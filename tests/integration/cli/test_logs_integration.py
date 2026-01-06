@@ -5,9 +5,10 @@ These tests exercise the end-to-end CLI path via CliRunner, verifying that:
 2. All subcommands (list, sessions, show) are accessible
 3. Help text displays correct options/arguments
 
-Stub command tests use xfail(strict=True) so they:
-- Pass (xfail) now while stubs raise NotImplementedError
-- Fail (XPASS) when implementation lands, prompting marker removal
+Stub command tests use dynamic pytest.xfail() so they:
+- Xfail when stubs raise NotImplementedError (expected behavior)
+- Fail loudly if a different exception occurs (regression detection)
+- Pass when implementation lands (prompting test updates)
 """
 
 from __future__ import annotations
@@ -59,94 +60,84 @@ class TestLogsSubcommandRegistration:
 class TestLogsListCommand:
     """Tests for 'mala logs list' command (expected to fail until T003)."""
 
-    @pytest.mark.xfail(strict=True, reason="Stub raises NotImplementedError - T003")
     def test_list_basic_invocation(self) -> None:
         """Test basic 'mala logs list' invocation."""
         result = runner.invoke(app, ["logs", "list"])
-        # Verify stub raises NotImplementedError (not import/registration error)
-        assert result.exception is None or isinstance(
-            result.exception, NotImplementedError
-        )
+        if isinstance(result.exception, NotImplementedError):
+            pytest.xfail("Stub raises NotImplementedError - T003")
+        assert result.exception is None
         assert result.exit_code == 0
 
-    @pytest.mark.xfail(strict=True, reason="Stub raises NotImplementedError - T003")
     def test_list_with_json_flag(self) -> None:
         """Test 'mala logs list --json' produces valid output."""
         result = runner.invoke(app, ["logs", "list", "--json"])
-        assert result.exception is None or isinstance(
-            result.exception, NotImplementedError
-        )
+        if isinstance(result.exception, NotImplementedError):
+            pytest.xfail("Stub raises NotImplementedError - T003")
+        assert result.exception is None
         assert result.exit_code == 0
 
-    @pytest.mark.xfail(strict=True, reason="Stub raises NotImplementedError - T003")
     def test_list_with_all_flag(self) -> None:
         """Test 'mala logs list --all' shows all runs."""
         result = runner.invoke(app, ["logs", "list", "--all"])
-        assert result.exception is None or isinstance(
-            result.exception, NotImplementedError
-        )
+        if isinstance(result.exception, NotImplementedError):
+            pytest.xfail("Stub raises NotImplementedError - T003")
+        assert result.exception is None
         assert result.exit_code == 0
 
 
 class TestLogsSessionsCommand:
     """Tests for 'mala logs sessions' command (expected to fail until T004)."""
 
-    @pytest.mark.xfail(strict=True, reason="Stub raises NotImplementedError - T004")
     def test_sessions_basic_invocation(self) -> None:
         """Test basic 'mala logs sessions' invocation."""
         result = runner.invoke(app, ["logs", "sessions"])
-        assert result.exception is None or isinstance(
-            result.exception, NotImplementedError
-        )
+        if isinstance(result.exception, NotImplementedError):
+            pytest.xfail("Stub raises NotImplementedError - T004")
+        assert result.exception is None
         assert result.exit_code == 0
 
-    @pytest.mark.xfail(strict=True, reason="Stub raises NotImplementedError - T004")
     def test_sessions_with_issue_filter(self) -> None:
         """Test 'mala logs sessions --issue test-123' filters by issue."""
         result = runner.invoke(app, ["logs", "sessions", "--issue", "test-123"])
-        assert result.exception is None or isinstance(
-            result.exception, NotImplementedError
-        )
+        if isinstance(result.exception, NotImplementedError):
+            pytest.xfail("Stub raises NotImplementedError - T004")
+        assert result.exception is None
         assert result.exit_code == 0
 
-    @pytest.mark.xfail(strict=True, reason="Stub raises NotImplementedError - T004")
     def test_sessions_with_json_flag(self) -> None:
         """Test 'mala logs sessions --json' produces valid output."""
         result = runner.invoke(app, ["logs", "sessions", "--json"])
-        assert result.exception is None or isinstance(
-            result.exception, NotImplementedError
-        )
+        if isinstance(result.exception, NotImplementedError):
+            pytest.xfail("Stub raises NotImplementedError - T004")
+        assert result.exception is None
         assert result.exit_code == 0
 
-    @pytest.mark.xfail(strict=True, reason="Stub raises NotImplementedError - T004")
     def test_sessions_with_all_flag(self) -> None:
         """Test 'mala logs sessions --all' shows all sessions."""
         result = runner.invoke(app, ["logs", "sessions", "--all"])
-        assert result.exception is None or isinstance(
-            result.exception, NotImplementedError
-        )
+        if isinstance(result.exception, NotImplementedError):
+            pytest.xfail("Stub raises NotImplementedError - T004")
+        assert result.exception is None
         assert result.exit_code == 0
 
 
 class TestLogsShowCommand:
     """Tests for 'mala logs show' command (expected to fail until T005)."""
 
-    @pytest.mark.xfail(strict=True, reason="Stub raises NotImplementedError - T005")
     def test_show_basic_invocation(self) -> None:
         """Test 'mala logs show <run_id>' invocation."""
         result = runner.invoke(app, ["logs", "show", "abc12345"])
-        assert result.exception is None or isinstance(
-            result.exception, NotImplementedError
-        )
+        if isinstance(result.exception, NotImplementedError):
+            pytest.xfail("Stub raises NotImplementedError - T005")
+        assert result.exception is None
         assert result.exit_code == 0
 
-    @pytest.mark.xfail(strict=True, reason="Stub raises NotImplementedError - T005")
     def test_show_with_json_flag(self) -> None:
         """Test 'mala logs show <run_id> --json' produces valid output."""
         result = runner.invoke(app, ["logs", "show", "abc12345", "--json"])
-        assert result.exception is None or isinstance(
-            result.exception, NotImplementedError
-        )
+        if isinstance(result.exception, NotImplementedError):
+            pytest.xfail("Stub raises NotImplementedError - T005")
+        assert result.exception is None
         assert result.exit_code == 0
 
     def test_show_missing_run_id_fails(self) -> None:
