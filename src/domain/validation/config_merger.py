@@ -181,8 +181,8 @@ def merge_configs(
     )
 
     # custom_commands: user always takes precedence (presets cannot define them)
-    # No merging needed - just use user's custom_commands
-    merged_custom_commands = user.custom_commands
+    # No merging needed - copy user's custom_commands to avoid aliasing
+    merged_custom_commands = dict(user.custom_commands)
 
     return ValidationConfig(
         preset=user.preset,  # Keep user's preset reference
