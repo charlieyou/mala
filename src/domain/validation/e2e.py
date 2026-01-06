@@ -315,7 +315,7 @@ class E2ERunner:
             "--disable-validations",
             "e2e",
             # Use fast mode for Cerberus to speed up E2E tests
-            f"--cerberus-spawn-args=--mode={self.config.cerberus_mode}",
+            f"--review-spawn-args=--mode={self.config.cerberus_mode}",
         ]
 
         runner = self._command_runner
