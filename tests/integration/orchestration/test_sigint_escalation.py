@@ -661,7 +661,7 @@ asyncio.run(main())
                 remaining_stdout, stderr = proc.communicate(timeout=5.0)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                remaining_stdout, stderr = proc.communicate()
+                remaining_stdout, stderr = proc.communicate(timeout=5.0)
                 pytest.fail(f"Process did not exit after SIGINT. Stderr: {stderr}")
 
             all_stdout = output + remaining_stdout
@@ -826,7 +826,7 @@ if __name__ == "__main__":
                 remaining_stdout, stderr = proc.communicate(timeout=10.0)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                remaining_stdout, stderr = proc.communicate()
+                remaining_stdout, stderr = proc.communicate(timeout=5.0)
                 pytest.fail(
                     f"Process did not exit after single SIGINT. Stderr: {stderr}"
                 )
@@ -977,7 +977,7 @@ if __name__ == "__main__":
                 remaining_stdout, stderr = proc.communicate(timeout=10.0)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                remaining_stdout, stderr = proc.communicate()
+                remaining_stdout, stderr = proc.communicate(timeout=5.0)
                 pytest.fail(
                     f"Process did not exit after double SIGINT. Stderr: {stderr}"
                 )
@@ -1154,7 +1154,7 @@ if __name__ == "__main__":
                 remaining_stdout, stderr = proc.communicate(timeout=10.0)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                remaining_stdout, stderr = proc.communicate()
+                remaining_stdout, stderr = proc.communicate(timeout=5.0)
                 pytest.fail(
                     f"Process did not exit after triple SIGINT. Stderr: {stderr}"
                 )
