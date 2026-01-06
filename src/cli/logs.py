@@ -95,7 +95,7 @@ def _parse_run_file(path: Path) -> dict[str, Any] | None:
         if data.get("issues") is None:
             data["issues"] = {}
         return data
-    except (json.JSONDecodeError, OSError) as e:
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
         print(f"Warning: skipping corrupt file {path}: {e}", file=sys.stderr)
         return None
 
@@ -151,15 +151,19 @@ def _parse_timestamp(ts: str) -> float:
         return 0.0
 
 
-def _collect_runs(files: list[Path]) -> list[dict[str, Any]]:
-    """Collect all valid run metadata from files.
+def _collect_runs(files: list[Path], limit: int | None = None) -> list[dict[str, Any]]:
+    """Collect valid run metadata from files, stopping early if limit reached.
+
+    Files are assumed to be pre-sorted by filename descending (newest first),
+    allowing early termination once `limit` valid runs are collected.
 
     Args:
-        files: List of JSON file paths.
+        files: List of JSON file paths (pre-sorted newest first).
+        limit: Maximum number of runs to collect. None means collect all.
 
     Returns:
         List of run metadata dicts with 'metadata_path' added.
-        Caller is responsible for sorting and limiting.
+        Caller may apply final sort for determinism on ties.
     """
     runs: list[dict[str, Any]] = []
     for path in files:
@@ -168,6 +172,8 @@ def _collect_runs(files: list[Path]) -> list[dict[str, Any]]:
             # Add metadata_path to a copy to avoid mutating parsed data
             run_entry = {**data, "metadata_path": str(path)}
             runs.append(run_entry)
+            if limit is not None and len(runs) >= limit:
+                break
     return runs
 
 
@@ -219,10 +225,11 @@ def list_runs(
 ) -> None:
     """List recent mala runs."""
     files = _discover_run_files(all_runs)
-    runs = _collect_runs(files)
+    # Collect with limit (files are pre-sorted newest first by filename)
+    runs = _collect_runs(files, limit=limit)
 
-    # Sort by started_at desc, run_id asc for determinism, then take top N
-    runs = _sort_runs(runs)[:limit]
+    # Final sort for determinism (handles ties within the collected set)
+    runs = _sort_runs(runs)
 
     if not runs:
         if json_output:

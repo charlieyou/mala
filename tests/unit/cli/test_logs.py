@@ -259,12 +259,23 @@ class TestParseRunFile:
         result = _parse_run_file(run_file)
         assert result is None
 
+    def test_parse_invalid_encoding(self, tmp_path: Path) -> None:
+        """Verify file with invalid encoding returns None with warning."""
+        run_file = tmp_path / "bad_encoding.json"
+        # Write invalid UTF-8 bytes directly
+        run_file.write_bytes(b'{"run_id": "\xff\xfe invalid bytes"}')
+
+        with patch("sys.stderr", new_callable=StringIO) as mock_stderr:
+            result = _parse_run_file(run_file)
+            assert result is None
+            assert "Warning: skipping corrupt file" in mock_stderr.getvalue()
+
 
 class TestCollectRuns:
     """Tests for _collect_runs function."""
 
     def test_collect_all_valid_runs(self, tmp_path: Path) -> None:
-        """Verify all valid runs are collected (limit applied by caller)."""
+        """Verify all valid runs are collected when no limit specified."""
         # Create 25 valid run files
         files = []
         for i in range(25):
@@ -277,15 +288,29 @@ class TestCollectRuns:
             run_file.write_text(json.dumps(data))
             files.append(run_file)
 
-        # _collect_runs collects all valid runs; caller sorts and limits
+        # Without limit, all valid runs are collected
         runs = _collect_runs(files)
-        assert len(runs) == 25  # All valid runs collected
+        assert len(runs) == 25
 
-        # Verify limit works when applied to sorted runs
-        from src.cli.logs import _sort_runs
+    def test_collect_with_limit_stops_early(self, tmp_path: Path) -> None:
+        """Verify _collect_runs stops after collecting limit valid runs."""
+        # Create 25 valid run files
+        files = []
+        for i in range(25):
+            run_file = tmp_path / f"run_{i:02d}.json"
+            data = {
+                "run_id": f"run-{i:02d}",
+                "started_at": f"2024-01-{(i % 28) + 1:02d}T10:00:00+00:00",
+                "issues": {},
+            }
+            run_file.write_text(json.dumps(data))
+            files.append(run_file)
 
-        sorted_runs = _sort_runs(runs)[:20]
-        assert len(sorted_runs) == 20
+        # With limit, only that many runs are collected (early stop)
+        runs = _collect_runs(files, limit=10)
+        assert len(runs) == 10
+        # Should have collected the first 10 files in order
+        assert [r["run_id"] for r in runs] == [f"run-{i:02d}" for i in range(10)]
 
     def test_collect_skips_invalid_files(self, tmp_path: Path) -> None:
         """Verify invalid files are skipped, valid ones collected."""
