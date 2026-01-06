@@ -533,3 +533,98 @@ while True:
             if proc.poll() is None:
                 proc.kill()
                 proc.wait()
+
+    def test_abort_with_validation_failed(self, tmp_path: Path) -> None:
+        """When validation failed before Stage 2, abort exits with code 1.
+
+        This tests the interaction between validation state and SIGINT handling:
+        if _validation_failed is True when Stage 2 is entered, the exit code
+        should be 1 (validation failure) instead of 130 (interrupted).
+        """
+        script = tmp_path / "validation_failed_abort_test.py"
+        script.write_text(
+            """
+import signal
+import sys
+import time
+
+sigint_count = 0
+validation_failed = True  # Simulate validation having failed before SIGINT
+
+
+def sigint_handler(signum, frame):
+    global sigint_count
+    sigint_count += 1
+    print(f"SIGINT count={sigint_count}", flush=True)
+    if sigint_count == 1:
+        # Stage 1: Drain mode - continue running
+        print("DRAIN_MODE", flush=True)
+    elif sigint_count >= 2:
+        # Stage 2: Abort mode - exit with 1 if validation failed, else 130
+        exit_code = 1 if validation_failed else 130
+        print(f"ABORT_MODE exit_code={exit_code}", flush=True)
+        sys.exit(exit_code)
+
+
+signal.signal(signal.SIGINT, sigint_handler)
+
+print("READY", flush=True)
+
+# Simulate active work
+while True:
+    time.sleep(0.1)
+"""
+        )
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(REPO_ROOT)
+
+        proc = subprocess.Popen(
+            [sys.executable, str(script)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+
+        try:
+            ready, output = _wait_for_ready(proc)
+            if not ready:
+                stderr = _get_stderr(proc)
+                if proc.poll() is not None:
+                    pytest.fail(
+                        f"Subprocess exited early with code {proc.returncode}. "
+                        f"Output: {output}\nStderr: {stderr}"
+                    )
+                pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
+
+            # Wait briefly for task to start
+            time.sleep(0.3)
+
+            # Send two SIGINTs for abort mode
+            _send_sigint_and_wait(proc, wait_after=0.2)
+            _send_sigint_and_wait(proc, wait_after=0.2)
+
+            # Wait for exit
+            try:
+                proc.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                stderr = _get_stderr(proc)
+                proc.kill()
+                proc.wait()
+                pytest.fail(
+                    f"Process did not exit after double SIGINT. Stderr: {stderr}"
+                )
+
+            # When validation failed, abort should exit with 1 (not 130)
+            if proc.returncode != 1:
+                stderr = _get_stderr(proc)
+                pytest.fail(
+                    f"Expected exit code 1 (validation failed + abort), "
+                    f"got {proc.returncode}. Stderr: {stderr}"
+                )
+
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
