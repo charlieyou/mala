@@ -632,7 +632,7 @@ class EpicVerifier:
                     continue
                 epic = row.get("epic") or {}
                 if isinstance(epic, dict) and epic.get("id") == epic_id:
-                    if row.get("eligible_for_close"):
+                    if row.get("eligible_for_close") is True:
                         return None  # Actually eligible
                     try:
                         total = int(row.get("total_children") or 0)
