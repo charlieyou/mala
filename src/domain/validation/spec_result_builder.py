@@ -30,14 +30,13 @@ from pathlib import Path
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from src.core.protocols import CommandRunnerPort, EnvConfigPort
+    from src.core.protocols import CommandRunnerPort, EnvConfigPort, MalaEventSink
 
     from .config import YamlCoverageConfig
     from .e2e import E2EResult
     from .result import ValidationStepResult
     from .spec import (
         CoverageConfig,
-        E2EConfig,
         ValidationArtifacts,
         ValidationContext,
         ValidationSpec,
@@ -74,6 +73,7 @@ class ResultBuilderInput:
     env_config: EnvConfigPort
     command_runner: CommandRunnerPort
     yaml_coverage_config: YamlCoverageConfig | None = None
+    event_sink: MalaEventSink | None = None
 
 
 class SpecResultBuilder:
@@ -127,6 +127,7 @@ class SpecResultBuilder:
             artifacts=input.artifacts,
             env_config=input.env_config,
             command_runner=input.command_runner,
+            event_sink=input.event_sink,
         )
         if e2e is not None and not e2e.passed and e2e.status != E2EStatus.SKIPPED:
             reason = e2e.failure_reason or "E2E failed"
@@ -307,6 +308,7 @@ class SpecResultBuilder:
         artifacts: ValidationArtifacts,
         env_config: EnvConfigPort,
         command_runner: CommandRunnerPort,
+        event_sink: MalaEventSink | None = None,
     ) -> E2EResult | None:
         """Run E2E validation if enabled (only for run-level scope).
 
@@ -318,6 +320,7 @@ class SpecResultBuilder:
             artifacts: Artifacts to update with fixture path.
             env_config: Environment configuration for paths.
             command_runner: Command runner for executing commands.
+            event_sink: Event sink for emitting validation step events.
 
         Returns:
             E2EResult if E2E is enabled and scope is run-level, None otherwise.
@@ -327,44 +330,48 @@ class SpecResultBuilder:
         if not spec.e2e.enabled or spec.scope != ValidationScope.RUN_LEVEL:
             return None
 
-        e2e_result = self._run_e2e(
-            spec.e2e, env, cwd, log_dir, env_config, command_runner
+        # Check prereqs before emitting "running" to match cached command behavior
+        # (skipped steps only emit "skipped", not "running" then "skipped")
+        runner_config = E2ERunnerConfig(
+            enabled=spec.e2e.enabled,
+            skip_if_no_keys=True,
+            keep_fixture=True,
+            timeout_seconds=1200.0,
         )
+        runner = E2ERunner(env_config, command_runner, runner_config)
+        prereq = runner.check_prereqs(env)
+
+        if not prereq.ok:
+            reason = prereq.failure_reason() or "prerequisites not met"
+            if event_sink is not None:
+                event_sink.on_validation_step_skipped("e2e", reason)
+            from .e2e import E2EResult
+
+            return E2EResult(
+                passed=False,
+                status=E2EStatus.SKIPPED if prereq.can_skip else E2EStatus.FAILED,
+                failure_reason=reason,
+                returncode=1,
+            )
+
+        if event_sink is not None:
+            event_sink.on_validation_step_running("e2e")
+
+        e2e_result = runner.run(env=dict(env), cwd=cwd)
         if e2e_result.fixture_path:
             artifacts.e2e_fixture_path = e2e_result.fixture_path
 
+        if event_sink is not None:
+            if e2e_result.passed:
+                event_sink.on_validation_step_passed(
+                    "e2e", e2e_result.duration_seconds
+                )
+            else:
+                event_sink.on_validation_step_failed(
+                    "e2e", e2e_result.returncode or 1
+                )
+
         return e2e_result
-
-    def _run_e2e(
-        self,
-        config: E2EConfig,
-        env: Mapping[str, str],
-        cwd: Path,
-        log_dir: Path,
-        env_config: EnvConfigPort,
-        command_runner: CommandRunnerPort,
-    ) -> E2EResult:
-        """Run E2E validation using the E2ERunner.
-
-        Args:
-            config: E2E configuration from spec.
-            env: Environment variables.
-            cwd: Working directory.
-            log_dir: Directory for logs.
-            env_config: Environment configuration for paths.
-            command_runner: Command runner for executing commands.
-
-        Returns:
-            E2EResult with pass/fail status.
-        """
-        runner_config = E2ERunnerConfig(
-            enabled=config.enabled,
-            skip_if_no_keys=True,  # Don't fail if API key missing
-            keep_fixture=True,  # Keep for debugging
-            timeout_seconds=1200.0,  # 20 min for E2E mala run (default 10 min was too short)
-        )
-        runner = E2ERunner(env_config, command_runner, runner_config)
-        return runner.run(env=dict(env), cwd=cwd)
 
     def _build_failure_result(
         self,

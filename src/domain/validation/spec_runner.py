@@ -274,6 +274,7 @@ class SpecValidationRunner:
             env_config=self.env_config,
             command_runner=command_runner,
             yaml_coverage_config=spec.yaml_coverage_config,
+            event_sink=self.event_sink,
         )
         result = builder.build(builder_input)
 

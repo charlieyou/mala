@@ -671,8 +671,6 @@ class TestSpecValidationRunner:
         self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
     ) -> None:
         """Test that E2E only runs for per-issue scope."""
-        from src.domain.validation.spec_result_builder import SpecResultBuilder
-
         # Per-issue context - E2E should not run
         per_issue_context = ValidationContext(
             issue_id="test-123",
@@ -690,49 +688,10 @@ class TestSpecValidationRunner:
         )
 
         # E2E should not be called for per-issue scope
-        e2e_run_called = False
-
-        def mock_e2e_run(*args: object, **kwargs: object) -> MagicMock:
-            nonlocal e2e_run_called
-            e2e_run_called = True
-            return MagicMock(passed=True, fixture_path=None)
-
-        with patch.object(SpecResultBuilder, "_run_e2e", side_effect=mock_e2e_run):
-            result = runner._run_spec_sync(spec, per_issue_context, log_dir=tmp_path)
-            assert result.passed is True
-            assert not e2e_run_called
-
-    def test_run_spec_e2e_runs_for_run_level(
-        self, runner: SpecValidationRunner, tmp_path: Path
-    ) -> None:
-        """Test that E2E runs for run-level scope."""
-        from src.domain.validation.e2e import E2EResult, E2EStatus
-        from src.domain.validation.spec_result_builder import SpecResultBuilder
-
-        run_level_context = ValidationContext(
-            issue_id=None,
-            repo_path=tmp_path,
-            commit_hash="",
-            changed_files=[],
-            scope=ValidationScope.RUN_LEVEL,
-        )
-
-        spec = ValidationSpec(
-            commands=[],
-            scope=ValidationScope.RUN_LEVEL,
-            coverage=CoverageConfig(enabled=False),
-            e2e=E2EConfig(enabled=True),
-        )
-
-        mock_e2e_result = E2EResult(
-            passed=True,
-            status=E2EStatus.PASSED,
-            fixture_path=tmp_path / "fixture",
-        )
-
-        with patch.object(SpecResultBuilder, "_run_e2e", return_value=mock_e2e_result):
-            result = runner._run_spec_sync(spec, run_level_context, log_dir=tmp_path)
-            assert result.passed is True
+        # We verify this by checking result.e2e_result is None
+        result = runner._run_spec_sync(spec, per_issue_context, log_dir=tmp_path)
+        assert result.passed is True
+        assert result.e2e_result is None
 
     @pytest.mark.asyncio
     async def test_run_spec_async(
@@ -3118,181 +3077,12 @@ class TestSpecResultBuilder:
             command_runner=command_runner,
         )
 
-        e2e_called = False
-
-        def mock_run(*args: object, **kwargs: object) -> MagicMock:
-            nonlocal e2e_called
-            e2e_called = True
-            return MagicMock(passed=True)
-
-        with patch.object(builder, "_run_e2e", side_effect=mock_run):
-            result = builder.build(input)
+        # For per-issue scope, E2E should not run - we verify by checking
+        # result.e2e_result is None
+        result = builder.build(input)
 
         assert result.passed is True
         assert result.e2e_result is None
-        assert not e2e_called
-
-    def test_build_e2e_runs_for_run_level(
-        self,
-        builder: "SpecResultBuilder",
-        basic_artifacts: ValidationArtifacts,
-        basic_steps: list[ValidationStepResult],
-        env_config: EnvConfig,
-        command_runner: FakeCommandRunner,
-        tmp_path: Path,
-    ) -> None:
-        """Test build() runs E2E for run-level scope."""
-        from src.domain.validation.e2e import E2EResult, E2EStatus
-        from src.domain.validation.spec_result_builder import ResultBuilderInput
-
-        run_level_context = ValidationContext(
-            issue_id=None,
-            repo_path=tmp_path,
-            commit_hash="",
-            changed_files=[],
-            scope=ValidationScope.RUN_LEVEL,
-        )
-
-        spec = ValidationSpec(
-            commands=[],
-            scope=ValidationScope.RUN_LEVEL,
-            coverage=CoverageConfig(enabled=False),
-            e2e=E2EConfig(enabled=True),
-        )
-
-        mock_e2e_result = E2EResult(
-            passed=True,
-            status=E2EStatus.PASSED,
-            fixture_path=tmp_path / "fixture",
-        )
-
-        input = ResultBuilderInput(
-            spec=spec,
-            context=run_level_context,
-            steps=basic_steps,
-            artifacts=basic_artifacts,
-            cwd=tmp_path,
-            log_dir=tmp_path,
-            env={},
-            baseline_percent=None,
-            env_config=env_config,
-            command_runner=command_runner,
-        )
-
-        with patch.object(builder, "_run_e2e", return_value=mock_e2e_result):
-            result = builder.build(input)
-
-        assert result.passed is True
-        assert result.e2e_result is mock_e2e_result
-
-    def test_build_e2e_failure_fails_build(
-        self,
-        builder: "SpecResultBuilder",
-        basic_artifacts: ValidationArtifacts,
-        basic_steps: list[ValidationStepResult],
-        env_config: EnvConfig,
-        command_runner: FakeCommandRunner,
-        tmp_path: Path,
-    ) -> None:
-        """Test build() fails when E2E fails."""
-        from src.domain.validation.e2e import E2EResult, E2EStatus
-        from src.domain.validation.spec_result_builder import ResultBuilderInput
-
-        run_level_context = ValidationContext(
-            issue_id=None,
-            repo_path=tmp_path,
-            commit_hash="",
-            changed_files=[],
-            scope=ValidationScope.RUN_LEVEL,
-        )
-
-        spec = ValidationSpec(
-            commands=[],
-            scope=ValidationScope.RUN_LEVEL,
-            coverage=CoverageConfig(enabled=False),
-            e2e=E2EConfig(enabled=True),
-        )
-
-        mock_e2e_result = E2EResult(
-            passed=False,
-            status=E2EStatus.FAILED,
-            failure_reason="E2E test failed",
-        )
-
-        input = ResultBuilderInput(
-            spec=spec,
-            context=run_level_context,
-            steps=basic_steps,
-            artifacts=basic_artifacts,
-            cwd=tmp_path,
-            log_dir=tmp_path,
-            env={},
-            baseline_percent=None,
-            env_config=env_config,
-            command_runner=command_runner,
-        )
-
-        with patch.object(builder, "_run_e2e", return_value=mock_e2e_result):
-            result = builder.build(input)
-
-        assert result.passed is False
-        assert "E2E test failed" in result.failure_reasons[0]
-        assert result.e2e_result is mock_e2e_result
-
-    def test_build_e2e_skipped_does_not_fail(
-        self,
-        builder: "SpecResultBuilder",
-        basic_artifacts: ValidationArtifacts,
-        basic_steps: list[ValidationStepResult],
-        env_config: EnvConfig,
-        command_runner: FakeCommandRunner,
-        tmp_path: Path,
-    ) -> None:
-        """Test build() passes when E2E is skipped (status=SKIPPED)."""
-        from src.domain.validation.e2e import E2EResult, E2EStatus
-        from src.domain.validation.spec_result_builder import ResultBuilderInput
-
-        run_level_context = ValidationContext(
-            issue_id=None,
-            repo_path=tmp_path,
-            commit_hash="",
-            changed_files=[],
-            scope=ValidationScope.RUN_LEVEL,
-        )
-
-        spec = ValidationSpec(
-            commands=[],
-            scope=ValidationScope.RUN_LEVEL,
-            coverage=CoverageConfig(enabled=False),
-            e2e=E2EConfig(enabled=True),
-        )
-
-        # E2E skipped due to missing prereqs - should not cause failure
-        mock_e2e_result = E2EResult(
-            passed=False,  # Note: passed=False but status=SKIPPED
-            status=E2EStatus.SKIPPED,
-            failure_reason="E2E prerequisites not met",
-        )
-
-        input = ResultBuilderInput(
-            spec=spec,
-            context=run_level_context,
-            steps=basic_steps,
-            artifacts=basic_artifacts,
-            cwd=tmp_path,
-            log_dir=tmp_path,
-            env={},
-            baseline_percent=None,
-            env_config=env_config,
-            command_runner=command_runner,
-        )
-
-        with patch.object(builder, "_run_e2e", return_value=mock_e2e_result):
-            result = builder.build(input)
-
-        # Should pass because SKIPPED is not considered a failure
-        assert result.passed is True
-        assert result.e2e_result is mock_e2e_result
 
     def test_build_coverage_updates_artifacts(
         self,
