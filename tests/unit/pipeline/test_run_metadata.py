@@ -28,6 +28,7 @@ from src.infra.io.log_output.run_metadata import (
     get_running_instances,
     get_running_instances_for_dir,
     lookup_prior_session,
+    parse_timestamp,
     remove_run_marker,
     write_run_marker,
 )
@@ -1338,3 +1339,102 @@ class TestLookupPriorSession:
                 result = lookup_prior_session(repo_path, "issue-123")
 
             assert result == "valid-session"
+
+    def test_lookup_deterministic_on_timestamp_ties(self) -> None:
+        """Test that lookup uses run_id as tiebreaker for same timestamps."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            runs_dir = repo_path / ".mala" / "runs"
+            runs_dir.mkdir(parents=True)
+
+            # Create two runs with identical timestamps but different run_ids
+            run_a = {
+                "run_id": "aaa-run",
+                "started_at": "2024-01-01T10:00:00Z",
+                "issues": {"issue-123": {"session_id": "session-aaa"}},
+            }
+            run_z = {
+                "run_id": "zzz-run",
+                "started_at": "2024-01-01T10:00:00Z",  # Same timestamp
+                "issues": {"issue-123": {"session_id": "session-zzz"}},
+            }
+
+            (runs_dir / "run_a.json").write_text(json.dumps(run_a))
+            (runs_dir / "run_z.json").write_text(json.dumps(run_z))
+
+            with patch(
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                return_value=runs_dir,
+            ):
+                result = lookup_prior_session(repo_path, "issue-123")
+
+            # Should return session from run_id "aaa-run" (sorts first alphabetically)
+            assert result == "session-aaa"
+
+    def test_lookup_logs_warning_for_corrupt_files(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test that corrupt JSON files are logged as warnings."""
+        import logging
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            runs_dir = repo_path / ".mala" / "runs"
+            runs_dir.mkdir(parents=True)
+
+            # Create a corrupt JSON file
+            corrupt_path = runs_dir / "corrupt.json"
+            corrupt_path.write_text("not valid json {{{")
+
+            # Create a valid run file
+            valid_run = {
+                "run_id": "run-1",
+                "started_at": "2024-01-01T10:00:00Z",
+                "issues": {"issue-123": {"session_id": "valid-session"}},
+            }
+            (runs_dir / "valid.json").write_text(json.dumps(valid_run))
+
+            with patch(
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                return_value=runs_dir,
+            ):
+                caplog.set_level(logging.WARNING)
+                result = lookup_prior_session(repo_path, "issue-123")
+
+            assert result == "valid-session"
+            # Check that a warning was logged for the corrupt file
+            assert any(
+                "Skipping corrupt file" in record.message
+                and "corrupt.json" in record.message
+                for record in caplog.records
+            )
+
+
+class TestParseTimestamp:
+    """Test parse_timestamp function (canonical timestamp parsing)."""
+
+    def test_parses_z_suffix(self) -> None:
+        """Test parsing timestamp with Z suffix."""
+        result = parse_timestamp("2024-01-01T10:00:00Z")
+        assert result > 0
+
+    def test_parses_offset_suffix(self) -> None:
+        """Test parsing timestamp with +00:00 suffix."""
+        result = parse_timestamp("2024-01-01T10:00:00+00:00")
+        assert result > 0
+
+    def test_z_and_offset_are_equal(self) -> None:
+        """Test that Z and +00:00 produce the same result."""
+        z_result = parse_timestamp("2024-01-01T10:00:00Z")
+        offset_result = parse_timestamp("2024-01-01T10:00:00+00:00")
+        assert z_result == offset_result
+
+    def test_returns_zero_for_invalid(self) -> None:
+        """Test that invalid timestamps return 0.0."""
+        assert parse_timestamp("not a timestamp") == 0.0
+        assert parse_timestamp("") == 0.0
+
+    def test_handles_none_gracefully(self) -> None:
+        """Test that None input returns 0.0 (via TypeError)."""
+        # The function catches TypeError for this case
+        assert parse_timestamp(None) == 0.0  # type: ignore[arg-type]

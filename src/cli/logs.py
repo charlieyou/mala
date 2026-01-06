@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
 import typer
 from tabulate import tabulate
 
+from src.infra.io.log_output.run_metadata import parse_timestamp
 from src.infra.tools.env import get_repo_runs_dir, get_runs_dir
 
 logs_app = typer.Typer(name="logs", help="Search and inspect mala run logs")
@@ -137,18 +137,7 @@ def _sort_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     Returns:
         Sorted list.
     """
-    return sorted(runs, key=lambda r: (-_parse_timestamp(r["started_at"]), r["run_id"]))
-
-
-def _parse_timestamp(ts: str) -> float:
-    """Parse ISO timestamp to epoch float for sorting."""
-    try:
-        # Handle both Z suffix and +00:00
-        ts = ts.replace("Z", "+00:00")
-        dt = datetime.fromisoformat(ts)
-        return dt.timestamp()
-    except (ValueError, TypeError, AttributeError):
-        return 0.0
+    return sorted(runs, key=lambda r: (-parse_timestamp(r["started_at"]), r["run_id"]))
 
 
 def _extract_timestamp_prefix(filename: str) -> str:
@@ -388,7 +377,7 @@ def _sort_sessions(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         sessions,
         key=lambda s: (
-            -_parse_timestamp(s.get("run_started_at") or ""),
+            -parse_timestamp(s.get("run_started_at") or ""),
             s.get("run_id") or "",
             s.get("issue_id") or "",
         ),

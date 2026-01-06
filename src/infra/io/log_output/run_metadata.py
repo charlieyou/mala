@@ -699,12 +699,19 @@ def _is_process_running(pid: int) -> bool:
         return False
 
 
+_logger = logging.getLogger(__name__)
+
+
 def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
     """Look up the session ID from a prior run on this issue.
 
     Scans run metadata files in the repo's runs directory, finds entries
     for the given issue, and returns the session_id from the most recent
-    run (sorted by started_at timestamp descending).
+    run (sorted by started_at timestamp descending, with run_id as tiebreaker).
+
+    Files are sorted by filename descending before scanning (leveraging the
+    timestamp prefix in filenames for efficiency). Corrupt files are logged
+    as warnings and skipped.
 
     Args:
         repo_path: Repository path for finding run metadata.
@@ -717,15 +724,18 @@ def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
     if not runs_dir.exists():
         return None
 
-    # Collect all (started_at, session_id) pairs for this issue
-    candidates: list[tuple[float, str]] = []
+    # Sort files by filename descending (newest first based on timestamp prefix)
+    json_files = sorted(runs_dir.glob("*.json"), key=lambda p: p.name, reverse=True)
 
-    for json_path in runs_dir.glob("*.json"):
+    # Collect all (started_at, run_id, session_id) tuples for this issue
+    candidates: list[tuple[float, str, str]] = []
+
+    for json_path in json_files:
         try:
             with json_path.open() as f:
                 data = json.load(f)
-        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-            # Skip corrupt files silently
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+            _logger.warning("Skipping corrupt file %s: %s", json_path, e)
             continue
 
         if not isinstance(data, dict):
@@ -743,21 +753,25 @@ def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
         if not isinstance(session_id, str) or not session_id:
             continue
 
-        # Parse started_at for sorting
+        # Parse started_at for sorting, use run_id as secondary key for ties
         started_at = data.get("started_at", "")
-        timestamp = _parse_timestamp_for_sort(started_at)
-        candidates.append((timestamp, session_id))
+        run_id = data.get("run_id", "")
+        timestamp = parse_timestamp(started_at)
+        candidates.append((timestamp, run_id, session_id))
 
     if not candidates:
         return None
 
-    # Sort by timestamp descending (most recent first)
-    candidates.sort(key=lambda x: -x[0])
-    return candidates[0][1]
+    # Sort by timestamp descending, then run_id ascending for determinism
+    candidates.sort(key=lambda x: (-x[0], x[1]))
+    return candidates[0][2]
 
 
-def _parse_timestamp_for_sort(ts: str) -> float:
+def parse_timestamp(ts: str) -> float:
     """Parse ISO timestamp to epoch float for sorting.
+
+    This is the canonical implementation for timestamp parsing across
+    the codebase. Used by both run_metadata.py and cli/logs.py.
 
     Args:
         ts: ISO format timestamp string (with Z or +00:00 suffix).
