@@ -88,6 +88,13 @@ def test_repo(tmp_path: Path) -> Path:
         check=True,
         capture_output=True,
     )
+    # Disable GPG signing to avoid failures when global commit.gpgsign=true
+    subprocess.run(
+        ["git", "config", "commit.gpgsign", "false"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
 
     # Create initial commit (empty file)
     (tmp_path / "example.py").write_text("")
