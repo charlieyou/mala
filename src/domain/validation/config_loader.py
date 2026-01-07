@@ -162,31 +162,67 @@ def _validate_schema(data: dict[str, Any]) -> None:
         raise ConfigError(f"Unknown field '{first_unknown}' in mala.yaml")
 
 
-def _parse_trigger_command_ref(data: dict[str, Any]) -> TriggerCommandRef:
+_TRIGGER_COMMAND_REF_FIELDS = frozenset({"ref", "command", "timeout"})
+
+
+def _parse_trigger_command_ref(
+    data: dict[str, Any], trigger_name: str, cmd_index: int
+) -> TriggerCommandRef:
     """Parse a single command reference from a trigger's commands list.
 
     Args:
         data: Dict with 'ref' (required), optional 'command' and 'timeout' overrides.
+        trigger_name: Name of the trigger for error messages.
+        cmd_index: Index of the command in the list for error messages.
 
     Returns:
         TriggerCommandRef instance.
 
     Raises:
-        ConfigError: If 'ref' is missing or has wrong type.
+        ConfigError: If 'ref' is missing, has wrong type, or unknown fields present.
     """
+    # Validate unknown fields
+    unknown = set(data.keys()) - _TRIGGER_COMMAND_REF_FIELDS
+    if unknown:
+        first = sorted(unknown)[0]
+        raise ConfigError(
+            f"Unknown field '{first}' in command {cmd_index} of trigger {trigger_name}"
+        )
+
     if "ref" not in data:
-        raise ConfigError("'ref' is required for trigger command")
+        raise ConfigError(
+            f"'ref' is required for command {cmd_index} in trigger {trigger_name}"
+        )
     ref = data["ref"]
     if not isinstance(ref, str):
-        raise ConfigError(f"'ref' must be a string, got {type(ref).__name__}")
+        raise ConfigError(
+            f"'ref' must be a string in command {cmd_index} of trigger {trigger_name}, "
+            f"got {type(ref).__name__}"
+        )
+    if not ref.strip():
+        raise ConfigError(
+            f"'ref' cannot be empty in command {cmd_index} of trigger {trigger_name}"
+        )
 
     command = data.get("command")
-    if command is not None and not isinstance(command, str):
-        raise ConfigError(f"'command' must be a string, got {type(command).__name__}")
+    if command is not None:
+        if not isinstance(command, str):
+            raise ConfigError(
+                f"'command' must be a string in command {cmd_index} of trigger {trigger_name}, "
+                f"got {type(command).__name__}"
+            )
+        if not command.strip():
+            raise ConfigError(
+                f"'command' cannot be empty in command {cmd_index} of trigger {trigger_name}"
+            )
 
     timeout = data.get("timeout")
-    if timeout is not None and not isinstance(timeout, int):
-        raise ConfigError(f"'timeout' must be an integer, got {type(timeout).__name__}")
+    if timeout is not None:
+        if isinstance(timeout, bool) or not isinstance(timeout, int):
+            raise ConfigError(
+                f"'timeout' must be an integer in command {cmd_index} of trigger {trigger_name}, "
+                f"got {type(timeout).__name__}"
+            )
 
     return TriggerCommandRef(ref=ref, command=command, timeout=timeout)
 
@@ -217,9 +253,13 @@ def _parse_commands_list(
     for i, cmd_data in enumerate(commands_data):
         if isinstance(cmd_data, str):
             # Allow shorthand: just the ref string
+            if not cmd_data.strip():
+                raise ConfigError(
+                    f"Command {i} in trigger {trigger_name} cannot be an empty string"
+                )
             commands.append(TriggerCommandRef(ref=cmd_data))
         elif isinstance(cmd_data, dict):
-            commands.append(_parse_trigger_command_ref(cmd_data))
+            commands.append(_parse_trigger_command_ref(cmd_data, trigger_name, i))
         else:
             raise ConfigError(
                 f"Command {i} in trigger {trigger_name} must be a string or object, "
@@ -285,13 +325,19 @@ def _parse_max_retries(
             f"max_retries required when failure_mode=remediate for trigger {trigger_name}"
         )
 
-    if max_retries is not None and not isinstance(max_retries, int):
-        raise ConfigError(
-            f"max_retries must be an integer for trigger {trigger_name}, "
-            f"got {type(max_retries).__name__}"
-        )
+    if max_retries is not None:
+        if isinstance(max_retries, bool) or not isinstance(max_retries, int):
+            raise ConfigError(
+                f"max_retries must be an integer for trigger {trigger_name}, "
+                f"got {type(max_retries).__name__}"
+            )
 
     return max_retries
+
+
+_EPIC_COMPLETION_FIELDS = frozenset(
+    {"failure_mode", "max_retries", "commands", "epic_depth", "fire_on"}
+)
 
 
 def _parse_epic_completion_trigger(
@@ -306,9 +352,16 @@ def _parse_epic_completion_trigger(
         EpicCompletionTriggerConfig instance.
 
     Raises:
-        ConfigError: If required fields missing or invalid.
+        ConfigError: If required fields missing, invalid, or unknown fields present.
     """
     trigger_name = "epic_completion"
+
+    # Validate unknown fields
+    unknown = set(data.keys()) - _EPIC_COMPLETION_FIELDS
+    if unknown:
+        first = sorted(unknown)[0]
+        raise ConfigError(f"Unknown field '{first}' in trigger {trigger_name}")
+
     failure_mode = _parse_failure_mode(data, trigger_name)
     max_retries = _parse_max_retries(data, trigger_name, failure_mode)
     commands = _parse_commands_list(data, trigger_name)
@@ -358,6 +411,9 @@ def _parse_epic_completion_trigger(
     )
 
 
+_SESSION_END_FIELDS = frozenset({"failure_mode", "max_retries", "commands"})
+
+
 def _parse_session_end_trigger(data: dict[str, Any]) -> SessionEndTriggerConfig:
     """Parse session_end trigger config.
 
@@ -368,9 +424,16 @@ def _parse_session_end_trigger(data: dict[str, Any]) -> SessionEndTriggerConfig:
         SessionEndTriggerConfig instance.
 
     Raises:
-        ConfigError: If required fields missing or invalid.
+        ConfigError: If required fields missing, invalid, or unknown fields present.
     """
     trigger_name = "session_end"
+
+    # Validate unknown fields
+    unknown = set(data.keys()) - _SESSION_END_FIELDS
+    if unknown:
+        first = sorted(unknown)[0]
+        raise ConfigError(f"Unknown field '{first}' in trigger {trigger_name}")
+
     failure_mode = _parse_failure_mode(data, trigger_name)
     max_retries = _parse_max_retries(data, trigger_name, failure_mode)
     commands = _parse_commands_list(data, trigger_name)
@@ -380,6 +443,9 @@ def _parse_session_end_trigger(data: dict[str, Any]) -> SessionEndTriggerConfig:
         commands=commands,
         max_retries=max_retries,
     )
+
+
+_PERIODIC_FIELDS = frozenset({"failure_mode", "max_retries", "commands", "interval"})
 
 
 def _parse_periodic_trigger(data: dict[str, Any]) -> PeriodicTriggerConfig:
@@ -392,9 +458,16 @@ def _parse_periodic_trigger(data: dict[str, Any]) -> PeriodicTriggerConfig:
         PeriodicTriggerConfig instance.
 
     Raises:
-        ConfigError: If required fields missing or invalid.
+        ConfigError: If required fields missing, invalid, or unknown fields present.
     """
     trigger_name = "periodic"
+
+    # Validate unknown fields
+    unknown = set(data.keys()) - _PERIODIC_FIELDS
+    if unknown:
+        first = sorted(unknown)[0]
+        raise ConfigError(f"Unknown field '{first}' in trigger {trigger_name}")
+
     failure_mode = _parse_failure_mode(data, trigger_name)
     max_retries = _parse_max_retries(data, trigger_name, failure_mode)
     commands = _parse_commands_list(data, trigger_name)
@@ -403,7 +476,7 @@ def _parse_periodic_trigger(data: dict[str, Any]) -> PeriodicTriggerConfig:
     if "interval" not in data:
         raise ConfigError(f"interval required for trigger {trigger_name}")
     interval = data["interval"]
-    if not isinstance(interval, int):
+    if isinstance(interval, bool) or not isinstance(interval, int):
         raise ConfigError(
             f"interval must be an integer for trigger {trigger_name}, "
             f"got {type(interval).__name__}"
@@ -415,6 +488,9 @@ def _parse_periodic_trigger(data: dict[str, Any]) -> PeriodicTriggerConfig:
         max_retries=max_retries,
         interval=interval,
     )
+
+
+_VALIDATION_TRIGGERS_FIELDS = frozenset({"epic_completion", "session_end", "periodic"})
 
 
 def _parse_validation_triggers(
@@ -429,10 +505,21 @@ def _parse_validation_triggers(
         ValidationTriggersConfig if data is provided, None otherwise.
 
     Raises:
-        ConfigError: If any trigger config is invalid.
+        ConfigError: If data is not a dict, has unknown keys, or any trigger is invalid.
     """
     if data is None:
         return None
+
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"validation_triggers must be an object, got {type(data).__name__}"
+        )
+
+    # Validate unknown fields
+    unknown = set(data.keys()) - _VALIDATION_TRIGGERS_FIELDS
+    if unknown:
+        first = sorted(unknown)[0]
+        raise ConfigError(f"Unknown trigger '{first}' in validation_triggers")
 
     epic_completion = None
     session_end = None

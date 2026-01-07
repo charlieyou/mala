@@ -1648,7 +1648,9 @@ class TestValidationTriggersConfigParsing:
             }
         }
 
-        with pytest.raises(ConfigError, match="'ref' is required for trigger command"):
+        with pytest.raises(
+            ConfigError, match="'ref' is required for command 0 in trigger session_end"
+        ):
             _parse_validation_triggers(data)
 
     def test_parse_command_invalid_type_raises_error(self) -> None:
@@ -1664,5 +1666,155 @@ class TestValidationTriggersConfigParsing:
 
         with pytest.raises(
             ConfigError, match="Command 0 in trigger session_end must be"
+        ):
+            _parse_validation_triggers(data)
+
+    def test_parse_validation_triggers_not_dict_raises_error(self) -> None:
+        """validation_triggers must be a dict, not a list or other type."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        with pytest.raises(ConfigError, match="validation_triggers must be an object"):
+            _parse_validation_triggers([])  # type: ignore[arg-type]
+
+        with pytest.raises(ConfigError, match="validation_triggers must be an object"):
+            _parse_validation_triggers("not a dict")  # type: ignore[arg-type]
+
+    def test_parse_unknown_trigger_key_raises_error(self) -> None:
+        """Unknown keys under validation_triggers raise ConfigError."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_endd": {  # typo
+                "failure_mode": "abort",
+            }
+        }
+
+        with pytest.raises(
+            ConfigError, match="Unknown trigger 'session_endd' in validation_triggers"
+        ):
+            _parse_validation_triggers(data)
+
+    def test_parse_unknown_field_in_trigger_raises_error(self) -> None:
+        """Unknown fields within a trigger config raise ConfigError."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "abort",
+                "unknown_field": "value",
+            }
+        }
+
+        with pytest.raises(
+            ConfigError, match="Unknown field 'unknown_field' in trigger session_end"
+        ):
+            _parse_validation_triggers(data)
+
+    def test_parse_unknown_field_in_command_ref_raises_error(self) -> None:
+        """Unknown fields in command ref raise ConfigError with context."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "abort",
+                "commands": [{"ref": "lint", "unknown": "value"}],
+            }
+        }
+
+        with pytest.raises(
+            ConfigError,
+            match="Unknown field 'unknown' in command 0 of trigger session_end",
+        ):
+            _parse_validation_triggers(data)
+
+    def test_parse_boolean_timeout_raises_error(self) -> None:
+        """Boolean values for timeout are rejected (bool is subclass of int)."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "abort",
+                "commands": [{"ref": "lint", "timeout": True}],
+            }
+        }
+
+        with pytest.raises(ConfigError, match="'timeout' must be an integer"):
+            _parse_validation_triggers(data)
+
+    def test_parse_boolean_max_retries_raises_error(self) -> None:
+        """Boolean values for max_retries are rejected."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "remediate",
+                "max_retries": True,
+            }
+        }
+
+        with pytest.raises(ConfigError, match="max_retries must be an integer"):
+            _parse_validation_triggers(data)
+
+    def test_parse_boolean_interval_raises_error(self) -> None:
+        """Boolean values for interval are rejected."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "periodic": {
+                "failure_mode": "abort",
+                "interval": False,
+            }
+        }
+
+        with pytest.raises(ConfigError, match="interval must be an integer"):
+            _parse_validation_triggers(data)
+
+    def test_parse_empty_ref_string_raises_error(self) -> None:
+        """Empty ref string in command raises ConfigError."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "abort",
+                "commands": [{"ref": "  "}],
+            }
+        }
+
+        with pytest.raises(
+            ConfigError,
+            match="'ref' cannot be empty in command 0 of trigger session_end",
+        ):
+            _parse_validation_triggers(data)
+
+    def test_parse_empty_command_string_shorthand_raises_error(self) -> None:
+        """Empty string shorthand for command raises ConfigError."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "abort",
+                "commands": [""],
+            }
+        }
+
+        with pytest.raises(
+            ConfigError, match="Command 0 in trigger session_end cannot be an empty"
+        ):
+            _parse_validation_triggers(data)
+
+    def test_parse_empty_command_override_raises_error(self) -> None:
+        """Empty command override string raises ConfigError."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "abort",
+                "commands": [{"ref": "lint", "command": "  "}],
+            }
+        }
+
+        with pytest.raises(
+            ConfigError,
+            match="'command' cannot be empty in command 0 of trigger session_end",
         ):
             _parse_validation_triggers(data)
