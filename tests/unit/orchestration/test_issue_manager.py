@@ -220,6 +220,29 @@ class TestSortByEpicGroups:
         assert result[0]["id"] == "b"
         assert result[1]["id"] == "a"
 
+    def test_sorts_groups_by_epic_priority_string_format(self) -> None:
+        """Groups should handle epic_priority as 'P1' string format."""
+        issues = [
+            {
+                "id": "a",
+                "priority": 1,
+                "parent_epic": "epic-1",
+                "epic_priority": "P2",  # String format with P prefix
+                "updated_at": "2025-01-01",
+            },
+            {
+                "id": "b",
+                "priority": 3,
+                "parent_epic": "epic-2",
+                "epic_priority": "P1",  # String format with P prefix
+                "updated_at": "2025-01-01",
+            },
+        ]
+        result = IssueManager.sort_by_epic_groups(issues)
+        # epic-2 has lower epic_priority (P1 -> 1), so comes first
+        assert result[0]["id"] == "b"
+        assert result[1]["id"] == "a"
+
     def test_sorts_groups_by_min_priority_when_no_epic_priority(self) -> None:
         """Groups fall back to min_priority when epic_priority is not set."""
         issues = [
