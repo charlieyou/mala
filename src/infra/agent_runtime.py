@@ -103,6 +103,7 @@ class AgentRuntimeBuilder:
         agent_id: str,
         sdk_client_factory: SDKClientFactoryProtocol,
         mcp_server_factory: McpServerFactory | None = None,
+        setting_sources: list[str] | None = None,
     ) -> None:
         """Initialize the builder.
 
@@ -112,11 +113,14 @@ class AgentRuntimeBuilder:
             sdk_client_factory: Factory for creating SDK options and matchers.
             mcp_server_factory: Optional factory for creating MCP server configs.
                 Required unless MCP servers are explicitly provided via with_mcp().
+            setting_sources: Optional list of Claude settings sources to use.
+                E.g., ["local", "project"]. If None, SDK defaults are used.
         """
         self._repo_path = repo_path
         self._agent_id = agent_id
         self._sdk_client_factory = sdk_client_factory
         self._mcp_server_factory = mcp_server_factory
+        self._setting_sources = setting_sources
 
         # Lint tools configuration
         self._lint_tools: set[str] | frozenset[str] | None = None
@@ -392,6 +396,19 @@ class AgentRuntimeBuilder:
             len(stop_hooks),
         )
 
+        # Log and validate setting sources before SDK initialization
+        if self._setting_sources is not None:
+            from pathlib import Path as PathlibPath
+
+            logger.info("Claude settings sources: %s", ", ".join(self._setting_sources))
+            if "local" in self._setting_sources:
+                local_settings_path = PathlibPath(".claude/settings.local.json")
+                if not local_settings_path.exists():
+                    logger.warning(
+                        "Claude settings file .claude/settings.local.json not found "
+                        "(will be skipped)"
+                    )
+
         # Build SDK options
         options = self._sdk_client_factory.create_options(
             cwd=str(self._repo_path),
@@ -399,6 +416,7 @@ class AgentRuntimeBuilder:
             disallowed_tools=self._disallowed_tools,
             env=env,
             hooks=hooks_dict,
+            setting_sources=self._setting_sources,
         )
 
         return AgentRuntime(
