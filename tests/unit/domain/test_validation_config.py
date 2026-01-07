@@ -700,6 +700,142 @@ class TestValidationConfig:
         assert "agent_sdk_reviewer_model" not in config._fields_set
 
 
+class TestClaudeSettingsSources:
+    """Tests for claude_settings_sources field in ValidationConfig."""
+
+    def test_claude_settings_sources_defaults_to_none(self) -> None:
+        """Default claude_settings_sources is None (use default behavior)."""
+        config = ValidationConfig.from_dict({})
+        assert config.claude_settings_sources is None
+
+    def test_claude_settings_sources_local_only(self) -> None:
+        """Single 'local' source is accepted."""
+        config = ValidationConfig.from_dict({"claude_settings_sources": ["local"]})
+        assert config.claude_settings_sources == ("local",)
+
+    def test_claude_settings_sources_project_only(self) -> None:
+        """Single 'project' source is accepted."""
+        config = ValidationConfig.from_dict({"claude_settings_sources": ["project"]})
+        assert config.claude_settings_sources == ("project",)
+
+    def test_claude_settings_sources_user_only(self) -> None:
+        """Single 'user' source is accepted."""
+        config = ValidationConfig.from_dict({"claude_settings_sources": ["user"]})
+        assert config.claude_settings_sources == ("user",)
+
+    def test_claude_settings_sources_multiple(self) -> None:
+        """Multiple valid sources are accepted."""
+        config = ValidationConfig.from_dict(
+            {"claude_settings_sources": ["local", "project"]}
+        )
+        assert config.claude_settings_sources == ("local", "project")
+
+    def test_claude_settings_sources_all_three(self) -> None:
+        """All three valid sources are accepted."""
+        config = ValidationConfig.from_dict(
+            {"claude_settings_sources": ["local", "project", "user"]}
+        )
+        assert config.claude_settings_sources == ("local", "project", "user")
+
+    def test_claude_settings_sources_empty_list(self) -> None:
+        """Empty list is valid (means no sources)."""
+        config = ValidationConfig.from_dict({"claude_settings_sources": []})
+        assert config.claude_settings_sources == ()
+
+    def test_claude_settings_sources_invalid_source(self) -> None:
+        """Invalid source raises ConfigError."""
+        with pytest.raises(
+            ConfigError,
+            match=r"Invalid Claude settings source 'foo'\. Valid sources: local, project, user",
+        ):
+            ValidationConfig.from_dict({"claude_settings_sources": ["foo"]})
+
+    def test_claude_settings_sources_invalid_mixed(self) -> None:
+        """Invalid source in list with valid sources raises ConfigError."""
+        with pytest.raises(
+            ConfigError,
+            match=r"Invalid Claude settings source 'invalid'\. Valid sources: local, project, user",
+        ):
+            ValidationConfig.from_dict(
+                {"claude_settings_sources": ["local", "invalid", "project"]}
+            )
+
+    def test_claude_settings_sources_not_list(self) -> None:
+        """Non-list value raises ConfigError."""
+        with pytest.raises(ConfigError, match="claude_settings_sources must be a list"):
+            ValidationConfig.from_dict({"claude_settings_sources": "local"})
+
+    def test_claude_settings_sources_non_string_item(self) -> None:
+        """Non-string item in list raises ConfigError."""
+        with pytest.raises(
+            ConfigError, match=r"claude_settings_sources\[0\] must be a string"
+        ):
+            ValidationConfig.from_dict({"claude_settings_sources": [123]})
+
+    def test_claude_settings_sources_strips_whitespace(self) -> None:
+        """Whitespace is stripped from source names (forgiving parsing)."""
+        config = ValidationConfig.from_dict(
+            {"claude_settings_sources": ["  local  ", " project"]}
+        )
+        assert config.claude_settings_sources == ("local", "project")
+
+    def test_claude_settings_sources_tracked_in_fields_set(self) -> None:
+        """claude_settings_sources is tracked in _fields_set when explicitly set."""
+        config = ValidationConfig.from_dict({"claude_settings_sources": ["local"]})
+        assert "claude_settings_sources" in config._fields_set
+
+    def test_claude_settings_sources_empty_list_tracked_in_fields_set(self) -> None:
+        """Empty list is tracked in _fields_set (explicit empty differs from None)."""
+        config = ValidationConfig.from_dict({"claude_settings_sources": []})
+        assert "claude_settings_sources" in config._fields_set
+        assert config.claude_settings_sources == ()
+
+    def test_claude_settings_sources_not_in_fields_set_when_omitted(self) -> None:
+        """claude_settings_sources is not in _fields_set when omitted."""
+        config = ValidationConfig.from_dict({})
+        assert "claude_settings_sources" not in config._fields_set
+
+
+class TestClaudeSettingsSourcesIntegration:
+    """Integration test for claude_settings_sources full config path.
+
+    This test verifies the path: mala.yaml → ValidationConfig → orchestrator → MalaConfig.
+    It is expected to FAIL until T004 wires the orchestrator.
+    """
+
+    @pytest.mark.xfail(
+        reason="T004: Orchestrator wiring not yet implemented - ValidationConfig.claude_settings_sources not passed to MalaConfig",
+        strict=True,
+    )
+    def test_claude_settings_sources_full_path_integration(self) -> None:
+        """Test that claude_settings_sources flows through the full config path.
+
+        This test creates a ValidationConfig with claude_settings_sources and verifies
+        that the value is passed through the factory/orchestrator to MalaConfig.
+
+        Expected to FAIL until T004 (orchestrator wiring) is implemented.
+        The test uses strict=True so it will fail when T004 is complete (reminder to remove xfail).
+        """
+        from src.infra.io.config import MalaConfig
+
+        # Step 1: Create ValidationConfig from dict (simulating mala.yaml parsing)
+        validation_config = ValidationConfig.from_dict(
+            {"claude_settings_sources": ["user"]}  # Non-default value to detect wiring
+        )
+        assert validation_config.claude_settings_sources == ("user",)
+
+        # Step 2: Create MalaConfig (currently doesn't receive ValidationConfig sources)
+        # When T004 is implemented, the factory will pass ValidationConfig.claude_settings_sources
+        # to MalaConfig constructor, overriding the default
+        mala_config = MalaConfig.from_env(validate=False)
+
+        # Step 3: Verify MalaConfig receives sources from ValidationConfig
+        # This assertion will FAIL until T004 wires the path
+        # Currently MalaConfig uses DEFAULT_CLAUDE_SETTINGS_SOURCES ('local', 'project')
+        # instead of receiving ('user',) from ValidationConfig
+        assert mala_config.claude_settings_sources == ("user",)
+
+
 class TestGlobalCustomCommandsMode:
     """Tests for global custom command mode detection."""
 

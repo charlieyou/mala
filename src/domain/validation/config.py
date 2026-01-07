@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal, cast
 
+from src.domain.validation.constants import VALID_CLAUDE_SETTINGS_SOURCES
+
 # Regex for valid custom command names: starts with letter or underscore,
 # followed by letters, digits, underscores, or hyphens
 CUSTOM_COMMAND_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
@@ -772,6 +774,8 @@ class ValidationConfig:
         agent_sdk_reviewer_model: Model short name for Agent SDK reviewer
             ('sonnet', 'opus', or 'haiku').
         validation_triggers: Configuration for validation triggers. None means no triggers.
+        claude_settings_sources: Sources to load Claude settings from. Valid sources are
+            'local', 'project', 'user'. None means use default. Empty tuple means no sources.
         _fields_set: Set of field names that were explicitly provided in source.
             Used by the merger to distinguish "not set" from "explicitly set".
     """
@@ -789,6 +793,7 @@ class ValidationConfig:
     agent_sdk_review_timeout: int = 600
     agent_sdk_reviewer_model: Literal["sonnet", "opus", "haiku"] = "sonnet"
     validation_triggers: ValidationTriggersConfig | None = None
+    claude_settings_sources: tuple[str, ...] | None = None
     _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
@@ -998,6 +1003,35 @@ class ValidationConfig:
                     "Literal['sonnet', 'opus', 'haiku']", model_value
                 )
 
+        # Parse claude_settings_sources
+        claude_settings_sources: tuple[str, ...] | None = None
+        if "claude_settings_sources" in data:
+            fields_set.add("claude_settings_sources")
+            css_value = data["claude_settings_sources"]
+            if css_value is not None:
+                if not isinstance(css_value, list):
+                    raise ConfigError(
+                        f"claude_settings_sources must be a list, "
+                        f"got {type(css_value).__name__}"
+                    )
+                sources: list[str] = []
+                for i, item in enumerate(css_value):
+                    if not isinstance(item, str):
+                        raise ConfigError(
+                            f"claude_settings_sources[{i}] must be a string, "
+                            f"got {type(item).__name__}"
+                        )
+                    # Strip whitespace for forgiving parsing
+                    source = item.strip()
+                    if source not in VALID_CLAUDE_SETTINGS_SOURCES:
+                        valid_str = ", ".join(sorted(VALID_CLAUDE_SETTINGS_SOURCES))
+                        raise ConfigError(
+                            f"Invalid Claude settings source '{source}'. "
+                            f"Valid sources: {valid_str}"
+                        )
+                    sources.append(source)
+                claude_settings_sources = tuple(sources)
+
         return cls(
             preset=preset,
             commands=commands,
@@ -1011,6 +1045,7 @@ class ValidationConfig:
             reviewer_type=reviewer_type,
             agent_sdk_review_timeout=agent_sdk_review_timeout,
             agent_sdk_reviewer_model=agent_sdk_reviewer_model,
+            claude_settings_sources=claude_settings_sources,
             _fields_set=frozenset(fields_set),
         )
 
