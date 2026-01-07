@@ -120,7 +120,7 @@ dev = [
 # Import Linter Configuration
 # =============================================================================
 # Enforces architectural boundaries between layers.
-# Run with: uv run import-linter
+# Run with: uv run lint-imports (or: uvx --from import-linter lint-imports)
 #
 # Architecture:
 #   cli -> orchestration -> pipeline -> domain -> infra -> core
