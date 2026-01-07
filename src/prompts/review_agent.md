@@ -81,9 +81,9 @@ Only flag issues that meet ALL of these criteria:
 ## Error Handling
 
 If you encounter errors:
-- **Git command fails**: Report in your output that the diff could not be retrieved
+- **Git command fails**: Return FAIL with an operational error finding (see Operational Errors section)
 - **File not found**: Skip that file and note it in your findings
-- **Repository issues**: Return a FAIL verdict with explanation
+- **Repository issues**: Return FAIL with an operational error finding (see Operational Errors section)
 
 ## Output Format
 
@@ -113,8 +113,29 @@ After completing your review, output your findings as raw JSON with NO markdown 
 ### Verdict Values
 
 - **PASS** - No significant findings (empty findings array), code is good to merge
-- **FAIL** - Blocking issues found (any finding with priority 0 or 1)
+- **FAIL** - Blocking issues found (any finding with priority 0 or 1), OR operational errors prevented review
 - **NEEDS_WORK** - Non-blocking issues only (all findings have priority 2 or 3)
+
+### Operational Errors
+
+If git commands fail or the repository cannot be accessed, return FAIL with an operational error finding:
+
+```
+{
+  "findings": [
+    {
+      "title": "[P0] Could not retrieve diff",
+      "body": "Git command failed: <error message>. Unable to complete review.",
+      "priority": 0,
+      "file_path": null,
+      "line_start": null,
+      "line_end": null
+    }
+  ],
+  "verdict": "FAIL",
+  "summary": "Review could not be completed due to operational error."
+}
+```
 
 ### Important
 
