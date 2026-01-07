@@ -19,15 +19,6 @@ LLM agents become unreliable as their context window fills up. Early in a sessio
 3. **Running automated checks after completion** — Linting, tests, type checking, and code review
 4. **Looping until done** — The orchestrator continuously spawns agents for ready issues
 
-### Limitations
-
-**This project is a work in progress.** Expect rough edges, breaking changes, and incomplete features.
-
-- **Python-only**: Tailored for Python projects (pytest, ruff, ty)
-- **Opinionated stack**: Assumes uv, ruff, and ty
-- **Run in a sandbox**: Agent permissions are permissive
-- **Garbage in, garbage out**: Output quality depends on issue quality
-
 ## Prerequisites
 
 ### Beads (`bd`)
@@ -158,11 +149,37 @@ See `commands/bd-breakdown.md` for the full issue creation workflow.
 - [Development](docs/development.md) — Type checking, testing, package structure
 - `plans/` — Historical design documents (not actively maintained)
 
-## Key Design Decisions
+## Running in a Sandbox
 
-- **Event sink architecture** decouples orchestration from presentation
-- **Filesystem locks** via atomic hardlink (sandbox-compatible)
-- **Orchestrator claims issues** before spawning (agents don't claim)
-- **Evidence check** verifies commits and validation before accepting work
-- **Epic verification** uses AI to validate collective work against acceptance criteria
-- **JSONL logs** in `~/.config/mala/logs/` for debugging
+Mala spawns AI agents with permissive tool access. **Running in a container is strongly recommended** to limit blast radius if an agent misbehaves.
+
+### DevContainer (Recommended)
+
+This repo includes a DevContainer configuration for developing mala:
+
+```bash
+devcontainer up --workspace-folder .
+devcontainer exec --workspace-folder . mala run /workspaces/mala
+```
+
+The DevContainer mounts:
+- `/workspaces/mala` — the mala source code
+- `/.claude` — Claude Code auth and plugins (including Cerberus)
+- `/.codex` — Codex CLI config
+- `/.gemini` — Gemini CLI config
+- `/.config/mala` — mala logs and run state
+
+Pre-installed tools: Claude Code, Codex CLI, Gemini CLI, bd (Beads), uv, Python 3.12, Node.js
+
+### What DevContainers Protect Against
+
+| Risk | Protected? |
+|------|------------|
+| Modifying files outside mounted dirs | ✅ Yes |
+| Accessing host processes | ✅ Yes |
+| Persisting malware on host | ✅ Yes |
+| Reading mounted sensitive files | ❌ No |
+| Network exfiltration | ❌ No (full network access) |
+
+DevContainers provide **process isolation** (prevent accidents) not **security isolation** (prevent malice).
+

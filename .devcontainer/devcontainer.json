@@ -1,0 +1,19 @@
+{
+  "name": "mala-sandbox",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {}
+  },
+  "runArgs": ["--env-file", "${localWorkspaceFolder}/.env", "--add-host=host.docker.internal:host-gateway"],
+  "postCreateCommand": "npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli && curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash && pip install uv && uv sync --all-extras",
+  "mounts": [
+    "source=${localEnv:HOME}/.claude,target=/root/.claude,type=bind",
+    "source=${localEnv:HOME}/.codex,target=/root/.codex,type=bind",
+    "source=${localEnv:HOME}/.gemini,target=/root/.gemini,type=bind",
+    "source=${localEnv:HOME}/.config/mala,target=/root/.config/mala,type=bind"
+  ],
+  "containerEnv": {
+    "BEADS_NO_DAEMON": "1"
+  },
+  "remoteUser": "root"
+}
