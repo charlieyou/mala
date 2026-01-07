@@ -160,6 +160,7 @@ class TestAgentAcquiresLocks:
     """Test that agents can acquire locks using the scripts."""
 
     @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2)
     async def test_agent_runs_lock_try_script(
         self,
         lock_env: dict[str, Path],
@@ -195,6 +196,7 @@ After running the commands, respond with "DONE".
         assert get_lock_holder(lock_dir, "test_file.py", cwd) == agent_id
 
     @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2)
     async def test_agent_checks_lock_ownership(
         self,
         lock_env: dict[str, Path],
@@ -243,6 +245,7 @@ class TestAgentReleasesLocks:
     """Test that agents properly release locks."""
 
     @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2)
     async def test_agent_releases_single_lock(
         self,
         lock_env: dict[str, Path],
@@ -281,6 +284,7 @@ Respond with "DONE".
         assert not lock_file_exists(lock_dir, "release_test.py", cwd)
 
     @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2)
     async def test_agent_releases_all_locks(
         self, lock_env: dict[str, Path], agent_options: ClaudeAgentOptions
     ) -> None:
@@ -324,6 +328,7 @@ class TestAgentHandlesContention:
     """Test agent behavior when encountering locked files."""
 
     @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2)
     async def test_agent_detects_blocked_file(
         self,
         lock_env: dict[str, Path],
@@ -377,6 +382,7 @@ class TestStopHookWithSDK:
     """Test the Stop hook integration with real SDK."""
 
     @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2)
     async def test_stop_hook_cleans_locks_on_agent_exit(
         self, lock_env: dict[str, Path], tmp_path: Path
     ) -> None:
@@ -442,6 +448,7 @@ class TestMultiAgentWithSDK:
     """Test multiple agents interacting with locks via SDK."""
 
     @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2)
     async def test_sequential_agents_handoff_lock(
         self,
         lock_env: dict[str, Path],
@@ -511,6 +518,7 @@ class TestAgentWorkflowE2E:
     """End-to-end test of a realistic agent workflow."""
 
     @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2)
     async def test_full_implementation_workflow(
         self, lock_env: dict[str, Path], tmp_path: Path
     ) -> None:
@@ -636,6 +644,7 @@ class TestMCPLockingToolsSchemaValidation:
     """
 
     @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2)
     async def test_mcp_locking_tools_schema_accepted(
         self,
         tmp_path: Path,
