@@ -839,20 +839,21 @@ claude_settings_sources:
     @pytest.mark.xfail(
         reason="T004: Orchestrator wiring not yet implemented - ValidationConfig.claude_settings_sources not passed to MalaConfig",
         strict=True,
+        raises=AssertionError,
     )
     def test_claude_settings_sources_full_path_integration(
         self, tmp_path: "pathlib.Path"
     ) -> None:
         """Test that claude_settings_sources flows through the full config path.
 
-        This test creates a real mala.yaml file, loads ValidationConfig via load_config,
-        then passes through create_orchestrator to verify MalaConfig receives the value.
+        This test creates a real mala.yaml file and verifies that the factory reads
+        ValidationConfig from repo_path and wires claude_settings_sources to MalaConfig.
 
         Expected to FAIL until T004 (orchestrator wiring) is implemented.
         The test uses strict=True so it will fail when T004 is complete (reminder to remove xfail).
+        Uses raises=AssertionError to ensure it fails for the expected reason, not import errors.
         """
         from src.domain.validation.config_loader import load_config
-        from src.infra.io.config import MalaConfig
         from src.orchestration.factory import create_orchestrator
         from src.orchestration.types import OrchestratorConfig
 
@@ -866,15 +867,15 @@ claude_settings_sources:
 """
         )
 
-        # Step 2: Load ValidationConfig via load_config (mala.yaml → ValidationConfig)
+        # Step 2: Verify ValidationConfig parses correctly (mala.yaml → ValidationConfig)
         validation_config = load_config(tmp_path)
         assert validation_config.claude_settings_sources == ("user",)
 
-        # Step 3: Create orchestrator via factory (ValidationConfig → orchestrator → MalaConfig)
-        # The factory should pass ValidationConfig.claude_settings_sources to MalaConfig
+        # Step 3: Create orchestrator via factory WITHOUT explicit mala_config
+        # The factory should read ValidationConfig from repo_path and wire
+        # claude_settings_sources to MalaConfig (this is what T004 will implement)
         orchestrator_config = OrchestratorConfig(repo_path=tmp_path)
-        mala_config = MalaConfig.from_env(validate=False)
-        orchestrator = create_orchestrator(orchestrator_config, mala_config=mala_config)
+        orchestrator = create_orchestrator(orchestrator_config)
 
         # Step 4: Verify MalaConfig received sources from ValidationConfig
         # This assertion will FAIL until T004 wires the path

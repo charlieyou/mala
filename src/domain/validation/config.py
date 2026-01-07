@@ -805,6 +805,10 @@ class ValidationConfig:
             object.__setattr__(self, "config_files", tuple(self.config_files))
         if isinstance(self.setup_files, list):
             object.__setattr__(self, "setup_files", tuple(self.setup_files))
+        if isinstance(self.claude_settings_sources, list):
+            object.__setattr__(
+                self, "claude_settings_sources", tuple(self.claude_settings_sources)
+            )
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> ValidationConfig:
