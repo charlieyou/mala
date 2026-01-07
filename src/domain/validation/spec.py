@@ -287,7 +287,11 @@ def build_validation_spec(
         A ValidationSpec configured according to the config files.
     """
     from src.domain.validation.config import ConfigError
-    from src.domain.validation.config_loader import ConfigMissingError, load_config
+    from src.domain.validation.config_loader import (
+        ConfigMissingError,
+        _validate_migration,
+        load_config,
+    )
     from src.domain.validation.config_merger import merge_configs
     from src.domain.validation.preset_registry import PresetRegistry
 
@@ -326,6 +330,9 @@ def build_validation_spec(
         merged_config = merge_configs(preset_config, user_config)
     else:
         merged_config = user_config
+
+    # Validate migration on effective merged config (catches deprecated patterns)
+    _validate_migration(merged_config)
 
     # Ensure at least one command is defined after merge
     if not merged_config.has_any_command():

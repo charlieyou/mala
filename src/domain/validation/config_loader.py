@@ -107,7 +107,9 @@ def load_config(repo_path: Path) -> ValidationConfig:
     _validate_schema(data)
     config = _build_config(data)
     _validate_config(config)
-    _validate_migration(config)
+    # Note: _validate_migration is NOT called here because it must run on the
+    # effective merged config (after preset merge). Call sites that merge configs
+    # (build_validation_spec, build_prompt_validation_commands) call it after merge.
 
     return config
 
@@ -634,10 +636,12 @@ def _validate_migration(config: ValidationConfig) -> None:
     Raises:
         ConfigError: If deprecated config patterns are detected.
     """
-    # Check if global_validation_commands has any commands defined
+    # Check if global_validation_commands has any commands defined.
+    # Note: Top-level custom_commands is rejected in ValidationConfig.from_dict,
+    # so we only need to check global_validation_commands here.
     gvc = config.global_validation_commands
     has_global_commands = any(
-        [
+        (
             gvc.setup,
             gvc.test,
             gvc.lint,
@@ -645,7 +649,7 @@ def _validate_migration(config: ValidationConfig) -> None:
             gvc.typecheck,
             gvc.e2e,
             gvc.custom_commands,
-        ]
+        )
     )
 
     # If global_validation_commands is non-empty but validation_triggers is not set,

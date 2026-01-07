@@ -1,5 +1,8 @@
 preset: python-uv
 
+# Required when global_validation_commands is defined (empty = explicit opt-out)
+validation_triggers: {}
+
 global_validation_commands:
   test:
     command: "uv run pytest -m 'unit or integration' --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"

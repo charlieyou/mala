@@ -279,7 +279,11 @@ def build_prompt_validation_commands(repo_path: Path) -> PromptValidationCommand
         Returns default Python/uv commands if no config is found.
     """
     from src.domain.validation.config import PromptValidationCommands
-    from src.domain.validation.config_loader import ConfigMissingError, load_config
+    from src.domain.validation.config_loader import (
+        ConfigMissingError,
+        _validate_migration,
+        load_config,
+    )
     from src.domain.validation.config_merger import merge_configs
     from src.domain.validation.preset_registry import PresetRegistry
 
@@ -296,5 +300,8 @@ def build_prompt_validation_commands(repo_path: Path) -> PromptValidationCommand
         merged_config = merge_configs(preset_config, user_config)
     else:
         merged_config = user_config
+
+    # Validate migration on effective merged config (catches deprecated patterns)
+    _validate_migration(merged_config)
 
     return PromptValidationCommands.from_validation_config(merged_config)

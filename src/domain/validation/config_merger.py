@@ -278,6 +278,7 @@ def merge_configs(
         reviewer_type=merged_reviewer_type,
         agent_sdk_review_timeout=merged_timeout,
         agent_sdk_reviewer_model=merged_model,
+        validation_triggers=user.validation_triggers,  # User's triggers (presets don't define)
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 

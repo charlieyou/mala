@@ -278,6 +278,7 @@ class TestBuildValidationSpec:
                     '  test: "pytest issue"',
                     "global_validation_commands:",
                     '  test: "pytest global"',
+                    "validation_triggers: {}",  # Required with global_validation_commands
                 ]
             )
             + "\n"
@@ -473,6 +474,7 @@ commands:
   test: "pytest"
 global_validation_commands:
   test: "pytest --cov=src --cov-report=xml"
+validation_triggers: {}
 coverage:
   format: xml
   file: coverage.xml
@@ -559,6 +561,7 @@ commands:
   lint: "uvx ruff check ."
 global_validation_commands:
   test: "uv run pytest --cov=src --cov-report=xml"
+validation_triggers: {}
 coverage:
   format: xml
   file: coverage.xml
@@ -707,6 +710,7 @@ class TestCoverageOnlyAtGlobal:
 preset: python-uv
 global_validation_commands:
   test: "pytest --cov=src --cov-report=xml"
+validation_triggers: {}
 coverage:
   format: xml
   file: coverage.xml
@@ -1122,6 +1126,7 @@ commands:
   security: bandit -r src/
 global_validation_commands:
   +integration: uv run pytest -m integration
+validation_triggers: {}
 """
         (tmp_path / "mala.yaml").write_text(yaml_content)
 
@@ -1152,6 +1157,7 @@ commands:
   security: bandit -r src/
 global_validation_commands:
   integration: uv run pytest -m integration
+validation_triggers: {}
 """
         (tmp_path / "mala.yaml").write_text(yaml_content)
 
