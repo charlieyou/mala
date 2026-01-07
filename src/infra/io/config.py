@@ -14,6 +14,7 @@ Environment Variables:
     MALA_CERBERUS_ENV: Extra env for review-gate (JSON dict or comma KEY=VALUE list)
     MALA_MAX_DIFF_SIZE_KB: Max diff size for epic verification (KB)
     MALA_MAX_EPIC_VERIFICATION_RETRIES: Max retries for epic verification loop
+    MALA_CLAUDE_SETTINGS_SOURCES: Comma-separated Claude settings sources
     LLM_API_KEY: API key for LLM calls (fallback to ANTHROPIC_API_KEY)
     LLM_BASE_URL: Base URL for LLM API
 """
@@ -199,7 +200,8 @@ class MalaConfig:
     max_epic_verification_retries: int = field(default=3)
 
     # Claude settings sources (which Claude configuration files to use)
-    claude_settings_sources: tuple[str, ...] = field(
+    # Accepts None (normalized to default in __post_init__)
+    claude_settings_sources: tuple[str, ...] | None = field(
         default=DEFAULT_CLAUDE_SETTINGS_SOURCES
     )
 
@@ -224,6 +226,15 @@ class MalaConfig:
             )
         elif isinstance(self.cerberus_env, list):
             object.__setattr__(self, "cerberus_env", tuple(self.cerberus_env))
+        # Normalize claude_settings_sources: convert list to tuple, None to default
+        if self.claude_settings_sources is None:
+            object.__setattr__(
+                self, "claude_settings_sources", DEFAULT_CLAUDE_SETTINGS_SOURCES
+            )
+        elif isinstance(self.claude_settings_sources, list):
+            object.__setattr__(
+                self, "claude_settings_sources", tuple(self.claude_settings_sources)
+            )
 
     @classmethod
     def from_env(cls, *, validate: bool = True) -> MalaConfig:
@@ -240,6 +251,7 @@ class MalaConfig:
             - MALA_CERBERUS_ENV: Extra env for review-gate (optional)
             - MALA_MAX_DIFF_SIZE_KB: Max diff size for epic verification (optional)
             - MALA_MAX_EPIC_VERIFICATION_RETRIES: Max epic verification retries (optional)
+            - MALA_CLAUDE_SETTINGS_SOURCES: Comma-separated Claude settings sources (optional)
             - LLM_API_KEY: API key for LLM calls (optional)
             - LLM_BASE_URL: Base URL for LLM API (optional)
 
