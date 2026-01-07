@@ -120,7 +120,8 @@ class AgentRuntimeBuilder:
         self._agent_id = agent_id
         self._sdk_client_factory = sdk_client_factory
         self._mcp_server_factory = mcp_server_factory
-        self._setting_sources = setting_sources
+        # Normalize to list (e.g., tuple from config -> list)
+        self._setting_sources = list(setting_sources) if setting_sources else None
 
         # Lint tools configuration
         self._lint_tools: set[str] | frozenset[str] | None = None
@@ -397,17 +398,16 @@ class AgentRuntimeBuilder:
         )
 
         # Log and validate setting sources before SDK initialization
-        if self._setting_sources is not None:
-            from pathlib import Path as PathlibPath
-
-            logger.info("Claude settings sources: %s", ", ".join(self._setting_sources))
-            if "local" in self._setting_sources:
-                local_settings_path = PathlibPath(".claude/settings.local.json")
-                if not local_settings_path.exists():
-                    logger.warning(
-                        "Claude settings file .claude/settings.local.json not found "
-                        "(will be skipped)"
-                    )
+        # Resolve to defaults if not specified (SDK defaults to ["local", "project"])
+        resolved_sources = self._setting_sources or ["local", "project"]
+        logger.info("Claude settings sources: %s", ", ".join(resolved_sources))
+        if "local" in resolved_sources:
+            local_settings_path = self._repo_path / ".claude/settings.local.json"
+            if not local_settings_path.exists():
+                logger.warning(
+                    "Claude settings file .claude/settings.local.json not found "
+                    "(will be skipped)"
+                )
 
         # Build SDK options
         options = self._sdk_client_factory.create_options(

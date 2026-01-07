@@ -356,26 +356,18 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """setting_sources logs WARN when 'local' in sources but file missing."""
         import logging
-        import os
 
-        # Change to repo_path so relative path check works
-        original_cwd = os.getcwd()
-        os.chdir(repo_path)
-        try:
-            with caplog.at_level(logging.WARNING):
-                AgentRuntimeBuilder(
-                    repo_path,
-                    "agent-warn",
-                    factory,
-                    setting_sources=["local", "project"],
-                ).with_mcp(servers={}).build()
+        with caplog.at_level(logging.WARNING):
+            AgentRuntimeBuilder(
+                repo_path,
+                "agent-warn",
+                factory,
+                setting_sources=["local", "project"],
+            ).with_mcp(servers={}).build()
 
-            assert (
-                "Claude settings file .claude/settings.local.json not found"
-                in caplog.text
-            )
-        finally:
-            os.chdir(original_cwd)
+        assert (
+            "Claude settings file .claude/settings.local.json not found" in caplog.text
+        )
 
     @pytest.mark.unit
     def test_setting_sources_no_warn_when_local_file_exists(
@@ -386,27 +378,24 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """setting_sources does NOT warn when 'local' in sources and file exists."""
         import logging
-        import os
 
         # Create the .claude/settings.local.json file
         (repo_path / ".claude").mkdir(exist_ok=True)
         (repo_path / ".claude" / "settings.local.json").write_text("{}")
 
-        # Change to repo_path so relative path check works
-        original_cwd = os.getcwd()
-        os.chdir(repo_path)
-        try:
-            with caplog.at_level(logging.WARNING):
-                AgentRuntimeBuilder(
-                    repo_path,
-                    "agent-no-warn",
-                    factory,
-                    setting_sources=["local", "project"],
-                ).with_mcp(servers={}).build()
+        with caplog.at_level(logging.WARNING):
+            AgentRuntimeBuilder(
+                repo_path,
+                "agent-no-warn",
+                factory,
+                setting_sources=["local", "project"],
+            ).with_mcp(servers={}).build()
 
-            assert "not found" not in caplog.text
-        finally:
-            os.chdir(original_cwd)
+        # Assert the specific settings warning is not present
+        assert not any(
+            "Claude settings file .claude/settings.local.json" in r.message
+            for r in caplog.records
+        )
 
     @pytest.mark.unit
     def test_setting_sources_passed_to_sdk_adapter(
@@ -424,21 +413,26 @@ class TestAgentRuntimeBuilder:
         assert factory.created_options[0]["setting_sources"] == ["local", "project"]
 
     @pytest.mark.unit
-    def test_setting_sources_none_not_logged(
+    def test_setting_sources_none_uses_defaults(
         self,
         repo_path: Path,
         factory: FakeSDKClientFactory,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """When setting_sources is None, no log message is emitted."""
+        """When setting_sources is None, defaults are logged and local file is checked."""
         import logging
 
         with caplog.at_level(logging.INFO):
             AgentRuntimeBuilder(
                 repo_path,
-                "agent-none",
+                "agent-defaults",
                 factory,
                 setting_sources=None,
             ).with_mcp(servers={}).build()
 
-        assert "Claude settings sources:" not in caplog.text
+        # Should log with SDK defaults
+        assert "Claude settings sources: local, project" in caplog.text
+        # Should warn about missing local file (using defaults includes "local")
+        assert (
+            "Claude settings file .claude/settings.local.json not found" in caplog.text
+        )
