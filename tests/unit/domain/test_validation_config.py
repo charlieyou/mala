@@ -8,7 +8,12 @@ Tests the configuration schema for mala.yaml including:
 - ConfigError and PresetNotFoundError exceptions
 """
 
+from typing import TYPE_CHECKING
+
 import pytest
+
+if TYPE_CHECKING:
+    import pathlib
 
 from src.domain.validation.config import (
     CommandConfig,
@@ -803,37 +808,79 @@ class TestClaudeSettingsSourcesIntegration:
     It is expected to FAIL until T004 wires the orchestrator.
     """
 
+    def test_claude_settings_sources_mala_yaml_to_validation_config(
+        self, tmp_path: "pathlib.Path"
+    ) -> None:
+        """Test that claude_settings_sources flows from mala.yaml to ValidationConfig.
+
+        This test creates a real mala.yaml file and uses load_config to parse it,
+        exercising the full mala.yaml → ValidationConfig path.
+        """
+        from src.domain.validation.config_loader import load_config
+
+        # Step 1: Create temp mala.yaml with claude_settings_sources
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """\
+preset: python-uv
+claude_settings_sources:
+  - local
+  - project
+"""
+        )
+
+        # Step 2: Load via config_loader (exercises full parsing path)
+        validation_config = load_config(tmp_path)
+
+        # Step 3: Verify ValidationConfig received the sources
+        assert validation_config.claude_settings_sources == ("local", "project")
+        assert "claude_settings_sources" in validation_config._fields_set
+
     @pytest.mark.xfail(
         reason="T004: Orchestrator wiring not yet implemented - ValidationConfig.claude_settings_sources not passed to MalaConfig",
         strict=True,
     )
-    def test_claude_settings_sources_full_path_integration(self) -> None:
+    def test_claude_settings_sources_full_path_integration(
+        self, tmp_path: "pathlib.Path"
+    ) -> None:
         """Test that claude_settings_sources flows through the full config path.
 
-        This test creates a ValidationConfig with claude_settings_sources and verifies
-        that the value is passed through the factory/orchestrator to MalaConfig.
+        This test creates a real mala.yaml file, loads ValidationConfig via load_config,
+        then passes through create_orchestrator to verify MalaConfig receives the value.
 
         Expected to FAIL until T004 (orchestrator wiring) is implemented.
         The test uses strict=True so it will fail when T004 is complete (reminder to remove xfail).
         """
+        from src.domain.validation.config_loader import load_config
         from src.infra.io.config import MalaConfig
+        from src.orchestration.factory import create_orchestrator
+        from src.orchestration.types import OrchestratorConfig
 
-        # Step 1: Create ValidationConfig from dict (simulating mala.yaml parsing)
-        validation_config = ValidationConfig.from_dict(
-            {"claude_settings_sources": ["user"]}  # Non-default value to detect wiring
+        # Step 1: Create temp mala.yaml with non-default claude_settings_sources
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """\
+preset: python-uv
+claude_settings_sources:
+  - user
+"""
         )
+
+        # Step 2: Load ValidationConfig via load_config (mala.yaml → ValidationConfig)
+        validation_config = load_config(tmp_path)
         assert validation_config.claude_settings_sources == ("user",)
 
-        # Step 2: Create MalaConfig (currently doesn't receive ValidationConfig sources)
-        # When T004 is implemented, the factory will pass ValidationConfig.claude_settings_sources
-        # to MalaConfig constructor, overriding the default
+        # Step 3: Create orchestrator via factory (ValidationConfig → orchestrator → MalaConfig)
+        # The factory should pass ValidationConfig.claude_settings_sources to MalaConfig
+        orchestrator_config = OrchestratorConfig(repo_path=tmp_path)
         mala_config = MalaConfig.from_env(validate=False)
+        orchestrator = create_orchestrator(orchestrator_config, mala_config=mala_config)
 
-        # Step 3: Verify MalaConfig receives sources from ValidationConfig
+        # Step 4: Verify MalaConfig received sources from ValidationConfig
         # This assertion will FAIL until T004 wires the path
         # Currently MalaConfig uses DEFAULT_CLAUDE_SETTINGS_SOURCES ('local', 'project')
-        # instead of receiving ('user',) from ValidationConfig
-        assert mala_config.claude_settings_sources == ("user",)
+        # instead of receiving ('user',) from ValidationConfig via the factory
+        assert orchestrator._mala_config.claude_settings_sources == ("user",)
 
 
 class TestGlobalCustomCommandsMode:

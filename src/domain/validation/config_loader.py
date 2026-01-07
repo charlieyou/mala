@@ -70,6 +70,7 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "agent_sdk_review_timeout",
         "agent_sdk_reviewer_model",
         "validation_triggers",
+        "claude_settings_sources",
     }
 )
 
