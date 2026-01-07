@@ -595,3 +595,98 @@ class TestBuildResolvedConfigReviewEnabled:
         resolved = build_resolved_config(base, overrides)
 
         assert resolved.review_enabled is True
+
+
+class TestResolvedConfigClaudeSettingsSources:
+    """Tests for claude_settings_sources in ResolvedConfig via build_resolved_config()."""
+
+    def test_cli_overrides_env_and_yaml(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """CLI overrides env var which overrides yaml (CLI wins)."""
+        # Set env var (would be picked up by MalaConfig.from_env)
+        monkeypatch.setenv("MALA_CLAUDE_SETTINGS_SOURCES", "project")
+        base = MalaConfig.from_env(
+            validate=False, yaml_claude_settings_sources=("user",)
+        )
+        # base now has ("project",) from env
+        assert base.claude_settings_sources == ("project",)
+
+        # CLI override should win
+        overrides = CLIOverrides(claude_settings_sources="local")
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.claude_settings_sources == ("local",)
+
+    def test_env_overrides_yaml(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Env var overrides yaml when CLI not set (Env wins)."""
+        monkeypatch.setenv("MALA_CLAUDE_SETTINGS_SOURCES", "project")
+        base = MalaConfig.from_env(
+            validate=False, yaml_claude_settings_sources=("user",)
+        )
+        # base has ("project",) from env
+        assert base.claude_settings_sources == ("project",)
+
+        overrides = CLIOverrides()  # No CLI override
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.claude_settings_sources == ("project",)
+
+    def test_yaml_used_when_env_not_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """YAML value used when env var not set and CLI not set (YAML wins)."""
+        monkeypatch.delenv("MALA_CLAUDE_SETTINGS_SOURCES", raising=False)
+        base = MalaConfig.from_env(
+            validate=False, yaml_claude_settings_sources=("user",)
+        )
+        # base has ("user",) from yaml
+        assert base.claude_settings_sources == ("user",)
+
+        overrides = CLIOverrides()  # No CLI override
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.claude_settings_sources == ("user",)
+
+    def test_default_when_nothing_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Default value used when CLI, env, and yaml are all not set."""
+        monkeypatch.delenv("MALA_CLAUDE_SETTINGS_SOURCES", raising=False)
+        base = MalaConfig.from_env(validate=False, yaml_claude_settings_sources=None)
+        # base has default
+        assert base.claude_settings_sources == DEFAULT_CLAUDE_SETTINGS_SOURCES
+
+        overrides = CLIOverrides()  # No CLI override
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.claude_settings_sources == ("local", "project")
+
+    def test_parse_cli_multiple_sources(self) -> None:
+        """CLI value with multiple sources is parsed correctly."""
+        base = MalaConfig()
+        overrides = CLIOverrides(claude_settings_sources="local,project,user")
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.claude_settings_sources == ("local", "project", "user")
+
+    def test_cli_whitespace_stripped(self) -> None:
+        """CLI value with whitespace is stripped correctly."""
+        base = MalaConfig()
+        overrides = CLIOverrides(claude_settings_sources=" local , project ")
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.claude_settings_sources == ("local", "project")
+
+    def test_invalid_cli_source_raises(self) -> None:
+        """Invalid source in CLI raises ValueError with clear message."""
+        base = MalaConfig()
+        overrides = CLIOverrides(claude_settings_sources="foo")
+
+        with pytest.raises(ValueError) as exc_info:
+            build_resolved_config(base, overrides)
+
+        assert "CLI: Invalid source 'foo'" in str(exc_info.value)
+        assert "Valid sources: local, project, user" in str(exc_info.value)
+
+    def test_empty_cli_falls_back_to_base(self) -> None:
+        """Empty CLI value falls back to base config."""
+        base = MalaConfig(claude_settings_sources_init=("user",))
+        overrides = CLIOverrides(claude_settings_sources="")
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.claude_settings_sources == ("user",)

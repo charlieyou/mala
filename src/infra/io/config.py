@@ -503,6 +503,7 @@ class ResolvedConfig:
         llm_api_key: API key for LLM calls.
         llm_base_url: Base URL for LLM API.
         max_epic_verification_retries: Maximum retries for epic verification loop.
+        claude_settings_sources: Tuple of settings sources for Claude SDK.
     """
 
     # Paths
@@ -525,6 +526,9 @@ class ResolvedConfig:
 
     # Epic verification
     max_epic_verification_retries: int
+
+    # Claude SDK settings
+    claude_settings_sources: tuple[str, ...]
 
 
 def build_resolved_config(
@@ -594,6 +598,18 @@ def build_resolved_config(
     # Determine if review is enabled after CLI overrides
     review_enabled = base_config.review_enabled and not overrides.disable_review
 
+    # Apply claude_settings_sources override (CLI > Env > YAML > default)
+    # base_config already has Env > YAML > default applied
+    if overrides.claude_settings_sources is not None:
+        claude_settings = parse_claude_settings_sources(
+            overrides.claude_settings_sources, source="CLI"
+        )
+        # parse returns None for empty string, use base_config in that case
+        if claude_settings is None:
+            claude_settings = base_config.claude_settings_sources
+    else:
+        claude_settings = base_config.claude_settings_sources
+
     return ResolvedConfig(
         runs_dir=base_config.runs_dir,
         lock_dir=base_config.lock_dir,
@@ -608,4 +624,5 @@ def build_resolved_config(
         llm_api_key=base_config.llm_api_key,
         llm_base_url=base_config.llm_base_url,
         max_epic_verification_retries=max_epic_verification_retries,
+        claude_settings_sources=claude_settings,
     )
