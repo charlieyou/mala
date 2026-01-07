@@ -175,6 +175,69 @@ class TestGlobalValidation:
         assert run_metadata.run_validation.passed is True
 
     @pytest.mark.asyncio
+    async def test_global_validation_does_not_reload_config_when_missing(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """Global validation should not re-read config after startup."""
+        from src.domain.validation.result import ValidationResult
+
+        mock_gate_checker = MagicMock()
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            validation_config_missing=True,
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+        )
+
+        run_config = RunConfig(
+            max_agents=1,
+            timeout_minutes=None,
+            max_issues=None,
+            epic_id=None,
+            only_ids=None,
+        )
+        run_metadata = RunMetadata(tmp_path, run_config, "test")
+
+        async def mock_get_commit(path: Path) -> str:
+            return "abc123"
+
+        mock_result = ValidationResult(
+            passed=True,
+            steps=[],
+        )
+
+        with (
+            patch(
+                "src.infra.git_utils.get_git_commit_async",
+                side_effect=mock_get_commit,
+            ),
+            patch("src.domain.validation.config_loader.load_config") as mock_load_config,
+            patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
+        ):
+            mock_runner_instance = MagicMock()
+            mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
+            MockRunner.return_value = mock_runner_instance
+
+            input_data = GlobalValidationInput(run_metadata=run_metadata)
+            result = await coordinator.run_validation(input_data)
+
+        assert result.passed is True
+        assert mock_load_config.call_count == 0
+
+    @pytest.mark.asyncio
     async def test_global_validation_spawns_fixer_on_failure(
         self,
         tmp_path: Path,

@@ -265,7 +265,12 @@ def build_continuation_prompt(continuation_template: str, checkpoint_text: str) 
     return continuation_template.replace("{checkpoint}", checkpoint_text)
 
 
-def build_prompt_validation_commands(repo_path: Path) -> PromptValidationCommands:
+def build_prompt_validation_commands(
+    repo_path: Path,
+    *,
+    validation_config: "ValidationConfig | None" = None,
+    config_missing: bool = False,
+) -> PromptValidationCommands:
     """Build PromptValidationCommands for a repository.
 
     Loads the mala.yaml configuration, merges with preset if specified,
@@ -287,11 +292,17 @@ def build_prompt_validation_commands(repo_path: Path) -> PromptValidationCommand
     from src.domain.validation.config_merger import merge_configs
     from src.domain.validation.preset_registry import PresetRegistry
 
-    try:
-        user_config = load_config(repo_path)
-    except ConfigMissingError:
-        # No config file - return defaults
+    if config_missing:
         return get_default_validation_commands()
+
+    if validation_config is not None:
+        user_config = validation_config
+    else:
+        try:
+            user_config = load_config(repo_path)
+        except ConfigMissingError:
+            # No config file - return defaults
+            return get_default_validation_commands()
 
     # Load and merge preset if specified
     if user_config.preset is not None:

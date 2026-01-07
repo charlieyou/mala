@@ -2400,25 +2400,6 @@ validate_every: 10
         with pytest.raises(ConfigError, match=r"validate_every is deprecated"):
             load_config(tmp_path)
 
-    def test_validate_every_error_contains_migration_url(
-        self, tmp_path: "pathlib.Path"
-    ) -> None:
-        """validate_every error message includes migration guide URL."""
-        from src.domain.validation.config_loader import load_config
-
-        mala_yaml = tmp_path / "mala.yaml"
-        mala_yaml.write_text(
-            """
-preset: python-uv
-validate_every: 10
-"""
-        )
-
-        with pytest.raises(
-            ConfigError, match=r"https://docs\.mala\.ai/migration/validation-triggers"
-        ):
-            load_config(tmp_path)
-
     def test_validate_every_error_mentions_periodic_trigger(
         self, tmp_path: "pathlib.Path"
     ) -> None:
@@ -2455,26 +2436,6 @@ global_validation_commands:
 
         with pytest.raises(
             ConfigError, match=r"validation_triggers required when global_validation"
-        ):
-            build_validation_spec(tmp_path)
-
-    def test_global_validation_commands_error_contains_migration_url(
-        self, tmp_path: "pathlib.Path"
-    ) -> None:
-        """global_validation_commands error includes migration guide URL."""
-        from src.domain.validation.spec import build_validation_spec
-
-        mala_yaml = tmp_path / "mala.yaml"
-        mala_yaml.write_text(
-            """
-preset: python-uv
-global_validation_commands:
-  lint: "ruff check ."
-"""
-        )
-
-        with pytest.raises(
-            ConfigError, match=r"https://docs\.mala\.ai/migration/validation-triggers"
         ):
             build_validation_spec(tmp_path)
 
@@ -2621,10 +2582,9 @@ global_validation_commands:
         ):
             _validate_migration(merged)
 
-        # Verify error includes URL and example
+        # Verify error includes example
         try:
             _validate_migration(merged)
         except ConfigError as e:
             error_msg = str(e)
-            assert "https://docs.mala.ai/migration/validation-triggers" in error_msg
             assert "Example:" in error_msg

@@ -100,6 +100,8 @@ def mock_pipeline_config(
         context_limit=200_000,
         prompts=mock_prompt_provider,
         prompt_validation_commands=mock_prompt_validation_commands,
+        validation_config=None,
+        validation_config_missing=False,
         deadlock_monitor=None,
     )
 

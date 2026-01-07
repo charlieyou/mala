@@ -1,11 +1,17 @@
 # Roadmap to v1
 
+Bugs:
+* --resume does not continue a session 
+* fixers should be aware of the global validation commands so they can replicate runs
+
 New Features
 * Add code review to global kvalidations
 
 Config
 * Interactive config setup
 * Separate mala agent logs from system claude code with CLAUDE_CONFIG_DIR env var
+* cerberus args should be passed in via mala.yaml
+* config reviewer/gate/etc retries in mala.yaml
 
 * Publish to PyPi
 

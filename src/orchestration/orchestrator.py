@@ -194,6 +194,8 @@ class MalaOrchestrator:
         self.max_review_retries = orch_config.max_review_retries
         self.disable_validations = orch_config.disable_validations
         self._disabled_validations = derived.disabled_validations
+        self._validation_config = derived.validation_config
+        self._validation_config_missing = derived.validation_config_missing
         self.prioritize_wip = orch_config.prioritize_wip
         self.strict_resume = orch_config.strict_resume
         self.focus = orch_config.focus
@@ -244,7 +246,9 @@ class MalaOrchestrator:
         self._shutdown_requested: bool = False
         self._run_task: asyncio.Task[Any] | None = None
         self._prompt_validation_commands = build_prompt_validation_commands(
-            self.repo_path
+            self.repo_path,
+            validation_config=self._validation_config,
+            config_missing=self._validation_config_missing,
         )
         self._prompts: PromptProvider = load_prompts(PROMPTS_DIR)
         # Deadlock detection is always enabled
@@ -322,6 +326,8 @@ class MalaOrchestrator:
             context_limit=self.context_limit,
             prompts=self._prompts,
             prompt_validation_commands=self._prompt_validation_commands,
+            validation_config=self._validation_config,
+            validation_config_missing=self._validation_config_missing,
             deadlock_monitor=self.deadlock_monitor,
         )
 
@@ -1032,6 +1038,8 @@ class MalaOrchestrator:
             self.repo_path,
             scope=ValidationScope.PER_SESSION,
             disable_validations=self._disabled_validations,
+            validation_config=self._validation_config,
+            config_missing=self._validation_config_missing,
         )
         self.async_gate_runner.per_session_spec = per_session_spec
         self._lint_tools = extract_lint_tools_from_spec(per_session_spec)

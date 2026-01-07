@@ -39,6 +39,7 @@ if TYPE_CHECKING:
         GateResultProtocol,
         ValidationSpecProtocol,
     )
+    from src.domain.validation.config import ValidationConfig
     from src.domain.validation.spec import ValidationSpec
 
 
@@ -53,6 +54,8 @@ class GateRunnerConfig:
 
     max_gate_retries: int = 3
     disable_validations: set[str] | None = None
+    validation_config: "ValidationConfig | None" = None
+    validation_config_missing: bool = False
 
 
 @dataclass
@@ -141,6 +144,8 @@ class GateRunner:
                 self.repo_path,
                 scope=ValidationScope.PER_SESSION,
                 disable_validations=self.config.disable_validations,
+                validation_config=self.config.validation_config,
+                config_missing=self.config.validation_config_missing,
             )
         return self.per_session_spec
 

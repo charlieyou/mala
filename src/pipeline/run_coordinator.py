@@ -47,6 +47,7 @@ if TYPE_CHECKING:
         SDKClientFactoryProtocol,
     )
     from src.domain.validation.result import ValidationResult
+    from src.domain.validation.config import ValidationConfig
     from src.domain.validation.spec import ValidationSpec
     from src.infra.io.log_output.run_metadata import (
         RunMetadata,
@@ -88,6 +89,8 @@ class RunCoordinatorConfig:
     disable_validations: set[str] | None = None
     fixer_prompt: str | _FixerPromptNotSet = _FIXER_PROMPT_NOT_SET
     mcp_server_factory: McpServerFactory | None = None
+    validation_config: "ValidationConfig | None" = None
+    validation_config_missing: bool = False
 
 
 @dataclass
@@ -247,6 +250,8 @@ class RunCoordinator:
             self.config.repo_path,
             scope=ValidationScope.GLOBAL,
             disable_validations=self.config.disable_validations,
+            validation_config=self.config.validation_config,
+            config_missing=self.config.validation_config_missing,
         )
 
         # Build validation context

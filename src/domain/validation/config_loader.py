@@ -166,8 +166,7 @@ def _validate_schema(data: dict[str, Any]) -> None:
     if "validate_every" in data:
         raise ConfigError(
             "validate_every is deprecated. Use validation_triggers.periodic with "
-            "interval field. See migration guide at "
-            "https://docs.mala.ai/migration/validation-triggers"
+            "interval field."
         )
 
     unknown_fields = set(data.keys()) - _ALLOWED_TOP_LEVEL_FIELDS
@@ -666,8 +665,7 @@ def _validate_migration(config: ValidationConfig) -> None:
     # require explicit validation_triggers configuration
     if has_global_commands and config.validation_triggers is None:
         raise ConfigError(
-            "validation_triggers required when global_validation_commands is defined. "
-            "See migration guide at https://docs.mala.ai/migration/validation-triggers\n\n"
+            "validation_triggers required when global_validation_commands is defined.\n\n"
             "Example:\n"
             "validation_triggers:\n"
             "  session_end:\n"

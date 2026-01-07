@@ -71,6 +71,8 @@ def build_gate_runner(
     config = GateRunnerConfig(
         max_gate_retries=pipeline.max_gate_retries,
         disable_validations=pipeline.disabled_validations,
+        validation_config=pipeline.validation_config,
+        validation_config_missing=pipeline.validation_config_missing,
     )
     gate_runner = GateRunner(
         gate_checker=runtime.evidence_check,
@@ -109,6 +111,8 @@ def build_run_coordinator(
         disable_validations=pipeline.disabled_validations,
         fixer_prompt=pipeline.prompts.fixer_prompt,
         mcp_server_factory=mcp_server_factory,
+        validation_config=pipeline.validation_config,
+        validation_config_missing=pipeline.validation_config_missing,
     )
     return RunCoordinator(
         config=config,

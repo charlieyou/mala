@@ -2782,6 +2782,18 @@ class TestOrchestratorFactory:
         assert orchestrator.max_agents is None
         assert orchestrator.max_issues is None
 
+    def test_create_orchestrator_invalid_config_fails(self, tmp_path: Path) -> None:
+        """create_orchestrator fails fast on invalid mala.yaml."""
+        from src.domain.validation.config import ConfigError
+        from src.orchestration.factory import create_orchestrator
+        from src.orchestration.types import OrchestratorConfig
+
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\ninvalid_field: 1\n")
+
+        config = OrchestratorConfig(repo_path=tmp_path)
+        with pytest.raises(ConfigError, match="Unknown field"):
+            create_orchestrator(config)
+
     def test_create_orchestrator_with_full_config(self, tmp_path: Path) -> None:
         """create_orchestrator respects all config options."""
         from src.orchestration.factory import create_orchestrator

@@ -108,6 +108,9 @@ def create_issue_provider(
 def _derive_config(
     config: OrchestratorConfig,
     mala_config: MalaConfig,
+    *,
+    validation_config: "ValidationConfig | None",
+    validation_config_missing: bool,
 ) -> _DerivedConfig:
     """Derive computed configuration values from config sources.
 
@@ -116,6 +119,8 @@ def _derive_config(
     Args:
         config: User-provided orchestrator configuration.
         mala_config: MalaConfig with API keys and feature flags.
+        validation_config: Loaded ValidationConfig from startup, if any.
+        validation_config_missing: True if mala.yaml was missing at startup.
 
     Returns:
         _DerivedConfig with computed values.
@@ -141,6 +146,8 @@ def _derive_config(
     return _DerivedConfig(
         timeout_seconds=timeout_seconds,
         disabled_validations=disabled_validations,
+        validation_config=validation_config,
+        validation_config_missing=validation_config_missing,
     )
 
 
@@ -504,17 +511,18 @@ def create_orchestrator(
     # to MalaConfig and reviewer configuration (avoids redundant I/O and parsing)
     yaml_claude_settings_sources: tuple[str, ...] | None = None
     reviewer_config = _ReviewerConfig()  # Default
+    validation_config = None
+    validation_config_missing = False
     try:
         validation_config = load_config(config.repo_path)
         yaml_claude_settings_sources = validation_config.claude_settings_sources
         reviewer_config = _extract_reviewer_config(validation_config)
     except ConfigMissingError:
         # mala.yaml not present - use defaults
-        pass
+        validation_config_missing = True
     except ConfigError as e:
-        # Invalid config (syntax error, schema violation, etc.) - log and use defaults
-        # This preserves the resilient behavior that previously existed in _get_reviewer_config
-        logger.warning("Failed to load mala.yaml config: %s", e)
+        # Invalid config (syntax error, schema violation, etc.) - fail fast
+        raise
 
     # Load MalaConfig if not provided
     if mala_config is None:
@@ -524,7 +532,12 @@ def create_orchestrator(
         )
 
     # Derive computed configuration
-    derived = _derive_config(config, mala_config)
+    derived = _derive_config(
+        config,
+        mala_config,
+        validation_config=validation_config,
+        validation_config_missing=validation_config_missing,
+    )
 
     # Check review availability and update disabled_validations
     review_disabled_reason = _check_review_availability(

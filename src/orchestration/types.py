@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     )
     from src.domain.deadlock import DeadlockMonitor
     from src.domain.prompts import PromptProvider
-    from src.domain.validation.config import PromptValidationCommands
+    from src.domain.validation.config import PromptValidationCommands, ValidationConfig
     from src.infra.io.config import MalaConfig
     from src.infra.telemetry import TelemetryProvider
 
@@ -136,6 +136,8 @@ class _DerivedConfig:
     timeout_seconds: int
     disabled_validations: set[str]
     review_disabled_reason: str | None = None
+    validation_config: "ValidationConfig | None" = None
+    validation_config_missing: bool = False
 
 
 @dataclass(frozen=True)
@@ -181,6 +183,8 @@ class PipelineConfig:
         context_limit: Maximum context tokens (default 200K for Claude).
         prompts: PromptProvider with loaded prompt templates.
         prompt_validation_commands: Validation commands for prompt substitution.
+        validation_config: Loaded ValidationConfig from startup, if any.
+        validation_config_missing: True if mala.yaml was missing at startup.
         deadlock_monitor: DeadlockMonitor for deadlock detection (None until wired).
     """
 
@@ -193,6 +197,8 @@ class PipelineConfig:
     context_limit: int
     prompts: PromptProvider
     prompt_validation_commands: PromptValidationCommands
+    validation_config: "ValidationConfig | None" = None
+    validation_config_missing: bool = False
     deadlock_monitor: DeadlockMonitor | None = None
 
 
