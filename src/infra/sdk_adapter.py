@@ -45,7 +45,9 @@ class SDKClientFactory:
             SDKClientProtocol wrapping a ClaudeSDKClient.
         """
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient  # noqa: TC002
+        from src.infra.sdk_transport import ensure_sigint_isolated_cli_transport
 
+        ensure_sigint_isolated_cli_transport()
         return cast(
             "SDKClientProtocol",
             ClaudeSDKClient(options=cast("ClaudeAgentOptions", options)),

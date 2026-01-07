@@ -174,6 +174,16 @@ class CommandRunner(CommandRunnerPort):
         _forward_sigint_to_process_groups()
 
     @staticmethod
+    def register_sigint_pgid(pgid: int) -> None:
+        """Register an external process group for SIGINT forwarding."""
+        _register_sigint_pgid(pgid)
+
+    @staticmethod
+    def unregister_sigint_pgid(pgid: int) -> None:
+        """Unregister an external process group from SIGINT forwarding."""
+        _unregister_sigint_pgid(pgid)
+
+    @staticmethod
     def kill_active_process_groups() -> None:
         """Send SIGKILL to all tracked process groups.
 

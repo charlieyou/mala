@@ -86,6 +86,16 @@ class TestKillActiveProcessGroups:
 
         mock_killpg.assert_not_called()
 
+    def test_register_unregister_sigint_pgid(self) -> None:
+        """Register/unregister should update the pgid tracking set."""
+        command_runner._SIGINT_FORWARD_PGIDS.clear()
+
+        CommandRunner.register_sigint_pgid(4242)
+        assert command_runner._SIGINT_FORWARD_PGIDS == {4242}
+
+        CommandRunner.unregister_sigint_pgid(4242)
+        assert command_runner._SIGINT_FORWARD_PGIDS == set()
+
     def test_noop_on_windows(self) -> None:
         """No-op on Windows platform."""
         command_runner._SIGINT_FORWARD_PGIDS.update({1001, 1002})
