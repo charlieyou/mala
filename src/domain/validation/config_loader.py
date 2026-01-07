@@ -22,6 +22,8 @@ from src.domain.validation.config import ConfigError, ValidationConfig
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from src.domain.validation.config import ValidationTriggersConfig
+
 
 class ConfigMissingError(ConfigError):
     """Raised when the mala.yaml configuration file is not found.
@@ -58,6 +60,7 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "reviewer_type",
         "agent_sdk_review_timeout",
         "agent_sdk_reviewer_model",
+        "validation_triggers",
     }
 )
 
@@ -150,6 +153,23 @@ def _validate_schema(data: dict[str, Any]) -> None:
         raise ConfigError(f"Unknown field '{first_unknown}' in mala.yaml")
 
 
+def _parse_validation_triggers(data: dict[str, Any] | None) -> ValidationTriggersConfig | None:
+    """Parse the validation_triggers section from mala.yaml.
+
+    Args:
+        data: The validation_triggers dict from the YAML.
+
+    Returns:
+        ValidationTriggersConfig if data is provided, None otherwise.
+
+    Raises:
+        NotImplementedError: Always (skeleton implementation).
+    """
+    if data is None:
+        return None
+    raise NotImplementedError("validation_triggers parsing not yet implemented")
+
+
 def _build_config(data: dict[str, Any]) -> ValidationConfig:
     """Convert a validated YAML dict to a ValidationConfig dataclass.
 
@@ -165,7 +185,21 @@ def _build_config(data: dict[str, Any]) -> ValidationConfig:
     Raises:
         ConfigError: If any field has an invalid type or value.
     """
-    return ValidationConfig.from_dict(data)
+    # Parse validation_triggers before delegating to from_dict
+    triggers_data = data.get("validation_triggers")
+    validation_triggers = _parse_validation_triggers(triggers_data)
+
+    # Build the base config
+    config = ValidationConfig.from_dict(data)
+
+    # If validation_triggers were parsed, create a new config with them
+    if validation_triggers is not None:
+        # Since ValidationConfig is frozen, we need to create a new instance
+        from dataclasses import replace
+
+        config = replace(config, validation_triggers=validation_triggers)
+
+    return config
 
 
 def _validate_config(config: ValidationConfig) -> None:
