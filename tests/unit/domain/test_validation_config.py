@@ -1296,3 +1296,373 @@ class TestTriggerCommandRef:
         cmd_ref = TriggerCommandRef(ref="test")
         with pytest.raises(AttributeError):
             cmd_ref.ref = "other"  # type: ignore[misc]
+
+
+class TestValidationTriggersConfigParsing:
+    """Tests for parsing validation_triggers from YAML via config_loader."""
+
+    def test_parse_none_returns_none(self) -> None:
+        """None input returns None."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        result = _parse_validation_triggers(None)
+        assert result is None
+
+    def test_parse_empty_dict_returns_empty_config(self) -> None:
+        """Empty dict returns ValidationTriggersConfig with all None."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        result = _parse_validation_triggers({})
+        assert result is not None
+        assert result.epic_completion is None
+        assert result.session_end is None
+        assert result.periodic is None
+
+    def test_parse_all_triggers_with_all_fields(self) -> None:
+        """All trigger types parse correctly with all fields."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "epic_completion": {
+                "epic_depth": "all",
+                "fire_on": "both",
+                "failure_mode": "remediate",
+                "max_retries": 2,
+                "commands": [{"ref": "test", "timeout": 120}],
+            },
+            "session_end": {
+                "failure_mode": "continue",
+                "commands": [{"ref": "lint"}],
+            },
+            "periodic": {
+                "interval": 10,
+                "failure_mode": "abort",
+                "commands": [],
+            },
+        }
+
+        result = _parse_validation_triggers(data)
+        assert result is not None
+
+        # epic_completion
+        assert result.epic_completion is not None
+        assert result.epic_completion.epic_depth == EpicDepth.ALL
+        assert result.epic_completion.fire_on == FireOn.BOTH
+        assert result.epic_completion.failure_mode == FailureMode.REMEDIATE
+        assert result.epic_completion.max_retries == 2
+        assert len(result.epic_completion.commands) == 1
+        assert result.epic_completion.commands[0].ref == "test"
+        assert result.epic_completion.commands[0].timeout == 120
+
+        # session_end
+        assert result.session_end is not None
+        assert result.session_end.failure_mode == FailureMode.CONTINUE
+        assert result.session_end.commands[0].ref == "lint"
+
+        # periodic
+        assert result.periodic is not None
+        assert result.periodic.interval == 10
+        assert result.periodic.failure_mode == FailureMode.ABORT
+        assert result.periodic.commands == ()
+
+    def test_parse_enum_failure_mode_values(self) -> None:
+        """All FailureMode enum values parse correctly."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        for mode in ["abort", "continue", "remediate"]:
+            data = {
+                "session_end": {
+                    "failure_mode": mode,
+                    "commands": [],
+                    **({"max_retries": 1} if mode == "remediate" else {}),
+                }
+            }
+            result = _parse_validation_triggers(data)
+            assert result is not None
+            assert result.session_end is not None
+            assert result.session_end.failure_mode == FailureMode(mode)
+
+    def test_parse_enum_epic_depth_values(self) -> None:
+        """All EpicDepth enum values parse correctly."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        for depth in ["top_level", "all"]:
+            data = {
+                "epic_completion": {
+                    "epic_depth": depth,
+                    "fire_on": "success",
+                    "failure_mode": "abort",
+                    "commands": [],
+                }
+            }
+            result = _parse_validation_triggers(data)
+            assert result is not None
+            assert result.epic_completion is not None
+            assert result.epic_completion.epic_depth == EpicDepth(depth)
+
+    def test_parse_enum_fire_on_values(self) -> None:
+        """All FireOn enum values parse correctly."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        for fire_on in ["success", "failure", "both"]:
+            data = {
+                "epic_completion": {
+                    "epic_depth": "top_level",
+                    "fire_on": fire_on,
+                    "failure_mode": "abort",
+                    "commands": [],
+                }
+            }
+            result = _parse_validation_triggers(data)
+            assert result is not None
+            assert result.epic_completion is not None
+            assert result.epic_completion.fire_on == FireOn(fire_on)
+
+    def test_parse_trigger_command_ref_with_overrides(self) -> None:
+        """TriggerCommandRef parses with command and timeout overrides."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "abort",
+                "commands": [
+                    {"ref": "test", "command": "pytest -x", "timeout": 300},
+                ],
+            }
+        }
+
+        result = _parse_validation_triggers(data)
+        assert result is not None
+        cmd = result.session_end.commands[0]
+        assert cmd.ref == "test"
+        assert cmd.command == "pytest -x"
+        assert cmd.timeout == 300
+
+    def test_parse_trigger_command_ref_ref_only(self) -> None:
+        """TriggerCommandRef parses with just ref."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "abort",
+                "commands": [{"ref": "lint"}],
+            }
+        }
+
+        result = _parse_validation_triggers(data)
+        assert result is not None
+        cmd = result.session_end.commands[0]
+        assert cmd.ref == "lint"
+        assert cmd.command is None
+        assert cmd.timeout is None
+
+    def test_parse_trigger_command_ref_string_shorthand(self) -> None:
+        """Command can be a plain string (ref shorthand)."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "abort",
+                "commands": ["test", "lint"],
+            }
+        }
+
+        result = _parse_validation_triggers(data)
+        assert result is not None
+        assert len(result.session_end.commands) == 2
+        assert result.session_end.commands[0].ref == "test"
+        assert result.session_end.commands[1].ref == "lint"
+
+    def test_parse_empty_commands_list_is_valid(self) -> None:
+        """Empty commands list is valid (parsed as empty tuple)."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "abort",
+                "commands": [],
+            }
+        }
+
+        result = _parse_validation_triggers(data)
+        assert result is not None
+        assert result.session_end.commands == ()
+
+    def test_parse_failure_mode_missing_raises_error(self) -> None:
+        """Missing failure_mode raises ConfigError."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "commands": [],
+            }
+        }
+
+        with pytest.raises(
+            ConfigError, match="failure_mode required for trigger session_end"
+        ):
+            _parse_validation_triggers(data)
+
+    def test_parse_max_retries_required_when_remediate(self) -> None:
+        """max_retries required when failure_mode=remediate."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "remediate",
+                "commands": [],
+            }
+        }
+
+        with pytest.raises(
+            ConfigError,
+            match="max_retries required when failure_mode=remediate for trigger session_end",
+        ):
+            _parse_validation_triggers(data)
+
+    def test_parse_epic_completion_missing_epic_depth_raises_error(self) -> None:
+        """epic_completion without epic_depth raises ConfigError."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "epic_completion": {
+                "fire_on": "success",
+                "failure_mode": "abort",
+                "commands": [],
+            }
+        }
+
+        with pytest.raises(
+            ConfigError, match="epic_depth required for trigger epic_completion"
+        ):
+            _parse_validation_triggers(data)
+
+    def test_parse_epic_completion_missing_fire_on_raises_error(self) -> None:
+        """epic_completion without fire_on raises ConfigError."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "epic_completion": {
+                "epic_depth": "top_level",
+                "failure_mode": "abort",
+                "commands": [],
+            }
+        }
+
+        with pytest.raises(
+            ConfigError, match="fire_on required for trigger epic_completion"
+        ):
+            _parse_validation_triggers(data)
+
+    def test_parse_periodic_missing_interval_raises_error(self) -> None:
+        """periodic without interval raises ConfigError."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "periodic": {
+                "failure_mode": "abort",
+                "commands": [],
+            }
+        }
+
+        with pytest.raises(ConfigError, match="interval required for trigger periodic"):
+            _parse_validation_triggers(data)
+
+    def test_parse_invalid_failure_mode_raises_error(self) -> None:
+        """Invalid failure_mode string raises ConfigError."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "invalid_mode",
+                "commands": [],
+            }
+        }
+
+        with pytest.raises(ConfigError, match="Invalid failure_mode 'invalid_mode'"):
+            _parse_validation_triggers(data)
+
+    def test_parse_invalid_epic_depth_raises_error(self) -> None:
+        """Invalid epic_depth string raises ConfigError."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "epic_completion": {
+                "epic_depth": "invalid",
+                "fire_on": "success",
+                "failure_mode": "abort",
+                "commands": [],
+            }
+        }
+
+        with pytest.raises(ConfigError, match="Invalid epic_depth 'invalid'"):
+            _parse_validation_triggers(data)
+
+    def test_parse_invalid_fire_on_raises_error(self) -> None:
+        """Invalid fire_on string raises ConfigError."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "epic_completion": {
+                "epic_depth": "top_level",
+                "fire_on": "invalid",
+                "failure_mode": "abort",
+                "commands": [],
+            }
+        }
+
+        with pytest.raises(ConfigError, match="Invalid fire_on 'invalid'"):
+            _parse_validation_triggers(data)
+
+    def test_parse_trigger_not_dict_raises_error(self) -> None:
+        """Trigger value that's not a dict raises ConfigError."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {"session_end": "not_a_dict"}
+
+        with pytest.raises(ConfigError, match="session_end must be an object"):
+            _parse_validation_triggers(data)
+
+    def test_parse_commands_not_list_raises_error(self) -> None:
+        """commands that's not a list raises ConfigError."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "abort",
+                "commands": "not_a_list",
+            }
+        }
+
+        with pytest.raises(ConfigError, match="'commands' must be a list"):
+            _parse_validation_triggers(data)
+
+    def test_parse_command_ref_missing_ref_raises_error(self) -> None:
+        """Command dict without 'ref' raises ConfigError."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "abort",
+                "commands": [{"command": "pytest"}],
+            }
+        }
+
+        with pytest.raises(ConfigError, match="'ref' is required for trigger command"):
+            _parse_validation_triggers(data)
+
+    def test_parse_command_invalid_type_raises_error(self) -> None:
+        """Command that's not string or dict raises ConfigError."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "abort",
+                "commands": [123],
+            }
+        }
+
+        with pytest.raises(
+            ConfigError, match="Command 0 in trigger session_end must be"
+        ):
+            _parse_validation_triggers(data)

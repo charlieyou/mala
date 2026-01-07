@@ -17,12 +17,21 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from src.domain.validation.config import ConfigError, ValidationConfig
+from src.domain.validation.config import (
+    ConfigError,
+    EpicCompletionTriggerConfig,
+    EpicDepth,
+    FailureMode,
+    FireOn,
+    PeriodicTriggerConfig,
+    SessionEndTriggerConfig,
+    TriggerCommandRef,
+    ValidationConfig,
+    ValidationTriggersConfig,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from src.domain.validation.config import ValidationTriggersConfig
 
 
 class ConfigMissingError(ConfigError):
@@ -153,7 +162,264 @@ def _validate_schema(data: dict[str, Any]) -> None:
         raise ConfigError(f"Unknown field '{first_unknown}' in mala.yaml")
 
 
-def _parse_validation_triggers(data: dict[str, Any] | None) -> ValidationTriggersConfig | None:
+def _parse_trigger_command_ref(data: dict[str, Any]) -> TriggerCommandRef:
+    """Parse a single command reference from a trigger's commands list.
+
+    Args:
+        data: Dict with 'ref' (required), optional 'command' and 'timeout' overrides.
+
+    Returns:
+        TriggerCommandRef instance.
+
+    Raises:
+        ConfigError: If 'ref' is missing or has wrong type.
+    """
+    if "ref" not in data:
+        raise ConfigError("'ref' is required for trigger command")
+    ref = data["ref"]
+    if not isinstance(ref, str):
+        raise ConfigError(f"'ref' must be a string, got {type(ref).__name__}")
+
+    command = data.get("command")
+    if command is not None and not isinstance(command, str):
+        raise ConfigError(f"'command' must be a string, got {type(command).__name__}")
+
+    timeout = data.get("timeout")
+    if timeout is not None and not isinstance(timeout, int):
+        raise ConfigError(f"'timeout' must be an integer, got {type(timeout).__name__}")
+
+    return TriggerCommandRef(ref=ref, command=command, timeout=timeout)
+
+
+def _parse_commands_list(
+    data: dict[str, Any], trigger_name: str
+) -> tuple[TriggerCommandRef, ...]:
+    """Parse the commands list for a trigger.
+
+    Args:
+        data: The trigger config dict.
+        trigger_name: Name of the trigger for error messages.
+
+    Returns:
+        Tuple of TriggerCommandRef instances.
+
+    Raises:
+        ConfigError: If commands has wrong type.
+    """
+    commands_data = data.get("commands", [])
+    if not isinstance(commands_data, list):
+        raise ConfigError(
+            f"'commands' must be a list for trigger {trigger_name}, "
+            f"got {type(commands_data).__name__}"
+        )
+
+    commands: list[TriggerCommandRef] = []
+    for i, cmd_data in enumerate(commands_data):
+        if isinstance(cmd_data, str):
+            # Allow shorthand: just the ref string
+            commands.append(TriggerCommandRef(ref=cmd_data))
+        elif isinstance(cmd_data, dict):
+            commands.append(_parse_trigger_command_ref(cmd_data))
+        else:
+            raise ConfigError(
+                f"Command {i} in trigger {trigger_name} must be a string or object, "
+                f"got {type(cmd_data).__name__}"
+            )
+
+    return tuple(commands)
+
+
+def _parse_failure_mode(data: dict[str, Any], trigger_name: str) -> FailureMode:
+    """Parse and validate failure_mode for a trigger.
+
+    Args:
+        data: The trigger config dict.
+        trigger_name: Name of the trigger for error messages.
+
+    Returns:
+        FailureMode enum value.
+
+    Raises:
+        ConfigError: If failure_mode is missing or invalid.
+    """
+    if "failure_mode" not in data:
+        raise ConfigError(f"failure_mode required for trigger {trigger_name}")
+
+    mode_str = data["failure_mode"]
+    if not isinstance(mode_str, str):
+        raise ConfigError(
+            f"failure_mode must be a string for trigger {trigger_name}, "
+            f"got {type(mode_str).__name__}"
+        )
+
+    try:
+        return FailureMode(mode_str)
+    except ValueError:
+        valid = ", ".join(m.value for m in FailureMode)
+        raise ConfigError(
+            f"Invalid failure_mode '{mode_str}' for trigger {trigger_name}. "
+            f"Valid values: {valid}"
+        ) from None
+
+
+def _parse_max_retries(
+    data: dict[str, Any], trigger_name: str, failure_mode: FailureMode
+) -> int | None:
+    """Parse and validate max_retries for a trigger.
+
+    Args:
+        data: The trigger config dict.
+        trigger_name: Name of the trigger for error messages.
+        failure_mode: The parsed failure mode.
+
+    Returns:
+        max_retries value or None.
+
+    Raises:
+        ConfigError: If max_retries is required but missing, or has wrong type.
+    """
+    max_retries = data.get("max_retries")
+
+    if failure_mode == FailureMode.REMEDIATE and max_retries is None:
+        raise ConfigError(
+            f"max_retries required when failure_mode=remediate for trigger {trigger_name}"
+        )
+
+    if max_retries is not None and not isinstance(max_retries, int):
+        raise ConfigError(
+            f"max_retries must be an integer for trigger {trigger_name}, "
+            f"got {type(max_retries).__name__}"
+        )
+
+    return max_retries
+
+
+def _parse_epic_completion_trigger(
+    data: dict[str, Any],
+) -> EpicCompletionTriggerConfig:
+    """Parse epic_completion trigger config.
+
+    Args:
+        data: The epic_completion config dict.
+
+    Returns:
+        EpicCompletionTriggerConfig instance.
+
+    Raises:
+        ConfigError: If required fields missing or invalid.
+    """
+    trigger_name = "epic_completion"
+    failure_mode = _parse_failure_mode(data, trigger_name)
+    max_retries = _parse_max_retries(data, trigger_name, failure_mode)
+    commands = _parse_commands_list(data, trigger_name)
+
+    # Parse epic_depth (required for epic_completion)
+    if "epic_depth" not in data:
+        raise ConfigError(f"epic_depth required for trigger {trigger_name}")
+    depth_str = data["epic_depth"]
+    if not isinstance(depth_str, str):
+        raise ConfigError(
+            f"epic_depth must be a string for trigger {trigger_name}, "
+            f"got {type(depth_str).__name__}"
+        )
+    try:
+        epic_depth = EpicDepth(depth_str)
+    except ValueError:
+        valid = ", ".join(d.value for d in EpicDepth)
+        raise ConfigError(
+            f"Invalid epic_depth '{depth_str}' for trigger {trigger_name}. "
+            f"Valid values: {valid}"
+        ) from None
+
+    # Parse fire_on (required for epic_completion)
+    if "fire_on" not in data:
+        raise ConfigError(f"fire_on required for trigger {trigger_name}")
+    fire_on_str = data["fire_on"]
+    if not isinstance(fire_on_str, str):
+        raise ConfigError(
+            f"fire_on must be a string for trigger {trigger_name}, "
+            f"got {type(fire_on_str).__name__}"
+        )
+    try:
+        fire_on = FireOn(fire_on_str)
+    except ValueError:
+        valid = ", ".join(f.value for f in FireOn)
+        raise ConfigError(
+            f"Invalid fire_on '{fire_on_str}' for trigger {trigger_name}. "
+            f"Valid values: {valid}"
+        ) from None
+
+    return EpicCompletionTriggerConfig(
+        failure_mode=failure_mode,
+        commands=commands,
+        max_retries=max_retries,
+        epic_depth=epic_depth,
+        fire_on=fire_on,
+    )
+
+
+def _parse_session_end_trigger(data: dict[str, Any]) -> SessionEndTriggerConfig:
+    """Parse session_end trigger config.
+
+    Args:
+        data: The session_end config dict.
+
+    Returns:
+        SessionEndTriggerConfig instance.
+
+    Raises:
+        ConfigError: If required fields missing or invalid.
+    """
+    trigger_name = "session_end"
+    failure_mode = _parse_failure_mode(data, trigger_name)
+    max_retries = _parse_max_retries(data, trigger_name, failure_mode)
+    commands = _parse_commands_list(data, trigger_name)
+
+    return SessionEndTriggerConfig(
+        failure_mode=failure_mode,
+        commands=commands,
+        max_retries=max_retries,
+    )
+
+
+def _parse_periodic_trigger(data: dict[str, Any]) -> PeriodicTriggerConfig:
+    """Parse periodic trigger config.
+
+    Args:
+        data: The periodic config dict.
+
+    Returns:
+        PeriodicTriggerConfig instance.
+
+    Raises:
+        ConfigError: If required fields missing or invalid.
+    """
+    trigger_name = "periodic"
+    failure_mode = _parse_failure_mode(data, trigger_name)
+    max_retries = _parse_max_retries(data, trigger_name, failure_mode)
+    commands = _parse_commands_list(data, trigger_name)
+
+    # Parse interval (required for periodic)
+    if "interval" not in data:
+        raise ConfigError(f"interval required for trigger {trigger_name}")
+    interval = data["interval"]
+    if not isinstance(interval, int):
+        raise ConfigError(
+            f"interval must be an integer for trigger {trigger_name}, "
+            f"got {type(interval).__name__}"
+        )
+
+    return PeriodicTriggerConfig(
+        failure_mode=failure_mode,
+        commands=commands,
+        max_retries=max_retries,
+        interval=interval,
+    )
+
+
+def _parse_validation_triggers(
+    data: dict[str, Any] | None,
+) -> ValidationTriggersConfig | None:
     """Parse the validation_triggers section from mala.yaml.
 
     Args:
@@ -163,11 +429,47 @@ def _parse_validation_triggers(data: dict[str, Any] | None) -> ValidationTrigger
         ValidationTriggersConfig if data is provided, None otherwise.
 
     Raises:
-        NotImplementedError: Always (skeleton implementation).
+        ConfigError: If any trigger config is invalid.
     """
     if data is None:
         return None
-    raise NotImplementedError("validation_triggers parsing not yet implemented")
+
+    epic_completion = None
+    session_end = None
+    periodic = None
+
+    if "epic_completion" in data:
+        epic_data = data["epic_completion"]
+        if epic_data is not None:
+            if not isinstance(epic_data, dict):
+                raise ConfigError(
+                    f"epic_completion must be an object, got {type(epic_data).__name__}"
+                )
+            epic_completion = _parse_epic_completion_trigger(epic_data)
+
+    if "session_end" in data:
+        session_data = data["session_end"]
+        if session_data is not None:
+            if not isinstance(session_data, dict):
+                raise ConfigError(
+                    f"session_end must be an object, got {type(session_data).__name__}"
+                )
+            session_end = _parse_session_end_trigger(session_data)
+
+    if "periodic" in data:
+        periodic_data = data["periodic"]
+        if periodic_data is not None:
+            if not isinstance(periodic_data, dict):
+                raise ConfigError(
+                    f"periodic must be an object, got {type(periodic_data).__name__}"
+                )
+            periodic = _parse_periodic_trigger(periodic_data)
+
+    return ValidationTriggersConfig(
+        epic_completion=epic_completion,
+        session_end=session_end,
+        periodic=periodic,
+    )
 
 
 def _build_config(data: dict[str, Any]) -> ValidationConfig:
