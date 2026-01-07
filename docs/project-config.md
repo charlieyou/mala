@@ -360,7 +360,7 @@ commands:
 
 ## Code Review Configuration
 
-Configure the code reviewer used during validation. The Agent SDK reviewer is the default; Cerberus is available as an optional alternative (requires the Cerberus plugin).
+Configure the code reviewer used during validation. By default, mala uses the Agent SDK reviewer. Cerberus is available as an optional alternative (requires the Cerberus plugin to be installed).
 
 ```yaml
 # Use Agent SDK reviewer (default)
