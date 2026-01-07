@@ -1,10 +1,9 @@
 # Roadmap to v1
 
 New Features
-* Add code review to run-level validations
-* Option to run run-level validations after every epic completion
-* Rename gate 4 / run level validations
-* Option to hard exit if run-level validations fail
+* Add code review to global kvalidations
+* Option to run global validations after every epic completion
+* Option to hard exit if global validations fail
 
 Compatibility
 * Add claude reviewer
@@ -29,7 +28,7 @@ New Features
 
 * Use Amp/Codex in the main agent loop (waiting until they have hooks)
 
-* CLI command for run statistics - tokens used, tools calls, etc. 
+* CLI command for run statistics - tokens used, tools calls, reviewer/validation pass rates, etc.
 
 Tech Debt
 * Use pydantic-settings, or some other library for config
