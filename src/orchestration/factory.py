@@ -30,7 +30,6 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 
@@ -53,6 +52,7 @@ __all__ = [
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from src.core.protocols import (
         CodeReviewer,
@@ -130,17 +130,57 @@ def _derive_config(
     )
 
 
+def _get_reviewer_type(repo_path: Path) -> str:
+    """Get reviewer_type from ValidationConfig.
+
+    Loads mala.yaml to determine which reviewer to use.
+    Returns 'agent_sdk' (default) if config is missing or loading fails.
+
+    Args:
+        repo_path: Path to the repository.
+
+    Returns:
+        Reviewer type ('agent_sdk' or 'cerberus').
+    """
+    from src.domain.validation.config_loader import ConfigMissingError, load_config
+
+    try:
+        validation_config = load_config(repo_path)
+        return getattr(validation_config, "reviewer_type", "agent_sdk")
+    except ConfigMissingError:
+        return "agent_sdk"
+    except Exception as e:
+        logger.warning("Failed to load reviewer_type from mala.yaml: %s", e)
+        return "agent_sdk"
+
+
 def _check_review_availability(
     mala_config: MalaConfig,
     disabled_validations: set[str],
+    reviewer_type: str = "agent_sdk",
 ) -> str | None:
     """Check if code review is available.
 
     Returns the reason review is disabled, or None if available.
+    For agent_sdk reviewer, always returns None (no external dependencies).
+    For cerberus reviewer, checks if review-gate binary is available.
+
+    Args:
+        mala_config: MalaConfig with Cerberus settings.
+        disabled_validations: Set of validations explicitly disabled.
+        reviewer_type: Type of reviewer ('agent_sdk' or 'cerberus').
+
+    Returns:
+        Reason review is disabled, or None if available.
     """
     if "review" in disabled_validations:
         return None  # Explicitly disabled, no warning needed
 
+    # Agent SDK reviewer has no external dependencies - always available
+    if reviewer_type == "agent_sdk":
+        return None
+
+    # Cerberus reviewer requires review-gate binary
     review_gate_path = (
         mala_config.cerberus_bin_path / "review-gate"
         if mala_config.cerberus_bin_path
@@ -240,8 +280,9 @@ def _create_code_reviewer(
         # Default: agent_sdk
         logger.info("Using AgentSDKReviewer for code review")
         # Load prompts to get review_agent_prompt
-        prompts_dir = Path(__file__).parent.parent / "prompts"
-        prompts = load_prompts(prompts_dir)
+        from src.infra.tools.env import PROMPTS_DIR
+
+        prompts = load_prompts(PROMPTS_DIR)
         sdk_client_factory = SDKClientFactory()
 
         return cast(
@@ -437,9 +478,13 @@ def create_orchestrator(
     # Derive computed configuration
     derived = _derive_config(config, mala_config)
 
+    # Determine reviewer_type from ValidationConfig before checking availability
+    reviewer_type = _get_reviewer_type(config.repo_path)
+
     # Check review availability and update disabled_validations
+    # Pass reviewer_type so agent_sdk reviewer doesn't require Cerberus
     review_disabled_reason = _check_review_availability(
-        mala_config, derived.disabled_validations
+        mala_config, derived.disabled_validations, reviewer_type
     )
     if review_disabled_reason:
         derived.disabled_validations.add("review")
