@@ -6,6 +6,7 @@ using the log helpers from log_output/console.py.
 
 import math
 import re
+from collections.abc import Sequence
 from typing import Any
 
 from src.core.protocols import DeadlockInfoProtocol, EventRunConfig, MalaEventSink
@@ -95,6 +96,8 @@ class ConsoleEventSink(BaseEventSink):
             items.append("review=enabled")
         else:
             reason = config.review_disabled_reason or "disabled"
+            # Normalize whitespace to underscores to keep key=value as single token
+            reason = re.sub(r"\s+", "_", reason)
             items.append(f"review={reason}")
 
         # CLI args extras (watch, validate_every, disable_validations)
@@ -107,11 +110,19 @@ class ConsoleEventSink(BaseEventSink):
                 items.append(f"validate_every={validate_every}")
 
             disable = config.cli_args.get("disable_validations")
-            if disable and isinstance(disable, list):
+            if (
+                disable
+                and isinstance(disable, Sequence)
+                and not isinstance(disable, str)
+            ):
                 items.append(f"disable={','.join(str(d) for d in disable)}")
 
             epic_override = config.cli_args.get("epic_override")
-            if epic_override and isinstance(epic_override, list):
+            if (
+                epic_override
+                and isinstance(epic_override, Sequence)
+                and not isinstance(epic_override, str)
+            ):
                 items.append(f"epic_override={','.join(str(e) for e in epic_override)}")
 
         # Format: show all items on one line if short, otherwise multi-line
