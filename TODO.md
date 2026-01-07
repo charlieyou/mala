@@ -2,14 +2,8 @@
 
 New Features
 * Add code review to global kvalidations
-* Option to run global validations after every epic completion
-* Option to hard exit if global validations fail
-
-Compatibility
-* Add claude reviewer
 
 Config
-* Add configs for which claude settings are used - user or project (or mala specific?)
 * Interactive config setup
 * Separate mala agent logs from system claude code with CLAUDE_CONFIG_DIR env var
 

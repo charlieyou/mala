@@ -9,10 +9,10 @@
 | Phase | Tasks | Parallel | Dependencies |
 |-------|-------|----------|--------------|
 | Foundation | 1 | 0 | None |
-| Config & Migration | 4 | 2 | T001 |
-| Trigger Execution | 3 | 1 | T002-T005 |
-| Integration Points | 4 | 3 | T006-T008 |
-| Instrumentation | 1 | 0 | T006 |
+| Config & Migration | 4 | 0 | T001 (sequential: file overlap on test file) |
+| Trigger Execution | 3 | 0 | T002-T005 |
+| Integration Points | 4 | 0 | T006-T008 (sequential: file overlap on orchestrator.py and test file) |
+| Instrumentation | 1 | 0 | T008 |
 | Documentation | 1 | 0 | T009-T012 |
 
 **Total**: 14 tasks
@@ -32,7 +32,7 @@
 **Dependencies**: None
 
 **Goal**:
-Add all trigger-related enums (TriggerType, FailureMode, EpicDepth, FireOn) and dataclasses (TriggerCommandRef, BaseTriggerConfig, EpicCompletionTriggerConfig, SessionEndTriggerConfig, PeriodicTriggerConfig, ValidationTriggersConfig) to the config module.
+Add all trigger-related enums (TriggerType, FailureMode, EpicDepth, FireOn) and dataclasses (TriggerCommandRef, BaseTriggerConfig, EpicCompletionTriggerConfig, SessionEndTriggerConfig, PeriodicTriggerConfig, ValidationTriggersConfig) to the config module. Also update the existing ValidationConfig dataclass to include the new validation_triggers field.
 
 **Context**:
 - Foundation for all trigger configuration
@@ -40,7 +40,7 @@ Add all trigger-related enums (TriggerType, FailureMode, EpicDepth, FireOn) and 
 - Enums parse from YAML strings (e.g., "abort" → FailureMode.ABORT)
 
 **Scope**:
-- In: Enums, dataclasses, type definitions
+- In: Enums, dataclasses, type definitions, ValidationConfig field update
 - Out: Parsing logic (T003), validation logic (T004)
 
 **Changes**:
@@ -55,22 +55,26 @@ Add all trigger-related enums (TriggerType, FailureMode, EpicDepth, FireOn) and 
   - `SessionEndTriggerConfig(BaseTriggerConfig)`: (no additional fields)
   - `PeriodicTriggerConfig(BaseTriggerConfig)`: interval
   - `ValidationTriggersConfig` frozen dataclass: epic_completion?, session_end?, periodic?, is_empty()
+  - **UPDATE ValidationConfig**: Add `validation_triggers: ValidationTriggersConfig | None = None` field
 
 **Acceptance Criteria**:
 - All 4 enums defined with correct values
-- All 6 dataclasses are frozen
+- All 6 new dataclasses are frozen
 - TriggerCommandRef supports optional command/timeout overrides
 - BaseTriggerConfig has failure_mode (FailureMode), commands (tuple), max_retries (int|None)
 - ValidationTriggersConfig.is_empty() returns True when all triggers are None
+- **ValidationConfig has new validation_triggers field with None default**
 
 **Verification**:
 - Type check: `uvx ty check src/domain/validation/config.py`
-- Import test: `python -c "from src.domain.validation.config import TriggerType, FailureMode, ValidationTriggersConfig"`
+- Import test: `python -c "from src.domain.validation.config import TriggerType, FailureMode, ValidationTriggersConfig, ValidationConfig"`
+- Verify: `python -c "from src.domain.validation.config import ValidationConfig; print(ValidationConfig.__dataclass_fields__['validation_triggers'])"`
 
 **Notes for Agent**:
 - Use `tuple[TriggerCommandRef, ...]` not `list` for frozen dataclass fields
 - Follow existing CommandConfig pattern for TriggerCommandRef
 - All dataclasses must be frozen=True
+- The validation_triggers field on ValidationConfig must default to None for backward compatibility
 
 ---
 
@@ -191,10 +195,10 @@ Implement full parsing of validation_triggers from mala.yaml, including nested t
 **Type**: task
 **Priority**: P1
 **Story**: Config & Migration
-**Parallel**: [P]
+**Parallel**: (sequential - shares test file with T005)
 **Primary Files**: src/domain/validation/config_loader.py, tests/unit/domain/test_validation_config.py
 **Subsystems**: domain
-**Dependencies**: T003
+**Dependencies**: T003, T005
 
 **Goal**:
 Add `_validate_migration()` function that fails fast on deprecated config patterns (validate_every, global_validation_commands without validation_triggers).
@@ -243,7 +247,7 @@ Add `_validate_migration()` function that fails fast on deprecated config patter
 **Type**: task
 **Priority**: P1
 **Story**: Config & Migration
-**Parallel**: [P]
+**Parallel**: (sequential - shares test file with T004)
 **Primary Files**: src/domain/validation/config_merger.py, tests/unit/domain/test_validation_config.py
 **Subsystems**: domain
 **Dependencies**: T003
@@ -408,7 +412,7 @@ Implement command resolution from base pool and sequential command execution wit
 
 ---
 
-### [T008] Implement failure mode handling (abort/continue/remediate)
+### [T008] Implement failure mode handling (abort/continue/remediate) + SIGINT
 
 **Type**: task
 **Priority**: P1
@@ -419,15 +423,16 @@ Implement command resolution from base pool and sequential command execution wit
 **Dependencies**: T007
 
 **Goal**:
-Implement failure_mode handling: abort sets result to aborted, continue logs and proceeds, remediate spawns fixer with retry loop.
+Implement failure_mode handling: abort sets result to aborted, continue logs and proceeds, remediate spawns fixer with retry loop. Also implement SIGINT handling for graceful interrupt during validation.
 
 **Context**:
 - Uses existing `_run_fixer_agent()` mechanism for remediation
 - Remediation exhaustion → abort (terminal behavior per spec)
 - Abort clears queue and emits skipped events
+- SIGINT during validation must be responsive (no indefinite blocking)
 
 **Scope**:
-- In: Failure mode switch, remediation retry loop, abort handling
+- In: Failure mode switch, remediation retry loop, abort handling, SIGINT handling
 - Out: Integration points (T009-T012)
 
 **Changes**:
@@ -438,6 +443,11 @@ Implement failure_mode handling: abort sets result to aborted, continue logs and
     - REMEDIATE: for attempt in range(max_retries): call _run_fixer_agent(), re-run failed command
   - Implement `clear_trigger_queue(reason)`: emit on_trigger_validation_skipped for each queued item, clear list
   - Remediation exhaustion → abort
+  - **SIGINT handling**:
+    - Register signal handler when validation starts
+    - On SIGINT: send SIGTERM to subprocess, set internal `_interrupted` flag
+    - Check `_interrupted` after each command; if set, abort remaining commands and clear queue
+    - Restore original signal handler when validation completes
 - `tests/unit/pipeline/test_trigger_execution.py` — Exists — Add:
   - Test abort mode: failure sets aborted status, clears queue
   - Test continue mode: failure logs, returns failed status, doesn't abort
@@ -445,6 +455,7 @@ Implement failure_mode handling: abort sets result to aborted, continue logs and
   - Test remediate exhaustion: aborts after max_retries
   - Test remediate success: fixer fixes, command passes, continues
   - Test max_retries=0: no fixer spawned, immediate abort
+  - Test SIGINT: validation interrupted, queue cleared, result is aborted
 
 **Acceptance Criteria**:
 - ABORT mode sets aborted status and clears queue
@@ -452,6 +463,7 @@ Implement failure_mode handling: abort sets result to aborted, continue logs and
 - REMEDIATE mode spawns fixer up to max_retries times
 - Remediation exhaustion aborts the run
 - max_retries=0 means no fixer spawned
+- SIGINT immediately releases blocking wait and aborts
 
 **Verification**:
 - Unit tests: `uv run pytest tests/unit/pipeline/test_trigger_execution.py -k failure_mode -v`
@@ -461,6 +473,8 @@ Implement failure_mode handling: abort sets result to aborted, continue logs and
 - Reuse existing _run_fixer_agent() - don't reimplement
 - Event emission for remediation handled in T013
 - Keep failure_mode switch clean and readable
+- Per spec: SIGINT must be responsive (user can always cancel)
+- Signal handling: register handler at start of validation, restore original after
 
 ---
 
@@ -521,7 +535,7 @@ This test exercises orchestrator main loop → periodic trigger queueing path.
 **Type**: task
 **Priority**: P1
 **Story**: Integration Points
-**Parallel**: [P]
+**Parallel**: (sequential - shares test file with T011, T012)
 **Primary Files**: src/pipeline/epic_verification_coordinator.py, tests/unit/pipeline/test_trigger_execution.py
 **Subsystems**: pipeline
 **Dependencies**: T009
@@ -574,10 +588,10 @@ Hook epic_completion trigger into EpicVerificationCoordinator.check_epic_closure
 **Type**: task
 **Priority**: P1
 **Story**: Integration Points
-**Parallel**: [P]
+**Parallel**: (sequential - shares orchestrator.py with T012, shares test file with T010, T012)
 **Primary Files**: src/orchestration/orchestrator.py, tests/unit/pipeline/test_trigger_execution.py
 **Subsystems**: orchestration
-**Dependencies**: T009
+**Dependencies**: T009, T010
 
 **Goal**:
 Implement periodic trigger logic: increment non_epic_completed_count after non-epic issue completion, fire trigger at interval multiples.
@@ -625,10 +639,10 @@ Implement periodic trigger logic: increment non_epic_completed_count after non-e
 **Type**: task
 **Priority**: P1
 **Story**: Integration Points
-**Parallel**: [P]
+**Parallel**: (sequential - shares orchestrator.py with T011, shares test file with T010, T011)
 **Primary Files**: src/orchestration/orchestrator.py, tests/unit/pipeline/test_trigger_execution.py
 **Subsystems**: orchestration
-**Dependencies**: T009
+**Dependencies**: T009, T010, T011
 
 **Goal**:
 Implement session_end trigger with skip conditions and blocking execution that prevents next issue assignment until validation completes.
@@ -683,10 +697,10 @@ Implement session_end trigger with skip conditions and blocking execution that p
 **Type**: task
 **Priority**: P2
 **Story**: Instrumentation
-**Parallel**:
+**Parallel**: (sequential - shares run_coordinator.py with T007, T008)
 **Primary Files**: src/core/protocols.py, src/infra/io/log_output/console.py, src/pipeline/run_coordinator.py
 **Subsystems**: core, infra, pipeline
-**Dependencies**: T006
+**Dependencies**: T006, T007, T008
 
 **Goal**:
 Add 10 new MalaEventSink methods for trigger lifecycle and implement console handlers to log trigger events.
@@ -796,36 +810,40 @@ Create comprehensive user documentation for validation trigger configuration.
 ```
 T001 (Foundation)
   │
-  ├──► T002 (Config skeleton + integration test)
-  │      │
-  │      ├──► T003 (Config parsing) ──┐
-  │      │                            │
-  │      ├──► T004 (Migration) ───────┤ [P]
-  │      │                            │
-  │      └──► T005 (Merger) ──────────┘ [P]
-  │                  │
-  │                  ▼
-  │            T006 (RunCoordinator skeleton + integration test)
-  │                  │
-  │                  ├──► T007 (Command execution)
-  │                  │      │
-  │                  │      └──► T008 (Failure modes)
-  │                  │                  │
-  │                  │                  ▼
-  │                  │            T009 (Orchestrator skeleton + integration test)
-  │                  │                  │
-  │                  │                  ├──► T010 (epic_completion) ─┐
-  │                  │                  │                            │
-  │                  │                  ├──► T011 (periodic) ────────┤ [P]
-  │                  │                  │                            │
-  │                  │                  └──► T012 (session_end) ─────┘ [P]
-  │                  │                              │
-  │                  └──► T013 (Events) ◄──────────┘
-  │                              │
-  └──────────────────────────────┴──► T014 (Docs)
+  └──► T002 (Config skeleton + integration test)
+         │
+         └──► T003 (Config parsing)
+                │
+                └──► T005 (Merger)
+                       │
+                       └──► T004 (Migration)
+                              │
+                              └──► T006 (RunCoordinator skeleton + integration test)
+                                     │
+                                     └──► T007 (Command execution)
+                                            │
+                                            └──► T008 (Failure modes)
+                                                   │
+                                                   ├──► T009 (Orchestrator skeleton + integration test)
+                                                   │      │
+                                                   │      └──► T010 (epic_completion)
+                                                   │             │
+                                                   │             └──► T011 (periodic)
+                                                   │                    │
+                                                   │                    └──► T012 (session_end)
+                                                   │                           │
+                                                   │                           └──► T014 (Docs)
+                                                   │
+                                                   └──► T013 (Events)
 ```
 
-**Dependency notation**: Arrow points FROM dependent TO dependency (T002 → T001 means T002 depends on T001)
+**Dependency notation**: Arrow points FROM blocker TO dependent (T001 → T002 means T001 blocks T002)
+
+**Note**: All parallelism removed due to file overlaps:
+- T004/T005: both write to tests/unit/domain/test_validation_config.py
+- T011/T012: both write to src/orchestration/orchestrator.py
+- T010/T011/T012: all write to tests/unit/pipeline/test_trigger_execution.py
+- T007/T008/T013: all write to src/pipeline/run_coordinator.py
 
 ## AC Coverage
 
