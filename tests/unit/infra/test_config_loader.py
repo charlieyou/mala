@@ -153,16 +153,16 @@ setup_files:
         expected = "At least one command must be defined. Specify a preset or define commands directly."
         assert str(exc_info.value) == expected
 
-    def test_run_level_commands_only_is_valid(self, tmp_path: Path) -> None:
-        """Run-level commands without base commands are allowed."""
+    def test_global_validation_commands_only_is_valid(self, tmp_path: Path) -> None:
+        """Global commands without base commands are allowed."""
         config_file = tmp_path / "mala.yaml"
-        config_file.write_text("run_level_commands:\n  test: pytest\n")
+        config_file.write_text("global_validation_commands:\n  test: pytest\n")
 
         config = load_config(tmp_path)
 
         assert config.commands.test is None
-        assert config.run_level_commands.test is not None
-        assert config.run_level_commands.test.command == "pytest"
+        assert config.global_validation_commands.test is not None
+        assert config.global_validation_commands.test.command == "pytest"
 
     def test_empty_command_string_error(self, tmp_path: Path) -> None:
         """Empty command string raises ConfigError."""

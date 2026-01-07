@@ -270,7 +270,7 @@ class TestSpecValidationRunner:
                     use_test_mutex=False,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=False),
             e2e=E2EConfig(enabled=False),
         )
@@ -283,7 +283,7 @@ class TestSpecValidationRunner:
             repo_path=tmp_path,
             commit_hash="",  # Empty = validate in place
             changed_files=["src/test.py"],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
     def test_run_spec_single_command_passes(
@@ -349,7 +349,7 @@ class TestSpecValidationRunner:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=False),
             e2e=E2EConfig(enabled=False),
         )
@@ -388,7 +388,7 @@ class TestSpecValidationRunner:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=False),
             e2e=E2EConfig(enabled=False),
         )
@@ -428,7 +428,7 @@ class TestSpecValidationRunner:
                     kind=CommandKind.LINT,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=False),
             e2e=E2EConfig(enabled=False),
         )
@@ -479,7 +479,7 @@ class TestSpecValidationRunner:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=False),
             e2e=E2EConfig(enabled=False),
         )
@@ -520,7 +520,7 @@ class TestSpecValidationRunner:
                     use_test_mutex=True,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=False),
             e2e=E2EConfig(enabled=False),
         )
@@ -580,7 +580,7 @@ class TestSpecValidationRunner:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(
                 enabled=True,
                 min_percent=85.0,
@@ -618,7 +618,7 @@ class TestSpecValidationRunner:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(
                 enabled=True,
                 min_percent=85.0,
@@ -651,7 +651,7 @@ class TestSpecValidationRunner:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(
                 enabled=True,
                 min_percent=85.0,
@@ -667,29 +667,29 @@ class TestSpecValidationRunner:
         assert result.coverage_result.passed is False
         assert "not found" in (result.coverage_result.failure_reason or "")
 
-    def test_run_spec_e2e_only_for_run_level(
+    def test_run_spec_e2e_only_for_global(
         self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
     ) -> None:
-        """Test that E2E only runs for per-issue scope."""
-        # Per-issue context - E2E should not run
-        per_issue_context = ValidationContext(
+        """Test that E2E only runs for per-session scope."""
+        # Per-session context - E2E should not run
+        per_session_context = ValidationContext(
             issue_id="test-123",
             repo_path=tmp_path,
             commit_hash="",
             changed_files=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
         spec = ValidationSpec(
             commands=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=False),
             e2e=E2EConfig(enabled=True),
         )
 
-        # E2E should not be called for per-issue scope
+        # E2E should not be called for per-session scope
         # We verify this by checking result.e2e_result is None
-        result = runner._run_spec_sync(spec, per_issue_context, log_dir=tmp_path)
+        result = runner._run_spec_sync(spec, per_session_context, log_dir=tmp_path)
         assert result.passed is True
         assert result.e2e_result is None
 
@@ -752,7 +752,7 @@ class TestSpecValidationRunner:
             repo_path=repo_path,
             commit_hash="abc123",
             changed_files=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
         spec = ValidationSpec(
@@ -763,7 +763,7 @@ class TestSpecValidationRunner:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=False),
             e2e=E2EConfig(enabled=False),
         )
@@ -806,12 +806,12 @@ class TestSpecValidationRunner:
             repo_path=tmp_path,
             commit_hash="abc123",
             changed_files=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
         spec = ValidationSpec(
             commands=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=False),
             e2e=E2EConfig(enabled=False),
         )
@@ -834,16 +834,16 @@ class TestSpecValidationRunner:
         assert "AGENT_ID" in env
         assert "test-123" in env["AGENT_ID"]
 
-    def test_build_spec_env_run_level(
+    def test_build_spec_env_global(
         self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
-        """Test _build_spec_env with run-level context (no issue_id)."""
+        """Test _build_spec_env with global context (no issue_id)."""
         context = ValidationContext(
             issue_id=None,
             repo_path=tmp_path,
             commit_hash="",
             changed_files=[],
-            scope=ValidationScope.RUN_LEVEL,
+            scope=ValidationScope.GLOBAL,
         )
         env = runner._build_spec_env(context, "run-456")
         assert "run-456" in env["AGENT_ID"]
@@ -878,7 +878,7 @@ class TestSpecValidationRunner:
             repo_path=repo_path,
             commit_hash="abc123",
             changed_files=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
         spec = ValidationSpec(
@@ -889,7 +889,7 @@ class TestSpecValidationRunner:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=False),
             e2e=E2EConfig(enabled=False),
         )
@@ -953,7 +953,7 @@ class TestSpecValidationRunner:
             repo_path=repo_path,
             commit_hash="abc123",
             changed_files=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
         spec = ValidationSpec(
@@ -964,7 +964,7 @@ class TestSpecValidationRunner:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=False),
             e2e=E2EConfig(enabled=False),
         )
@@ -1058,7 +1058,7 @@ class TestSpecRunnerNoDecreaseMode:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(
                 enabled=True,
                 min_percent=None,  # No-decrease mode
@@ -1072,7 +1072,7 @@ class TestSpecRunnerNoDecreaseMode:
             repo_path=tmp_path,
             commit_hash="",  # Validate in place
             changed_files=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
         # FakeCommandRunner with allow_unregistered=True returns success by default
@@ -1127,7 +1127,7 @@ class TestSpecRunnerNoDecreaseMode:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
         )
@@ -1137,7 +1137,7 @@ class TestSpecRunnerNoDecreaseMode:
             repo_path=tmp_path,
             commit_hash="",
             changed_files=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
         # FakeCommandRunner with allow_unregistered=True returns success by default
@@ -1195,7 +1195,7 @@ class TestSpecRunnerNoDecreaseMode:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(
                 enabled=True,
                 min_percent=None,  # No-decrease mode
@@ -1208,7 +1208,7 @@ class TestSpecRunnerNoDecreaseMode:
             repo_path=tmp_path,
             commit_hash="",
             changed_files=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
         # Create a worktree path for the test output
@@ -1265,7 +1265,7 @@ class TestSpecRunnerNoDecreaseMode:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
         )
@@ -1275,7 +1275,7 @@ class TestSpecRunnerNoDecreaseMode:
             repo_path=tmp_path,
             commit_hash="",
             changed_files=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
         # FakeCommandRunner with allow_unregistered=True returns success by default
@@ -1319,7 +1319,7 @@ class TestSpecRunnerNoDecreaseMode:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(
                 enabled=True,
                 min_percent=70.0,  # Explicit threshold
@@ -1332,7 +1332,7 @@ class TestSpecRunnerNoDecreaseMode:
             repo_path=tmp_path,
             commit_hash="",
             changed_files=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
         # FakeCommandRunner with allow_unregistered=True returns success by default
@@ -1404,7 +1404,7 @@ class TestSpecRunnerBaselineRefresh:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
         )
@@ -1463,7 +1463,7 @@ class TestSpecRunnerBaselineRefresh:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
         )
@@ -1573,7 +1573,7 @@ class TestSpecRunnerBaselineRefresh:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
         )
@@ -1622,7 +1622,7 @@ class TestSpecRunnerBaselineRefresh:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
         )
@@ -1733,7 +1733,7 @@ class TestSpecRunnerBaselineRefresh:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
         )
@@ -1803,7 +1803,7 @@ class TestSpecRunnerBaselineRefresh:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.RUN_LEVEL,
+            scope=ValidationScope.GLOBAL,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
         )
@@ -1937,7 +1937,7 @@ class TestSpecRunnerBaselineRefresh:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.RUN_LEVEL,
+            scope=ValidationScope.GLOBAL,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
         )
@@ -2032,7 +2032,7 @@ class TestSpecRunnerBaselineRefresh:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.RUN_LEVEL,
+            scope=ValidationScope.GLOBAL,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
         )
@@ -2152,7 +2152,7 @@ class TestBaselineCaptureOrder:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
             yaml_coverage_config=yaml_coverage_config,
@@ -2164,7 +2164,7 @@ class TestBaselineCaptureOrder:
             repo_path=tmp_path,
             commit_hash="abc123",
             changed_files=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
         # Track the order of operations
@@ -2259,7 +2259,7 @@ class TestBaselineCaptureOrder:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
         )
@@ -2269,7 +2269,7 @@ class TestBaselineCaptureOrder:
             repo_path=tmp_path,
             commit_hash="",
             changed_files=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
         # Mock worktree with LOWER coverage (70%) - simulating coverage drop
@@ -2712,7 +2712,7 @@ class TestSpecResultBuilder:
 
     These tests verify the result builder handles:
     - Coverage checking when enabled
-    - E2E execution when enabled and run-level
+    - E2E execution when enabled and global
     - Failure result assembly with correct reasons
     - Success result assembly
     """
@@ -2737,7 +2737,7 @@ class TestSpecResultBuilder:
             repo_path=tmp_path,
             commit_hash="",
             changed_files=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
     @pytest.fixture
@@ -2782,7 +2782,7 @@ class TestSpecResultBuilder:
 
         spec = ValidationSpec(
             commands=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=False),
             e2e=E2EConfig(enabled=False),
         )
@@ -2829,7 +2829,7 @@ class TestSpecResultBuilder:
 
         spec = ValidationSpec(
             commands=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=85.0),
             e2e=E2EConfig(enabled=False),
         )
@@ -2875,7 +2875,7 @@ class TestSpecResultBuilder:
 
         spec = ValidationSpec(
             commands=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=85.0),
             e2e=E2EConfig(enabled=False),
         )
@@ -2921,7 +2921,7 @@ class TestSpecResultBuilder:
 
         spec = ValidationSpec(
             commands=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
         )
@@ -2963,7 +2963,7 @@ class TestSpecResultBuilder:
 
         spec = ValidationSpec(
             commands=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=85.0),
             e2e=E2EConfig(enabled=False),
         )
@@ -3010,7 +3010,7 @@ class TestSpecResultBuilder:
 
         spec = ValidationSpec(
             commands=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=80.0),
             e2e=E2EConfig(enabled=False),
             yaml_coverage_config=yaml_coverage_config,
@@ -3044,7 +3044,7 @@ class TestSpecResultBuilder:
             result.coverage_result.failure_reason or ""
         )
 
-    def test_build_e2e_skipped_for_per_issue(
+    def test_build_e2e_skipped_for_per_session(
         self,
         builder: "SpecResultBuilder",
         basic_artifacts: ValidationArtifacts,
@@ -3054,12 +3054,12 @@ class TestSpecResultBuilder:
         command_runner: FakeCommandRunner,
         tmp_path: Path,
     ) -> None:
-        """Test build() skips E2E for per-issue scope."""
+        """Test build() skips E2E for per-session scope."""
         from src.domain.validation.spec_result_builder import ResultBuilderInput
 
         spec = ValidationSpec(
             commands=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=False),
             e2e=E2EConfig(enabled=True),
         )
@@ -3077,7 +3077,7 @@ class TestSpecResultBuilder:
             command_runner=command_runner,
         )
 
-        # For per-issue scope, E2E should not run - we verify by checking
+        # For per-session scope, E2E should not run - we verify by checking
         # result.e2e_result is None
         result = builder.build(input)
 
@@ -3106,7 +3106,7 @@ class TestSpecResultBuilder:
 
         spec = ValidationSpec(
             commands=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
         )

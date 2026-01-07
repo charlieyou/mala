@@ -121,7 +121,7 @@ def setup_workspace(
 
     # Generate unique run ID
     run_id = f"run-{uuid.uuid4().hex[:8]}"
-    issue_id = context.issue_id or "run-level"
+    issue_id = context.issue_id or "global"
 
     # Initialize artifacts
     artifacts = ValidationArtifacts(log_dir=log_dir)

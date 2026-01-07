@@ -8,7 +8,7 @@ Design principles:
 - Protocols use structural typing (typing.Protocol) for flexibility
 - Methods match exactly what the orchestrator actually calls
 - Result types are defined as local Protocol types to avoid import-time dependencies
-- BeadsClient, ReviewRunner, and QualityGate conform to these protocols
+- BeadsClient, ReviewRunner, and EvidenceCheck conform to these protocols
 
 Usage:
     These protocols enable:
@@ -94,14 +94,14 @@ class ValidationSpecProtocol(Protocol):
     """List of validation commands to run."""
 
     scope: Any
-    """The validation scope (per-issue or run-level)."""
+    """The validation scope (per-session or global)."""
 
 
 @runtime_checkable
 class ValidationEvidenceProtocol(Protocol):
     """Protocol for validation evidence from agent runs.
 
-    Matches the shape of quality_gate.ValidationEvidence for structural typing.
+    Matches the shape of evidence_check.ValidationEvidence for structural typing.
     """
 
     commands_ran: dict[Any, bool]
@@ -129,7 +129,7 @@ class ValidationEvidenceProtocol(Protocol):
 class CommitResultProtocol(Protocol):
     """Protocol for commit existence check results.
 
-    Matches the shape of quality_gate.CommitResult for structural typing.
+    Matches the shape of evidence_check.CommitResult for structural typing.
     """
 
     exists: bool
@@ -160,7 +160,7 @@ class IssueResolutionProtocol(Protocol):
 class GateResultProtocol(Protocol):
     """Protocol for quality gate check results.
 
-    Matches the shape of quality_gate.GateResult for structural typing.
+    Matches the shape of evidence_check.GateResult for structural typing.
     """
 
     passed: bool
@@ -795,10 +795,10 @@ class GateChecker(Protocol):
     The orchestrator uses this after each agent attempt to determine if
     the issue was successfully resolved.
 
-    The canonical implementation is QualityGate, which conforms to this
+    The canonical implementation is EvidenceCheck, which conforms to this
     protocol. Test implementations can verify specific conditions for isolation.
 
-    Methods match QualityGate's API exactly so QualityGate conforms to this
+    Methods match EvidenceCheck's API exactly so EvidenceCheck conforms to this
     protocol without adaptation.
     """
 
@@ -1430,7 +1430,7 @@ class MalaEventSink(Protocol):
         Args:
             success_count: Number of issues completed successfully.
             total_count: Total number of issues processed.
-            run_validation_passed: Whether Gate 4 (run-level validation) passed.
+            run_validation_passed: Whether global validation (global validation) passed.
             abort_reason: If run was aborted, the reason string.
         """
         ...
@@ -1544,7 +1544,7 @@ class MalaEventSink(Protocol):
         """Called when a quality gate check begins.
 
         Args:
-            agent_id: Agent ID (None for run-level gate).
+            agent_id: Agent ID (None for global gate).
             attempt: Current attempt number (1-indexed).
             max_attempts: Maximum retry attempts.
             issue_id: Issue being validated (for display).
@@ -1559,7 +1559,7 @@ class MalaEventSink(Protocol):
         """Called when a quality gate passes.
 
         Args:
-            agent_id: Agent ID (None for run-level gate).
+            agent_id: Agent ID (None for global gate).
             issue_id: Issue being validated (for display).
         """
         ...
@@ -1574,7 +1574,7 @@ class MalaEventSink(Protocol):
         """Called when a quality gate fails after all retries.
 
         Args:
-            agent_id: Agent ID (None for run-level gate).
+            agent_id: Agent ID (None for global gate).
             attempt: Final attempt number.
             max_attempts: Maximum retry attempts.
             issue_id: Issue being validated (for display).
@@ -1611,7 +1611,7 @@ class MalaEventSink(Protocol):
         complementing the simpler on_gate_passed/on_gate_failed events.
 
         Args:
-            agent_id: Agent ID (None for run-level gate).
+            agent_id: Agent ID (None for global gate).
             passed: Whether the gate passed.
             failure_reasons: List of failure reasons (if failed).
             issue_id: Issue being validated (for display).
@@ -1769,7 +1769,7 @@ class MalaEventSink(Protocol):
         agent_id: str,
         issue_id: str | None = None,
     ) -> None:
-        """Called when per-issue validation begins.
+        """Called when per-session validation begins.
 
         Args:
             agent_id: Agent being validated.
@@ -1783,7 +1783,7 @@ class MalaEventSink(Protocol):
         passed: bool,
         issue_id: str | None = None,
     ) -> None:
-        """Called when per-issue validation completes.
+        """Called when per-session validation completes.
 
         Args:
             agent_id: Agent that was validated.
@@ -1901,8 +1901,8 @@ class MalaEventSink(Protocol):
         """
         ...
 
-    def on_run_level_validation_disabled(self) -> None:
-        """Called when run-level validation is disabled."""
+    def on_global_validation_disabled(self) -> None:
+        """Called when global validation is disabled."""
         ...
 
     def on_abort_requested(self, reason: str) -> None:

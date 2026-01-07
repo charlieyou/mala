@@ -17,7 +17,7 @@ from src.domain.lifecycle import (
     LifecycleContext,
     LifecycleState,
 )
-from src.domain.quality_gate import GateResult
+from src.domain.evidence_check import GateResult
 from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,

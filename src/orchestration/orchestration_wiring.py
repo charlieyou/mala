@@ -73,7 +73,7 @@ def build_gate_runner(
         disable_validations=pipeline.disabled_validations,
     )
     gate_runner = GateRunner(
-        gate_checker=runtime.quality_gate,
+        gate_checker=runtime.evidence_check,
         repo_path=pipeline.repo_path,
         config=config,
     )
@@ -91,7 +91,7 @@ def build_review_runner(runtime: RuntimeDeps, pipeline: PipelineConfig) -> Revie
     return ReviewRunner(
         code_reviewer=runtime.code_reviewer,
         config=config,
-        gate_checker=runtime.quality_gate,
+        gate_checker=runtime.evidence_check,
     )
 
 
@@ -112,7 +112,7 @@ def build_run_coordinator(
     )
     return RunCoordinator(
         config=config,
-        gate_checker=runtime.quality_gate,
+        gate_checker=runtime.evidence_check,
         command_runner=runtime.command_runner,
         env_config=runtime.env_config,
         lock_manager=runtime.lock_manager,
@@ -209,7 +209,7 @@ def build_session_callback_factory(
     async_gate_runner: AsyncGateRunner,
     review_runner: ReviewRunner,
     log_provider_getter: Callable,
-    quality_gate_getter: Callable,
+    evidence_check_getter: Callable,
     on_session_log_path: Callable[[str, Path], None],
     on_review_log_path: Callable[[str, str], None],
 ) -> SessionCallbackFactory:
@@ -219,11 +219,11 @@ def build_session_callback_factory(
         review_runner=review_runner,
         log_provider=log_provider_getter,
         event_sink=lambda: runtime.event_sink,
-        quality_gate=quality_gate_getter,
+        evidence_check=evidence_check_getter,
         repo_path=pipeline.repo_path,
         on_session_log_path=on_session_log_path,
         on_review_log_path=on_review_log_path,
-        get_per_issue_spec=lambda: async_gate_runner.per_issue_spec,
+        get_per_session_spec=lambda: async_gate_runner.per_session_spec,
         is_verbose=is_verbose_enabled,
     )
 

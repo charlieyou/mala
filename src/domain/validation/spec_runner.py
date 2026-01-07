@@ -66,7 +66,7 @@ class SpecValidationRunner:
     """Runs validation according to a ValidationSpec.
 
     This runner supports:
-    - Scope-aware validation (per-issue vs run-level)
+    - Scope-aware validation (per-session vs global)
     - Per-command mutex settings
     - Integrated worktree, coverage, and E2E handling
     - Artifact tracking

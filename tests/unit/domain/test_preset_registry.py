@@ -194,15 +194,15 @@ class TestPresetRegistryProhibitions:
         assert "int" in error_msg
 
     @pytest.mark.unit
-    def test_preset_run_level_commands_unknown_keys_raises_config_error(
+    def test_preset_global_validation_commands_unknown_keys_raises_config_error(
         self, registry: PresetRegistry, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Presets cannot define custom commands in run_level_commands."""
+        """Presets cannot define custom commands in global_validation_commands."""
 
         def mock_load_preset_yaml(self: PresetRegistry, name: str) -> dict:
             return {
                 "commands": {"test": "echo test"},
-                "run_level_commands": {
+                "global_validation_commands": {
                     "lint": "echo lint",
                     "my_custom": "echo custom",  # Unknown key
                 },
@@ -214,17 +214,17 @@ class TestPresetRegistryProhibitions:
             registry.get("python-uv")
 
         error_msg = str(exc_info.value)
-        assert "Preset run_level_commands contain unknown keys:" in error_msg
+        assert "Preset global_validation_commands contain unknown keys:" in error_msg
         assert "my_custom" in error_msg
 
     @pytest.mark.unit
-    def test_preset_run_level_commands_non_dict_raises_config_error(
+    def test_preset_global_validation_commands_non_dict_raises_config_error(
         self, registry: PresetRegistry, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Preset run_level_commands section must be a dict."""
+        """Preset global_validation_commands section must be a dict."""
 
         def mock_load_preset_yaml(self: PresetRegistry, name: str) -> dict:
-            return {"run_level_commands": "echo test"}
+            return {"global_validation_commands": "echo test"}
 
         monkeypatch.setattr(PresetRegistry, "_load_preset_yaml", mock_load_preset_yaml)
 
@@ -232,17 +232,17 @@ class TestPresetRegistryProhibitions:
             registry.get("python-uv")
 
         error_msg = str(exc_info.value)
-        assert "Preset run_level_commands must be an object" in error_msg
+        assert "Preset global_validation_commands must be an object" in error_msg
         assert "str" in error_msg
 
     @pytest.mark.unit
-    def test_preset_run_level_commands_non_string_keys_raises_config_error(
+    def test_preset_global_validation_commands_non_string_keys_raises_config_error(
         self, registry: PresetRegistry, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Preset run_level_commands keys must be strings."""
+        """Preset global_validation_commands keys must be strings."""
 
         def mock_load_preset_yaml(self: PresetRegistry, name: str) -> dict:
-            return {"run_level_commands": {42: "echo test"}}
+            return {"global_validation_commands": {42: "echo test"}}
 
         monkeypatch.setattr(PresetRegistry, "_load_preset_yaml", mock_load_preset_yaml)
 
@@ -250,23 +250,23 @@ class TestPresetRegistryProhibitions:
             registry.get("python-uv")
 
         error_msg = str(exc_info.value)
-        assert "Preset run_level_commands keys must be strings" in error_msg
+        assert "Preset global_validation_commands keys must be strings" in error_msg
         assert "int" in error_msg
 
     @pytest.mark.unit
-    def test_preset_with_valid_run_level_commands_loads_successfully(
+    def test_preset_with_valid_global_validation_commands_loads_successfully(
         self, registry: PresetRegistry, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Presets with valid run_level_commands load without error."""
+        """Presets with valid global_validation_commands load without error."""
 
         def mock_load_preset_yaml(self: PresetRegistry, name: str) -> dict:
             return {
                 "commands": {"test": "echo test"},
-                "run_level_commands": {"lint": "echo lint"},
+                "global_validation_commands": {"lint": "echo lint"},
             }
 
         monkeypatch.setattr(PresetRegistry, "_load_preset_yaml", mock_load_preset_yaml)
 
         # Should not raise
         config = registry.get("python-uv")
-        assert config.run_level_commands.lint is not None
+        assert config.global_validation_commands.lint is not None

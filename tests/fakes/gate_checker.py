@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from src.domain.quality_gate import CommitResult, GateResult, ValidationEvidence
+from src.domain.evidence_check import CommitResult, GateResult, ValidationEvidence
 
 if TYPE_CHECKING:
     from pathlib import Path

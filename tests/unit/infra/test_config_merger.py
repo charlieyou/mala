@@ -547,7 +547,7 @@ class TestFieldsSetTracking:
 
         assert "preset" in config._fields_set
         assert "commands" in config._fields_set
-        assert "run_level_commands" not in config._fields_set
+        assert "global_validation_commands" not in config._fields_set
         assert "code_patterns" in config._fields_set
         assert "coverage" not in config._fields_set
         assert "config_files" not in config._fields_set
@@ -564,16 +564,16 @@ class TestFieldsSetTracking:
         assert "coverage" in config._fields_set
         assert config.coverage is None
 
-    def test_from_dict_tracks_run_level_commands(self) -> None:
-        """from_dict tracks run_level_commands when provided."""
+    def test_from_dict_tracks_global_validation_commands(self) -> None:
+        """from_dict tracks global_validation_commands when provided."""
         config = ValidationConfig.from_dict(
             {
-                "run_level_commands": {"test": "pytest -m integration"},
+                "global_validation_commands": {"test": "pytest -m integration"},
             }
         )
 
-        assert "run_level_commands" in config._fields_set
-        assert config.run_level_commands.test is not None
+        assert "global_validation_commands" in config._fields_set
+        assert config.global_validation_commands.test is not None
 
     def test_from_dict_tracks_empty_list_fields(self) -> None:
         """from_dict tracks fields explicitly set to empty list."""
@@ -787,48 +787,48 @@ class TestExplicitCommandsNullOrEmptyInheritsPreset:
         assert result.coverage.threshold == 85.0
 
 
-class TestExplicitRunLevelCommandsNullOrEmpty:
-    """Tests for explicitly clearing run_level_commands with null or empty object.
+class TestExplicitGlobalCommandsNullOrEmpty:
+    """Tests for explicitly clearing global_validation_commands with null or empty object.
 
-    When a user sets run_level_commands: null or run_level_commands: {} to clear
-    preset run-level overrides, the preset overrides should be removed.
+    When a user sets global_validation_commands: null or global_validation_commands: {} to clear
+    preset global overrides, the preset overrides should be removed.
     """
 
-    def test_explicit_run_level_commands_null_clears_preset_overrides(self) -> None:
-        """Setting run_level_commands: null clears preset run-level overrides."""
+    def test_explicit_global_validation_commands_null_clears_preset_overrides(self) -> None:
+        """Setting global_validation_commands: null clears preset global overrides."""
         preset = ValidationConfig(
             commands=CommandsConfig(
                 test=CommandConfig(command="pytest"),
             ),
-            run_level_commands=CommandsConfig(
+            global_validation_commands=CommandsConfig(
                 test=CommandConfig(command="pytest -m integration"),
                 lint=CommandConfig(command="ruff check . --select=E"),
             ),
         )
-        # User explicitly sets run_level_commands to null to clear overrides
-        user = ValidationConfig.from_dict({"run_level_commands": None})
+        # User explicitly sets global_validation_commands to null to clear overrides
+        user = ValidationConfig.from_dict({"global_validation_commands": None})
         result = merge_configs(preset, user)
 
         # Commands should be inherited from preset
         assert result.commands.test is not None
         assert result.commands.test.command == "pytest"
-        # run_level_commands should be cleared (empty CommandsConfig)
-        assert result.run_level_commands.test is None
-        assert result.run_level_commands.lint is None
+        # global_validation_commands should be cleared (empty CommandsConfig)
+        assert result.global_validation_commands.test is None
+        assert result.global_validation_commands.lint is None
 
-    def test_explicit_run_level_commands_empty_clears_preset_overrides(self) -> None:
-        """Setting run_level_commands: {} clears preset run-level overrides."""
+    def test_explicit_global_validation_commands_empty_clears_preset_overrides(self) -> None:
+        """Setting global_validation_commands: {} clears preset global overrides."""
         preset = ValidationConfig(
             commands=CommandsConfig(
                 test=CommandConfig(command="pytest"),
                 lint=CommandConfig(command="ruff check ."),
             ),
-            run_level_commands=CommandsConfig(
+            global_validation_commands=CommandsConfig(
                 test=CommandConfig(command="pytest -v --tb=short"),
             ),
         )
-        # User explicitly sets run_level_commands to empty object to clear overrides
-        user = ValidationConfig.from_dict({"run_level_commands": {}})
+        # User explicitly sets global_validation_commands to empty object to clear overrides
+        user = ValidationConfig.from_dict({"global_validation_commands": {}})
         result = merge_configs(preset, user)
 
         # Commands should be inherited from preset
@@ -836,48 +836,48 @@ class TestExplicitRunLevelCommandsNullOrEmpty:
         assert result.commands.test.command == "pytest"
         assert result.commands.lint is not None
         assert result.commands.lint.command == "ruff check ."
-        # run_level_commands should be cleared
-        assert result.run_level_commands.test is None
+        # global_validation_commands should be cleared
+        assert result.global_validation_commands.test is None
 
-    def test_run_level_commands_with_specific_override_still_inherits_others(
+    def test_global_validation_commands_with_specific_override_still_inherits_others(
         self,
     ) -> None:
-        """run_level_commands with specific fields still inherits other run-level overrides.
+        """global_validation_commands with specific fields still inherits other global overrides.
 
-        Unlike null/empty which clears ALL run-level overrides, specifying some
-        fields should still inherit unspecified run-level overrides from preset.
+        Unlike null/empty which clears ALL global overrides, specifying some
+        fields should still inherit unspecified global overrides from preset.
         """
         preset = ValidationConfig(
             commands=CommandsConfig(
                 test=CommandConfig(command="pytest"),
                 lint=CommandConfig(command="ruff check ."),
             ),
-            run_level_commands=CommandsConfig(
+            global_validation_commands=CommandsConfig(
                 test=CommandConfig(command="pytest -m integration"),
                 lint=CommandConfig(command="ruff check . --select=E"),
             ),
         )
         # User specifies only test override, lint override should inherit
-        user = ValidationConfig.from_dict({"run_level_commands": {"test": "pytest -v"}})
+        user = ValidationConfig.from_dict({"global_validation_commands": {"test": "pytest -v"}})
         result = merge_configs(preset, user)
 
         # Commands inherited
         assert result.commands.test is not None
         assert result.commands.test.command == "pytest"
-        # run_level_commands: test overridden, lint inherited
-        assert result.run_level_commands.test is not None
-        assert result.run_level_commands.test.command == "pytest -v"
-        assert result.run_level_commands.lint is not None
-        assert result.run_level_commands.lint.command == "ruff check . --select=E"
+        # global_validation_commands: test overridden, lint inherited
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest -v"
+        assert result.global_validation_commands.lint is not None
+        assert result.global_validation_commands.lint.command == "ruff check . --select=E"
 
-    def test_explicit_run_level_commands_null_with_other_overrides(self) -> None:
-        """run_level_commands: null can coexist with other user overrides."""
+    def test_explicit_global_validation_commands_null_with_other_overrides(self) -> None:
+        """global_validation_commands: null can coexist with other user overrides."""
         preset = ValidationConfig(
             commands=CommandsConfig(
                 test=CommandConfig(command="pytest"),
                 lint=CommandConfig(command="ruff check ."),
             ),
-            run_level_commands=CommandsConfig(
+            global_validation_commands=CommandsConfig(
                 test=CommandConfig(command="pytest -m integration"),
             ),
             code_patterns=("**/*.py",),
@@ -885,7 +885,7 @@ class TestExplicitRunLevelCommandsNullOrEmpty:
         user = ValidationConfig.from_dict(
             {
                 "commands": {"test": "pytest -v"},  # Override test
-                "run_level_commands": None,  # Clear run-level overrides
+                "global_validation_commands": None,  # Clear global overrides
                 "code_patterns": ["src/**/*.py"],  # Override patterns
             }
         )
@@ -897,31 +897,31 @@ class TestExplicitRunLevelCommandsNullOrEmpty:
         # lint command inherited
         assert result.commands.lint is not None
         assert result.commands.lint.command == "ruff check ."
-        # run_level_commands cleared
-        assert result.run_level_commands.test is None
+        # global_validation_commands cleared
+        assert result.global_validation_commands.test is None
         # patterns overridden
         assert result.code_patterns == ("src/**/*.py",)
 
-    def test_omitted_run_level_commands_inherits_preset(self) -> None:
-        """When run_level_commands is omitted, preset run-level overrides are inherited."""
+    def test_omitted_global_validation_commands_inherits_preset(self) -> None:
+        """When global_validation_commands is omitted, preset global overrides are inherited."""
         preset = ValidationConfig(
             commands=CommandsConfig(
                 test=CommandConfig(command="pytest"),
             ),
-            run_level_commands=CommandsConfig(
+            global_validation_commands=CommandsConfig(
                 test=CommandConfig(command="pytest -m integration"),
             ),
         )
-        # User doesn't mention run_level_commands at all
+        # User doesn't mention global_validation_commands at all
         user = ValidationConfig.from_dict({"commands": {"test": "pytest -v"}})
         result = merge_configs(preset, user)
 
         # test command overridden
         assert result.commands.test is not None
         assert result.commands.test.command == "pytest -v"
-        # run_level_commands inherited from preset
-        assert result.run_level_commands.test is not None
-        assert result.run_level_commands.test.command == "pytest -m integration"
+        # global_validation_commands inherited from preset
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest -m integration"
 
 
 class TestProgrammaticConfigOverrides:
@@ -1118,8 +1118,8 @@ class TestProgrammaticConfigOverrides:
         assert result.coverage.threshold == 85.0
 
 
-class TestRunLevelCommandsFieldsSetPreservation:
-    """Tests for _fields_set preservation in run_level_commands after merge.
+class TestGlobalCommandsFieldsSetPreservation:
+    """Tests for _fields_set preservation in global_validation_commands after merge.
 
     These tests verify that after merge_configs:
     1. Fields explicitly set by user appear in merged _fields_set
@@ -1127,12 +1127,12 @@ class TestRunLevelCommandsFieldsSetPreservation:
     3. Explicit null values correctly disable preset values
 
     This is critical for build_validation_spec to correctly detect whether
-    run_level_commands.test was explicitly set by the user (triggering
-    coverage-only-at-run-level behavior) vs inherited from preset.
+    global_validation_commands.test was explicitly set by the user (triggering
+    coverage-only-at-global behavior) vs inherited from preset.
     """
 
-    def test_user_run_level_test_in_merged_fields_set(self) -> None:
-        """When user sets run_level_commands.test, it appears in merged _fields_set."""
+    def test_user_global_test_in_merged_fields_set(self) -> None:
+        """When user sets global_validation_commands.test, it appears in merged _fields_set."""
         preset = ValidationConfig(
             commands=CommandsConfig(
                 test=CommandConfig(command="pytest"),
@@ -1141,52 +1141,52 @@ class TestRunLevelCommandsFieldsSetPreservation:
         user = ValidationConfig.from_dict(
             {
                 "preset": "python-uv",
-                "run_level_commands": {
+                "global_validation_commands": {
                     "test": "pytest --cov=src --cov-report=xml",
                 },
             }
         )
         result = merge_configs(preset, user)
 
-        # User's run_level_commands.test should be in _fields_set
-        assert "test" in result.run_level_commands._fields_set
-        assert result.run_level_commands.test is not None
+        # User's global_validation_commands.test should be in _fields_set
+        assert "test" in result.global_validation_commands._fields_set
+        assert result.global_validation_commands.test is not None
         assert (
-            result.run_level_commands.test.command
+            result.global_validation_commands.test.command
             == "pytest --cov=src --cov-report=xml"
         )
 
-    def test_preset_run_level_test_not_in_merged_fields_set(self) -> None:
-        """When preset sets run_level_commands.test but user doesn't, it's NOT in merged _fields_set."""
+    def test_preset_global_test_not_in_merged_fields_set(self) -> None:
+        """When preset sets global_validation_commands.test but user doesn't, it's NOT in merged _fields_set."""
         preset = ValidationConfig.from_dict(
             {
                 "commands": {
                     "test": "pytest",
                 },
-                "run_level_commands": {
+                "global_validation_commands": {
                     "test": "pytest -m integration",
                 },
             }
         )
-        # User doesn't set run_level_commands
+        # User doesn't set global_validation_commands
         user = ValidationConfig.from_dict({"preset": "some-preset"})
 
         result = merge_configs(preset, user)
 
-        # run_level_commands.test is inherited from preset but NOT in _fields_set
-        assert result.run_level_commands.test is not None
-        assert result.run_level_commands.test.command == "pytest -m integration"
-        # _fields_set should be empty because user didn't set any run_level_commands
-        assert "test" not in result.run_level_commands._fields_set
+        # global_validation_commands.test is inherited from preset but NOT in _fields_set
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest -m integration"
+        # _fields_set should be empty because user didn't set any global_validation_commands
+        assert "test" not in result.global_validation_commands._fields_set
 
-    def test_user_run_level_null_disables_preset_value(self) -> None:
-        """When user sets run_level_commands.test: null, it disables preset's value."""
+    def test_user_global_null_disables_preset_value(self) -> None:
+        """When user sets global_validation_commands.test: null, it disables preset's value."""
         preset = ValidationConfig.from_dict(
             {
                 "commands": {
                     "test": "pytest",
                 },
-                "run_level_commands": {
+                "global_validation_commands": {
                     "test": "pytest -m integration",
                 },
             }
@@ -1195,7 +1195,7 @@ class TestRunLevelCommandsFieldsSetPreservation:
         user = ValidationConfig.from_dict(
             {
                 "preset": "some-preset",
-                "run_level_commands": {
+                "global_validation_commands": {
                     "test": None,
                 },
             }
@@ -1204,19 +1204,19 @@ class TestRunLevelCommandsFieldsSetPreservation:
         result = merge_configs(preset, user)
 
         # test should be None (user's null overrides preset)
-        assert result.run_level_commands.test is None
+        assert result.global_validation_commands.test is None
         # test should still be in _fields_set (user explicitly set it to null)
-        assert "test" in result.run_level_commands._fields_set
+        assert "test" in result.global_validation_commands._fields_set
 
-    def test_mixed_user_and_preset_run_level_commands(self) -> None:
-        """User overrides some run_level commands, inherits others."""
+    def test_mixed_user_and_preset_global_validation_commands(self) -> None:
+        """User overrides some global commands, inherits others."""
         preset = ValidationConfig.from_dict(
             {
                 "commands": {
                     "test": "pytest",
                     "lint": "ruff check .",
                 },
-                "run_level_commands": {
+                "global_validation_commands": {
                     "test": "pytest -m integration",
                     "lint": "ruff check . --select=E",
                 },
@@ -1226,7 +1226,7 @@ class TestRunLevelCommandsFieldsSetPreservation:
         user = ValidationConfig.from_dict(
             {
                 "preset": "some-preset",
-                "run_level_commands": {
+                "global_validation_commands": {
                     "test": "pytest --cov=src",
                 },
             }
@@ -1235,71 +1235,71 @@ class TestRunLevelCommandsFieldsSetPreservation:
         result = merge_configs(preset, user)
 
         # test is overridden by user
-        assert result.run_level_commands.test is not None
-        assert result.run_level_commands.test.command == "pytest --cov=src"
-        assert "test" in result.run_level_commands._fields_set
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest --cov=src"
+        assert "test" in result.global_validation_commands._fields_set
 
         # lint is inherited from preset
-        assert result.run_level_commands.lint is not None
-        assert result.run_level_commands.lint.command == "ruff check . --select=E"
+        assert result.global_validation_commands.lint is not None
+        assert result.global_validation_commands.lint.command == "ruff check . --select=E"
         # lint should NOT be in _fields_set since user didn't set it
-        assert "lint" not in result.run_level_commands._fields_set
+        assert "lint" not in result.global_validation_commands._fields_set
 
-    def test_empty_run_level_commands_inherits_preset(self) -> None:
-        """Empty run_level_commands ({}) inherits all preset run_level_commands."""
+    def test_empty_global_validation_commands_inherits_preset(self) -> None:
+        """Empty global_validation_commands ({}) inherits all preset global_validation_commands."""
         preset = ValidationConfig.from_dict(
             {
                 "commands": {
                     "test": "pytest",
                 },
-                "run_level_commands": {
+                "global_validation_commands": {
                     "test": "pytest -m integration",
                     "lint": "ruff check . --select=E",
                 },
             }
         )
-        # User sets run_level_commands to empty object
+        # User sets global_validation_commands to empty object
         user = ValidationConfig.from_dict(
             {
                 "preset": "some-preset",
-                "run_level_commands": {},
+                "global_validation_commands": {},
             }
         )
 
         result = merge_configs(preset, user)
 
-        # Empty {} clears run_level_commands (due to clear_on_explicit_empty=True)
-        assert result.run_level_commands.test is None
-        assert result.run_level_commands.lint is None
+        # Empty {} clears global_validation_commands (due to clear_on_explicit_empty=True)
+        assert result.global_validation_commands.test is None
+        assert result.global_validation_commands.lint is None
         # _fields_set should be empty
-        assert result.run_level_commands._fields_set == frozenset()
+        assert result.global_validation_commands._fields_set == frozenset()
 
-    def test_null_run_level_commands_clears_preset(self) -> None:
-        """run_level_commands: null clears all preset run_level_commands."""
+    def test_null_global_validation_commands_clears_preset(self) -> None:
+        """global_validation_commands: null clears all preset global_validation_commands."""
         preset = ValidationConfig.from_dict(
             {
                 "commands": {
                     "test": "pytest",
                 },
-                "run_level_commands": {
+                "global_validation_commands": {
                     "test": "pytest -m integration",
                 },
             }
         )
-        # User sets run_level_commands to null
+        # User sets global_validation_commands to null
         user = ValidationConfig.from_dict(
             {
                 "preset": "some-preset",
-                "run_level_commands": None,
+                "global_validation_commands": None,
             }
         )
 
         result = merge_configs(preset, user)
 
-        # null clears run_level_commands (due to clear_on_explicit_empty=True)
-        assert result.run_level_commands.test is None
+        # null clears global_validation_commands (due to clear_on_explicit_empty=True)
+        assert result.global_validation_commands.test is None
         # _fields_set should be empty
-        assert result.run_level_commands._fields_set == frozenset()
+        assert result.global_validation_commands._fields_set == frozenset()
 
 
 class TestMergeConfigsCustomCommands:
@@ -1383,14 +1383,14 @@ class TestMergeConfigsCustomCommands:
 class TestClearCustomsPresetMerge:
     """Tests for _clear_customs with preset merging.
 
-    When _clear_customs: true is set in run_level_commands, it should clear
-    custom commands but NOT clear the preset's built-in run-level commands.
+    When _clear_customs: true is set in global_validation_commands, it should clear
+    custom commands but NOT clear the preset's built-in global commands.
     """
 
-    def test_clear_customs_does_not_clear_preset_run_level_commands(self) -> None:
-        """_clear_customs: true should not clear preset run_level_commands builtins.
+    def test_clear_customs_does_not_clear_preset_global_validation_commands(self) -> None:
+        """_clear_customs: true should not clear preset global_validation_commands builtins.
 
-        Regression test: When user sets run_level_commands: {_clear_customs: true},
+        Regression test: When user sets global_validation_commands: {_clear_customs: true},
         the custom_override_mode is CLEAR but _fields_set is empty. The merger
         must NOT treat this as an "explicit empty" that clears preset builtins.
         """
@@ -1398,103 +1398,103 @@ class TestClearCustomsPresetMerge:
             commands=CommandsConfig(
                 test=CommandConfig(command="pytest"),
             ),
-            run_level_commands=CommandsConfig(
+            global_validation_commands=CommandsConfig(
                 test=CommandConfig(command="pytest -m integration"),
                 lint=CommandConfig(command="ruff check . --select=E"),
             ),
         )
         # User sets _clear_customs: true - only wants to clear customs, not builtins
         user = ValidationConfig(
-            run_level_commands=CommandsConfig(
+            global_validation_commands=CommandsConfig(
                 custom_override_mode=CustomOverrideMode.CLEAR,
             ),
-            _fields_set=frozenset({"run_level_commands"}),
+            _fields_set=frozenset({"global_validation_commands"}),
         )
 
         result = merge_configs(preset, user)
 
-        # Preset run_level_commands should be INHERITED, not cleared
-        assert result.run_level_commands.test is not None
-        assert result.run_level_commands.test.command == "pytest -m integration"
-        assert result.run_level_commands.lint is not None
-        assert result.run_level_commands.lint.command == "ruff check . --select=E"
+        # Preset global_validation_commands should be INHERITED, not cleared
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest -m integration"
+        assert result.global_validation_commands.lint is not None
+        assert result.global_validation_commands.lint.command == "ruff check . --select=E"
         # But custom_override_mode should be CLEAR
         assert (
-            result.run_level_commands.custom_override_mode == CustomOverrideMode.CLEAR
+            result.global_validation_commands.custom_override_mode == CustomOverrideMode.CLEAR
         )
 
-    def test_only_custom_commands_does_not_clear_preset_run_level(self) -> None:
-        """Run-level with only custom keys (no built-ins) should NOT clear preset.
+    def test_only_custom_commands_does_not_clear_preset_global(self) -> None:
+        """Global with only custom keys (no built-ins) should NOT clear preset.
 
-        When user sets run_level_commands with only custom_commands (no built-in
+        When user sets global_validation_commands with only custom_commands (no built-in
         fields set), _fields_set is empty but this should NOT be treated as
-        "explicitly empty" that clears preset run-level built-ins.
+        "explicitly empty" that clears preset global built-ins.
         """
         preset = ValidationConfig(
             commands=CommandsConfig(
                 test=CommandConfig(command="pytest"),
             ),
-            run_level_commands=CommandsConfig(
+            global_validation_commands=CommandsConfig(
                 test=CommandConfig(command="pytest -m integration"),
                 lint=CommandConfig(command="ruff check . --select=E"),
             ),
         )
-        # User sets run_level_commands with only custom commands, no built-ins
+        # User sets global_validation_commands with only custom commands, no built-ins
         user = ValidationConfig(
-            run_level_commands=CommandsConfig(
+            global_validation_commands=CommandsConfig(
                 custom_commands={
                     "mycheck": CustomCommandConfig(command="mycheck run"),
                 },
                 custom_override_mode=CustomOverrideMode.INHERIT,
                 _fields_set=frozenset(),  # No built-in fields set
             ),
-            _fields_set=frozenset({"run_level_commands"}),
+            _fields_set=frozenset({"global_validation_commands"}),
         )
 
         result = merge_configs(preset, user)
 
-        # Preset run_level_commands should be INHERITED, not cleared
-        assert result.run_level_commands.test is not None
-        assert result.run_level_commands.test.command == "pytest -m integration"
-        assert result.run_level_commands.lint is not None
-        assert result.run_level_commands.lint.command == "ruff check . --select=E"
+        # Preset global_validation_commands should be INHERITED, not cleared
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest -m integration"
+        assert result.global_validation_commands.lint is not None
+        assert result.global_validation_commands.lint.command == "ruff check . --select=E"
         # User's custom_commands should be preserved
-        assert "mycheck" in result.run_level_commands.custom_commands
+        assert "mycheck" in result.global_validation_commands.custom_commands
         assert (
-            result.run_level_commands.custom_commands["mycheck"].command
+            result.global_validation_commands.custom_commands["mycheck"].command
             == "mycheck run"
         )
 
-    def test_truly_empty_run_level_still_clears_preset(self) -> None:
-        """Run-level with {} (truly empty) should still clear preset overrides.
+    def test_truly_empty_global_still_clears_preset(self) -> None:
+        """Global with {} (truly empty) should still clear preset overrides.
 
-        When user sets run_level_commands: {} (no built-ins, no customs, mode=INHERIT),
-        this should clear all preset run-level overrides.
+        When user sets global_validation_commands: {} (no built-ins, no customs, mode=INHERIT),
+        this should clear all preset global overrides.
         """
         preset = ValidationConfig(
             commands=CommandsConfig(
                 test=CommandConfig(command="pytest"),
             ),
-            run_level_commands=CommandsConfig(
+            global_validation_commands=CommandsConfig(
                 test=CommandConfig(command="pytest -m integration"),
                 lint=CommandConfig(command="ruff check . --select=E"),
             ),
         )
         # Truly empty: no built-ins, no customs, mode=INHERIT
         user = ValidationConfig(
-            run_level_commands=CommandsConfig(
+            global_validation_commands=CommandsConfig(
                 custom_commands={},
                 custom_override_mode=CustomOverrideMode.INHERIT,
                 _fields_set=frozenset(),
             ),
-            _fields_set=frozenset({"run_level_commands"}),
+            _fields_set=frozenset({"global_validation_commands"}),
         )
 
         result = merge_configs(preset, user)
 
-        # run_level_commands should be cleared (empty)
-        assert result.run_level_commands.test is None
-        assert result.run_level_commands.lint is None
+        # global_validation_commands should be cleared (empty)
+        assert result.global_validation_commands.test is None
+        assert result.global_validation_commands.lint is None
         # Commands at base level should still be inherited
         assert result.commands.test is not None
         assert result.commands.test.command == "pytest"

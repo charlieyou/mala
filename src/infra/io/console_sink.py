@@ -422,8 +422,8 @@ class ConsoleEventSink(BaseEventSink):
     def on_run_metadata_saved(self, path: str) -> None:
         log("◦", f"Run metadata saved to {path}", agent_id="run")
 
-    def on_run_level_validation_disabled(self) -> None:
-        log_verbose("◦", "Run-level validation disabled", agent_id="run")
+    def on_global_validation_disabled(self) -> None:
+        log_verbose("◦", "Global validation disabled", agent_id="run")
 
     def on_abort_requested(self, reason: str) -> None:
         log("⚠", f"{Colors.YELLOW}ABORT {reason}{Colors.RESET}", agent_id="run")

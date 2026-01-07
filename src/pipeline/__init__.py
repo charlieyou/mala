@@ -9,7 +9,7 @@ Modules:
     epic_verification_coordinator: Epic closure verification with retry loop
     gate_runner: Quality gate checking with retry/fixer logic
     issue_execution_coordinator: Main loop coordination for issue processing
-    run_coordinator: Run-level coordination and validation
+    run_coordinator: Global coordination and validation
 """
 
 from src.pipeline.agent_session_runner import (
@@ -27,8 +27,8 @@ from src.pipeline.epic_verification_coordinator import (
 from src.pipeline.gate_runner import (
     GateRunner,
     GateRunnerConfig,
-    PerIssueGateInput,
-    PerIssueGateOutput,
+    PerSessionGateInput,
+    PerSessionGateOutput,
 )
 from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
@@ -42,10 +42,10 @@ from src.pipeline.issue_finalizer import (
     IssueFinalizer,
 )
 from src.pipeline.run_coordinator import (
+    GlobalValidationInput,
+    GlobalValidationOutput,
     RunCoordinator,
     RunCoordinatorConfig,
-    RunLevelValidationInput,
-    RunLevelValidationOutput,
     SpecResultBuilder,
 )
 from src.pipeline.session_callback_factory import SessionCallbackFactory
@@ -61,18 +61,18 @@ __all__ = [
     "EpicVerificationCoordinator",
     "GateRunner",
     "GateRunnerConfig",
+    "GlobalValidationInput",
+    "GlobalValidationOutput",
     "IssueExecutionCoordinator",
     "IssueFinalizeCallbacks",
     "IssueFinalizeConfig",
     "IssueFinalizeInput",
     "IssueFinalizeOutput",
     "IssueFinalizer",
-    "PerIssueGateInput",
-    "PerIssueGateOutput",
+    "PerSessionGateInput",
+    "PerSessionGateOutput",
     "RunCoordinator",
     "RunCoordinatorConfig",
-    "RunLevelValidationInput",
-    "RunLevelValidationOutput",
     "SessionCallbackFactory",
     "SessionCallbacks",
     "SpecResultBuilder",

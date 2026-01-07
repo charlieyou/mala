@@ -74,7 +74,7 @@ def basic_spec() -> ValidationSpec:
                 kind=CommandKind.TEST,
             ),
         ],
-        scope=ValidationScope.PER_ISSUE,
+        scope=ValidationScope.PER_SESSION,
         coverage=CoverageConfig(enabled=False),
         e2e=E2EConfig(enabled=False),
     )
@@ -88,7 +88,7 @@ def context_in_place(tmp_repo: Path) -> ValidationContext:
         repo_path=tmp_repo,
         commit_hash="",  # Empty = validate in place
         changed_files=["src/test.py"],
-        scope=ValidationScope.PER_ISSUE,
+        scope=ValidationScope.PER_SESSION,
     )
 
 
@@ -100,7 +100,7 @@ def context_with_commit(tmp_repo: Path) -> ValidationContext:
         repo_path=tmp_repo,
         commit_hash="abc123",
         changed_files=["src/test.py"],
-        scope=ValidationScope.PER_ISSUE,
+        scope=ValidationScope.PER_SESSION,
     )
 
 
@@ -337,7 +337,7 @@ class TestSetupWorkspaceBaseline:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
             yaml_coverage_config=yaml_coverage_config,
@@ -396,7 +396,7 @@ class TestSetupWorkspaceBaseline:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=80.0),
             e2e=E2EConfig(enabled=False),
         )
@@ -471,7 +471,7 @@ class TestSetupWorkspaceErrors:
                     kind=CommandKind.TEST,
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
             yaml_coverage_config=yaml_coverage_config,

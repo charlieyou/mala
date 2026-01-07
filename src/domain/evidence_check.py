@@ -46,15 +46,15 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CommitResult",
+    "EvidenceCheck",
     "GateResult",
-    "QualityGate",
     "ValidationEvidence",
 ]
 
 # Command kinds that should not be required by the quality gate.
 # SETUP commands like `uv sync` are useful for local setup, but should not
 # block gate passing if omitted or failed.
-QUALITY_GATE_IGNORED_KINDS: set[CommandKind] = {CommandKind.SETUP}
+EVIDENCE_CHECK_IGNORED_KINDS: set[CommandKind] = {CommandKind.SETUP}
 
 # Regex for parsing custom command markers from tool_result content.
 # Matches: [custom:<name>:start], [custom:<name>:pass],
@@ -188,7 +188,7 @@ def get_required_evidence_kinds(spec: ValidationSpec) -> set[CommandKind]:
     """Get the set of command kinds required by a ValidationSpec.
 
     This derives the expected evidence from the spec, ensuring scope-aware
-    evidence requirements. For example, per-issue scope specs won't have
+    evidence requirements. For example, per-session scope specs won't have
     E2E commands, so E2E evidence won't be required.
 
     Args:
@@ -198,7 +198,7 @@ def get_required_evidence_kinds(spec: ValidationSpec) -> set[CommandKind]:
         Set of CommandKind values that must have evidence.
     """
     return {
-        cmd.kind for cmd in spec.commands if cmd.kind not in QUALITY_GATE_IGNORED_KINDS
+        cmd.kind for cmd in spec.commands if cmd.kind not in EVIDENCE_CHECK_IGNORED_KINDS
     }
 
 
@@ -211,8 +211,8 @@ def check_evidence_against_spec(
     derived from the spec's commands, not hardcoded. This allows adding new
     validation commands without code changes.
 
-    This is scope-aware: a per-issue spec won't require E2E evidence because
-    per-issue specs don't include E2E commands.
+    This is scope-aware: a per-session spec won't require E2E evidence because
+    per-session specs don't include E2E commands.
 
     For custom commands (CommandKind.CUSTOM), checks:
     - "not run" (no markers for spec'd command) → missing
@@ -289,7 +289,7 @@ class GateResult:
     resolution: IssueResolution | IssueResolutionProtocol | None = None
 
 
-class QualityGate:
+class EvidenceCheck:
     """Quality gate for verifying agent work meets requirements.
 
     Uses LogProvider for JSONL log parsing, keeping this class
@@ -564,7 +564,7 @@ class QualityGate:
                 cmd_name
                 for kind, (is_failed, cmd_name) in kind_failed.items()
                 if is_failed
-                and kind not in QUALITY_GATE_IGNORED_KINDS
+                and kind not in EVIDENCE_CHECK_IGNORED_KINDS
                 and kind != CommandKind.CUSTOM
             )
         )
@@ -624,7 +624,7 @@ class QualityGate:
             previous_commit_hash: Commit hash from the previous attempt (None if no commit).
             current_commit_hash: Commit hash from this attempt (None if no commit).
             spec: Optional ValidationSpec for spec-driven evidence detection.
-                If not provided, builds a default per-issue spec.
+                If not provided, builds a default per-session spec.
             check_validation_evidence: If True (default), also check for new validation
                 evidence. Set to False for review retries where only commit/working-tree
                 changes should gate progress.
@@ -659,7 +659,7 @@ class QualityGate:
         if spec is None:
             spec = build_validation_spec(
                 self.repo_path,
-                scope=ValidationScope.PER_ISSUE,
+                scope=ValidationScope.PER_SESSION,
             )
 
         # Check for new validation evidence after the offset using spec-driven parsing
@@ -858,7 +858,7 @@ class QualityGate:
 
         When a ValidationSpec is provided, evidence requirements are derived
         from the spec rather than using hardcoded defaults. This ensures:
-        - Per-issue scope never requires E2E evidence
+        - Per-session scope never requires E2E evidence
         - Disabled validations don't cause failures
 
         Args:

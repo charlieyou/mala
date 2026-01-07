@@ -123,7 +123,7 @@ def cleanup_debug_logging(run_id: str) -> bool:
 
 
 @dataclass
-class QualityGateResult:
+class EvidenceCheckResult:
     """Quality gate check result for an issue."""
 
     passed: bool
@@ -162,7 +162,7 @@ class IssueRun:
     duration_seconds: float
     session_id: str | None = None  # Claude SDK session ID
     log_path: str | None = None  # Path to Claude's log file
-    quality_gate: QualityGateResult | None = None
+    evidence_check: EvidenceCheckResult | None = None
     error: str | None = None
     # Retry tracking (recorded even if defaulted)
     gate_attempts: int = 0
@@ -198,7 +198,7 @@ class RunMetadata:
 
     Creates a JSON file at ~/.config/mala/runs/{run_id}.json containing:
     - Run configuration
-    - Per-issue results with Claude log path pointers
+    - Per-session results with Claude log path pointers
     - Quality gate outcomes
     - Validation results and artifacts
     - Timing and error information
@@ -219,7 +219,7 @@ class RunMetadata:
         self.version = version
         self._runs_dir = runs_dir
         self.issues: dict[str, IssueRun] = {}
-        # Run-level validation results (from mala-e0i)
+        # Global validation results (from mala-e0i)
         self.run_validation: ValidationResult | None = None
         # Configure debug logging for this run (always enabled)
         self.debug_log_path: Path | None = configure_debug_logging(
@@ -231,7 +231,7 @@ class RunMetadata:
         self.issues[issue.issue_id] = issue
 
     def record_run_validation(self, result: ValidationResult) -> None:
-        """Record run-level validation results.
+        """Record global validation results.
 
         Args:
             result: The validation result for the entire run.
@@ -298,8 +298,8 @@ class RunMetadata:
             "issues": {
                 issue_id: {
                     **asdict(issue),
-                    "quality_gate": asdict(issue.quality_gate)
-                    if issue.quality_gate
+                    "evidence_check": asdict(issue.evidence_check)
+                    if issue.evidence_check
                     else None,
                     "validation": self._serialize_validation_result(issue.validation),
                     "resolution": self._serialize_issue_resolution(issue.resolution),
@@ -410,10 +410,10 @@ class RunMetadata:
         # Reconstruct issues
         metadata.issues = {}
         for issue_id, issue_data in data.get("issues", {}).items():
-            quality_gate = None
-            if issue_data.get("quality_gate"):
-                qg_data = issue_data["quality_gate"]
-                quality_gate = QualityGateResult(
+            evidence_check = None
+            if issue_data.get("evidence_check"):
+                qg_data = issue_data["evidence_check"]
+                evidence_check = EvidenceCheckResult(
                     passed=qg_data["passed"],
                     evidence=qg_data.get("evidence", {}),
                     failure_reasons=qg_data.get("failure_reasons", []),
@@ -432,7 +432,7 @@ class RunMetadata:
                 duration_seconds=issue_data["duration_seconds"],
                 session_id=issue_data.get("session_id"),
                 log_path=issue_data.get("log_path"),
-                quality_gate=quality_gate,
+                evidence_check=evidence_check,
                 error=issue_data.get("error"),
                 gate_attempts=issue_data.get("gate_attempts", 0),
                 review_attempts=issue_data.get("review_attempts", 0),
@@ -442,7 +442,7 @@ class RunMetadata:
             )
             metadata.issues[issue_id] = issue
 
-        # Load run-level validation
+        # Load global validation
         metadata.run_validation = cls._deserialize_validation_result(
             data.get("run_validation")
         )

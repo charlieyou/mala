@@ -83,12 +83,12 @@ class TestValidationSpec:
     def test_minimal_spec(self) -> None:
         spec = ValidationSpec(
             commands=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
         assert spec.commands == []
         assert spec.require_clean_git is True  # default
         assert spec.require_pytest_for_code_changes is True  # default
-        assert spec.scope == ValidationScope.PER_ISSUE
+        assert spec.scope == ValidationScope.PER_SESSION
         assert spec.coverage is not None
         assert spec.e2e is not None
         assert spec.code_patterns == []
@@ -107,7 +107,7 @@ class TestValidationSpec:
             require_pytest_for_code_changes=True,
             coverage=CoverageConfig(enabled=True, min_percent=90.0),
             e2e=E2EConfig(enabled=False),
-            scope=ValidationScope.RUN_LEVEL,
+            scope=ValidationScope.GLOBAL,
             code_patterns=["**/*.py"],
             config_files=["pyproject.toml"],
             setup_files=["uv.lock"],
@@ -128,7 +128,7 @@ class TestValidationSpec:
         )
         spec = ValidationSpec(
             commands=[lint_cmd, test_cmd],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
         lint_cmds = spec.commands_by_kind(CommandKind.LINT)
@@ -199,7 +199,7 @@ class TestBuildValidationSpec:
         spec = build_validation_spec(tmp_path)
 
         assert spec.commands == []
-        assert spec.scope == ValidationScope.PER_ISSUE
+        assert spec.scope == ValidationScope.PER_SESSION
         assert spec.coverage.enabled is False
         assert spec.e2e.enabled is False
 
@@ -268,58 +268,58 @@ class TestBuildValidationSpec:
         assert "format" not in command_names
         assert "typecheck" not in command_names
 
-    def test_run_level_commands_override_base(self, tmp_path: Path) -> None:
-        """Run-level commands should override base commands when provided."""
+    def test_global_validation_commands_override_base(self, tmp_path: Path) -> None:
+        """Global commands should override base commands when provided."""
         config_dst = tmp_path / "mala.yaml"
         config_dst.write_text(
             "\n".join(
                 [
                     "commands:",
                     '  test: "pytest issue"',
-                    "run_level_commands:",
-                    '  test: "pytest run-level"',
+                    "global_validation_commands:",
+                    '  test: "pytest global"',
                 ]
             )
             + "\n"
         )
 
-        issue_spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
-        run_spec = build_validation_spec(tmp_path, scope=ValidationScope.RUN_LEVEL)
+        issue_spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        run_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
 
         issue_test = next(cmd for cmd in issue_spec.commands if cmd.name == "test")
         run_test = next(cmd for cmd in run_spec.commands if cmd.name == "test")
 
         assert issue_test.command == "pytest issue"
-        assert run_test.command == "pytest run-level"
+        assert run_test.command == "pytest global"
 
-    def test_run_level_commands_can_disable_base(self, tmp_path: Path) -> None:
-        """Run-level overrides can explicitly disable a base command."""
+    def test_global_validation_commands_can_disable_base(self, tmp_path: Path) -> None:
+        """Global overrides can explicitly disable a base command."""
         config_dst = tmp_path / "mala.yaml"
         config_dst.write_text(
             "\n".join(
                 [
                     "commands:",
                     '  test: "pytest issue"',
-                    "run_level_commands:",
+                    "global_validation_commands:",
                     "  test: null",
                 ]
             )
             + "\n"
         )
 
-        issue_spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
-        run_spec = build_validation_spec(tmp_path, scope=ValidationScope.RUN_LEVEL)
+        issue_spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        run_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
 
         assert any(cmd.name == "test" for cmd in issue_spec.commands)
         assert not any(cmd.name == "test" for cmd in run_spec.commands)
 
-    def test_coverage_with_run_level_null_test_raises_error(
+    def test_coverage_with_global_null_test_raises_error(
         self, tmp_path: Path
     ) -> None:
-        """Coverage enabled + run_level test=null should raise ConfigError.
+        """Coverage enabled + global test=null should raise ConfigError.
 
-        If commands.test is set but run_level_commands.test is explicitly null,
-        and coverage is enabled, building a RUN_LEVEL spec should fail because
+        If commands.test is set but global_validation_commands.test is explicitly null,
+        and coverage is enabled, building a GLOBAL spec should fail because
         coverage requires a test command to generate coverage data.
         """
         import pytest
@@ -332,7 +332,7 @@ class TestBuildValidationSpec:
                 [
                     "commands:",
                     '  test: "uv run pytest"',
-                    "run_level_commands:",
+                    "global_validation_commands:",
                     "  test: null",
                     "coverage:",
                     "  format: xml",
@@ -343,14 +343,14 @@ class TestBuildValidationSpec:
             + "\n"
         )
 
-        # PER_ISSUE scope should work fine (test command is present)
-        issue_spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+        # PER_SESSION scope should work fine (test command is present)
+        issue_spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         assert issue_spec.coverage.enabled is True
         assert any(cmd.name == "test" for cmd in issue_spec.commands)
 
-        # RUN_LEVEL scope should fail because test is disabled but coverage is enabled
+        # GLOBAL scope should fail because test is disabled but coverage is enabled
         with pytest.raises(ConfigError) as exc_info:
-            build_validation_spec(tmp_path, scope=ValidationScope.RUN_LEVEL)
+            build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
 
         assert "coverage" in str(exc_info.value).lower()
         assert "test" in str(exc_info.value).lower()
@@ -412,24 +412,24 @@ class TestBuildValidationSpec:
 
         spec = build_validation_spec(
             tmp_path,
-            scope=ValidationScope.RUN_LEVEL,
+            scope=ValidationScope.GLOBAL,
             disable_validations={"e2e"},
         )
 
         assert spec.e2e.enabled is False
 
-    def test_scope_defaults_to_per_issue(self, tmp_path: Path) -> None:
-        """When scope is not specified, defaults to PER_ISSUE."""
+    def test_scope_defaults_to_per_session(self, tmp_path: Path) -> None:
+        """When scope is not specified, defaults to PER_SESSION."""
         config_src = Path("tests/fixtures/mala-configs/partial-config.yaml")
         config_dst = tmp_path / "mala.yaml"
         shutil.copy(config_src, config_dst)
 
         spec = build_validation_spec(tmp_path)
 
-        assert spec.scope == ValidationScope.PER_ISSUE
+        assert spec.scope == ValidationScope.PER_SESSION
 
-    def test_run_level_scope_can_enable_e2e(self, tmp_path: Path) -> None:
-        """Run-level scope enables E2E if e2e command is defined."""
+    def test_global_scope_can_enable_e2e(self, tmp_path: Path) -> None:
+        """Global scope enables E2E if e2e command is defined."""
         # Create config with e2e command
         config_content = """
 commands:
@@ -438,40 +438,40 @@ commands:
 """
         (tmp_path / "mala.yaml").write_text(config_content)
 
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.RUN_LEVEL)
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
 
         assert spec.e2e.enabled is True
 
-    def test_run_level_commands_e2e_null_disables_e2e(self, tmp_path: Path) -> None:
-        """run_level_commands.e2e: null disables E2E even if base e2e is defined."""
-        # Create config with e2e command but run_level_commands.e2e: null
+    def test_global_validation_commands_e2e_null_disables_e2e(self, tmp_path: Path) -> None:
+        """global_validation_commands.e2e: null disables E2E even if base e2e is defined."""
+        # Create config with e2e command but global_validation_commands.e2e: null
         config_content = """
 commands:
   test: "pytest"
   e2e: "pytest -m e2e"
-run_level_commands:
+global_validation_commands:
   e2e: null
 """
         (tmp_path / "mala.yaml").write_text(config_content)
 
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.RUN_LEVEL)
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
 
-        # E2E should be disabled because run_level_commands.e2e: null overrides
+        # E2E should be disabled because global_validation_commands.e2e: null overrides
         assert spec.e2e.enabled is False
 
-    def test_run_level_test_disables_coverage_for_per_issue(
+    def test_global_test_disables_coverage_for_per_session(
         self, tmp_path: Path
     ) -> None:
-        """Coverage should be disabled for PER_ISSUE when run_level_commands.test is set.
+        """Coverage should be disabled for PER_SESSION when global_validation_commands.test is set.
 
-        When run_level_commands.test provides a different test command (e.g., with
+        When global_validation_commands.test provides a different test command (e.g., with
         --cov flags), the base commands.test won't generate coverage.xml, so
-        per-issue validation should not check coverage.
+        per-session validation should not check coverage.
         """
         config_content = """
 commands:
   test: "pytest"
-run_level_commands:
+global_validation_commands:
   test: "pytest --cov=src --cov-report=xml"
 coverage:
   format: xml
@@ -480,25 +480,25 @@ coverage:
 """
         (tmp_path / "mala.yaml").write_text(config_content)
 
-        # PER_ISSUE scope should have coverage DISABLED
-        # because run_level_commands.test is set (meaning only run-level generates coverage)
-        per_issue_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_ISSUE
+        # PER_SESSION scope should have coverage DISABLED
+        # because global_validation_commands.test is set (meaning only global generates coverage)
+        per_session_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_SESSION
         )
-        assert per_issue_spec.coverage.enabled is False
+        assert per_session_spec.coverage.enabled is False
 
-        # RUN_LEVEL scope should have coverage ENABLED
-        run_level_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.RUN_LEVEL
+        # GLOBAL scope should have coverage ENABLED
+        global_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.GLOBAL
         )
-        assert run_level_spec.coverage.enabled is True
+        assert global_spec.coverage.enabled is True
 
-    def test_no_run_level_test_enables_coverage_for_both_scopes(
+    def test_no_global_test_enables_coverage_for_both_scopes(
         self, tmp_path: Path
     ) -> None:
-        """Coverage should be enabled for both scopes when run_level_commands.test is not set.
+        """Coverage should be enabled for both scopes when global_validation_commands.test is not set.
 
-        When there's no run_level_commands.test override, the same test command
+        When there's no global_validation_commands.test override, the same test command
         is used for both scopes, so coverage should be enabled for both.
         """
         config_content = """
@@ -512,29 +512,29 @@ coverage:
         (tmp_path / "mala.yaml").write_text(config_content)
 
         # Both scopes should have coverage enabled
-        per_issue_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_ISSUE
+        per_session_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_SESSION
         )
-        assert per_issue_spec.coverage.enabled is True
+        assert per_session_spec.coverage.enabled is True
 
-        run_level_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.RUN_LEVEL
+        global_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.GLOBAL
         )
-        assert run_level_spec.coverage.enabled is True
+        assert global_spec.coverage.enabled is True
 
-    def test_run_level_test_null_preserves_coverage_for_per_issue(
+    def test_global_test_null_preserves_coverage_for_per_session(
         self, tmp_path: Path
     ) -> None:
-        """Coverage should stay enabled for PER_ISSUE when run_level_commands.test is null.
+        """Coverage should stay enabled for PER_SESSION when global_validation_commands.test is null.
 
-        When run_level_commands.test is explicitly null (disabling test at run level),
-        per-issue should still run with coverage since it has a test command. The null
-        value indicates "skip test at run level" - not "move coverage to run level".
+        When global_validation_commands.test is explicitly null (disabling test at global),
+        per-session should still run with coverage since it has a test command. The null
+        value indicates "skip test at global" - not "move coverage to global".
         """
         config_content = """
 commands:
   test: "pytest --cov=src --cov-report=xml"
-run_level_commands:
+global_validation_commands:
   test: null
 coverage:
   format: xml
@@ -543,27 +543,27 @@ coverage:
 """
         (tmp_path / "mala.yaml").write_text(config_content)
 
-        # PER_ISSUE scope should have coverage enabled (base test has --cov)
-        # run_level_commands.test is null, which means "skip test at run level",
-        # not "move coverage to run level"
-        per_issue_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_ISSUE
+        # PER_SESSION scope should have coverage enabled (base test has --cov)
+        # global_validation_commands.test is null, which means "skip test at global",
+        # not "move coverage to global"
+        per_session_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_SESSION
         )
-        assert per_issue_spec.coverage.enabled is True
+        assert per_session_spec.coverage.enabled is True
 
-    def test_run_level_only_test_with_coverage_no_base_test(
+    def test_global_only_test_with_coverage_no_base_test(
         self, tmp_path: Path
     ) -> None:
-        """Coverage with run_level_commands.test only (no base test) should work.
+        """Coverage with global_validation_commands.test only (no base test) should work.
 
-        When a config has only run_level_commands.test (no base commands.test)
-        plus coverage settings, building a PER_ISSUE spec should not raise an error.
-        Coverage will be generated at run-level where the test command exists.
+        When a config has only global_validation_commands.test (no base commands.test)
+        plus coverage settings, building a PER_SESSION spec should not raise an error.
+        Coverage will be generated at global where the test command exists.
         """
         config_content = """
 commands:
   lint: "uvx ruff check ."
-run_level_commands:
+global_validation_commands:
   test: "uv run pytest --cov=src --cov-report=xml"
 coverage:
   format: xml
@@ -572,31 +572,31 @@ coverage:
 """
         (tmp_path / "mala.yaml").write_text(config_content)
 
-        # PER_ISSUE scope should NOT raise ConfigError
-        # Coverage is disabled for PER_ISSUE since there's no test command
-        # but the error should not fire because run_level_commands.test exists
-        per_issue_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_ISSUE
+        # PER_SESSION scope should NOT raise ConfigError
+        # Coverage is disabled for PER_SESSION since there's no test command
+        # but the error should not fire because global_validation_commands.test exists
+        per_session_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_SESSION
         )
-        # Coverage should be disabled for PER_ISSUE (no test command to run)
-        assert per_issue_spec.coverage.enabled is False
-        # No test command in per-issue spec
-        assert not any(cmd.name == "test" for cmd in per_issue_spec.commands)
+        # Coverage should be disabled for PER_SESSION (no test command to run)
+        assert per_session_spec.coverage.enabled is False
+        # No test command in per-session spec
+        assert not any(cmd.name == "test" for cmd in per_session_spec.commands)
 
-        # RUN_LEVEL scope should have coverage enabled
-        run_level_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.RUN_LEVEL
+        # GLOBAL scope should have coverage enabled
+        global_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.GLOBAL
         )
-        assert run_level_spec.coverage.enabled is True
-        # Run-level should have test command
-        assert any(cmd.name == "test" for cmd in run_level_spec.commands)
+        assert global_spec.coverage.enabled is True
+        # Global should have test command
+        assert any(cmd.name == "test" for cmd in global_spec.commands)
 
     def test_no_test_command_anywhere_with_coverage_raises_error(
         self, tmp_path: Path
     ) -> None:
         """Coverage without any test command should raise ConfigError.
 
-        If there's no commands.test and no run_level_commands.test, but coverage
+        If there's no commands.test and no global_validation_commands.test, but coverage
         is enabled, we should raise an error because there's no way to generate
         coverage data.
         """
@@ -616,7 +616,7 @@ coverage:
 
         # Should raise ConfigError because no test command exists anywhere
         with pytest.raises(ConfigError) as exc_info:
-            build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+            build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
 
         assert "coverage" in str(exc_info.value).lower()
         assert "test" in str(exc_info.value).lower()
@@ -693,27 +693,27 @@ class TestBuildValidationSpecWithPreset:
         assert "typecheck" in command_names
 
 
-class TestCoverageOnlyAtRunLevel:
-    """Tests for coverage-only-at-run-level behavior based on run_level_commands.test.
+class TestCoverageOnlyAtGlobal:
+    """Tests for coverage-only-at-global behavior based on global_validation_commands.test.
 
-    When a user explicitly sets run_level_commands.test (e.g., with --cov flags),
-    coverage should only be checked at run-level, not per-issue. This prevents
-    per-issue validation from failing due to missing coverage.xml that only
-    run-level generates.
+    When a user explicitly sets global_validation_commands.test (e.g., with --cov flags),
+    coverage should only be checked at global, not per-session. This prevents
+    per-session validation from failing due to missing coverage.xml that only
+    global generates.
     """
 
-    def test_user_run_level_test_disables_per_issue_coverage(
+    def test_user_global_test_disables_per_session_coverage(
         self, tmp_path: Path
     ) -> None:
-        """User's run_level_commands.test should disable coverage for per-issue.
+        """User's global_validation_commands.test should disable coverage for per-session.
 
-        When the user explicitly sets run_level_commands.test with coverage flags,
-        per-issue scope should have coverage disabled since only run-level
+        When the user explicitly sets global_validation_commands.test with coverage flags,
+        per-session scope should have coverage disabled since only global
         generates coverage.xml.
         """
         config_content = """
 preset: python-uv
-run_level_commands:
+global_validation_commands:
   test: "pytest --cov=src --cov-report=xml"
 coverage:
   format: xml
@@ -722,31 +722,31 @@ coverage:
 """
         (tmp_path / "mala.yaml").write_text(config_content)
 
-        per_issue_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_ISSUE
+        per_session_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_SESSION
         )
-        run_level_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.RUN_LEVEL
+        global_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.GLOBAL
         )
 
-        # Per-issue should NOT check coverage (run-level generates it)
-        assert per_issue_spec.coverage.enabled is False
-        # Run-level should check coverage
-        assert run_level_spec.coverage.enabled is True
+        # Per-session should NOT check coverage (global generates it)
+        assert per_session_spec.coverage.enabled is False
+        # Global should check coverage
+        assert global_spec.coverage.enabled is True
 
-    def test_preset_run_level_test_does_not_disable_per_issue_coverage(
+    def test_preset_global_test_does_not_disable_per_session_coverage(
         self, tmp_path: Path
     ) -> None:
-        """Preset's run_level_commands.test should NOT disable per-issue coverage.
+        """Preset's global_validation_commands.test should NOT disable per-session coverage.
 
-        When run_level_commands.test comes from preset (not user), it shouldn't
+        When global_validation_commands.test comes from preset (not user), it shouldn't
         affect coverage behavior. This is because the user didn't explicitly
-        opt into the coverage-only-at-run-level pattern.
+        opt into the coverage-only-at-global pattern.
 
-        Note: Currently python-uv doesn't have run_level_commands, so we use
+        Note: Currently python-uv doesn't have global_validation_commands, so we use
         a custom mala.yaml to simulate this scenario.
         """
-        # Write a preset-like config directly (simulating a preset with run_level_commands)
+        # Write a preset-like config directly (simulating a preset with global_validation_commands)
         # In real usage, this would come from a preset
         config_content = """
 commands:
@@ -758,31 +758,31 @@ coverage:
 """
         (tmp_path / "mala.yaml").write_text(config_content)
 
-        # Without explicit run_level_commands.test, coverage should be enabled for both
-        per_issue_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_ISSUE
+        # Without explicit global_validation_commands.test, coverage should be enabled for both
+        per_session_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_SESSION
         )
-        run_level_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.RUN_LEVEL
+        global_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.GLOBAL
         )
 
         # Both scopes should have coverage enabled
-        assert per_issue_spec.coverage.enabled is True
-        assert run_level_spec.coverage.enabled is True
+        assert per_session_spec.coverage.enabled is True
+        assert global_spec.coverage.enabled is True
 
-    def test_run_level_test_null_preserves_per_issue_coverage(
+    def test_global_test_null_preserves_per_session_coverage(
         self, tmp_path: Path
     ) -> None:
-        """run_level_commands.test: null should NOT disable per-issue coverage.
+        """global_validation_commands.test: null should NOT disable per-session coverage.
 
-        When user sets run_level_commands.test to null (to skip tests at run level),
+        When user sets global_validation_commands.test to null (to skip tests at global),
         this is different from setting a test command. The intent is to skip
-        testing at run level, not to move coverage there.
+        testing at global, not to move coverage there.
         """
         config_content = """
 commands:
   test: "pytest --cov=src --cov-report=xml"
-run_level_commands:
+global_validation_commands:
   test: null
 coverage:
   format: xml
@@ -791,13 +791,13 @@ coverage:
 """
         (tmp_path / "mala.yaml").write_text(config_content)
 
-        per_issue_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_ISSUE
+        per_session_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_SESSION
         )
 
-        # Per-issue should still check coverage (run-level test is disabled, not moved)
-        assert per_issue_spec.coverage.enabled is True
-        assert any(cmd.name == "test" for cmd in per_issue_spec.commands)
+        # Per-session should still check coverage (global test is disabled, not moved)
+        assert per_session_spec.coverage.enabled is True
+        assert any(cmd.name == "test" for cmd in per_session_spec.commands)
 
 
 class TestBuildValidationSpecCustomCommands:
@@ -884,105 +884,105 @@ class TestBuildValidationSpecCustomCommands:
 
 
 class TestApplyCommandOverridesCustomCommands:
-    """Test run-level custom_commands override with mode-based semantics."""
+    """Test global custom_commands override with mode-based semantics."""
 
-    def test_run_level_replace_mode_fully_replaces_repo_customs(self) -> None:
-        """RUN_LEVEL + REPLACE mode returns only run-level customs."""
+    def test_global_replace_mode_fully_replaces_repo_customs(self) -> None:
+        """GLOBAL + REPLACE mode returns only global customs."""
         repo_customs = {
             "cmd_a": CustomCommandConfig(command="echo a"),
             "cmd_b": CustomCommandConfig(command="echo b"),
         }
-        run_level_commands = CommandsConfig(
+        global_validation_commands = CommandsConfig(
             custom_commands={"cmd_a": CustomCommandConfig(command="echo new_a")},
             custom_override_mode=CustomOverrideMode.REPLACE,
         )
 
-        # PER_ISSUE ignores run-level mode, returns repo customs
-        per_issue_result = _apply_custom_commands_override(
-            repo_customs, run_level_commands, ValidationScope.PER_ISSUE
+        # PER_SESSION ignores global mode, returns repo customs
+        per_session_result = _apply_custom_commands_override(
+            repo_customs, global_validation_commands, ValidationScope.PER_SESSION
         )
-        assert len(per_issue_result) == 2
-        assert set(per_issue_result.keys()) == {"cmd_a", "cmd_b"}
+        assert len(per_session_result) == 2
+        assert set(per_session_result.keys()) == {"cmd_a", "cmd_b"}
 
-        # RUN_LEVEL with REPLACE returns only run-level customs
-        run_level_result = _apply_custom_commands_override(
-            repo_customs, run_level_commands, ValidationScope.RUN_LEVEL
+        # GLOBAL with REPLACE returns only global customs
+        global_result = _apply_custom_commands_override(
+            repo_customs, global_validation_commands, ValidationScope.GLOBAL
         )
-        assert len(run_level_result) == 1
-        assert "cmd_a" in run_level_result
-        assert run_level_result["cmd_a"].command == "echo new_a"
+        assert len(global_result) == 1
+        assert "cmd_a" in global_result
+        assert global_result["cmd_a"].command == "echo new_a"
 
-    def test_run_level_clear_mode_returns_empty_dict(self) -> None:
-        """RUN_LEVEL + CLEAR mode returns empty dict (no customs)."""
+    def test_global_clear_mode_returns_empty_dict(self) -> None:
+        """GLOBAL + CLEAR mode returns empty dict (no customs)."""
         repo_customs = {
             "cmd_a": CustomCommandConfig(command="echo a"),
             "cmd_b": CustomCommandConfig(command="echo b"),
         }
-        run_level_commands = CommandsConfig(
+        global_validation_commands = CommandsConfig(
             custom_override_mode=CustomOverrideMode.CLEAR,
         )
 
-        # PER_ISSUE ignores run-level mode, returns repo customs
-        per_issue_result = _apply_custom_commands_override(
-            repo_customs, run_level_commands, ValidationScope.PER_ISSUE
+        # PER_SESSION ignores global mode, returns repo customs
+        per_session_result = _apply_custom_commands_override(
+            repo_customs, global_validation_commands, ValidationScope.PER_SESSION
         )
-        assert len(per_issue_result) == 2
+        assert len(per_session_result) == 2
 
-        # RUN_LEVEL with CLEAR returns empty dict
-        run_level_result = _apply_custom_commands_override(
-            repo_customs, run_level_commands, ValidationScope.RUN_LEVEL
+        # GLOBAL with CLEAR returns empty dict
+        global_result = _apply_custom_commands_override(
+            repo_customs, global_validation_commands, ValidationScope.GLOBAL
         )
-        assert len(run_level_result) == 0
+        assert len(global_result) == 0
 
-    def test_run_level_inherit_mode_returns_repo_customs(self) -> None:
-        """RUN_LEVEL + INHERIT mode returns repo-level customs unchanged."""
+    def test_global_inherit_mode_returns_repo_customs(self) -> None:
+        """GLOBAL + INHERIT mode returns repo-level customs unchanged."""
         repo_customs = {
             "cmd_a": CustomCommandConfig(command="echo a"),
             "cmd_b": CustomCommandConfig(command="echo b"),
         }
-        run_level_commands = CommandsConfig(
+        global_validation_commands = CommandsConfig(
             custom_override_mode=CustomOverrideMode.INHERIT,
         )
 
         # Both scopes return repo customs with INHERIT
-        per_issue_result = _apply_custom_commands_override(
-            repo_customs, run_level_commands, ValidationScope.PER_ISSUE
+        per_session_result = _apply_custom_commands_override(
+            repo_customs, global_validation_commands, ValidationScope.PER_SESSION
         )
-        run_level_result = _apply_custom_commands_override(
-            repo_customs, run_level_commands, ValidationScope.RUN_LEVEL
+        global_result = _apply_custom_commands_override(
+            repo_customs, global_validation_commands, ValidationScope.GLOBAL
         )
 
-        assert len(per_issue_result) == 2
-        assert len(run_level_result) == 2
-        assert set(per_issue_result.keys()) == {"cmd_a", "cmd_b"}
-        assert set(run_level_result.keys()) == {"cmd_a", "cmd_b"}
+        assert len(per_session_result) == 2
+        assert len(global_result) == 2
+        assert set(per_session_result.keys()) == {"cmd_a", "cmd_b"}
+        assert set(global_result.keys()) == {"cmd_a", "cmd_b"}
 
-    def test_no_run_level_commands_uses_repo_customs(self) -> None:
-        """When run_level_commands is None, use repo-level customs."""
+    def test_no_global_validation_commands_uses_repo_customs(self) -> None:
+        """When global_validation_commands is None, use repo-level customs."""
         repo_customs = {
             "cmd_a": CustomCommandConfig(command="echo a"),
             "cmd_b": CustomCommandConfig(command="echo b"),
         }
 
-        # Both scopes return repo customs when run_level_commands is None
-        per_issue_result = _apply_custom_commands_override(
-            repo_customs, None, ValidationScope.PER_ISSUE
+        # Both scopes return repo customs when global_validation_commands is None
+        per_session_result = _apply_custom_commands_override(
+            repo_customs, None, ValidationScope.PER_SESSION
         )
-        run_level_result = _apply_custom_commands_override(
-            repo_customs, None, ValidationScope.RUN_LEVEL
+        global_result = _apply_custom_commands_override(
+            repo_customs, None, ValidationScope.GLOBAL
         )
 
-        assert len(per_issue_result) == 2
-        assert len(run_level_result) == 2
+        assert len(per_session_result) == 2
+        assert len(global_result) == 2
 
 
 class TestApplyCustomCommandsOverride:
     """Tests for _apply_custom_commands_override with mode-based API."""
 
     def test_additive_mode_merges_customs(self) -> None:
-        """RUN_LEVEL + ADDITIVE mode merges run-level into repo-level."""
+        """GLOBAL + ADDITIVE mode merges global into repo-level."""
         repo_customs = {"cmd_a": CustomCommandConfig(command="echo a")}
-        run_level_commands = CommandsConfig(
+        global_validation_commands = CommandsConfig(
             custom_commands={"cmd_b": CustomCommandConfig(command="echo b")},
             custom_override_mode=CustomOverrideMode.ADDITIVE,
         )
@@ -990,8 +990,8 @@ class TestApplyCustomCommandsOverride:
         # ADDITIVE merges: repo + run
         result = _apply_custom_commands_override(
             repo_customs=repo_customs,
-            run_level_commands=run_level_commands,
-            scope=ValidationScope.RUN_LEVEL,
+            global_validation_commands=global_validation_commands,
+            scope=ValidationScope.GLOBAL,
         )
 
         assert len(result) == 2
@@ -1000,52 +1000,52 @@ class TestApplyCustomCommandsOverride:
         assert result["cmd_a"].command == "echo a"
         assert result["cmd_b"].command == "echo b"
 
-    def test_additive_mode_run_level_overrides_same_key(self) -> None:
-        """ADDITIVE mode: run-level value overrides repo-level for same key."""
+    def test_additive_mode_global_overrides_same_key(self) -> None:
+        """ADDITIVE mode: global value overrides repo-level for same key."""
         repo_customs = {"cmd_a": CustomCommandConfig(command="echo old")}
-        run_level_commands = CommandsConfig(
+        global_validation_commands = CommandsConfig(
             custom_commands={"cmd_a": CustomCommandConfig(command="echo new")},
             custom_override_mode=CustomOverrideMode.ADDITIVE,
         )
 
         result = _apply_custom_commands_override(
             repo_customs=repo_customs,
-            run_level_commands=run_level_commands,
-            scope=ValidationScope.RUN_LEVEL,
+            global_validation_commands=global_validation_commands,
+            scope=ValidationScope.GLOBAL,
         )
 
         assert len(result) == 1
         assert result["cmd_a"].command == "echo new"
 
-    def test_per_issue_scope_ignores_all_run_level_modes(self) -> None:
-        """PER_ISSUE scope always uses repo customs regardless of mode."""
+    def test_per_session_scope_ignores_all_global_modes(self) -> None:
+        """PER_SESSION scope always uses repo customs regardless of mode."""
         repo_customs = {"cmd_a": CustomCommandConfig(command="echo a")}
 
-        # Test all modes - PER_ISSUE should always return repo_customs
+        # Test all modes - PER_SESSION should always return repo_customs
         for mode in CustomOverrideMode:
-            run_level_commands = CommandsConfig(
+            global_validation_commands = CommandsConfig(
                 custom_commands={"cmd_b": CustomCommandConfig(command="echo b")},
                 custom_override_mode=mode,
             )
             result = _apply_custom_commands_override(
                 repo_customs=repo_customs,
-                run_level_commands=run_level_commands,
-                scope=ValidationScope.PER_ISSUE,
+                global_validation_commands=global_validation_commands,
+                scope=ValidationScope.PER_SESSION,
             )
-            assert result == repo_customs, f"PER_ISSUE should ignore {mode}"
+            assert result == repo_customs, f"PER_SESSION should ignore {mode}"
 
     def test_replace_mode_replaces_with_empty_customs(self) -> None:
         """REPLACE mode with empty custom_commands returns empty dict."""
         repo_customs = {"cmd_a": CustomCommandConfig(command="echo a")}
-        run_level_commands = CommandsConfig(
+        global_validation_commands = CommandsConfig(
             custom_commands={},  # Empty
             custom_override_mode=CustomOverrideMode.REPLACE,
         )
 
         result = _apply_custom_commands_override(
             repo_customs=repo_customs,
-            run_level_commands=run_level_commands,
-            scope=ValidationScope.RUN_LEVEL,
+            global_validation_commands=global_validation_commands,
+            scope=ValidationScope.GLOBAL,
         )
 
         assert result == {}
@@ -1121,10 +1121,10 @@ commands:
         test_idx = cmd_names.index("test")
         assert typecheck_idx < security_idx < test_idx
 
-    def test_run_level_additive_customs_yaml_to_spec(self, tmp_path: Path) -> None:
-        """YAML with +prefixed customs in run_level_commands → merged ValidationSpec.
+    def test_global_additive_customs_yaml_to_spec(self, tmp_path: Path) -> None:
+        """YAML with +prefixed customs in global_validation_commands → merged ValidationSpec.
 
-        Tests ADDITIVE mode: run-level customs are merged with repo-level customs.
+        Tests ADDITIVE mode: global customs are merged with repo-level customs.
         """
         yaml_content = """\
 preset: python-uv
@@ -1132,33 +1132,33 @@ commands:
   lint: uvx ruff check .
   test: uv run pytest
   security: bandit -r src/
-run_level_commands:
+global_validation_commands:
   +integration: uv run pytest -m integration
 """
         (tmp_path / "mala.yaml").write_text(yaml_content)
 
-        # PER_ISSUE scope: only repo-level customs
-        per_issue_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_ISSUE
+        # PER_SESSION scope: only repo-level customs
+        per_session_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_SESSION
         )
-        per_issue_names = [cmd.name for cmd in per_issue_spec.commands]
-        assert "security" in per_issue_names
-        assert "integration" not in per_issue_names
+        per_session_names = [cmd.name for cmd in per_session_spec.commands]
+        assert "security" in per_session_names
+        assert "integration" not in per_session_names
 
-        # RUN_LEVEL scope: merged customs (repo + run-level additive)
-        run_level_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.RUN_LEVEL
+        # GLOBAL scope: merged customs (repo + global additive)
+        global_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.GLOBAL
         )
-        run_level_names = [cmd.name for cmd in run_level_spec.commands]
-        assert "security" in run_level_names
-        assert "integration" in run_level_names
+        global_names = [cmd.name for cmd in global_spec.commands]
+        assert "security" in global_names
+        assert "integration" in global_names
 
-    def test_run_level_replace_customs_clears_repo_customs(
+    def test_global_replace_customs_clears_repo_customs(
         self, tmp_path: Path
     ) -> None:
-        """YAML with unprefixed custom in run_level_commands → repo customs cleared.
+        """YAML with unprefixed custom in global_validation_commands → repo customs cleared.
 
-        Tests REPLACE mode with actual custom command at run-level.
+        Tests REPLACE mode with actual custom command at global.
         """
         yaml_content = """\
 preset: python-uv
@@ -1166,22 +1166,22 @@ commands:
   lint: uvx ruff check .
   test: uv run pytest
   security: bandit -r src/
-run_level_commands:
+global_validation_commands:
   integration: uv run pytest -m integration
 """
         (tmp_path / "mala.yaml").write_text(yaml_content)
 
-        # PER_ISSUE scope: only repo-level customs
-        per_issue_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_ISSUE
+        # PER_SESSION scope: only repo-level customs
+        per_session_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_SESSION
         )
-        per_issue_names = [cmd.name for cmd in per_issue_spec.commands]
-        assert "security" in per_issue_names
+        per_session_names = [cmd.name for cmd in per_session_spec.commands]
+        assert "security" in per_session_names
 
-        # RUN_LEVEL scope: REPLACE mode - only run-level customs
-        run_level_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.RUN_LEVEL
+        # GLOBAL scope: REPLACE mode - only global customs
+        global_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.GLOBAL
         )
-        run_level_names = [cmd.name for cmd in run_level_spec.commands]
-        assert "security" not in run_level_names  # Repo custom cleared
-        assert "integration" in run_level_names  # Run-level custom present
+        global_names = [cmd.name for cmd in global_spec.commands]
+        assert "security" not in global_names  # Repo custom cleared
+        assert "integration" in global_names  # Global custom present

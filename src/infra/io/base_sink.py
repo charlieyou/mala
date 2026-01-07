@@ -278,7 +278,7 @@ class BaseEventSink:
     def on_run_metadata_saved(self, path: str) -> None:
         pass
 
-    def on_run_level_validation_disabled(self) -> None:
+    def on_global_validation_disabled(self) -> None:
         pass
 
     def on_abort_requested(self, reason: str) -> None:

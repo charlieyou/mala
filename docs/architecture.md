@@ -7,7 +7,7 @@
 ## Executive Summary
 
 - The codebase is a **layered, protocol-driven architecture** with explicit boundaries: `cli -> orchestration -> pipeline -> domain -> infra -> core`.
-- Orchestration is split into **run-level coordination**, **per-issue session execution**, and **finalization/epic verification** via dedicated coordinators (IssueExecutionCoordinator, IssueFinalizer, EpicVerificationCoordinator).
+- Orchestration is split into **global coordination**, **per-session session execution**, and **finalization/epic verification** via dedicated coordinators (IssueExecutionCoordinator, IssueFinalizer, EpicVerificationCoordinator).
 - Validation is **spec-driven** and uses explicit inputs/outputs, worktrees, and evidence parsing from JSONL logs.
 - Infrastructure code (clients, IO, hooks, tools) is isolated behind Protocols to keep core and domain logic testable.
 
@@ -118,7 +118,7 @@ flowchart TD
   INFRA --> CORE[core]
 ```
 
-Per-issue call graph (main happy path):
+Per-session call graph (main happy path):
 
 ```mermaid
 flowchart LR
@@ -130,14 +130,14 @@ flowchart LR
   Session --> Idle[IdleTimeoutRetryPolicy.execute_iteration]
   Idle --> Stream[MessageStreamProcessor.process_stream]
   Session --> Effects[LifecycleEffectHandler]
-  Effects --> Gate[GateRunner.run_per_issue_gate]
+  Effects --> Gate[GateRunner.run_per_session_gate]
   Effects --> Review[ReviewRunner.run_review]
   Loop --> Finalize[IssueFinalizer.finalize]
   Finalize --> EpicCoord[EpicVerificationCoordinator.check_epic_closure]
   Orch --> RunValidate[RunCoordinator.run_validation]
 ```
 
-Per-issue sequence (orchestration -> gate -> review):
+Per-session sequence (orchestration -> gate -> review):
 
 ```mermaid
 sequenceDiagram
@@ -145,7 +145,7 @@ sequenceDiagram
   participant Orch as MalaOrchestrator
   participant Beads
   participant Session as AgentSessionRunner
-  participant Gate as GateRunner/QualityGate
+  participant Gate as GateRunner/EvidenceCheck
   participant Review as ReviewRunner
   participant Final as IssueFinalizer
   participant Epic as EpicVerificationCoordinator
@@ -165,7 +165,7 @@ sequenceDiagram
   Final->>Epic: check_epic_closure(issue)
 ```
 
-Run-level validation + fixer retry:
+Global validation + fixer retry:
 
 ```mermaid
 sequenceDiagram
@@ -175,11 +175,11 @@ sequenceDiagram
   participant Fixer as AgentSessionRunner
 
   Orch->>RunCoord: run_validation()
-  RunCoord->>Spec: run_spec(RUN_LEVEL)
+  RunCoord->>Spec: run_spec(GLOBAL)
   alt validation failed
     RunCoord->>Fixer: run_session(fixer prompt)
     Fixer-->>RunCoord: session output
-    RunCoord->>Spec: run_spec(RUN_LEVEL) retry
+    RunCoord->>Spec: run_spec(GLOBAL) retry
   end
   RunCoord-->>Orch: passed/failed
 ```
@@ -216,18 +216,18 @@ High-level flow:
 2. `create_orchestrator()` builds dependencies and configuration.
 3. `MalaOrchestrator.run()`:
    - Delegates scheduling to `IssueExecutionCoordinator.run_loop`.
-   - Spawns per-issue agent sessions (parallel) via `spawn_agent()`.
-   - Uses session callbacks to run per-issue gate + review.
+   - Spawns per-session agent sessions (parallel) via `spawn_agent()`.
+   - Uses session callbacks to run per-session gate + review.
    - Finalizes outcomes via `IssueFinalizer` (close/mark followup).
-4. After all issues, `RunCoordinator.run_validation()` executes run-level validation.
+4. After all issues, `RunCoordinator.run_validation()` executes global validation.
 5. `EpicVerificationCoordinator` verifies and closes epics when children complete.
 
-Per-issue pipeline sequence:
+Per-session pipeline sequence:
 ```
 Issue -> AgentSessionRunner (callbacks) -> GateRunner/ReviewRunner -> IssueFinalizer
 ```
 
-Run-level validation uses `RunCoordinator` and `SpecValidationRunner` with `ValidationScope.RUN_LEVEL`, including E2E checks and coverage when configured.
+Global validation uses `RunCoordinator` and `SpecValidationRunner` with `ValidationScope.GLOBAL`, including E2E checks and coverage when configured.
 
 ## Package Layout and Responsibilities
 
@@ -235,7 +235,7 @@ Run-level validation uses `RunCoordinator` and `SpecValidationRunner` with `Vali
 src/
   cli/              CLI entry points and CLI-only wiring
   orchestration/    Orchestrator + factory/DI + wiring + run config + review tracking
-  pipeline/         Pipeline stages for agent sessions, gate, review, run-level validation
+  pipeline/         Pipeline stages for agent sessions, gate, review, global validation
   domain/           Business logic: lifecycle, quality gate, validation, prompts
   infra/            External systems, IO, hooks, tools, telemetry
   core/             Minimal shared models, protocols, log event schema
@@ -261,7 +261,7 @@ Orchestration-agnostic business rules.
 | Module | Purpose |
 |--------|---------|
 | `lifecycle.py` | Issue lifecycle state machine and retry policy |
-| `quality_gate.py` | Gate checking: commit exists, tests passed, evidence present |
+| `evidence_check.py` | Gate checking: commit exists, tests passed, evidence present |
 | `prompts.py` | Prompt template loading |
 | `deadlock.py` | Wait-for graph + deadlock detection domain model |
 | `validation/` | Spec-based validation pipeline |
@@ -314,10 +314,10 @@ Pipeline components for running agent sessions.
 | `gate_runner.py` | Quality gate execution |
 | `gate_metadata.py` | Gate metadata extraction for finalization |
 | `review_runner.py` | External code review via Cerberus |
-| `run_coordinator.py` | Run-level validation and fixer agent |
-| `issue_execution_coordinator.py` | Per-issue pipeline: session → gate → review |
+| `run_coordinator.py` | Global validation and fixer agent |
+| `issue_execution_coordinator.py` | Per-session pipeline: session → gate → review |
 | `issue_finalizer.py` | Issue close/mark-needs-followup logic |
-| `issue_result.py` | Issue result dataclass (per-issue output) |
+| `issue_result.py` | Issue result dataclass (per-session output) |
 | `session_callback_factory.py` | SDK session callback construction |
 | `epic_verification_coordinator.py` | Epic verification pipeline |
 
@@ -362,11 +362,11 @@ Developer-facing shell scripts bundled with the package. Not part of the core ru
   - Key methods:
     - `run()` / `run_sync()`: public entrypoints for async/sync execution.
     - `_run_main_loop()`: main scheduler loop (delegates to IssueExecutionCoordinator).
-    - `spawn_agent()`: claims issues and launches per-issue worker tasks.
-    - `run_implementer()`: per-issue pipeline (session -> gate -> review).
+    - `spawn_agent()`: claims issues and launches per-session worker tasks.
+    - `run_implementer()`: per-session pipeline (session -> gate -> review).
     - `_finalize_issue_result()`: delegates finalization to IssueFinalizer.
     - `_abort_active_tasks()`: delegates task abort handling to DeadlockHandler.
-    - `_finalize_run()`: run-level validation + summary + cleanup.
+    - `_finalize_run()`: global validation + summary + cleanup.
 
 - `OrchestratorConfig`, `OrchestratorDependencies` (`src/orchestration/types.py`)
   - Split between simple config values and injected dependencies (DI).
@@ -403,14 +403,14 @@ Supporting orchestration components:
   - Encapsulates gate/review side effects (events, retry prompts, no-progress).
 
 - `SessionCallbackFactory` (`src/pipeline/session_callback_factory.py`)
-  - Builds per-issue callbacks that wire gate/review/logging into AgentSessionRunner.
+  - Builds per-session callbacks that wire gate/review/logging into AgentSessionRunner.
 
 - `GateRunner` (`src/pipeline/gate_runner.py`)
   - Runs gate checks using a `GateChecker` protocol.
   - Tracks and applies retry/no-progress logic.
   - Key methods:
-    - `run_per_issue_gate()`: synchronous gate execution (used via `to_thread`).
-    - `get_cached_spec()`: returns cached per-issue `ValidationSpec`.
+    - `run_per_session_gate()`: synchronous gate execution (used via `to_thread`).
+    - `get_cached_spec()`: returns cached per-session `ValidationSpec`.
 
 - `ReviewRunner` (`src/pipeline/review_runner.py`)
   - Executes external code review via `CodeReviewer` protocol.
@@ -420,17 +420,17 @@ Supporting orchestration components:
     - `check_no_progress()`: avoids review retries when no new evidence.
 
 - `RunCoordinator` (`src/pipeline/run_coordinator.py`)
-  - Performs run-level validation and fixer retries.
+  - Performs global validation and fixer retries.
   - Key methods:
-    - `run_validation()`: run RUN_LEVEL spec; spawns fixer on failure.
+    - `run_validation()`: run GLOBAL spec; spawns fixer on failure.
 
 - `IssueExecutionCoordinator` (`src/pipeline/issue_execution_coordinator.py`)
-  - Schedules and tracks per-issue tasks; owns active task lifecycle.
+  - Schedules and tracks per-session tasks; owns active task lifecycle.
   - Key methods:
-    - `run_loop()`: spawn/wait/finalize loop for per-issue tasks.
+    - `run_loop()`: spawn/wait/finalize loop for per-session tasks.
 
 - `IssueFinalizer` (`src/pipeline/issue_finalizer.py`)
-  - Finalizes per-issue results: metadata, close/mark followup, and review tracking.
+  - Finalizes per-session results: metadata, close/mark followup, and review tracking.
   - Key methods:
     - `finalize()`: orchestrate close/mark + metadata recording.
 
@@ -451,7 +451,7 @@ Supporting orchestration components:
     - `on_review_result()`: review pass/fail transitions + retry decisions.
     - `on_timeout()` / `on_error()`: hard failure paths.
 
-- `QualityGate` (`src/domain/quality_gate.py`)
+- `EvidenceCheck` (`src/domain/evidence_check.py`)
   - Checks for required commit + evidence of validation commands.
   - Evidence is spec-driven and parsed from JSONL logs.
   - Key methods:
@@ -465,7 +465,7 @@ Supporting orchestration components:
   - Tracks lock waits/holds and detects deadlock cycles.
 
 - Validation subsystem (`src/domain/validation/*`)
-  - `ValidationSpec` defines commands and policies for per-issue vs run-level runs.
+  - `ValidationSpec` defines commands and policies for per-session vs global runs.
   - `SpecValidationRunner` executes commands and assembles results.
   - Worktrees are used to keep validation isolated.
   - Key methods:

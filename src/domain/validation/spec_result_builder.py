@@ -3,7 +3,7 @@
 This module provides SpecResultBuilder which handles the post-command-execution
 stages of validation:
 - Coverage checks (threshold or no-decrease mode)
-- E2E execution (run-level only)
+- E2E execution (global only)
 - ValidationResult assembly
 
 The builder is called after commands have been executed and produces the final
@@ -82,7 +82,7 @@ class SpecResultBuilder:
     This builder handles the post-processing stages after commands have been
     executed:
     1. Coverage check (if enabled)
-    2. E2E execution (if enabled and scope is run-level)
+    2. E2E execution (if enabled and scope is global)
     3. Final ValidationResult assembly
 
     The builder owns the coverage and E2E checking logic, keeping the runner
@@ -310,7 +310,7 @@ class SpecResultBuilder:
         command_runner: CommandRunnerPort,
         event_sink: MalaEventSink | None = None,
     ) -> E2EResult | None:
-        """Run E2E validation if enabled (only for run-level scope).
+        """Run E2E validation if enabled (only for global scope).
 
         Args:
             spec: Validation spec with E2E config.
@@ -323,11 +323,11 @@ class SpecResultBuilder:
             event_sink: Event sink for emitting validation step events.
 
         Returns:
-            E2EResult if E2E is enabled and scope is run-level, None otherwise.
+            E2EResult if E2E is enabled and scope is global, None otherwise.
         """
         from .spec import ValidationScope
 
-        if not spec.e2e.enabled or spec.scope != ValidationScope.RUN_LEVEL:
+        if not spec.e2e.enabled or spec.scope != ValidationScope.GLOBAL:
             return None
 
         # Check prereqs before emitting "running" to match cached command behavior

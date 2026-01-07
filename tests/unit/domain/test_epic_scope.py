@@ -95,7 +95,7 @@ class TestComputeCommitList:
         assert commits == []
 
     @pytest.mark.asyncio
-    async def test_handles_multiple_commits_per_issue(
+    async def test_handles_multiple_commits_per_session(
         self, analyzer: EpicScopeAnalyzer
     ) -> None:
         """Should include all commits matching an issue prefix."""

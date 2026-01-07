@@ -45,7 +45,7 @@ The codebase is organized into layered packages with enforced import boundaries 
 ```
 src/
 ├── core/           # Models, protocols, log events (no internal dependencies)
-├── domain/         # Business logic: lifecycle, quality_gate, validation, prompts
+├── domain/         # Business logic: lifecycle, evidence_check, validation, prompts
 ├── infra/          # Infrastructure: clients/, io/, tools/, hooks/
 ├── pipeline/       # Agent session pipeline, gate/review runners, run coordinator
 ├── orchestration/  # Orchestrator, factory, CLI support

@@ -387,7 +387,7 @@ def _config_prefers_uv(repo_root: Path) -> bool:
     try:
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
-        spec = build_validation_spec(repo_root, scope=ValidationScope.RUN_LEVEL)
+        spec = build_validation_spec(repo_root, scope=ValidationScope.GLOBAL)
     except Exception:
         return False
 

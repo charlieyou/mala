@@ -18,7 +18,7 @@ import pytest
 
 from src.infra.io.log_output.run_metadata import (
     IssueRun,
-    QualityGateResult,
+    EvidenceCheckResult,
     RunConfig,
     RunMetadata,
     RunningInstance,
@@ -39,12 +39,12 @@ from src.core.models import (
 )
 
 
-class TestQualityGateResult:
-    """Test QualityGateResult dataclass."""
+class TestEvidenceCheckResult:
+    """Test EvidenceCheckResult dataclass."""
 
     def test_failed_result(self) -> None:
         # New spec-driven evidence uses CommandKind values as keys
-        result = QualityGateResult(
+        result = EvidenceCheckResult(
             passed=False,
             evidence={"test": True, "lint": False},
             failure_reasons=["ruff check not run"],
@@ -217,7 +217,7 @@ class TestRunMetadataSerialization:
             duration_seconds=120.0,
             session_id="session-abc",
             log_path="/tmp/logs/agent-1.jsonl",
-            quality_gate=QualityGateResult(
+            evidence_check=EvidenceCheckResult(
                 passed=True,
                 evidence={"test": True, "commit_found": True},
             ),
@@ -239,7 +239,7 @@ class TestRunMetadataSerialization:
         )
         metadata.record_issue(issue2)
 
-        # Add run-level validation
+        # Add global validation
         run_validation = ValidationResult(
             passed=True,
             commands_run=["e2e tests"],
@@ -280,7 +280,7 @@ class TestRunMetadataSerialization:
         assert issue2_data["resolution"]["outcome"] == "obsolete"
         assert "removed" in issue2_data["resolution"]["rationale"]
 
-        # Check run-level validation
+        # Check global validation
         assert data["run_validation"]["passed"] is True
         assert data["run_validation"]["e2e_passed"] is True
 
@@ -315,7 +315,7 @@ class TestRunMetadataSerialization:
                 duration_seconds=120.0,
                 session_id="session-abc",
                 log_path="/tmp/logs/agent-1.jsonl",
-                quality_gate=QualityGateResult(
+                evidence_check=EvidenceCheckResult(
                     passed=True,
                     evidence={"test": True, "commit_found": True},
                 ),
@@ -337,7 +337,7 @@ class TestRunMetadataSerialization:
             )
             metadata.record_issue(issue2)
 
-            # Add run-level validation
+            # Add global validation
             run_validation = ValidationResult(
                 passed=True,
                 commands_run=["e2e tests"],
@@ -382,7 +382,7 @@ class TestRunMetadataSerialization:
             assert issue2_loaded.resolution is not None
             assert issue2_loaded.resolution.outcome == ResolutionOutcome.OBSOLETE
 
-            # Verify run-level validation
+            # Verify global validation
             assert loaded.run_validation is not None
             assert loaded.run_validation.passed is True
             assert loaded.run_validation.e2e_passed is True
@@ -444,7 +444,7 @@ class TestRunMetadataSerialization:
                         "agent_id": "old-agent",
                         "status": "success",
                         "duration_seconds": 60.0,
-                        # No validation, resolution, quality_gate
+                        # No validation, resolution, evidence_check
                     }
                 },
                 # No run_validation
@@ -464,7 +464,7 @@ class TestRunMetadataSerialization:
             issue = loaded.issues["old-issue"]
             assert issue.validation is None
             assert issue.resolution is None
-            assert issue.quality_gate is None
+            assert issue.evidence_check is None
 
             assert loaded.run_validation is None
 

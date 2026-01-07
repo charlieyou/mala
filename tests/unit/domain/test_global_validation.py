@@ -1,6 +1,6 @@
-"""Unit tests for run-level validation (Gate 4) in RunCoordinator.
+"""Unit tests for global validation (global validation) in RunCoordinator.
 
-Tests the implementation of Gate 4 validation that runs after all issues complete.
+Tests the implementation of global validation validation that runs after all issues complete.
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ from src.orchestration.orchestrator import IssueResult
 from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,
-    RunLevelValidationInput,
-    RunLevelValidationOutput,
+    GlobalValidationInput,
+    GlobalValidationOutput,
 )
 from tests.fakes.command_runner import FakeCommandRunner
 from tests.fakes.lock_manager import FakeLockManager
@@ -55,11 +55,11 @@ def mock_sdk_client_factory() -> MagicMock:
     return MagicMock()
 
 
-class TestRunLevelValidation:
-    """Test Gate 4 (run-level validation) in RunCoordinator."""
+class TestGlobalValidation:
+    """Test global validation (global validation) in RunCoordinator."""
 
     @pytest.mark.asyncio
-    async def test_run_level_validation_skipped_when_disabled(
+    async def test_global_validation_skipped_when_disabled(
         self,
         tmp_path: Path,
         fake_command_runner: FakeCommandRunner,
@@ -67,14 +67,14 @@ class TestRunLevelValidation:
         fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
-        """Run-level validation should be skipped when disabled."""
+        """Global validation should be skipped when disabled."""
         # Create a mock gate_checker
         mock_gate_checker = MagicMock()
 
         config = RunCoordinatorConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
-            disable_validations={"run-level-validate"},
+            disable_validations={"global-validate"},
         )
         coordinator = RunCoordinator(
             config=config,
@@ -94,7 +94,7 @@ class TestRunLevelValidation:
         )
         run_metadata = RunMetadata(tmp_path, run_config, "test")
 
-        input_data = RunLevelValidationInput(run_metadata=run_metadata)
+        input_data = GlobalValidationInput(run_metadata=run_metadata)
         result = await coordinator.run_validation(input_data)
 
         # Should return passed=True (skipped)
@@ -103,7 +103,7 @@ class TestRunLevelValidation:
         assert run_metadata.run_validation is None
 
     @pytest.mark.asyncio
-    async def test_run_level_validation_passes_when_validation_succeeds(
+    async def test_global_validation_passes_when_validation_succeeds(
         self,
         tmp_path: Path,
         fake_command_runner: FakeCommandRunner,
@@ -111,7 +111,7 @@ class TestRunLevelValidation:
         fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
-        """Run-level validation should pass when validation runner succeeds."""
+        """Global validation should pass when validation runner succeeds."""
         from src.domain.validation.result import ValidationResult, ValidationStepResult
 
         mock_gate_checker = MagicMock()
@@ -166,7 +166,7 @@ class TestRunLevelValidation:
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
             MockRunner.return_value = mock_runner_instance
 
-            input_data = RunLevelValidationInput(run_metadata=run_metadata)
+            input_data = GlobalValidationInput(run_metadata=run_metadata)
             result = await coordinator.run_validation(input_data)
 
         assert result.passed is True
@@ -174,7 +174,7 @@ class TestRunLevelValidation:
         assert run_metadata.run_validation.passed is True
 
     @pytest.mark.asyncio
-    async def test_run_level_validation_spawns_fixer_on_failure(
+    async def test_global_validation_spawns_fixer_on_failure(
         self,
         tmp_path: Path,
         fake_command_runner: FakeCommandRunner,
@@ -182,7 +182,7 @@ class TestRunLevelValidation:
         fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
-        """Run-level validation should spawn fixer agent on failure."""
+        """Global validation should spawn fixer agent on failure."""
         from src.domain.validation.result import ValidationResult, ValidationStepResult
 
         mock_gate_checker = MagicMock()
@@ -248,7 +248,7 @@ class TestRunLevelValidation:
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
             MockRunner.return_value = mock_runner_instance
 
-            input_data = RunLevelValidationInput(run_metadata=run_metadata)
+            input_data = GlobalValidationInput(run_metadata=run_metadata)
             result = await coordinator.run_validation(input_data)
 
         # Should have called fixer once (max_gate_retries=2, fails on attempt 2)
@@ -260,7 +260,7 @@ class TestRunLevelValidation:
         assert result.passed is False
 
     @pytest.mark.asyncio
-    async def test_run_level_validation_records_to_metadata(
+    async def test_global_validation_records_to_metadata(
         self,
         tmp_path: Path,
         fake_command_runner: FakeCommandRunner,
@@ -268,7 +268,7 @@ class TestRunLevelValidation:
         fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
-        """Run-level validation should record results to run metadata."""
+        """Global validation should record results to run metadata."""
         from src.domain.validation.result import ValidationResult, ValidationStepResult
 
         mock_gate_checker = MagicMock()
@@ -333,7 +333,7 @@ class TestRunLevelValidation:
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
             MockRunner.return_value = mock_runner_instance
 
-            input_data = RunLevelValidationInput(run_metadata=run_metadata)
+            input_data = GlobalValidationInput(run_metadata=run_metadata)
             await coordinator.run_validation(input_data)
 
         # Check metadata was recorded
@@ -478,7 +478,7 @@ class TestRunLevelValidation:
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
             MockRunner.return_value = mock_runner_instance
 
-            input_data = RunLevelValidationInput(run_metadata=run_metadata)
+            input_data = GlobalValidationInput(run_metadata=run_metadata)
             result = await coordinator.run_validation(input_data)
 
         assert result.passed is True
@@ -554,7 +554,7 @@ class TestRunLevelValidation:
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
             MockRunner.return_value = mock_runner_instance
 
-            input_data = RunLevelValidationInput(run_metadata=run_metadata)
+            input_data = GlobalValidationInput(run_metadata=run_metadata)
             result = await coordinator.run_validation(input_data)
 
         assert result.passed is True
@@ -629,7 +629,7 @@ class TestRunLevelValidation:
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
             MockRunner.return_value = mock_runner_instance
 
-            input_data = RunLevelValidationInput(run_metadata=run_metadata)
+            input_data = GlobalValidationInput(run_metadata=run_metadata)
             result = await coordinator.run_validation(input_data)
 
         assert result.passed is True
@@ -712,7 +712,7 @@ class TestRunLevelValidation:
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
             MockRunner.return_value = mock_runner_instance
 
-            input_data = RunLevelValidationInput(run_metadata=run_metadata)
+            input_data = GlobalValidationInput(run_metadata=run_metadata)
             result = await coordinator.run_validation(input_data)
 
         assert result.passed is False
@@ -790,7 +790,7 @@ class TestRunLevelValidation:
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
             MockRunner.return_value = mock_runner_instance
 
-            input_data = RunLevelValidationInput(run_metadata=run_metadata)
+            input_data = GlobalValidationInput(run_metadata=run_metadata)
             result = await coordinator.run_validation(input_data)
 
         assert result.passed is False
@@ -800,24 +800,24 @@ class TestRunLevelValidation:
         assert run_metadata.run_validation.e2e_passed is None
 
 
-class TestRunLevelValidationIntegration:
-    """Integration tests for Gate 4 in the orchestrator run() method."""
+class TestGlobalValidationIntegration:
+    """Integration tests for global validation in the orchestrator run() method."""
 
     @pytest.mark.asyncio
     async def test_run_calls_gate4_after_issues_complete(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """run() should call run-level validation after all issues complete."""
+        """run() should call global validation after all issues complete."""
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
 
         gate4_called = False
 
         async def mock_run_validation(
-            input_data: RunLevelValidationInput,
-        ) -> RunLevelValidationOutput:
+            input_data: GlobalValidationInput,
+        ) -> GlobalValidationOutput:
             nonlocal gate4_called
             gate4_called = True
-            return RunLevelValidationOutput(passed=True)
+            return GlobalValidationOutput(passed=True)
 
         first_call = True
 
@@ -879,7 +879,7 @@ class TestRunLevelValidationIntegration:
     async def test_run_returns_zero_success_on_gate4_failure(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """run() should return 0 successes if Gate 4 fails."""
+        """run() should return 0 successes if global validation fails."""
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
 
         first_call = True
@@ -908,10 +908,10 @@ class TestRunLevelValidationIntegration:
                 summary="Done",
             )
 
-        async def mock_run_level_fails(
-            input_data: RunLevelValidationInput,
-        ) -> RunLevelValidationOutput:
-            return RunLevelValidationOutput(passed=False)  # Gate 4 fails
+        async def mock_global_fails(
+            input_data: GlobalValidationInput,
+        ) -> GlobalValidationOutput:
+            return GlobalValidationOutput(passed=False)  # global validation fails
 
         with (
             patch.object(
@@ -929,7 +929,7 @@ class TestRunLevelValidationIntegration:
             patch.object(
                 orchestrator.run_coordinator,
                 "run_validation",
-                side_effect=mock_run_level_fails,
+                side_effect=mock_global_fails,
             ),
             patch(
                 "src.orchestration.orchestrator.get_lock_dir",
@@ -941,7 +941,7 @@ class TestRunLevelValidationIntegration:
             (tmp_path / "locks").mkdir(exist_ok=True)
             success_count, total = await orchestrator.run()
 
-        # Gate 4 failure should cause 0 successes to be returned
+        # global validation failure should cause 0 successes to be returned
         assert success_count == 0
         assert total == 1
 
@@ -949,17 +949,17 @@ class TestRunLevelValidationIntegration:
     async def test_run_skips_gate4_when_no_successes(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """run() should skip Gate 4 when there are no successful issues."""
+        """run() should skip global validation when there are no successful issues."""
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
 
         gate4_called = False
 
         async def mock_run_validation(
-            input_data: RunLevelValidationInput,
-        ) -> RunLevelValidationOutput:
+            input_data: GlobalValidationInput,
+        ) -> GlobalValidationOutput:
             nonlocal gate4_called
             gate4_called = True
-            return RunLevelValidationOutput(passed=True)
+            return GlobalValidationOutput(passed=True)
 
         first_call = True
 
@@ -1018,18 +1018,18 @@ class TestRunLevelValidationIntegration:
             (tmp_path / "locks").mkdir(exist_ok=True)
             await orchestrator.run()
 
-        # Gate 4 should NOT be called when no issues succeeded
+        # global validation should NOT be called when no issues succeeded
         assert gate4_called is False
 
     @pytest.mark.asyncio
     async def test_run_skips_gate4_when_disabled(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """run() should skip Gate 4 when run-level-validate is disabled."""
+        """run() should skip global validation when global-validate is disabled."""
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
             max_agents=1,
-            disable_validations={"run-level-validate"},
+            disable_validations={"global-validate"},
         )
 
         first_call = True
@@ -1081,6 +1081,6 @@ class TestRunLevelValidationIntegration:
             (tmp_path / "locks").mkdir(exist_ok=True)
             success_count, total = await orchestrator.run()
 
-        # Should succeed (not fail due to Gate 4)
+        # Should succeed (not fail due to global validation)
         assert success_count == 1
         assert total == 1

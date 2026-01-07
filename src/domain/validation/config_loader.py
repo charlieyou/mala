@@ -48,13 +48,13 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
     {
         "preset",
         "commands",
-        "run_level_commands",
+        "global_validation_commands",
         "coverage",
         "code_patterns",
         "config_files",
         "setup_files",
         "custom_commands",
-        "run_level_custom_commands",
+        "global_custom_commands",
     }
 )
 

@@ -103,7 +103,7 @@ class OrchestratorDependencies:
     When None, the factory creates default implementations.
 
     Note: AgentSessionRunner is NOT included here because it's constructed
-    per-issue in run_implementer with issue-specific callbacks.
+    per-session in run_implementer with issue-specific callbacks.
 
     Attributes:
         issue_provider: IssueProvider for issue tracking operations.
@@ -145,7 +145,7 @@ class RuntimeDeps:
     Protocol implementations and service objects injected at startup.
 
     Attributes:
-        quality_gate: GateChecker for quality gate validation.
+        evidence_check: GateChecker for quality gate validation.
         code_reviewer: CodeReviewer for post-commit code reviews.
         beads: IssueProvider for issue tracking operations.
         event_sink: MalaEventSink for run lifecycle logging.
@@ -155,7 +155,7 @@ class RuntimeDeps:
         mala_config: MalaConfig for orchestrator configuration.
     """
 
-    quality_gate: GateChecker
+    evidence_check: GateChecker
     code_reviewer: CodeReviewer
     beads: IssueProvider
     event_sink: MalaEventSink

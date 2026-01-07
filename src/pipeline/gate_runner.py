@@ -2,7 +2,7 @@
 
 Extracted from MalaOrchestrator to separate gate/fixer policy from orchestration.
 This module handles:
-- Per-issue quality gate checks with retry state management
+- Per-session quality gate checks with retry state management
 - No-progress detection for retry termination
 - Async gate running for non-blocking orchestration
 
@@ -22,7 +22,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
-from src.domain.quality_gate import GateResult
+from src.domain.evidence_check import GateResult
 from src.domain.validation.spec import (
     ValidationScope,
     build_validation_spec,
@@ -56,8 +56,8 @@ class GateRunnerConfig:
 
 
 @dataclass
-class PerIssueGateInput:
-    """Input for per-issue quality gate check.
+class PerSessionGateInput:
+    """Input for per-session quality gate check.
 
     Bundles all the data needed to run a single gate check.
 
@@ -75,8 +75,8 @@ class PerIssueGateInput:
 
 
 @dataclass
-class PerIssueGateOutput:
-    """Output from per-issue quality gate check.
+class PerSessionGateOutput:
+    """Output from per-session quality gate check.
 
     Attributes:
         gate_result: The GateResult from the quality gate.
@@ -89,10 +89,10 @@ class PerIssueGateOutput:
 
 @dataclass
 class GateRunner:
-    """Quality gate runner for per-issue validation.
+    """Quality gate runner for per-session validation.
 
     This class encapsulates the gate checking logic that was previously
-    inline in MalaOrchestrator._run_quality_gate_sync. It receives a
+    inline in MalaOrchestrator._run_evidence_check_sync. It receives a
     GateChecker (protocol) for actual validation execution.
 
     The GateRunner is responsible for:
@@ -103,28 +103,28 @@ class GateRunner:
 
     Usage:
         runner = GateRunner(
-            gate_checker=quality_gate,
+            gate_checker=evidence_check,
             repo_path=repo_path,
             config=GateRunnerConfig(max_gate_retries=3),
         )
-        output = runner.run_per_issue_gate(input)
+        output = runner.run_per_session_gate(input)
 
     Attributes:
         gate_checker: GateChecker implementation for running checks.
         repo_path: Path to the repository.
         config: Configuration for gate behavior.
-        per_issue_spec: Cached per-issue ValidationSpec (built lazily).
+        per_session_spec: Cached per-session ValidationSpec (built lazily).
     """
 
     gate_checker: GateChecker
     repo_path: Path
     config: GateRunnerConfig = field(default_factory=GateRunnerConfig)
-    per_issue_spec: ValidationSpec | None = field(default=None, init=False)
+    per_session_spec: ValidationSpec | None = field(default=None, init=False)
 
     def _get_or_build_spec(
         self, provided_spec: ValidationSpec | None
     ) -> ValidationSpec:
-        """Get provided spec or build/cache a per-issue spec.
+        """Get provided spec or build/cache a per-session spec.
 
         Args:
             provided_spec: Spec provided in input, or None.
@@ -135,26 +135,26 @@ class GateRunner:
         if provided_spec is not None:
             return provided_spec
 
-        # Build and cache per-issue spec if not already cached
-        if self.per_issue_spec is None:
-            self.per_issue_spec = build_validation_spec(
+        # Build and cache per-session spec if not already cached
+        if self.per_session_spec is None:
+            self.per_session_spec = build_validation_spec(
                 self.repo_path,
-                scope=ValidationScope.PER_ISSUE,
+                scope=ValidationScope.PER_SESSION,
                 disable_validations=self.config.disable_validations,
             )
-        return self.per_issue_spec
+        return self.per_session_spec
 
-    def run_per_issue_gate(self, input: PerIssueGateInput) -> PerIssueGateOutput:
+    def run_per_session_gate(self, input: PerSessionGateInput) -> PerSessionGateOutput:
         """Run quality gate check for a single issue.
 
         This is a synchronous method that performs blocking I/O.
         The orchestrator should call this via asyncio.to_thread().
 
         Args:
-            input: PerIssueGateInput with issue_id, log_path, retry_state.
+            input: PerSessionGateInput with issue_id, log_path, retry_state.
 
         Returns:
-            PerIssueGateOutput with gate_result and new_log_offset.
+            PerSessionGateOutput with gate_result and new_log_offset.
         """
         spec = self._get_or_build_spec(input.spec)
         logger.debug(
@@ -202,13 +202,13 @@ class GateRunner:
                     resolution=gate_result.resolution,
                 )
 
-        return PerIssueGateOutput(
+        return PerSessionGateOutput(
             gate_result=gate_result,
             new_log_offset=new_offset,
         )
 
     def get_cached_spec(self) -> ValidationSpec | None:
-        """Get the cached per-issue spec, if any.
+        """Get the cached per-session spec, if any.
 
         This allows the orchestrator to access the spec for other purposes
         (e.g., evidence parsing) without rebuilding it.
@@ -216,10 +216,10 @@ class GateRunner:
         Returns:
             The cached ValidationSpec, or None if not yet built.
         """
-        return self.per_issue_spec
+        return self.per_session_spec
 
     def set_cached_spec(self, spec: ValidationSpec) -> None:
-        """Set the cached per-issue spec.
+        """Set the cached per-session spec.
 
         Allows the orchestrator to pre-populate the cache with a spec
         built at run start.
@@ -227,7 +227,7 @@ class GateRunner:
         Args:
             spec: ValidationSpec to cache.
         """
-        self.per_issue_spec = spec
+        self.per_session_spec = spec
         logger.debug("Validation spec cached: issue_id=*")
 
 
@@ -240,7 +240,7 @@ class AsyncGateRunner:
     execution.
 
     The AsyncGateRunner maintains its own state for:
-    - per_issue_spec: Cached validation spec (synced with underlying GateRunner)
+    - per_session_spec: Cached validation spec (synced with underlying GateRunner)
     - last_gate_results: Most recent gate results per issue
 
     Usage:
@@ -250,7 +250,7 @@ class AsyncGateRunner:
     """
 
     gate_runner: GateRunner
-    per_issue_spec: ValidationSpec | None = field(default=None)
+    per_session_spec: ValidationSpec | None = field(default=None)
     last_gate_results: dict[str, GateResult | GateResultProtocol] = field(
         default_factory=dict
     )
@@ -265,21 +265,21 @@ class AsyncGateRunner:
 
         Delegates to GateRunner for actual gate checking logic.
         """
-        # Sync per_issue_spec with gate_runner
-        if self.per_issue_spec is not None:
-            self.gate_runner.set_cached_spec(self.per_issue_spec)
+        # Sync per_session_spec with gate_runner
+        if self.per_session_spec is not None:
+            self.gate_runner.set_cached_spec(self.per_session_spec)
 
-        gate_input = PerIssueGateInput(
+        gate_input = PerSessionGateInput(
             issue_id=issue_id,
             log_path=log_path,
             retry_state=retry_state,
-            spec=self.per_issue_spec,
+            spec=self.per_session_spec,
         )
-        output = self.gate_runner.run_per_issue_gate(gate_input)
+        output = self.gate_runner.run_per_session_gate(gate_input)
 
         # Sync cached spec back (gate_runner may have built it)
-        if self.per_issue_spec is None:
-            self.per_issue_spec = self.gate_runner.get_cached_spec()
+        if self.per_session_spec is None:
+            self.per_session_spec = self.gate_runner.get_cached_spec()
 
         # Store gate result for later retrieval
         self.last_gate_results[issue_id] = output.gate_result

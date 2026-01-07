@@ -13,10 +13,10 @@ from src.domain.lifecycle import RetryState
 from src.pipeline.gate_runner import (
     GateRunner,
     GateRunnerConfig,
-    PerIssueGateInput,
+    PerSessionGateInput,
 )
 from src.core.protocols import GateChecker  # noqa: TC001 - needed at runtime for cast()
-from src.domain.quality_gate import GateResult
+from src.domain.evidence_check import GateResult
 from src.domain.validation.spec import (
     CommandKind,
     ValidationCommand,
@@ -26,8 +26,8 @@ from src.domain.validation.spec import (
 from tests.fakes.gate_checker import FakeGateChecker
 
 
-class TestPerIssueGate:
-    """Test per-issue quality gate checking."""
+class TestPerSessionGate:
+    """Test per-session quality gate checking."""
 
     @pytest.fixture
     def tmp_log_path(self, tmp_path: Path) -> Path:
@@ -46,7 +46,7 @@ class TestPerIssueGate:
         """Create a minimal ValidationSpec for tests."""
         return ValidationSpec(
             commands=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
     @pytest.fixture
@@ -58,7 +58,7 @@ class TestPerIssueGate:
             config=GateRunnerConfig(max_gate_retries=3),
         )
 
-    def test_run_per_issue_gate_returns_gate_result(
+    def test_run_per_session_gate_returns_gate_result(
         self,
         runner: GateRunner,
         fake_checker: FakeGateChecker,
@@ -72,18 +72,18 @@ class TestPerIssueGate:
             commit_hash="def456",
         )
 
-        input = PerIssueGateInput(
+        input = PerSessionGateInput(
             issue_id="test-123",
             log_path=tmp_log_path,
             retry_state=RetryState(),
             spec=minimal_spec,
         )
-        output = runner.run_per_issue_gate(input)
+        output = runner.run_per_session_gate(input)
 
         assert output.gate_result.passed is True
         assert output.gate_result.commit_hash == "def456"
 
-    def test_run_per_issue_gate_returns_new_offset(
+    def test_run_per_session_gate_returns_new_offset(
         self,
         runner: GateRunner,
         fake_checker: FakeGateChecker,
@@ -93,17 +93,17 @@ class TestPerIssueGate:
         """Gate runner should return the new log offset."""
         fake_checker.log_end_offset = 5000
 
-        input = PerIssueGateInput(
+        input = PerSessionGateInput(
             issue_id="test-123",
             log_path=tmp_log_path,
             retry_state=RetryState(),
             spec=minimal_spec,
         )
-        output = runner.run_per_issue_gate(input)
+        output = runner.run_per_session_gate(input)
 
         assert output.new_log_offset == 5000
 
-    def test_run_per_issue_gate_passes_retry_state(
+    def test_run_per_session_gate_passes_retry_state(
         self,
         runner: GateRunner,
         fake_checker: FakeGateChecker,
@@ -117,13 +117,13 @@ class TestPerIssueGate:
             baseline_timestamp=1234567890,
         )
 
-        input = PerIssueGateInput(
+        input = PerSessionGateInput(
             issue_id="test-123",
             log_path=tmp_log_path,
             retry_state=retry_state,
             spec=minimal_spec,
         )
-        runner.run_per_issue_gate(input)
+        runner.run_per_session_gate(input)
 
         assert len(fake_checker.check_with_resolution_calls) == 1
         call = fake_checker.check_with_resolution_calls[0]
@@ -131,7 +131,7 @@ class TestPerIssueGate:
         assert call["baseline_timestamp"] == 1234567890
         assert call["log_offset"] == 500
 
-    def test_run_per_issue_gate_checks_no_progress_on_retry(
+    def test_run_per_session_gate_checks_no_progress_on_retry(
         self,
         runner: GateRunner,
         fake_checker: FakeGateChecker,
@@ -147,26 +147,26 @@ class TestPerIssueGate:
         fake_checker.no_progress_result = False
 
         # First attempt - should NOT check no_progress
-        input = PerIssueGateInput(
+        input = PerSessionGateInput(
             issue_id="test-123",
             log_path=tmp_log_path,
             retry_state=RetryState(gate_attempt=1),
             spec=minimal_spec,
         )
-        runner.run_per_issue_gate(input)
+        runner.run_per_session_gate(input)
         assert len(fake_checker.check_no_progress_calls) == 0
 
         # Second attempt - should check no_progress
-        input = PerIssueGateInput(
+        input = PerSessionGateInput(
             issue_id="test-123",
             log_path=tmp_log_path,
             retry_state=RetryState(gate_attempt=2),
             spec=minimal_spec,
         )
-        runner.run_per_issue_gate(input)
+        runner.run_per_session_gate(input)
         assert len(fake_checker.check_no_progress_calls) == 1
 
-    def test_run_per_issue_gate_adds_no_progress_failure(
+    def test_run_per_session_gate_adds_no_progress_failure(
         self,
         runner: GateRunner,
         fake_checker: FakeGateChecker,
@@ -181,20 +181,20 @@ class TestPerIssueGate:
         )
         fake_checker.no_progress_result = True
 
-        input = PerIssueGateInput(
+        input = PerSessionGateInput(
             issue_id="test-123",
             log_path=tmp_log_path,
             retry_state=RetryState(gate_attempt=2),
             spec=minimal_spec,
         )
-        output = runner.run_per_issue_gate(input)
+        output = runner.run_per_session_gate(input)
 
         assert output.gate_result.passed is False
         assert output.gate_result.no_progress is True
         assert "No progress" in output.gate_result.failure_reasons[-1]
         assert len(output.gate_result.failure_reasons) == 2
 
-    def test_run_per_issue_gate_skips_no_progress_when_passed(
+    def test_run_per_session_gate_skips_no_progress_when_passed(
         self,
         runner: GateRunner,
         fake_checker: FakeGateChecker,
@@ -208,13 +208,13 @@ class TestPerIssueGate:
             commit_hash="abc123",
         )
 
-        input = PerIssueGateInput(
+        input = PerSessionGateInput(
             issue_id="test-123",
             log_path=tmp_log_path,
             retry_state=RetryState(gate_attempt=2),
             spec=minimal_spec,
         )
-        runner.run_per_issue_gate(input)
+        runner.run_per_session_gate(input)
 
         # Should not check no_progress when gate passed
         assert len(fake_checker.check_no_progress_calls) == 0
@@ -250,18 +250,18 @@ class TestSpecCaching:
         # Create mala.yaml so build_validation_spec works
         (tmp_path / "mala.yaml").write_text("commands:\n  test: echo test\n")
 
-        input = PerIssueGateInput(
+        input = PerSessionGateInput(
             issue_id="test-123",
             log_path=log_path,
             retry_state=RetryState(),
             spec=None,  # Not provided
         )
-        runner.run_per_issue_gate(input)
+        runner.run_per_session_gate(input)
 
         # Spec should have been built and cached
         cached_spec = runner.get_cached_spec()
         assert cached_spec is not None
-        assert cached_spec.scope == ValidationScope.PER_ISSUE
+        assert cached_spec.scope == ValidationScope.PER_SESSION
 
     def test_uses_provided_spec(
         self,
@@ -281,16 +281,16 @@ class TestSpecCaching:
                     kind=CommandKind.TEST,
                 )
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
-        input = PerIssueGateInput(
+        input = PerSessionGateInput(
             issue_id="test-123",
             log_path=log_path,
             retry_state=RetryState(),
             spec=custom_spec,
         )
-        runner.run_per_issue_gate(input)
+        runner.run_per_session_gate(input)
 
         # Should have passed custom spec to checker
         assert len(fake_checker.check_with_resolution_calls) == 1
@@ -306,7 +306,7 @@ class TestSpecCaching:
         """set_cached_spec should pre-populate the cache."""
         custom_spec = ValidationSpec(
             commands=[],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
         runner.set_cached_spec(custom_spec)

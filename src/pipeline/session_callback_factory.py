@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from src.core.protocols import GateResultProtocol, LogProvider, ReviewResultProtocol
     from src.domain.lifecycle import RetryState
-    from src.domain.quality_gate import GateResult
+    from src.domain.evidence_check import GateResult
     from src.domain.validation.spec import ValidationSpec
     from src.core.protocols import MalaEventSink
     from src.pipeline.review_runner import ReviewRunner
@@ -68,11 +68,11 @@ class SessionCallbackFactory:
         review_runner: ReviewRunner,
         log_provider: Callable[[], LogProvider],
         event_sink: Callable[[], MalaEventSink],
-        quality_gate: Callable[[], GateChecker],
+        evidence_check: Callable[[], GateChecker],
         repo_path: Path,
         on_session_log_path: Callable[[str, Path], None],
         on_review_log_path: Callable[[str, str], None],
-        get_per_issue_spec: GetPerIssueSpec,
+        get_per_session_spec: GetPerSessionSpec,
         is_verbose: IsVerboseCheck,
     ) -> None:
         """Initialize the factory with dependencies.
@@ -82,15 +82,15 @@ class SessionCallbackFactory:
             review_runner: Runner for Cerberus code review.
             log_provider: Callable returning the log provider (late-bound).
             event_sink: Callable returning the event sink (late-bound).
-            quality_gate: Callable returning the gate checker (late-bound).
+            evidence_check: Callable returning the gate checker (late-bound).
             repo_path: Repository path for git operations.
             on_session_log_path: Callback when session log path becomes known.
             on_review_log_path: Callback when review log path becomes known.
-            get_per_issue_spec: Callable to get current per-issue spec.
+            get_per_session_spec: Callable to get current per-session spec.
             is_verbose: Callable to check verbose mode.
 
         Note:
-            log_provider, event_sink, and quality_gate are callables to support
+            log_provider, event_sink, and evidence_check are callables to support
             late-bound lookups. This allows tests to patch orchestrator attributes
             after factory construction and have the patches take effect.
         """
@@ -98,11 +98,11 @@ class SessionCallbackFactory:
         self._review_runner = review_runner
         self._get_log_provider = log_provider
         self._get_event_sink = event_sink
-        self._get_quality_gate = quality_gate
+        self._get_evidence_check = evidence_check
         self._repo_path = repo_path
         self._on_session_log_path = on_session_log_path
         self._on_review_log_path = on_review_log_path
-        self._get_per_issue_spec = get_per_issue_spec
+        self._get_per_session_spec = get_per_session_spec
         self._is_verbose = is_verbose
 
     def build(
@@ -169,7 +169,7 @@ class SessionCallbackFactory:
                 log_offset=log_offset,
                 previous_commit_hash=prev_commit,
                 current_commit_hash=curr_commit,
-                spec=self._get_per_issue_spec(),
+                spec=self._get_per_session_spec(),
             )
             return self._review_runner.check_no_progress(no_progress_input)
 
@@ -181,7 +181,7 @@ class SessionCallbackFactory:
             return log_path
 
         def get_log_offset(log_path: Path, start_offset: int) -> int:
-            return self._get_quality_gate().get_log_end_offset(log_path, start_offset)
+            return self._get_evidence_check().get_log_end_offset(log_path, start_offset)
 
         def on_tool_use(agent_id: str, tool_name: str, arguments: dict | None) -> None:
             self._get_event_sink().on_tool_use(agent_id, tool_name, arguments=arguments)
@@ -201,12 +201,12 @@ class SessionCallbackFactory:
         )
 
 
-# Protocol for getting per-issue spec
-class GetPerIssueSpec(Protocol):
-    """Protocol for getting the current per-issue validation spec."""
+# Protocol for getting per-session spec
+class GetPerSessionSpec(Protocol):
+    """Protocol for getting the current per-session validation spec."""
 
     def __call__(self) -> ValidationSpec | None:
-        """Return the current per-issue spec, or None if not set."""
+        """Return the current per-session spec, or None if not set."""
         ...
 
 

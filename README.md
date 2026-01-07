@@ -87,8 +87,8 @@ mala epic-verify proj-abc /path/to/repo   # Verify and close an epic
 1. **Orchestrator** queries `bd ready --json` for available issues
 2. **Filtering**: Epics are skipped - only tasks/bugs are processed
 3. **Spawning**: Up to N parallel agent tasks (unlimited by default)
-4. **Per-issue pipeline**: Agent implements → quality gate → external review → close
-5. **Run-level validation**: Final validation pass catches cross-issue regressions
+4. **Per-session pipeline**: Agent implements → evidence check → external review → close
+5. **Global validation**: Final validation pass catches cross-issue regressions
 6. **Epic verification**: When all children close, verifies acceptance criteria
 
 ### Agent Workflow
@@ -154,7 +154,7 @@ See `commands/bd-breakdown.md` for the full issue creation workflow.
 - [Architecture](docs/architecture.md) — Layered architecture, module responsibilities, key flows
 - [CLI Reference](docs/cli-reference.md) — CLI options, environment variables, integrations
 - [Project Configuration](docs/project-config.md) — mala.yaml schema, presets, coverage settings
-- [Validation](docs/validation.md) — Quality gate, external review, run-level validation
+- [Validation](docs/validation.md) — Evidence check, external review, global validation
 - [Development](docs/development.md) — Type checking, testing, package structure
 - `plans/` — Historical design documents (not actively maintained)
 
@@ -163,6 +163,6 @@ See `commands/bd-breakdown.md` for the full issue creation workflow.
 - **Event sink architecture** decouples orchestration from presentation
 - **Filesystem locks** via atomic hardlink (sandbox-compatible)
 - **Orchestrator claims issues** before spawning (agents don't claim)
-- **Quality gate** verifies commits and validation before accepting work
+- **Evidence check** verifies commits and validation before accepting work
 - **Epic verification** uses AI to validate collective work against acceptance criteria
 - **JSONL logs** in `~/.config/mala/logs/` for debugging

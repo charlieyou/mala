@@ -195,16 +195,16 @@ def _print_task_line(
 # Valid values for --disable flag
 # Each value controls a specific validation phase:
 #   post-validate: Skip all validation commands (pytest, ruff, ty) after agent commits
-#   run-level-validate: Skip run-level validation at end of batch (reserved for future use)
+#   global-validate: Skip global validation at end of batch (reserved for future use)
 #   integration-tests: Exclude @pytest.mark.integration tests from pytest runs
 #   coverage: Disable code coverage enforcement (threshold check)
-#   e2e: Disable end-to-end fixture repo tests (run-level only)
+#   e2e: Disable end-to-end fixture repo tests (global only)
 #   review: Disable automated LLM code review after quality gate passes
 #   followup-on-run-validate-fail: Disable auto-retry on run validation failures (reserved)
 VALID_DISABLE_VALUES = frozenset(
     {
         "post-validate",
-        "run-level-validate",
+        "global-validate",
         "integration-tests",
         "coverage",
         "e2e",

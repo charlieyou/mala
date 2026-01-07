@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from src.infra.io.log_output.run_metadata import (
-    QualityGateResult,
+    EvidenceCheckResult,
     ValidationResult as MetaValidationResult,
 )
 
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
         GateResultProtocol,
         ValidationSpecProtocol,
     )
-    from src.domain.quality_gate import GateResult
+    from src.domain.evidence_check import GateResult
     from src.domain.validation.spec import ValidationSpec
 
 
@@ -34,7 +34,7 @@ class GateMetadata:
     separating the extraction logic from the finalization flow.
     """
 
-    quality_gate_result: QualityGateResult | None = None
+    evidence_check_result: EvidenceCheckResult | None = None
     validation_result: MetaValidationResult | None = None
 
 
@@ -46,11 +46,11 @@ def build_gate_metadata(
 
     Extracts evidence from the stored gate result without re-running validation.
     This is the primary path used when gate results are available from
-    _run_quality_gate_sync.
+    _run_evidence_check_sync.
 
     Args:
         gate_result: The stored gate result (may be None if no gate ran).
-        passed: Whether the overall run passed (affects quality_gate_result.passed).
+        passed: Whether the overall run passed (affects evidence_check_result.passed).
 
     Returns:
         GateMetadata with extracted quality gate and validation results.
@@ -67,7 +67,7 @@ def build_gate_metadata(
         evidence_dict = evidence.to_evidence_dict()
     evidence_dict["commit_found"] = commit_hash is not None
 
-    quality_gate_result = QualityGateResult(
+    evidence_check_result = EvidenceCheckResult(
         passed=passed if passed else gate_result.passed,
         evidence=evidence_dict,
         failure_reasons=[] if passed else list(gate_result.failure_reasons),
@@ -79,7 +79,7 @@ def build_gate_metadata(
         commands_run = [
             kind.value for kind, ran in evidence.commands_ran.items() if ran
         ]
-        # failed_commands is already filtered by QUALITY_GATE_IGNORED_KINDS
+        # failed_commands is already filtered by EVIDENCE_CHECK_IGNORED_KINDS
         # at the source in parse_validation_evidence_with_spec
         validation_result = MetaValidationResult(
             passed=passed if passed else gate_result.passed,
@@ -88,7 +88,7 @@ def build_gate_metadata(
         )
 
     return GateMetadata(
-        quality_gate_result=quality_gate_result,
+        evidence_check_result=evidence_check_result,
         validation_result=validation_result,
     )
 
@@ -97,8 +97,8 @@ def build_gate_metadata_from_logs(
     log_path: Path,
     result_summary: str,
     result_success: bool,
-    quality_gate: GateChecker,
-    per_issue_spec: ValidationSpec | ValidationSpecProtocol | None,
+    evidence_check: GateChecker,
+    per_session_spec: ValidationSpec | ValidationSpecProtocol | None,
 ) -> GateMetadata:
     """Build GateMetadata by parsing logs directly (fallback path).
 
@@ -109,17 +109,17 @@ def build_gate_metadata_from_logs(
         log_path: Path to the session log file.
         result_summary: Summary from the issue result (for extracting failure reasons).
         result_success: Whether the run succeeded (determines passed status).
-        quality_gate: The GateChecker instance for parsing.
-        per_issue_spec: ValidationSpec for parsing evidence (if None, returns empty).
+        evidence_check: The GateChecker instance for parsing.
+        per_session_spec: ValidationSpec for parsing evidence (if None, returns empty).
 
     Returns:
         GateMetadata with extracted results, or empty if spec is None.
     """
-    if per_issue_spec is None:
+    if per_session_spec is None:
         return GateMetadata()
 
-    evidence = quality_gate.parse_validation_evidence_with_spec(
-        log_path, cast("ValidationSpecProtocol", per_issue_spec)
+    evidence = evidence_check.parse_validation_evidence_with_spec(
+        log_path, cast("ValidationSpecProtocol", per_session_spec)
     )
 
     # Extract failure reasons from result summary
@@ -136,7 +136,7 @@ def build_gate_metadata_from_logs(
     # and this is a fallback path - just mark as unknown
     evidence_dict["commit_found"] = False
 
-    quality_gate_result = QualityGateResult(
+    evidence_check_result = EvidenceCheckResult(
         passed=result_success,
         evidence=evidence_dict,
         failure_reasons=failure_reasons,
@@ -144,7 +144,7 @@ def build_gate_metadata_from_logs(
 
     # Build validation result from evidence (matches build_gate_metadata behavior)
     commands_run = [kind.value for kind, ran in evidence.commands_ran.items() if ran]
-    # failed_commands is already filtered by QUALITY_GATE_IGNORED_KINDS
+    # failed_commands is already filtered by EVIDENCE_CHECK_IGNORED_KINDS
     # at the source in parse_validation_evidence_with_spec
     validation_result = MetaValidationResult(
         passed=result_success,
@@ -153,6 +153,6 @@ def build_gate_metadata_from_logs(
     )
 
     return GateMetadata(
-        quality_gate_result=quality_gate_result,
+        evidence_check_result=evidence_check_result,
         validation_result=validation_result,
     )

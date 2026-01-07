@@ -1,9 +1,9 @@
 """RunCoordinator: Main run orchestration pipeline stage.
 
-Extracted from MalaOrchestrator to separate run-level coordination from
+Extracted from MalaOrchestrator to separate global coordination from
 the main class. This module handles:
 - Main run loop (spawning agents, waiting for completion)
-- Run-level validation (Gate 4)
+- Global validation (global validation)
 - Fixer agent spawning for validation failures
 
 The RunCoordinator receives explicit inputs and returns explicit outputs,
@@ -90,8 +90,8 @@ class RunCoordinatorConfig:
 
 
 @dataclass
-class RunLevelValidationInput:
-    """Input for run-level validation.
+class GlobalValidationInput:
+    """Input for global validation.
 
     Attributes:
         run_metadata: Run metadata tracker.
@@ -101,8 +101,8 @@ class RunLevelValidationInput:
 
 
 @dataclass
-class RunLevelValidationOutput:
-    """Output from run-level validation.
+class GlobalValidationOutput:
+    """Output from global validation.
 
     Attributes:
         passed: Whether validation passed.
@@ -174,19 +174,19 @@ class SpecResultBuilder:
 
 @dataclass
 class RunCoordinator:
-    """Run-level coordination for MalaOrchestrator.
+    """Global coordination for MalaOrchestrator.
 
-    This class encapsulates the run-level orchestration logic that was
+    This class encapsulates the global orchestration logic that was
     previously inline in MalaOrchestrator. It handles:
-    - Run-level validation (Gate 4) with fixer retries
+    - Global validation (global validation) with fixer retries
     - Fixer agent spawning
 
-    The orchestrator delegates to this class for run-level operations
-    while retaining per-issue coordination.
+    The orchestrator delegates to this class for global operations
+    while retaining per-session coordination.
 
     Attributes:
         config: Configuration for run behavior.
-        gate_checker: GateChecker for run-level validation.
+        gate_checker: GateChecker for global validation.
         command_runner: CommandRunner for executing validation commands.
         env_config: Environment configuration for paths.
         lock_manager: Lock manager for file locking.
@@ -204,40 +204,40 @@ class RunCoordinator:
     _active_fixer_ids: list[str] = field(default_factory=list, init=False)
 
     async def run_validation(
-        self, input: RunLevelValidationInput
-    ) -> RunLevelValidationOutput:
-        """Run Gate 4 validation after all issues complete.
+        self, input: GlobalValidationInput
+    ) -> GlobalValidationOutput:
+        """Run global validation validation after all issues complete.
 
-        This runs validation with RUN_LEVEL scope, which includes E2E tests.
+        This runs validation with GLOBAL scope, which includes E2E tests.
         On failure, spawns a fixer agent and retries up to max_gate_retries.
 
         Args:
-            input: RunLevelValidationInput with run metadata.
+            input: GlobalValidationInput with run metadata.
 
         Returns:
-            RunLevelValidationOutput indicating pass/fail.
+            GlobalValidationOutput indicating pass/fail.
         """
         from src.infra.git_utils import get_git_commit_async
 
-        # Check if run-level validation is disabled
-        if "run-level-validate" in (self.config.disable_validations or set()):
+        # Check if global validation is disabled
+        if "global-validate" in (self.config.disable_validations or set()):
             if self.event_sink is not None:
-                self.event_sink.on_run_level_validation_disabled()
-            return RunLevelValidationOutput(passed=True)
+                self.event_sink.on_global_validation_disabled()
+            return GlobalValidationOutput(passed=True)
 
         # Get current HEAD commit
         commit_hash = await get_git_commit_async(self.config.repo_path)
         if not commit_hash:
             if self.event_sink is not None:
                 self.event_sink.on_warning(
-                    "Could not get HEAD commit for run-level validation"
+                    "Could not get HEAD commit for global validation"
                 )
-            return RunLevelValidationOutput(passed=True)
+            return GlobalValidationOutput(passed=True)
 
-        # Build run-level validation spec
+        # Build global validation spec
         spec = build_validation_spec(
             self.config.repo_path,
-            scope=ValidationScope.RUN_LEVEL,
+            scope=ValidationScope.GLOBAL,
             disable_validations=self.config.disable_validations,
         )
 
@@ -247,7 +247,7 @@ class RunCoordinator:
             repo_path=self.config.repo_path,
             commit_hash=commit_hash,
             changed_files=[],
-            scope=ValidationScope.RUN_LEVEL,
+            scope=ValidationScope.GLOBAL,
         )
 
         # Create validation runner
@@ -279,7 +279,7 @@ class RunCoordinator:
                     self.event_sink.on_gate_passed(None)
                 meta_result = SpecResultBuilder.build_meta_result(result, passed=True)
                 input.run_metadata.record_run_validation(meta_result)
-                return RunLevelValidationOutput(passed=True)
+                return GlobalValidationOutput(passed=True)
 
             # Validation failed - build failure output for fixer
             failure_output = self._build_validation_failure_output(result)
@@ -303,7 +303,7 @@ class RunCoordinator:
                     self.event_sink.on_gate_result(
                         None, passed=False, failure_reasons=failure_reasons
                     )
-                return RunLevelValidationOutput(passed=False)
+                return GlobalValidationOutput(passed=False)
 
             # Spawn fixer agent
             if self.event_sink is not None:
@@ -328,10 +328,10 @@ class RunCoordinator:
                     repo_path=self.config.repo_path,
                     commit_hash=commit_hash,
                     changed_files=[],
-                    scope=ValidationScope.RUN_LEVEL,
+                    scope=ValidationScope.GLOBAL,
                 )
 
-        return RunLevelValidationOutput(passed=False)
+        return GlobalValidationOutput(passed=False)
 
     def _build_validation_failure_output(self, result: ValidationResult | None) -> str:
         """Build failure output string for fixer agent prompt.
@@ -377,7 +377,7 @@ class RunCoordinator:
         attempt: int,
         spec: ValidationSpec | None = None,
     ) -> bool:
-        """Spawn a fixer agent to address run-level validation failures.
+        """Spawn a fixer agent to address global validation failures.
 
         Args:
             failure_output: Human-readable description of what failed.

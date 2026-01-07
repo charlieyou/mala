@@ -49,25 +49,25 @@ def orchestrator(
 
 
 @pytest.fixture(autouse=True)
-def skip_run_level_validation(
+def skip_global_validation(
     make_orchestrator: Callable[..., MalaOrchestrator],
 ) -> Generator[None, None, None]:
-    """Skip Gate 4 (run-level validation) in all tests.
+    """Skip global validation (global validation) in all tests.
 
-    Run-level validation spawns a real Claude agent which is too slow for
-    unit tests. Tests for run-level validation are in test_run_level_validation.py.
+    Global validation spawns a real Claude agent which is too slow for
+    unit tests. Tests for global validation are in test_global_validation.py.
 
     This fixture monkey-patches RunCoordinator.run_validation at the class level
     to avoid using patch() context managers. The method is restored after each test.
     """
-    from src.pipeline.run_coordinator import RunCoordinator, RunLevelValidationOutput
+    from src.pipeline.run_coordinator import RunCoordinator, GlobalValidationOutput
 
     original_run_validation = RunCoordinator.run_validation
 
     async def mock_run_validation(
         self: object, *args: object, **kwargs: object
-    ) -> RunLevelValidationOutput:
-        return RunLevelValidationOutput(passed=True)
+    ) -> GlobalValidationOutput:
+        return GlobalValidationOutput(passed=True)
 
     RunCoordinator.run_validation = mock_run_validation  # type: ignore[method-assign]
     yield
@@ -434,7 +434,7 @@ class TestOrchestratorWithEpicId:
         assert orch.epic_id is None
 
 
-class TestOrchestratorQualityGateIntegration:
+class TestOrchestratorEvidenceCheckIntegration:
     """Test quality gate integration in orchestrator run flow.
 
     These tests verify that success=False triggers followup marking
@@ -831,7 +831,7 @@ class TestGateFlowSequencing:
     """
 
     @pytest.mark.asyncio
-    async def test_no_op_resolution_skips_per_issue_validation(
+    async def test_no_op_resolution_skips_per_session_validation(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """No-op resolution should skip Gate 2/3 (commit + validation evidence)."""
@@ -875,7 +875,7 @@ class TestGateFlowSequencing:
         assert "issue-noop" in fake_issues.closed
 
     @pytest.mark.asyncio
-    async def test_obsolete_resolution_skips_per_issue_validation(
+    async def test_obsolete_resolution_skips_per_session_validation(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Obsolete resolution should skip Gate 2/3 (commit + validation evidence)."""
@@ -1041,8 +1041,8 @@ class TestDisableValidationsRespected:
         assert orch.disable_validations is None
 
 
-class TestRunLevelValidation:
-    """Test run-level validation after all issues complete.
+class TestGlobalValidation:
+    """Test global validation after all issues complete.
 
     Uses FakeIssueProvider for behavioral assertions on close/followup state.
     """
@@ -1190,7 +1190,7 @@ class TestValidationResultMetadata:
     ) -> None:
         """Validation metadata should be derived from gate result's validation_evidence."""
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
-        from src.domain.quality_gate import (
+        from src.domain.evidence_check import (
             CommandKind,
             GateResult,
             ValidationEvidence,
@@ -1275,7 +1275,7 @@ class TestValidationResultMetadata:
     ) -> None:
         """Gate decisions and metadata should derive from the same validation result."""
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
-        from src.domain.quality_gate import (
+        from src.domain.evidence_check import (
             CommandKind,
             GateResult,
             ValidationEvidence,
@@ -1348,9 +1348,9 @@ class TestValidationResultMetadata:
         assert issue_run.issue_id == "issue-failed-validation"
 
         # Quality gate result should match gate evidence
-        assert issue_run.quality_gate is not None
-        assert issue_run.quality_gate.passed is False
-        assert "ruff check" in issue_run.quality_gate.failure_reasons[0]
+        assert issue_run.evidence_check is not None
+        assert issue_run.evidence_check.passed is False
+        assert "ruff check" in issue_run.evidence_check.failure_reasons[0]
 
         # Validation metadata should derive from same evidence
         assert issue_run.validation is not None
@@ -1946,15 +1946,15 @@ class TestEpicClosureAfterChildCompletion:
         assert set(epic_closure_calls) == {"epic-1", "epic-2"}
 
 
-class TestQualityGateAsync:
+class TestEvidenceCheckAsync:
     """Test that quality gate checks are non-blocking."""
 
     @pytest.mark.asyncio
-    async def test_run_quality_gate_uses_to_thread(
+    async def test_run_evidence_check_uses_to_thread(
         self, orchestrator: MalaOrchestrator, tmp_path: Path
     ) -> None:
         """Quality gate should use asyncio.to_thread to avoid blocking the event loop."""
-        from src.domain.quality_gate import GateResult
+        from src.domain.evidence_check import GateResult
 
         # Create a mock session log
         log_path = tmp_path / "session.jsonl"
@@ -2003,19 +2003,19 @@ class TestQualityGateAsync:
         assert offset == 0
 
 
-class TestFailedRunQualityGateEvidence:
-    """Test that failed runs record quality_gate evidence in IssueRun metadata.
+class TestFailedRunEvidenceCheckEvidence:
+    """Test that failed runs record evidence_check evidence in IssueRun metadata.
 
     When a run fails (result.success=False), the orchestrator should still
-    parse and record validation evidence and failure reasons in the quality_gate
+    parse and record validation evidence and failure reasons in the evidence_check
     field of IssueRun. This enables troubleshooting and follow-up triage.
     """
 
     @pytest.mark.asyncio
-    async def test_failed_run_records_quality_gate_evidence(
+    async def test_failed_run_records_evidence_check_evidence(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """Failed run should populate quality_gate with evidence and failure reasons."""
+        """Failed run should populate evidence_check with evidence and failure reasons."""
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
 
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
@@ -2111,18 +2111,18 @@ class TestFailedRunQualityGateEvidence:
         assert issue_run.issue_id == "issue-fail"
         assert issue_run.status == "failed"
 
-        # CRITICAL: quality_gate should be populated for failed runs
-        assert issue_run.quality_gate is not None, (
-            "quality_gate should be populated for failed runs with logs"
+        # CRITICAL: evidence_check should be populated for failed runs
+        assert issue_run.evidence_check is not None, (
+            "evidence_check should be populated for failed runs with logs"
         )
-        assert issue_run.quality_gate.passed is False
+        assert issue_run.evidence_check.passed is False
         # Evidence should be parsed from the log using spec-driven keys (CommandKind.value)
         # Note: empty evidence is valid if no validation commands were detected
-        assert isinstance(issue_run.quality_gate.evidence, dict)
+        assert isinstance(issue_run.evidence_check.evidence, dict)
         # commit_found should always be present (added by orchestrator)
-        assert "commit_found" in issue_run.quality_gate.evidence
+        assert "commit_found" in issue_run.evidence_check.evidence
         # Failure reasons should be extracted from summary
-        assert len(issue_run.quality_gate.failure_reasons) > 0
+        assert len(issue_run.evidence_check.failure_reasons) > 0
 
 
 def _make_mock_log_provider(log_file: Path) -> object:
@@ -2437,7 +2437,7 @@ class TestReviewUsesIssueCommits:
     ) -> None:
         """Review should use the issue's commit list, not unrelated commits."""
         from src.infra.clients.review_output_parser import ReviewResult
-        from src.domain.quality_gate import GateResult
+        from src.domain.evidence_check import GateResult
 
         # Create a fake log file
         log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
@@ -2518,13 +2518,13 @@ class TestReviewUsesIssueCommits:
         mock_client.receive_response = mock_receive_response
 
         # Mock the quality gate to return our specific gate result
-        mock_quality_gate = MagicMock()
-        mock_quality_gate.check_with_resolution = MagicMock(
+        mock_evidence_check = MagicMock()
+        mock_evidence_check.check_with_resolution = MagicMock(
             return_value=mock_gate_result
         )
-        mock_quality_gate.get_log_end_offset = MagicMock(return_value=0)
-        mock_quality_gate.check_no_progress = MagicMock(return_value=False)
-        mock_quality_gate.parse_validation_evidence_with_spec = MagicMock(
+        mock_evidence_check.get_log_end_offset = MagicMock(return_value=0)
+        mock_evidence_check.check_no_progress = MagicMock(return_value=False)
+        mock_evidence_check.parse_validation_evidence_with_spec = MagicMock(
             return_value=MagicMock(
                 pytest_ran=True,
                 ruff_check_ran=True,
@@ -2552,8 +2552,8 @@ class TestReviewUsesIssueCommits:
                 return_value=issue_commits,
             ),
             patch.object(orchestrator.review_runner, "code_reviewer", mock_reviewer),
-            patch.object(orchestrator, "quality_gate", mock_quality_gate),
-            patch.object(orchestrator.gate_runner, "gate_checker", mock_quality_gate),
+            patch.object(orchestrator, "evidence_check", mock_evidence_check),
+            patch.object(orchestrator.gate_runner, "gate_checker", mock_evidence_check),
             patch.object(
                 orchestrator.beads,
                 "get_issue_description_async",
@@ -2916,7 +2916,7 @@ class TestBuildGateMetadata:
 
         result = _build_gate_metadata(None, passed=True)
 
-        assert result.quality_gate_result is None
+        assert result.evidence_check_result is None
         assert result.validation_result is None
 
     def test_successful_gate_with_full_evidence(self) -> None:
@@ -2924,7 +2924,7 @@ class TestBuildGateMetadata:
         from src.pipeline.gate_metadata import (
             build_gate_metadata as _build_gate_metadata,
         )
-        from src.domain.quality_gate import GateResult, ValidationEvidence
+        from src.domain.evidence_check import GateResult, ValidationEvidence
         from src.domain.validation.spec import CommandKind
 
         evidence = ValidationEvidence(
@@ -2940,10 +2940,10 @@ class TestBuildGateMetadata:
 
         result = _build_gate_metadata(gate_result, passed=True)
 
-        assert result.quality_gate_result is not None
-        assert result.quality_gate_result.passed is True
-        assert result.quality_gate_result.failure_reasons == []
-        assert result.quality_gate_result.evidence["commit_found"] is True
+        assert result.evidence_check_result is not None
+        assert result.evidence_check_result.passed is True
+        assert result.evidence_check_result.failure_reasons == []
+        assert result.evidence_check_result.evidence["commit_found"] is True
         assert result.validation_result is not None
         assert result.validation_result.passed is True
         # Commands run uses kind.value (e.g., "test", "lint")
@@ -2956,7 +2956,7 @@ class TestBuildGateMetadata:
         from src.pipeline.gate_metadata import (
             build_gate_metadata as _build_gate_metadata,
         )
-        from src.domain.quality_gate import GateResult, ValidationEvidence
+        from src.domain.evidence_check import GateResult, ValidationEvidence
         from src.domain.validation.spec import CommandKind
 
         evidence = ValidationEvidence(
@@ -2972,13 +2972,13 @@ class TestBuildGateMetadata:
 
         result = _build_gate_metadata(gate_result, passed=False)
 
-        assert result.quality_gate_result is not None
-        assert result.quality_gate_result.passed is False
-        assert result.quality_gate_result.failure_reasons == [
+        assert result.evidence_check_result is not None
+        assert result.evidence_check_result.passed is False
+        assert result.evidence_check_result.failure_reasons == [
             "pytest failed",
             "no commit found",
         ]
-        assert result.quality_gate_result.evidence["commit_found"] is False
+        assert result.evidence_check_result.evidence["commit_found"] is False
         assert result.validation_result is not None
         assert result.validation_result.passed is False
         # Commands run uses kind.value (e.g., "test")
@@ -2991,7 +2991,7 @@ class TestBuildGateMetadata:
         from src.pipeline.gate_metadata import (
             build_gate_metadata as _build_gate_metadata,
         )
-        from src.domain.quality_gate import GateResult, ValidationEvidence
+        from src.domain.evidence_check import GateResult, ValidationEvidence
 
         evidence = ValidationEvidence(commands_ran={}, failed_commands=[])
         gate_result = GateResult(
@@ -3003,16 +3003,16 @@ class TestBuildGateMetadata:
 
         result = _build_gate_metadata(gate_result, passed=False)
 
-        assert result.quality_gate_result is not None
-        assert result.quality_gate_result.failure_reasons == []
-        assert result.quality_gate_result.evidence["commit_found"] is False
+        assert result.evidence_check_result is not None
+        assert result.evidence_check_result.failure_reasons == []
+        assert result.evidence_check_result.evidence["commit_found"] is False
 
     def test_passed_true_overrides_gate_result_passed(self) -> None:
-        """When passed=True, quality_gate_result.passed should be True."""
+        """When passed=True, evidence_check_result.passed should be True."""
         from src.pipeline.gate_metadata import (
             build_gate_metadata as _build_gate_metadata,
         )
-        from src.domain.quality_gate import GateResult, ValidationEvidence
+        from src.domain.evidence_check import GateResult, ValidationEvidence
 
         evidence = ValidationEvidence(commands_ran={}, failed_commands=[])
         gate_result = GateResult(
@@ -3025,11 +3025,11 @@ class TestBuildGateMetadata:
         # But overall run passed (e.g., resolution marker)
         result = _build_gate_metadata(gate_result, passed=True)
 
-        assert result.quality_gate_result is not None
+        assert result.evidence_check_result is not None
         # passed=True should override gate_result.passed
-        assert result.quality_gate_result.passed is True
+        assert result.evidence_check_result.passed is True
         # failure_reasons should be empty when passed=True
-        assert result.quality_gate_result.failure_reasons == []
+        assert result.evidence_check_result.failure_reasons == []
 
 
 class TestBuildGateMetadataFromLogs:
@@ -3038,33 +3038,33 @@ class TestBuildGateMetadataFromLogs:
     def test_none_spec_returns_empty_metadata(
         self, tmp_path: Path, log_provider: LogProvider
     ) -> None:
-        """When per_issue_spec is None, returns empty GateMetadata."""
+        """When per_session_spec is None, returns empty GateMetadata."""
         from typing import TYPE_CHECKING, cast
 
         from src.pipeline.gate_metadata import (
             build_gate_metadata_from_logs as _build_gate_metadata_from_logs,
         )
-        from src.domain.quality_gate import QualityGate
+        from src.domain.evidence_check import EvidenceCheck
 
         if TYPE_CHECKING:
             from src.core.protocols import GateChecker
 
         log_path = tmp_path / "test.log"
         log_path.write_text("{}")
-        quality_gate = cast(
+        evidence_check = cast(
             "GateChecker",
-            QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
+            EvidenceCheck(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
         )
 
         result = _build_gate_metadata_from_logs(
             log_path=log_path,
             result_summary="Quality gate failed: no tests",
             result_success=False,
-            quality_gate=quality_gate,
-            per_issue_spec=None,
+            evidence_check=evidence_check,
+            per_session_spec=None,
         )
 
-        assert result.quality_gate_result is None
+        assert result.evidence_check_result is None
         assert result.validation_result is None
 
     def test_valid_spec_parses_evidence(
@@ -3077,7 +3077,7 @@ class TestBuildGateMetadataFromLogs:
         from src.pipeline.gate_metadata import (
             build_gate_metadata_from_logs as _build_gate_metadata_from_logs,
         )
-        from src.domain.quality_gate import QualityGate
+        from src.domain.evidence_check import EvidenceCheck
         from src.domain.validation.spec import (
             CommandKind,
             ValidationCommand,
@@ -3092,9 +3092,9 @@ class TestBuildGateMetadataFromLogs:
         # Write a minimal log entry
         log_path.write_text('{"type":"result"}\n')
 
-        quality_gate = cast(
+        evidence_check = cast(
             "GateChecker",
-            QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
+            EvidenceCheck(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
         )
         spec = ValidationSpec(
             commands=[
@@ -3105,20 +3105,20 @@ class TestBuildGateMetadataFromLogs:
                     detection_pattern=re.compile(r"pytest"),
                 ),
             ],
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
         )
 
         result = _build_gate_metadata_from_logs(
             log_path=log_path,
             result_summary="Quality gate failed: pytest failed",
             result_success=False,
-            quality_gate=quality_gate,
-            per_issue_spec=spec,
+            evidence_check=evidence_check,
+            per_session_spec=spec,
         )
 
-        assert result.quality_gate_result is not None
-        assert result.quality_gate_result.passed is False
-        assert "pytest failed" in result.quality_gate_result.failure_reasons
+        assert result.evidence_check_result is not None
+        assert result.evidence_check_result.passed is False
+        assert "pytest failed" in result.evidence_check_result.failure_reasons
         # validation_result is now populated with parsed evidence
         assert result.validation_result is not None
         assert result.validation_result.passed is False
@@ -3126,13 +3126,13 @@ class TestBuildGateMetadataFromLogs:
     def test_result_success_determines_passed_status(
         self, tmp_path: Path, log_provider: LogProvider
     ) -> None:
-        """result_success parameter determines quality_gate_result.passed."""
+        """result_success parameter determines evidence_check_result.passed."""
         from typing import TYPE_CHECKING, cast
 
         from src.pipeline.gate_metadata import (
             build_gate_metadata_from_logs as _build_gate_metadata_from_logs,
         )
-        from src.domain.quality_gate import QualityGate
+        from src.domain.evidence_check import EvidenceCheck
         from src.domain.validation.spec import ValidationScope, ValidationSpec
 
         if TYPE_CHECKING:
@@ -3141,23 +3141,23 @@ class TestBuildGateMetadataFromLogs:
         log_path = tmp_path / "test.log"
         log_path.write_text('{"type":"result"}\n')
 
-        quality_gate = cast(
+        evidence_check = cast(
             "GateChecker",
-            QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
+            EvidenceCheck(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
         )
-        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
+        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_SESSION)
 
         # Test with result_success=True
         result = _build_gate_metadata_from_logs(
             log_path=log_path,
             result_summary="Success",
             result_success=True,
-            quality_gate=quality_gate,
-            per_issue_spec=spec,
+            evidence_check=evidence_check,
+            per_session_spec=spec,
         )
 
-        assert result.quality_gate_result is not None
-        assert result.quality_gate_result.passed is True
+        assert result.evidence_check_result is not None
+        assert result.evidence_check_result.passed is True
 
     def test_extracts_failure_reasons_from_summary(
         self, tmp_path: Path, log_provider: LogProvider
@@ -3168,7 +3168,7 @@ class TestBuildGateMetadataFromLogs:
         from src.pipeline.gate_metadata import (
             build_gate_metadata_from_logs as _build_gate_metadata_from_logs,
         )
-        from src.domain.quality_gate import QualityGate
+        from src.domain.evidence_check import EvidenceCheck
         from src.domain.validation.spec import ValidationScope, ValidationSpec
 
         if TYPE_CHECKING:
@@ -3177,22 +3177,22 @@ class TestBuildGateMetadataFromLogs:
         log_path = tmp_path / "test.log"
         log_path.write_text('{"type":"result"}\n')
 
-        quality_gate = cast(
+        evidence_check = cast(
             "GateChecker",
-            QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
+            EvidenceCheck(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
         )
-        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
+        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_SESSION)
 
         result = _build_gate_metadata_from_logs(
             log_path=log_path,
             result_summary="Quality gate failed: lint failed; no commit",
             result_success=False,
-            quality_gate=quality_gate,
-            per_issue_spec=spec,
+            evidence_check=evidence_check,
+            per_session_spec=spec,
         )
 
-        assert result.quality_gate_result is not None
-        assert result.quality_gate_result.failure_reasons == [
+        assert result.evidence_check_result is not None
+        assert result.evidence_check_result.failure_reasons == [
             "lint failed",
             "no commit",
         ]
@@ -3206,7 +3206,7 @@ class TestBuildGateMetadataFromLogs:
         from src.pipeline.gate_metadata import (
             build_gate_metadata_from_logs as _build_gate_metadata_from_logs,
         )
-        from src.domain.quality_gate import QualityGate
+        from src.domain.evidence_check import EvidenceCheck
         from src.domain.validation.spec import ValidationScope, ValidationSpec
 
         if TYPE_CHECKING:
@@ -3216,18 +3216,18 @@ class TestBuildGateMetadataFromLogs:
         log_path = tmp_path / "test.log"
         log_path.write_text('{"type":"result"}\n')
 
-        quality_gate = cast(
+        evidence_check = cast(
             "GateChecker",
-            QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
+            EvidenceCheck(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
         )
-        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
+        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_SESSION)
 
         result = _build_gate_metadata_from_logs(
             log_path=log_path,
             result_summary="Success",
             result_success=True,
-            quality_gate=quality_gate,
-            per_issue_spec=spec,
+            evidence_check=evidence_check,
+            per_session_spec=spec,
         )
 
         # Key assertion: validation_result is now populated (not None)

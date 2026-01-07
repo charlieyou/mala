@@ -392,8 +392,8 @@ class FakeEventSink:
     def on_run_metadata_saved(self, path: str) -> None:
         self._record("run_metadata_saved", path=path)
 
-    def on_run_level_validation_disabled(self) -> None:
-        self._record("run_level_validation_disabled")
+    def on_global_validation_disabled(self) -> None:
+        self._record("global_validation_disabled")
 
     def on_abort_requested(self, reason: str) -> None:
         self._record("abort_requested", reason=reason)

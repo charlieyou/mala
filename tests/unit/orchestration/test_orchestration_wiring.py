@@ -72,7 +72,7 @@ def mock_runtime_deps() -> RuntimeDeps:
         review_timeout=300,
     )
     return RuntimeDeps(
-        quality_gate=MagicMock(),
+        evidence_check=MagicMock(),
         code_reviewer=MagicMock(),
         beads=MagicMock(),
         event_sink=FakeEventSink(),

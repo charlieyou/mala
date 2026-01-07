@@ -1,6 +1,6 @@
 preset: python-uv
 
-run_level_commands:
+global_validation_commands:
   test:
     command: "uv run pytest -m 'unit or integration or e2e' --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
     timeout: 600

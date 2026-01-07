@@ -38,7 +38,7 @@ if TYPE_CHECKING:
         GateResultProtocol,
         ReviewIssueProtocol,
     )
-    from src.domain.quality_gate import GateResult
+    from src.domain.evidence_check import GateResult
     from src.domain.validation.spec import ValidationSpec
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.pipeline.issue_result import IssueResult
@@ -136,14 +136,14 @@ class IssueFinalizer:
     Attributes:
         config: Finalization configuration.
         callbacks: Callbacks for orchestrator-owned operations.
-        quality_gate: Quality gate checker for fallback metadata extraction.
-        per_issue_spec: Validation spec for fallback metadata extraction.
+        evidence_check: Quality gate checker for fallback metadata extraction.
+        per_session_spec: Validation spec for fallback metadata extraction.
     """
 
     config: IssueFinalizeConfig
     callbacks: IssueFinalizeCallbacks
-    quality_gate: GateChecker | None = None
-    per_issue_spec: ValidationSpec | None = None
+    evidence_check: GateChecker | None = None
+    per_session_spec: ValidationSpec | None = None
 
     async def finalize(self, input: IssueFinalizeInput) -> IssueFinalizeOutput:
         """Finalize an issue result.
@@ -209,15 +209,15 @@ class IssueFinalizer:
             not result.success
             and log_path
             and log_path.exists()
-            and self.quality_gate is not None
-            and self.per_issue_spec is not None
+            and self.evidence_check is not None
+            and self.per_session_spec is not None
         ):
             return build_gate_metadata_from_logs(
                 log_path,
                 result.summary,
                 result.success,
-                self.quality_gate,
-                self.per_issue_spec,
+                self.evidence_check,
+                self.per_session_spec,
             )
         else:
             return GateMetadata()
@@ -243,7 +243,7 @@ class IssueFinalizer:
             duration_seconds=result.duration_seconds,
             session_id=result.session_id,
             log_path=str(log_path) if log_path else None,
-            quality_gate=gate_metadata.quality_gate_result,
+            evidence_check=gate_metadata.evidence_check_result,
             error=result.summary if not result.success else None,
             gate_attempts=result.gate_attempts,
             review_attempts=result.review_attempts,

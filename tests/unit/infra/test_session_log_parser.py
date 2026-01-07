@@ -410,10 +410,10 @@ class TestExtractAssistantTextBlocks:
 
 
 class TestSessionLogParserIndependentUsability:
-    """Test that SessionLogParser can be used independently of QualityGate."""
+    """Test that SessionLogParser can be used independently of EvidenceCheck."""
 
     def test_parser_usable_standalone(self, tmp_path: Path) -> None:
-        """SessionLogParser should work without QualityGate."""
+        """SessionLogParser should work without EvidenceCheck."""
         log_path = tmp_path / "session.jsonl"
         entries = [
             {

@@ -302,10 +302,10 @@ class TestCommandsConfig:
         assert config.custom_commands == {}
         assert config.custom_override_mode == CustomOverrideMode.INHERIT
 
-    def test_from_dict_accepts_is_run_level_param(self) -> None:
-        """from_dict accepts is_run_level kwarg (stub for future parsing)."""
-        # is_run_level doesn't change behavior yet, but signature should accept it
-        config = CommandsConfig.from_dict({"lint": "ruff check ."}, is_run_level=True)
+    def test_from_dict_accepts_is_global_param(self) -> None:
+        """from_dict accepts is_global kwarg (stub for future parsing)."""
+        # is_global doesn't change behavior yet, but signature should accept it
+        config = CommandsConfig.from_dict({"lint": "ruff check ."}, is_global=True)
         assert config.lint is not None
         assert config.lint.command == "ruff check ."
         # custom_commands still empty until inline parsing implemented
@@ -315,28 +315,28 @@ class TestCommandsConfig:
 class TestClearCustoms:
     """Tests for _clear_customs reserved key handling."""
 
-    def test_clear_customs_true_at_run_level_sets_clear_mode(self) -> None:
-        """_clear_customs: true at run-level sets mode=CLEAR with empty customs."""
-        config = CommandsConfig.from_dict({"_clear_customs": True}, is_run_level=True)
+    def test_clear_customs_true_at_global_sets_clear_mode(self) -> None:
+        """_clear_customs: true at global sets mode=CLEAR with empty customs."""
+        config = CommandsConfig.from_dict({"_clear_customs": True}, is_global=True)
         assert config.custom_override_mode == CustomOverrideMode.CLEAR
         assert config.custom_commands == {}
 
     def test_clear_customs_false_raises_error(self) -> None:
         """_clear_customs: false raises ConfigError."""
         with pytest.raises(ConfigError, match="_clear_customs must be true"):
-            CommandsConfig.from_dict({"_clear_customs": False}, is_run_level=True)
+            CommandsConfig.from_dict({"_clear_customs": False}, is_global=True)
 
     def test_clear_customs_string_yes_raises_error(self) -> None:
         """_clear_customs: 'yes' raises ConfigError (must be boolean true)."""
         with pytest.raises(ConfigError, match="_clear_customs must be true"):
-            CommandsConfig.from_dict({"_clear_customs": "yes"}, is_run_level=True)
+            CommandsConfig.from_dict({"_clear_customs": "yes"}, is_global=True)
 
     def test_clear_customs_at_repo_level_raises_error(self) -> None:
-        """_clear_customs at repo-level (is_run_level=False) raises ConfigError."""
+        """_clear_customs at repo-level (is_global=False) raises ConfigError."""
         with pytest.raises(
-            ConfigError, match="_clear_customs is only valid in run_level_commands"
+            ConfigError, match="_clear_customs is only valid in global_validation_commands"
         ):
-            CommandsConfig.from_dict({"_clear_customs": True}, is_run_level=False)
+            CommandsConfig.from_dict({"_clear_customs": True}, is_global=False)
 
     def test_clear_customs_with_custom_keys_raises_error(self) -> None:
         """_clear_customs combined with custom command keys raises ConfigError."""
@@ -344,7 +344,7 @@ class TestClearCustoms:
             ConfigError, match="_clear_customs cannot be combined with custom commands"
         ):
             CommandsConfig.from_dict(
-                {"_clear_customs": True, "my_custom": "some cmd"}, is_run_level=True
+                {"_clear_customs": True, "my_custom": "some cmd"}, is_global=True
             )
 
     def test_clear_customs_with_plus_prefixed_custom_keys_raises_error(self) -> None:
@@ -353,18 +353,18 @@ class TestClearCustoms:
             ConfigError, match="_clear_customs cannot be combined with custom commands"
         ):
             CommandsConfig.from_dict(
-                {"_clear_customs": True, "+my_custom": "some cmd"}, is_run_level=True
+                {"_clear_customs": True, "+my_custom": "some cmd"}, is_global=True
             )
 
     def test_plus_clear_customs_raises_error(self) -> None:
         """+_clear_customs raises ConfigError (reserved key cannot be prefixed)."""
         with pytest.raises(ConfigError, match=r"\+_clear_customs is not allowed"):
-            CommandsConfig.from_dict({"+_clear_customs": True}, is_run_level=True)
+            CommandsConfig.from_dict({"+_clear_customs": True}, is_global=True)
 
     def test_clear_customs_with_builtin_commands_allowed(self) -> None:
         """_clear_customs can be combined with built-in commands like lint."""
         config = CommandsConfig.from_dict(
-            {"_clear_customs": True, "lint": "ruff check ."}, is_run_level=True
+            {"_clear_customs": True, "lint": "ruff check ."}, is_global=True
         )
         assert config.custom_override_mode == CustomOverrideMode.CLEAR
         assert config.custom_commands == {}
@@ -461,23 +461,23 @@ class TestValidationConfig:
         ):
             ValidationConfig.from_dict({"custom_commands": {}})
 
-    def test_deprecated_run_level_custom_commands_key_raises_error(self) -> None:
-        """Top-level 'run_level_custom_commands' key raises ConfigError with migration hint."""
+    def test_deprecated_global_custom_commands_key_raises_error(self) -> None:
+        """Top-level 'global_custom_commands' key raises ConfigError with migration hint."""
         with pytest.raises(
             ConfigError,
-            match=r"'run_level_custom_commands' is no longer supported.*'run_level_commands' section",
+            match=r"'global_custom_commands' is no longer supported.*'global_validation_commands' section",
         ):
             ValidationConfig.from_dict(
-                {"run_level_custom_commands": {"my_check": "echo test"}}
+                {"global_custom_commands": {"my_check": "echo test"}}
             )
 
-    def test_deprecated_run_level_custom_commands_error_references_plan(self) -> None:
-        """run_level_custom_commands error message references the plan document."""
+    def test_deprecated_global_custom_commands_error_references_plan(self) -> None:
+        """global_custom_commands error message references the plan document."""
         with pytest.raises(
             ConfigError,
             match=r"plans/2026-01-06-inline-custom-commands-plan\.md",
         ):
-            ValidationConfig.from_dict({"run_level_custom_commands": {}})
+            ValidationConfig.from_dict({"global_custom_commands": {}})
 
     def test_deprecated_both_custom_commands_keys_raises_first_error(self) -> None:
         """Both deprecated keys present raises error for custom_commands first."""
@@ -486,7 +486,7 @@ class TestValidationConfig:
             ValidationConfig.from_dict(
                 {
                     "custom_commands": {"a": "cmd a"},
-                    "run_level_custom_commands": {"b": "cmd b"},
+                    "global_custom_commands": {"b": "cmd b"},
                 }
             )
 
@@ -573,17 +573,17 @@ class TestValidationConfig:
         config = ValidationConfig.from_dict(yaml_data)
         assert "security" in config.commands.custom_commands
         assert config.commands.custom_commands["security"].command == "bandit -r src/"
-        # At repo-level, mode stays INHERIT (mode detection only matters at run-level)
+        # At repo-level, mode stays INHERIT (mode detection only matters at global)
         assert config.commands.custom_override_mode == CustomOverrideMode.INHERIT
 
 
-class TestRunLevelCustomCommandsMode:
-    """Tests for run-level custom command mode detection."""
+class TestGlobalCustomCommandsMode:
+    """Tests for global custom command mode detection."""
 
-    def test_run_level_all_plus_prefixed_sets_additive_mode(self) -> None:
-        """All +prefixed custom keys at run-level sets mode=ADDITIVE."""
+    def test_global_all_plus_prefixed_sets_additive_mode(self) -> None:
+        """All +prefixed custom keys at global sets mode=ADDITIVE."""
         config = CommandsConfig.from_dict(
-            {"+my_check": "cmd1", "+other_check": "cmd2"}, is_run_level=True
+            {"+my_check": "cmd1", "+other_check": "cmd2"}, is_global=True
         )
         assert config.custom_override_mode == CustomOverrideMode.ADDITIVE
         assert "my_check" in config.custom_commands
@@ -592,37 +592,37 @@ class TestRunLevelCustomCommandsMode:
         assert config.custom_commands["my_check"].command == "cmd1"
         assert config.custom_commands["other_check"].command == "cmd2"
 
-    def test_run_level_all_unprefixed_sets_replace_mode(self) -> None:
-        """All unprefixed custom keys at run-level sets mode=REPLACE."""
+    def test_global_all_unprefixed_sets_replace_mode(self) -> None:
+        """All unprefixed custom keys at global sets mode=REPLACE."""
         config = CommandsConfig.from_dict(
-            {"my_check": "cmd1", "other_check": "cmd2"}, is_run_level=True
+            {"my_check": "cmd1", "other_check": "cmd2"}, is_global=True
         )
         assert config.custom_override_mode == CustomOverrideMode.REPLACE
         assert "my_check" in config.custom_commands
         assert "other_check" in config.custom_commands
 
-    def test_run_level_no_custom_keys_sets_inherit_mode(self) -> None:
-        """No custom keys at run-level keeps mode=INHERIT."""
-        config = CommandsConfig.from_dict({"lint": "ruff check ."}, is_run_level=True)
+    def test_global_no_custom_keys_sets_inherit_mode(self) -> None:
+        """No custom keys at global keeps mode=INHERIT."""
+        config = CommandsConfig.from_dict({"lint": "ruff check ."}, is_global=True)
         assert config.custom_override_mode == CustomOverrideMode.INHERIT
         assert config.custom_commands == {}
 
-    def test_run_level_mixed_prefixes_raises_error(self) -> None:
+    def test_global_mixed_prefixes_raises_error(self) -> None:
         """Mixed +prefixed and unprefixed custom keys raises ConfigError."""
         with pytest.raises(ConfigError, match=r"Cannot mix.*prefixed and unprefixed"):
             CommandsConfig.from_dict(
-                {"+additive_cmd": "cmd1", "replace_cmd": "cmd2"}, is_run_level=True
+                {"+additive_cmd": "cmd1", "replace_cmd": "cmd2"}, is_global=True
             )
 
-    def test_run_level_plus_builtin_collision_raises_error(self) -> None:
+    def test_global_plus_builtin_collision_raises_error(self) -> None:
         """Plus-prefixed key colliding with built-in after stripping raises error."""
         with pytest.raises(ConfigError, match=r"\+lint.*conflicts.*built-in"):
-            CommandsConfig.from_dict({"+lint": "some cmd"}, is_run_level=True)
+            CommandsConfig.from_dict({"+lint": "some cmd"}, is_global=True)
 
-    def test_run_level_builtin_key_parsed_as_builtin_not_custom(self) -> None:
+    def test_global_builtin_key_parsed_as_builtin_not_custom(self) -> None:
         """Built-in key names are parsed as built-ins, not custom commands."""
         # "lint" matches a valid_kind so it's parsed as built-in, not custom
-        config = CommandsConfig.from_dict({"lint": "some cmd"}, is_run_level=True)
+        config = CommandsConfig.from_dict({"lint": "some cmd"}, is_global=True)
         assert config.lint is not None
         assert config.lint.command == "some cmd"
         assert "lint" not in config.custom_commands
@@ -630,33 +630,33 @@ class TestRunLevelCustomCommandsMode:
     def test_repo_level_plus_prefix_raises_error(self) -> None:
         """Plus-prefixed key at repo-level raises ConfigError."""
         with pytest.raises(ConfigError, match=r"Plus-prefixed.*only allowed"):
-            CommandsConfig.from_dict({"+my_check": "cmd"}, is_run_level=False)
+            CommandsConfig.from_dict({"+my_check": "cmd"}, is_global=False)
 
     def test_repo_level_custom_commands_stored_directly(self) -> None:
         """Custom commands at repo-level stored without mode change."""
         config = CommandsConfig.from_dict(
-            {"my_check": "cmd1", "lint": "ruff check ."}, is_run_level=False
+            {"my_check": "cmd1", "lint": "ruff check ."}, is_global=False
         )
         assert config.custom_override_mode == CustomOverrideMode.INHERIT
         assert "my_check" in config.custom_commands
         assert config.custom_commands["my_check"].command == "cmd1"
 
-    def test_run_level_custom_with_builtin_override(self) -> None:
-        """Run-level can have both built-in overrides and custom commands."""
+    def test_global_custom_with_builtin_override(self) -> None:
+        """Global can have both built-in overrides and custom commands."""
         config = CommandsConfig.from_dict(
             {"lint": "new lint cmd", "security": "bandit -r src/"},
-            is_run_level=True,
+            is_global=True,
         )
         assert config.lint is not None
         assert config.lint.command == "new lint cmd"
         assert config.custom_override_mode == CustomOverrideMode.REPLACE
         assert "security" in config.custom_commands
 
-    def test_run_level_plus_custom_with_builtin_override(self) -> None:
-        """Run-level can have built-in overrides and +prefixed customs."""
+    def test_global_plus_custom_with_builtin_override(self) -> None:
+        """Global can have built-in overrides and +prefixed customs."""
         config = CommandsConfig.from_dict(
             {"lint": "new lint cmd", "+security": "bandit -r src/"},
-            is_run_level=True,
+            is_global=True,
         )
         assert config.lint is not None
         assert config.lint.command == "new lint cmd"
@@ -673,7 +673,7 @@ class TestRunLevelCustomCommandsMode:
                     "allow_fail": True,
                 }
             },
-            is_run_level=True,
+            is_global=True,
         )
         assert "slow_check" in config.custom_commands
         custom = config.custom_commands["slow_check"]
@@ -685,7 +685,7 @@ class TestRunLevelCustomCommandsMode:
         """Hyphenated custom command names are valid."""
         config = CommandsConfig.from_dict(
             {"arch-check": "some cmd", "my-other-cmd": "other cmd"},
-            is_run_level=False,
+            is_global=False,
         )
         assert "arch-check" in config.custom_commands
         assert "my-other-cmd" in config.custom_commands
@@ -856,7 +856,7 @@ class TestCustomCommandConfig:
 
     def test_null_value_error(self) -> None:
         """Null value raises ConfigError with guidance."""
-        with pytest.raises(ConfigError, match="use run-level override to disable"):
+        with pytest.raises(ConfigError, match="use global override to disable"):
             CustomCommandConfig.from_value("my_cmd", None)  # type: ignore[arg-type]
 
     def test_empty_command_string_error(self) -> None:

@@ -38,10 +38,10 @@ if TYPE_CHECKING:
 
 
 class ValidationScope(Enum):
-    """Scope for validation: per-issue or run-level."""
+    """Scope for validation: per-session or global."""
 
-    PER_ISSUE = "per_issue"
-    RUN_LEVEL = "run_level"
+    PER_SESSION = "per_session"
+    GLOBAL = "global"
 
 
 class CommandKind(Enum):
@@ -76,7 +76,7 @@ class ValidationCommand:
         shell: Whether to run command in shell mode. Defaults to True.
         timeout: Command timeout in seconds. Defaults to 120.
         detection_pattern: Compiled regex to detect this command in log evidence.
-            If None, falls back to hardcoded patterns in QualityGate.
+            If None, falls back to hardcoded patterns in EvidenceCheck.
         use_test_mutex: Whether to wrap with test mutex.
         allow_fail: If True, failure doesn't stop the pipeline.
     """
@@ -132,12 +132,12 @@ class ValidationContext:
     """Immutable context for a single validation run.
 
     Attributes:
-        issue_id: The issue ID (None for run-level).
+        issue_id: The issue ID (None for global).
         repo_path: Path to the repository.
         commit_hash: The commit being validated.
         log_path: Path to the Claude session log.
         changed_files: List of files changed in this commit.
-        scope: Whether this is per-issue or run-level.
+        scope: Whether this is per-session or global.
     """
 
     issue_id: str | None
@@ -273,14 +273,14 @@ def build_validation_spec(
 
     Disable values:
     - "post-validate": Skip test commands entirely
-    - "run-level-validate": (handled elsewhere, not here)
+    - "global-validate": (handled elsewhere, not here)
     - "integration-tests": (handled by config, not here)
     - "coverage": Disable coverage checking
     - "e2e": Disable E2E fixture repo test
 
     Args:
         repo_path: Path to the repository root directory.
-        scope: The validation scope. Defaults to PER_ISSUE.
+        scope: The validation scope. Defaults to PER_SESSION.
         disable_validations: Set of validation types to disable.
 
     Returns:
@@ -293,7 +293,7 @@ def build_validation_spec(
 
     # Use default scope if not specified
     if scope is None:
-        scope = ValidationScope.PER_ISSUE
+        scope = ValidationScope.PER_SESSION
 
     disable = disable_validations or set()
 
@@ -334,33 +334,33 @@ def build_validation_spec(
             "Specify a preset or define commands directly."
         )
 
-    # Resolve commands for scope (run-level may override base commands)
+    # Resolve commands for scope (global may override base commands)
     commands_config = merged_config.commands
-    if scope == ValidationScope.RUN_LEVEL:
+    if scope == ValidationScope.GLOBAL:
         commands_config = _apply_command_overrides(
-            merged_config.commands, merged_config.run_level_commands
+            merged_config.commands, merged_config.global_validation_commands
         )
 
     # Resolve custom_commands for scope (mode-based override semantics)
     custom_commands = _apply_custom_commands_override(
         merged_config.commands.custom_commands,
-        merged_config.run_level_commands,
+        merged_config.global_validation_commands,
         scope,
     )
 
     # Coverage requires a test command in the effective commands_config
     # This check must happen after _apply_command_overrides to catch cases where
-    # run_level_commands.test is explicitly null (disabling the base test command)
-    # However, we only raise an error if there's no run_level_commands.test set either -
-    # if run_level_commands.test is set, coverage will be generated at run-level
+    # global_validation_commands.test is explicitly null (disabling the base test command)
+    # However, we only raise an error if there's no global_validation_commands.test set either -
+    # if global_validation_commands.test is set, coverage will be generated at global
     if merged_config.coverage is not None and commands_config.test is None:
-        # Check if run_level_commands.test provides a test command for coverage
-        run_level_test_set = (
-            merged_config.run_level_commands._fields_set
-            and "test" in merged_config.run_level_commands._fields_set
-            and merged_config.run_level_commands.test is not None
+        # Check if global_validation_commands.test provides a test command for coverage
+        global_test_set = (
+            merged_config.global_validation_commands._fields_set
+            and "test" in merged_config.global_validation_commands._fields_set
+            and merged_config.global_validation_commands.test is not None
         )
-        if not run_level_test_set:
+        if not global_test_set:
             raise ConfigError(
                 "Coverage requires a test command to generate coverage data."
             )
@@ -372,26 +372,26 @@ def build_validation_spec(
         commands = _build_commands_from_config(commands_config, custom_commands)
 
     # Determine if coverage is enabled
-    # Coverage is disabled for PER_ISSUE scope when run_level_commands.test provides
+    # Coverage is disabled for PER_SESSION scope when global_validation_commands.test provides
     # a different test command (e.g., with --cov flags). In this pattern, only the
-    # run-level test command generates coverage.xml, so per-issue validation should
+    # global test command generates coverage.xml, so per-session validation should
     # not check coverage.
-    # Note: If run_level_commands.test is explicitly null, we don't disable coverage
-    # for PER_ISSUE - the intent is to skip tests at run level, not to move coverage
-    # to run level.
-    run_level_has_different_test_command = (
-        merged_config.run_level_commands._fields_set
-        and "test" in merged_config.run_level_commands._fields_set
-        and merged_config.run_level_commands.test is not None
+    # Note: If global_validation_commands.test is explicitly null, we don't disable coverage
+    # for PER_SESSION - the intent is to skip tests at global, not to move coverage
+    # to global.
+    global_has_different_test_command = (
+        merged_config.global_validation_commands._fields_set
+        and "test" in merged_config.global_validation_commands._fields_set
+        and merged_config.global_validation_commands.test is not None
     )
-    coverage_only_at_run_level = (
-        run_level_has_different_test_command and scope == ValidationScope.PER_ISSUE
+    coverage_only_at_global = (
+        global_has_different_test_command and scope == ValidationScope.PER_SESSION
     )
     coverage_enabled = (
         merged_config.coverage is not None
         and "coverage" not in disable
         and not skip_tests
-        and not coverage_only_at_run_level
+        and not coverage_only_at_global
     )
 
     # Build coverage config
@@ -407,9 +407,9 @@ def build_validation_spec(
     )
 
     # Configure E2E
-    # Use commands_config which has run_level_commands overrides applied
+    # Use commands_config which has global_validation_commands overrides applied
     e2e_enabled = (
-        scope == ValidationScope.RUN_LEVEL
+        scope == ValidationScope.GLOBAL
         and "e2e" not in disable
         and commands_config.e2e is not None
     )
@@ -435,7 +435,7 @@ def build_validation_spec(
 def _apply_command_overrides(
     base: CommandsConfig, overrides: CommandsConfig
 ) -> CommandsConfig:
-    """Apply run-level command overrides on top of base commands."""
+    """Apply global command overrides on top of base commands."""
 
     def is_explicit(field_name: str, value: CommandConfig | None) -> bool:
         if overrides._fields_set:
@@ -462,37 +462,37 @@ def _apply_command_overrides(
 
 def _apply_custom_commands_override(
     repo_customs: dict[str, CustomCommandConfig],
-    run_level_commands: CommandsConfig | None,
+    global_validation_commands: CommandsConfig | None,
     scope: ValidationScope,
 ) -> dict[str, CustomCommandConfig]:
-    """Apply run-level custom_commands override based on CustomOverrideMode.
+    """Apply global custom_commands override based on CustomOverrideMode.
 
     Args:
         repo_customs: Repo-level custom_commands dict (from commands.custom_commands).
-        run_level_commands: Run-level CommandsConfig (contains custom_override_mode
+        global_validation_commands: Global CommandsConfig (contains custom_override_mode
             and custom_commands). May be None if not configured.
         scope: The validation scope.
 
     Returns:
         The effective custom_commands dict for this scope.
 
-    Mode behavior (only applies to RUN_LEVEL scope):
-    - INHERIT: Use repo-level customs unchanged (default, no run-level customs)
+    Mode behavior (only applies to GLOBAL scope):
+    - INHERIT: Use repo-level customs unchanged (default, no global customs)
     - CLEAR: Return empty dict (disable all customs)
-    - REPLACE: Return only run-level customs (full replace)
-    - ADDITIVE: Merge run-level into repo-level ({**repo, **run})
+    - REPLACE: Return only global customs (full replace)
+    - ADDITIVE: Merge global into repo-level ({**repo, **run})
     """
-    # For PER_ISSUE scope, always use repo-level custom_commands
-    if scope == ValidationScope.PER_ISSUE:
+    # For PER_SESSION scope, always use repo-level custom_commands
+    if scope == ValidationScope.PER_SESSION:
         return repo_customs
 
-    # For RUN_LEVEL scope, apply mode-based logic
-    if run_level_commands is None:
-        # No run-level commands configured - use repo-level
+    # For GLOBAL scope, apply mode-based logic
+    if global_validation_commands is None:
+        # No global commands configured - use repo-level
         return repo_customs
 
-    mode = run_level_commands.custom_override_mode
-    run_customs = run_level_commands.custom_commands
+    mode = global_validation_commands.custom_override_mode
+    run_customs = global_validation_commands.custom_commands
 
     if mode == CustomOverrideMode.INHERIT:
         return repo_customs
@@ -501,7 +501,7 @@ def _apply_custom_commands_override(
     elif mode == CustomOverrideMode.REPLACE:
         return run_customs
     elif mode == CustomOverrideMode.ADDITIVE:
-        # Merge: repo order preserved, run-level updates/appends
+        # Merge: repo order preserved, global updates/appends
         return {**repo_customs, **run_customs}
     else:
         # Should never happen with enum, but be defensive

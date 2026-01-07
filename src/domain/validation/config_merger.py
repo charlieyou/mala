@@ -125,18 +125,18 @@ def merge_configs(
         preset.commands, user.commands, user_commands_explicitly_set
     )
 
-    # Merge run-level command overrides
-    user_run_level_commands_explicitly_set = _is_field_explicitly_set(
-        "run_level_commands",
+    # Merge global command overrides
+    user_global_validation_commands_explicitly_set = _is_field_explicitly_set(
+        "global_validation_commands",
         user._fields_set,
-        user.run_level_commands,
-        user.run_level_commands == CommandsConfig(),
+        user.global_validation_commands,
+        user.global_validation_commands == CommandsConfig(),
     )
-    merged_run_level_commands = _merge_commands(
-        preset.run_level_commands,
-        user.run_level_commands,
-        user_run_level_commands_explicitly_set,
-        clear_on_explicit_empty=True,  # Allow users to clear preset run-level overrides
+    merged_global_validation_commands = _merge_commands(
+        preset.global_validation_commands,
+        user.global_validation_commands,
+        user_global_validation_commands_explicitly_set,
+        clear_on_explicit_empty=True,  # Allow users to clear preset global overrides
     )
 
     # Coverage: user replaces if explicitly set, otherwise inherit
@@ -185,24 +185,24 @@ def merge_configs(
     # No merging needed - copy user's custom_commands to avoid aliasing
     merged_custom_commands = dict(user.custom_commands)
 
-    # run_level_custom_commands: user always takes precedence (presets cannot define)
+    # global_custom_commands: user always takes precedence (presets cannot define)
     # Copy if set, otherwise None (not set = use repo-level at runtime)
-    merged_run_level_custom_commands = (
-        dict(user.run_level_custom_commands)
-        if user.run_level_custom_commands is not None
+    merged_global_custom_commands = (
+        dict(user.global_custom_commands)
+        if user.global_custom_commands is not None
         else None
     )
 
     return ValidationConfig(
         preset=user.preset,  # Keep user's preset reference
         commands=merged_commands,
-        run_level_commands=merged_run_level_commands,
+        global_validation_commands=merged_global_validation_commands,
         coverage=merged_coverage,
         code_patterns=merged_code_patterns,
         config_files=merged_config_files,
         setup_files=merged_setup_files,
         custom_commands=merged_custom_commands,
-        run_level_custom_commands=merged_run_level_custom_commands,
+        global_custom_commands=merged_global_custom_commands,
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 
@@ -224,17 +224,17 @@ def _merge_commands(
         preset: Preset CommandsConfig to merge with.
         user: User CommandsConfig with overrides.
         user_commands_explicitly_set: Whether the user explicitly set the commands
-            field at the parent level (commands or run_level_commands).
+            field at the parent level (commands or global_validation_commands).
         clear_on_explicit_empty: If True and user explicitly set the field to null
             or empty ({}) at the top level, return empty CommandsConfig without
-            inheriting from preset. This is used for run_level_commands to allow
+            inheriting from preset. This is used for global_validation_commands to allow
             users to clear all preset overrides.
 
     """
     # If clear_on_explicit_empty is enabled and user explicitly set commands to
     # null/empty (no individual fields set), short-circuit to return the user's
     # empty config without inheriting. This allows users to clear all preset
-    # run_level_commands overrides.
+    # global_validation_commands overrides.
     # Note: _clear_customs sets custom_override_mode=CLEAR but doesn't set built-in
     # fields, so we must also check that no custom command directive was given.
     # Similarly, if user has custom_commands (but no built-ins), that's not "empty".

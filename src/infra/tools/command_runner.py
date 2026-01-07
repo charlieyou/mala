@@ -2,7 +2,7 @@
 
 This module provides CommandRunner for consistent subprocess handling across:
 - src/beads_client.py
-- quality_gate.py
+- evidence_check.py
 - validation/legacy_runner.py
 - validation/spec_runner.py
 - validation/e2e.py

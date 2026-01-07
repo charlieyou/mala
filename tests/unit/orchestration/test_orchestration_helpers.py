@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from src.domain.quality_gate import GateResult, ValidationEvidence
+from src.domain.evidence_check import GateResult, ValidationEvidence
 from src.domain.validation.spec import CommandKind
 from src.pipeline.gate_metadata import (
     build_gate_metadata,
@@ -43,7 +43,7 @@ class TestBuildGateMetadata:
     def test_none_gate_result(self) -> None:
         """Should return empty metadata when gate_result is None."""
         metadata = build_gate_metadata(None, passed=True)
-        assert metadata.quality_gate_result is None
+        assert metadata.evidence_check_result is None
         assert metadata.validation_result is None
 
     def test_passed_gate_result(self) -> None:
@@ -61,10 +61,10 @@ class TestBuildGateMetadata:
 
         metadata = build_gate_metadata(gate_result, passed=True)
 
-        assert metadata.quality_gate_result is not None
-        assert metadata.quality_gate_result.passed is True
-        assert metadata.quality_gate_result.evidence["commit_found"] is True
-        assert metadata.quality_gate_result.failure_reasons == []
+        assert metadata.evidence_check_result is not None
+        assert metadata.evidence_check_result.passed is True
+        assert metadata.evidence_check_result.evidence["commit_found"] is True
+        assert metadata.evidence_check_result.failure_reasons == []
 
         assert metadata.validation_result is not None
         assert metadata.validation_result.passed is True
@@ -88,9 +88,9 @@ class TestBuildGateMetadata:
 
         metadata = build_gate_metadata(gate_result, passed=False)
 
-        assert metadata.quality_gate_result is not None
-        assert metadata.quality_gate_result.passed is False
-        assert "ruff check failed" in metadata.quality_gate_result.failure_reasons
+        assert metadata.evidence_check_result is not None
+        assert metadata.evidence_check_result.passed is False
+        assert "ruff check failed" in metadata.evidence_check_result.failure_reasons
 
         assert metadata.validation_result is not None
         assert metadata.validation_result.passed is False
@@ -112,8 +112,8 @@ class TestBuildGateMetadata:
         metadata = build_gate_metadata(gate_result, passed=True)
 
         # When passed=True, it should override gate_result.passed
-        assert metadata.quality_gate_result is not None
-        assert metadata.quality_gate_result.passed is True
+        assert metadata.evidence_check_result is not None
+        assert metadata.evidence_check_result.passed is True
         assert metadata.validation_result is not None
         assert metadata.validation_result.passed is True
 
@@ -128,8 +128,8 @@ class TestBuildGateMetadata:
 
         metadata = build_gate_metadata(gate_result, passed=True)
 
-        assert metadata.quality_gate_result is not None
-        assert metadata.quality_gate_result.evidence["commit_found"] is False
+        assert metadata.evidence_check_result is not None
+        assert metadata.evidence_check_result.evidence["commit_found"] is False
 
     def test_no_validation_evidence(self) -> None:
         """Should handle missing validation evidence."""
@@ -142,7 +142,7 @@ class TestBuildGateMetadata:
 
         metadata = build_gate_metadata(gate_result, passed=True)
 
-        assert metadata.quality_gate_result is not None
+        assert metadata.evidence_check_result is not None
         # No validation result when evidence is missing
         assert metadata.validation_result is None
 
@@ -160,11 +160,11 @@ class TestBuildGateMetadataFromLogs:
             log_path=log_path,
             result_summary="Success",
             result_success=True,
-            quality_gate=cast("GateChecker", gate),
-            per_issue_spec=None,
+            evidence_check=cast("GateChecker", gate),
+            per_session_spec=None,
         )
 
-        assert metadata.quality_gate_result is None
+        assert metadata.evidence_check_result is None
         assert metadata.validation_result is None
 
     def test_with_spec(self, tmp_path: Path) -> None:
@@ -180,18 +180,18 @@ class TestBuildGateMetadataFromLogs:
         )
 
         gate = FakeGateChecker(validation_evidence=evidence)
-        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
+        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_SESSION)
 
         metadata = build_gate_metadata_from_logs(
             log_path=log_path,
             result_summary="Success",
             result_success=True,
-            quality_gate=cast("GateChecker", gate),
-            per_issue_spec=spec,
+            evidence_check=cast("GateChecker", gate),
+            per_session_spec=spec,
         )
 
-        assert metadata.quality_gate_result is not None
-        assert metadata.quality_gate_result.passed is True
+        assert metadata.evidence_check_result is not None
+        assert metadata.evidence_check_result.passed is True
         assert metadata.validation_result is not None
         # Commands run uses kind.value (e.g., "test")
         assert "test" in metadata.validation_result.commands_run
@@ -209,19 +209,19 @@ class TestBuildGateMetadataFromLogs:
         )
 
         gate = FakeGateChecker(validation_evidence=evidence)
-        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
+        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_SESSION)
 
         metadata = build_gate_metadata_from_logs(
             log_path=log_path,
             result_summary="Quality gate failed: tests failed; lint failed",
             result_success=False,
-            quality_gate=cast("GateChecker", gate),
-            per_issue_spec=spec,
+            evidence_check=cast("GateChecker", gate),
+            per_session_spec=spec,
         )
 
-        assert metadata.quality_gate_result is not None
-        assert "tests failed" in metadata.quality_gate_result.failure_reasons
-        assert "lint failed" in metadata.quality_gate_result.failure_reasons
+        assert metadata.evidence_check_result is not None
+        assert "tests failed" in metadata.evidence_check_result.failure_reasons
+        assert "lint failed" in metadata.evidence_check_result.failure_reasons
 
 
 # ============================================================================

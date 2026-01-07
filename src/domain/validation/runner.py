@@ -14,7 +14,7 @@ For new code, use SpecValidationRunner directly with ValidationSpec and injected
         command_runner=command_runner,
         lock_manager=lock_manager,
     )
-    spec = build_validation_spec(repo_path, scope=ValidationScope.PER_ISSUE, ...)
+    spec = build_validation_spec(repo_path, scope=ValidationScope.PER_SESSION, ...)
     result = await runner.run_spec(spec, context)
 """
 

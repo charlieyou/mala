@@ -28,16 +28,16 @@ CUSTOM_COMMAND_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 
 
 class CustomOverrideMode(Enum):
-    """Mode for how custom commands in run_level_commands override per_issue_commands.
+    """Mode for how custom commands in global_validation_commands override per_session_commands.
 
-    When run_level_commands defines custom commands, this mode determines how they
-    combine with custom commands from per_issue_commands.
+    When global_validation_commands defines custom commands, this mode determines how they
+    combine with custom commands from per_session_commands.
     """
 
-    INHERIT = "inherit"  # Keep per_issue customs unchanged (no run_level customs)
-    CLEAR = "clear"  # Remove all per_issue customs (no customs at run-level)
-    REPLACE = "replace"  # Replace per_issue customs with run_level customs
-    ADDITIVE = "additive"  # Merge run_level customs into per_issue customs
+    INHERIT = "inherit"  # Keep per_session customs unchanged (no global customs)
+    CLEAR = "clear"  # Remove all per_session customs (no customs at global)
+    REPLACE = "replace"  # Replace per_session customs with global customs
+    ADDITIVE = "additive"  # Merge global customs into per_session customs
 
 
 class ConfigError(Exception):
@@ -195,7 +195,7 @@ class CustomCommandConfig:
         if value is None:
             raise ConfigError(
                 f"Custom command '{name}' cannot be null. "
-                "To disable, use run-level override to disable."
+                "To disable, use global override to disable."
             )
 
         # String shorthand
@@ -396,7 +396,7 @@ class CommandsConfig:
         typecheck: Type checker command (e.g., "uvx ty check", "tsc --noEmit").
         e2e: End-to-end test command (e.g., "uv run pytest -m e2e").
         custom_commands: Dictionary of custom validation commands (name -> config).
-        custom_override_mode: How run_level custom commands combine with per_issue.
+        custom_override_mode: How global custom commands combine with per_session.
         _fields_set: Set of field names that were explicitly provided in source.
             Used by the merger to distinguish "not set" from "explicitly null".
     """
@@ -413,14 +413,14 @@ class CommandsConfig:
 
     @classmethod
     def from_dict(
-        cls, data: dict[str, object] | None, *, is_run_level: bool = False
+        cls, data: dict[str, object] | None, *, is_global: bool = False
     ) -> CommandsConfig:
         """Create CommandsConfig from a YAML dict.
 
         Args:
             data: Dict with optional command fields. Each can be a string,
                 command object, or null.
-            is_run_level: If True, this is for run_level_commands section.
+            is_global: If True, this is for global_validation_commands section.
                 Enables _clear_customs validation and +prefix custom command parsing.
 
         Returns:
@@ -448,9 +448,9 @@ class CommandsConfig:
                     "_clear_customs must be true (got "
                     f"{type(clear_value).__name__}: {clear_value!r})"
                 )
-            # Only allowed at run-level
-            if not is_run_level:
-                raise ConfigError("_clear_customs is only valid in run_level_commands")
+            # Only allowed at global
+            if not is_global:
+                raise ConfigError("_clear_customs is only valid in global_validation_commands")
             # Check for custom command keys (non-builtin, non-reserved)
             custom_keys = set(data.keys()) - set(valid_kinds) - {"_clear_customs"}
             if custom_keys:
@@ -478,13 +478,13 @@ class CommandsConfig:
             plus_prefixed = [k for k in custom_keys_ordered if k.startswith("+")]
             unprefixed = [k for k in custom_keys_ordered if not k.startswith("+")]
 
-            if is_run_level:
-                # At run-level: detect mode based on prefix pattern
+            if is_global:
+                # At global: detect mode based on prefix pattern
                 if plus_prefixed and unprefixed:
                     # Mixed prefixes not allowed
                     raise ConfigError(
                         "Cannot mix +prefixed and unprefixed custom commands "
-                        "in run_level_commands. Use all +prefix for additive mode "
+                        "in global_validation_commands. Use all +prefix for additive mode "
                         "or all unprefixed for replace mode."
                     )
                 if plus_prefixed:
@@ -517,8 +517,8 @@ class CommandsConfig:
                     first_prefixed = plus_prefixed[0]
                     raise ConfigError(
                         f"Plus-prefixed custom command '{first_prefixed}' is only "
-                        "allowed in run_level_commands. Remove the '+' prefix or "
-                        "move to run_level_commands section."
+                        "allowed in global_validation_commands. Remove the '+' prefix or "
+                        "move to global_validation_commands section."
                     )
                 # Parse unprefixed as custom commands (order preserved)
                 for key in unprefixed:
@@ -566,11 +566,11 @@ class ValidationConfig:
     Attributes:
         preset: Optional preset name to extend (e.g., "python-uv", "go").
         commands: Command definitions. May be partially filled if extending preset.
-        run_level_commands: Optional overrides for run-level validation commands.
+        global_validation_commands: Optional overrides for global validation commands.
         coverage: Coverage configuration. None means coverage is disabled.
         custom_commands: User-defined custom validation commands. Execution order
             follows YAML key order (Python 3.7+ dict insertion order is preserved).
-        run_level_custom_commands: Optional run-level override for custom commands.
+        global_custom_commands: Optional global override for custom commands.
             None means use repo-level custom_commands. Empty dict {} disables all
             custom commands. Non-empty dict fully replaces (not merges) repo-level.
         code_patterns: Glob patterns for code files that trigger validation.
@@ -581,11 +581,11 @@ class ValidationConfig:
     """
 
     commands: CommandsConfig = field(default_factory=CommandsConfig)
-    run_level_commands: CommandsConfig = field(default_factory=CommandsConfig)
+    global_validation_commands: CommandsConfig = field(default_factory=CommandsConfig)
     preset: str | None = None
     coverage: YamlCoverageConfig | None = None
     custom_commands: dict[str, CustomCommandConfig] = field(default_factory=dict)
-    run_level_custom_commands: dict[str, CustomCommandConfig] | None = None
+    global_custom_commands: dict[str, CustomCommandConfig] | None = None
     code_patterns: tuple[str, ...] = field(default_factory=tuple)
     config_files: tuple[str, ...] = field(default_factory=tuple)
     setup_files: tuple[str, ...] = field(default_factory=tuple)
@@ -622,10 +622,10 @@ class ValidationConfig:
                 "'import_lint: \"uvx import-linter\"'). "
                 "See plans/2026-01-06-inline-custom-commands-plan.md"
             )
-        if "run_level_custom_commands" in data:
+        if "global_custom_commands" in data:
             raise ConfigError(
-                "'run_level_custom_commands' is no longer supported. Move custom "
-                "commands into the 'run_level_commands' section. Use unprefixed "
+                "'global_custom_commands' is no longer supported. Move custom "
+                "commands into the 'global_validation_commands' section. Use unprefixed "
                 "keys to replace repo-level customs, or '+' prefix for additive "
                 "merge. See plans/2026-01-06-inline-custom-commands-plan.md"
             )
@@ -653,20 +653,20 @@ class ValidationConfig:
             cast("dict[str, object] | None", commands_data)
         )
 
-        # Parse run-level commands
-        run_level_commands_data = data.get("run_level_commands")
-        if "run_level_commands" in data:
-            fields_set.add("run_level_commands")
-        if run_level_commands_data is not None and not isinstance(
-            run_level_commands_data, dict
+        # Parse global commands
+        global_validation_commands_data = data.get("global_validation_commands")
+        if "global_validation_commands" in data:
+            fields_set.add("global_validation_commands")
+        if global_validation_commands_data is not None and not isinstance(
+            global_validation_commands_data, dict
         ):
             raise ConfigError(
-                "run_level_commands must be an object, got "
-                f"{type(run_level_commands_data).__name__}"
+                "global_validation_commands must be an object, got "
+                f"{type(global_validation_commands_data).__name__}"
             )
-        run_level_commands = CommandsConfig.from_dict(
-            cast("dict[str, object] | None", run_level_commands_data),
-            is_run_level=True,
+        global_validation_commands = CommandsConfig.from_dict(
+            cast("dict[str, object] | None", global_validation_commands_data),
+            is_global=True,
         )
 
         # Parse coverage - track if explicitly present (even if null)
@@ -726,39 +726,39 @@ class ValidationConfig:
                         name, cast("str | dict[str, object] | None", value)
                     )
 
-        # Parse run_level_custom_commands - track in _fields_set only when dict
+        # Parse global_custom_commands - track in _fields_set only when dict
         # None/null = not set (use repo-level), {} = explicitly empty (disable all)
         # Only add to fields_set when value is a dict (including {}), so null
         # truly behaves like omission at the metadata level
-        run_level_custom_commands: dict[str, CustomCommandConfig] | None = None
-        if "run_level_custom_commands" in data:
-            rlcc_data = data.get("run_level_custom_commands")
+        global_custom_commands: dict[str, CustomCommandConfig] | None = None
+        if "global_custom_commands" in data:
+            rlcc_data = data.get("global_custom_commands")
             if rlcc_data is not None:
                 if not isinstance(rlcc_data, dict):
                     raise ConfigError(
-                        "run_level_custom_commands must be an object, "
+                        "global_custom_commands must be an object, "
                         f"got {type(rlcc_data).__name__}"
                     )
                 # Only track in fields_set when value is a dict (not null)
-                fields_set.add("run_level_custom_commands")
-                run_level_custom_commands = {}
+                fields_set.add("global_custom_commands")
+                global_custom_commands = {}
                 for name, value in rlcc_data.items():
                     if not isinstance(name, str):
                         raise ConfigError(
-                            f"run_level_custom_commands key must be a string, "
+                            f"global_custom_commands key must be a string, "
                             f"got {type(name).__name__}"
                         )
-                    run_level_custom_commands[name] = CustomCommandConfig.from_value(
+                    global_custom_commands[name] = CustomCommandConfig.from_value(
                         name, cast("str | dict[str, object] | None", value)
                     )
 
         return cls(
             preset=preset,
             commands=commands,
-            run_level_commands=run_level_commands,
+            global_validation_commands=global_validation_commands,
             coverage=coverage,
             custom_commands=custom_commands,
-            run_level_custom_commands=run_level_custom_commands,
+            global_custom_commands=global_custom_commands,
             code_patterns=code_patterns,
             config_files=config_files,
             setup_files=setup_files,
@@ -779,14 +779,14 @@ class ValidationConfig:
                 self.commands.format,
                 self.commands.typecheck,
                 self.commands.e2e,
-                self.run_level_commands.setup,
-                self.run_level_commands.test,
-                self.run_level_commands.lint,
-                self.run_level_commands.format,
-                self.run_level_commands.typecheck,
-                self.run_level_commands.e2e,
+                self.global_validation_commands.setup,
+                self.global_validation_commands.test,
+                self.global_validation_commands.lint,
+                self.global_validation_commands.format,
+                self.global_validation_commands.typecheck,
+                self.global_validation_commands.e2e,
                 self.custom_commands,  # Non-empty dict is truthy
-                self.run_level_custom_commands,  # Non-empty dict is truthy
+                self.global_custom_commands,  # Non-empty dict is truthy
             ]
         )
 

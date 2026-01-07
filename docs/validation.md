@@ -73,37 +73,37 @@ When Cerberus review passes but includes P2/P3 priority findings, the orchestrat
 
 This ensures low-priority review findings are tracked and not forgotten, without blocking the current issue from completing.
 
-## Run-Level Validation
+## Global Validation
 
 After all issues complete, the orchestrator runs a final validation pass. This catches issues that only manifest when all changes are combined:
 
-1. **Triggers**: After all per-issue work completes (with at least one success)
+1. **Triggers**: After all per-session work completes (with at least one success)
 2. **Worktree validation**: Runs tests in isolated worktree at HEAD commit
 3. **Fixer agent**: On failure, spawns a dedicated fixer agent with the failure output
 4. **Retry loop**: Continues up to `max_gate_retries` attempts
 
-Run-level validations can override the base `commands` via `run_level_commands` in `mala.yaml`. Any omitted fields inherit from `commands`.
+Global validations can override the base `commands` via `global_validation_commands` in `mala.yaml`. Any omitted fields inherit from `commands`.
 
 ### Validation Scopes
 
 | Scope | When | What runs |
 |-------|------|-----------|
-| **Per-issue** | After each issue completes | pytest, ruff, ty |
-| **Run-level** | After all issues complete | pytest, ruff, ty, + E2E fixture test |
+| **Per-session** | After each issue completes | pytest, ruff, ty |
+| **Global** | After all issues complete | pytest, ruff, ty, + E2E fixture test |
 
 ### Test Flags
 
 | Flag | Default | Effect |
 |------|---------|--------|
 | `integration-tests` | included | Pytest tests marked `@pytest.mark.integration` are skipped when this flag is in the disable list |
-| `e2e` | enabled (run-level only) | E2E fixture test runs only during run-level validation |
+| `e2e` | enabled (global only) | E2E fixture test runs only during global validation |
 
 ### Disable Flags
 
-- `--disable run-level-validate`: Skip run-level validation entirely
+- `--disable global-validate`: Skip global validation entirely
 - `--disable integration-tests`: Exclude integration-marked pytest tests
-- `--disable e2e`: Disable E2E fixture test (only affects run-level)
-- `--disable followup-on-run-validate-fail`: Don't mark issues on run-level validation failure
+- `--disable e2e`: Disable E2E fixture test (only affects global)
+- `--disable followup-on-run-validate-fail`: Don't mark issues on global validation failure
 
 ## Repo Type Detection
 
@@ -118,13 +118,13 @@ This allows mala to process issues in non-Python repositories without failing on
 
 ## ValidationSpec
 
-Defines what validations run per scope (per-issue vs run-level):
+Defines what validations run per scope (per-session vs global):
 
 ```python
 from src.domain.validation import build_validation_spec, ValidationScope
 
 spec = build_validation_spec(
-    scope=ValidationScope.PER_ISSUE,
+    scope=ValidationScope.PER_SESSION,
     disable_validations={"integration-tests"},  # Optional disable flags
 )
 ```

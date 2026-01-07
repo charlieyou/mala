@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from src.domain.quality_gate import QualityGate
+from src.domain.evidence_check import EvidenceCheck
 from src.domain.validation.spec import (
     CommandKind,
     ValidationCommand,
@@ -88,7 +88,7 @@ def _make_validation_spec_with_custom_commands(
         for name, cmd, allow_fail in custom_commands
     ]
     return ValidationSpec(
-        scope=ValidationScope.PER_ISSUE,
+        scope=ValidationScope.PER_SESSION,
         commands=commands,
     )
 
@@ -132,7 +132,7 @@ class TestEvidenceDetectionCustomCommandsIntegration:
 
         log_provider = FileSystemLogProvider()
         command_runner = CommandRunner(cwd=tmp_path)
-        gate = QualityGate(tmp_path, log_provider, command_runner)
+        gate = EvidenceCheck(tmp_path, log_provider, command_runner)
 
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
@@ -171,7 +171,7 @@ class TestEvidenceDetectionCustomCommandsIntegration:
 
         log_provider = FileSystemLogProvider()
         command_runner = CommandRunner(cwd=tmp_path)
-        gate = QualityGate(tmp_path, log_provider, command_runner)
+        gate = EvidenceCheck(tmp_path, log_provider, command_runner)
 
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
@@ -219,7 +219,7 @@ class TestEvidenceDetectionCustomCommandsIntegration:
 
         log_provider = FileSystemLogProvider()
         command_runner = CommandRunner(cwd=tmp_path)
-        gate = QualityGate(tmp_path, log_provider, command_runner)
+        gate = EvidenceCheck(tmp_path, log_provider, command_runner)
 
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 

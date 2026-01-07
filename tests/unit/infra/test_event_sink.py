@@ -91,9 +91,9 @@ class TestBaseEventSink:
 
         # Quality gate events
         assert sink.on_gate_started("agent-1", 1, 3) is None
-        assert sink.on_gate_started(None, 1, 3) is None  # run-level
+        assert sink.on_gate_started(None, 1, 3) is None  # global
         assert sink.on_gate_passed("agent-1") is None
-        assert sink.on_gate_passed(None) is None  # run-level
+        assert sink.on_gate_passed(None) is None  # global
         assert sink.on_gate_failed("agent-1", 3, 3) is None
         assert sink.on_gate_retry("agent-1", 2, 3) is None
         assert sink.on_gate_result("agent-1", True) is None
@@ -101,7 +101,7 @@ class TestBaseEventSink:
             sink.on_gate_result("agent-1", False, ["lint failed", "tests failed"])
             is None
         )
-        assert sink.on_gate_result(None, True) is None  # run-level
+        assert sink.on_gate_result(None, True) is None  # global
 
         # Codex review events
         assert sink.on_review_started("agent-1", 1, 2) is None
@@ -134,7 +134,7 @@ class TestBaseEventSink:
         assert sink.on_locks_released(5) is None
         assert sink.on_issues_committed() is None
         assert sink.on_run_metadata_saved("/tmp/run.json") is None
-        assert sink.on_run_level_validation_disabled() is None
+        assert sink.on_global_validation_disabled() is None
         assert sink.on_abort_requested("Fatal error occurred") is None
         assert sink.on_tasks_aborting(3, "Unrecoverable error") is None
 
@@ -213,9 +213,9 @@ class TestNullEventSink:
 
         # Quality gate events
         assert sink.on_gate_started("agent-1", 1, 3) is None
-        assert sink.on_gate_started(None, 1, 3) is None  # run-level
+        assert sink.on_gate_started(None, 1, 3) is None  # global
         assert sink.on_gate_passed("agent-1") is None
-        assert sink.on_gate_passed(None) is None  # run-level
+        assert sink.on_gate_passed(None) is None  # global
         assert sink.on_gate_failed("agent-1", 3, 3) is None
         assert sink.on_gate_retry("agent-1", 2, 3) is None
         assert sink.on_gate_result("agent-1", True) is None
@@ -223,7 +223,7 @@ class TestNullEventSink:
             sink.on_gate_result("agent-1", False, ["lint failed", "tests failed"])
             is None
         )
-        assert sink.on_gate_result(None, True) is None  # run-level
+        assert sink.on_gate_result(None, True) is None  # global
 
         # Codex review events
         assert sink.on_review_started("agent-1", 1, 2) is None
@@ -256,7 +256,7 @@ class TestNullEventSink:
         assert sink.on_locks_released(5) is None
         assert sink.on_issues_committed() is None
         assert sink.on_run_metadata_saved("/tmp/run.json") is None
-        assert sink.on_run_level_validation_disabled() is None
+        assert sink.on_global_validation_disabled() is None
         assert sink.on_abort_requested("Fatal error occurred") is None
         assert sink.on_tasks_aborting(3, "Unrecoverable error") is None
 
@@ -485,7 +485,7 @@ class TestConsoleEventSink:
         sink.on_locks_released(5)
         sink.on_issues_committed()
         sink.on_run_metadata_saved("/tmp/run.json")
-        sink.on_run_level_validation_disabled()
+        sink.on_global_validation_disabled()
         sink.on_abort_requested("Fatal error occurred")
         sink.on_tasks_aborting(3, "Unrecoverable error")
 

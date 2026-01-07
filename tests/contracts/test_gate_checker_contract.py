@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from src.core.protocols import GateChecker
-from src.domain.quality_gate import CommitResult, GateResult, ValidationEvidence
+from src.domain.evidence_check import CommitResult, GateResult, ValidationEvidence
 from tests.contracts import get_protocol_members
 from tests.fakes.gate_checker import FakeGateChecker
 
@@ -138,7 +138,7 @@ class TestFakeGateCheckerBehavior:
             commands_ran={CommandKind.TEST: True, CommandKind.LINT: True}
         )
         checker = FakeGateChecker(validation_evidence=evidence)
-        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
+        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_SESSION)
         result = checker.parse_validation_evidence_with_spec(
             log_path=Path("/tmp/log.jsonl"),
             spec=spec,

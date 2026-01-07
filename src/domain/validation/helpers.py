@@ -162,7 +162,7 @@ dev = [
     (repo_path / "mala.yaml").write_text(
         """preset: python-uv
 
-run_level_commands:
+global_validation_commands:
   test: "uv run pytest --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
 
 coverage:

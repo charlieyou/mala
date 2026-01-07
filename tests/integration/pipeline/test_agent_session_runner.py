@@ -30,7 +30,7 @@ from src.pipeline.message_stream_processor import (
     IdleTimeoutStream,
     MessageIterationState,
 )
-from src.domain.quality_gate import GateResult
+from src.domain.evidence_check import GateResult
 from tests.fakes import FakeLintCache
 from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 

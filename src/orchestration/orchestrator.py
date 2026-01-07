@@ -54,7 +54,7 @@ from src.pipeline.issue_finalizer import (
     IssueFinalizeInput,
 )
 from src.pipeline.run_coordinator import (
-    RunLevelValidationInput,
+    GlobalValidationInput,
 )
 from src.orchestration.orchestration_wiring import (
     FinalizerCallbackRefs,
@@ -206,7 +206,7 @@ class MalaOrchestrator:
         self.review_disabled_reason = derived.review_disabled_reason
         self._init_runtime_state()
         self.log_provider = log_provider
-        self.quality_gate = gate_checker
+        self.evidence_check = gate_checker
         self.event_sink = event_sink
         self.beads = issue_provider
         self.epic_verifier = epic_verifier
@@ -228,7 +228,7 @@ class MalaOrchestrator:
         Note: verified_epics and epics_being_verified are delegated to
         epic_verification_coordinator.
 
-        Note: per_issue_spec and last_gate_results are delegated to
+        Note: per_session_spec and last_gate_results are delegated to
         async_gate_runner.
         """
         self._state = OrchestratorState()
@@ -276,7 +276,7 @@ class MalaOrchestrator:
             self.async_gate_runner,
             self.review_runner,
             lambda: self.log_provider,
-            lambda: self.quality_gate,
+            lambda: self.evidence_check,
             on_session_log_path=self._on_session_log_path,
             on_review_log_path=self._on_review_log_path,
         )
@@ -298,7 +298,7 @@ class MalaOrchestrator:
     def _build_runtime_deps(self) -> RuntimeDeps:
         """Build RuntimeDeps from orchestrator state."""
         return RuntimeDeps(
-            quality_gate=self.quality_gate,
+            evidence_check=self.evidence_check,
             code_reviewer=self.code_reviewer,
             beads=self.beads,
             event_sink=self.event_sink,
@@ -377,8 +377,8 @@ class MalaOrchestrator:
         return IssueFinalizer(
             config=config,
             callbacks=callbacks,
-            quality_gate=self.quality_gate,
-            per_issue_spec=None,
+            evidence_check=self.evidence_check,
+            per_session_spec=None,
         )
 
     def _build_epic_verification_coordinator(self) -> EpicVerificationCoordinator:
@@ -590,8 +590,8 @@ class MalaOrchestrator:
         """
         stored_gate_result = self.async_gate_runner.get_last_gate_result(issue_id)
 
-        # Update finalizer's per_issue_spec if it has changed
-        self.issue_finalizer.per_issue_spec = self.async_gate_runner.per_issue_spec
+        # Update finalizer's per_session_spec if it has changed
+        self.issue_finalizer.per_session_spec = self.async_gate_runner.per_session_spec
 
         # Build finalization input - use log paths from IssueResult
         finalize_input = IssueFinalizeInput(
@@ -1028,13 +1028,13 @@ class MalaOrchestrator:
             version=__version__,
             runs_dir=runs_dir,
         )
-        per_issue_spec = build_validation_spec(
+        per_session_spec = build_validation_spec(
             self.repo_path,
-            scope=ValidationScope.PER_ISSUE,
+            scope=ValidationScope.PER_SESSION,
             disable_validations=self._disabled_validations,
         )
-        self.async_gate_runner.per_issue_spec = per_issue_spec
-        self._lint_tools = extract_lint_tools_from_spec(per_issue_spec)
+        self.async_gate_runner.per_session_spec = per_session_spec
+        self._lint_tools = extract_lint_tools_from_spec(per_session_spec)
         self._session_config.lint_tools = self._lint_tools
         write_run_marker(
             run_id=run_metadata.run_id,
@@ -1065,7 +1065,7 @@ class MalaOrchestrator:
                     success_count = sum(1 for r in self._state.completed if r.success)
                     if success_count == 0 or self.abort_run:
                         return True
-                    validation_input = RunLevelValidationInput(
+                    validation_input = GlobalValidationInput(
                         run_metadata=run_metadata
                     )
                     validation_output = await self.run_coordinator.run_validation(
@@ -1128,13 +1128,13 @@ class MalaOrchestrator:
                 self._exit_code = final_exit_code
                 return await self._finalize_run(run_metadata, final_exit_code != 1)
 
-            # Run-level validation and finalization happen after lock cleanup
+            # Global validation and finalization happen after lock cleanup
             # but before debug log cleanup (so they're captured in the debug log)
             success_count = sum(1 for r in self._state.completed if r.success)
             run_validation_passed = True
             if success_count > 0 and not self.abort_run:
                 try:
-                    validation_input = RunLevelValidationInput(
+                    validation_input = GlobalValidationInput(
                         run_metadata=run_metadata
                     )
                     validation_output = await self.run_coordinator.run_validation(

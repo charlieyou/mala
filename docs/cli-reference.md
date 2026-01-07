@@ -87,13 +87,13 @@ Repeat the flag or pass comma-separated lists (e.g., `--disable coverage --disab
 
 | Value | Description |
 |-------|-------------|
-| `post-validate` | Skip all per-issue validation (tests, lint, typecheck) |
-| `run-level-validate` | Skip run-level validation |
+| `post-validate` | Skip all per-session validation (tests, lint, typecheck) |
+| `global-validate` | Skip global validation |
 | `integration-tests` | Exclude integration tests from pytest |
 | `coverage` | Disable coverage checking |
 | `e2e` | Disable E2E fixture repo test |
 | `review` | Disable external review (Cerberus review-gate) |
-| `followup-on-run-validate-fail` | Don't mark issues with `needs-followup` on run-level validation failure |
+| `followup-on-run-validate-fail` | Don't mark issues with `needs-followup` on global validation failure |
 
 ## Global Configuration
 

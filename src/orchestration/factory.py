@@ -202,7 +202,7 @@ def _build_dependencies(
         Tuple of all required dependencies.
     """
     from src.core.models import RetryConfig
-    from src.domain.quality_gate import QualityGate
+    from src.domain.evidence_check import EvidenceCheck
     from src.infra.clients.beads_client import BeadsClient
     from src.infra.clients.cerberus_review import DefaultReviewer
     from src.infra.epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
@@ -237,7 +237,7 @@ def _build_dependencies(
     else:
         gate_checker = cast(
             "GateChecker",
-            QualityGate(
+            EvidenceCheck(
                 repo_path, log_provider=log_provider, command_runner=command_runner
             ),
         )

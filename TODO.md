@@ -1,10 +1,10 @@
 # Roadmap to v1
 
 New Features
-* Add code review to run-level validations
-* Option to run run-level validations after every epic completion
+* Add code review to global validations
+* Option to run global validations after every epic completion
 * Rename gate 4 / run level validations
-* Option to hard exit if run-level validations fail
+* Option to hard exit if global validations fail
 
 Security
 * Setup in devcontainer - should it just be compatible, or part of the app itself?
