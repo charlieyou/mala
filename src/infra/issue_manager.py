@@ -192,18 +192,34 @@ class IssueManager:
             )
 
         def get_epic_priority(issue: dict[str, object]) -> int | None:
-            """Extract epic_priority as int if available, or None."""
+            """Extract epic_priority as int if available, or None.
+
+            Handles both int and "P1" string formats.
+            """
             prio = issue.get("epic_priority")
             if prio is None:
                 return None
-            return int(str(prio))
+            try:
+                prio_str = str(prio)
+                # Handle "P1" format by stripping leading P
+                if prio_str.upper().startswith("P"):
+                    prio_str = prio_str[1:]
+                return int(prio_str)
+            except (ValueError, IndexError):
+                return None
 
         # Compute group sort key: (epic_priority or min_priority, -max_updated)
         def group_sort_key(epic: str | None) -> tuple[int, str]:
             group_issues = groups[epic]
-            # Use epic_priority if available (from first issue in group)
-            # Otherwise fall back to min_priority of issues in group
-            epic_prio = get_epic_priority(group_issues[0]) if epic else None
+            # Use epic_priority if available from any issue in group
+            # (all issues in same epic should have same epic_priority, but check all
+            # in case of mixed enrichment)
+            epic_prio: int | None = None
+            if epic:
+                for issue in group_issues:
+                    epic_prio = get_epic_priority(issue)
+                    if epic_prio is not None:
+                        break
             if epic_prio is not None:
                 effective_priority = epic_prio
             else:

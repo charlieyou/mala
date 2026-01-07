@@ -129,13 +129,14 @@ class BeadsClient:
         """Sort issues by epic groups for focus mode.
 
         Groups issues by parent epic, then sorts:
-        1. Groups by (min_priority, max_updated DESC)
+        1. Groups by (epic_priority, max_updated DESC) - falls back to min_priority
+           of issues in group if epic_priority is unavailable
         2. Within groups by (priority, updated DESC)
 
-        Orphan tasks (no parent epic) form a virtual group with the same rules.
+        Orphan tasks (no parent epic) form a virtual group using min_priority.
 
-        Note: This async version fetches parent epics first, then delegates
-        to IssueManager.sort_by_epic_groups for the actual sorting.
+        Note: This async version fetches parent epics first (populating epic_priority),
+        then delegates to IssueManager.sort_by_epic_groups for the actual sorting.
 
         Args:
             issues: List of issue dicts to sort.
@@ -387,9 +388,10 @@ class BeadsClient:
             suppress_warn_ids: Optional set of issue IDs to suppress from warnings.
             prioritize_wip: If True, sort in_progress issues before open issues.
             focus: If True, group tasks by parent epic and complete one epic at a time.
-                When focus=True, groups are sorted by (min_priority, max_updated DESC)
-                and within groups by (priority, updated DESC). Orphan tasks form a
-                virtual group with the same sorting rules.
+                When focus=True, groups are sorted by (epic_priority, max_updated DESC)
+                and within groups by (priority, updated DESC). Falls back to min_priority
+                of issues in group if epic_priority is unavailable. Orphan tasks form a
+                virtual group using min_priority.
             orphans_only: If True, only return issues with no parent epic.
             order_preference: Issue ordering (focus, epic-priority, issue-priority, or input).
 
@@ -813,11 +815,22 @@ class BeadsClient:
                 parent_epic: str | None = None
                 for item in tree:
                     if item.get("depth", 0) > 0 and item.get("issue_type") == "epic":
-                        parent_epic = item["id"]
+                        epic_id = item.get("id")
+                        if epic_id is None:
+                            continue  # Skip malformed item
+                        parent_epic = str(epic_id)
                         # Cache epic priority for focus mode ordering
+                        # Priority may be int or "P1" string format
                         epic_priority = item.get("priority")
                         if epic_priority is not None:
-                            self._epic_priority_cache[parent_epic] = int(epic_priority)
+                            try:
+                                prio_str = str(epic_priority)
+                                # Handle "P1" format by stripping leading P
+                                if prio_str.upper().startswith("P"):
+                                    prio_str = prio_str[1:]
+                                self._epic_priority_cache[parent_epic] = int(prio_str)
+                            except (ValueError, IndexError):
+                                pass  # Skip if priority is unparseable
                         break
 
                 # Cache for this issue only
