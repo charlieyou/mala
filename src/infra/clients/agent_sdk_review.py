@@ -104,7 +104,13 @@ class AgentSDKReviewer:
                 )
             all_empty = True
             for sha in commit_shas:
-                if not await self._check_diff_empty(f"{sha}^..{sha}"):
+                try:
+                    if not await self._check_diff_empty(f"{sha}^..{sha}"):
+                        all_empty = False
+                        break
+                except TimeoutError:
+                    # Git diff check timed out - assume not empty, proceed with review
+                    logger.warning(f"Git diff check timed out for {sha}, proceeding")
                     all_empty = False
                     break
             if all_empty:
@@ -326,7 +332,12 @@ class AgentSDKReviewer:
                     content = getattr(msg, "content", None)
                     if content is not None and isinstance(content, list):
                         for block in content:
-                            if isinstance(block, dict) and block.get("type") == "text":
+                            # Handle both SDK TextBlock objects and dict format
+                            if type(block).__name__ == "TextBlock":
+                                response_text += getattr(block, "text", "")
+                            elif (
+                                isinstance(block, dict) and block.get("type") == "text"
+                            ):
                                 response_text += block.get("text", "")
 
                 # Extract session info from result message
@@ -433,15 +444,23 @@ class AgentSDKReviewer:
             if priority_raw is not None:
                 priority = self._convert_priority(priority_raw)
 
+            # Coerce nullable fields to expected types (None -> default)
+            file_path = item.get("file_path")
+            line_start = item.get("line_start")
+            line_end = item.get("line_end")
+            title = item.get("title")
+            body = item.get("body")
+            reviewer = item.get("reviewer")
+
             issues.append(
                 ReviewIssue(
-                    file=item.get("file_path", ""),
-                    line_start=item.get("line_start", 0),
-                    line_end=item.get("line_end", 0),
+                    file=file_path if isinstance(file_path, str) else "",
+                    line_start=line_start if isinstance(line_start, int) else 0,
+                    line_end=line_end if isinstance(line_end, int) else 0,
                     priority=priority,
-                    title=item.get("title", ""),
-                    body=item.get("body", ""),
-                    reviewer=item.get("reviewer", "agent_sdk"),
+                    title=title if isinstance(title, str) else "",
+                    body=body if isinstance(body, str) else "",
+                    reviewer=reviewer if isinstance(reviewer, str) else "agent_sdk",
                 )
             )
 
@@ -456,16 +475,25 @@ class AgentSDKReviewer:
     def _extract_json(self, text: str) -> str:
         """Extract JSON from text, handling markdown code blocks.
 
+        Tries each code block and returns the first one that parses as valid JSON.
+        Falls back to brace-scanning if no valid JSON found in code blocks.
+
         Args:
             text: Raw text that may contain JSON in code blocks.
 
         Returns:
             Extracted JSON string.
         """
-        # Try markdown code block first (flexible whitespace handling)
-        code_block_match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
-        if code_block_match:
-            return code_block_match.group(1).strip()
+        # Find all code blocks and try each one for valid JSON
+        code_blocks = re.findall(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+        for block_content in code_blocks:
+            candidate = block_content.strip()
+            if candidate:
+                try:
+                    json.loads(candidate)
+                    return candidate
+                except json.JSONDecodeError:
+                    continue
 
         # Fallback: find first { and last }
         first_brace = text.find("{")
