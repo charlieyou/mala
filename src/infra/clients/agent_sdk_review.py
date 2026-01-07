@@ -67,7 +67,7 @@ class AgentSDKReviewer:
         self,
         diff_range: str,
         context_file: Path | None = None,
-        timeout: int = 600,
+        timeout: int | None = None,
         claude_session_id: str | None = None,
         *,
         commit_shas: Sequence[str] | None = None,
@@ -80,13 +80,16 @@ class AgentSDKReviewer:
         Args:
             diff_range: Git diff range (e.g., "HEAD~1..HEAD").
             context_file: Optional file with implementation context.
-            timeout: Maximum time for agent session (seconds).
+            timeout: Maximum time for agent session (seconds). Uses default_timeout if None.
             claude_session_id: Optional session ID for telemetry.
             commit_shas: Specific commit SHAs being reviewed.
 
         Returns:
             ReviewResult with verdict and findings.
         """
+        # Use instance default_timeout if not specified
+        effective_timeout = timeout if timeout is not None else self.default_timeout
+
         # Check for empty diff (short-circuit without running agent)
         # For commit_shas, check each commit individually
         if commit_shas is not None:
@@ -112,14 +115,19 @@ class AgentSDKReviewer:
                     fatal_error=False,
                     review_log_path=None,
                 )
-        elif await self._check_diff_empty(diff_range):
-            return ReviewResult(
-                passed=True,
-                issues=[],
-                parse_error=None,
-                fatal_error=False,
-                review_log_path=None,
-            )
+        else:
+            try:
+                if await self._check_diff_empty(diff_range):
+                    return ReviewResult(
+                        passed=True,
+                        issues=[],
+                        parse_error=None,
+                        fatal_error=False,
+                        review_log_path=None,
+                    )
+            except TimeoutError:
+                # Git diff check timed out - proceed with review anyway
+                logger.warning("Git diff check timed out, proceeding with review")
 
         # Load context file if provided
         context = await self._load_context(context_file)
@@ -130,7 +138,7 @@ class AgentSDKReviewer:
         # Run agent session
         try:
             response_text, log_path = await self._run_agent_session(
-                query, timeout, claude_session_id
+                query, effective_timeout, claude_session_id
             )
         except TimeoutError as e:
             if self.event_sink is not None:
@@ -325,39 +333,13 @@ class AgentSDKReviewer:
                 if hasattr(msg, "subtype") and msg.subtype == "result":
                     result_session_id = getattr(msg, "session_id", None)
 
-        # Construct log path from session ID if available
+        # Construct log path from session ID if available using canonical helper
         if result_session_id:
-            log_path = self._get_session_log_path(result_session_id)
+            from src.infra.tools.env import get_claude_log_path
+
+            log_path = get_claude_log_path(self.repo_path, result_session_id)
 
         return response_text, log_path
-
-    def _get_session_log_path(self, session_id: str) -> Path | None:
-        """Get the log path for a session ID.
-
-        SDK logs are at ~/.claude/projects/{encoded-path}/{session_id}.jsonl
-
-        Args:
-            session_id: The session ID from ResultMessage.
-
-        Returns:
-            Path to the session log, or None if it can't be computed.
-        """
-        from pathlib import Path as PathLib
-        import base64
-
-        try:
-            # Encode repo path like the SDK does
-            repo_str = str(self.repo_path.resolve())
-            encoded_path = base64.urlsafe_b64encode(repo_str.encode()).decode()
-
-            # Construct log path
-            home = PathLib.home()
-            log_path = (
-                home / ".claude" / "projects" / encoded_path / f"{session_id}.jsonl"
-            )
-            return log_path
-        except Exception:
-            return None
 
     def _parse_response(self, response_text: str) -> ReviewResult:
         """Parse JSON response into ReviewResult.
