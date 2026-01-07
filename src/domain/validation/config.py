@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal, cast
 
-from src.domain.validation.constants import VALID_CLAUDE_SETTINGS_SOURCES
+from src.core.constants import VALID_CLAUDE_SETTINGS_SOURCES
 
 # Regex for valid custom command names: starts with letter or underscore,
 # followed by letters, digits, underscores, or hyphens

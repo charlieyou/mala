@@ -529,6 +529,7 @@ forbidden_modules = ["claude_agent_sdk"]
 allow_indirect_imports = true
 ignore_imports = [
     "src.infra.sdk_adapter -> claude_agent_sdk",
+    "src.infra.sdk_transport -> claude_agent_sdk",
     "src.infra.epic_verifier -> claude_agent_sdk",
     "src.infra.tools.locking_mcp -> claude_agent_sdk",
 ]

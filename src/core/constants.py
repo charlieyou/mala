@@ -1,4 +1,4 @@
-"""Shared constants for Claude settings validation.
+"""Shared constants for configuration and validation.
 
 Claude settings sources map to configuration files in the Claude Code settings hierarchy:
 - local: .claude/settings.local.json (gitignored, machine-specific)

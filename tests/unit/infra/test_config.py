@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.domain.validation.constants import DEFAULT_CLAUDE_SETTINGS_SOURCES
+from src.core.constants import DEFAULT_CLAUDE_SETTINGS_SOURCES
 from src.infra.io.config import (
     CLIOverrides,
     ConfigurationError,

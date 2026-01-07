@@ -27,7 +27,7 @@ import shlex
 from dataclasses import InitVar, dataclass, field
 from pathlib import Path
 
-from src.domain.validation.constants import (
+from src.core.constants import (
     DEFAULT_CLAUDE_SETTINGS_SOURCES,
     VALID_CLAUDE_SETTINGS_SOURCES,
 )
