@@ -580,6 +580,8 @@ class CommandsConfig:
         custom_override_mode: How global custom commands combine with per_session.
         _fields_set: Set of field names that were explicitly provided in source.
             Used by the merger to distinguish "not set" from "explicitly null".
+        _is_null_override: True if this config was parsed from explicit null.
+            Used by merger to distinguish null (clear preset) from {} (inherit).
     """
 
     setup: CommandConfig | None = None
@@ -591,6 +593,7 @@ class CommandsConfig:
     custom_commands: dict[str, CustomCommandConfig] = field(default_factory=dict)
     custom_override_mode: CustomOverrideMode = CustomOverrideMode.INHERIT
     _fields_set: frozenset[str] = field(default_factory=frozenset)
+    _is_null_override: bool = False
 
     @classmethod
     def from_dict(
@@ -611,7 +614,7 @@ class CommandsConfig:
             ConfigError: If a command value is invalid.
         """
         if data is None:
-            return cls()
+            return cls(_is_null_override=True)
 
         valid_kinds = ("setup", "test", "lint", "format", "typecheck", "e2e")
 

@@ -1434,14 +1434,16 @@ class TestGlobalValidationCommandsFieldLevelMerge:
                 lint=CommandConfig(command="ruff check ."),
             ),
         )
-        # This already has a test that shows {} clears preset
-        # That behavior is correct for this case per clear_on_explicit_empty
+        # Empty {} should inherit preset pool (not clear it)
         user = ValidationConfig.from_dict({"global_validation_commands": {}})
         result = merge_configs(preset, user)
 
-        # Empty {} clears preset per existing behavior (clear_on_explicit_empty=True)
-        assert result.global_validation_commands.test is None
-        assert result.global_validation_commands.lint is None
+        # Empty {} inherits preset commands per T005 acceptance criteria
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest"
+        assert result.global_validation_commands.test.timeout == 300
+        assert result.global_validation_commands.lint is not None
+        assert result.global_validation_commands.lint.command == "ruff check ."
 
     def test_project_adds_new_command_to_preset_pool(self) -> None:
         """Project can add new commands while inheriting preset commands."""
@@ -1516,6 +1518,96 @@ class TestGlobalValidationCommandsFieldLevelMerge:
         assert result.global_validation_commands.test is not None
         assert result.global_validation_commands.test.command == "pytest"
         assert result.global_validation_commands.test.timeout is None
+
+    def test_partial_override_without_preset_raises_error(self) -> None:
+        """Partial override for command not in preset raises ConfigError."""
+        from src.domain.validation.config_merger import merge_configs
+
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+            ),
+        )
+        # lint not defined in preset, but user tries to set only timeout
+        user = ValidationConfig.from_dict(
+            {
+                "global_validation_commands": {
+                    "lint": {"timeout": 120},
+                }
+            }
+        )
+        with pytest.raises(
+            ConfigError,
+            match=r"Cannot specify partial override for 'lint'.*no preset command",
+        ):
+            merge_configs(preset, user)
+
+    def test_custom_commands_inherited_from_preset(self) -> None:
+        """Custom commands from preset are inherited in merged result."""
+        from src.domain.validation.config_merger import merge_configs
+
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+                custom_commands={
+                    "security": CustomCommandConfig(command="bandit -r src/"),
+                },
+            ),
+        )
+        # User overrides test timeout, shouldn't lose preset custom commands
+        user = ValidationConfig.from_dict(
+            {
+                "global_validation_commands": {
+                    "test": {"timeout": 120},
+                }
+            }
+        )
+        result = merge_configs(preset, user)
+
+        # Built-in command merged
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest"
+        assert result.global_validation_commands.test.timeout == 120
+        # Custom command inherited from preset
+        assert "security" in result.global_validation_commands.custom_commands
+        assert (
+            result.global_validation_commands.custom_commands["security"].command
+            == "bandit -r src/"
+        )
+
+    def test_custom_commands_user_overrides_preset(self) -> None:
+        """User custom commands override preset custom commands by name."""
+        from src.domain.validation.config_merger import merge_configs
+
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                custom_commands={
+                    "security": CustomCommandConfig(command="bandit -r src/"),
+                    "docs": CustomCommandConfig(command="mkdocs build"),
+                },
+            ),
+        )
+        user = ValidationConfig.from_dict(
+            {
+                "global_validation_commands": {
+                    "security": "bandit -r src/ --skip B101",  # override
+                }
+            }
+        )
+        result = merge_configs(preset, user)
+
+        # security overridden by user
+        assert "security" in result.global_validation_commands.custom_commands
+        assert (
+            result.global_validation_commands.custom_commands["security"].command
+            == "bandit -r src/ --skip B101"
+        )
+        # docs inherited from preset
+        assert "docs" in result.global_validation_commands.custom_commands
+        assert (
+            result.global_validation_commands.custom_commands["docs"].command
+            == "mkdocs build"
+        )
 
 
 class TestValidationTriggersConfigParsing:

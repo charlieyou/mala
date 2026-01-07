@@ -788,10 +788,11 @@ class TestExplicitCommandsNullOrEmptyInheritsPreset:
 
 
 class TestExplicitGlobalCommandsNullOrEmpty:
-    """Tests for explicitly clearing global_validation_commands with null or empty object.
+    """Tests for global_validation_commands with null or empty object.
 
-    When a user sets global_validation_commands: null or global_validation_commands: {} to clear
-    preset global overrides, the preset overrides should be removed.
+    Per T005 acceptance criteria:
+    - Empty {} uses preset pool (inherits)
+    - Explicit null clears preset overrides
     """
 
     def test_explicit_global_validation_commands_null_clears_preset_overrides(
@@ -818,10 +819,13 @@ class TestExplicitGlobalCommandsNullOrEmpty:
         assert result.global_validation_commands.test is None
         assert result.global_validation_commands.lint is None
 
-    def test_explicit_global_validation_commands_empty_clears_preset_overrides(
+    def test_explicit_global_validation_commands_empty_inherits_preset(
         self,
     ) -> None:
-        """Setting global_validation_commands: {} clears preset global overrides."""
+        """Setting global_validation_commands: {} inherits preset global overrides.
+
+        Per T005: Empty project global_validation_commands uses preset pool.
+        """
         preset = ValidationConfig(
             commands=CommandsConfig(
                 test=CommandConfig(command="pytest"),
@@ -831,7 +835,7 @@ class TestExplicitGlobalCommandsNullOrEmpty:
                 test=CommandConfig(command="pytest -v --tb=short"),
             ),
         )
-        # User explicitly sets global_validation_commands to empty object to clear overrides
+        # User explicitly sets global_validation_commands to empty object
         user = ValidationConfig.from_dict({"global_validation_commands": {}})
         result = merge_configs(preset, user)
 
@@ -840,8 +844,9 @@ class TestExplicitGlobalCommandsNullOrEmpty:
         assert result.commands.test.command == "pytest"
         assert result.commands.lint is not None
         assert result.commands.lint.command == "ruff check ."
-        # global_validation_commands should be cleared
-        assert result.global_validation_commands.test is None
+        # global_validation_commands should be inherited (not cleared)
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest -v --tb=short"
 
     def test_global_validation_commands_with_specific_override_still_inherits_others(
         self,
@@ -1258,7 +1263,10 @@ class TestGlobalCommandsFieldsSetPreservation:
         assert "lint" not in result.global_validation_commands._fields_set
 
     def test_empty_global_validation_commands_inherits_preset(self) -> None:
-        """Empty global_validation_commands ({}) inherits all preset global_validation_commands."""
+        """Empty global_validation_commands ({}) inherits all preset global_validation_commands.
+
+        Per T005: Empty project global_validation_commands uses preset pool.
+        """
         preset = ValidationConfig.from_dict(
             {
                 "commands": {
@@ -1280,11 +1288,13 @@ class TestGlobalCommandsFieldsSetPreservation:
 
         result = merge_configs(preset, user)
 
-        # Empty {} clears global_validation_commands (due to clear_on_explicit_empty=True)
-        assert result.global_validation_commands.test is None
-        assert result.global_validation_commands.lint is None
-        # _fields_set should be empty
-        assert result.global_validation_commands._fields_set == frozenset()
+        # Empty {} inherits global_validation_commands per T005
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest -m integration"
+        assert result.global_validation_commands.lint is not None
+        assert (
+            result.global_validation_commands.lint.command == "ruff check . --select=E"
+        )
 
     def test_null_global_validation_commands_clears_preset(self) -> None:
         """global_validation_commands: null clears all preset global_validation_commands."""
@@ -1308,7 +1318,7 @@ class TestGlobalCommandsFieldsSetPreservation:
 
         result = merge_configs(preset, user)
 
-        # null clears global_validation_commands (due to clear_on_explicit_empty=True)
+        # null clears global_validation_commands
         assert result.global_validation_commands.test is None
         # _fields_set should be empty
         assert result.global_validation_commands._fields_set == frozenset()
@@ -1484,11 +1494,12 @@ class TestClearCustomsPresetMerge:
             == "mycheck run"
         )
 
-    def test_truly_empty_global_still_clears_preset(self) -> None:
-        """Global with {} (truly empty) should still clear preset overrides.
+    def test_truly_empty_global_inherits_preset(self) -> None:
+        """Global with {} (truly empty) should inherit preset overrides.
 
+        Per T005: Empty project global_validation_commands uses preset pool.
         When user sets global_validation_commands: {} (no built-ins, no customs, mode=INHERIT),
-        this should clear all preset global overrides.
+        this should inherit all preset global overrides.
         """
         preset = ValidationConfig(
             commands=CommandsConfig(
@@ -1511,9 +1522,13 @@ class TestClearCustomsPresetMerge:
 
         result = merge_configs(preset, user)
 
-        # global_validation_commands should be cleared (empty)
-        assert result.global_validation_commands.test is None
-        assert result.global_validation_commands.lint is None
+        # global_validation_commands should be inherited per T005
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest -m integration"
+        assert result.global_validation_commands.lint is not None
+        assert (
+            result.global_validation_commands.lint.command == "ruff check . --select=E"
+        )
         # Commands at base level should still be inherited
         assert result.commands.test is not None
         assert result.commands.test.command == "pytest"

@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 from src.domain.validation.config import (
     CommandConfig,
     CommandsConfig,
+    ConfigError,
     CustomOverrideMode,
     ValidationConfig,
 )
@@ -128,19 +129,30 @@ def merge_configs(
     # Merge global command overrides with field-level deep merge
     # Per T005: project commands merge field-by-field with preset commands
     # e.g., project {test: {timeout: 120}} inherits command from preset
+    # Special handling:
+    # - Empty {} uses preset pool (inherits)
+    # - Explicit null clears preset pool (via _is_null_override flag)
     user_global_validation_commands_explicitly_set = _is_field_explicitly_set(
         "global_validation_commands",
         user._fields_set,
         user.global_validation_commands,
         user.global_validation_commands == CommandsConfig(),
     )
-    merged_global_validation_commands = _merge_commands(
-        preset.global_validation_commands,
-        user.global_validation_commands,
-        user_global_validation_commands_explicitly_set,
-        clear_on_explicit_empty=True,  # Allow users to clear preset global overrides
-        deep_merge_fields=True,  # Field-level merge within CommandConfig
-    )
+    # Check if user explicitly set to null (clear preset)
+    if (
+        user_global_validation_commands_explicitly_set
+        and user.global_validation_commands._is_null_override
+    ):
+        # Explicit null clears preset - return empty config
+        merged_global_validation_commands = user.global_validation_commands
+    else:
+        merged_global_validation_commands = _merge_commands(
+            preset.global_validation_commands,
+            user.global_validation_commands,
+            user_global_validation_commands_explicitly_set,
+            clear_on_explicit_empty=False,  # Empty {} inherits preset pool per T005
+            deep_merge_fields=True,  # Field-level merge within CommandConfig
+        )
 
     # Coverage: user replaces if explicitly set, otherwise inherit
     user_coverage_explicitly_set = _is_field_explicitly_set(
@@ -301,6 +313,13 @@ def _merge_commands(
     # Choose merge function based on deep_merge_fields flag
     merge_fn = _merge_command_field_deep if deep_merge_fields else _merge_command_field
 
+    # Merge custom_commands: for deep_merge_fields, merge preset + user dicts
+    # so preset custom commands are preserved unless overridden by user
+    if deep_merge_fields:
+        merged_custom_commands = {**preset.custom_commands, **user.custom_commands}
+    else:
+        merged_custom_commands = user.custom_commands
+
     return CommandsConfig(
         setup=merge_fn(preset.setup, user.setup, "setup", user._fields_set),
         test=merge_fn(preset.test, user.test, "test", user._fields_set),
@@ -310,7 +329,7 @@ def _merge_commands(
             preset.typecheck, user.typecheck, "typecheck", user._fields_set
         ),
         e2e=merge_fn(preset.e2e, user.e2e, "e2e", user._fields_set),
-        custom_commands=user.custom_commands,  # Preserve user's custom commands
+        custom_commands=merged_custom_commands,
         custom_override_mode=user.custom_override_mode,  # Preserve user's mode
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
@@ -384,9 +403,15 @@ def _merge_command_field_deep(
         return None
 
     if preset_cmd is None:
-        # User set a command but no preset exists - use user's (must have command)
+        # User set a command but no preset exists
         # If user_cmd.command is empty (""), it's a partial config without preset
-        # to inherit from, which is an error at runtime but we pass through here
+        # to inherit from - this is an error
+        if not user_cmd.command:
+            raise ConfigError(
+                f"Cannot specify partial override for '{field_name}' in "
+                "global_validation_commands: no preset command to inherit from. "
+                "Either provide a 'command' string or ensure the preset defines this command."
+            )
         return user_cmd
 
     # Both preset and user have configs - do field-level merge
