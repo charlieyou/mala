@@ -1298,6 +1298,226 @@ class TestTriggerCommandRef:
             cmd_ref.ref = "other"  # type: ignore[misc]
 
 
+class TestGlobalValidationCommandsFieldLevelMerge:
+    """Tests for field-level deep merge in global_validation_commands.
+
+    Per T005: When project sets global_validation_commands, fields should merge
+    at the command field level, not just at the command level.
+
+    Example:
+    - Preset: {test: {command: 'pytest', timeout: 300}}
+    - Project: {test: {timeout: 120}}
+    - Effective: {test: {command: 'pytest', timeout: 120}}
+
+    The project's timeout overrides the preset's, but the command is inherited.
+    """
+
+    def test_preset_only_command_inherited(self) -> None:
+        """Command from preset-only entry is inherited."""
+        from src.domain.validation.config_merger import merge_configs
+
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                test=CommandConfig(command="pytest", timeout=300),
+            ),
+        )
+        user = ValidationConfig()  # No global_validation_commands set
+        result = merge_configs(preset, user)
+
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest"
+        assert result.global_validation_commands.test.timeout == 300
+
+    def test_project_only_command_added(self) -> None:
+        """Command defined only in project is added to pool."""
+        from src.domain.validation.config_merger import merge_configs
+
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+            ),
+        )
+        user = ValidationConfig.from_dict(
+            {
+                "global_validation_commands": {
+                    "lint": "ruff check .",
+                }
+            }
+        )
+        result = merge_configs(preset, user)
+
+        # test inherited from preset
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest"
+        # lint added from project
+        assert result.global_validation_commands.lint is not None
+        assert result.global_validation_commands.lint.command == "ruff check ."
+
+    def test_field_level_merge_timeout_override(self) -> None:
+        """Project timeout overrides preset timeout, command inherited from preset."""
+        from src.domain.validation.config_merger import merge_configs
+
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                test=CommandConfig(command="pytest", timeout=300),
+            ),
+        )
+        # User sets only timeout for test command
+        user = ValidationConfig.from_dict(
+            {
+                "global_validation_commands": {
+                    "test": {"timeout": 120},
+                }
+            }
+        )
+        result = merge_configs(preset, user)
+
+        # command should be inherited from preset, timeout overridden
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest"
+        assert result.global_validation_commands.test.timeout == 120
+
+    def test_field_level_merge_command_override(self) -> None:
+        """Project command overrides preset command."""
+        from src.domain.validation.config_merger import merge_configs
+
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                test=CommandConfig(command="pytest", timeout=300),
+            ),
+        )
+        # User sets only command string (shorthand)
+        user = ValidationConfig.from_dict(
+            {
+                "global_validation_commands": {
+                    "test": "pytest -v",
+                }
+            }
+        )
+        result = merge_configs(preset, user)
+
+        # command overridden, timeout inherited from preset
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest -v"
+        assert result.global_validation_commands.test.timeout == 300
+
+    def test_field_level_merge_both_fields(self) -> None:
+        """Both fields explicitly set override both preset fields."""
+        from src.domain.validation.config_merger import merge_configs
+
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                test=CommandConfig(command="pytest", timeout=300),
+            ),
+        )
+        user = ValidationConfig.from_dict(
+            {
+                "global_validation_commands": {
+                    "test": {"command": "pytest -v", "timeout": 120},
+                }
+            }
+        )
+        result = merge_configs(preset, user)
+
+        # Both overridden
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest -v"
+        assert result.global_validation_commands.test.timeout == 120
+
+    def test_empty_global_validation_commands_uses_preset_pool(self) -> None:
+        """Empty global_validation_commands: {} uses preset pool."""
+        from src.domain.validation.config_merger import merge_configs
+
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                test=CommandConfig(command="pytest", timeout=300),
+                lint=CommandConfig(command="ruff check ."),
+            ),
+        )
+        # This already has a test that shows {} clears preset
+        # That behavior is correct for this case per clear_on_explicit_empty
+        user = ValidationConfig.from_dict({"global_validation_commands": {}})
+        result = merge_configs(preset, user)
+
+        # Empty {} clears preset per existing behavior (clear_on_explicit_empty=True)
+        assert result.global_validation_commands.test is None
+        assert result.global_validation_commands.lint is None
+
+    def test_project_adds_new_command_to_preset_pool(self) -> None:
+        """Project can add new commands while inheriting preset commands."""
+        from src.domain.validation.config_merger import merge_configs
+
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+            ),
+        )
+        # User adds format command, doesn't touch test
+        user = ValidationConfig.from_dict(
+            {
+                "global_validation_commands": {
+                    "format": "ruff format --check .",
+                }
+            }
+        )
+        result = merge_configs(preset, user)
+
+        # test inherited from preset
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest"
+        # format added from project
+        assert result.global_validation_commands.format is not None
+        assert (
+            result.global_validation_commands.format.command == "ruff format --check ."
+        )
+
+    def test_field_level_merge_no_preset_timeout(self) -> None:
+        """When preset has no timeout, project timeout is used."""
+        from src.domain.validation.config_merger import merge_configs
+
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),  # No timeout
+            ),
+        )
+        user = ValidationConfig.from_dict(
+            {
+                "global_validation_commands": {
+                    "test": {"timeout": 120},
+                }
+            }
+        )
+        result = merge_configs(preset, user)
+
+        # command inherited, timeout from project
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest"
+        assert result.global_validation_commands.test.timeout == 120
+
+    def test_field_level_merge_null_timeout_clears_preset_timeout(self) -> None:
+        """Explicit null timeout clears preset timeout."""
+        from src.domain.validation.config_merger import merge_configs
+
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                test=CommandConfig(command="pytest", timeout=300),
+            ),
+        )
+        user = ValidationConfig.from_dict(
+            {
+                "global_validation_commands": {
+                    "test": {"timeout": None},
+                }
+            }
+        )
+        result = merge_configs(preset, user)
+
+        # command inherited, timeout explicitly cleared to None
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest"
+        assert result.global_validation_commands.test.timeout is None
+
+
 class TestValidationTriggersConfigParsing:
     """Tests for parsing validation_triggers from YAML via config_loader."""
 

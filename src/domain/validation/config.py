@@ -127,51 +127,79 @@ class CommandConfig:
     The factory method `from_value` handles both forms.
 
     Attributes:
-        command: The shell command string to execute.
+        command: The shell command string to execute. Empty string for partial
+            configs used in global_validation_commands merge (requires_command=False).
         timeout: Optional timeout in seconds. None means use system default.
+        _fields_set: Fields explicitly set by user (for merge tracking).
     """
 
     command: str
     timeout: int | None = None
+    _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     @classmethod
-    def from_value(cls, value: str | dict[str, object]) -> CommandConfig:
+    def from_value(
+        cls,
+        value: str | dict[str, object],
+        *,
+        requires_command: bool = True,
+    ) -> CommandConfig:
         """Create CommandConfig from YAML value (string or dict).
 
         Args:
             value: Either a command string or a dict with 'command' and
                 optional 'timeout' keys.
+            requires_command: If True (default), 'command' field is required.
+                Set to False for partial configs in global_validation_commands
+                where only timeout may be specified for field-level merge.
 
         Returns:
             CommandConfig instance.
 
         Raises:
-            ConfigError: If value is neither string nor valid dict.
+            ConfigError: If value is neither string nor valid dict, or if
+                requires_command=True and command is missing.
 
         Examples:
             >>> CommandConfig.from_value("uv run pytest")
-            CommandConfig(command='uv run pytest', timeout=None)
+            CommandConfig(command='uv run pytest', timeout=None, _fields_set=frozenset({'command'}))
 
             >>> CommandConfig.from_value({"command": "pytest", "timeout": 60})
-            CommandConfig(command='pytest', timeout=60)
+            CommandConfig(command='pytest', timeout=60, _fields_set=frozenset({'command', 'timeout'}))
+
+            >>> CommandConfig.from_value({"timeout": 120}, requires_command=False)
+            CommandConfig(command='', timeout=120, _fields_set=frozenset({'timeout'}))
         """
         if isinstance(value, str):
             if not value:
                 raise ConfigError(
                     "Command cannot be empty string. Use null to disable."
                 )
-            return cls(command=value)
+            return cls(command=value, _fields_set=frozenset({"command"}))
 
         if isinstance(value, dict):
+            fields_set: set[str] = set()
+
             command = value.get("command")
-            if not isinstance(command, str):
+            if command is not None:
+                if not isinstance(command, str):
+                    raise ConfigError(
+                        "Command object must have a 'command' string field"
+                    )
+                if not command:
+                    raise ConfigError(
+                        "Command cannot be empty string. Use null to disable."
+                    )
+                fields_set.add("command")
+            elif requires_command:
                 raise ConfigError("Command object must have a 'command' string field")
-            if not command:
-                raise ConfigError(
-                    "Command cannot be empty string. Use null to disable."
-                )
+            else:
+                command = ""  # Sentinel for partial config
 
             timeout = value.get("timeout")
+            # Track timeout even if explicitly set to None
+            if "timeout" in value:
+                fields_set.add("timeout")
             if timeout is not None:
                 # Reject booleans explicitly (bool is subclass of int)
                 if isinstance(timeout, bool) or not isinstance(timeout, int):
@@ -179,7 +207,11 @@ class CommandConfig:
                         f"Command timeout must be an integer, got {type(timeout).__name__}"
                     )
 
-            return cls(command=command, timeout=cast("int | None", timeout))
+            return cls(
+                command=cast("str", command),
+                timeout=cast("int | None", timeout),
+                _fields_set=frozenset(fields_set),
+            )
 
         raise ConfigError(
             f"Command must be a string or object, got {type(value).__name__}"
@@ -692,7 +724,12 @@ class CommandsConfig:
                     f"Command '{key}' cannot be empty string. Use null to disable."
                 )
             # After the above checks, value is str or dict (from YAML)
-            return CommandConfig.from_value(cast("str | dict[str, object]", value))
+            # For global_validation_commands, allow partial configs (e.g., only timeout)
+            # so they can be deep-merged with preset commands at field level
+            return CommandConfig.from_value(
+                cast("str | dict[str, object]", value),
+                requires_command=not is_global,
+            )
 
         return cls(
             setup=parse_command("setup"),

@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from src.domain.validation.config import (
+    CommandConfig,
     CommandsConfig,
     CustomOverrideMode,
     ValidationConfig,
@@ -31,7 +32,6 @@ from src.domain.validation.config import (
 
 if TYPE_CHECKING:
     from src.domain.validation.config import (
-        CommandConfig,
         YamlCoverageConfig,
     )
 
@@ -125,7 +125,9 @@ def merge_configs(
         preset.commands, user.commands, user_commands_explicitly_set
     )
 
-    # Merge global command overrides
+    # Merge global command overrides with field-level deep merge
+    # Per T005: project commands merge field-by-field with preset commands
+    # e.g., project {test: {timeout: 120}} inherits command from preset
     user_global_validation_commands_explicitly_set = _is_field_explicitly_set(
         "global_validation_commands",
         user._fields_set,
@@ -137,6 +139,7 @@ def merge_configs(
         user.global_validation_commands,
         user_global_validation_commands_explicitly_set,
         clear_on_explicit_empty=True,  # Allow users to clear preset global overrides
+        deep_merge_fields=True,  # Field-level merge within CommandConfig
     )
 
     # Coverage: user replaces if explicitly set, otherwise inherit
@@ -251,12 +254,19 @@ def _merge_commands(
     user_commands_explicitly_set: bool,
     *,
     clear_on_explicit_empty: bool = False,
+    deep_merge_fields: bool = False,
 ) -> CommandsConfig:
     """Merge preset and user command configurations.
 
     For each command field:
     - If field is explicitly set by user: use user value (even if None)
     - If field is not explicitly set: inherit from preset
+
+    When deep_merge_fields=True (for global_validation_commands), individual fields
+    within CommandConfig are merged:
+    - command: user overrides preset if user explicitly set it
+    - timeout: user overrides preset if user explicitly set it
+    This allows users to override just timeout while inheriting command from preset.
 
     Args:
         preset: Preset CommandsConfig to merge with.
@@ -267,6 +277,9 @@ def _merge_commands(
             or empty ({}) at the top level, return empty CommandsConfig without
             inheriting from preset. This is used for global_validation_commands to allow
             users to clear all preset overrides.
+        deep_merge_fields: If True, merge individual fields within CommandConfig
+            rather than replacing the entire CommandConfig. Used for
+            global_validation_commands field-level deep merge.
 
     """
     # If clear_on_explicit_empty is enabled and user explicitly set commands to
@@ -285,17 +298,18 @@ def _merge_commands(
     ):
         return user
 
+    # Choose merge function based on deep_merge_fields flag
+    merge_fn = _merge_command_field_deep if deep_merge_fields else _merge_command_field
+
     return CommandsConfig(
-        setup=_merge_command_field(preset.setup, user.setup, "setup", user._fields_set),
-        test=_merge_command_field(preset.test, user.test, "test", user._fields_set),
-        lint=_merge_command_field(preset.lint, user.lint, "lint", user._fields_set),
-        format=_merge_command_field(
-            preset.format, user.format, "format", user._fields_set
-        ),
-        typecheck=_merge_command_field(
+        setup=merge_fn(preset.setup, user.setup, "setup", user._fields_set),
+        test=merge_fn(preset.test, user.test, "test", user._fields_set),
+        lint=merge_fn(preset.lint, user.lint, "lint", user._fields_set),
+        format=merge_fn(preset.format, user.format, "format", user._fields_set),
+        typecheck=merge_fn(
             preset.typecheck, user.typecheck, "typecheck", user._fields_set
         ),
-        e2e=_merge_command_field(preset.e2e, user.e2e, "e2e", user._fields_set),
+        e2e=merge_fn(preset.e2e, user.e2e, "e2e", user._fields_set),
         custom_commands=user.custom_commands,  # Preserve user's custom commands
         custom_override_mode=user.custom_override_mode,  # Preserve user's mode
         _fields_set=user._fields_set,  # Preserve user's fields_set
@@ -308,7 +322,7 @@ def _merge_command_field(
     field_name: str,
     user_fields_set: frozenset[str],
 ) -> CommandConfig | None:
-    """Merge a single command field.
+    """Merge a single command field (replace entire CommandConfig).
 
     If the field was explicitly set by the user (in user_fields_set or
     non-None for programmatic configs), use the user value. Otherwise,
@@ -327,6 +341,82 @@ def _merge_command_field(
 
     # Otherwise inherit from preset
     return preset_cmd
+
+
+def _merge_command_field_deep(
+    preset_cmd: CommandConfig | None,
+    user_cmd: CommandConfig | None,
+    field_name: str,
+    user_fields_set: frozenset[str],
+) -> CommandConfig | None:
+    """Merge a single command field with field-level deep merge.
+
+    For global_validation_commands, individual fields within CommandConfig are merged:
+    - If user explicitly set 'command', use user's command; else inherit preset's
+    - If user explicitly set 'timeout', use user's timeout; else inherit preset's
+
+    This allows users to override just the timeout while inheriting the command
+    from the preset, or vice versa.
+
+    Args:
+        preset_cmd: Preset command config (may be None).
+        user_cmd: User command config (may be None or partial).
+        field_name: Name of the command field (e.g., "test", "lint").
+        user_fields_set: Fields explicitly set in the parent CommandsConfig.
+
+    Returns:
+        Merged CommandConfig, or None if both preset and user are None/disabled.
+    """
+    # Check if this command field is explicitly set by user
+    is_explicit = _is_field_explicitly_set(
+        field_name,
+        user_fields_set,
+        user_cmd,
+        user_cmd is None,  # Default is None
+    )
+
+    if not is_explicit:
+        # User didn't set this command - inherit from preset entirely
+        return preset_cmd
+
+    if user_cmd is None:
+        # User explicitly set to None/null - disable this command
+        return None
+
+    if preset_cmd is None:
+        # User set a command but no preset exists - use user's (must have command)
+        # If user_cmd.command is empty (""), it's a partial config without preset
+        # to inherit from, which is an error at runtime but we pass through here
+        return user_cmd
+
+    # Both preset and user have configs - do field-level merge
+    # Determine which fields user explicitly set within CommandConfig
+    user_cmd_fields_set = user_cmd._fields_set
+
+    # Merge 'command' field
+    if "command" in user_cmd_fields_set:
+        # User explicitly set command - use it (even if empty for partial, but that
+        # shouldn't happen since we check requires_command in parsing)
+        merged_command = user_cmd.command
+    else:
+        # User didn't set command - inherit from preset
+        merged_command = preset_cmd.command
+
+    # Merge 'timeout' field
+    if "timeout" in user_cmd_fields_set:
+        # User explicitly set timeout (even if to None) - use it
+        merged_timeout = user_cmd.timeout
+    else:
+        # User didn't set timeout - inherit from preset
+        merged_timeout = preset_cmd.timeout
+
+    # Create merged CommandConfig
+    # Preserve user's _fields_set for downstream tracking
+    return CommandConfig(
+        command=merged_command,
+        timeout=merged_timeout,
+        _fields_set=user_cmd_fields_set,
+    )
 
 
 def _merge_coverage(
