@@ -3,7 +3,11 @@ preset: python-uv
 global_validation_commands:
   test:
     command: "uv run pytest -m 'unit or integration' --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
-    timeout: 600
+    timeout: 300
+
+  e2e:
+    command: "uv run pytest -m 'e2e'"
+
   import-linter:
     command: "uvx --from import-linter lint-imports"
 
