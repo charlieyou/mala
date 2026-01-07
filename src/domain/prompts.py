@@ -85,6 +85,7 @@ class PromptProvider:
     idle_resume_prompt: str
     checkpoint_request_prompt: str
     continuation_prompt: str
+    review_agent_prompt: str = ""
 
 
 def load_prompts(prompt_dir: Path) -> PromptProvider:
@@ -99,6 +100,12 @@ def load_prompts(prompt_dir: Path) -> PromptProvider:
     Raises:
         FileNotFoundError: If any required prompt file is missing.
     """
+    # Load optional review_agent.md (backwards compat: empty string if missing)
+    review_agent_path = prompt_dir / "review_agent.md"
+    review_agent_prompt = (
+        review_agent_path.read_text() if review_agent_path.exists() else ""
+    )
+
     return PromptProvider(
         implementer_prompt=(prompt_dir / "implementer_prompt.md").read_text(),
         review_followup_prompt=(prompt_dir / "review_followup.md").read_text(),
@@ -107,6 +114,7 @@ def load_prompts(prompt_dir: Path) -> PromptProvider:
         idle_resume_prompt=(prompt_dir / "idle_resume.md").read_text(),
         checkpoint_request_prompt=(prompt_dir / "checkpoint_request.md").read_text(),
         continuation_prompt=(prompt_dir / "continuation.md").read_text(),
+        review_agent_prompt=review_agent_prompt,
     )
 
 

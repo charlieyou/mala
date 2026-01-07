@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import cast
+from typing import Literal, cast
 
 # Regex for valid custom command names: starts with letter or underscore,
 # followed by letters, digits, underscores, or hyphens
@@ -450,7 +450,9 @@ class CommandsConfig:
                 )
             # Only allowed at global
             if not is_global:
-                raise ConfigError("_clear_customs is only valid in global_validation_commands")
+                raise ConfigError(
+                    "_clear_customs is only valid in global_validation_commands"
+                )
             # Check for custom command keys (non-builtin, non-reserved)
             custom_keys = set(data.keys()) - set(valid_kinds) - {"_clear_customs"}
             if custom_keys:
@@ -576,6 +578,10 @@ class ValidationConfig:
         code_patterns: Glob patterns for code files that trigger validation.
         config_files: Tool config files that invalidate lint/format cache.
         setup_files: Lock/dependency files that invalidate setup cache.
+        reviewer_type: Reviewer implementation to use ('agent_sdk' or 'cerberus').
+        agent_sdk_review_timeout: Timeout in seconds for Agent SDK reviewer (default 600).
+        agent_sdk_reviewer_model: Model short name for Agent SDK reviewer
+            ('sonnet', 'opus', or 'haiku').
         _fields_set: Set of field names that were explicitly provided in source.
             Used by the merger to distinguish "not set" from "explicitly set".
     """
@@ -589,6 +595,9 @@ class ValidationConfig:
     code_patterns: tuple[str, ...] = field(default_factory=tuple)
     config_files: tuple[str, ...] = field(default_factory=tuple)
     setup_files: tuple[str, ...] = field(default_factory=tuple)
+    reviewer_type: Literal["agent_sdk", "cerberus"] = "agent_sdk"
+    agent_sdk_review_timeout: int = 600
+    agent_sdk_reviewer_model: Literal["sonnet", "opus", "haiku"] = "sonnet"
     _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
@@ -752,6 +761,48 @@ class ValidationConfig:
                         name, cast("str | dict[str, object] | None", value)
                     )
 
+        # Parse reviewer configuration fields
+        reviewer_type: Literal["agent_sdk", "cerberus"] = "agent_sdk"
+        if "reviewer_type" in data:
+            fields_set.add("reviewer_type")
+            rt_value = data["reviewer_type"]
+            if rt_value is not None:
+                if rt_value not in ("agent_sdk", "cerberus"):
+                    raise ConfigError(
+                        f"reviewer_type must be 'agent_sdk' or 'cerberus', "
+                        f"got {rt_value!r}"
+                    )
+                reviewer_type = cast("Literal['agent_sdk', 'cerberus']", rt_value)
+
+        agent_sdk_review_timeout: int = 600
+        if "agent_sdk_review_timeout" in data:
+            fields_set.add("agent_sdk_review_timeout")
+            timeout_value = data["agent_sdk_review_timeout"]
+            if timeout_value is not None:
+                # Reject booleans explicitly (bool is subclass of int)
+                if isinstance(timeout_value, bool) or not isinstance(
+                    timeout_value, int
+                ):
+                    raise ConfigError(
+                        f"agent_sdk_review_timeout must be an integer, "
+                        f"got {type(timeout_value).__name__}"
+                    )
+                agent_sdk_review_timeout = timeout_value
+
+        agent_sdk_reviewer_model: Literal["sonnet", "opus", "haiku"] = "sonnet"
+        if "agent_sdk_reviewer_model" in data:
+            fields_set.add("agent_sdk_reviewer_model")
+            model_value = data["agent_sdk_reviewer_model"]
+            if model_value is not None:
+                if model_value not in ("sonnet", "opus", "haiku"):
+                    raise ConfigError(
+                        f"agent_sdk_reviewer_model must be 'sonnet', 'opus', or 'haiku', "
+                        f"got {model_value!r}"
+                    )
+                agent_sdk_reviewer_model = cast(
+                    "Literal['sonnet', 'opus', 'haiku']", model_value
+                )
+
         return cls(
             preset=preset,
             commands=commands,
@@ -762,6 +813,9 @@ class ValidationConfig:
             code_patterns=code_patterns,
             config_files=config_files,
             setup_files=setup_files,
+            reviewer_type=reviewer_type,
+            agent_sdk_review_timeout=agent_sdk_review_timeout,
+            agent_sdk_reviewer_model=agent_sdk_reviewer_model,
             _fields_set=frozenset(fields_set),
         )
 

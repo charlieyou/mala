@@ -37,6 +37,7 @@ class TestLoadPrompts:
         assert isinstance(result.idle_resume_prompt, str)
         assert isinstance(result.checkpoint_request_prompt, str)
         assert isinstance(result.continuation_prompt, str)
+        assert isinstance(result.review_agent_prompt, str)
 
     def test_gate_followup_contains_template_placeholders(self) -> None:
         """Gate followup prompt contains expected placeholders."""
@@ -56,6 +57,37 @@ class TestLoadPrompts:
         """load_prompts raises FileNotFoundError for missing directory."""
         with pytest.raises(FileNotFoundError):
             load_prompts(tmp_path / "nonexistent")
+
+    def test_review_agent_prompt_defaults_empty_when_missing(
+        self, tmp_path: Path
+    ) -> None:
+        """review_agent_prompt defaults to empty string when file is missing."""
+        # Create minimal prompt dir with required files but no review_agent.md
+        (tmp_path / "implementer_prompt.md").write_text("impl")
+        (tmp_path / "review_followup.md").write_text("review")
+        (tmp_path / "gate_followup.md").write_text("gate")
+        (tmp_path / "fixer.md").write_text("fixer")
+        (tmp_path / "idle_resume.md").write_text("idle")
+        (tmp_path / "checkpoint_request.md").write_text("checkpoint")
+        (tmp_path / "continuation.md").write_text("continuation")
+
+        result = load_prompts(tmp_path)
+        assert result.review_agent_prompt == ""
+
+    def test_review_agent_prompt_loaded_when_exists(self, tmp_path: Path) -> None:
+        """review_agent_prompt is loaded when review_agent.md exists."""
+        # Create minimal prompt dir with all files including review_agent.md
+        (tmp_path / "implementer_prompt.md").write_text("impl")
+        (tmp_path / "review_followup.md").write_text("review")
+        (tmp_path / "gate_followup.md").write_text("gate")
+        (tmp_path / "fixer.md").write_text("fixer")
+        (tmp_path / "idle_resume.md").write_text("idle")
+        (tmp_path / "checkpoint_request.md").write_text("checkpoint")
+        (tmp_path / "continuation.md").write_text("continuation")
+        (tmp_path / "review_agent.md").write_text("Review agent system prompt content")
+
+        result = load_prompts(tmp_path)
+        assert result.review_agent_prompt == "Review agent system prompt content"
 
 
 class TestLoadPrompt:

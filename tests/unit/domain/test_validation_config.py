@@ -334,7 +334,8 @@ class TestClearCustoms:
     def test_clear_customs_at_repo_level_raises_error(self) -> None:
         """_clear_customs at repo-level (is_global=False) raises ConfigError."""
         with pytest.raises(
-            ConfigError, match="_clear_customs is only valid in global_validation_commands"
+            ConfigError,
+            match="_clear_customs is only valid in global_validation_commands",
         ):
             CommandsConfig.from_dict({"_clear_customs": True}, is_global=False)
 
@@ -575,6 +576,106 @@ class TestValidationConfig:
         assert config.commands.custom_commands["security"].command == "bandit -r src/"
         # At repo-level, mode stays INHERIT (mode detection only matters at global)
         assert config.commands.custom_override_mode == CustomOverrideMode.INHERIT
+
+    def test_reviewer_type_defaults_to_agent_sdk(self) -> None:
+        """Default reviewer_type is 'agent_sdk'."""
+        config = ValidationConfig.from_dict({})
+        assert config.reviewer_type == "agent_sdk"
+
+    def test_reviewer_type_cerberus(self) -> None:
+        """reviewer_type can be set to 'cerberus'."""
+        config = ValidationConfig.from_dict({"reviewer_type": "cerberus"})
+        assert config.reviewer_type == "cerberus"
+
+    def test_reviewer_type_invalid_value(self) -> None:
+        """Invalid reviewer_type raises ConfigError."""
+        with pytest.raises(
+            ConfigError, match="reviewer_type must be 'agent_sdk' or 'cerberus'"
+        ):
+            ValidationConfig.from_dict({"reviewer_type": "invalid"})
+
+    def test_agent_sdk_review_timeout_defaults(self) -> None:
+        """Default agent_sdk_review_timeout is 600."""
+        config = ValidationConfig.from_dict({})
+        assert config.agent_sdk_review_timeout == 600
+
+    def test_agent_sdk_review_timeout_custom(self) -> None:
+        """agent_sdk_review_timeout can be customized."""
+        config = ValidationConfig.from_dict({"agent_sdk_review_timeout": 300})
+        assert config.agent_sdk_review_timeout == 300
+
+    def test_agent_sdk_review_timeout_invalid_type(self) -> None:
+        """Non-integer agent_sdk_review_timeout raises ConfigError."""
+        with pytest.raises(
+            ConfigError, match="agent_sdk_review_timeout must be an integer"
+        ):
+            ValidationConfig.from_dict({"agent_sdk_review_timeout": "300"})
+
+    def test_agent_sdk_review_timeout_boolean_rejected(self) -> None:
+        """Boolean agent_sdk_review_timeout is rejected (bool is subclass of int)."""
+        with pytest.raises(
+            ConfigError, match="agent_sdk_review_timeout must be an integer"
+        ):
+            ValidationConfig.from_dict({"agent_sdk_review_timeout": True})
+
+    def test_agent_sdk_reviewer_model_defaults(self) -> None:
+        """Default agent_sdk_reviewer_model is 'sonnet'."""
+        config = ValidationConfig.from_dict({})
+        assert config.agent_sdk_reviewer_model == "sonnet"
+
+    def test_agent_sdk_reviewer_model_opus(self) -> None:
+        """agent_sdk_reviewer_model can be set to 'opus'."""
+        config = ValidationConfig.from_dict({"agent_sdk_reviewer_model": "opus"})
+        assert config.agent_sdk_reviewer_model == "opus"
+
+    def test_agent_sdk_reviewer_model_haiku(self) -> None:
+        """agent_sdk_reviewer_model can be set to 'haiku'."""
+        config = ValidationConfig.from_dict({"agent_sdk_reviewer_model": "haiku"})
+        assert config.agent_sdk_reviewer_model == "haiku"
+
+    def test_agent_sdk_reviewer_model_invalid(self) -> None:
+        """Invalid agent_sdk_reviewer_model raises ConfigError."""
+        with pytest.raises(
+            ConfigError,
+            match="agent_sdk_reviewer_model must be 'sonnet', 'opus', or 'haiku'",
+        ):
+            ValidationConfig.from_dict({"agent_sdk_reviewer_model": "gpt-4"})
+
+    def test_reviewer_config_in_full_config(self) -> None:
+        """Reviewer config fields work together in a full configuration."""
+        config = ValidationConfig.from_dict(
+            {
+                "preset": "python-uv",
+                "reviewer_type": "cerberus",
+                "agent_sdk_review_timeout": 120,
+                "agent_sdk_reviewer_model": "haiku",
+                "commands": {"test": "uv run pytest"},
+            }
+        )
+        assert config.reviewer_type == "cerberus"
+        assert config.agent_sdk_review_timeout == 120
+        assert config.agent_sdk_reviewer_model == "haiku"
+        assert config.commands.test is not None
+
+    def test_reviewer_fields_tracked_in_fields_set(self) -> None:
+        """Reviewer fields are tracked in _fields_set when explicitly set."""
+        config = ValidationConfig.from_dict(
+            {
+                "reviewer_type": "agent_sdk",
+                "agent_sdk_review_timeout": 600,
+                "agent_sdk_reviewer_model": "sonnet",
+            }
+        )
+        assert "reviewer_type" in config._fields_set
+        assert "agent_sdk_review_timeout" in config._fields_set
+        assert "agent_sdk_reviewer_model" in config._fields_set
+
+    def test_reviewer_fields_not_in_fields_set_when_omitted(self) -> None:
+        """Reviewer fields are not in _fields_set when omitted."""
+        config = ValidationConfig.from_dict({})
+        assert "reviewer_type" not in config._fields_set
+        assert "agent_sdk_review_timeout" not in config._fields_set
+        assert "agent_sdk_reviewer_model" not in config._fields_set
 
 
 class TestGlobalCustomCommandsMode:
