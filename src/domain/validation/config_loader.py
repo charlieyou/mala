@@ -184,7 +184,7 @@ def _parse_trigger_command_ref(
     # Validate unknown fields
     unknown = set(data.keys()) - _TRIGGER_COMMAND_REF_FIELDS
     if unknown:
-        first = sorted(unknown)[0]
+        first = sorted(str(k) for k in unknown)[0]
         raise ConfigError(
             f"Unknown field '{first}' in command {cmd_index} of trigger {trigger_name}"
         )
@@ -359,7 +359,7 @@ def _parse_epic_completion_trigger(
     # Validate unknown fields
     unknown = set(data.keys()) - _EPIC_COMPLETION_FIELDS
     if unknown:
-        first = sorted(unknown)[0]
+        first = sorted(str(k) for k in unknown)[0]
         raise ConfigError(f"Unknown field '{first}' in trigger {trigger_name}")
 
     failure_mode = _parse_failure_mode(data, trigger_name)
@@ -431,7 +431,7 @@ def _parse_session_end_trigger(data: dict[str, Any]) -> SessionEndTriggerConfig:
     # Validate unknown fields
     unknown = set(data.keys()) - _SESSION_END_FIELDS
     if unknown:
-        first = sorted(unknown)[0]
+        first = sorted(str(k) for k in unknown)[0]
         raise ConfigError(f"Unknown field '{first}' in trigger {trigger_name}")
 
     failure_mode = _parse_failure_mode(data, trigger_name)
@@ -465,7 +465,7 @@ def _parse_periodic_trigger(data: dict[str, Any]) -> PeriodicTriggerConfig:
     # Validate unknown fields
     unknown = set(data.keys()) - _PERIODIC_FIELDS
     if unknown:
-        first = sorted(unknown)[0]
+        first = sorted(str(k) for k in unknown)[0]
         raise ConfigError(f"Unknown field '{first}' in trigger {trigger_name}")
 
     failure_mode = _parse_failure_mode(data, trigger_name)
@@ -518,7 +518,7 @@ def _parse_validation_triggers(
     # Validate unknown fields
     unknown = set(data.keys()) - _VALIDATION_TRIGGERS_FIELDS
     if unknown:
-        first = sorted(unknown)[0]
+        first = sorted(str(k) for k in unknown)[0]
         raise ConfigError(f"Unknown trigger '{first}' in validation_triggers")
 
     epic_completion = None
