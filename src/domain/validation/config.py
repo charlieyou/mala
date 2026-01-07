@@ -13,6 +13,8 @@ Key types:
 - CommandsConfig: All validation commands (setup, test, lint, format, typecheck, e2e)
 - ValidationConfig: Top-level configuration with preset, commands, coverage, patterns
 - PromptValidationCommands: Validation commands formatted for prompt templates
+- TriggerType, FailureMode, EpicDepth, FireOn: Enums for trigger configuration
+- ValidationTriggersConfig: Configuration for validation triggers
 """
 
 from __future__ import annotations
@@ -25,6 +27,49 @@ from typing import Literal, cast
 # Regex for valid custom command names: starts with letter or underscore,
 # followed by letters, digits, underscores, or hyphens
 CUSTOM_COMMAND_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+
+
+class TriggerType(Enum):
+    """Type of validation trigger.
+
+    Determines when validation commands are executed.
+    """
+
+    EPIC_COMPLETION = "epic_completion"  # When an epic (story/milestone) completes
+    SESSION_END = "session_end"  # When a session ends
+    PERIODIC = "periodic"  # At regular time intervals
+
+
+class FailureMode(Enum):
+    """How to handle validation failures.
+
+    Determines the behavior when a triggered validation fails.
+    """
+
+    ABORT = "abort"  # Stop immediately on failure
+    CONTINUE = "continue"  # Continue despite failure
+    REMEDIATE = "remediate"  # Attempt to fix the failure
+
+
+class EpicDepth(Enum):
+    """Which epics trigger validation.
+
+    Controls whether only top-level epics or all nested epics trigger validation.
+    """
+
+    TOP_LEVEL = "top_level"  # Only top-level (root) epics
+    ALL = "all"  # All epics including nested
+
+
+class FireOn(Enum):
+    """When to fire the trigger based on completion status.
+
+    Determines whether to trigger on success, failure, or both.
+    """
+
+    SUCCESS = "success"  # Fire only on successful completion
+    FAILURE = "failure"  # Fire only on failed completion
+    BOTH = "both"  # Fire on both success and failure
 
 
 class CustomOverrideMode(Enum):
@@ -138,6 +183,105 @@ class CommandConfig:
 
         raise ConfigError(
             f"Command must be a string or object, got {type(value).__name__}"
+        )
+
+
+@dataclass(frozen=True)
+class TriggerCommandRef:
+    """Reference to a validation command for use in triggers.
+
+    Allows triggers to reference existing commands (by name) with optional
+    overrides for command string and timeout.
+
+    Attributes:
+        ref: Name of the command to reference (e.g., "test", "lint", "my_custom").
+        command: Optional override for the command string.
+        timeout: Optional override for the timeout in seconds.
+    """
+
+    ref: str
+    command: str | None = None
+    timeout: int | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class BaseTriggerConfig:
+    """Base configuration for validation triggers.
+
+    Common fields shared by all trigger types.
+
+    Attributes:
+        failure_mode: How to handle validation failures.
+        commands: Commands to run when the trigger fires.
+        max_retries: Maximum number of retry attempts on failure. None means no retries.
+    """
+
+    failure_mode: FailureMode
+    commands: tuple[TriggerCommandRef, ...]
+    max_retries: int | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class EpicCompletionTriggerConfig(BaseTriggerConfig):
+    """Configuration for epic completion triggers.
+
+    Triggers validation when an epic (story/milestone) completes.
+
+    Attributes:
+        epic_depth: Which epics trigger validation (top-level only or all).
+        fire_on: When to fire based on completion status.
+    """
+
+    epic_depth: EpicDepth
+    fire_on: FireOn
+
+
+@dataclass(frozen=True, kw_only=True)
+class SessionEndTriggerConfig(BaseTriggerConfig):
+    """Configuration for session end triggers.
+
+    Triggers validation when a session ends.
+    No additional fields beyond BaseTriggerConfig.
+    """
+
+    pass
+
+
+@dataclass(frozen=True, kw_only=True)
+class PeriodicTriggerConfig(BaseTriggerConfig):
+    """Configuration for periodic triggers.
+
+    Triggers validation at regular time intervals.
+
+    Attributes:
+        interval: Time between trigger activations in seconds.
+    """
+
+    interval: int
+
+
+@dataclass(frozen=True)
+class ValidationTriggersConfig:
+    """Configuration for all validation triggers.
+
+    Container for the different types of validation triggers.
+
+    Attributes:
+        epic_completion: Configuration for epic completion triggers.
+        session_end: Configuration for session end triggers.
+        periodic: Configuration for periodic triggers.
+    """
+
+    epic_completion: EpicCompletionTriggerConfig | None = None
+    session_end: SessionEndTriggerConfig | None = None
+    periodic: PeriodicTriggerConfig | None = None
+
+    def is_empty(self) -> bool:
+        """Return True if no triggers are configured."""
+        return (
+            self.epic_completion is None
+            and self.session_end is None
+            and self.periodic is None
         )
 
 
@@ -582,6 +726,7 @@ class ValidationConfig:
         agent_sdk_review_timeout: Timeout in seconds for Agent SDK reviewer (default 600).
         agent_sdk_reviewer_model: Model short name for Agent SDK reviewer
             ('sonnet', 'opus', or 'haiku').
+        validation_triggers: Configuration for validation triggers. None means no triggers.
         _fields_set: Set of field names that were explicitly provided in source.
             Used by the merger to distinguish "not set" from "explicitly set".
     """
@@ -598,6 +743,7 @@ class ValidationConfig:
     reviewer_type: Literal["agent_sdk", "cerberus"] = "agent_sdk"
     agent_sdk_review_timeout: int = 600
     agent_sdk_reviewer_model: Literal["sonnet", "opus", "haiku"] = "sonnet"
+    validation_triggers: ValidationTriggersConfig | None = None
     _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
