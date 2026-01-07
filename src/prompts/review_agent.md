@@ -87,34 +87,38 @@ If you encounter errors:
 
 ## Output Format
 
-After completing your review, output your findings as JSON (no markdown code fences around the JSON):
+After completing your review, output your findings as raw JSON with NO markdown code fences.
+
+**Priority mapping**: P0=0, P1=1, P2=2, P3=3 (use integers, not strings).
+
+**Schema** (example shown in a code block for readability; do NOT wrap your actual output in fences):
 
 ```
 {
   "findings": [
     {
-      "title": "[P1] Brief imperative description (max 80 chars)",
+      "title": "[P2] Brief imperative description (max 80 chars)",
       "body": "Markdown explanation of why this is a problem and how to fix it",
-      "priority": 1,
+      "priority": 2,
       "file_path": "path/to/file.py",
       "line_start": 42,
       "line_end": 45
     }
   ],
-  "verdict": "PASS",
+  "verdict": "NEEDS_WORK",
   "summary": "1-3 sentence summary of the review"
 }
 ```
 
 ### Verdict Values
 
-- **PASS** - No significant findings, code is good to merge
-- **FAIL** - Blocking issues found (P0 or P1)
-- **NEEDS_WORK** - Non-blocking issues found (P2 or P3 only)
+- **PASS** - No significant findings (empty findings array), code is good to merge
+- **FAIL** - Blocking issues found (any finding with priority 0 or 1)
+- **NEEDS_WORK** - Non-blocking issues only (all findings have priority 2 or 3)
 
 ### Important
 
-- Output valid JSON that can be parsed programmatically
+- Output raw JSON with NO markdown code fences - your output must be directly parseable
 - Keep `line_start` and `line_end` ranges short (under 10 lines)
 - One finding per distinct issue
 - If no issues found, return `"findings": []` with verdict `"PASS"`
