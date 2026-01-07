@@ -5,8 +5,6 @@ from __future__ import annotations
 from textwrap import dedent
 from typing import TYPE_CHECKING
 
-import pytest
-
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -16,10 +14,12 @@ def test_config_loads_validation_triggers_via_normal_path(tmp_path: Path) -> Non
 
     This test exercises the full config loading path:
     load_config() → _build_config() → _parse_validation_triggers()
-
-    Expected: FAILS with NotImplementedError (skeleton implementation)
-    After T003: Test will pass with populated ValidationTriggersConfig
     """
+    from src.domain.validation.config import (
+        EpicDepth,
+        FailureMode,
+        FireOn,
+    )
     from src.domain.validation.config_loader import load_config
 
     # Create a minimal mala.yaml with validation_triggers section
@@ -28,19 +28,48 @@ def test_config_loads_validation_triggers_via_normal_path(tmp_path: Path) -> Non
 
         validation_triggers:
           epic_completion:
-            when: always
+            epic_depth: top_level
+            fire_on: success
+            failure_mode: continue
+            commands:
+              - ref: test
           session_end:
-            when: on_changes
+            failure_mode: remediate
+            max_retries: 3
+            commands:
+              - ref: lint
           periodic:
-            when: always
-            interval: 300
+            interval: 5
+            failure_mode: abort
+            commands: []
     """)
 
     config_file = tmp_path / "mala.yaml"
     config_file.write_text(config_content)
 
-    # This should raise NotImplementedError from the skeleton
-    with pytest.raises(
-        NotImplementedError, match="validation_triggers parsing not yet implemented"
-    ):
-        load_config(tmp_path)
+    config = load_config(tmp_path)
+
+    # Verify validation_triggers were parsed
+    assert config.validation_triggers is not None
+    triggers = config.validation_triggers
+
+    # Verify epic_completion
+    assert triggers.epic_completion is not None
+    assert triggers.epic_completion.epic_depth == EpicDepth.TOP_LEVEL
+    assert triggers.epic_completion.fire_on == FireOn.SUCCESS
+    assert triggers.epic_completion.failure_mode == FailureMode.CONTINUE
+    assert len(triggers.epic_completion.commands) == 1
+    assert triggers.epic_completion.commands[0].ref == "test"
+
+    # Verify session_end
+    assert triggers.session_end is not None
+    assert triggers.session_end.failure_mode == FailureMode.REMEDIATE
+    assert triggers.session_end.max_retries == 3
+    assert len(triggers.session_end.commands) == 1
+    assert triggers.session_end.commands[0].ref == "lint"
+
+    # Verify periodic
+    assert triggers.periodic is not None
+    assert triggers.periodic.interval == 5
+    assert triggers.periodic.failure_mode == FailureMode.ABORT
+    assert triggers.periodic.commands == ()
