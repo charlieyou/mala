@@ -92,14 +92,19 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
         self, tmp_path: Path
     ) -> None:
         """Verify factory creates DefaultReviewer with reviewer_type=cerberus."""
-        from src.orchestration.factory import _ReviewerConfig
+        # Create mala.yaml with cerberus reviewer_type to test full config path
+        (tmp_path / "mala.yaml").write_text(
+            "preset: python-uv\nreviewer_type: cerberus\n"
+        )
 
-        # Create reviewer config with cerberus type
-        reviewer_config = _ReviewerConfig(reviewer_type="cerberus")
+        # Load reviewer config via factory path (validates mala.yaml parsing)
+        reviewer_config = _get_reviewer_config(tmp_path)
+        assert reviewer_config.reviewer_type == "cerberus"
 
         # Create minimal MalaConfig mock with cerberus settings
+        # cerberus_bin_path is a directory containing review-gate binary
         mala_config = MagicMock()
-        mala_config.cerberus_bin_path = Path("/usr/bin/review-gate")
+        mala_config.cerberus_bin_path = Path("/usr/bin")
         mala_config.cerberus_spawn_args = ("--spawn",)
         mala_config.cerberus_wait_args = ("--wait",)
         mala_config.cerberus_env = {"CERBERUS_MODE": "test"}
@@ -118,7 +123,7 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
         assert isinstance(reviewer, DefaultReviewer)
         # Verify settings were passed through
         assert reviewer.repo_path == tmp_path
-        assert reviewer.bin_path == Path("/usr/bin/review-gate")
+        assert reviewer.bin_path == Path("/usr/bin")
         assert reviewer.spawn_args == ("--spawn",)
         assert reviewer.wait_args == ("--wait",)
         assert reviewer.env == {"CERBERUS_MODE": "test"}
@@ -131,14 +136,19 @@ class TestFactoryCreatesAgentSDKReviewerWhenConfigured:
         self, tmp_path: Path
     ) -> None:
         """Verify factory creates AgentSDKReviewer with reviewer_type=agent_sdk."""
-        from src.orchestration.factory import _ReviewerConfig
-
-        # Create reviewer config with explicit agent_sdk type
-        reviewer_config = _ReviewerConfig(
-            reviewer_type="agent_sdk",
-            agent_sdk_review_timeout=900,
-            agent_sdk_reviewer_model="opus",
+        # Create mala.yaml with agent_sdk config to test full config path
+        (tmp_path / "mala.yaml").write_text(
+            "preset: python-uv\n"
+            "reviewer_type: agent_sdk\n"
+            "agent_sdk_review_timeout: 900\n"
+            "agent_sdk_reviewer_model: opus\n"
         )
+
+        # Load reviewer config via factory path (validates mala.yaml parsing)
+        reviewer_config = _get_reviewer_config(tmp_path)
+        assert reviewer_config.reviewer_type == "agent_sdk"
+        assert reviewer_config.agent_sdk_review_timeout == 900
+        assert reviewer_config.agent_sdk_reviewer_model == "opus"
 
         # Create minimal MalaConfig mock
         mala_config = MagicMock()
