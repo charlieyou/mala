@@ -193,8 +193,7 @@ def merge_configs(
         else None
     )
 
-    # Reviewer fields: user always takes precedence (presets cannot define them)
-    # Check if user explicitly set, otherwise use defaults
+    # Reviewer fields: user overrides if explicitly set, otherwise inherit from preset
     reviewer_type_explicitly_set = _is_field_explicitly_set(
         "reviewer_type",
         user._fields_set,
