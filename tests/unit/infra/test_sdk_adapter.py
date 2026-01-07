@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path  # noqa: TC003
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
-from claude_agent_sdk.types import ClaudeAgentOptions  # noqa: TC002
 
 from src.infra.sdk_adapter import SDKClientFactory
+
+if TYPE_CHECKING:
+    from claude_agent_sdk.types import ClaudeAgentOptions
 
 
 @pytest.fixture
