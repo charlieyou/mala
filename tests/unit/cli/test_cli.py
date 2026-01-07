@@ -2318,3 +2318,33 @@ class TestValidateEveryEnablement:
         validation_config = DummyOrchestrator.last_validation_config
         assert validation_config is not None
         assert validation_config.validate_every == 3
+
+
+class TestClaudeSettingsSourcesHelp:
+    """Test that --claude-settings-sources appears in help output."""
+
+    def test_run_help_shows_claude_settings_sources(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that 'run --help' includes --claude-settings-sources option."""
+        from typer.testing import CliRunner
+
+        cli = _reload_cli(monkeypatch)
+        runner = CliRunner()
+        result = runner.invoke(cli.app, ["run", "--help"])
+
+        assert result.exit_code == 0
+        assert "--claude-settings-sources" in result.output
+
+    def test_epic_verify_help_shows_claude_settings_sources(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that 'epic-verify --help' includes --claude-settings-sources option."""
+        from typer.testing import CliRunner
+
+        cli = _reload_cli(monkeypatch)
+        runner = CliRunner()
+        result = runner.invoke(cli.app, ["epic-verify", "--help"])
+
+        assert result.exit_code == 0
+        assert "--claude-settings-sources" in result.output

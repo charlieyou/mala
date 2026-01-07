@@ -786,7 +786,10 @@ def run(
         str | None,
         typer.Option(
             "--claude-settings-sources",
-            help="Claude settings sources: local,project,user (default: local,project)",
+            help=(
+                "Comma-separated list of Claude settings sources "
+                "(local, project, user). Default: local,project"
+            ),
             rich_help_panel="Claude Settings",
         ),
     ] = None,
@@ -1012,7 +1015,10 @@ def epic_verify(
         str | None,
         typer.Option(
             "--claude-settings-sources",
-            help="Claude settings sources: local,project,user (default: local,project)",
+            help=(
+                "Comma-separated list of Claude settings sources "
+                "(local, project, user). Default: local,project"
+            ),
             rich_help_panel="Claude Settings",
         ),
     ] = None,
@@ -1032,6 +1038,25 @@ def epic_verify(
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     config = _lazy("MalaConfig").from_env(validate=False)
+
+    # Apply CLI overrides to config
+    override_result = _apply_config_overrides(
+        config=config,
+        review_timeout=None,
+        cerberus_spawn_args=None,
+        cerberus_wait_args=None,
+        cerberus_env=None,
+        max_epic_verification_retries=None,
+        disable_review=False,
+        claude_settings_sources=claude_settings_sources,
+    )
+    if override_result.is_error:
+        assert override_result.error is not None
+        log("✗", override_result.error, Colors.RED)
+        raise typer.Exit(1)
+    assert override_result.updated_config is not None
+    config = override_result.updated_config
+
     orch_config = _lazy("OrchestratorConfig")(repo_path=repo_path)
     orchestrator = _lazy("create_orchestrator")(orch_config, mala_config=config)
     verifier = getattr(orchestrator, "epic_verifier", None)
