@@ -1,0 +1,561 @@
+"""Tests for AgentSDKReviewer.
+
+Tests the Agent SDK code reviewer implementation including:
+- Empty diff short-circuiting (both diff_range and commit_shas)
+- Successful review scenarios (PASS/FAIL/NEEDS_WORK)
+- JSON parsing with fallbacks
+- Error handling (timeout, SDK failures)
+- Context file loading
+- Priority conversion
+- Telemetry warnings
+- overrides_disabled_setting behavior
+"""
+
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from src.infra.clients.agent_sdk_review import AgentSDKReviewer
+from tests.fakes.event_sink import FakeEventSink
+from tests.fakes.sdk_client import FakeSDKClientFactory
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+def _make_review_json(
+    verdict: str = "PASS",
+    issues: list[dict[str, Any]] | None = None,
+) -> str:
+    """Create a valid review JSON response."""
+    return json.dumps(
+        {
+            "consensus_verdict": verdict,
+            "aggregated_findings": issues or [],
+        }
+    )
+
+
+def _make_issue(
+    file: str = "src/test.py",
+    line_start: int = 10,
+    line_end: int = 12,
+    priority: str | int = "P1",
+    title: str = "Test finding",
+    body: str = "Test body",
+    reviewer: str = "agent_sdk",
+) -> dict[str, Any]:
+    """Create a valid issue dict."""
+    return {
+        "file_path": file,
+        "line_start": line_start,
+        "line_end": line_end,
+        "priority": priority,
+        "title": title,
+        "body": body,
+        "reviewer": reviewer,
+    }
+
+
+class TestEmptyDiffSkipsAgentSession:
+    """Test that empty diffs short-circuit before agent session."""
+
+    async def test_empty_diff_skips_agent_session(self, tmp_path: Path) -> None:
+        """Empty diff range returns PASS without running agent session."""
+        factory = FakeSDKClientFactory()
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        # Mock git diff --stat to return empty output
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout="", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer("HEAD~1..HEAD")
+
+        # Should pass without issues
+        assert result.passed is True
+        assert result.issues == []
+        assert result.parse_error is None
+        assert result.fatal_error is False
+
+        # No SDK client should have been created
+        assert len(factory.clients) == 0
+
+    async def test_empty_commit_sha_skips_agent_session(self, tmp_path: Path) -> None:
+        """Empty commit SHA list returns PASS without running agent session."""
+        factory = FakeSDKClientFactory()
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        # Mock git diff --stat for commit SHA to return empty
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout="", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer(
+                "HEAD~1..HEAD",
+                commit_shas=["abc123"],
+            )
+
+        # Should pass without issues
+        assert result.passed is True
+        assert result.issues == []
+
+        # No SDK client should have been created
+        assert len(factory.clients) == 0
+
+
+class TestSuccessfulReview:
+    """Test successful review scenarios."""
+
+    async def test_successful_review_pass(self, tmp_path: Path) -> None:
+        """Review that passes returns correct result."""
+        factory = FakeSDKClientFactory()
+        # Configure SDK client to return PASS verdict
+        client = factory.configure_next_client(
+            messages=[
+                MagicMock(
+                    subtype="assistant",
+                    content=[{"type": "text", "text": _make_review_json("PASS")}],
+                )
+            ]
+        )
+
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            # Non-empty diff
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+
+        assert result.passed is True
+        assert result.issues == []
+        assert result.parse_error is None
+        assert result.fatal_error is False
+
+        # Verify SDK client was used
+        assert len(factory.clients) == 1
+        assert len(client.queries) == 1
+
+    async def test_successful_review_fail(self, tmp_path: Path) -> None:
+        """Review that fails returns issues."""
+        factory = FakeSDKClientFactory()
+        issue = _make_issue(priority="P1", title="Critical bug")
+        factory.configure_next_client(
+            messages=[
+                MagicMock(
+                    subtype="assistant",
+                    content=[
+                        {"type": "text", "text": _make_review_json("FAIL", [issue])}
+                    ],
+                )
+            ]
+        )
+
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+
+        assert result.passed is False
+        assert len(result.issues) == 1
+        assert result.issues[0].title == "Critical bug"
+        assert result.issues[0].priority == 1  # Converted from "P1"
+
+    async def test_successful_review_needs_work(self, tmp_path: Path) -> None:
+        """NEEDS_WORK verdict is treated as failure."""
+        factory = FakeSDKClientFactory()
+        factory.configure_next_client(
+            messages=[
+                MagicMock(
+                    subtype="assistant",
+                    content=[{"type": "text", "text": _make_review_json("NEEDS_WORK")}],
+                )
+            ]
+        )
+
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+
+        assert result.passed is False
+
+
+class TestMalformedJsonResponse:
+    """Test handling of malformed JSON responses."""
+
+    async def test_malformed_json_response(self, tmp_path: Path) -> None:
+        """Malformed JSON returns parse error."""
+        factory = FakeSDKClientFactory()
+        factory.configure_next_client(
+            messages=[
+                MagicMock(
+                    subtype="assistant",
+                    content=[{"type": "text", "text": "not valid json at all"}],
+                )
+            ]
+        )
+
+        event_sink = FakeEventSink()
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+            event_sink=event_sink,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+
+        assert result.passed is False
+        assert result.parse_error is not None
+        assert result.fatal_error is False
+
+    async def test_json_in_code_block_extracted(self, tmp_path: Path) -> None:
+        """JSON inside markdown code block is extracted."""
+        factory = FakeSDKClientFactory()
+        json_content = _make_review_json("PASS")
+        wrapped = f"Here is my review:\n```json\n{json_content}\n```"
+        factory.configure_next_client(
+            messages=[
+                MagicMock(
+                    subtype="assistant",
+                    content=[{"type": "text", "text": wrapped}],
+                )
+            ]
+        )
+
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+
+        assert result.passed is True
+        assert result.parse_error is None
+
+
+class TestTimeoutHandling:
+    """Test timeout handling."""
+
+    async def test_timeout_handling(self, tmp_path: Path) -> None:
+        """Timeout during agent session returns appropriate error."""
+        factory = FakeSDKClientFactory()
+
+        # Configure client to raise TimeoutError
+        factory.configure_next_client(query_error=TimeoutError("Agent timed out"))
+
+        event_sink = FakeEventSink()
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+            event_sink=event_sink,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer(
+                "HEAD~1..HEAD", claude_session_id="test-session", timeout=10
+            )
+
+        assert result.passed is False
+        assert result.parse_error is not None
+        assert (
+            "timeout" in result.parse_error.lower()
+            or "timed out" in result.parse_error.lower()
+        )
+        assert result.fatal_error is False
+
+
+class TestSDKClientCreationFailure:
+    """Test SDK client creation failure handling."""
+
+    async def test_sdk_client_creation_failure(self, tmp_path: Path) -> None:
+        """SDK client creation failure returns error result."""
+        factory = MagicMock()
+        factory.create_options.return_value = {}
+        factory.create.side_effect = RuntimeError("SDK initialization failed")
+
+        event_sink = FakeEventSink()
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+            event_sink=event_sink,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+
+        assert result.passed is False
+        assert result.parse_error is not None
+        assert (
+            "SDK" in result.parse_error
+            or "initialization" in result.parse_error.lower()
+        )
+        assert result.fatal_error is False
+
+
+class TestContextFileLoading:
+    """Test context file loading."""
+
+    async def test_context_file_loading(self, tmp_path: Path) -> None:
+        """Context file content is included in review query."""
+        # Create context file
+        context_file = tmp_path / "context.txt"
+        context_file.write_text("Issue: Fix the bug in authentication")
+
+        factory = FakeSDKClientFactory()
+        client = factory.configure_next_client(
+            messages=[
+                MagicMock(
+                    subtype="assistant",
+                    content=[{"type": "text", "text": _make_review_json("PASS")}],
+                )
+            ]
+        )
+
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer(
+                "HEAD~1..HEAD",
+                context_file=context_file,
+                claude_session_id="test-session",
+            )
+
+        assert result.passed is True
+        # Verify context was included in query
+        assert len(client.queries) == 1
+        query_text = client.queries[0][0]
+        assert "authentication" in query_text
+
+
+class TestPriorityConversion:
+    """Test priority string/int conversion."""
+
+    async def test_priority_conversion_string_p1(self, tmp_path: Path) -> None:
+        """Priority string 'P1' is converted to int 1."""
+        factory = FakeSDKClientFactory()
+        issue = _make_issue(priority="P1")
+        factory.configure_next_client(
+            messages=[
+                MagicMock(
+                    subtype="assistant",
+                    content=[
+                        {"type": "text", "text": _make_review_json("FAIL", [issue])}
+                    ],
+                )
+            ]
+        )
+
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+
+        assert result.issues[0].priority == 1
+
+    async def test_priority_conversion_int(self, tmp_path: Path) -> None:
+        """Priority int 2 is kept as int 2."""
+        factory = FakeSDKClientFactory()
+        issue = _make_issue(priority=2)
+        factory.configure_next_client(
+            messages=[
+                MagicMock(
+                    subtype="assistant",
+                    content=[
+                        {"type": "text", "text": _make_review_json("FAIL", [issue])}
+                    ],
+                )
+            ]
+        )
+
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+
+        assert result.issues[0].priority == 2
+
+
+class TestTelemetryWarning:
+    """Test telemetry warning on errors."""
+
+    async def test_telemetry_warning_on_error(self, tmp_path: Path) -> None:
+        """Non-fatal errors emit on_review_warning to event sink."""
+        factory = FakeSDKClientFactory()
+        # Return malformed JSON to trigger warning
+        factory.configure_next_client(
+            messages=[
+                MagicMock(
+                    subtype="assistant",
+                    content=[{"type": "text", "text": "invalid json response"}],
+                )
+            ]
+        )
+
+        event_sink = FakeEventSink()
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+            event_sink=event_sink,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+
+        assert result.passed is False
+        # Check that warning was emitted
+        warnings = event_sink.get_events("review_warning")
+        assert len(warnings) >= 1
+
+
+class TestOverridesDisabledSetting:
+    """Test overrides_disabled_setting behavior."""
+
+    def test_overrides_disabled_setting_returns_false(self, tmp_path: Path) -> None:
+        """AgentSDKReviewer.overrides_disabled_setting() returns False."""
+        factory = FakeSDKClientFactory()
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        assert reviewer.overrides_disabled_setting() is False

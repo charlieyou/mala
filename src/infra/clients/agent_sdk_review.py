@@ -14,11 +14,15 @@ Key features:
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.infra.clients.review_output_parser import ReviewResult  # noqa: TC001 (runtime)
+from src.infra.clients.review_output_parser import ReviewIssue, ReviewResult
+from src.infra.tools.command_runner import CommandRunner
 
 logger = logging.getLogger(__name__)
 
@@ -82,13 +86,74 @@ class AgentSDKReviewer:
 
         Returns:
             ReviewResult with verdict and findings.
-
-        Raises:
-            NotImplementedError: Skeleton implementation - T004 will add real logic.
         """
-        # Skeleton implementation - T004 will implement real logic
-        raise NotImplementedError(
-            "AgentSDKReviewer.__call__ not implemented yet. See T004."
+        # Check for empty diff (short-circuit without running agent)
+        # For commit_shas, check each commit individually
+        if commit_shas:
+            all_empty = True
+            for sha in commit_shas:
+                if not await self._check_diff_empty(f"{sha}^..{sha}"):
+                    all_empty = False
+                    break
+            if all_empty:
+                return ReviewResult(
+                    passed=True,
+                    issues=[],
+                    parse_error=None,
+                    fatal_error=False,
+                    review_log_path=None,
+                )
+        elif await self._check_diff_empty(diff_range):
+            return ReviewResult(
+                passed=True,
+                issues=[],
+                parse_error=None,
+                fatal_error=False,
+                review_log_path=None,
+            )
+
+        # Load context file if provided
+        context = await self._load_context(context_file)
+
+        # Create review query
+        query = self._create_review_query(diff_range, context, commit_shas)
+
+        # Run agent session
+        try:
+            response_text, log_path = await self._run_agent_session(
+                query, timeout, claude_session_id
+            )
+        except TimeoutError as e:
+            if self.event_sink is not None:
+                self.event_sink.on_review_warning(f"Agent session timed out: {e}")
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error=f"Agent session timed out: {e}",
+                fatal_error=False,
+                review_log_path=None,
+            )
+        except Exception as e:
+            error_msg = f"SDK error: {e}"
+            if self.event_sink is not None:
+                self.event_sink.on_review_warning(error_msg)
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error=error_msg,
+                fatal_error=False,
+                review_log_path=None,
+            )
+
+        # Parse response
+        result = self._parse_response(response_text)
+        # Set review_log_path from agent session
+        return ReviewResult(
+            passed=result.passed,
+            issues=result.issues,
+            parse_error=result.parse_error,
+            fatal_error=result.fatal_error,
+            review_log_path=log_path,
         )
 
     async def _check_diff_empty(self, diff_range: str) -> bool:
@@ -99,11 +164,14 @@ class AgentSDKReviewer:
 
         Returns:
             True if the diff is empty, False otherwise.
-
-        Raises:
-            NotImplementedError: Skeleton implementation.
         """
-        raise NotImplementedError("_check_diff_empty not implemented yet. See T004.")
+        runner = CommandRunner(cwd=self.repo_path)
+        result = await runner.run_async(
+            ["git", "diff", "--stat", diff_range],
+            timeout=30,
+        )
+        # Empty diff has no output
+        return result.returncode == 0 and not result.stdout.strip()
 
     async def _load_context(self, context_file: Path | None) -> str:
         """Load context file asynchronously.
@@ -113,11 +181,12 @@ class AgentSDKReviewer:
 
         Returns:
             Context file content as string, or empty string if no file.
-
-        Raises:
-            NotImplementedError: Skeleton implementation.
         """
-        raise NotImplementedError("_load_context not implemented yet. See T004.")
+        if context_file is None or not context_file.exists():
+            return ""
+
+        # Use asyncio.to_thread for non-blocking file I/O
+        return await asyncio.to_thread(context_file.read_text)
 
     def _create_review_query(
         self,
@@ -136,18 +205,46 @@ class AgentSDKReviewer:
 
         Returns:
             Formatted query string for the agent.
-
-        Raises:
-            NotImplementedError: Skeleton implementation.
         """
-        raise NotImplementedError("_create_review_query not implemented yet. See T004.")
+        parts = [self.review_agent_prompt]
+
+        parts.append(f"\n\n## Diff Range\n{diff_range}")
+
+        if commit_shas:
+            parts.append(f"\n\n## Specific Commits\n{', '.join(commit_shas)}")
+
+        if context:
+            parts.append(f"\n\n## Implementation Context\n{context}")
+
+        parts.append(
+            "\n\n## Output Format\n"
+            "Return your review as a JSON object with the following structure:\n"
+            "```json\n"
+            "{\n"
+            '  "consensus_verdict": "PASS" | "FAIL" | "NEEDS_WORK",\n'
+            '  "aggregated_findings": [\n'
+            "    {\n"
+            '      "file_path": "path/to/file.py",\n'
+            '      "line_start": 10,\n'
+            '      "line_end": 15,\n'
+            '      "priority": "P1" | "P2" | "P3" | 1 | 2 | 3,\n'
+            '      "title": "Issue title",\n'
+            '      "body": "Detailed description",\n'
+            '      "reviewer": "agent_sdk"\n'
+            "    }\n"
+            "  ]\n"
+            "}\n"
+            "```"
+        )
+
+        return "".join(parts)
 
     async def _run_agent_session(
         self,
         query: str,
         timeout: int,
         session_id: str | None,
-    ) -> str:
+    ) -> tuple[str, Path | None]:
         """Run agent session and collect final output.
 
         Creates SDK client, opens session, sends query, streams responses,
@@ -159,12 +256,46 @@ class AgentSDKReviewer:
             session_id: Optional session ID for telemetry.
 
         Returns:
-            Raw response text from the agent.
+            Tuple of (raw response text, session log path).
 
         Raises:
-            NotImplementedError: Skeleton implementation.
+            TimeoutError: If agent session times out.
+            Exception: If SDK client creation or query fails.
         """
-        raise NotImplementedError("_run_agent_session not implemented yet. See T004.")
+        # Create SDK options
+        options = self.sdk_client_factory.create_options(
+            cwd=str(self.repo_path),
+            model=self.model,
+            permission_mode="bypassPermissions",
+        )
+
+        # Create SDK client
+        client = self.sdk_client_factory.create(options)
+
+        response_text = ""
+        log_path: Path | None = None
+
+        async with client:
+            await client.query(query, session_id=session_id)
+
+            async for msg in client.receive_response():
+                # Extract text from assistant messages
+                if hasattr(msg, "subtype") and msg.subtype == "assistant":
+                    content = getattr(msg, "content", None)
+                    if content is not None and isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                response_text += block.get("text", "")
+
+                # Extract session info from result message
+                if hasattr(msg, "subtype") and msg.subtype == "result":
+                    if hasattr(msg, "session_id") and msg.session_id:
+                        # Construct log path from session ID
+                        # SDK logs are at ~/.claude/projects/{encoded-path}/
+                        # We return None for now; the caller can compute if needed
+                        pass
+
+        return response_text, log_path
 
     def _parse_response(self, response_text: str) -> ReviewResult:
         """Parse JSON response into ReviewResult.
@@ -180,8 +311,150 @@ class AgentSDKReviewer:
 
         Returns:
             Parsed ReviewResult.
-
-        Raises:
-            NotImplementedError: Skeleton implementation.
         """
-        raise NotImplementedError("_parse_response not implemented yet. See T004.")
+        if not response_text.strip():
+            if self.event_sink is not None:
+                self.event_sink.on_review_warning("Empty response from agent")
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error="Empty response from agent",
+                fatal_error=False,
+                review_log_path=None,
+            )
+
+        # Try to extract JSON from markdown code blocks
+        json_str = self._extract_json(response_text)
+
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            if self.event_sink is not None:
+                self.event_sink.on_review_warning(f"JSON parse error: {e}")
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error=f"JSON parse error: {e}",
+                fatal_error=False,
+                review_log_path=None,
+            )
+
+        if not isinstance(data, dict):
+            if self.event_sink is not None:
+                self.event_sink.on_review_warning("Response is not a JSON object")
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error="Response is not a JSON object",
+                fatal_error=False,
+                review_log_path=None,
+            )
+
+        # Extract verdict
+        verdict = data.get("consensus_verdict", "")
+        if verdict not in ("PASS", "FAIL", "NEEDS_WORK"):
+            if self.event_sink is not None:
+                self.event_sink.on_review_warning(f"Invalid verdict: {verdict}")
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error=f"Invalid verdict: {verdict}",
+                fatal_error=False,
+                review_log_path=None,
+            )
+
+        passed = verdict == "PASS"
+
+        # Parse issues
+        raw_issues = data.get("aggregated_findings", [])
+        if not isinstance(raw_issues, list):
+            if self.event_sink is not None:
+                self.event_sink.on_review_warning("aggregated_findings is not a list")
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error="aggregated_findings is not a list",
+                fatal_error=False,
+                review_log_path=None,
+            )
+
+        issues: list[ReviewIssue] = []
+        for item in raw_issues:
+            if not isinstance(item, dict):
+                continue
+
+            # Extract and convert priority
+            priority_raw = item.get("priority")
+            priority: int | None = None
+            if priority_raw is not None:
+                priority = self._convert_priority(priority_raw)
+
+            issues.append(
+                ReviewIssue(
+                    file=item.get("file_path", ""),
+                    line_start=item.get("line_start", 0),
+                    line_end=item.get("line_end", 0),
+                    priority=priority,
+                    title=item.get("title", ""),
+                    body=item.get("body", ""),
+                    reviewer=item.get("reviewer", "agent_sdk"),
+                )
+            )
+
+        return ReviewResult(
+            passed=passed,
+            issues=issues,
+            parse_error=None,
+            fatal_error=False,
+            review_log_path=None,
+        )
+
+    def _extract_json(self, text: str) -> str:
+        """Extract JSON from text, handling markdown code blocks.
+
+        Args:
+            text: Raw text that may contain JSON in code blocks.
+
+        Returns:
+            Extracted JSON string.
+        """
+        # Try markdown code block first
+        code_block_match = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
+        if code_block_match:
+            return code_block_match.group(1).strip()
+
+        # Fallback: find first { and last }
+        first_brace = text.find("{")
+        last_brace = text.rfind("}")
+        if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+            return text[first_brace : last_brace + 1]
+
+        # Return original text if no JSON found
+        return text
+
+    def _convert_priority(self, priority_raw: str | int) -> int | None:
+        """Convert priority string to int.
+
+        Args:
+            priority_raw: Priority as string ("P1", "P2") or int.
+
+        Returns:
+            Priority as int, or None if conversion fails.
+        """
+        if isinstance(priority_raw, int):
+            return priority_raw
+
+        if isinstance(priority_raw, str):
+            # Handle "P1", "P2", etc.
+            if priority_raw.startswith("P") and len(priority_raw) >= 2:
+                try:
+                    return int(priority_raw[1:])
+                except ValueError:
+                    return None
+            # Try direct int conversion
+            try:
+                return int(priority_raw)
+            except ValueError:
+                return None
+
+        return None
