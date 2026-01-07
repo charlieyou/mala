@@ -440,6 +440,7 @@ class CLIOverrides:
         review_timeout: Override for review timeout in seconds.
         max_epic_verification_retries: Override for max epic verification retries.
         disable_review: Whether 'review' is in --disable.
+        claude_settings_sources: Raw comma-separated list of settings sources.
     """
 
     cerberus_spawn_args: str | None = None
@@ -448,6 +449,7 @@ class CLIOverrides:
     review_timeout: int | None = None
     max_epic_verification_retries: int | None = None
     disable_review: bool = False
+    claude_settings_sources: str | None = None
 
 
 @dataclass(frozen=True)

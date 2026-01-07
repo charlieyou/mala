@@ -432,6 +432,7 @@ def _apply_config_overrides(
     cerberus_env: str | None,
     max_epic_verification_retries: int | None,
     disable_review: bool,
+    claude_settings_sources: str | None,
 ) -> ConfigOverrideResult:
     """Apply CLI overrides to MalaConfig, returning error on parse failures.
 
@@ -443,6 +444,7 @@ def _apply_config_overrides(
         cerberus_env: Raw string of extra env vars (key=value pairs).
         max_epic_verification_retries: Optional max retries override.
         disable_review: Whether review is disabled.
+        claude_settings_sources: Raw comma-separated list of settings sources.
 
     Returns:
         ConfigOverrideResult with resolved config and updated MalaConfig on success,
@@ -457,6 +459,7 @@ def _apply_config_overrides(
         review_timeout=review_timeout,
         max_epic_verification_retries=max_epic_verification_retries,
         disable_review=disable_review,
+        claude_settings_sources=claude_settings_sources,
     )
 
     try:
@@ -779,6 +782,14 @@ def run(
             help="Run validation after every N issues complete (default: 10 in watch mode)",
         ),
     ] = None,
+    claude_settings_sources: Annotated[
+        str | None,
+        typer.Option(
+            "--claude-settings-sources",
+            help="Claude settings sources: local,project,user (default: local,project)",
+            rich_help_panel="Claude Settings",
+        ),
+    ] = None,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
@@ -873,6 +884,7 @@ def run(
         cerberus_env=review_env,
         max_epic_verification_retries=max_epic_verification_retries,
         disable_review="review" in (disable_set or set()),
+        claude_settings_sources=claude_settings_sources,
     )
     if override_result.is_error:
         assert override_result.error is not None  # for type narrowing
@@ -996,6 +1008,14 @@ def epic_verify(
             help="Enable verbose output",
         ),
     ] = False,
+    claude_settings_sources: Annotated[
+        str | None,
+        typer.Option(
+            "--claude-settings-sources",
+            help="Claude settings sources: local,project,user (default: local,project)",
+            rich_help_panel="Claude Settings",
+        ),
+    ] = None,
 ) -> None:
     """Verify a single epic and optionally close it without running tasks."""
     set_verbose(verbose)
