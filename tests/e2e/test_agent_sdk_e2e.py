@@ -1,8 +1,8 @@
 """E2E test for AgentSDKReviewer with real Claude Agent SDK.
 
 This test validates that AgentSDKReviewer works end-to-end with the real Agent SDK,
-not just mocks. It requires ANTHROPIC_API_KEY or Claude CLI OAuth credentials and
-uses minimal test cases to keep costs low.
+not just mocks. It requires ANTHROPIC_API_KEY and uses minimal test cases to keep
+costs low.
 
 Key validations:
 - Real SDK client creation and session management
@@ -23,7 +23,6 @@ from src.infra.clients.agent_sdk_review import AgentSDKReviewer
 from src.infra.clients.review_output_parser import ReviewResult
 from src.infra.io.session_log_parser import SessionLogParser
 from src.infra.sdk_adapter import SDKClientFactory
-from tests.e2e.claude_auth import has_valid_oauth_credentials, is_claude_cli_available
 
 pytestmark = [pytest.mark.e2e]
 
@@ -32,14 +31,14 @@ if TYPE_CHECKING:
 
 
 def _skip_if_no_auth() -> None:
-    """Skip test if neither API key nor OAuth credentials available."""
-    has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    has_oauth = is_claude_cli_available() and has_valid_oauth_credentials()
+    """Skip test if ANTHROPIC_API_KEY is not set.
 
-    if not has_api_key and not has_oauth:
-        pytest.skip(
-            "No auth available: set ANTHROPIC_API_KEY or login via `claude` CLI"
-        )
+    This E2E test specifically validates the API-key auth path with the real SDK.
+    We require ANTHROPIC_API_KEY explicitly rather than accepting OAuth credentials
+    to ensure we're testing the intended auth mechanism.
+    """
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        pytest.skip("ANTHROPIC_API_KEY not set")
 
 
 def _session_log_contains_tool_use(log_path: Path) -> bool:
