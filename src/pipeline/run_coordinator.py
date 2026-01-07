@@ -89,7 +89,7 @@ class RunCoordinatorConfig:
     disable_validations: set[str] | None = None
     fixer_prompt: str | _FixerPromptNotSet = _FIXER_PROMPT_NOT_SET
     mcp_server_factory: McpServerFactory | None = None
-    validation_config: "ValidationConfig | None" = None
+    validation_config: ValidationConfig | None = None
     validation_config_missing: bool = False
 
 

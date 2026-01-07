@@ -54,7 +54,7 @@ class GateRunnerConfig:
 
     max_gate_retries: int = 3
     disable_validations: set[str] | None = None
-    validation_config: "ValidationConfig | None" = None
+    validation_config: ValidationConfig | None = None
     validation_config_missing: bool = False
 
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.domain.validation.config import PromptValidationCommands
+    from src.domain.validation.config import PromptValidationCommands, ValidationConfig
 
 
 def _build_custom_commands_section(
@@ -268,7 +268,7 @@ def build_continuation_prompt(continuation_template: str, checkpoint_text: str) 
 def build_prompt_validation_commands(
     repo_path: Path,
     *,
-    validation_config: "ValidationConfig | None" = None,
+    validation_config: ValidationConfig | None = None,
     config_missing: bool = False,
 ) -> PromptValidationCommands:
     """Build PromptValidationCommands for a repository.

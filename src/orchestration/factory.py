@@ -62,6 +62,7 @@ if TYPE_CHECKING:
         IssueProvider,
         LogProvider,
     )
+    from src.domain.validation.config import ValidationConfig
     from src.infra.io.config import MalaConfig
     from src.core.protocols import EpicVerifierProtocol, MalaEventSink
     from src.infra.telemetry import TelemetryProvider
@@ -109,7 +110,7 @@ def _derive_config(
     config: OrchestratorConfig,
     mala_config: MalaConfig,
     *,
-    validation_config: "ValidationConfig | None",
+    validation_config: ValidationConfig | None,
     validation_config_missing: bool,
 ) -> _DerivedConfig:
     """Derive computed configuration values from config sources.
@@ -520,7 +521,7 @@ def create_orchestrator(
     except ConfigMissingError:
         # mala.yaml not present - use defaults
         validation_config_missing = True
-    except ConfigError as e:
+    except ConfigError:
         # Invalid config (syntax error, schema violation, etc.) - fail fast
         raise
 

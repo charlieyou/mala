@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from src.domain.validation.config import (
         CommandConfig,
         CustomCommandConfig,
+        ValidationConfig,
         YamlCoverageConfig,
     )
 
@@ -357,7 +358,7 @@ def build_validation_spec(
     scope: ValidationScope | None = None,
     disable_validations: set[str] | None = None,
     *,
-    validation_config: "ValidationConfig | None" = None,
+    validation_config: ValidationConfig | None = None,
     config_missing: bool = False,
 ) -> ValidationSpec:
     """Build a ValidationSpec from config files.
@@ -382,7 +383,7 @@ def build_validation_spec(
     Returns:
         A ValidationSpec configured according to the config files.
     """
-    from src.domain.validation.config import ConfigError, ValidationConfig
+    from src.domain.validation.config import ConfigError
     from src.domain.validation.config_loader import (
         ConfigMissingError,
         _validate_migration,

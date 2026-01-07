@@ -136,7 +136,7 @@ class _DerivedConfig:
     timeout_seconds: int
     disabled_validations: set[str]
     review_disabled_reason: str | None = None
-    validation_config: "ValidationConfig | None" = None
+    validation_config: ValidationConfig | None = None
     validation_config_missing: bool = False
 
 
@@ -197,7 +197,7 @@ class PipelineConfig:
     context_limit: int
     prompts: PromptProvider
     prompt_validation_commands: PromptValidationCommands
-    validation_config: "ValidationConfig | None" = None
+    validation_config: ValidationConfig | None = None
     validation_config_missing: bool = False
     deadlock_monitor: DeadlockMonitor | None = None
 
