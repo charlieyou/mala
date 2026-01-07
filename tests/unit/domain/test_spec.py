@@ -1225,7 +1225,9 @@ class TestConfigMissingSemanticsConsistency:
         from src.domain.prompts import build_prompt_validation_commands
 
         # Get defaults from prompts
-        prompt_commands = build_prompt_validation_commands(tmp_path, config_missing=True)
+        prompt_commands = build_prompt_validation_commands(
+            tmp_path, config_missing=True
+        )
 
         # Get defaults from spec
         spec = build_validation_spec(tmp_path, config_missing=True)

@@ -224,7 +224,9 @@ class TestGlobalValidation:
                 "src.infra.git_utils.get_git_commit_async",
                 side_effect=mock_get_commit,
             ),
-            patch("src.domain.validation.config_loader.load_config") as mock_load_config,
+            patch(
+                "src.domain.validation.config_loader.load_config"
+            ) as mock_load_config,
             patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
         ):
             mock_runner_instance = MagicMock()
