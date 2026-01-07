@@ -1065,9 +1065,7 @@ class MalaOrchestrator:
                     success_count = sum(1 for r in self._state.completed if r.success)
                     if success_count == 0 or self.abort_run:
                         return True
-                    validation_input = GlobalValidationInput(
-                        run_metadata=run_metadata
-                    )
+                    validation_input = GlobalValidationInput(run_metadata=run_metadata)
                     validation_output = await self.run_coordinator.run_validation(
                         validation_input
                     )
@@ -1134,9 +1132,7 @@ class MalaOrchestrator:
             run_validation_passed = True
             if success_count > 0 and not self.abort_run:
                 try:
-                    validation_input = GlobalValidationInput(
-                        run_metadata=run_metadata
-                    )
+                    validation_input = GlobalValidationInput(run_metadata=run_metadata)
                     validation_output = await self.run_coordinator.run_validation(
                         validation_input
                     )

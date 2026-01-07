@@ -794,7 +794,9 @@ class TestExplicitGlobalCommandsNullOrEmpty:
     preset global overrides, the preset overrides should be removed.
     """
 
-    def test_explicit_global_validation_commands_null_clears_preset_overrides(self) -> None:
+    def test_explicit_global_validation_commands_null_clears_preset_overrides(
+        self,
+    ) -> None:
         """Setting global_validation_commands: null clears preset global overrides."""
         preset = ValidationConfig(
             commands=CommandsConfig(
@@ -816,7 +818,9 @@ class TestExplicitGlobalCommandsNullOrEmpty:
         assert result.global_validation_commands.test is None
         assert result.global_validation_commands.lint is None
 
-    def test_explicit_global_validation_commands_empty_clears_preset_overrides(self) -> None:
+    def test_explicit_global_validation_commands_empty_clears_preset_overrides(
+        self,
+    ) -> None:
         """Setting global_validation_commands: {} clears preset global overrides."""
         preset = ValidationConfig(
             commands=CommandsConfig(
@@ -858,7 +862,9 @@ class TestExplicitGlobalCommandsNullOrEmpty:
             ),
         )
         # User specifies only test override, lint override should inherit
-        user = ValidationConfig.from_dict({"global_validation_commands": {"test": "pytest -v"}})
+        user = ValidationConfig.from_dict(
+            {"global_validation_commands": {"test": "pytest -v"}}
+        )
         result = merge_configs(preset, user)
 
         # Commands inherited
@@ -868,9 +874,13 @@ class TestExplicitGlobalCommandsNullOrEmpty:
         assert result.global_validation_commands.test is not None
         assert result.global_validation_commands.test.command == "pytest -v"
         assert result.global_validation_commands.lint is not None
-        assert result.global_validation_commands.lint.command == "ruff check . --select=E"
+        assert (
+            result.global_validation_commands.lint.command == "ruff check . --select=E"
+        )
 
-    def test_explicit_global_validation_commands_null_with_other_overrides(self) -> None:
+    def test_explicit_global_validation_commands_null_with_other_overrides(
+        self,
+    ) -> None:
         """global_validation_commands: null can coexist with other user overrides."""
         preset = ValidationConfig(
             commands=CommandsConfig(
@@ -1241,7 +1251,9 @@ class TestGlobalCommandsFieldsSetPreservation:
 
         # lint is inherited from preset
         assert result.global_validation_commands.lint is not None
-        assert result.global_validation_commands.lint.command == "ruff check . --select=E"
+        assert (
+            result.global_validation_commands.lint.command == "ruff check . --select=E"
+        )
         # lint should NOT be in _fields_set since user didn't set it
         assert "lint" not in result.global_validation_commands._fields_set
 
@@ -1387,7 +1399,9 @@ class TestClearCustomsPresetMerge:
     custom commands but NOT clear the preset's built-in global commands.
     """
 
-    def test_clear_customs_does_not_clear_preset_global_validation_commands(self) -> None:
+    def test_clear_customs_does_not_clear_preset_global_validation_commands(
+        self,
+    ) -> None:
         """_clear_customs: true should not clear preset global_validation_commands builtins.
 
         Regression test: When user sets global_validation_commands: {_clear_customs: true},
@@ -1417,10 +1431,13 @@ class TestClearCustomsPresetMerge:
         assert result.global_validation_commands.test is not None
         assert result.global_validation_commands.test.command == "pytest -m integration"
         assert result.global_validation_commands.lint is not None
-        assert result.global_validation_commands.lint.command == "ruff check . --select=E"
+        assert (
+            result.global_validation_commands.lint.command == "ruff check . --select=E"
+        )
         # But custom_override_mode should be CLEAR
         assert (
-            result.global_validation_commands.custom_override_mode == CustomOverrideMode.CLEAR
+            result.global_validation_commands.custom_override_mode
+            == CustomOverrideMode.CLEAR
         )
 
     def test_only_custom_commands_does_not_clear_preset_global(self) -> None:
@@ -1457,7 +1474,9 @@ class TestClearCustomsPresetMerge:
         assert result.global_validation_commands.test is not None
         assert result.global_validation_commands.test.command == "pytest -m integration"
         assert result.global_validation_commands.lint is not None
-        assert result.global_validation_commands.lint.command == "ruff check . --select=E"
+        assert (
+            result.global_validation_commands.lint.command == "ruff check . --select=E"
+        )
         # User's custom_commands should be preserved
         assert "mycheck" in result.global_validation_commands.custom_commands
         assert (

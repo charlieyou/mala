@@ -103,7 +103,9 @@ class TestFakeIssueProviderContract:
     ) -> None:
         """get_ready_async returns issues with ready status."""
         # Use EPIC_PRIORITY to get all issues (FOCUS mode returns single epic group)
-        ready = await fake_provider.get_ready_async(order_preference=OrderPreference.EPIC_PRIORITY)
+        ready = await fake_provider.get_ready_async(
+            order_preference=OrderPreference.EPIC_PRIORITY
+        )
         assert "issue-1" in ready
         assert "issue-2" in ready
 
@@ -130,7 +132,9 @@ class TestFakeIssueProviderContract:
         self, fake_provider: FakeIssueProvider
     ) -> None:
         """get_ready_async returns issues sorted by priority (lower first)."""
-        ready = await fake_provider.get_ready_async(order_preference=OrderPreference.ISSUE_PRIORITY)
+        ready = await fake_provider.get_ready_async(
+            order_preference=OrderPreference.ISSUE_PRIORITY
+        )
         # issue-1 has priority 1, issue-2 has priority 2
         issue1_idx = ready.index("issue-1")
         issue2_idx = ready.index("issue-2")

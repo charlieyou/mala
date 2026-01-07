@@ -198,7 +198,9 @@ def get_required_evidence_kinds(spec: ValidationSpec) -> set[CommandKind]:
         Set of CommandKind values that must have evidence.
     """
     return {
-        cmd.kind for cmd in spec.commands if cmd.kind not in EVIDENCE_CHECK_IGNORED_KINDS
+        cmd.kind
+        for cmd in spec.commands
+        if cmd.kind not in EVIDENCE_CHECK_IGNORED_KINDS
     }
 
 

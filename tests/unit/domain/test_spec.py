@@ -313,9 +313,7 @@ class TestBuildValidationSpec:
         assert any(cmd.name == "test" for cmd in issue_spec.commands)
         assert not any(cmd.name == "test" for cmd in run_spec.commands)
 
-    def test_coverage_with_global_null_test_raises_error(
-        self, tmp_path: Path
-    ) -> None:
+    def test_coverage_with_global_null_test_raises_error(self, tmp_path: Path) -> None:
         """Coverage enabled + global test=null should raise ConfigError.
 
         If commands.test is set but global_validation_commands.test is explicitly null,
@@ -442,7 +440,9 @@ commands:
 
         assert spec.e2e.enabled is True
 
-    def test_global_validation_commands_e2e_null_disables_e2e(self, tmp_path: Path) -> None:
+    def test_global_validation_commands_e2e_null_disables_e2e(
+        self, tmp_path: Path
+    ) -> None:
         """global_validation_commands.e2e: null disables E2E even if base e2e is defined."""
         # Create config with e2e command but global_validation_commands.e2e: null
         config_content = """
@@ -488,9 +488,7 @@ coverage:
         assert per_session_spec.coverage.enabled is False
 
         # GLOBAL scope should have coverage ENABLED
-        global_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.GLOBAL
-        )
+        global_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
         assert global_spec.coverage.enabled is True
 
     def test_no_global_test_enables_coverage_for_both_scopes(
@@ -517,9 +515,7 @@ coverage:
         )
         assert per_session_spec.coverage.enabled is True
 
-        global_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.GLOBAL
-        )
+        global_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
         assert global_spec.coverage.enabled is True
 
     def test_global_test_null_preserves_coverage_for_per_session(
@@ -551,9 +547,7 @@ coverage:
         )
         assert per_session_spec.coverage.enabled is True
 
-    def test_global_only_test_with_coverage_no_base_test(
-        self, tmp_path: Path
-    ) -> None:
+    def test_global_only_test_with_coverage_no_base_test(self, tmp_path: Path) -> None:
         """Coverage with global_validation_commands.test only (no base test) should work.
 
         When a config has only global_validation_commands.test (no base commands.test)
@@ -584,9 +578,7 @@ coverage:
         assert not any(cmd.name == "test" for cmd in per_session_spec.commands)
 
         # GLOBAL scope should have coverage enabled
-        global_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.GLOBAL
-        )
+        global_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
         assert global_spec.coverage.enabled is True
         # Global should have test command
         assert any(cmd.name == "test" for cmd in global_spec.commands)
@@ -725,9 +717,7 @@ coverage:
         per_session_spec = build_validation_spec(
             tmp_path, scope=ValidationScope.PER_SESSION
         )
-        global_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.GLOBAL
-        )
+        global_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
 
         # Per-session should NOT check coverage (global generates it)
         assert per_session_spec.coverage.enabled is False
@@ -762,9 +752,7 @@ coverage:
         per_session_spec = build_validation_spec(
             tmp_path, scope=ValidationScope.PER_SESSION
         )
-        global_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.GLOBAL
-        )
+        global_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
 
         # Both scopes should have coverage enabled
         assert per_session_spec.coverage.enabled is True
@@ -1146,16 +1134,12 @@ global_validation_commands:
         assert "integration" not in per_session_names
 
         # GLOBAL scope: merged customs (repo + global additive)
-        global_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.GLOBAL
-        )
+        global_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
         global_names = [cmd.name for cmd in global_spec.commands]
         assert "security" in global_names
         assert "integration" in global_names
 
-    def test_global_replace_customs_clears_repo_customs(
-        self, tmp_path: Path
-    ) -> None:
+    def test_global_replace_customs_clears_repo_customs(self, tmp_path: Path) -> None:
         """YAML with unprefixed custom in global_validation_commands → repo customs cleared.
 
         Tests REPLACE mode with actual custom command at global.
@@ -1179,9 +1163,7 @@ global_validation_commands:
         assert "security" in per_session_names
 
         # GLOBAL scope: REPLACE mode - only global customs
-        global_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.GLOBAL
-        )
+        global_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
         global_names = [cmd.name for cmd in global_spec.commands]
         assert "security" not in global_names  # Repo custom cleared
         assert "integration" in global_names  # Global custom present
