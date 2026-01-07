@@ -144,11 +144,34 @@ def _derive_config(
     )
 
 
-def _get_reviewer_config(repo_path: Path) -> _ReviewerConfig:
-    """Get reviewer configuration from ValidationConfig.
+def _extract_reviewer_config(validation_config: object) -> _ReviewerConfig:
+    """Extract reviewer configuration from a ValidationConfig.
 
-    Loads mala.yaml once to get all reviewer-related settings.
+    Args:
+        validation_config: A ValidationConfig instance.
+
+    Returns:
+        _ReviewerConfig with reviewer settings.
+    """
+    return _ReviewerConfig(
+        reviewer_type=getattr(validation_config, "reviewer_type", "agent_sdk"),
+        agent_sdk_review_timeout=getattr(
+            validation_config, "agent_sdk_review_timeout", 600
+        ),
+        agent_sdk_reviewer_model=getattr(
+            validation_config, "agent_sdk_reviewer_model", "sonnet"
+        ),
+    )
+
+
+def _get_reviewer_config(repo_path: Path) -> _ReviewerConfig:
+    """Get reviewer configuration from mala.yaml.
+
+    Convenience wrapper that loads mala.yaml and extracts reviewer settings.
     Returns defaults if config is missing or loading fails.
+
+    Note: If you already have a loaded ValidationConfig, use
+    _extract_reviewer_config() directly to avoid redundant I/O.
 
     Args:
         repo_path: Path to the repository.
@@ -156,22 +179,15 @@ def _get_reviewer_config(repo_path: Path) -> _ReviewerConfig:
     Returns:
         _ReviewerConfig with reviewer settings.
     """
+    from src.domain.validation.config import ConfigError
     from src.domain.validation.config_loader import ConfigMissingError, load_config
 
     try:
         validation_config = load_config(repo_path)
-        return _ReviewerConfig(
-            reviewer_type=getattr(validation_config, "reviewer_type", "agent_sdk"),
-            agent_sdk_review_timeout=getattr(
-                validation_config, "agent_sdk_review_timeout", 600
-            ),
-            agent_sdk_reviewer_model=getattr(
-                validation_config, "agent_sdk_reviewer_model", "sonnet"
-            ),
-        )
+        return _extract_reviewer_config(validation_config)
     except ConfigMissingError:
         return _ReviewerConfig()
-    except Exception as e:
+    except ConfigError as e:
         logger.warning("Failed to load reviewer config from mala.yaml: %s", e)
         return _ReviewerConfig()
 
@@ -478,19 +494,27 @@ def create_orchestrator(
         )
         orchestrator = create_orchestrator(config, deps=deps)
     """
+    from src.domain.validation.config import ConfigError
     from src.domain.validation.config_loader import ConfigMissingError, load_config
     from src.infra.io.config import MalaConfig
 
     from .orchestrator import MalaOrchestrator
 
-    # Load ValidationConfig from mala.yaml for settings that need to flow to MalaConfig
+    # Load ValidationConfig once from mala.yaml for all settings that need to flow
+    # to MalaConfig and reviewer configuration (avoids redundant I/O and parsing)
     yaml_claude_settings_sources: tuple[str, ...] | None = None
+    reviewer_config = _ReviewerConfig()  # Default
     try:
         validation_config = load_config(config.repo_path)
         yaml_claude_settings_sources = validation_config.claude_settings_sources
+        reviewer_config = _extract_reviewer_config(validation_config)
     except ConfigMissingError:
         # mala.yaml not present - use defaults
         pass
+    except ConfigError as e:
+        # Invalid config (syntax error, schema violation, etc.) - log and use defaults
+        # This preserves the resilient behavior that previously existed in _get_reviewer_config
+        logger.warning("Failed to load mala.yaml config: %s", e)
 
     # Load MalaConfig if not provided
     if mala_config is None:
@@ -501,9 +525,6 @@ def create_orchestrator(
 
     # Derive computed configuration
     derived = _derive_config(config, mala_config)
-
-    # Load reviewer config once (avoids redundant mala.yaml reads)
-    reviewer_config = _get_reviewer_config(config.repo_path)
 
     # Check review availability and update disabled_validations
     review_disabled_reason = _check_review_availability(
