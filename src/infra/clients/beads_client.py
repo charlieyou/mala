@@ -147,15 +147,8 @@ class BeadsClient:
         if not issues:
             return issues
 
-        # Get parent epics for all issues
-        issue_ids = [str(i["id"]) for i in issues]
-        parent_epics = await self.get_parent_epics_async(issue_ids)
-
-        # Enrich issues with parent_epic field
-        enriched = [
-            {**issue, "parent_epic": parent_epics.get(str(issue["id"]))}
-            for issue in issues
-        ]
+        # Enrich issues with parent_epic and epic_priority
+        enriched = await self.enrich_with_epics_async(issues)
 
         # Delegate to IssueManager for pure sorting logic
         return IssueManager.sort_by_epic_groups(enriched)

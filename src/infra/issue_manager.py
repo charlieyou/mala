@@ -137,6 +137,26 @@ class IssueManager:
         return "".join(chr(255 - ord(c)) for c in timestamp)
 
     @staticmethod
+    def parse_priority(prio: object) -> int:
+        """Parse priority value to int, handling both int and "P1" string formats.
+
+        Args:
+            prio: Priority value (int, string like "1" or "P1", or None).
+
+        Returns:
+            Integer priority, defaulting to 0 for unparseable values.
+        """
+        if prio is None:
+            return 0
+        try:
+            prio_str = str(prio)
+            if prio_str.upper().startswith("P"):
+                prio_str = prio_str[1:]
+            return int(prio_str)
+        except (ValueError, IndexError):
+            return 0
+
+    @staticmethod
     def sort_by_epic_groups(
         issues: list[dict[str, object]],
     ) -> list[dict[str, object]]:
@@ -172,10 +192,7 @@ class IssueManager:
 
         def get_priority(issue: dict[str, object]) -> int:
             """Extract priority as int, defaulting to 0."""
-            prio = issue.get("priority")
-            if prio is None:
-                return 0
-            return int(str(prio))
+            return IssueManager.parse_priority(issue.get("priority"))
 
         def get_updated_at(issue: dict[str, object]) -> str:
             """Extract updated_at as string, defaulting to empty."""
@@ -192,19 +209,19 @@ class IssueManager:
             )
 
         def get_epic_priority(issue: dict[str, object]) -> int | None:
-            """Extract epic_priority as int if available, or None.
-
-            Handles both int and "P1" string formats.
-            """
+            """Extract epic_priority as int if available, or None."""
             prio = issue.get("epic_priority")
             if prio is None:
                 return None
+            parsed = IssueManager.parse_priority(prio)
+            # parse_priority returns 0 for invalid, but we want None for epic_priority
+            # to fall back to min_priority. Only return None if original was invalid.
             try:
                 prio_str = str(prio)
-                # Handle "P1" format by stripping leading P
                 if prio_str.upper().startswith("P"):
                     prio_str = prio_str[1:]
-                return int(prio_str)
+                int(prio_str)  # Validate it's parseable
+                return parsed
             except (ValueError, IndexError):
                 return None
 
@@ -267,7 +284,9 @@ class IssueManager:
 
         # order_preference is authoritative
         if order_preference == OrderPreference.ISSUE_PRIORITY:
-            result = sorted(issues, key=lambda i: i.get("priority") or 0)
+            result = sorted(
+                issues, key=lambda i: IssueManager.parse_priority(i.get("priority"))
+            )
         elif order_preference == OrderPreference.FOCUS:
             # FOCUS: single-epic mode - return only issues from the top epic group
             sorted_all = IssueManager.sort_by_epic_groups(list(issues))
