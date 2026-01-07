@@ -33,8 +33,29 @@ from src.domain.validation.config import (
 
 if TYPE_CHECKING:
     from src.domain.validation.config import (
+        CustomCommandConfig,
         YamlCoverageConfig,
     )
+
+
+def _validate_no_partial_commands(commands: CommandsConfig) -> None:
+    """Validate that no commands have empty command strings.
+
+    Partial configs (command="") are only valid during preset merge.
+    When there's no preset, all commands must have a command string.
+
+    Raises:
+        ConfigError: If any command has an empty command string.
+    """
+    command_fields = ["setup", "test", "lint", "format", "typecheck", "e2e"]
+    for field_name in command_fields:
+        cmd = getattr(commands, field_name)
+        if cmd is not None and not cmd.command:
+            raise ConfigError(
+                f"Command '{field_name}' in global_validation_commands has no "
+                "'command' field. Partial overrides (e.g., timeout-only) require "
+                "a preset to inherit the command string from."
+            )
 
 
 def _is_field_explicitly_set(
@@ -110,8 +131,9 @@ def merge_configs(
         >>> result.commands.lint.command  # inherited
         'ruff check'
     """
-    # If no preset, return user config as-is
+    # If no preset, return user config as-is but validate no partial configs
     if preset is None:
+        _validate_no_partial_commands(user.global_validation_commands)
         return user
 
     # Merge commands - check if user explicitly set commands
@@ -313,11 +335,22 @@ def _merge_commands(
     # Choose merge function based on deep_merge_fields flag
     merge_fn = _merge_command_field_deep if deep_merge_fields else _merge_command_field
 
-    # Merge custom_commands: for deep_merge_fields, merge preset + user dicts
-    # so preset custom commands are preserved unless overridden by user
-    if deep_merge_fields:
+    # Determine custom_override_mode: user overrides preset only if user set a
+    # non-default mode (CLEAR, REPLACE, ADDITIVE) or has custom_commands
+    if user.custom_override_mode != CustomOverrideMode.INHERIT or user.custom_commands:
+        merged_custom_override_mode = user.custom_override_mode
+    else:
+        merged_custom_override_mode = preset.custom_override_mode
+
+    # Merge custom_commands based on mode and deep_merge_fields flag
+    if merged_custom_override_mode == CustomOverrideMode.CLEAR:
+        # _clear_customs: true - clear all custom commands (both preset and user)
+        merged_custom_commands: dict[str, CustomCommandConfig] = {}
+    elif deep_merge_fields:
+        # For global_validation_commands: merge preset + user (user overrides by name)
         merged_custom_commands = {**preset.custom_commands, **user.custom_commands}
     else:
+        # For regular commands: user replaces entirely
         merged_custom_commands = user.custom_commands
 
     return CommandsConfig(
@@ -330,7 +363,7 @@ def _merge_commands(
         ),
         e2e=merge_fn(preset.e2e, user.e2e, "e2e", user._fields_set),
         custom_commands=merged_custom_commands,
-        custom_override_mode=user.custom_override_mode,  # Preserve user's mode
+        custom_override_mode=merged_custom_override_mode,
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 
@@ -418,18 +451,27 @@ def _merge_command_field_deep(
     # Determine which fields user explicitly set within CommandConfig
     user_cmd_fields_set = user_cmd._fields_set
 
+    # For programmatic configs (_fields_set is empty), treat non-default values
+    # as explicitly set to preserve caller's intent
+    is_programmatic = not user_cmd_fields_set
+
     # Merge 'command' field
-    if "command" in user_cmd_fields_set:
-        # User explicitly set command - use it (even if empty for partial, but that
-        # shouldn't happen since we check requires_command in parsing)
+    # For YAML: check _fields_set; for programmatic: non-empty command is explicit
+    command_is_explicit = "command" in user_cmd_fields_set or (
+        is_programmatic and user_cmd.command
+    )
+    if command_is_explicit:
         merged_command = user_cmd.command
     else:
         # User didn't set command - inherit from preset
         merged_command = preset_cmd.command
 
     # Merge 'timeout' field
-    if "timeout" in user_cmd_fields_set:
-        # User explicitly set timeout (even if to None) - use it
+    # For YAML: check _fields_set; for programmatic: non-None timeout is explicit
+    timeout_is_explicit = "timeout" in user_cmd_fields_set or (
+        is_programmatic and user_cmd.timeout is not None
+    )
+    if timeout_is_explicit:
         merged_timeout = user_cmd.timeout
     else:
         # User didn't set timeout - inherit from preset

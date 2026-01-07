@@ -1609,6 +1609,75 @@ class TestGlobalValidationCommandsFieldLevelMerge:
             == "mkdocs build"
         )
 
+    def test_partial_config_without_preset_raises_error(self) -> None:
+        """Partial config (timeout-only) without preset raises ConfigError."""
+        from src.domain.validation.config_merger import merge_configs
+
+        # User has partial config but no preset to inherit from
+        user = ValidationConfig.from_dict(
+            {
+                "global_validation_commands": {
+                    "test": {"timeout": 120},  # No command - partial config
+                }
+            }
+        )
+        with pytest.raises(
+            ConfigError,
+            match=r"Command 'test' in global_validation_commands has no 'command' field",
+        ):
+            merge_configs(None, user)
+
+    def test_programmatic_config_overrides_preset(self) -> None:
+        """Programmatic (dataclass) configs override preset values."""
+        from src.domain.validation.config_merger import merge_configs
+
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                test=CommandConfig(command="pytest", timeout=300),
+            ),
+        )
+        # Programmatic config - no _fields_set tracking
+        user = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                test=CommandConfig(command="pytest -v"),  # Override command
+            ),
+        )
+        result = merge_configs(preset, user)
+
+        # Programmatic command value should override preset
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest -v"
+        # Timeout inherited from preset since user's is None
+        assert result.global_validation_commands.test.timeout == 300
+
+    def test_clear_customs_clears_preset_custom_commands(self) -> None:
+        """_clear_customs: true clears all custom commands including preset's."""
+        from src.domain.validation.config_merger import merge_configs
+
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+                custom_commands={
+                    "security": CustomCommandConfig(command="bandit -r src/"),
+                },
+            ),
+        )
+        # User sets _clear_customs: true
+        user = ValidationConfig.from_dict(
+            {
+                "global_validation_commands": {
+                    "_clear_customs": True,
+                }
+            }
+        )
+        result = merge_configs(preset, user)
+
+        # Built-in command inherited
+        assert result.global_validation_commands.test is not None
+        assert result.global_validation_commands.test.command == "pytest"
+        # Custom commands cleared
+        assert len(result.global_validation_commands.custom_commands) == 0
+
 
 class TestValidationTriggersConfigParsing:
     """Tests for parsing validation_triggers from YAML via config_loader."""
