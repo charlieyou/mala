@@ -176,9 +176,12 @@ def _check_review_availability(
     if "review" in disabled_validations:
         return None  # Explicitly disabled, no warning needed
 
-    # Agent SDK reviewer has no external dependencies - always available
+    # Agent SDK reviewer is not yet implemented (T004 pending)
+    # Treat as unavailable until __call__ is implemented
     if reviewer_type == "agent_sdk":
-        return None
+        reason = "agent_sdk reviewer not yet implemented (skeleton only, see T004)"
+        logger.info("Review disabled: reason=%s", reason)
+        return reason
 
     # Cerberus reviewer requires review-gate binary
     review_gate_path = (
