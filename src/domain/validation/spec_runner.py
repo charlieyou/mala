@@ -17,6 +17,7 @@ from .spec_executor import (
     ExecutorConfig,
     ExecutorInput,
     SpecCommandExecutor,
+    ValidationInterrupted,
 )
 from .spec_result_builder import ResultBuilderInput, SpecResultBuilder
 from .spec_workspace import (
@@ -259,6 +260,11 @@ class SpecValidationRunner:
                 failure_reasons=[e.reason],
                 artifacts=artifacts,
             )
+        except ValidationInterrupted as e:
+            self._write_completion_manifest(
+                log_dir, expected, e.steps, "Interrupted by SIGINT"
+            )
+            raise
 
         # Step 2: Build result (coverage check, E2E, result assembly)
         builder = SpecResultBuilder()

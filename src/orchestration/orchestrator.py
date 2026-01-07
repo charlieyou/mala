@@ -1067,7 +1067,7 @@ class MalaOrchestrator:
                         return True
                     validation_input = GlobalValidationInput(run_metadata=run_metadata)
                     validation_output = await self.run_coordinator.run_validation(
-                        validation_input
+                        validation_input, interrupt_event=interrupt_event
                     )
                     # Update _validation_failed so SIGINT handler can snapshot it
                     if not validation_output.passed:
@@ -1134,7 +1134,7 @@ class MalaOrchestrator:
                 try:
                     validation_input = GlobalValidationInput(run_metadata=run_metadata)
                     validation_output = await self.run_coordinator.run_validation(
-                        validation_input
+                        validation_input, interrupt_event=interrupt_event
                     )
                     run_validation_passed = validation_output.passed
                 except asyncio.CancelledError:

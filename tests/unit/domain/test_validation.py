@@ -2443,6 +2443,44 @@ class TestSpecCommandExecutor:
         assert output.failure_reason is not None
         assert "failing cmd failed" in output.failure_reason
 
+    def test_executor_raises_on_sigint(
+        self,
+        basic_config: "ExecutorConfig",
+        fake_runner: FakeCommandRunner,
+        tmp_path: Path,
+        tmp_path_with_logs: Path,
+    ) -> None:
+        """SIGINT return codes should raise ValidationInterrupted."""
+        import signal
+
+        from src.domain.validation.spec_executor import (
+            ExecutorInput,
+            SpecCommandExecutor,
+            ValidationInterrupted,
+        )
+
+        executor = SpecCommandExecutor(basic_config)
+
+        cmd = ValidationCommand(
+            name="sigint cmd",
+            command="sleep 10",
+            kind=CommandKind.TEST,
+        )
+
+        input = ExecutorInput(
+            commands=[cmd],
+            cwd=tmp_path,
+            env={},
+            log_dir=tmp_path_with_logs,
+        )
+
+        fake_runner.responses[("sleep 10",)] = make_failing_result(
+            "sleep 10", returncode=-signal.SIGINT
+        )
+
+        with pytest.raises(ValidationInterrupted):
+            executor.execute(input)
+
     def test_executor_allow_fail_continues(
         self,
         basic_config: "ExecutorConfig",

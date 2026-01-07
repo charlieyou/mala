@@ -5,6 +5,7 @@ Tests the implementation of global validation validation that runs after all iss
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -258,6 +259,94 @@ class TestGlobalValidation:
 
         # Should return False after exhausting retries
         assert result.passed is False
+
+    @pytest.mark.asyncio
+    async def test_global_validation_skips_fixer_on_sigint(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """Global validation should skip fixer when interrupted by SIGINT."""
+        import signal
+
+        from src.domain.validation.result import ValidationStepResult
+        from src.domain.validation.spec_executor import ValidationInterrupted
+
+        mock_gate_checker = MagicMock()
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            max_gate_retries=2,
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+        )
+
+        run_config = RunConfig(
+            max_agents=1,
+            timeout_minutes=None,
+            max_issues=None,
+            epic_id=None,
+            only_ids=None,
+        )
+        run_metadata = RunMetadata(tmp_path, run_config, "test")
+
+        async def mock_get_commit(path: Path) -> str:
+            return "abc123"
+
+        fixer_called = False
+
+        async def mock_fixer(
+            failure_output: str, attempt: int, spec: object = None
+        ) -> bool:
+            nonlocal fixer_called
+            fixer_called = True
+            return True
+
+        interrupted_step = ValidationStepResult(
+            name="pytest",
+            command="pytest",
+            ok=False,
+            returncode=-signal.SIGINT,
+            stdout_tail="",
+            duration_seconds=1.0,
+        )
+
+        interrupt_event = asyncio.Event()
+
+        async def interrupted_run_spec(*_args: object, **_kwargs: object) -> None:
+            interrupt_event.set()
+            raise ValidationInterrupted(interrupted_step, [interrupted_step])
+
+        with (
+            patch(
+                "src.infra.git_utils.get_git_commit_async",
+                side_effect=mock_get_commit,
+            ),
+            patch.object(RunCoordinator, "_run_fixer_agent", side_effect=mock_fixer),
+            patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
+        ):
+            mock_runner_instance = MagicMock()
+            mock_runner_instance.run_spec = AsyncMock(side_effect=interrupted_run_spec)
+            MockRunner.return_value = mock_runner_instance
+
+            input_data = GlobalValidationInput(run_metadata=run_metadata)
+            result = await coordinator.run_validation(
+                input_data, interrupt_event=interrupt_event
+            )
+
+        assert result.passed is True
+        assert fixer_called is False
+        assert run_metadata.run_validation is None
 
     @pytest.mark.asyncio
     async def test_global_validation_records_to_metadata(
@@ -814,6 +903,7 @@ class TestGlobalValidationIntegration:
 
         async def mock_run_validation(
             input_data: GlobalValidationInput,
+            **_kwargs: object,
         ) -> GlobalValidationOutput:
             nonlocal gate4_called
             gate4_called = True
@@ -910,6 +1000,7 @@ class TestGlobalValidationIntegration:
 
         async def mock_global_fails(
             input_data: GlobalValidationInput,
+            **_kwargs: object,
         ) -> GlobalValidationOutput:
             return GlobalValidationOutput(passed=False)  # global validation fails
 
@@ -956,6 +1047,7 @@ class TestGlobalValidationIntegration:
 
         async def mock_run_validation(
             input_data: GlobalValidationInput,
+            **_kwargs: object,
         ) -> GlobalValidationOutput:
             nonlocal gate4_called
             gate4_called = True

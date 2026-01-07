@@ -31,6 +31,7 @@ from src.domain.validation.spec import (
     build_validation_spec,
 )
 from src.domain.validation.spec import extract_lint_tools_from_spec
+from src.domain.validation.spec_executor import ValidationInterrupted
 from src.domain.validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:
@@ -204,7 +205,10 @@ class RunCoordinator:
     _active_fixer_ids: list[str] = field(default_factory=list, init=False)
 
     async def run_validation(
-        self, input: GlobalValidationInput
+        self,
+        input: GlobalValidationInput,
+        *,
+        interrupt_event: asyncio.Event | None = None,
     ) -> GlobalValidationOutput:
         """Run global validation validation after all issues complete.
 
@@ -218,6 +222,10 @@ class RunCoordinator:
             GlobalValidationOutput indicating pass/fail.
         """
         from src.infra.git_utils import get_git_commit_async
+
+        # Short-circuit on interrupt before doing any work
+        if interrupt_event is not None and interrupt_event.is_set():
+            return GlobalValidationOutput(passed=True)
 
         # Check if global validation is disabled
         if "global-validate" in (self.config.disable_validations or set()):
@@ -267,12 +275,18 @@ class RunCoordinator:
                 )
 
             # Run validation
+            result = None
             try:
                 result = await runner.run_spec(spec, context)
+            except ValidationInterrupted:
+                if self.event_sink is not None:
+                    self.event_sink.on_warning("Validation interrupted by SIGINT")
             except Exception as e:
                 if self.event_sink is not None:
                     self.event_sink.on_warning(f"Validation runner error: {e}")
-                result = None
+
+            if interrupt_event is not None and interrupt_event.is_set():
+                return GlobalValidationOutput(passed=True)
 
             if result and result.passed:
                 if self.event_sink is not None:
@@ -288,6 +302,10 @@ class RunCoordinator:
             if result:
                 meta_result = SpecResultBuilder.build_meta_result(result, passed=False)
                 input.run_metadata.record_run_validation(meta_result)
+
+            # Check for interrupt before spawning fixer
+            if interrupt_event is not None and interrupt_event.is_set():
+                return GlobalValidationOutput(passed=True)
 
             # Check if we have retries left
             if attempt >= self.config.max_gate_retries:

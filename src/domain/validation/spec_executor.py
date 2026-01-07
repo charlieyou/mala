@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import signal
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -83,6 +84,17 @@ class ExecutorOutput:
     steps: list[ValidationStepResult] = field(default_factory=list)
     failed: bool = False
     failure_reason: str | None = None
+
+
+class ValidationInterrupted(Exception):
+    """Raised when a validation command is interrupted by SIGINT."""
+
+    def __init__(
+        self, step: ValidationStepResult, steps: list[ValidationStepResult]
+    ) -> None:
+        self.step = step
+        self.steps = steps
+        super().__init__(f"Validation interrupted (exit {step.returncode})")
 
 
 class SpecCommandExecutor:
@@ -157,6 +169,10 @@ class SpecCommandExecutor:
             # Write step logs to files
             self._write_step_logs(step, input.log_dir)
 
+            if self._is_sigint_returncode(step.returncode):
+                self._log_failure(cmd, step)
+                raise ValidationInterrupted(step, list(output.steps))
+
             # Log result to terminal and update cache
             if step.ok:
                 self._log_success(cmd, step, lint_cache)
@@ -168,6 +184,10 @@ class SpecCommandExecutor:
                     break
 
         return output
+
+    def _is_sigint_returncode(self, returncode: int) -> bool:
+        """Return True when a command exited due to SIGINT."""
+        return returncode in (-signal.SIGINT, 128 + signal.SIGINT)
 
     def _create_lint_cache(self, cwd: Path) -> LintCache | None:
         """Create lint cache if enabled and paths available.
