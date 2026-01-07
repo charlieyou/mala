@@ -4228,8 +4228,8 @@ class TestResumeSessionId:
 class TestLocalSettingsIntegration:
     """Integration tests for SDK settings merge with .claude/settings.local.json.
 
-    Verifies the full path: config → AgentRuntimeBuilder → SDK respects
-    local settings files when configured with setting_sources=["local"].
+    Verifies the full path: config → AgentRuntimeBuilder → SDK options creation
+    with setting_sources=["local"] and validates the real ClaudeAgentOptions.
     """
 
     @pytest.fixture
@@ -4258,39 +4258,92 @@ class TestLocalSettingsIntegration:
             setting_sources=["local"],  # Explicitly configure local-only sources
         )
 
-    @pytest.mark.unit
+    @pytest.mark.integration
     def test_agent_session_runner_respects_local_settings(
         self,
         session_config_with_local_settings: AgentSessionConfig,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Integration test: SDK receives setting_sources=["local"] from config.
+        """Integration test: SDK options created with setting_sources=["local"].
 
         Verifies that when AgentSessionConfig has setting_sources=["local"] and
-        .claude/settings.local.json exists with timeout=300, the SDK client
-        factory receives setting_sources=["local"].
+        .claude/settings.local.json exists with timeout=300:
+        1. Real ClaudeAgentOptions is created with setting_sources=["local"]
+        2. The options configure the SDK to read from the local settings file
+        3. No warning about missing settings file (since file exists)
 
-        This tests the full integration path:
-        1. AgentSessionConfig with setting_sources=["local"] and settings file
-        2. AgentSessionRunner._initialize_session() creates AgentRuntimeBuilder
-        3. AgentRuntimeBuilder passes setting_sources to SDK factory
-        4. SDK factory receives setting_sources=["local"]
-        5. No warning about missing settings file (since file exists)
+        This uses a hybrid factory that creates real ClaudeAgentOptions via
+        SDKClientFactory but returns a FakeSDKClient, enabling verification
+        of the actual SDK options object while avoiding network calls.
 
-        Note: With fake SDK, we verify config passing (setting_sources=["local"])
-        rather than actual SDK behavior. The SDK's runtime behavior of reading
-        timeout=300 from settings.local.json requires real SDK (E2E tests).
+        Note: The SDK's runtime merge behavior (reading timeout=300 from the
+        settings file) happens when ClaudeSDKClient runs. This integration test
+        verifies the options are configured correctly; actual merge verification
+        requires E2E tests where the SDK executes.
         """
         import json
         import logging
 
+        from claude_agent_sdk import ClaudeAgentOptions
+
+        from src.infra.sdk_adapter import SDKClientFactory
+
+        # Hybrid factory: real SDKClientFactory for options, fake client for execution
+        real_factory = SDKClientFactory()
         fake_client = FakeSDKClient(result_message=make_result_message())
-        fake_factory = FakeSDKClientFactory(fake_client)
+        created_options: list[ClaudeAgentOptions] = []
+
+        class HybridSDKClientFactory:
+            """Factory using real SDK for options, fake client for execution."""
+
+            def create(self, options: object) -> FakeSDKClient:
+                return fake_client
+
+            def create_options(
+                self,
+                *,
+                cwd: str,
+                permission_mode: str = "bypassPermissions",
+                model: str = "opus",
+                system_prompt: dict[str, str] | None = None,
+                output_format: object | None = None,
+                setting_sources: list[str] | None = None,
+                mcp_servers: object | None = None,
+                disallowed_tools: list[str] | None = None,
+                env: dict[str, str] | None = None,
+                hooks: dict[str, list[object]] | None = None,
+                resume: str | None = None,
+            ) -> ClaudeAgentOptions:
+                opts = real_factory.create_options(
+                    cwd=cwd,
+                    permission_mode=permission_mode,
+                    model=model,
+                    system_prompt=system_prompt,
+                    output_format=output_format,
+                    setting_sources=setting_sources,
+                    mcp_servers=mcp_servers,
+                    disallowed_tools=disallowed_tools,
+                    env=env,
+                    hooks=hooks,
+                    resume=resume,
+                )
+                created_options.append(opts)  # type: ignore[arg-type]
+                return opts  # type: ignore[return-value]
+
+            def create_hook_matcher(
+                self, matcher: object | None, hooks: list[object]
+            ) -> object:
+                return real_factory.create_hook_matcher(matcher, hooks)
+
+            def with_resume(self, options: object, resume: str | None) -> object:
+                return real_factory.with_resume(options, resume)
+
+        hybrid_factory = HybridSDKClientFactory()
 
         runner = AgentSessionRunner(
             config=session_config_with_local_settings,
             callbacks=SessionCallbacks(),
-            sdk_client_factory=fake_factory,
+            sdk_client_factory=hybrid_factory,  # type: ignore[arg-type]
         )
 
         input_data = AgentSessionInput(
@@ -4314,7 +4367,7 @@ class TestLocalSettingsIntegration:
             f"Settings file should have timeout=300, got {settings_content}"
         )
 
-        # Verify AgentRuntimeBuilder logs setting sources as "local" (not "local, project")
+        # Verify AgentRuntimeBuilder logs setting sources as "local"
         assert "Claude settings sources: local" in caplog.text, (
             f"Should log 'Claude settings sources: local', got: {caplog.text}"
         )
@@ -4324,11 +4377,21 @@ class TestLocalSettingsIntegration:
             "Should NOT warn about missing settings file since we created it"
         )
 
-        # Verify factory.create_options() was called with setting_sources=["local"]
-        assert len(fake_factory.created_options) == 1, (
+        # Verify real ClaudeAgentOptions was created with setting_sources=["local"]
+        assert len(created_options) == 1, (
             "Expected one create_options call during initialization"
         )
-        options = fake_factory.created_options[0]
-        assert options.get("setting_sources") == ["local"], (
-            f"SDK factory should receive setting_sources=['local'], got {options.get('setting_sources')}"
+        options = created_options[0]
+        assert isinstance(options, ClaudeAgentOptions), (
+            f"Expected ClaudeAgentOptions, got {type(options)}"
+        )
+        assert options.setting_sources == ["local"], (
+            f"ClaudeAgentOptions.setting_sources should be ['local'], "
+            f"got {options.setting_sources}"
+        )
+
+        # Verify cwd points to our test repo with the settings file
+        assert str(options.cwd) == str(session_config_with_local_settings.repo_path), (
+            f"Options cwd should be {session_config_with_local_settings.repo_path}, "
+            f"got {options.cwd}"
         )
