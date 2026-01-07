@@ -380,6 +380,18 @@ class AgentRuntimeBuilder:
             emit_lock_event = monitor.handle_event if monitor is not None else None
             self.with_mcp(emit_lock_event=emit_lock_event)
 
+        # Log and validate setting sources BEFORE any SDK initialization
+        # (create_hook_matcher imports SDK types, so this must come first)
+        resolved_sources = self._setting_sources or ["local", "project"]
+        logger.info("Claude settings sources: %s", ", ".join(resolved_sources))
+        if "local" in resolved_sources:
+            local_settings_path = self._repo_path / ".claude/settings.local.json"
+            if not local_settings_path.exists():
+                logger.warning(
+                    "Claude settings file .claude/settings.local.json not found "
+                    "(will be skipped)"
+                )
+
         # Build hooks dict using factory
         make_matcher = self._sdk_client_factory.create_hook_matcher
         hooks_dict: dict[str, list[object]] = {
@@ -396,18 +408,6 @@ class AgentRuntimeBuilder:
             len(post_tool_hooks),
             len(stop_hooks),
         )
-
-        # Log and validate setting sources before SDK initialization
-        # Resolve to defaults if not specified (SDK defaults to ["local", "project"])
-        resolved_sources = self._setting_sources or ["local", "project"]
-        logger.info("Claude settings sources: %s", ", ".join(resolved_sources))
-        if "local" in resolved_sources:
-            local_settings_path = self._repo_path / ".claude/settings.local.json"
-            if not local_settings_path.exists():
-                logger.warning(
-                    "Claude settings file .claude/settings.local.json not found "
-                    "(will be skipped)"
-                )
 
         # Build SDK options
         options = self._sdk_client_factory.create_options(
