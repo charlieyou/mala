@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from pathlib import Path
 
 from src.domain.validation.constants import (
@@ -200,12 +200,16 @@ class MalaConfig:
     max_epic_verification_retries: int = field(default=3)
 
     # Claude settings sources (which Claude configuration files to use)
-    # Accepts None (normalized to default in __post_init__)
-    claude_settings_sources: tuple[str, ...] | None = field(
-        default=DEFAULT_CLAUDE_SETTINGS_SOURCES
+    # InitVar accepts None for init, normalized to non-None in __post_init__
+    _claude_settings_sources_init: InitVar[tuple[str, ...] | None] = (
+        DEFAULT_CLAUDE_SETTINGS_SOURCES
     )
+    # Stored field is always non-None after __post_init__
+    _claude_settings_sources: tuple[str, ...] = field(init=False)
 
-    def __post_init__(self) -> None:
+    def __post_init__(
+        self, _claude_settings_sources_init: tuple[str, ...] | None
+    ) -> None:
         """Normalize mutable fields to immutable types.
 
         Since the dataclass is frozen, we use object.__setattr__ to set
@@ -227,14 +231,23 @@ class MalaConfig:
         elif isinstance(self.cerberus_env, list):
             object.__setattr__(self, "cerberus_env", tuple(self.cerberus_env))
         # Normalize claude_settings_sources: convert list to tuple, None to default
-        if self.claude_settings_sources is None:
+        if _claude_settings_sources_init is None:
             object.__setattr__(
-                self, "claude_settings_sources", DEFAULT_CLAUDE_SETTINGS_SOURCES
+                self, "_claude_settings_sources", DEFAULT_CLAUDE_SETTINGS_SOURCES
             )
-        elif isinstance(self.claude_settings_sources, list):
+        elif isinstance(_claude_settings_sources_init, list):
             object.__setattr__(
-                self, "claude_settings_sources", tuple(self.claude_settings_sources)
+                self, "_claude_settings_sources", tuple(_claude_settings_sources_init)
             )
+        else:
+            object.__setattr__(
+                self, "_claude_settings_sources", _claude_settings_sources_init
+            )
+
+    @property
+    def claude_settings_sources(self) -> tuple[str, ...]:
+        """Claude settings sources (always non-None after construction)."""
+        return self._claude_settings_sources
 
     @classmethod
     def from_env(cls, *, validate: bool = True) -> MalaConfig:
@@ -367,7 +380,7 @@ class MalaConfig:
             llm_api_key=llm_api_key,
             llm_base_url=llm_base_url,
             max_epic_verification_retries=max_epic_verification_retries,
-            claude_settings_sources=(
+            _claude_settings_sources_init=(
                 claude_settings_sources
                 if claude_settings_sources is not None
                 else DEFAULT_CLAUDE_SETTINGS_SOURCES
