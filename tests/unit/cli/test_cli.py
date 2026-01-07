@@ -1834,6 +1834,7 @@ class TestApplyConfigOverrides:
             cerberus_env=None,
             max_epic_verification_retries=None,
             disable_review=False,
+            claude_settings_sources=None,
         )
 
         assert result.resolved is not None
@@ -1862,6 +1863,7 @@ class TestApplyConfigOverrides:
             cerberus_env=None,
             max_epic_verification_retries=None,
             disable_review=False,
+            claude_settings_sources=None,
         )
 
         assert result.resolved is not None
@@ -1888,6 +1890,7 @@ class TestApplyConfigOverrides:
             cerberus_env=None,
             max_epic_verification_retries=10,
             disable_review=False,
+            claude_settings_sources=None,
         )
 
         assert result.resolved is not None
@@ -1913,6 +1916,7 @@ class TestApplyConfigOverrides:
             cerberus_env=None,
             max_epic_verification_retries=None,
             disable_review=False,
+            claude_settings_sources=None,
         )
 
         assert result.resolved is not None
@@ -1948,6 +1952,7 @@ class TestApplyConfigOverrides:
             cerberus_env=None,
             max_epic_verification_retries=None,
             disable_review=False,
+            claude_settings_sources=None,
         )
 
         assert result.resolved is not None
@@ -1973,6 +1978,7 @@ class TestApplyConfigOverrides:
             cerberus_env="FOO=bar,BAZ=qux",
             max_epic_verification_retries=None,
             disable_review=False,
+            claude_settings_sources=None,
         )
 
         assert result.resolved is not None
@@ -1998,6 +2004,7 @@ class TestApplyConfigOverrides:
             cerberus_env=None,
             max_epic_verification_retries=None,
             disable_review=False,
+            claude_settings_sources=None,
         )
 
         assert result.is_error
@@ -2023,6 +2030,7 @@ class TestApplyConfigOverrides:
             cerberus_env=None,
             max_epic_verification_retries=None,
             disable_review=False,
+            claude_settings_sources=None,
         )
 
         assert result.is_error
@@ -2048,6 +2056,7 @@ class TestApplyConfigOverrides:
             cerberus_env="INVALID_NO_EQUALS",
             max_epic_verification_retries=None,
             disable_review=False,
+            claude_settings_sources=None,
         )
 
         assert result.is_error
