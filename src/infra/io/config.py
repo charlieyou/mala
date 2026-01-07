@@ -26,6 +26,11 @@ import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from src.domain.validation.constants import (
+    DEFAULT_CLAUDE_SETTINGS_SOURCES,
+    VALID_CLAUDE_SETTINGS_SOURCES,
+)
+
 
 def parse_cerberus_args(raw: str | None, *, source: str) -> list[str]:
     if not raw or not raw.strip():
@@ -75,6 +80,40 @@ def _safe_int(value: str | None, default: int) -> int:
         return int(value)
     except ValueError:
         return default
+
+
+def parse_claude_settings_sources(
+    raw: str | None, *, source: str
+) -> tuple[str, ...] | None:
+    """Parse comma-separated claude settings sources.
+
+    Args:
+        raw: Raw comma-separated string like "local,project,user"
+        source: Source name for error messages (e.g., "MALA_CLAUDE_SETTINGS_SOURCES")
+
+    Returns:
+        Tuple of source strings, or None if raw is empty/None.
+
+    Raises:
+        ValueError: If any source is not in VALID_CLAUDE_SETTINGS_SOURCES.
+    """
+    if not raw or not raw.strip():
+        return None
+
+    # Split by comma, strip whitespace, filter empty parts
+    sources = [s.strip() for s in raw.split(",") if s.strip()]
+    if not sources:
+        return None
+
+    # Validate each source
+    for src in sources:
+        if src not in VALID_CLAUDE_SETTINGS_SOURCES:
+            valid = ", ".join(sorted(VALID_CLAUDE_SETTINGS_SOURCES))
+            raise ValueError(
+                f"{source}: Invalid source '{src}'. Valid sources: {valid}"
+            )
+
+    return tuple(sources)
 
 
 class ConfigurationError(Exception):
@@ -158,6 +197,11 @@ class MalaConfig:
 
     # Epic verification retry configuration
     max_epic_verification_retries: int = field(default=3)
+
+    # Claude settings sources (which Claude configuration files to use)
+    claude_settings_sources: tuple[str, ...] = field(
+        default=DEFAULT_CLAUDE_SETTINGS_SOURCES
+    )
 
     def __post_init__(self) -> None:
         """Normalize mutable fields to immutable types.
@@ -288,6 +332,16 @@ class MalaConfig:
             os.environ.get("MALA_MAX_EPIC_VERIFICATION_RETRIES"), 3
         )
 
+        # Parse claude_settings_sources
+        try:
+            claude_settings_sources = parse_claude_settings_sources(
+                os.environ.get("MALA_CLAUDE_SETTINGS_SOURCES"),
+                source="MALA_CLAUDE_SETTINGS_SOURCES",
+            )
+        except ValueError as exc:
+            parse_errors.append(str(exc))
+            claude_settings_sources = None
+
         config = cls(
             runs_dir=runs_dir,
             lock_dir=lock_dir,
@@ -301,6 +355,11 @@ class MalaConfig:
             llm_api_key=llm_api_key,
             llm_base_url=llm_base_url,
             max_epic_verification_retries=max_epic_verification_retries,
+            claude_settings_sources=(
+                claude_settings_sources
+                if claude_settings_sources is not None
+                else DEFAULT_CLAUDE_SETTINGS_SOURCES
+            ),
         )
 
         if validate:

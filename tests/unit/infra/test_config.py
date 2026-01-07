@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from src.domain.validation.constants import DEFAULT_CLAUDE_SETTINGS_SOURCES
 from src.infra.io.config import (
     CLIOverrides,
     ConfigurationError,
@@ -149,6 +150,61 @@ class TestMalaConfigFromEnv:
         # Should not raise with validate=False
         config = MalaConfig.from_env(validate=False)
         assert config.runs_dir == Path("relative/path")
+
+
+class TestMalaConfigClaudeSettingsSources:
+    """Tests for claude_settings_sources field and parsing."""
+
+    def test_from_env_parses_claude_settings_sources(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() parses MALA_CLAUDE_SETTINGS_SOURCES."""
+        monkeypatch.setenv("MALA_CLAUDE_SETTINGS_SOURCES", "local,project")
+        config = MalaConfig.from_env(validate=False)
+        assert config.claude_settings_sources == ("local", "project")
+
+    def test_from_env_filters_empty_parts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() filters empty parts from comma-separated string."""
+        monkeypatch.setenv("MALA_CLAUDE_SETTINGS_SOURCES", "local,,project")
+        config = MalaConfig.from_env(validate=False)
+        assert config.claude_settings_sources == ("local", "project")
+
+    def test_from_env_strips_whitespace(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """from_env() strips whitespace from source names."""
+        monkeypatch.setenv("MALA_CLAUDE_SETTINGS_SOURCES", " local , project , user ")
+        config = MalaConfig.from_env(validate=False)
+        assert config.claude_settings_sources == ("local", "project", "user")
+
+    def test_from_env_rejects_invalid_source(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() rejects invalid source names."""
+        monkeypatch.setenv("MALA_CLAUDE_SETTINGS_SOURCES", "foo")
+        with pytest.raises(ConfigurationError) as exc_info:
+            MalaConfig.from_env(validate=False)
+        assert "MALA_CLAUDE_SETTINGS_SOURCES" in str(exc_info.value)
+        assert "Invalid source 'foo'" in str(exc_info.value)
+        assert "local" in str(exc_info.value)  # Valid sources listed
+
+    def test_from_env_default_when_not_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() uses default when env var not set."""
+        monkeypatch.delenv("MALA_CLAUDE_SETTINGS_SOURCES", raising=False)
+        config = MalaConfig.from_env(validate=False)
+        assert config.claude_settings_sources == DEFAULT_CLAUDE_SETTINGS_SOURCES
+
+    def test_constructor_accepts_override(self) -> None:
+        """MalaConfig constructor accepts claude_settings_sources parameter."""
+        config = MalaConfig(claude_settings_sources=("user",))
+        assert config.claude_settings_sources == ("user",)
+
+    def test_constructor_default_value(self) -> None:
+        """MalaConfig uses default when claude_settings_sources not provided."""
+        config = MalaConfig()
+        assert config.claude_settings_sources == DEFAULT_CLAUDE_SETTINGS_SOURCES
 
 
 class TestMalaConfigValidate:
