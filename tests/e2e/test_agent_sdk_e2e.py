@@ -1,14 +1,14 @@
 """E2E test for AgentSDKReviewer with real Claude Agent SDK.
 
 This test validates that AgentSDKReviewer works end-to-end with the real Agent SDK,
-not just mocks. It requires ANTHROPIC_API_KEY to be set and uses minimal test
-cases to keep costs low.
+not just mocks. It requires ANTHROPIC_API_KEY or Claude CLI OAuth credentials and
+uses minimal test cases to keep costs low.
 
 Key validations:
 - Real SDK client creation and session management
 - Agent can execute tools (git diff, file reading)
 - ReviewResult structure is valid (passed, issues, no parse_error)
-- Session log path is populated correctly
+- Session log contains evidence of tool usage
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ import pytest
 
 from src.infra.clients.agent_sdk_review import AgentSDKReviewer
 from src.infra.clients.review_output_parser import ReviewResult
+from src.infra.io.session_log_parser import SessionLogParser
 from src.infra.sdk_adapter import SDKClientFactory
 from tests.e2e.claude_auth import has_valid_oauth_credentials, is_claude_cli_available
 
@@ -39,6 +40,35 @@ def _skip_if_no_auth() -> None:
         pytest.skip(
             "No auth available: set ANTHROPIC_API_KEY or login via `claude` CLI"
         )
+
+
+def _session_log_contains_tool_use(log_path: Path) -> bool:
+    """Check if session log contains evidence of tool usage.
+
+    Parses the session log and looks for any tool_use blocks (Bash, Read, etc.).
+
+    Args:
+        log_path: Path to the session log file.
+
+    Returns:
+        True if at least one tool_use block is found in the log.
+    """
+    if not log_path.exists():
+        return False
+
+    parser = SessionLogParser()
+    for entry in parser.iter_jsonl_entries(log_path):
+        # Check for Bash commands (includes git diff)
+        bash_commands = parser.extract_bash_commands(entry)
+        if bash_commands:
+            return True
+
+        # Check for any tool results (indicates tools were used and completed)
+        tool_results = parser.extract_tool_results(entry)
+        if tool_results:
+            return True
+
+    return False
 
 
 @pytest.fixture
@@ -144,25 +174,21 @@ Only use FAIL if there's a serious bug. This is a simple function, so PASS is ex
     assert isinstance(result.passed, bool), "passed must be a boolean"
     assert isinstance(result.issues, list), "issues must be a list"
 
-    # If there's no parse error, the agent successfully returned valid JSON
-    if result.parse_error is None:
-        # Successful review should either pass or fail with issues
-        assert result.passed is True or len(result.issues) > 0, (
-            "If parse_error is None, review should either pass or have issues"
-        )
-    else:
-        # Parse error is acceptable for E2E (agent might format JSON incorrectly)
-        # but we should not have fatal_error
-        assert result.fatal_error is False, (
-            f"Fatal error occurred: {result.parse_error}"
-        )
+    # E2E test requires no parse errors - agent must return valid JSON
+    assert result.parse_error is None, (
+        f"Agent returned invalid JSON: {result.parse_error}"
+    )
+    assert result.fatal_error is False, "Review should not have fatal errors"
 
-    # Session log path should be populated if agent ran successfully
-    # (may be None if agent timed out or errored before completing)
-    if result.parse_error is None:
-        assert result.review_log_path is not None, (
-            "review_log_path should be populated for successful review"
-        )
+    # Session log path must be populated for successful review
+    assert result.review_log_path is not None, (
+        "review_log_path should be populated for successful review"
+    )
+
+    # Verify agent executed at least one tool (e.g., git diff)
+    assert _session_log_contains_tool_use(result.review_log_path), (
+        f"Session log at {result.review_log_path} should contain tool usage evidence"
+    )
 
 
 @pytest.mark.asyncio
