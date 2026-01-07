@@ -16,9 +16,17 @@ from src.domain.validation.config import (
     ConfigError,
     CustomCommandConfig,
     CustomOverrideMode,
+    EpicCompletionTriggerConfig,
+    EpicDepth,
+    FailureMode,
+    FireOn,
+    PeriodicTriggerConfig,
     PresetNotFoundError,
     PromptValidationCommands,
+    SessionEndTriggerConfig,
+    TriggerCommandRef,
     ValidationConfig,
+    ValidationTriggersConfig,
     YamlCoverageConfig,
 )
 
@@ -1033,3 +1041,258 @@ class TestCustomCommandConfig:
         """Non-string, non-dict value raises ConfigError."""
         with pytest.raises(ConfigError, match="must be a string or object"):
             CustomCommandConfig.from_value("my_cmd", 123)  # type: ignore[arg-type]
+
+
+class TestBaseTriggerConfig:
+    """Tests for BaseTriggerConfig dataclass."""
+
+    def test_commands_tuple_preserved(self) -> None:
+        """Tuple commands are preserved as-is."""
+        cmd_ref = TriggerCommandRef(ref="test")
+        # Use a concrete subclass since BaseTriggerConfig is abstract-ish (kw_only)
+        config = SessionEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(cmd_ref,),
+        )
+        assert config.commands == (cmd_ref,)
+        assert isinstance(config.commands, tuple)
+
+    def test_commands_list_coerced_to_tuple(self) -> None:
+        """List commands are coerced to tuple for immutability."""
+        cmd_ref = TriggerCommandRef(ref="lint")
+        # Pass a list instead of tuple - should be coerced
+        config = SessionEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=[cmd_ref],  # type: ignore[arg-type]
+        )
+        assert config.commands == (cmd_ref,)
+        assert isinstance(config.commands, tuple)
+
+    def test_empty_commands_list_coerced(self) -> None:
+        """Empty list is coerced to empty tuple."""
+        config = SessionEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=[],  # type: ignore[arg-type]
+        )
+        assert config.commands == ()
+        assert isinstance(config.commands, tuple)
+
+    def test_max_retries_default_none(self) -> None:
+        """max_retries defaults to None."""
+        config = SessionEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+        )
+        assert config.max_retries is None
+
+    def test_max_retries_can_be_set(self) -> None:
+        """max_retries can be explicitly set."""
+        config = SessionEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+            max_retries=3,
+        )
+        assert config.max_retries == 3
+
+
+class TestEpicCompletionTriggerConfig:
+    """Tests for EpicCompletionTriggerConfig dataclass."""
+
+    def test_construction_with_all_fields(self) -> None:
+        """All fields can be set on construction."""
+        cmd_ref = TriggerCommandRef(ref="test")
+        config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(cmd_ref,),
+            max_retries=2,
+            epic_depth=EpicDepth.TOP_LEVEL,
+            fire_on=FireOn.SUCCESS,
+        )
+        assert config.failure_mode == FailureMode.ABORT
+        assert config.commands == (cmd_ref,)
+        assert config.max_retries == 2
+        assert config.epic_depth == EpicDepth.TOP_LEVEL
+        assert config.fire_on == FireOn.SUCCESS
+
+    def test_epic_depth_all(self) -> None:
+        """epic_depth can be ALL."""
+        config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            epic_depth=EpicDepth.ALL,
+            fire_on=FireOn.BOTH,
+        )
+        assert config.epic_depth == EpicDepth.ALL
+
+    def test_fire_on_failure(self) -> None:
+        """fire_on can be FAILURE."""
+        config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+            epic_depth=EpicDepth.TOP_LEVEL,
+            fire_on=FireOn.FAILURE,
+        )
+        assert config.fire_on == FireOn.FAILURE
+
+    def test_commands_list_coerced_to_tuple(self) -> None:
+        """List commands are coerced to tuple via inherited __post_init__."""
+        cmd_ref = TriggerCommandRef(ref="lint")
+        config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=[cmd_ref],  # type: ignore[arg-type]
+            epic_depth=EpicDepth.ALL,
+            fire_on=FireOn.BOTH,
+        )
+        assert isinstance(config.commands, tuple)
+        assert config.commands == (cmd_ref,)
+
+
+class TestSessionEndTriggerConfig:
+    """Tests for SessionEndTriggerConfig dataclass."""
+
+    def test_construction(self) -> None:
+        """SessionEndTriggerConfig can be constructed with base fields only."""
+        cmd_ref = TriggerCommandRef(ref="format")
+        config = SessionEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(cmd_ref,),
+        )
+        assert config.failure_mode == FailureMode.CONTINUE
+        assert config.commands == (cmd_ref,)
+        assert config.max_retries is None
+
+    def test_is_frozen(self) -> None:
+        """SessionEndTriggerConfig is immutable."""
+        config = SessionEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+        )
+        with pytest.raises(AttributeError):
+            config.failure_mode = FailureMode.CONTINUE  # type: ignore[misc]
+
+
+class TestPeriodicTriggerConfig:
+    """Tests for PeriodicTriggerConfig dataclass."""
+
+    def test_construction_with_interval(self) -> None:
+        """interval field is required and set correctly."""
+        cmd_ref = TriggerCommandRef(ref="test")
+        config = PeriodicTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(cmd_ref,),
+            interval=3600,
+        )
+        assert config.interval == 3600
+        assert config.failure_mode == FailureMode.ABORT
+        assert config.commands == (cmd_ref,)
+
+    def test_commands_list_coerced_to_tuple(self) -> None:
+        """List commands are coerced to tuple via inherited __post_init__."""
+        cmd_ref = TriggerCommandRef(ref="typecheck")
+        config = PeriodicTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=[cmd_ref],  # type: ignore[arg-type]
+            interval=1800,
+        )
+        assert isinstance(config.commands, tuple)
+        assert config.commands == (cmd_ref,)
+
+
+class TestValidationTriggersConfig:
+    """Tests for ValidationTriggersConfig dataclass."""
+
+    def test_is_empty_all_none(self) -> None:
+        """is_empty returns True when all triggers are None."""
+        config = ValidationTriggersConfig()
+        assert config.is_empty() is True
+
+    def test_is_empty_with_epic_completion(self) -> None:
+        """is_empty returns False when epic_completion is set."""
+        epic_config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+            epic_depth=EpicDepth.TOP_LEVEL,
+            fire_on=FireOn.SUCCESS,
+        )
+        config = ValidationTriggersConfig(epic_completion=epic_config)
+        assert config.is_empty() is False
+
+    def test_is_empty_with_session_end(self) -> None:
+        """is_empty returns False when session_end is set."""
+        session_config = SessionEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+        )
+        config = ValidationTriggersConfig(session_end=session_config)
+        assert config.is_empty() is False
+
+    def test_is_empty_with_periodic(self) -> None:
+        """is_empty returns False when periodic is set."""
+        periodic_config = PeriodicTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+            interval=600,
+        )
+        config = ValidationTriggersConfig(periodic=periodic_config)
+        assert config.is_empty() is False
+
+    def test_is_empty_with_all_triggers(self) -> None:
+        """is_empty returns False when all triggers are set."""
+        epic_config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+            epic_depth=EpicDepth.ALL,
+            fire_on=FireOn.BOTH,
+        )
+        session_config = SessionEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+        )
+        periodic_config = PeriodicTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+            interval=300,
+        )
+        config = ValidationTriggersConfig(
+            epic_completion=epic_config,
+            session_end=session_config,
+            periodic=periodic_config,
+        )
+        assert config.is_empty() is False
+
+    def test_defaults_to_all_none(self) -> None:
+        """Default construction has all triggers as None."""
+        config = ValidationTriggersConfig()
+        assert config.epic_completion is None
+        assert config.session_end is None
+        assert config.periodic is None
+
+    def test_is_frozen(self) -> None:
+        """ValidationTriggersConfig is immutable."""
+        config = ValidationTriggersConfig()
+        with pytest.raises(AttributeError):
+            config.epic_completion = None  # type: ignore[misc]
+
+
+class TestTriggerCommandRef:
+    """Tests for TriggerCommandRef dataclass."""
+
+    def test_construction_ref_only(self) -> None:
+        """TriggerCommandRef can be created with just ref."""
+        cmd_ref = TriggerCommandRef(ref="test")
+        assert cmd_ref.ref == "test"
+        assert cmd_ref.command is None
+        assert cmd_ref.timeout is None
+
+    def test_construction_with_overrides(self) -> None:
+        """TriggerCommandRef can have command and timeout overrides."""
+        cmd_ref = TriggerCommandRef(ref="lint", command="ruff check .", timeout=120)
+        assert cmd_ref.ref == "lint"
+        assert cmd_ref.command == "ruff check ."
+        assert cmd_ref.timeout == 120
+
+    def test_is_frozen(self) -> None:
+        """TriggerCommandRef is immutable."""
+        cmd_ref = TriggerCommandRef(ref="test")
+        with pytest.raises(AttributeError):
+            cmd_ref.ref = "other"  # type: ignore[misc]

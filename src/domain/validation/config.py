@@ -220,6 +220,11 @@ class BaseTriggerConfig:
     commands: tuple[TriggerCommandRef, ...]
     max_retries: int | None = None
 
+    def __post_init__(self) -> None:
+        """Normalize commands to tuple for immutability."""
+        if isinstance(self.commands, list):
+            object.__setattr__(self, "commands", tuple(self.commands))
+
 
 @dataclass(frozen=True, kw_only=True)
 class EpicCompletionTriggerConfig(BaseTriggerConfig):
