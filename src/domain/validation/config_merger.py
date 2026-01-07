@@ -57,6 +57,15 @@ def _validate_no_partial_commands(commands: CommandsConfig) -> None:
                 "a preset to inherit the command string from."
             )
 
+    # Validate custom commands for empty command strings
+    for name, custom_cmd in commands.custom_commands.items():
+        if not custom_cmd.command:
+            raise ConfigError(
+                f"Custom command '{name}' in global_validation_commands has no "
+                "'command' field. Partial overrides (e.g., timeout-only) require "
+                "a preset to inherit the command string from."
+            )
+
 
 def _is_field_explicitly_set(
     field_name: str,

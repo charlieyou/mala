@@ -1802,6 +1802,25 @@ class TestGlobalValidationCommandsFieldLevelMerge:
         ):
             merge_configs(None, user)
 
+    def test_partial_custom_command_without_preset_raises_error(self) -> None:
+        """Partial custom command (timeout-only) without preset raises ConfigError."""
+        from src.domain.validation.config_merger import merge_configs
+
+        # User has partial custom command config but no preset to inherit from
+        # Create CustomCommandConfig directly with empty command to bypass from_value validation
+        user = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                custom_commands={
+                    "my_check": CustomCommandConfig(command="", timeout=120),
+                },
+            ),
+        )
+        with pytest.raises(
+            ConfigError,
+            match=r"Custom command 'my_check' in global_validation_commands has no 'command' field",
+        ):
+            merge_configs(None, user)
+
     def test_programmatic_config_overrides_preset(self) -> None:
         """Programmatic (dataclass) configs override preset values."""
         from src.domain.validation.config_merger import merge_configs
