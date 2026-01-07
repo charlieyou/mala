@@ -1,4 +1,20 @@
-# Implementation Plan: Agent SDK Reviewer Integration
+# ⚠️ DEPRECATED
+
+**This plan is obsolete.** It was superseded by the v2 plan which uses the Claude Agent SDK instead of the Messages API.
+
+**See instead:**
+- **Authoritative Plan**: [2026-01-07-agent-sdk-reviewer-v2-plan.md](./2026-01-07-agent-sdk-reviewer-v2-plan.md)
+- **Spec**: [2026-01-07-agent-sdk-reviewer-spec.md](./2026-01-07-agent-sdk-reviewer-spec.md)
+
+**Key differences from this plan:**
+- v2 uses `claude.Agent` from the Claude Agent SDK (not `anthropic.messages.create`)
+- v2 uses `ClaudeCodeReviewer` class name (not `AgentSDKReviewer`)
+- v2 provides read-only filesystem tools to the agent for context gathering
+- v2 has different prompt structure and JSON schema
+
+---
+
+# ~~Implementation Plan: Agent SDK Reviewer Integration~~ (DEPRECATED)
 
 ## Context & Goals
 - **Spec**: `/home/cyou/mala/plans/2026-01-07-agent-sdk-reviewer-spec.md`

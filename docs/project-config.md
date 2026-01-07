@@ -63,6 +63,10 @@ coverage:                # Optional. Omit to disable coverage
   format: string         # Required. Format: "xml" (Cobertura)
   file: string           # Required. Path to coverage report
   threshold: number      # Required. Minimum coverage percentage (0-100)
+
+reviewer_type: string             # Optional. "agent_sdk" (default) or "cerberus"
+agent_sdk_review_timeout: number  # Optional. Timeout in seconds (default: 600)
+agent_sdk_reviewer_model: string  # Optional. "sonnet" (default), "opus", or "haiku"
 ```
 
 ## Field Reference
@@ -82,6 +86,9 @@ coverage:                # Optional. Omit to disable coverage
 | `coverage.format` | string | Yes* | Format: `xml` |
 | `coverage.file` | string | Yes* | Path to coverage report |
 | `coverage.threshold` | number | Yes* | Minimum coverage % |
+| `reviewer_type` | string | No | Reviewer: `agent_sdk` (default) or `cerberus` |
+| `agent_sdk_review_timeout` | integer | No | Timeout in seconds (default: 600) |
+| `agent_sdk_reviewer_model` | string | No | Model: `sonnet` (default), `opus`, or `haiku` |
 
 *Required when `coverage` section is present.
 
@@ -350,6 +357,56 @@ commands:
 | Matches `config_files` | lint, format, typecheck |
 | Matches `setup_files` | setup, lint, format, typecheck |
 | `mala.yaml` | All commands |
+
+## Code Review Configuration
+
+Configure the code reviewer used during validation. The Agent SDK reviewer is the default; Cerberus is available as an optional alternative (requires the Cerberus plugin).
+
+```yaml
+# Use Agent SDK reviewer (default)
+reviewer_type: agent_sdk
+agent_sdk_review_timeout: 600    # Timeout in seconds (default: 600)
+agent_sdk_reviewer_model: sonnet # Model: sonnet (default), opus, or haiku
+
+# Or use Cerberus reviewer (requires plugin installation)
+reviewer_type: cerberus
+```
+
+### Reviewer Options
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `reviewer_type` | string | `agent_sdk` | Reviewer implementation: `agent_sdk` or `cerberus` |
+| `agent_sdk_review_timeout` | integer | `600` | Timeout in seconds for Agent SDK reviews (must be positive) |
+| `agent_sdk_reviewer_model` | string | `sonnet` | Model for Agent SDK reviewer: `sonnet`, `opus`, or `haiku` |
+
+### When to Use Each Reviewer
+
+- **Agent SDK** (default): Uses Claude agents for interactive code review. Preferred for most projects.
+- **Cerberus**: Uses the Cerberus CLI plugin for review. Requires separate plugin installation. Use when you need Cerberus-specific features or have existing Cerberus workflows.
+
+### Examples
+
+Use default Agent SDK with longer timeout:
+
+```yaml
+preset: python-uv
+agent_sdk_review_timeout: 900
+```
+
+Use Opus model for more thorough reviews:
+
+```yaml
+preset: python-uv
+agent_sdk_reviewer_model: opus
+```
+
+Switch to Cerberus reviewer:
+
+```yaml
+preset: python-uv
+reviewer_type: cerberus
+```
 
 ## Limitations
 
