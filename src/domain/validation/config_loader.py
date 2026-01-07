@@ -593,12 +593,17 @@ def _build_config(data: dict[str, Any]) -> ValidationConfig:
     # Build the base config
     config = ValidationConfig.from_dict(data)
 
-    # If validation_triggers were parsed, create a new config with them
-    if validation_triggers is not None:
-        # Since ValidationConfig is frozen, we need to create a new instance
+    # If validation_triggers key was present in YAML, update config and _fields_set
+    if "validation_triggers" in data:
         from dataclasses import replace
 
-        config = replace(config, validation_triggers=validation_triggers)
+        # Add validation_triggers to _fields_set so merger knows it was explicitly set
+        new_fields_set = config._fields_set | frozenset({"validation_triggers"})
+        config = replace(
+            config,
+            validation_triggers=validation_triggers,
+            _fields_set=new_fields_set,
+        )
 
     return config
 

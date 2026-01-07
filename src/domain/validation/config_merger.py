@@ -265,6 +265,19 @@ def merge_configs(
         else preset.agent_sdk_reviewer_model
     )
 
+    # validation_triggers: user overrides if explicitly set, otherwise inherit from preset
+    triggers_explicitly_set = _is_field_explicitly_set(
+        "validation_triggers",
+        user._fields_set,
+        user.validation_triggers,
+        user.validation_triggers is None,  # Default is None
+    )
+    merged_triggers = (
+        user.validation_triggers
+        if triggers_explicitly_set
+        else preset.validation_triggers
+    )
+
     return ValidationConfig(
         preset=user.preset,  # Keep user's preset reference
         commands=merged_commands,
@@ -278,7 +291,7 @@ def merge_configs(
         reviewer_type=merged_reviewer_type,
         agent_sdk_review_timeout=merged_timeout,
         agent_sdk_reviewer_model=merged_model,
-        validation_triggers=user.validation_triggers,  # User's triggers (presets don't define)
+        validation_triggers=merged_triggers,
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 
