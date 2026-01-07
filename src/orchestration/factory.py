@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 
@@ -68,6 +69,19 @@ if TYPE_CHECKING:
     from .orchestrator import MalaOrchestrator
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _ReviewerConfig:
+    """Reviewer configuration loaded from mala.yaml.
+
+    Consolidates all reviewer-related settings to avoid loading
+    ValidationConfig multiple times during orchestrator creation.
+    """
+
+    reviewer_type: str = "agent_sdk"
+    agent_sdk_review_timeout: int = 600
+    agent_sdk_reviewer_model: str = "sonnet"
 
 
 def create_issue_provider(
@@ -130,28 +144,36 @@ def _derive_config(
     )
 
 
-def _get_reviewer_type(repo_path: Path) -> str:
-    """Get reviewer_type from ValidationConfig.
+def _get_reviewer_config(repo_path: Path) -> _ReviewerConfig:
+    """Get reviewer configuration from ValidationConfig.
 
-    Loads mala.yaml to determine which reviewer to use.
-    Returns 'agent_sdk' (default) if config is missing or loading fails.
+    Loads mala.yaml once to get all reviewer-related settings.
+    Returns defaults if config is missing or loading fails.
 
     Args:
         repo_path: Path to the repository.
 
     Returns:
-        Reviewer type ('agent_sdk' or 'cerberus').
+        _ReviewerConfig with reviewer settings.
     """
     from src.domain.validation.config_loader import ConfigMissingError, load_config
 
     try:
         validation_config = load_config(repo_path)
-        return getattr(validation_config, "reviewer_type", "agent_sdk")
+        return _ReviewerConfig(
+            reviewer_type=getattr(validation_config, "reviewer_type", "agent_sdk"),
+            agent_sdk_review_timeout=getattr(
+                validation_config, "agent_sdk_review_timeout", 600
+            ),
+            agent_sdk_reviewer_model=getattr(
+                validation_config, "agent_sdk_reviewer_model", "sonnet"
+            ),
+        )
     except ConfigMissingError:
-        return "agent_sdk"
+        return _ReviewerConfig()
     except Exception as e:
-        logger.warning("Failed to load reviewer_type from mala.yaml: %s", e)
-        return "agent_sdk"
+        logger.warning("Failed to load reviewer config from mala.yaml: %s", e)
+        return _ReviewerConfig()
 
 
 def _check_review_availability(
@@ -230,10 +252,11 @@ def _create_code_reviewer(
     repo_path: Path,
     mala_config: MalaConfig,
     event_sink: MalaEventSink,
+    reviewer_config: _ReviewerConfig,
 ) -> CodeReviewer:
-    """Create the code reviewer based on ValidationConfig.reviewer_type.
+    """Create the code reviewer based on reviewer configuration.
 
-    Loads mala.yaml to determine which reviewer implementation to use.
+    Uses the pre-loaded _ReviewerConfig to avoid redundant mala.yaml reads.
     Defaults to AgentSDKReviewer when reviewer_type is 'agent_sdk' (default)
     or falls back to DefaultReviewer (Cerberus) when reviewer_type is 'cerberus'.
 
@@ -241,39 +264,17 @@ def _create_code_reviewer(
         repo_path: Path to the repository.
         mala_config: MalaConfig with Cerberus settings (for fallback).
         event_sink: Event sink for telemetry and warnings.
+        reviewer_config: Pre-loaded reviewer configuration from mala.yaml.
 
     Returns:
         CodeReviewer implementation (AgentSDKReviewer or DefaultReviewer).
     """
     from src.domain.prompts import load_prompts
-    from src.domain.validation.config_loader import ConfigMissingError, load_config
     from src.infra.clients.agent_sdk_review import AgentSDKReviewer
     from src.infra.clients.cerberus_review import DefaultReviewer
     from src.infra.sdk_adapter import SDKClientFactory
 
-    # Load ValidationConfig to get reviewer_type
-    # Use defaults if mala.yaml is missing or config loading fails
-    reviewer_type = "agent_sdk"
-    agent_sdk_review_timeout = 600
-    agent_sdk_reviewer_model = "sonnet"
-    try:
-        validation_config = load_config(repo_path)
-        # Use getattr() for backwards compatibility in case fields are missing
-        reviewer_type = getattr(validation_config, "reviewer_type", "agent_sdk")
-        agent_sdk_review_timeout = getattr(
-            validation_config, "agent_sdk_review_timeout", 600
-        )
-        agent_sdk_reviewer_model = getattr(
-            validation_config, "agent_sdk_reviewer_model", "sonnet"
-        )
-    except ConfigMissingError:
-        # No mala.yaml - use defaults (agent_sdk reviewer)
-        logger.debug("No mala.yaml found, using default reviewer_type='agent_sdk'")
-    except Exception as e:
-        # Config loading failed - use defaults and log warning
-        logger.warning("Failed to load mala.yaml for reviewer config: %s", e)
-
-    if reviewer_type == "cerberus":
+    if reviewer_config.reviewer_type == "cerberus":
         logger.info("Using DefaultReviewer (Cerberus) for code review")
         return cast(
             "CodeReviewer",
@@ -302,8 +303,8 @@ def _create_code_reviewer(
                 review_agent_prompt=prompts.review_agent_prompt,
                 sdk_client_factory=sdk_client_factory,
                 event_sink=event_sink,
-                model=agent_sdk_reviewer_model,
-                default_timeout=agent_sdk_review_timeout,
+                model=reviewer_config.agent_sdk_reviewer_model,
+                default_timeout=reviewer_config.agent_sdk_review_timeout,
             ),
         )
 
@@ -313,6 +314,7 @@ def _build_dependencies(
     mala_config: MalaConfig,
     derived: _DerivedConfig,
     deps: OrchestratorDependencies | None,
+    reviewer_config: _ReviewerConfig,
 ) -> tuple[
     IssueProvider,
     CodeReviewer,
@@ -329,6 +331,7 @@ def _build_dependencies(
         mala_config: MalaConfig with API keys.
         derived: Derived configuration values.
         deps: Optional pre-built dependencies.
+        reviewer_config: Pre-loaded reviewer configuration from mala.yaml.
 
     Returns:
         Tuple of all required dependencies.
@@ -408,7 +411,7 @@ def _build_dependencies(
             ),
         )
 
-    # Code reviewer - select based on ValidationConfig.reviewer_type
+    # Code reviewer - select based on reviewer_config.reviewer_type
     code_reviewer: CodeReviewer
     if deps is not None and deps.code_reviewer is not None:
         code_reviewer = deps.code_reviewer
@@ -417,6 +420,7 @@ def _build_dependencies(
             repo_path=repo_path,
             mala_config=mala_config,
             event_sink=event_sink,
+            reviewer_config=reviewer_config,
         )
 
     # Telemetry provider
@@ -488,19 +492,19 @@ def create_orchestrator(
     # Derive computed configuration
     derived = _derive_config(config, mala_config)
 
-    # Determine reviewer_type from ValidationConfig before checking availability
-    reviewer_type = _get_reviewer_type(config.repo_path)
+    # Load reviewer config once (avoids redundant mala.yaml reads)
+    reviewer_config = _get_reviewer_config(config.repo_path)
 
     # Check review availability and update disabled_validations
-    # Pass reviewer_type so agent_sdk reviewer doesn't require Cerberus
+    # agent_sdk reviewer is currently disabled until T004 implements it
     review_disabled_reason = _check_review_availability(
-        mala_config, derived.disabled_validations, reviewer_type
+        mala_config, derived.disabled_validations, reviewer_config.reviewer_type
     )
     if review_disabled_reason:
         derived.disabled_validations.add("review")
         derived.review_disabled_reason = review_disabled_reason
 
-    # Build dependencies
+    # Build dependencies (pass reviewer_config to avoid second config load)
     (
         issue_provider,
         code_reviewer,
@@ -509,7 +513,7 @@ def create_orchestrator(
         telemetry_provider,
         event_sink,
         epic_verifier,
-    ) = _build_dependencies(config, mala_config, derived, deps)
+    ) = _build_dependencies(config, mala_config, derived, deps, reviewer_config)
 
     # Create orchestrator using internal constructor
     logger.info(
