@@ -214,6 +214,39 @@ coverage:
 
         assert "At least one command must be defined" in str(exc_info.value)
 
+    def test_oserror_wrapped_as_config_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """OSError during file read is wrapped as ConfigError."""
+        config_file = tmp_path / "mala.yaml"
+        config_file.write_text("commands:\n  test: pytest\n")
+
+        def raise_permission_error(*args: object, **kwargs: object) -> str:
+            raise PermissionError("Permission denied")
+
+        monkeypatch.setattr(Path, "read_text", raise_permission_error)
+
+        with pytest.raises(ConfigError) as exc_info:
+            load_config(tmp_path)
+
+        assert "Failed to read" in str(exc_info.value)
+        assert "Permission denied" in str(exc_info.value)
+        assert exc_info.value.__cause__ is not None
+        assert isinstance(exc_info.value.__cause__, PermissionError)
+
+    def test_unicode_decode_error_wrapped_as_config_error(self, tmp_path: Path) -> None:
+        """UnicodeDecodeError during file read is wrapped as ConfigError."""
+        config_file = tmp_path / "mala.yaml"
+        # Write invalid UTF-8 bytes directly
+        config_file.write_bytes(b"\xff\xfe invalid utf-8")
+
+        with pytest.raises(ConfigError) as exc_info:
+            load_config(tmp_path)
+
+        assert "Failed to decode" in str(exc_info.value)
+        assert exc_info.value.__cause__ is not None
+        assert isinstance(exc_info.value.__cause__, UnicodeDecodeError)
+
 
 class TestParseYaml:
     """Tests for _parse_yaml function."""

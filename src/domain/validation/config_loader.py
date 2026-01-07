@@ -102,7 +102,12 @@ def load_config(repo_path: Path) -> ValidationConfig:
     if not config_file.exists():
         raise ConfigMissingError(repo_path)
 
-    content = config_file.read_text(encoding="utf-8")
+    try:
+        content = config_file.read_text(encoding="utf-8")
+    except OSError as e:
+        raise ConfigError(f"Failed to read {config_file}: {e}") from e
+    except UnicodeDecodeError as e:
+        raise ConfigError(f"Failed to decode {config_file}: {e}") from e
     data = _parse_yaml(content)
     _validate_schema(data)
     config = _build_config(data)
