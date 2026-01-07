@@ -2387,3 +2387,213 @@ class TestValidationTriggersConfigParsing:
             match="'command' cannot be empty in command 0 of trigger session_end",
         ):
             _parse_validation_triggers(data)
+
+
+class TestMigrationValidation:
+    """Tests for migration validation that catches deprecated config patterns."""
+
+    def test_validate_every_present_raises_error(
+        self, tmp_path: "pathlib.Path"
+    ) -> None:
+        """validate_every field raises ConfigError with deprecation message."""
+        from src.domain.validation.config_loader import load_config
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """
+preset: python-uv
+validate_every: 10
+"""
+        )
+
+        with pytest.raises(ConfigError, match=r"validate_every is deprecated"):
+            load_config(tmp_path)
+
+    def test_validate_every_error_contains_migration_url(
+        self, tmp_path: "pathlib.Path"
+    ) -> None:
+        """validate_every error message includes migration guide URL."""
+        from src.domain.validation.config_loader import load_config
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """
+preset: python-uv
+validate_every: 10
+"""
+        )
+
+        with pytest.raises(
+            ConfigError, match=r"https://docs\.mala\.ai/migration/validation-triggers"
+        ):
+            load_config(tmp_path)
+
+    def test_validate_every_error_mentions_periodic_trigger(
+        self, tmp_path: "pathlib.Path"
+    ) -> None:
+        """validate_every error suggests using validation_triggers.periodic."""
+        from src.domain.validation.config_loader import load_config
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """
+preset: python-uv
+validate_every: 10
+"""
+        )
+
+        with pytest.raises(
+            ConfigError, match=r"validation_triggers\.periodic.*interval"
+        ):
+            load_config(tmp_path)
+
+    def test_global_validation_commands_without_triggers_raises_error(
+        self, tmp_path: "pathlib.Path"
+    ) -> None:
+        """Non-empty global_validation_commands without validation_triggers raises error."""
+        from src.domain.validation.config_loader import load_config
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """
+preset: python-uv
+global_validation_commands:
+  test: "pytest -x"
+"""
+        )
+
+        with pytest.raises(
+            ConfigError, match=r"validation_triggers required when global_validation"
+        ):
+            load_config(tmp_path)
+
+    def test_global_validation_commands_error_contains_migration_url(
+        self, tmp_path: "pathlib.Path"
+    ) -> None:
+        """global_validation_commands error includes migration guide URL."""
+        from src.domain.validation.config_loader import load_config
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """
+preset: python-uv
+global_validation_commands:
+  lint: "ruff check ."
+"""
+        )
+
+        with pytest.raises(
+            ConfigError, match=r"https://docs\.mala\.ai/migration/validation-triggers"
+        ):
+            load_config(tmp_path)
+
+    def test_global_validation_commands_error_contains_example_snippet(
+        self, tmp_path: "pathlib.Path"
+    ) -> None:
+        """global_validation_commands error includes concrete example snippet."""
+        from src.domain.validation.config_loader import load_config
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """
+preset: python-uv
+global_validation_commands:
+  test: "pytest"
+"""
+        )
+
+        with pytest.raises(ConfigError, match=r"Example:") as exc_info:
+            load_config(tmp_path)
+
+        # Verify the example includes key elements
+        error_msg = str(exc_info.value)
+        assert "validation_triggers:" in error_msg
+        assert "session_end:" in error_msg
+        assert "failure_mode:" in error_msg
+        assert "commands:" in error_msg
+        assert "ref:" in error_msg
+
+    def test_empty_global_validation_commands_without_triggers_ok(
+        self, tmp_path: "pathlib.Path"
+    ) -> None:
+        """Empty global_validation_commands without validation_triggers is valid."""
+        from src.domain.validation.config_loader import load_config
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """
+preset: python-uv
+global_validation_commands: {}
+"""
+        )
+
+        # Should not raise - empty global_validation_commands is valid
+        config = load_config(tmp_path)
+        assert config.preset == "python-uv"
+        assert config.validation_triggers is None
+
+    def test_global_validation_commands_with_triggers_ok(
+        self, tmp_path: "pathlib.Path"
+    ) -> None:
+        """global_validation_commands WITH validation_triggers is valid."""
+        from src.domain.validation.config_loader import load_config
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """
+preset: python-uv
+global_validation_commands:
+  test: "pytest -x"
+validation_triggers:
+  session_end:
+    failure_mode: abort
+    commands:
+      - ref: test
+"""
+        )
+
+        # Should not raise
+        config = load_config(tmp_path)
+        assert config.global_validation_commands.test is not None
+        assert config.validation_triggers is not None
+        assert config.validation_triggers.session_end is not None
+
+    def test_empty_validation_triggers_dict_ok(self, tmp_path: "pathlib.Path") -> None:
+        """Empty validation_triggers {} is valid (explicit opt-out)."""
+        from src.domain.validation.config_loader import load_config
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """
+preset: python-uv
+global_validation_commands:
+  test: "pytest -x"
+validation_triggers: {}
+"""
+        )
+
+        # Should not raise - empty triggers is explicit opt-out
+        config = load_config(tmp_path)
+        assert config.global_validation_commands.test is not None
+        assert config.validation_triggers is not None
+        assert config.validation_triggers.is_empty()
+
+    def test_global_custom_commands_without_triggers_raises_error(
+        self, tmp_path: "pathlib.Path"
+    ) -> None:
+        """Custom commands in global_validation_commands also require triggers."""
+        from src.domain.validation.config_loader import load_config
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """
+preset: python-uv
+global_validation_commands:
+  my_check: "echo custom"
+"""
+        )
+
+        with pytest.raises(
+            ConfigError, match=r"validation_triggers required when global_validation"
+        ):
+            load_config(tmp_path)

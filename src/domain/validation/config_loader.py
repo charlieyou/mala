@@ -107,6 +107,7 @@ def load_config(repo_path: Path) -> ValidationConfig:
     _validate_schema(data)
     config = _build_config(data)
     _validate_config(config)
+    _validate_migration(config)
 
     return config
 
@@ -152,8 +153,16 @@ def _validate_schema(data: dict[str, Any]) -> None:
         data: Parsed YAML dictionary.
 
     Raises:
-        ConfigError: If unknown fields are present.
+        ConfigError: If unknown fields are present or deprecated fields are used.
     """
+    # Check for deprecated validate_every field with helpful migration message
+    if "validate_every" in data:
+        raise ConfigError(
+            "validate_every is deprecated. Use validation_triggers.periodic with "
+            "interval field. See migration guide at "
+            "https://docs.mala.ai/migration/validation-triggers"
+        )
+
     unknown_fields = set(data.keys()) - _ALLOWED_TOP_LEVEL_FIELDS
     if unknown_fields:
         # Sort for consistent error messages; convert to str to handle
@@ -610,4 +619,46 @@ def _validate_config(config: ValidationConfig) -> None:
         raise ConfigError(
             "At least one command must be defined. "
             "Specify a preset or define commands directly."
+        )
+
+
+def _validate_migration(config: ValidationConfig) -> None:
+    """Validate that deprecated config patterns are not used.
+
+    This function fails fast on deprecated config patterns that require
+    migration. It runs on the effective merged config (after preset merge).
+
+    Args:
+        config: Built ValidationConfig instance.
+
+    Raises:
+        ConfigError: If deprecated config patterns are detected.
+    """
+    # Check if global_validation_commands has any commands defined
+    gvc = config.global_validation_commands
+    has_global_commands = any(
+        [
+            gvc.setup,
+            gvc.test,
+            gvc.lint,
+            gvc.format,
+            gvc.typecheck,
+            gvc.e2e,
+            gvc.custom_commands,
+        ]
+    )
+
+    # If global_validation_commands is non-empty but validation_triggers is not set,
+    # require explicit validation_triggers configuration
+    if has_global_commands and config.validation_triggers is None:
+        raise ConfigError(
+            "validation_triggers required when global_validation_commands is defined. "
+            "See migration guide at https://docs.mala.ai/migration/validation-triggers\n\n"
+            "Example:\n"
+            "validation_triggers:\n"
+            "  session_end:\n"
+            "    failure_mode: remediate\n"
+            "    max_retries: 3\n"
+            "    commands:\n"
+            "      - ref: test"
         )
