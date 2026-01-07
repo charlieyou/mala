@@ -184,7 +184,7 @@ def _check_review_availability(
     """Check if code review is available.
 
     Returns the reason review is disabled, or None if available.
-    For agent_sdk reviewer, currently returns disabled (skeleton not implemented).
+    For agent_sdk reviewer, always available (no external dependencies).
     For cerberus reviewer, checks if review-gate binary is available.
     For unknown reviewer_type, returns disabled with warning.
 
@@ -199,15 +199,12 @@ def _check_review_availability(
     if "review" in disabled_validations:
         return None  # Explicitly disabled, no warning needed
 
-    # Agent SDK reviewer is not yet implemented (T004 pending)
-    # Treat as unavailable until __call__ is implemented
+    # Agent SDK reviewer is always available (no external dependencies)
     if reviewer_type == "agent_sdk":
-        reason = "agent_sdk reviewer not yet implemented (skeleton only, see T004)"
-        logger.info("Review disabled: reason=%s", reason)
-        return reason
+        return None
 
     # Unknown reviewer_type - disable review to prevent crashes
-    if reviewer_type != "cerberus":
+    if reviewer_type not in ("cerberus", "agent_sdk"):
         reason = f"unknown reviewer_type '{reviewer_type}', expected 'agent_sdk' or 'cerberus'"
         logger.warning("Review disabled: reason=%s", reason)
         return reason
