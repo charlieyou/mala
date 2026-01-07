@@ -92,8 +92,34 @@ class TestEmptyDiffSkipsAgentSession:
         # No SDK client should have been created
         assert len(factory.clients) == 0
 
-    async def test_empty_commit_sha_skips_agent_session(self, tmp_path: Path) -> None:
-        """Empty commit SHA list returns PASS without running agent session."""
+    async def test_empty_commit_sha_list_skips_agent_session(
+        self, tmp_path: Path
+    ) -> None:
+        """Empty commit SHA list [] returns PASS without running agent session."""
+        factory = FakeSDKClientFactory()
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        # Empty list should short-circuit without calling git diff
+        result = await reviewer(
+            "HEAD~1..HEAD",
+            commit_shas=[],  # Empty list
+        )
+
+        # Should pass without issues
+        assert result.passed is True
+        assert result.issues == []
+
+        # No SDK client should have been created
+        assert len(factory.clients) == 0
+
+    async def test_commit_sha_with_empty_diff_skips_agent_session(
+        self, tmp_path: Path
+    ) -> None:
+        """Commit SHA with empty diff returns PASS without running agent session."""
         factory = FakeSDKClientFactory()
         reviewer = AgentSDKReviewer(
             repo_path=tmp_path,
@@ -162,6 +188,9 @@ class TestSuccessfulReview:
         assert result.issues == []
         assert result.parse_error is None
         assert result.fatal_error is False
+        # review_log_path should be set from SDK session
+        assert result.review_log_path is not None
+        assert "fake-session" in str(result.review_log_path)
 
         # Verify SDK client was used
         assert len(factory.clients) == 1

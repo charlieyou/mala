@@ -89,7 +89,16 @@ class AgentSDKReviewer:
         """
         # Check for empty diff (short-circuit without running agent)
         # For commit_shas, check each commit individually
-        if commit_shas:
+        if commit_shas is not None:
+            # Empty list means no commits to review
+            if len(commit_shas) == 0:
+                return ReviewResult(
+                    passed=True,
+                    issues=[],
+                    parse_error=None,
+                    fatal_error=False,
+                    review_log_path=None,
+                )
             all_empty = True
             for sha in commit_shas:
                 if not await self._check_diff_empty(f"{sha}^..{sha}"):
@@ -272,13 +281,38 @@ class AgentSDKReviewer:
         # Create SDK client
         client = self.sdk_client_factory.create(options)
 
+        # Wrap the session in a timeout
+        return await asyncio.wait_for(
+            self._execute_agent_session(client, query, session_id),
+            timeout=timeout,
+        )
+
+    async def _execute_agent_session(
+        self,
+        client: object,
+        query: str,
+        session_id: str | None,
+    ) -> tuple[str, Path | None]:
+        """Execute the agent session and collect output.
+
+        Args:
+            client: SDK client instance.
+            query: Review query to send.
+            session_id: Optional session ID for telemetry.
+
+        Returns:
+            Tuple of (response text, session log path).
+        """
+        from pathlib import Path as PathLib  # noqa: TC003 (runtime import for log_path)
+
         response_text = ""
-        log_path: Path | None = None
+        log_path: PathLib | None = None
+        result_session_id: str | None = None
 
-        async with client:
-            await client.query(query, session_id=session_id)
+        async with client:  # type: ignore[union-attr]
+            await client.query(query, session_id=session_id)  # type: ignore[union-attr]
 
-            async for msg in client.receive_response():
+            async for msg in client.receive_response():  # type: ignore[union-attr]
                 # Extract text from assistant messages
                 if hasattr(msg, "subtype") and msg.subtype == "assistant":
                     content = getattr(msg, "content", None)
@@ -289,13 +323,41 @@ class AgentSDKReviewer:
 
                 # Extract session info from result message
                 if hasattr(msg, "subtype") and msg.subtype == "result":
-                    if hasattr(msg, "session_id") and msg.session_id:
-                        # Construct log path from session ID
-                        # SDK logs are at ~/.claude/projects/{encoded-path}/
-                        # We return None for now; the caller can compute if needed
-                        pass
+                    result_session_id = getattr(msg, "session_id", None)
+
+        # Construct log path from session ID if available
+        if result_session_id:
+            log_path = self._get_session_log_path(result_session_id)
 
         return response_text, log_path
+
+    def _get_session_log_path(self, session_id: str) -> Path | None:
+        """Get the log path for a session ID.
+
+        SDK logs are at ~/.claude/projects/{encoded-path}/{session_id}.jsonl
+
+        Args:
+            session_id: The session ID from ResultMessage.
+
+        Returns:
+            Path to the session log, or None if it can't be computed.
+        """
+        from pathlib import Path as PathLib
+        import base64
+
+        try:
+            # Encode repo path like the SDK does
+            repo_str = str(self.repo_path.resolve())
+            encoded_path = base64.urlsafe_b64encode(repo_str.encode()).decode()
+
+            # Construct log path
+            home = PathLib.home()
+            log_path = (
+                home / ".claude" / "projects" / encoded_path / f"{session_id}.jsonl"
+            )
+            return log_path
+        except Exception:
+            return None
 
     def _parse_response(self, response_text: str) -> ReviewResult:
         """Parse JSON response into ReviewResult.
@@ -418,8 +480,8 @@ class AgentSDKReviewer:
         Returns:
             Extracted JSON string.
         """
-        # Try markdown code block first
-        code_block_match = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
+        # Try markdown code block first (flexible whitespace handling)
+        code_block_match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
         if code_block_match:
             return code_block_match.group(1).strip()
 
