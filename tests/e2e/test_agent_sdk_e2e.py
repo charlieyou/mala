@@ -1,8 +1,8 @@
 """E2E test for AgentSDKReviewer with real Claude Agent SDK.
 
 This test validates that AgentSDKReviewer works end-to-end with the real Agent SDK,
-not just mocks. It requires ANTHROPIC_API_KEY and uses minimal test cases to keep
-costs low.
+not just mocks. It requires a working Claude Code authentication setup and uses
+minimal test cases to keep costs low.
 
 Key validations:
 - Real SDK client creation and session management
@@ -13,7 +13,6 @@ Key validations:
 
 from __future__ import annotations
 
-import os
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -28,17 +27,6 @@ pytestmark = [pytest.mark.e2e]
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-
-def _skip_if_no_auth() -> None:
-    """Skip test if ANTHROPIC_API_KEY is not set.
-
-    This E2E test specifically validates the API-key auth path with the real SDK.
-    We require ANTHROPIC_API_KEY explicitly rather than accepting OAuth credentials
-    to ensure we're testing the intended auth mechanism.
-    """
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        pytest.skip("ANTHROPIC_API_KEY not set")
 
 
 def _session_log_contains_tool_use(log_path: Path) -> bool:
@@ -131,8 +119,6 @@ async def test_real_agent_review_flow(test_repo: Path) -> None:
     - ReviewResult structure is valid
     - Agent executed at least one tool (via session log path presence)
     """
-    _skip_if_no_auth()
-
     # Create real SDK client factory
     sdk_factory = SDKClientFactory()
 
@@ -200,8 +186,6 @@ Only use FAIL if there's a serious bug. This is a simple function, so PASS is ex
 @pytest.mark.asyncio
 async def test_empty_diff_skips_agent(test_repo: Path) -> None:
     """Test that empty diff returns PASS without running agent."""
-    _skip_if_no_auth()
-
     sdk_factory = SDKClientFactory()
 
     reviewer = AgentSDKReviewer(

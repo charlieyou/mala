@@ -33,6 +33,58 @@ if TYPE_CHECKING:
     from src.core.protocols import MalaEventSink, SDKClientFactoryProtocol
 
 
+class StructuredOutputError(RuntimeError):
+    """Raised when the SDK reports a structured output failure."""
+
+    def __init__(self, subtype: str) -> None:
+        super().__init__(f"Structured output error: {subtype}")
+        self.subtype = subtype
+
+
+# Structured output schema for review results (matches Cerberus aggregate shape).
+_REVIEW_OUTPUT_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "consensus_verdict": {
+            "type": "string",
+            "enum": ["PASS", "FAIL", "NEEDS_WORK"],
+        },
+        "aggregated_findings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "title": {"type": "string"},
+                    "body": {"type": "string"},
+                    "priority": {"type": "integer", "enum": [0, 1, 2, 3]},
+                    "file_path": {"type": ["string", "null"]},
+                    "line_start": {"type": ["integer", "null"]},
+                    "line_end": {"type": ["integer", "null"]},
+                    "reviewer": {"type": "string"},
+                },
+                "required": [
+                    "title",
+                    "body",
+                    "priority",
+                    "file_path",
+                    "line_start",
+                    "line_end",
+                    "reviewer",
+                ],
+            },
+        },
+    },
+    "required": ["consensus_verdict", "aggregated_findings"],
+}
+
+_REVIEW_OUTPUT_FORMAT: dict[str, object] = {
+    "type": "json_schema",
+    "schema": _REVIEW_OUTPUT_SCHEMA,
+}
+
+
 @dataclass
 class AgentSDKReviewer:
     """Code reviewer using Claude Agent SDK with tool access.
@@ -156,6 +208,16 @@ class AgentSDKReviewer:
                 fatal_error=False,
                 review_log_path=None,
             )
+        except StructuredOutputError as e:
+            if self.event_sink is not None:
+                self.event_sink.on_review_warning(str(e))
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error=str(e),
+                fatal_error=False,
+                review_log_path=None,
+            )
         except Exception as e:
             error_msg = f"SDK error: {e}"
             if self.event_sink is not None:
@@ -272,6 +334,7 @@ class AgentSDKReviewer:
             cwd=str(self.repo_path),
             model=self.model,
             permission_mode="bypassPermissions",
+            output_format=_REVIEW_OUTPUT_FORMAT,
         )
 
         # Create SDK client
@@ -304,13 +367,23 @@ class AgentSDKReviewer:
         response_text = ""
         log_path: PathLib | None = None
         result_session_id: str | None = None
+        structured_output: object | None = None
+        result_subtype: str | None = None
 
         async with client:  # type: ignore[union-attr]
             await client.query(query, session_id=session_id)  # type: ignore[union-attr]
 
             async for msg in client.receive_response():  # type: ignore[union-attr]
-                # Extract text from assistant messages
-                if hasattr(msg, "subtype") and msg.subtype == "assistant":
+                msg_type = getattr(msg, "type", None)
+                msg_subtype = getattr(msg, "subtype", None)
+                msg_class = type(msg).__name__
+
+                # Extract text from assistant messages (SDK dataclass or dict-like)
+                if (
+                    msg_subtype == "assistant"
+                    or msg_type == "assistant"
+                    or msg_class == "AssistantMessage"
+                ):
                     content = getattr(msg, "content", None)
                     if content is not None and isinstance(content, list):
                         for block in content:
@@ -323,8 +396,28 @@ class AgentSDKReviewer:
                                 response_text += block.get("text", "")
 
                 # Extract session info from result message
-                if hasattr(msg, "subtype") and msg.subtype == "result":
+                if (
+                    msg_type == "result"
+                    or msg_subtype == "result"
+                    or msg_class == "ResultMessage"
+                ):
+                    result_subtype = msg_subtype
                     result_session_id = getattr(msg, "session_id", None)
+                    structured_output = getattr(msg, "structured_output", None)
+                    result_text = getattr(msg, "result", None)
+                    if structured_output is None and isinstance(result_text, dict):
+                        structured_output = result_text
+                    if isinstance(result_text, str) and not response_text.strip():
+                        response_text = result_text
+
+        if result_subtype == "error_max_structured_output_retries":
+            raise StructuredOutputError(result_subtype)
+
+        if structured_output is not None:
+            if isinstance(structured_output, str):
+                response_text = structured_output
+            else:
+                response_text = json.dumps(structured_output)
 
         # Construct log path from session ID if available using canonical helper
         if result_session_id:

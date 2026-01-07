@@ -60,6 +60,7 @@ class SDKClientFactory:
         permission_mode: str = "bypassPermissions",
         model: str = "opus",
         system_prompt: dict[str, str] | None = None,
+        output_format: object | None = None,
         setting_sources: list[str] | None = None,
         mcp_servers: object | None = None,
         disallowed_tools: list[str] | None = None,
@@ -77,6 +78,7 @@ class SDKClientFactory:
             permission_mode: Permission mode (default "bypassPermissions").
             model: Model to use (default "opus").
             system_prompt: System prompt configuration.
+            output_format: Structured output format configuration.
             setting_sources: List of setting sources.
             mcp_servers: List of MCP server configurations.
             disallowed_tools: List of tools to disallow.
@@ -92,15 +94,18 @@ class SDKClientFactory:
         """
         from claude_agent_sdk import ClaudeAgentOptions
 
+        effective_env = env or {}
+
         return ClaudeAgentOptions(
             cwd=cwd,
             permission_mode=permission_mode,  # type: ignore[arg-type]
             model=model,
             system_prompt=system_prompt or {"type": "preset", "preset": "claude_code"},  # type: ignore[arg-type]
+            output_format=output_format,  # type: ignore[arg-type]
             setting_sources=setting_sources or ["project", "user"],  # type: ignore[arg-type]
             mcp_servers=mcp_servers,  # type: ignore[arg-type]
             disallowed_tools=disallowed_tools,  # type: ignore[arg-type]
-            env=env,  # type: ignore[arg-type]
+            env=effective_env,  # type: ignore[arg-type]
             hooks=hooks,  # type: ignore[arg-type]
             resume=resume,  # type: ignore[arg-type]
         )

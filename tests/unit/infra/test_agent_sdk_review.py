@@ -768,6 +768,48 @@ class TestTelemetryWarning:
         assert len(warnings) >= 1
 
 
+class TestStructuredOutput:
+    """Test structured output handling."""
+
+    async def test_structured_output_parsed(self, tmp_path: Path) -> None:
+        """Structured output in result message is parsed and used."""
+        factory = FakeSDKClientFactory()
+        structured = {"consensus_verdict": "PASS", "aggregated_findings": []}
+        result_message = MagicMock(
+            type="result",
+            subtype="success",
+            session_id="fake-session",
+            structured_output=structured,
+        )
+        factory.configure_next_client(result_message=result_message)
+
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+
+        assert result.passed is True
+        assert result.parse_error is None
+
+        # Structured output format should be passed into SDK options
+        assert factory.created_options, "Expected SDK options to be created"
+        output_format = factory.created_options[0].get("output_format")
+        assert isinstance(output_format, dict)
+        assert output_format.get("type") == "json_schema"
+
+
 class TestOverridesDisabledSetting:
     """Test overrides_disabled_setting behavior."""
 

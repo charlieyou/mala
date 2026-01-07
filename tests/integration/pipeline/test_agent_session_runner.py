@@ -190,6 +190,7 @@ class SequencedSDKClientFactory:
         permission_mode: str = "bypassPermissions",
         model: str = "opus",
         system_prompt: dict[str, str] | None = None,
+        output_format: object | None = None,
         setting_sources: list[str] | None = None,
         mcp_servers: object | None = None,
         disallowed_tools: list[str] | None = None,
@@ -202,6 +203,7 @@ class SequencedSDKClientFactory:
             "permission_mode": permission_mode,
             "model": model,
             "system_prompt": system_prompt,
+            "output_format": output_format,
             "setting_sources": setting_sources,
             "mcp_servers": mcp_servers,
             "disallowed_tools": disallowed_tools,
@@ -2243,13 +2245,20 @@ class TestIdleTimeoutRetry:
                 permission_mode: str = "bypassPermissions",
                 model: str = "opus",
                 system_prompt: dict[str, str] | None = None,
+                output_format: object | None = None,
                 setting_sources: list[str] | None = None,
                 mcp_servers: object | None = None,
                 disallowed_tools: list[str] | None = None,
                 env: dict[str, str] | None = None,
                 hooks: dict[str, list[object]] | None = None,
+                resume: str | None = None,
             ) -> object:
-                return {"cwd": cwd, "hooks": hooks}
+                return {
+                    "cwd": cwd,
+                    "hooks": hooks,
+                    "output_format": output_format,
+                    "resume": resume,
+                }
 
             def create_hook_matcher(
                 self,
