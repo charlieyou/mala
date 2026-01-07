@@ -239,26 +239,8 @@ class AgentSDKReviewer:
         if context:
             parts.append(f"\n\n## Implementation Context\n{context}")
 
-        parts.append(
-            "\n\n## Output Format\n"
-            "Return your review as a JSON object with the following structure:\n"
-            "```json\n"
-            "{\n"
-            '  "consensus_verdict": "PASS" | "FAIL" | "NEEDS_WORK",\n'
-            '  "aggregated_findings": [\n'
-            "    {\n"
-            '      "file_path": "path/to/file.py",\n'
-            '      "line_start": 10,\n'
-            '      "line_end": 15,\n'
-            '      "priority": 0 | 1 | 2 | 3,\n'
-            '      "title": "Issue title",\n'
-            '      "body": "Detailed description",\n'
-            '      "reviewer": "agent_sdk"\n'
-            "    }\n"
-            "  ]\n"
-            "}\n"
-            "```"
-        )
+        # Output Format section is already in the prompt file (review_agent.md)
+        # - Do not duplicate it here to avoid conflicting instructions
 
         return "".join(parts)
 
