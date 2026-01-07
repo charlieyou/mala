@@ -1517,3 +1517,86 @@ class TestClearCustomsPresetMerge:
         # Commands at base level should still be inherited
         assert result.commands.test is not None
         assert result.commands.test.command == "pytest"
+
+
+class TestMergeConfigsReviewerFields:
+    """Tests for merge_configs preserving reviewer configuration fields."""
+
+    def test_reviewer_fields_inherited_from_preset(self) -> None:
+        """When user doesn't set reviewer fields, they are inherited from preset."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(test=CommandConfig(command="pytest")),
+            reviewer_type="cerberus",
+            agent_sdk_review_timeout=300,
+            agent_sdk_reviewer_model="opus",
+        )
+        user = ValidationConfig(
+            commands=CommandsConfig(test=CommandConfig(command="pytest -v")),
+        )
+
+        result = merge_configs(preset, user)
+
+        assert result.reviewer_type == "cerberus"
+        assert result.agent_sdk_review_timeout == 300
+        assert result.agent_sdk_reviewer_model == "opus"
+
+    def test_reviewer_fields_user_overrides_preset(self) -> None:
+        """User's reviewer fields override preset when explicitly set."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(test=CommandConfig(command="pytest")),
+            reviewer_type="cerberus",
+            agent_sdk_review_timeout=300,
+            agent_sdk_reviewer_model="opus",
+        )
+        user = ValidationConfig.from_dict(
+            {
+                "reviewer_type": "agent_sdk",
+                "agent_sdk_review_timeout": 120,
+                "agent_sdk_reviewer_model": "haiku",
+            }
+        )
+
+        result = merge_configs(preset, user)
+
+        assert result.reviewer_type == "agent_sdk"
+        assert result.agent_sdk_review_timeout == 120
+        assert result.agent_sdk_reviewer_model == "haiku"
+
+    def test_partial_reviewer_override(self) -> None:
+        """User can override some reviewer fields while inheriting others."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(test=CommandConfig(command="pytest")),
+            reviewer_type="cerberus",
+            agent_sdk_review_timeout=300,
+            agent_sdk_reviewer_model="opus",
+        )
+        # Only override reviewer_type
+        user = ValidationConfig.from_dict(
+            {
+                "reviewer_type": "agent_sdk",
+            }
+        )
+
+        result = merge_configs(preset, user)
+
+        # reviewer_type overridden, others inherited
+        assert result.reviewer_type == "agent_sdk"
+        assert result.agent_sdk_review_timeout == 300
+        assert result.agent_sdk_reviewer_model == "opus"
+
+    def test_reviewer_fields_preserved_with_no_preset(self) -> None:
+        """When no preset, user's reviewer fields are used as-is."""
+        user = ValidationConfig.from_dict(
+            {
+                "reviewer_type": "cerberus",
+                "agent_sdk_review_timeout": 900,
+                "agent_sdk_reviewer_model": "haiku",
+            }
+        )
+
+        result = merge_configs(None, user)
+
+        assert result is user
+        assert result.reviewer_type == "cerberus"
+        assert result.agent_sdk_review_timeout == 900
+        assert result.agent_sdk_reviewer_model == "haiku"

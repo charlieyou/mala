@@ -787,6 +787,10 @@ class ValidationConfig:
                         f"agent_sdk_review_timeout must be an integer, "
                         f"got {type(timeout_value).__name__}"
                     )
+                if timeout_value <= 0:
+                    raise ConfigError(
+                        f"agent_sdk_review_timeout must be positive, got {timeout_value}"
+                    )
                 agent_sdk_review_timeout = timeout_value
 
         agent_sdk_reviewer_model: Literal["sonnet", "opus", "haiku"] = "sonnet"

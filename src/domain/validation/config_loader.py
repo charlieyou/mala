@@ -55,6 +55,9 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "setup_files",
         "custom_commands",
         "global_custom_commands",
+        "reviewer_type",
+        "agent_sdk_review_timeout",
+        "agent_sdk_reviewer_model",
     }
 )
 

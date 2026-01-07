@@ -618,6 +618,20 @@ class TestValidationConfig:
         ):
             ValidationConfig.from_dict({"agent_sdk_review_timeout": True})
 
+    def test_agent_sdk_review_timeout_zero_rejected(self) -> None:
+        """Zero agent_sdk_review_timeout is rejected."""
+        with pytest.raises(
+            ConfigError, match="agent_sdk_review_timeout must be positive"
+        ):
+            ValidationConfig.from_dict({"agent_sdk_review_timeout": 0})
+
+    def test_agent_sdk_review_timeout_negative_rejected(self) -> None:
+        """Negative agent_sdk_review_timeout is rejected."""
+        with pytest.raises(
+            ConfigError, match="agent_sdk_review_timeout must be positive"
+        ):
+            ValidationConfig.from_dict({"agent_sdk_review_timeout": -100})
+
     def test_agent_sdk_reviewer_model_defaults(self) -> None:
         """Default agent_sdk_reviewer_model is 'sonnet'."""
         config = ValidationConfig.from_dict({})

@@ -277,6 +277,9 @@ class TestValidateSchema:
             "code_patterns": ["*.py"],
             "config_files": ["pyproject.toml"],
             "setup_files": ["uv.lock"],
+            "reviewer_type": "agent_sdk",
+            "agent_sdk_review_timeout": 600,
+            "agent_sdk_reviewer_model": "sonnet",
         }
         # Should not raise
         _validate_schema(data)

@@ -193,6 +193,42 @@ def merge_configs(
         else None
     )
 
+    # Reviewer fields: user always takes precedence (presets cannot define them)
+    # Check if user explicitly set, otherwise use defaults
+    reviewer_type_explicitly_set = _is_field_explicitly_set(
+        "reviewer_type",
+        user._fields_set,
+        user.reviewer_type,
+        user.reviewer_type == "agent_sdk",  # Default
+    )
+    merged_reviewer_type = (
+        user.reviewer_type if reviewer_type_explicitly_set else preset.reviewer_type
+    )
+
+    timeout_explicitly_set = _is_field_explicitly_set(
+        "agent_sdk_review_timeout",
+        user._fields_set,
+        user.agent_sdk_review_timeout,
+        user.agent_sdk_review_timeout == 600,  # Default
+    )
+    merged_timeout = (
+        user.agent_sdk_review_timeout
+        if timeout_explicitly_set
+        else preset.agent_sdk_review_timeout
+    )
+
+    model_explicitly_set = _is_field_explicitly_set(
+        "agent_sdk_reviewer_model",
+        user._fields_set,
+        user.agent_sdk_reviewer_model,
+        user.agent_sdk_reviewer_model == "sonnet",  # Default
+    )
+    merged_model = (
+        user.agent_sdk_reviewer_model
+        if model_explicitly_set
+        else preset.agent_sdk_reviewer_model
+    )
+
     return ValidationConfig(
         preset=user.preset,  # Keep user's preset reference
         commands=merged_commands,
@@ -203,6 +239,9 @@ def merge_configs(
         setup_files=merged_setup_files,
         custom_commands=merged_custom_commands,
         global_custom_commands=merged_global_custom_commands,
+        reviewer_type=merged_reviewer_type,
+        agent_sdk_review_timeout=merged_timeout,
+        agent_sdk_reviewer_model=merged_model,
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 
