@@ -112,9 +112,7 @@ def ensure_sigint_isolated_cli_transport() -> None:
                     )
                     self._exit_error = error
                     raise error from e
-                error = CLINotFoundError(
-                    f"Claude Code not found at: {self._cli_path}"
-                )
+                error = CLINotFoundError(f"Claude Code not found at: {self._cli_path}")
                 self._exit_error = error
                 raise error from e
             except Exception as e:
@@ -129,5 +127,5 @@ def ensure_sigint_isolated_cli_transport() -> None:
             finally:
                 self._clear_sigint_pgid()
 
-    subprocess_cli.SubprocessCLITransport = MalaSubprocessCLITransport
-    subprocess_cli._MALA_SIGINT_PATCHED = True
+    subprocess_cli.SubprocessCLITransport = MalaSubprocessCLITransport  # type: ignore[invalid-assignment]
+    subprocess_cli._MALA_SIGINT_PATCHED = True  # type: ignore[unresolved-attribute]

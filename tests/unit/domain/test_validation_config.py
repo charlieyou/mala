@@ -1814,6 +1814,7 @@ class TestValidationTriggersConfigParsing:
 
         result = _parse_validation_triggers(data)
         assert result is not None
+        assert result.session_end is not None
         cmd = result.session_end.commands[0]
         assert cmd.ref == "test"
         assert cmd.command == "pytest -x"
@@ -1832,6 +1833,7 @@ class TestValidationTriggersConfigParsing:
 
         result = _parse_validation_triggers(data)
         assert result is not None
+        assert result.session_end is not None
         cmd = result.session_end.commands[0]
         assert cmd.ref == "lint"
         assert cmd.command is None
@@ -1850,6 +1852,7 @@ class TestValidationTriggersConfigParsing:
 
         result = _parse_validation_triggers(data)
         assert result is not None
+        assert result.session_end is not None
         assert len(result.session_end.commands) == 2
         assert result.session_end.commands[0].ref == "test"
         assert result.session_end.commands[1].ref == "lint"
@@ -1867,6 +1870,7 @@ class TestValidationTriggersConfigParsing:
 
         result = _parse_validation_triggers(data)
         assert result is not None
+        assert result.session_end is not None
         assert result.session_end.commands == ()
 
     def test_parse_failure_mode_missing_raises_error(self) -> None:
