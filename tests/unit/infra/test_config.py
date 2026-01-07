@@ -197,8 +197,8 @@ class TestMalaConfigClaudeSettingsSources:
         assert config.claude_settings_sources == DEFAULT_CLAUDE_SETTINGS_SOURCES
 
     def test_constructor_accepts_override(self) -> None:
-        """MalaConfig constructor accepts _claude_settings_sources_init parameter."""
-        config = MalaConfig(_claude_settings_sources_init=("user",))
+        """MalaConfig constructor accepts claude_settings_sources_init parameter."""
+        config = MalaConfig(claude_settings_sources_init=("user",))
         assert config.claude_settings_sources == ("user",)
 
     def test_constructor_default_value(self) -> None:

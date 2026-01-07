@@ -201,14 +201,14 @@ class MalaConfig:
 
     # Claude settings sources (which Claude configuration files to use)
     # InitVar accepts None for init, normalized to non-None in __post_init__
-    _claude_settings_sources_init: InitVar[tuple[str, ...] | None] = (
+    claude_settings_sources_init: InitVar[tuple[str, ...] | None] = (
         DEFAULT_CLAUDE_SETTINGS_SOURCES
     )
     # Stored field is always non-None after __post_init__
     _claude_settings_sources: tuple[str, ...] = field(init=False)
 
     def __post_init__(
-        self, _claude_settings_sources_init: tuple[str, ...] | None
+        self, claude_settings_sources_init: tuple[str, ...] | None
     ) -> None:
         """Normalize mutable fields to immutable types.
 
@@ -231,17 +231,17 @@ class MalaConfig:
         elif isinstance(self.cerberus_env, list):
             object.__setattr__(self, "cerberus_env", tuple(self.cerberus_env))
         # Normalize claude_settings_sources: convert list to tuple, None to default
-        if _claude_settings_sources_init is None:
+        if claude_settings_sources_init is None:
             object.__setattr__(
                 self, "_claude_settings_sources", DEFAULT_CLAUDE_SETTINGS_SOURCES
             )
-        elif isinstance(_claude_settings_sources_init, list):
+        elif isinstance(claude_settings_sources_init, list):
             object.__setattr__(
-                self, "_claude_settings_sources", tuple(_claude_settings_sources_init)
+                self, "_claude_settings_sources", tuple(claude_settings_sources_init)
             )
         else:
             object.__setattr__(
-                self, "_claude_settings_sources", _claude_settings_sources_init
+                self, "_claude_settings_sources", claude_settings_sources_init
             )
 
     @property
@@ -380,7 +380,7 @@ class MalaConfig:
             llm_api_key=llm_api_key,
             llm_base_url=llm_base_url,
             max_epic_verification_retries=max_epic_verification_retries,
-            _claude_settings_sources_init=(
+            claude_settings_sources_init=(
                 claude_settings_sources
                 if claude_settings_sources is not None
                 else DEFAULT_CLAUDE_SETTINGS_SOURCES
