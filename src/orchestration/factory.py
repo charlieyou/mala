@@ -27,8 +27,10 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 
@@ -48,11 +50,9 @@ __all__ = [
     "create_orchestrator",
 ]
 
-import logging
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from src.core.protocols import (
         CodeReviewer,
@@ -176,6 +176,87 @@ def _check_review_availability(
     return None
 
 
+def _create_code_reviewer(
+    repo_path: Path,
+    mala_config: MalaConfig,
+    event_sink: MalaEventSink,
+) -> CodeReviewer:
+    """Create the code reviewer based on ValidationConfig.reviewer_type.
+
+    Loads mala.yaml to determine which reviewer implementation to use.
+    Defaults to AgentSDKReviewer when reviewer_type is 'agent_sdk' (default)
+    or falls back to DefaultReviewer (Cerberus) when reviewer_type is 'cerberus'.
+
+    Args:
+        repo_path: Path to the repository.
+        mala_config: MalaConfig with Cerberus settings (for fallback).
+        event_sink: Event sink for telemetry and warnings.
+
+    Returns:
+        CodeReviewer implementation (AgentSDKReviewer or DefaultReviewer).
+    """
+    from src.domain.prompts import load_prompts
+    from src.domain.validation.config_loader import ConfigMissingError, load_config
+    from src.infra.clients.agent_sdk_review import AgentSDKReviewer
+    from src.infra.clients.cerberus_review import DefaultReviewer
+    from src.infra.sdk_adapter import SDKClientFactory
+
+    # Load ValidationConfig to get reviewer_type
+    # Use defaults if mala.yaml is missing or config loading fails
+    reviewer_type = "agent_sdk"
+    agent_sdk_review_timeout = 600
+    agent_sdk_reviewer_model = "sonnet"
+    try:
+        validation_config = load_config(repo_path)
+        # Use getattr() for backwards compatibility in case fields are missing
+        reviewer_type = getattr(validation_config, "reviewer_type", "agent_sdk")
+        agent_sdk_review_timeout = getattr(
+            validation_config, "agent_sdk_review_timeout", 600
+        )
+        agent_sdk_reviewer_model = getattr(
+            validation_config, "agent_sdk_reviewer_model", "sonnet"
+        )
+    except ConfigMissingError:
+        # No mala.yaml - use defaults (agent_sdk reviewer)
+        logger.debug("No mala.yaml found, using default reviewer_type='agent_sdk'")
+    except Exception as e:
+        # Config loading failed - use defaults and log warning
+        logger.warning("Failed to load mala.yaml for reviewer config: %s", e)
+
+    if reviewer_type == "cerberus":
+        logger.info("Using DefaultReviewer (Cerberus) for code review")
+        return cast(
+            "CodeReviewer",
+            DefaultReviewer(
+                repo_path=repo_path,
+                bin_path=mala_config.cerberus_bin_path,
+                spawn_args=mala_config.cerberus_spawn_args,
+                wait_args=mala_config.cerberus_wait_args,
+                env=dict(mala_config.cerberus_env),
+                event_sink=event_sink,
+            ),
+        )
+    else:
+        # Default: agent_sdk
+        logger.info("Using AgentSDKReviewer for code review")
+        # Load prompts to get review_agent_prompt
+        prompts_dir = Path(__file__).parent.parent / "prompts"
+        prompts = load_prompts(prompts_dir)
+        sdk_client_factory = SDKClientFactory()
+
+        return cast(
+            "CodeReviewer",
+            AgentSDKReviewer(
+                repo_path=repo_path,
+                review_agent_prompt=prompts.review_agent_prompt,
+                sdk_client_factory=sdk_client_factory,
+                event_sink=event_sink,
+                model=agent_sdk_reviewer_model,
+                default_timeout=agent_sdk_review_timeout,
+            ),
+        )
+
+
 def _build_dependencies(
     config: OrchestratorConfig,
     mala_config: MalaConfig,
@@ -204,7 +285,6 @@ def _build_dependencies(
     from src.core.models import RetryConfig
     from src.domain.evidence_check import EvidenceCheck
     from src.infra.clients.beads_client import BeadsClient
-    from src.infra.clients.cerberus_review import DefaultReviewer
     from src.infra.epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
     from src.infra.io.console_sink import ConsoleEventSink
     from src.infra.io.session_log_parser import FileSystemLogProvider
@@ -277,21 +357,15 @@ def _build_dependencies(
             ),
         )
 
-    # Code reviewer
+    # Code reviewer - select based on ValidationConfig.reviewer_type
     code_reviewer: CodeReviewer
     if deps is not None and deps.code_reviewer is not None:
         code_reviewer = deps.code_reviewer
     else:
-        code_reviewer = cast(
-            "CodeReviewer",
-            DefaultReviewer(
-                repo_path=repo_path,
-                bin_path=mala_config.cerberus_bin_path,
-                spawn_args=mala_config.cerberus_spawn_args,
-                wait_args=mala_config.cerberus_wait_args,
-                env=dict(mala_config.cerberus_env),
-                event_sink=event_sink,
-            ),
+        code_reviewer = _create_code_reviewer(
+            repo_path=repo_path,
+            mala_config=mala_config,
+            event_sink=event_sink,
         )
 
     # Telemetry provider
