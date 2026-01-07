@@ -197,8 +197,31 @@ class TestSortByEpicGroups:
         ]
         assert epic1_indices == [0, 1] or epic1_indices == [1, 2]
 
-    def test_sorts_groups_by_min_priority(self) -> None:
-        """Groups should be sorted by minimum priority in group."""
+    def test_sorts_groups_by_epic_priority(self) -> None:
+        """Groups should be sorted by epic_priority (the epic's own priority)."""
+        issues = [
+            {
+                "id": "a",
+                "priority": 1,  # Task has P1
+                "parent_epic": "epic-1",
+                "epic_priority": 2,  # But epic has P2
+                "updated_at": "2025-01-01",
+            },
+            {
+                "id": "b",
+                "priority": 3,  # Task has P3
+                "parent_epic": "epic-2",
+                "epic_priority": 1,  # But epic has P1
+                "updated_at": "2025-01-01",
+            },
+        ]
+        result = IssueManager.sort_by_epic_groups(issues)
+        # epic-2 has lower epic_priority (1), so comes first even though task has P3
+        assert result[0]["id"] == "b"
+        assert result[1]["id"] == "a"
+
+    def test_sorts_groups_by_min_priority_when_no_epic_priority(self) -> None:
+        """Groups fall back to min_priority when epic_priority is not set."""
         issues = [
             {
                 "id": "a",

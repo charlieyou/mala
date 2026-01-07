@@ -56,6 +56,8 @@ class BeadsClient:
         self._blocked_epic_cache: dict[str, bool] = {}
         # Locks for in-flight blocked epic lookups
         self._blocked_epic_locks: dict[str, asyncio.Lock] = {}
+        # Cache for epic priority lookups (epic_id -> priority)
+        self._epic_priority_cache: dict[str, int] = {}
 
     async def _run_subprocess_async(
         self,
@@ -212,15 +214,23 @@ class BeadsClient:
     async def enrich_with_epics_async(
         self, issues: list[dict[str, object]]
     ) -> list[dict[str, object]]:
-        """Add parent_epic info (I/O step).
+        """Add parent_epic and epic_priority info (I/O step).
 
         Returns a new list with enriched copies; does not mutate input.
+        Each issue gets:
+        - parent_epic: The ID of the parent epic (or None for orphans)
+        - epic_priority: The priority of the parent epic (or None for orphans)
         """
         if not issues:
             return issues
         ids = [str(i["id"]) for i in issues]
         epics = await self.get_parent_epics_async(ids)
-        return [{**i, "parent_epic": epics.get(str(i["id"]))} for i in issues]
+        result = []
+        for i in issues:
+            epic_id = epics.get(str(i["id"]))
+            epic_priority = self._epic_priority_cache.get(epic_id) if epic_id else None
+            result.append({**i, "parent_epic": epic_id, "epic_priority": epic_priority})
+        return result
 
     # ───────────────────────────────────────────────────────────────────────────
     # Legacy pipeline methods (delegate to public methods or IssueManager)
@@ -804,6 +814,10 @@ class BeadsClient:
                 for item in tree:
                     if item.get("depth", 0) > 0 and item.get("issue_type") == "epic":
                         parent_epic = item["id"]
+                        # Cache epic priority for focus mode ordering
+                        epic_priority = item.get("priority")
+                        if epic_priority is not None:
+                            self._epic_priority_cache[parent_epic] = int(epic_priority)
                         break
 
                 # Cache for this issue only

@@ -400,6 +400,34 @@ class TestEpicPriorityModeGrouping:
         result_ids = [r["id"] for r in result]
         assert result_ids == ["task-a2", "task-a1", "task-a3"]
 
+    def test_epic_priority_uses_epic_priority_field(self) -> None:
+        """Groups should sort by epic_priority (epic's own priority) when available."""
+        issues = [
+            {
+                "id": "task-a1",
+                "priority": 0,  # Task has P0 (highest)
+                "status": "open",
+                "parent_epic": "epic-a",
+                "epic_priority": 2,  # But epic has P2
+                "updated_at": "2025-01-01T10:00:00Z",
+            },
+            {
+                "id": "task-b1",
+                "priority": 3,  # Task has P3 (lowest)
+                "status": "open",
+                "parent_epic": "epic-b",
+                "epic_priority": 1,  # But epic has P1 (should win)
+                "updated_at": "2025-01-01T10:00:00Z",
+            },
+        ]
+
+        result = IssueManager.sort_issues(issues, focus=True, prioritize_wip=False)
+
+        # epic-b has lower epic_priority (1), so comes first
+        # even though task-a1 has lower task priority (0)
+        result_ids = [r["id"] for r in result]
+        assert result_ids == ["task-b1", "task-a1"]
+
 
 class TestFocusModeOrderPreference:
     """Test OrderPreference.FOCUS mode - single epic at a time.

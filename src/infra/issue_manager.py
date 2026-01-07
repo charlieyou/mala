@@ -143,15 +143,18 @@ class IssueManager:
         """Sort issues by epic groups for focus mode.
 
         Groups issues by parent_epic field, then sorts:
-        1. Groups by (min_priority, max_updated DESC)
+        1. Groups by (epic_priority, max_updated DESC)
+           - Uses epic_priority field if available (the epic's own priority)
+           - Falls back to min_priority of issues in group if epic_priority is None
         2. Within groups by (priority, updated DESC)
 
-        Orphan tasks (no parent epic) form a virtual group with the same rules.
+        Orphan tasks (no parent epic) form a virtual group using min_priority.
 
         Note: Issues must have parent_epic field populated before calling.
+        Issues should also have epic_priority field for proper epic-based ordering.
 
         Args:
-            issues: List of issue dicts with parent_epic field.
+            issues: List of issue dicts with parent_epic (and optionally epic_priority).
 
         Returns:
             Sorted list of issue dicts.
@@ -188,12 +191,25 @@ class IssueManager:
                 )
             )
 
-        # Compute group sort key: (min_priority, -max_updated)
+        def get_epic_priority(issue: dict[str, object]) -> int | None:
+            """Extract epic_priority as int if available, or None."""
+            prio = issue.get("epic_priority")
+            if prio is None:
+                return None
+            return int(str(prio))
+
+        # Compute group sort key: (epic_priority or min_priority, -max_updated)
         def group_sort_key(epic: str | None) -> tuple[int, str]:
             group_issues = groups[epic]
-            min_priority = min(get_priority(i) for i in group_issues)
+            # Use epic_priority if available (from first issue in group)
+            # Otherwise fall back to min_priority of issues in group
+            epic_prio = get_epic_priority(group_issues[0]) if epic else None
+            if epic_prio is not None:
+                effective_priority = epic_prio
+            else:
+                effective_priority = min(get_priority(i) for i in group_issues)
             max_updated = max(get_updated_at(i) for i in group_issues)
-            return (min_priority, IssueManager.negate_timestamp(max_updated))
+            return (effective_priority, IssueManager.negate_timestamp(max_updated))
 
         # Sort groups and flatten
         sorted_epics = sorted(groups.keys(), key=group_sort_key)
