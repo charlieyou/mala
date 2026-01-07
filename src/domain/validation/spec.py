@@ -261,10 +261,104 @@ def classify_change(file_path: str) -> Literal["code", "docs"]:
     return "docs"
 
 
+def _build_default_validation_spec(scope: ValidationScope) -> ValidationSpec:
+    """Build a default ValidationSpec with standard Python/uv commands.
+
+    Used when no mala.yaml configuration is found. Provides sensible defaults
+    that align with build_prompt_validation_commands() default behavior.
+
+    Args:
+        scope: The validation scope.
+
+    Returns:
+        ValidationSpec with default Python/uv validation commands.
+    """
+    # Import here to avoid circular dependency
+    from src.domain.prompts import get_default_validation_commands
+
+    defaults = get_default_validation_commands()
+
+    # Build ValidationCommands from the default PromptValidationCommands
+    commands: list[ValidationCommand] = []
+
+    # Format command
+    if defaults.format:
+        commands.append(
+            ValidationCommand(
+                name="format",
+                command=defaults.format,
+                kind=CommandKind.FORMAT,
+                timeout=DEFAULT_COMMAND_TIMEOUT,
+                detection_pattern=re.compile(
+                    _tool_name_to_pattern("ruff"), re.IGNORECASE
+                ),
+            )
+        )
+
+    # Lint command
+    if defaults.lint:
+        commands.append(
+            ValidationCommand(
+                name="lint",
+                command=defaults.lint,
+                kind=CommandKind.LINT,
+                timeout=DEFAULT_COMMAND_TIMEOUT,
+                detection_pattern=re.compile(
+                    _tool_name_to_pattern("ruff"), re.IGNORECASE
+                ),
+            )
+        )
+
+    # Typecheck command
+    if defaults.typecheck:
+        commands.append(
+            ValidationCommand(
+                name="typecheck",
+                command=defaults.typecheck,
+                kind=CommandKind.TYPECHECK,
+                timeout=DEFAULT_COMMAND_TIMEOUT,
+                detection_pattern=re.compile(
+                    _tool_name_to_pattern("ty"), re.IGNORECASE
+                ),
+            )
+        )
+
+    # Test command
+    if defaults.test:
+        commands.append(
+            ValidationCommand(
+                name="test",
+                command=defaults.test,
+                kind=CommandKind.TEST,
+                timeout=DEFAULT_COMMAND_TIMEOUT,
+                detection_pattern=re.compile(
+                    _tool_name_to_pattern("pytest"), re.IGNORECASE
+                ),
+            )
+        )
+
+    return ValidationSpec(
+        commands=commands,
+        scope=scope,
+        require_clean_git=True,
+        require_pytest_for_code_changes=True,
+        # Coverage disabled by default (requires explicit config for threshold/file)
+        coverage=CoverageConfig(enabled=False),
+        # E2E disabled by default (requires explicit config)
+        e2e=E2EConfig(enabled=False),
+        code_patterns=[],
+        config_files=[],
+        setup_files=[],
+    )
+
+
 def build_validation_spec(
     repo_path: Path,
     scope: ValidationScope | None = None,
     disable_validations: set[str] | None = None,
+    *,
+    validation_config: "ValidationConfig | None" = None,
+    config_missing: bool = False,
 ) -> ValidationSpec:
     """Build a ValidationSpec from config files.
 
@@ -282,11 +376,13 @@ def build_validation_spec(
         repo_path: Path to the repository root directory.
         scope: The validation scope. Defaults to PER_SESSION.
         disable_validations: Set of validation types to disable.
+        validation_config: Pre-loaded ValidationConfig to avoid re-reading mala.yaml.
+        config_missing: Set True to skip config loading and return an empty spec.
 
     Returns:
         A ValidationSpec configured according to the config files.
     """
-    from src.domain.validation.config import ConfigError
+    from src.domain.validation.config import ConfigError, ValidationConfig
     from src.domain.validation.config_loader import (
         ConfigMissingError,
         _validate_migration,
@@ -304,24 +400,25 @@ def build_validation_spec(
     # Determine if we should skip tests
     skip_tests = "post-validate" in disable
 
-    # Load config from repo
-    # - ConfigMissingError: gracefully return empty spec (optional config)
+    # Load config from repo (unless a pre-loaded config is provided)
+    # - ConfigMissingError: gracefully return default spec (optional config)
     # - ConfigError: fail fast (invalid syntax, unknown fields, etc.)
-    try:
-        user_config = load_config(repo_path)
-    except ConfigMissingError:
-        # No config file - return empty spec with all validations disabled
-        return ValidationSpec(
-            commands=[],
-            scope=scope,
-            require_clean_git=True,
-            require_pytest_for_code_changes=True,
-            coverage=CoverageConfig(enabled=False),
-            e2e=E2EConfig(enabled=False),
-            code_patterns=[],
-            config_files=[],
-            setup_files=[],
-        )
+    user_config: ValidationConfig | None
+    if config_missing:
+        user_config = None
+    elif validation_config is not None:
+        user_config = validation_config
+    else:
+        try:
+            user_config = load_config(repo_path)
+        except ConfigMissingError:
+            user_config = None
+
+    if user_config is None:
+        # No config file - return default spec with standard Python/uv commands
+        # This aligns with build_prompt_validation_commands() which also returns
+        # defaults when config is missing.
+        return _build_default_validation_spec(scope)
 
     # Load and merge preset if specified
     if user_config.preset is not None:

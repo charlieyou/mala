@@ -194,12 +194,25 @@ class TestClassifyChange:
 class TestBuildValidationSpec:
     """Test building ValidationSpec from config files."""
 
-    def test_no_config_returns_empty_spec(self, tmp_path: Path) -> None:
-        """Without mala.yaml, returns empty spec."""
+    def test_no_config_returns_default_spec(self, tmp_path: Path) -> None:
+        """Without mala.yaml, returns default spec with standard Python/uv commands.
+
+        This aligns with build_prompt_validation_commands() which also returns
+        defaults when config is missing.
+        """
         spec = build_validation_spec(tmp_path)
 
-        assert spec.commands == []
+        # Should have default commands (not empty)
+        command_names = [cmd.name for cmd in spec.commands]
+        assert "format" in command_names
+        assert "lint" in command_names
+        assert "typecheck" in command_names
+        assert "test" in command_names
+
+        # Default scope
         assert spec.scope == ValidationScope.PER_SESSION
+
+        # Coverage and E2E disabled by default (require explicit config)
         assert spec.coverage.enabled is False
         assert spec.e2e.enabled is False
 
@@ -1173,3 +1186,61 @@ validation_triggers: {}
         global_names = [cmd.name for cmd in global_spec.commands]
         assert "security" not in global_names  # Repo custom cleared
         assert "integration" in global_names  # Global custom present
+
+
+class TestConfigMissingSemanticsConsistency:
+    """Tests for consistent config_missing behavior between spec and prompts.
+
+    When config is missing (no mala.yaml), both build_validation_spec() and
+    build_prompt_validation_commands() should return defaults, not disable
+    everything. This ensures agents get sensible commands AND the orchestrator
+    validates them.
+    """
+
+    def test_config_missing_flag_returns_defaults_for_spec(
+        self, tmp_path: Path
+    ) -> None:
+        """config_missing=True should return default spec, not empty spec.
+
+        This aligns with build_prompt_validation_commands() behavior.
+        """
+        spec = build_validation_spec(tmp_path, config_missing=True)
+
+        # Should have default commands
+        command_names = [cmd.name for cmd in spec.commands]
+        assert "format" in command_names
+        assert "lint" in command_names
+        assert "typecheck" in command_names
+        assert "test" in command_names
+
+    def test_spec_and_prompts_consistent_when_config_missing(
+        self, tmp_path: Path
+    ) -> None:
+        """build_validation_spec and build_prompt_validation_commands should be consistent.
+
+        Both functions should use defaults when config is missing. This is a
+        regression test for the issue where spec returned empty (disabled
+        validations) while prompts returned defaults (enabled commands).
+        """
+        from src.domain.prompts import build_prompt_validation_commands
+
+        # Get defaults from prompts
+        prompt_commands = build_prompt_validation_commands(tmp_path, config_missing=True)
+
+        # Get defaults from spec
+        spec = build_validation_spec(tmp_path, config_missing=True)
+
+        # Verify spec commands match prompt commands
+        spec_test_cmd = next(cmd for cmd in spec.commands if cmd.name == "test")
+        assert spec_test_cmd.command == prompt_commands.test
+
+        spec_lint_cmd = next(cmd for cmd in spec.commands if cmd.name == "lint")
+        assert spec_lint_cmd.command == prompt_commands.lint
+
+        spec_format_cmd = next(cmd for cmd in spec.commands if cmd.name == "format")
+        assert spec_format_cmd.command == prompt_commands.format
+
+        spec_typecheck_cmd = next(
+            cmd for cmd in spec.commands if cmd.name == "typecheck"
+        )
+        assert spec_typecheck_cmd.command == prompt_commands.typecheck
