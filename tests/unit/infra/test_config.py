@@ -206,6 +206,34 @@ class TestMalaConfigClaudeSettingsSources:
         config = MalaConfig()
         assert config.claude_settings_sources == DEFAULT_CLAUDE_SETTINGS_SOURCES
 
+    def test_from_env_yaml_fallback_used_when_env_not_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() uses yaml fallback when env var not set."""
+        monkeypatch.delenv("MALA_CLAUDE_SETTINGS_SOURCES", raising=False)
+        config = MalaConfig.from_env(
+            validate=False, yaml_claude_settings_sources=("user",)
+        )
+        assert config.claude_settings_sources == ("user",)
+
+    def test_from_env_env_var_wins_over_yaml(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() prefers env var over yaml fallback."""
+        monkeypatch.setenv("MALA_CLAUDE_SETTINGS_SOURCES", "local,project")
+        config = MalaConfig.from_env(
+            validate=False, yaml_claude_settings_sources=("user",)
+        )
+        assert config.claude_settings_sources == ("local", "project")
+
+    def test_from_env_default_when_both_not_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() uses default when neither env nor yaml set."""
+        monkeypatch.delenv("MALA_CLAUDE_SETTINGS_SOURCES", raising=False)
+        config = MalaConfig.from_env(validate=False, yaml_claude_settings_sources=None)
+        assert config.claude_settings_sources == DEFAULT_CLAUDE_SETTINGS_SOURCES
+
 
 class TestMalaConfigValidate:
     """Tests for validate() method."""

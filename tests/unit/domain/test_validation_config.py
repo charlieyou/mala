@@ -836,11 +836,6 @@ claude_settings_sources:
         assert validation_config.claude_settings_sources == ("local", "project")
         assert "claude_settings_sources" in validation_config._fields_set
 
-    @pytest.mark.xfail(
-        reason="T004: Orchestrator wiring not yet implemented - ValidationConfig.claude_settings_sources not passed to MalaConfig",
-        strict=True,
-        raises=AssertionError,
-    )
     def test_claude_settings_sources_full_path_integration(
         self, tmp_path: "pathlib.Path"
     ) -> None:
@@ -849,9 +844,7 @@ claude_settings_sources:
         This test creates a real mala.yaml file and verifies that the factory reads
         ValidationConfig from repo_path and wires claude_settings_sources to MalaConfig.
 
-        Expected to FAIL until T004 (orchestrator wiring) is implemented.
-        The test uses strict=True so it will fail when T004 is complete (reminder to remove xfail).
-        Uses raises=AssertionError to ensure it fails for the expected reason, not import errors.
+        T004 implemented the orchestrator wiring so this test now passes.
         """
         from src.domain.validation.config_loader import load_config
         from src.orchestration.factory import create_orchestrator
@@ -878,9 +871,7 @@ claude_settings_sources:
         orchestrator = create_orchestrator(orchestrator_config)
 
         # Step 4: Verify MalaConfig received sources from ValidationConfig
-        # This assertion will FAIL until T004 wires the path
-        # Currently MalaConfig uses DEFAULT_CLAUDE_SETTINGS_SOURCES ('local', 'project')
-        # instead of receiving ('user',) from ValidationConfig via the factory
+        # T004 wired the factory to pass ValidationConfig.claude_settings_sources to MalaConfig
         assert orchestrator._mala_config.claude_settings_sources == ("user",)
 
 

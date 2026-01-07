@@ -250,7 +250,12 @@ class MalaConfig:
         return self._claude_settings_sources
 
     @classmethod
-    def from_env(cls, *, validate: bool = True) -> MalaConfig:
+    def from_env(
+        cls,
+        *,
+        validate: bool = True,
+        yaml_claude_settings_sources: tuple[str, ...] | None = None,
+    ) -> MalaConfig:
         """Create MalaConfig by loading from environment variables with validation.
 
         Reads the following environment variables:
@@ -271,6 +276,9 @@ class MalaConfig:
         Args:
             validate: If True (default), run validation and raise ConfigurationError
                 on any errors. Set to False to skip validation.
+            yaml_claude_settings_sources: Claude settings sources from mala.yaml.
+                Used as fallback when env var is not set.
+                Precedence: env var > yaml > default.
 
         Returns:
             MalaConfig instance with values from environment or defaults.
@@ -284,6 +292,9 @@ class MalaConfig:
 
             # Skip validation if needed
             config = MalaConfig.from_env(validate=False)
+
+            # With yaml fallback
+            config = MalaConfig.from_env(yaml_claude_settings_sources=("local",))
         """
         # Get path values from environment with defaults
         runs_dir = Path(
@@ -380,10 +391,15 @@ class MalaConfig:
             llm_api_key=llm_api_key,
             llm_base_url=llm_base_url,
             max_epic_verification_retries=max_epic_verification_retries,
+            # Precedence: env var > yaml > default
             claude_settings_sources_init=(
                 claude_settings_sources
                 if claude_settings_sources is not None
-                else DEFAULT_CLAUDE_SETTINGS_SOURCES
+                else (
+                    yaml_claude_settings_sources
+                    if yaml_claude_settings_sources is not None
+                    else DEFAULT_CLAUDE_SETTINGS_SOURCES
+                )
             ),
         )
 

@@ -478,13 +478,26 @@ def create_orchestrator(
         )
         orchestrator = create_orchestrator(config, deps=deps)
     """
+    from src.domain.validation.config_loader import ConfigMissingError, load_config
     from src.infra.io.config import MalaConfig
 
     from .orchestrator import MalaOrchestrator
 
+    # Load ValidationConfig from mala.yaml for settings that need to flow to MalaConfig
+    yaml_claude_settings_sources: tuple[str, ...] | None = None
+    try:
+        validation_config = load_config(config.repo_path)
+        yaml_claude_settings_sources = validation_config.claude_settings_sources
+    except ConfigMissingError:
+        # mala.yaml not present - use defaults
+        pass
+
     # Load MalaConfig if not provided
     if mala_config is None:
-        mala_config = MalaConfig.from_env(validate=False)
+        mala_config = MalaConfig.from_env(
+            validate=False,
+            yaml_claude_settings_sources=yaml_claude_settings_sources,
+        )
 
     # Derive computed configuration
     derived = _derive_config(config, mala_config)
