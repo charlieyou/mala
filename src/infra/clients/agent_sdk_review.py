@@ -291,14 +291,25 @@ class AgentSDKReviewer:
         Returns:
             Formatted query string for the agent.
         """
-        parts = [self.review_agent_prompt]
+        prompt = self.review_agent_prompt
+        has_diff_placeholder = "{diff_range}" in prompt
+        has_context_placeholder = "{context_section}" in prompt
+        context_section = f"## Implementation Context\n{context}" if context else ""
 
-        parts.append(f"\n\n## Diff Range\n{diff_range}")
+        if has_diff_placeholder:
+            prompt = prompt.replace("{diff_range}", diff_range)
+        if has_context_placeholder:
+            prompt = prompt.replace("{context_section}", context_section)
+
+        parts = [prompt]
+
+        if not has_diff_placeholder:
+            parts.append(f"\n\n## Diff Range\n{diff_range}")
 
         if commit_shas:
             parts.append(f"\n\n## Specific Commits\n{', '.join(commit_shas)}")
 
-        if context:
+        if context and not has_context_placeholder:
             parts.append(f"\n\n## Implementation Context\n{context}")
 
         # Output Format section is already in the prompt file (review_agent.md)

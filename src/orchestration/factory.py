@@ -493,7 +493,6 @@ def create_orchestrator(
     reviewer_config = _get_reviewer_config(config.repo_path)
 
     # Check review availability and update disabled_validations
-    # agent_sdk reviewer is currently disabled until T004 implements it
     review_disabled_reason = _check_review_availability(
         mala_config, derived.disabled_validations, reviewer_config.reviewer_type
     )
