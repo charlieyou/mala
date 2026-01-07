@@ -250,7 +250,7 @@ class AgentSDKReviewer:
             '      "file_path": "path/to/file.py",\n'
             '      "line_start": 10,\n'
             '      "line_end": 15,\n'
-            '      "priority": "P1" | "P2" | "P3" | 1 | 2 | 3,\n'
+            '      "priority": 0 | 1 | 2 | 3,\n'
             '      "title": "Issue title",\n'
             '      "body": "Detailed description",\n'
             '      "reviewer": "agent_sdk"\n'

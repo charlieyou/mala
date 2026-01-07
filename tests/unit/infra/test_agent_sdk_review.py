@@ -534,6 +534,199 @@ class TestPriorityConversion:
         assert result.issues[0].priority == 2
 
 
+class TestP0Priority:
+    """Test P0 priority support."""
+
+    async def test_p0_priority_string(self, tmp_path: Path) -> None:
+        """Priority string 'P0' is converted to int 0."""
+        factory = FakeSDKClientFactory()
+        issue = _make_issue(priority="P0", title="Critical blocking issue")
+        factory.configure_next_client(
+            messages=[
+                MagicMock(
+                    subtype="assistant",
+                    content=[
+                        {"type": "text", "text": _make_review_json("FAIL", [issue])}
+                    ],
+                )
+            ]
+        )
+
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+
+        assert result.passed is False
+        assert len(result.issues) == 1
+        assert result.issues[0].priority == 0
+
+    async def test_p0_priority_int(self, tmp_path: Path) -> None:
+        """Priority int 0 is kept as int 0."""
+        factory = FakeSDKClientFactory()
+        issue = _make_issue(priority=0, title="Critical blocking issue")
+        factory.configure_next_client(
+            messages=[
+                MagicMock(
+                    subtype="assistant",
+                    content=[
+                        {"type": "text", "text": _make_review_json("FAIL", [issue])}
+                    ],
+                )
+            ]
+        )
+
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+
+        assert result.passed is False
+        assert len(result.issues) == 1
+        assert result.issues[0].priority == 0
+
+
+class TestMissingRequiredFields:
+    """Test parse error handling for missing required fields."""
+
+    async def test_missing_consensus_verdict(self, tmp_path: Path) -> None:
+        """Missing consensus_verdict returns parse_error."""
+        factory = FakeSDKClientFactory()
+        # Return JSON without consensus_verdict
+        invalid_json = json.dumps({"aggregated_findings": []})
+        factory.configure_next_client(
+            messages=[
+                MagicMock(
+                    subtype="assistant",
+                    content=[{"type": "text", "text": invalid_json}],
+                )
+            ]
+        )
+
+        event_sink = FakeEventSink()
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+            event_sink=event_sink,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+
+        assert result.passed is False
+        assert result.parse_error is not None
+        assert "verdict" in result.parse_error.lower()
+
+    async def test_wrong_field_names_verdict_findings(self, tmp_path: Path) -> None:
+        """Using wrong field names (verdict/findings) returns parse_error."""
+        factory = FakeSDKClientFactory()
+        # Return JSON with wrong field names
+        invalid_json = json.dumps({"verdict": "PASS", "findings": []})
+        factory.configure_next_client(
+            messages=[
+                MagicMock(
+                    subtype="assistant",
+                    content=[{"type": "text", "text": invalid_json}],
+                )
+            ]
+        )
+
+        event_sink = FakeEventSink()
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+            event_sink=event_sink,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+
+        # Should fail because consensus_verdict is missing (empty string)
+        assert result.passed is False
+        assert result.parse_error is not None
+        assert "verdict" in result.parse_error.lower()
+
+    async def test_aggregated_findings_not_a_list(self, tmp_path: Path) -> None:
+        """aggregated_findings not being a list returns parse_error."""
+        factory = FakeSDKClientFactory()
+        invalid_json = json.dumps(
+            {"consensus_verdict": "PASS", "aggregated_findings": "not a list"}
+        )
+        factory.configure_next_client(
+            messages=[
+                MagicMock(
+                    subtype="assistant",
+                    content=[{"type": "text", "text": invalid_json}],
+                )
+            ]
+        )
+
+        event_sink = FakeEventSink()
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+            event_sink=event_sink,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+
+        assert result.passed is False
+        assert result.parse_error is not None
+        assert "aggregated_findings" in result.parse_error
+
+
 class TestTelemetryWarning:
     """Test telemetry warning on errors."""
 

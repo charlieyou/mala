@@ -82,7 +82,7 @@ Only flag issues that meet ALL of these criteria:
 
 If you encounter errors:
 - **Git command fails**: Return FAIL with an operational error finding (see Operational Errors section)
-- **File not found**: Skip that file and note it in your findings
+- **File not found**: Skip that file and note it in your aggregated_findings
 - **Repository issues**: Return FAIL with an operational error finding (see Operational Errors section)
 
 ## Output Format
@@ -95,24 +95,24 @@ After completing your review, output your findings as raw JSON with NO markdown 
 
 ```
 {
-  "findings": [
+  "consensus_verdict": "NEEDS_WORK",
+  "aggregated_findings": [
     {
       "title": "[P2] Brief imperative description (max 80 chars)",
       "body": "Markdown explanation of why this is a problem and how to fix it",
       "priority": 2,
       "file_path": "path/to/file.py",
       "line_start": 42,
-      "line_end": 45
+      "line_end": 45,
+      "reviewer": "agent_sdk"
     }
-  ],
-  "verdict": "NEEDS_WORK",
-  "summary": "1-3 sentence summary of the review"
+  ]
 }
 ```
 
 ### Verdict Values
 
-- **PASS** - No significant findings (empty findings array), code is good to merge
+- **PASS** - No significant findings (empty aggregated_findings array), code is good to merge
 - **FAIL** - Blocking issues found (any finding with priority 0 or 1), OR operational errors prevented review
 - **NEEDS_WORK** - Non-blocking issues only (all findings have priority 2 or 3)
 
@@ -122,18 +122,18 @@ If git commands fail or the repository cannot be accessed, return FAIL with an o
 
 ```
 {
-  "findings": [
+  "consensus_verdict": "FAIL",
+  "aggregated_findings": [
     {
       "title": "[P0] Could not retrieve diff",
       "body": "Git command failed: <error message>. Unable to complete review.",
       "priority": 0,
       "file_path": null,
       "line_start": null,
-      "line_end": null
+      "line_end": null,
+      "reviewer": "agent_sdk"
     }
-  ],
-  "verdict": "FAIL",
-  "summary": "Review could not be completed due to operational error."
+  ]
 }
 ```
 
@@ -142,4 +142,4 @@ If git commands fail or the repository cannot be accessed, return FAIL with an o
 - Output raw JSON with NO markdown code fences - your output must be directly parseable
 - Keep `line_start` and `line_end` ranges short (under 10 lines)
 - One finding per distinct issue
-- If no issues found, return `"findings": []` with verdict `"PASS"`
+- If no issues found, return `"aggregated_findings": []` with consensus_verdict `"PASS"`
