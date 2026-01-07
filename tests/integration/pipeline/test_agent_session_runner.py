@@ -4229,21 +4229,23 @@ class TestLocalSettingsIntegration:
     """Integration tests for SDK settings merge with .claude/settings.local.json.
 
     Verifies the full path: config → AgentRuntimeBuilder → SDK respects
-    local settings files when configured.
+    local settings files when configured with setting_sources=["local"].
     """
 
     @pytest.fixture
     def session_config_with_local_settings(self, tmp_path: Path) -> AgentSessionConfig:
-        """Create session config with .claude/settings.local.json in repo path.
+        """Create session config with .claude/settings.local.json and sources=["local"].
 
         Creates a settings file with a distinct timeout value (300) that can
         be used to verify the SDK is configured to read local settings.
         """
-        # Create .claude directory and settings.local.json
+        import json
+
+        # Create .claude directory and settings.local.json with timeout=300
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir(parents=True, exist_ok=True)
         settings_file = claude_dir / "settings.local.json"
-        settings_file.write_text('{"timeout": 300}')
+        settings_file.write_text(json.dumps({"timeout": 300}))
 
         return AgentSessionConfig(
             repo_path=tmp_path,
@@ -4253,6 +4255,7 @@ class TestLocalSettingsIntegration:
             max_review_retries=2,
             review_enabled=False,
             mcp_server_factory=make_noop_mcp_factory(),
+            setting_sources=["local"],  # Explicitly configure local-only sources
         )
 
     @pytest.mark.unit
@@ -4261,23 +4264,24 @@ class TestLocalSettingsIntegration:
         session_config_with_local_settings: AgentSessionConfig,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Integration test: SDK is configured with setting_sources including 'local'.
+        """Integration test: SDK receives setting_sources=["local"] from config.
 
-        Verifies that when .claude/settings.local.json exists, the SDK client
-        factory is configured to read settings from the local file via
-        setting_sources that includes 'local'.
+        Verifies that when AgentSessionConfig has setting_sources=["local"] and
+        .claude/settings.local.json exists with timeout=300, the SDK client
+        factory receives setting_sources=["local"].
 
         This tests the full integration path:
-        1. AgentSessionConfig with repo_path containing settings file
+        1. AgentSessionConfig with setting_sources=["local"] and settings file
         2. AgentSessionRunner._initialize_session() creates AgentRuntimeBuilder
-        3. AgentRuntimeBuilder.build() logs setting_sources resolution
-        4. No warning about missing local file (since file exists)
-        5. SDK factory is called (verifying config flows through pipeline)
+        3. AgentRuntimeBuilder passes setting_sources to SDK factory
+        4. SDK factory receives setting_sources=["local"]
+        5. No warning about missing settings file (since file exists)
 
-        Note: With fake SDK, we verify config passing and logging rather than
-        actual SDK behavior. The SDK's runtime behavior of reading timeout=300
-        from settings.local.json is tested in E2E tests.
+        Note: With fake SDK, we verify config passing (setting_sources=["local"])
+        rather than actual SDK behavior. The SDK's runtime behavior of reading
+        timeout=300 from settings.local.json requires real SDK (E2E tests).
         """
+        import json
         import logging
 
         fake_client = FakeSDKClient(result_message=make_result_message())
@@ -4298,30 +4302,33 @@ class TestLocalSettingsIntegration:
         with caplog.at_level(logging.INFO):
             _session_cfg, _ = runner._initialize_session(input_data)
 
-        # Verify the settings file exists at expected location
+        # Verify the settings file exists and contains timeout=300
         settings_path = (
             session_config_with_local_settings.repo_path
             / ".claude"
             / "settings.local.json"
         )
         assert settings_path.exists(), f"Settings file should exist at {settings_path}"
-        assert "300" in settings_path.read_text(), (
-            "Settings file should contain timeout: 300"
+        settings_content = json.loads(settings_path.read_text())
+        assert settings_content.get("timeout") == 300, (
+            f"Settings file should have timeout=300, got {settings_content}"
         )
 
-        # Verify AgentRuntimeBuilder logs setting sources (defaults to ["local", "project"])
-        # This confirms the pipeline uses setting_sources that includes 'local'
-        assert "Claude settings sources: local, project" in caplog.text, (
-            "Should log setting_sources including 'local'"
+        # Verify AgentRuntimeBuilder logs setting sources as "local" (not "local, project")
+        assert "Claude settings sources: local" in caplog.text, (
+            f"Should log 'Claude settings sources: local', got: {caplog.text}"
         )
 
         # Verify NO warning about missing settings file (since we created it)
-        # This confirms the settings file path is correctly resolved
         assert "settings.local.json not found" not in caplog.text, (
             "Should NOT warn about missing settings file since we created it"
         )
 
-        # Verify factory.create_options() was called (config flows to SDK)
+        # Verify factory.create_options() was called with setting_sources=["local"]
         assert len(fake_factory.created_options) == 1, (
             "Expected one create_options call during initialization"
+        )
+        options = fake_factory.created_options[0]
+        assert options.get("setting_sources") == ["local"], (
+            f"SDK factory should receive setting_sources=['local'], got {options.get('setting_sources')}"
         )

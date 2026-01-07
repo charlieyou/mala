@@ -230,6 +230,8 @@ class AgentSessionConfig:
         context_limit: Maximum context tokens. Default 200K for Claude.
         strict_resume: When True and session resumption fails (stale session),
             fail the session instead of retrying with a fresh session.
+        setting_sources: Optional list of Claude settings sources to use.
+            When None, uses SDK defaults (["local", "project"]).
     """
 
     repo_path: Path
@@ -249,6 +251,7 @@ class AgentSessionConfig:
     deadlock_monitor: DeadlockMonitor | None = None
     mcp_server_factory: McpServerFactory | None = None
     strict_resume: bool = False
+    setting_sources: list[str] | None = None
 
 
 @dataclass
@@ -446,6 +449,7 @@ class AgentSessionRunner:
                 agent_id,
                 self.sdk_client_factory,
                 mcp_server_factory=self.config.mcp_server_factory,
+                setting_sources=self.config.setting_sources,
             )
             .with_hooks(deadlock_monitor=self.config.deadlock_monitor)
             .with_env()
