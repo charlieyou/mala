@@ -50,29 +50,8 @@ class ConsoleEventSink(BaseEventSink):
             log("◦", "Mode: prioritize WIP", agent_id="run")
         if config.orphans_only:
             log("◦", "Mode: orphans only", agent_id="run")
-        log_verbose("◦", f"Parallelism: {config.max_agents}", agent_id="run")
-        self._log_limits(config)
-        self._log_review_config(config)
+        self._log_config(config)
         self._log_cli_args(config)
-
-    def _log_limits(self, config: EventRunConfig) -> None:
-        limits_parts: list[str] = []
-        if config.timeout_minutes is not None:
-            limits_parts.append(f"Time: {config.timeout_minutes} min")
-        if config.max_issues is not None:
-            limits_parts.append(f"Issues: {config.max_issues}")
-        if limits_parts:
-            log_verbose("◦", f"Limits: {', '.join(limits_parts)}", agent_id="run")
-
-    def _log_review_config(self, config: EventRunConfig) -> None:
-        review_type = "LLM review" if config.review_enabled else "disabled"
-        log_verbose("◦", f"Review: {review_type}", agent_id="run")
-        log_verbose(
-            "◦",
-            f"Review retries: {config.max_review_retries} "
-            f"(gate retries: {config.max_gate_retries})",
-            agent_id="run",
-        )
 
     def _log_cli_args(self, config: EventRunConfig) -> None:
         # Log CLI arguments if available
@@ -85,6 +64,65 @@ class ConsoleEventSink(BaseEventSink):
             }
             if safe_args:
                 log_verbose("◦", f"CLI args: {safe_args}", agent_id="run")
+
+    def _log_config(self, config: EventRunConfig) -> None:
+        """Log all configuration values at run start.
+
+        Displays a comprehensive summary of effective configuration,
+        making it easy to understand exactly how the run is configured.
+        """
+        # Build config items as key=value pairs
+        items: list[str] = []
+
+        # Parallelism
+        agents = config.max_agents if config.max_agents is not None else "unlimited"
+        items.append(f"agents={agents}")
+
+        # Timeout
+        if config.timeout_minutes is not None:
+            items.append(f"timeout={config.timeout_minutes}m")
+
+        # Max issues
+        if config.max_issues is not None:
+            items.append(f"max_issues={config.max_issues}")
+
+        # Gate and review retries
+        items.append(f"gate_retries={config.max_gate_retries}")
+        items.append(f"review_retries={config.max_review_retries}")
+
+        # Review status
+        if config.review_enabled:
+            items.append("review=enabled")
+        else:
+            reason = config.review_disabled_reason or "disabled"
+            items.append(f"review={reason}")
+
+        # CLI args extras (watch, validate_every, disable_validations)
+        if config.cli_args:
+            if config.cli_args.get("watch"):
+                items.append("watch=true")
+
+            validate_every = config.cli_args.get("validate_every")
+            if validate_every is not None:
+                items.append(f"validate_every={validate_every}")
+
+            disable = config.cli_args.get("disable_validations")
+            if disable and isinstance(disable, list):
+                items.append(f"disable={','.join(str(d) for d in disable)}")
+
+            epic_override = config.cli_args.get("epic_override")
+            if epic_override and isinstance(epic_override, list):
+                items.append(f"epic_override={','.join(str(e) for e in epic_override)}")
+
+        # Format: show all items on one line if short, otherwise multi-line
+        config_str = " ".join(items)
+        if len(config_str) <= 80:
+            log("◐", f"Config: {config_str}", agent_id="run")
+        else:
+            # Multi-line for long configs
+            log("◐", "Config:", agent_id="run")
+            for item in items:
+                log("◦", f"  {item}", agent_id="run")
 
     def on_run_completed(
         self,
