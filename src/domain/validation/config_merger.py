@@ -27,13 +27,13 @@ from src.domain.validation.config import (
     CommandConfig,
     CommandsConfig,
     ConfigError,
+    CustomCommandConfig,
     CustomOverrideMode,
     ValidationConfig,
 )
 
 if TYPE_CHECKING:
     from src.domain.validation.config import (
-        CustomCommandConfig,
         YamlCoverageConfig,
     )
 
@@ -370,8 +370,10 @@ def _merge_commands(
         # _clear_customs: true - clear all custom commands (both preset and user)
         merged_custom_commands: dict[str, CustomCommandConfig] = {}
     elif deep_merge_fields:
-        # For global_validation_commands: merge preset + user (user overrides by name)
-        merged_custom_commands = {**preset.custom_commands, **user.custom_commands}
+        # For global_validation_commands: field-level deep merge of custom commands
+        merged_custom_commands = _merge_custom_commands_deep(
+            preset.custom_commands, user.custom_commands
+        )
     else:
         # For regular commands: user replaces entirely
         merged_custom_commands = user.custom_commands
@@ -507,6 +509,131 @@ def _merge_command_field_deep(
         timeout=merged_timeout,
         _fields_set=user_cmd_fields_set,
     )
+
+
+def _merge_custom_command_deep(
+    preset_cmd: CustomCommandConfig,
+    user_cmd: CustomCommandConfig,
+    name: str,
+) -> CustomCommandConfig:
+    """Merge a custom command with field-level deep merge.
+
+    For global_validation_commands, individual fields within CustomCommandConfig
+    are merged:
+    - If user explicitly set 'command', use user's command; else inherit preset's
+    - If user explicitly set 'timeout', use user's timeout; else inherit preset's
+    - If user explicitly set 'allow_fail', use user's; else inherit preset's
+
+    This allows users to override just the timeout while inheriting the command
+    from the preset, or vice versa.
+
+    Args:
+        preset_cmd: Preset custom command config.
+        user_cmd: User custom command config (may be partial).
+        name: Name of the custom command (for error messages).
+
+    Returns:
+        Merged CustomCommandConfig.
+
+    Raises:
+        ConfigError: If user provides partial config but no preset command
+            to inherit from.
+    """
+    user_cmd_fields_set = user_cmd._fields_set
+
+    # For programmatic configs (_fields_set is empty), treat non-default values
+    # as explicitly set to preserve caller's intent
+    is_programmatic = not user_cmd_fields_set
+
+    # Merge 'command' field
+    # For YAML: check _fields_set; for programmatic: non-empty command is explicit
+    command_is_explicit = "command" in user_cmd_fields_set or (
+        is_programmatic and user_cmd.command
+    )
+    if command_is_explicit:
+        merged_command = user_cmd.command
+    else:
+        # User didn't set command - inherit from preset
+        merged_command = preset_cmd.command
+
+    # Merge 'timeout' field
+    # For YAML: check _fields_set; for programmatic: non-None timeout is explicit
+    timeout_is_explicit = "timeout" in user_cmd_fields_set or (
+        is_programmatic and user_cmd.timeout is not None
+    )
+    if timeout_is_explicit:
+        merged_timeout = user_cmd.timeout
+    else:
+        # User didn't set timeout - inherit from preset
+        merged_timeout = preset_cmd.timeout
+
+    # Merge 'allow_fail' field
+    # For YAML: check _fields_set; for programmatic: True is explicit
+    allow_fail_is_explicit = "allow_fail" in user_cmd_fields_set or (
+        is_programmatic and user_cmd.allow_fail
+    )
+    if allow_fail_is_explicit:
+        merged_allow_fail = user_cmd.allow_fail
+    else:
+        # User didn't set allow_fail - inherit from preset
+        merged_allow_fail = preset_cmd.allow_fail
+
+    return CustomCommandConfig(
+        command=merged_command,
+        timeout=merged_timeout,
+        allow_fail=merged_allow_fail,
+        _fields_set=user_cmd_fields_set,
+    )
+
+
+def _merge_custom_commands_deep(
+    preset_customs: dict[str, CustomCommandConfig],
+    user_customs: dict[str, CustomCommandConfig],
+) -> dict[str, CustomCommandConfig]:
+    """Merge custom commands with field-level deep merge.
+
+    For global_validation_commands, this merges preset and user custom commands:
+    - Commands only in preset: preserved
+    - Commands only in user: added (must have command field)
+    - Commands in both: field-level merge (user overrides specific fields)
+
+    Args:
+        preset_customs: Preset's custom commands dict.
+        user_customs: User's custom commands dict.
+
+    Returns:
+        Merged custom commands dict.
+
+    Raises:
+        ConfigError: If user has partial custom command with no preset to inherit.
+    """
+    merged: dict[str, CustomCommandConfig] = {}
+
+    # Start with preset commands
+    for name, preset_cmd in preset_customs.items():
+        if name in user_customs:
+            # Both have this command - do field-level merge
+            merged[name] = _merge_custom_command_deep(
+                preset_cmd, user_customs[name], name
+            )
+        else:
+            # Only in preset - preserve it
+            merged[name] = preset_cmd
+
+    # Add user-only commands
+    for name, user_cmd in user_customs.items():
+        if name not in preset_customs:
+            # User-only command - must have command string
+            if not user_cmd.command:
+                raise ConfigError(
+                    f"Cannot specify partial override for custom command '{name}' in "
+                    "global_validation_commands: no preset command to inherit from. "
+                    "Either provide a 'command' string or ensure the preset defines "
+                    "this command."
+                )
+            merged[name] = user_cmd
+
+    return merged
 
 
 def _merge_coverage(

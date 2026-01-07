@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.domain.validation.config import (
     CommandConfig,
     CommandsConfig,
+    ConfigError,
     CustomCommandConfig,
     CustomOverrideMode,
     ValidationConfig,
@@ -1615,3 +1618,210 @@ class TestMergeConfigsReviewerFields:
         assert result.reviewer_type == "cerberus"
         assert result.agent_sdk_review_timeout == 900
         assert result.agent_sdk_reviewer_model == "haiku"
+
+
+class TestGlobalCustomCommandsDeepMerge:
+    """Tests for deep merge of custom_commands in global_validation_commands.
+
+    When merging global_validation_commands, custom commands should use
+    field-level deep merge, similar to built-in commands like test/lint.
+    """
+
+    def test_custom_command_inherits_command_when_only_timeout_set(self) -> None:
+        """User can override just timeout while inheriting command from preset.
+
+        This is the core bug fix - previously user's {timeout: 120} would
+        completely replace preset's {command: 'pytest', timeout: 300}.
+        """
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                custom_commands={
+                    "mytest": CustomCommandConfig(
+                        command="pytest -v",
+                        timeout=300,
+                        _fields_set=frozenset({"command", "timeout"}),
+                    ),
+                },
+            ),
+        )
+        user = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                custom_commands={
+                    "mytest": CustomCommandConfig(
+                        command="",  # Partial config - only timeout set
+                        timeout=120,
+                        _fields_set=frozenset({"timeout"}),
+                    ),
+                },
+                _fields_set=frozenset(),
+            ),
+            _fields_set=frozenset({"global_validation_commands"}),
+        )
+
+        result = merge_configs(preset, user)
+
+        # Command inherited from preset, timeout from user
+        assert "mytest" in result.global_validation_commands.custom_commands
+        custom = result.global_validation_commands.custom_commands["mytest"]
+        assert custom.command == "pytest -v"
+        assert custom.timeout == 120
+
+    def test_custom_command_inherits_timeout_when_only_command_set(self) -> None:
+        """User can override just command while inheriting timeout from preset."""
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                custom_commands={
+                    "mytest": CustomCommandConfig(
+                        command="pytest",
+                        timeout=300,
+                        _fields_set=frozenset({"command", "timeout"}),
+                    ),
+                },
+            ),
+        )
+        user = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                custom_commands={
+                    "mytest": CustomCommandConfig(
+                        command="pytest -v --tb=short",
+                        timeout=120,  # Default value, not explicitly set
+                        _fields_set=frozenset({"command"}),
+                    ),
+                },
+                _fields_set=frozenset(),
+            ),
+            _fields_set=frozenset({"global_validation_commands"}),
+        )
+
+        result = merge_configs(preset, user)
+
+        custom = result.global_validation_commands.custom_commands["mytest"]
+        assert custom.command == "pytest -v --tb=short"
+        assert custom.timeout == 300  # Inherited from preset
+
+    def test_custom_command_inherits_allow_fail_from_preset(self) -> None:
+        """User inherits allow_fail from preset when not explicitly set."""
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                custom_commands={
+                    "optional": CustomCommandConfig(
+                        command="optional-check",
+                        timeout=60,
+                        allow_fail=True,
+                        _fields_set=frozenset({"command", "timeout", "allow_fail"}),
+                    ),
+                },
+            ),
+        )
+        user = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                custom_commands={
+                    "optional": CustomCommandConfig(
+                        command="",
+                        timeout=120,  # Override timeout only
+                        _fields_set=frozenset({"timeout"}),
+                    ),
+                },
+                _fields_set=frozenset(),
+            ),
+            _fields_set=frozenset({"global_validation_commands"}),
+        )
+
+        result = merge_configs(preset, user)
+
+        custom = result.global_validation_commands.custom_commands["optional"]
+        assert custom.command == "optional-check"
+        assert custom.timeout == 120
+        assert custom.allow_fail is True  # Inherited from preset
+
+    def test_custom_command_no_preset_requires_command(self) -> None:
+        """When no preset custom command exists, user must provide command."""
+        user = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                custom_commands={
+                    "newcmd": CustomCommandConfig(
+                        command="",  # Partial config with no preset to inherit
+                        timeout=60,
+                        _fields_set=frozenset({"timeout"}),
+                    ),
+                },
+                _fields_set=frozenset(),
+            ),
+            _fields_set=frozenset({"global_validation_commands"}),
+        )
+
+        with pytest.raises(ConfigError, match=r"require.*preset.*inherit"):
+            merge_configs(None, user)
+
+    def test_custom_commands_from_different_sources_merged(self) -> None:
+        """Preset and user can have different custom commands that are merged."""
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                custom_commands={
+                    "preset_check": CustomCommandConfig(
+                        command="preset-cmd",
+                        timeout=60,
+                        _fields_set=frozenset({"command", "timeout"}),
+                    ),
+                },
+            ),
+        )
+        user = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                custom_commands={
+                    "user_check": CustomCommandConfig(
+                        command="user-cmd",
+                        timeout=120,
+                        _fields_set=frozenset({"command", "timeout"}),
+                    ),
+                },
+                _fields_set=frozenset(),
+            ),
+            _fields_set=frozenset({"global_validation_commands"}),
+        )
+
+        result = merge_configs(preset, user)
+
+        # Both custom commands present
+        customs = result.global_validation_commands.custom_commands
+        assert len(customs) == 2
+        assert "preset_check" in customs
+        assert customs["preset_check"].command == "preset-cmd"
+        assert "user_check" in customs
+        assert customs["user_check"].command == "user-cmd"
+
+    def test_custom_command_user_overrides_all_fields(self) -> None:
+        """User can override all fields of a custom command."""
+        preset = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                custom_commands={
+                    "mytest": CustomCommandConfig(
+                        command="old-cmd",
+                        timeout=60,
+                        allow_fail=False,
+                        _fields_set=frozenset({"command", "timeout", "allow_fail"}),
+                    ),
+                },
+            ),
+        )
+        user = ValidationConfig(
+            global_validation_commands=CommandsConfig(
+                custom_commands={
+                    "mytest": CustomCommandConfig(
+                        command="new-cmd",
+                        timeout=300,
+                        allow_fail=True,
+                        _fields_set=frozenset({"command", "timeout", "allow_fail"}),
+                    ),
+                },
+                _fields_set=frozenset(),
+            ),
+            _fields_set=frozenset({"global_validation_commands"}),
+        )
+
+        result = merge_configs(preset, user)
+
+        custom = result.global_validation_commands.custom_commands["mytest"]
+        assert custom.command == "new-cmd"
+        assert custom.timeout == 300
+        assert custom.allow_fail is True

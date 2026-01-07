@@ -335,15 +335,21 @@ class CustomCommandConfig:
         command: The shell command string to execute.
         timeout: Optional timeout in seconds. None means use system default.
         allow_fail: If True, command failure won't fail the validation.
+        _fields_set: Fields explicitly set by user (for merge tracking).
     """
 
     command: str
     timeout: int | None = None
     allow_fail: bool = False
+    _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     @classmethod
     def from_value(
-        cls, name: str, value: str | dict[str, object] | None
+        cls,
+        name: str,
+        value: str | dict[str, object] | None,
+        *,
+        requires_command: bool = True,
     ) -> CustomCommandConfig:
         """Create CustomCommandConfig from YAML value (string or dict).
 
@@ -351,6 +357,8 @@ class CustomCommandConfig:
             name: The custom command name (used as key in custom_commands dict).
             value: Either a command string or a dict with 'command' and
                 optional 'timeout', 'allow_fail' keys.
+            requires_command: If True (default), command field is required.
+                If False, allows partial configs for deep merge scenarios.
 
         Returns:
             CustomCommandConfig instance.
@@ -361,10 +369,13 @@ class CustomCommandConfig:
 
         Examples:
             >>> CustomCommandConfig.from_value("my_check", "uvx cmd")
-            CustomCommandConfig(command='uvx cmd', timeout=120, allow_fail=False)
+            CustomCommandConfig(command='uvx cmd', timeout=120, allow_fail=False, ...)
 
             >>> CustomCommandConfig.from_value("slow_check", {"command": "cmd", "timeout": 300})
-            CustomCommandConfig(command='cmd', timeout=300, allow_fail=False)
+            CustomCommandConfig(command='cmd', timeout=300, allow_fail=False, ...)
+
+            >>> CustomCommandConfig.from_value("override", {"timeout": 60}, requires_command=False)
+            CustomCommandConfig(command='', timeout=60, allow_fail=False, ...)
         """
         # Validate command name
         if not CUSTOM_COMMAND_NAME_PATTERN.match(name):
@@ -388,7 +399,12 @@ class CustomCommandConfig:
                     f"Custom command '{name}' cannot be empty. "
                     "Provide a command string."
                 )
-            return cls(command=value, timeout=120, allow_fail=False)
+            return cls(
+                command=value,
+                timeout=120,
+                allow_fail=False,
+                _fields_set=frozenset({"command"}),
+            )
 
         # Object form
         if isinstance(value, dict):
@@ -402,18 +418,31 @@ class CustomCommandConfig:
                     f"Allowed keys: {', '.join(sorted(known_keys))}"
                 )
 
+            fields_set: set[str] = set()
+
             command = value.get("command")
-            if not isinstance(command, str):
+            if command is not None:
+                if not isinstance(command, str):
+                    raise ConfigError(
+                        f"Custom command '{name}' object must have a 'command' string field"
+                    )
+                if not command or not command.strip():
+                    raise ConfigError(
+                        f"Custom command '{name}' cannot be empty. "
+                        "Provide a command string."
+                    )
+                fields_set.add("command")
+            elif requires_command:
                 raise ConfigError(
                     f"Custom command '{name}' object must have a 'command' string field"
                 )
-            if not command or not command.strip():
-                raise ConfigError(
-                    f"Custom command '{name}' cannot be empty. "
-                    "Provide a command string."
-                )
+            else:
+                command = ""  # Sentinel for partial config
 
             timeout = value.get("timeout")
+            # Track timeout when present in source dict
+            if "timeout" in value:
+                fields_set.add("timeout")
             if timeout is None:
                 timeout = 120
             else:
@@ -425,6 +454,9 @@ class CustomCommandConfig:
                     )
 
             allow_fail = value.get("allow_fail", False)
+            # Track allow_fail when present in source dict
+            if "allow_fail" in value:
+                fields_set.add("allow_fail")
             if not isinstance(allow_fail, bool):
                 raise ConfigError(
                     f"Custom command '{name}' allow_fail must be a boolean, "
@@ -432,9 +464,10 @@ class CustomCommandConfig:
                 )
 
             return cls(
-                command=command,
+                command=cast("str", command),
                 timeout=cast("int | None", timeout),
                 allow_fail=allow_fail,
+                _fields_set=frozenset(fields_set),
             )
 
         raise ConfigError(
@@ -689,7 +722,9 @@ class CommandsConfig:
                             )
                         value = data[key]
                         custom_commands[name] = CustomCommandConfig.from_value(
-                            name, cast("str | dict[str, object] | None", value)
+                            name,
+                            cast("str | dict[str, object] | None", value),
+                            requires_command=not is_global,
                         )
                 else:
                     # All unprefixed: REPLACE mode
@@ -697,7 +732,9 @@ class CommandsConfig:
                     for key in unprefixed:
                         value = data[key]
                         custom_commands[key] = CustomCommandConfig.from_value(
-                            key, cast("str | dict[str, object] | None", value)
+                            key,
+                            cast("str | dict[str, object] | None", value),
+                            requires_command=not is_global,
                         )
             else:
                 # At repo-level: +prefix not allowed
