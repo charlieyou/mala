@@ -429,6 +429,18 @@ class MalaOrchestrator:
                 get_agent_id=lambda issue_id: self._state.agent_ids.get(
                     issue_id, "unknown"
                 ),
+                queue_trigger_validation=(
+                    lambda trigger_type,
+                    context: self.run_coordinator.queue_trigger_validation(
+                        trigger_type, context
+                    )
+                ),
+                get_epic_completion_trigger=lambda: (
+                    self._validation_config.validation_triggers.epic_completion
+                    if self._validation_config
+                    and self._validation_config.validation_triggers
+                    else None
+                ),
             )
         )
         return EpicVerificationCoordinator(

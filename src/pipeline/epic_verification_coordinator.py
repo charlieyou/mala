@@ -17,12 +17,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from src.core.models import EpicVerificationResult
+    from src.domain.validation.config import EpicCompletionTriggerConfig, TriggerType
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.pipeline.issue_result import IssueResult
 
@@ -59,6 +60,8 @@ class EpicVerificationCallbacks:
         on_warning: Emit warning event.
         has_epic_verifier: Check if an EpicVerifier is available (callable for test patching).
         get_agent_id: Get the agent ID for an issue (for error attribution).
+        queue_trigger_validation: Queue a trigger for validation (trigger_type, context).
+        get_epic_completion_trigger: Get the epic_completion trigger config (or None).
     """
 
     get_parent_epic: Callable[[str], Awaitable[str | None]]
@@ -72,6 +75,8 @@ class EpicVerificationCallbacks:
     on_warning: Callable[[str], None]
     has_epic_verifier: Callable[[], bool]
     get_agent_id: Callable[[str], str]
+    queue_trigger_validation: Callable[[TriggerType, dict[str, Any]], None]
+    get_epic_completion_trigger: Callable[[], EpicCompletionTriggerConfig | None]
 
 
 @dataclass
@@ -190,6 +195,10 @@ class EpicVerificationCoordinator:
             # If epic passed verification, mark as verified and return
             if verification_result.passed_count > 0:
                 self.verified_epics.add(epic_id)
+                # Queue epic_completion trigger on success
+                await self._maybe_queue_epic_completion_trigger(
+                    epic_id, verification_passed=True
+                )
                 return
 
             # If no remediation issues were created, or max attempts reached,
@@ -203,6 +212,11 @@ class EpicVerificationCoordinator:
                         f"Epic verification failed after {max_retries} retries for {epic_id}"
                     )
                 self.verified_epics.add(epic_id)
+                # Queue epic_completion trigger on failure (only if verification was attempted)
+                if verification_result.failed_count > 0:
+                    await self._maybe_queue_epic_completion_trigger(
+                        epic_id, verification_passed=False
+                    )
                 return
 
             # Execute remediation issues before next verification attempt
@@ -211,6 +225,52 @@ class EpicVerificationCoordinator:
                 run_metadata,
                 interrupt_event=interrupt_event,
             )
+
+    async def _maybe_queue_epic_completion_trigger(
+        self,
+        epic_id: str,
+        *,
+        verification_passed: bool,
+    ) -> None:
+        """Queue epic_completion trigger if filters pass.
+
+        Checks epic_depth and fire_on filters from the trigger config.
+        If all filters pass, queues the trigger for validation.
+
+        Args:
+            epic_id: The epic that completed verification.
+            verification_passed: Whether the epic passed verification.
+        """
+        from src.domain.validation.config import EpicDepth, FireOn, TriggerType
+
+        trigger_config = self.callbacks.get_epic_completion_trigger()
+        if trigger_config is None:
+            return
+
+        # Check epic_depth filter
+        if trigger_config.epic_depth == EpicDepth.TOP_LEVEL:
+            # Check if epic has an epic parent (nested epic)
+            epic_parent = await self.callbacks.get_parent_epic(epic_id)
+            if epic_parent is not None:
+                # Nested epic - don't fire for top_level filter
+                return
+
+        # Check fire_on filter
+        if trigger_config.fire_on == FireOn.SUCCESS and not verification_passed:
+            return
+        if trigger_config.fire_on == FireOn.FAILURE and verification_passed:
+            return
+        # FireOn.BOTH always fires
+
+        # Build context and queue the trigger
+        context = {
+            "epic_id": epic_id,
+            "depth": "top_level"
+            if await self.callbacks.get_parent_epic(epic_id) is None
+            else "nested",
+            "verification_result": "passed" if verification_passed else "failed",
+        }
+        self.callbacks.queue_trigger_validation(TriggerType.EPIC_COMPLETION, context)
 
     async def _execute_remediation_issues(
         self,

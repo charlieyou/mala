@@ -64,6 +64,8 @@ class TestEpicVerificationInterruptHandling:
             on_warning=MagicMock(),
             has_epic_verifier=MagicMock(return_value=True),
             get_agent_id=MagicMock(return_value="agent-1"),
+            queue_trigger_validation=MagicMock(),
+            get_epic_completion_trigger=MagicMock(return_value=None),
         )
 
     @pytest.fixture

@@ -46,6 +46,7 @@ from src.pipeline.run_coordinator import (
 
 if TYPE_CHECKING:
     import asyncio
+    from typing import Any
 
     from collections.abc import Awaitable, Callable
     from pathlib import Path
@@ -55,6 +56,7 @@ if TYPE_CHECKING:
         SDKClientFactoryProtocol,
     )
     from src.core.models import EpicVerificationResult
+    from src.domain.validation.config import EpicCompletionTriggerConfig, TriggerType
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.orchestration.types import (
         IssueFilterConfig,
@@ -188,6 +190,8 @@ class EpicCallbackRefs:
     on_warning: Callable[[str], None]
     has_epic_verifier: Callable[[], bool]
     get_agent_id: Callable[[str], str]
+    queue_trigger_validation: Callable[[TriggerType, dict[str, Any]], None]
+    get_epic_completion_trigger: Callable[[], EpicCompletionTriggerConfig | None]
 
 
 def build_epic_callbacks(refs: EpicCallbackRefs) -> EpicVerificationCallbacks:
@@ -204,6 +208,8 @@ def build_epic_callbacks(refs: EpicCallbackRefs) -> EpicVerificationCallbacks:
         on_warning=refs.on_warning,
         has_epic_verifier=refs.has_epic_verifier,
         get_agent_id=refs.get_agent_id,
+        queue_trigger_validation=refs.queue_trigger_validation,
+        get_epic_completion_trigger=refs.get_epic_completion_trigger,
     )
 
 

@@ -791,3 +791,367 @@ class TestSigintHandling:
         assert "SIGINT" in result.details
         # Queue should be cleared
         assert len(coordinator._trigger_queue) == 0
+
+
+class TestEpicCompletionTriggerIntegration:
+    """Tests for epic_completion trigger integration in EpicVerificationCoordinator."""
+
+    def _make_run_metadata(self, tmp_path: Path) -> object:
+        """Create a minimal RunMetadata for testing."""
+        from src.infra.io.log_output.run_metadata import RunConfig, RunMetadata
+
+        config = RunConfig(
+            max_agents=1,
+            timeout_minutes=60,
+            max_issues=10,
+            epic_id=None,
+            only_ids=None,
+        )
+        return RunMetadata(tmp_path, config, "test")
+
+    def _make_epic_coordinator(
+        self,
+        *,
+        trigger_config: EpicCompletionTriggerConfig | None = None,
+        parent_epic_map: dict[str, str | None] | None = None,
+    ) -> tuple:
+        """Create EpicVerificationCoordinator with mock callbacks for trigger testing.
+
+        Args:
+            trigger_config: The epic_completion trigger config (or None if not configured).
+            parent_epic_map: Map of issue_id -> parent_epic_id (or None for top-level).
+
+        Returns:
+            Tuple of (coordinator, queued_triggers list).
+        """
+        from src.core.models import EpicVerificationResult, EpicVerdict
+        from src.pipeline.epic_verification_coordinator import (
+            EpicVerificationCallbacks,
+            EpicVerificationConfig,
+            EpicVerificationCoordinator,
+        )
+
+        parent_map = parent_epic_map or {}
+        queued_triggers: list[tuple[TriggerType, dict]] = []
+
+        async def get_parent_epic(issue_id: str) -> str | None:
+            return parent_map.get(issue_id)
+
+        # Default verification result: passed
+        verification_result = EpicVerificationResult(
+            verified_count=1,
+            passed_count=1,
+            failed_count=0,
+            verdicts={
+                "epic-1": EpicVerdict(
+                    passed=True, unmet_criteria=[], confidence=1.0, reasoning="passed"
+                )
+            },
+            remediation_issues_created=[],
+        )
+
+        async def verify_epic(
+            epic_id: str, human_override: bool
+        ) -> EpicVerificationResult:
+            return verification_result
+
+        callbacks = EpicVerificationCallbacks(
+            get_parent_epic=get_parent_epic,
+            verify_epic=verify_epic,
+            spawn_remediation=lambda issue_id, flow: None,  # type: ignore[return-value, arg-type]
+            finalize_remediation=lambda issue_id, result, metadata: None,  # type: ignore[return-value, arg-type]
+            mark_completed=lambda issue_id: None,
+            is_issue_failed=lambda issue_id: False,
+            close_eligible_epics=lambda: None,  # type: ignore[return-value, arg-type]
+            on_epic_closed=lambda issue_id: None,
+            on_warning=lambda msg: None,
+            has_epic_verifier=lambda: True,
+            get_agent_id=lambda issue_id: "test-agent",
+            queue_trigger_validation=lambda t, c: queued_triggers.append((t, c)),
+            get_epic_completion_trigger=lambda: trigger_config,
+        )
+
+        config = EpicVerificationConfig(max_retries=0)
+        coordinator = EpicVerificationCoordinator(
+            config=config,
+            callbacks=callbacks,
+        )
+
+        return coordinator, queued_triggers, callbacks
+
+    def test_epic_depth_top_level_nested_epic_does_not_fire(
+        self, tmp_path: Path
+    ) -> None:
+        """epic_depth=top_level: nested epic doesn't fire trigger."""
+        trigger_config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            epic_depth=EpicDepth.TOP_LEVEL,
+            fire_on=FireOn.SUCCESS,
+        )
+        # epic-1 has a parent epic, so it's nested
+        coordinator, queued, _ = self._make_epic_coordinator(
+            trigger_config=trigger_config,
+            parent_epic_map={"epic-1": "parent-epic"},
+        )
+
+        # Run verification
+        run_metadata = self._make_run_metadata(tmp_path)
+        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+
+        # No trigger should be queued for nested epic
+        assert len(queued) == 0
+
+    def test_epic_depth_top_level_top_level_epic_fires(self, tmp_path: Path) -> None:
+        """epic_depth=top_level: top-level epic fires trigger."""
+        trigger_config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            epic_depth=EpicDepth.TOP_LEVEL,
+            fire_on=FireOn.SUCCESS,
+        )
+        # epic-1 has no parent, so it's top-level
+        coordinator, queued, _ = self._make_epic_coordinator(
+            trigger_config=trigger_config,
+            parent_epic_map={"child-1": "epic-1", "epic-1": None},
+        )
+
+        run_metadata = self._make_run_metadata(tmp_path)
+        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+
+        # Trigger should be queued
+        assert len(queued) == 1
+        trigger_type, context = queued[0]
+        assert trigger_type == TriggerType.EPIC_COMPLETION
+        assert context["epic_id"] == "epic-1"
+        assert context["depth"] == "top_level"
+        assert context["verification_result"] == "passed"
+
+    def test_epic_depth_all_nested_epic_fires(self, tmp_path: Path) -> None:
+        """epic_depth=all: nested epic fires trigger."""
+        trigger_config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            epic_depth=EpicDepth.ALL,
+            fire_on=FireOn.SUCCESS,
+        )
+        # epic-1 has a parent
+        coordinator, queued, _ = self._make_epic_coordinator(
+            trigger_config=trigger_config,
+            parent_epic_map={"child-1": "epic-1", "epic-1": "grandparent-epic"},
+        )
+
+        run_metadata = self._make_run_metadata(tmp_path)
+        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+
+        # Trigger should be queued even for nested epic
+        assert len(queued) == 1
+        trigger_type, context = queued[0]
+        assert trigger_type == TriggerType.EPIC_COMPLETION
+        assert context["epic_id"] == "epic-1"
+        assert context["depth"] == "nested"
+        assert context["verification_result"] == "passed"
+
+    def test_fire_on_success_only_fires_on_pass(self, tmp_path: Path) -> None:
+        """fire_on=success: only fires when verification passes."""
+        from src.core.models import EpicVerificationResult, EpicVerdict
+
+        trigger_config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            epic_depth=EpicDepth.ALL,
+            fire_on=FireOn.SUCCESS,
+        )
+        coordinator, queued, callbacks = self._make_epic_coordinator(
+            trigger_config=trigger_config,
+            parent_epic_map={"child-1": "epic-1", "epic-1": None},
+        )
+
+        # Override verify_epic to return failed result
+        async def verify_failed(
+            epic_id: str, human_override: bool
+        ) -> EpicVerificationResult:
+            return EpicVerificationResult(
+                verified_count=1,
+                passed_count=0,
+                failed_count=1,
+                verdicts={
+                    "epic-1": EpicVerdict(
+                        passed=False,
+                        unmet_criteria=[],
+                        confidence=1.0,
+                        reasoning="failed",
+                    )
+                },
+                remediation_issues_created=[],
+            )
+
+        callbacks.verify_epic = verify_failed
+
+        run_metadata = self._make_run_metadata(tmp_path)
+        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+
+        # No trigger should be queued on failure when fire_on=success
+        assert len(queued) == 0
+
+    def test_fire_on_failure_only_fires_on_fail(self, tmp_path: Path) -> None:
+        """fire_on=failure: only fires when verification fails."""
+        trigger_config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            epic_depth=EpicDepth.ALL,
+            fire_on=FireOn.FAILURE,
+        )
+        coordinator, queued, _ = self._make_epic_coordinator(
+            trigger_config=trigger_config,
+            parent_epic_map={"child-1": "epic-1", "epic-1": None},
+        )
+
+        # Default verify_epic returns passed, so trigger should not fire
+        run_metadata = self._make_run_metadata(tmp_path)
+        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+
+        # No trigger should be queued on success when fire_on=failure
+        assert len(queued) == 0
+
+    def test_fire_on_failure_fires_on_fail(self, tmp_path: Path) -> None:
+        """fire_on=failure: fires when verification fails."""
+        from src.core.models import EpicVerificationResult, EpicVerdict
+
+        trigger_config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            epic_depth=EpicDepth.ALL,
+            fire_on=FireOn.FAILURE,
+        )
+        coordinator, queued, callbacks = self._make_epic_coordinator(
+            trigger_config=trigger_config,
+            parent_epic_map={"child-1": "epic-1", "epic-1": None},
+        )
+
+        # Override verify_epic to return failed result
+        async def verify_failed(
+            epic_id: str, human_override: bool
+        ) -> EpicVerificationResult:
+            return EpicVerificationResult(
+                verified_count=1,
+                passed_count=0,
+                failed_count=1,
+                verdicts={
+                    "epic-1": EpicVerdict(
+                        passed=False,
+                        unmet_criteria=[],
+                        confidence=1.0,
+                        reasoning="failed",
+                    )
+                },
+                remediation_issues_created=[],
+            )
+
+        callbacks.verify_epic = verify_failed
+
+        run_metadata = self._make_run_metadata(tmp_path)
+        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+
+        # Trigger should be queued
+        assert len(queued) == 1
+        trigger_type, context = queued[0]
+        assert trigger_type == TriggerType.EPIC_COMPLETION
+        assert context["verification_result"] == "failed"
+
+    def test_fire_on_both_always_fires(self, tmp_path: Path) -> None:
+        """fire_on=both: always fires."""
+        trigger_config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            epic_depth=EpicDepth.ALL,
+            fire_on=FireOn.BOTH,
+        )
+        coordinator, queued, _ = self._make_epic_coordinator(
+            trigger_config=trigger_config,
+            parent_epic_map={"child-1": "epic-1", "epic-1": None},
+        )
+
+        run_metadata = self._make_run_metadata(tmp_path)
+        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+
+        # Trigger should be queued on success
+        assert len(queued) == 1
+        assert queued[0][1]["verification_result"] == "passed"
+
+    def test_fire_on_both_fires_on_failure(self, tmp_path: Path) -> None:
+        """fire_on=both: fires on failure too."""
+        from src.core.models import EpicVerificationResult, EpicVerdict
+
+        trigger_config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            epic_depth=EpicDepth.ALL,
+            fire_on=FireOn.BOTH,
+        )
+        coordinator, queued, callbacks = self._make_epic_coordinator(
+            trigger_config=trigger_config,
+            parent_epic_map={"child-1": "epic-1", "epic-1": None},
+        )
+
+        # Override verify_epic to return failed result
+        async def verify_failed(
+            epic_id: str, human_override: bool
+        ) -> EpicVerificationResult:
+            return EpicVerificationResult(
+                verified_count=1,
+                passed_count=0,
+                failed_count=1,
+                verdicts={
+                    "epic-1": EpicVerdict(
+                        passed=False,
+                        unmet_criteria=[],
+                        confidence=1.0,
+                        reasoning="failed",
+                    )
+                },
+                remediation_issues_created=[],
+            )
+
+        callbacks.verify_epic = verify_failed
+
+        run_metadata = self._make_run_metadata(tmp_path)
+        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+
+        # Trigger should be queued on failure too
+        assert len(queued) == 1
+        assert queued[0][1]["verification_result"] == "failed"
+
+    def test_leaf_epic_with_no_children_fires(self, tmp_path: Path) -> None:
+        """Leaf epic (with no children) fires when verified."""
+        trigger_config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            epic_depth=EpicDepth.ALL,
+            fire_on=FireOn.SUCCESS,
+        )
+        # Simple case: child-1's parent is epic-1
+        coordinator, queued, _ = self._make_epic_coordinator(
+            trigger_config=trigger_config,
+            parent_epic_map={"child-1": "epic-1", "epic-1": None},
+        )
+
+        run_metadata = self._make_run_metadata(tmp_path)
+        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+
+        # Trigger should be queued
+        assert len(queued) == 1
+        assert queued[0][1]["epic_id"] == "epic-1"
+
+    def test_no_trigger_config_does_not_fire(self, tmp_path: Path) -> None:
+        """No epic_completion trigger configured: nothing fires."""
+        coordinator, queued, _ = self._make_epic_coordinator(
+            trigger_config=None,
+            parent_epic_map={"child-1": "epic-1", "epic-1": None},
+        )
+
+        run_metadata = self._make_run_metadata(tmp_path)
+        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+
+        # No trigger should be queued
+        assert len(queued) == 0
