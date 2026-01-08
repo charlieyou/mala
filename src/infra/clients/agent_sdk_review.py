@@ -377,6 +377,7 @@ class AgentSDKReviewer:
             model=self.model,
             permission_mode="bypassPermissions",
             output_format=_REVIEW_OUTPUT_FORMAT,
+            env={"MALA_SDK_FLOW": "reviewer"},
         )
 
         # Create SDK client
@@ -416,15 +417,6 @@ class AgentSDKReviewer:
         was_interrupted = False
 
         async with client:  # type: ignore[union-attr]
-            # Log subprocess spawned for reviewer flow
-            # Note: The actual subprocess PID is managed by sdk_transport, but we log
-            # here to indicate the reviewer flow has started for monitoring purposes
-            logger.info(
-                "sdk_subprocess_spawned pid=%s pgid=%s flow=reviewer",
-                "unknown",
-                "unknown",
-            )
-
             await client.query(query, session_id=session_id)  # type: ignore[union-attr]
 
             async for msg in client.receive_response():  # type: ignore[union-attr]
