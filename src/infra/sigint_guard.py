@@ -176,6 +176,12 @@ async def run_with_timeout_and_interrupt(
         The coroutine is cancelled if timeout or interrupt occurs.
         At most one of timed_out and interrupted will be True.
     """
+    # Check for early interrupt before starting task
+    if interrupt_event is not None and interrupt_event.is_set():
+        # Close the coroutine to avoid "coroutine was never awaited" warning
+        coro.close()
+        return (None, False, True)
+
     task = asyncio.create_task(coro)
 
     if interrupt_event is None:
@@ -191,6 +197,14 @@ async def run_with_timeout_and_interrupt(
             except asyncio.CancelledError:
                 pass
             return (None, True, False)
+        except BaseException:
+            # Cleanup on outer cancellation or other errors
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            raise
 
     # Create waiter for interrupt event
     interrupt_task = asyncio.create_task(interrupt_event.wait())
