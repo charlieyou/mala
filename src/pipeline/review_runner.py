@@ -39,6 +39,22 @@ if TYPE_CHECKING:
 
 
 @dataclass
+class _InterruptedReviewResult:
+    """Minimal ReviewResultProtocol implementation for interrupted reviews.
+
+    This local class avoids importing from src.infra.clients which would
+    violate the layered architecture (orchestration cannot import infra.clients).
+    """
+
+    passed: bool
+    issues: list[object]
+    parse_error: str | None
+    fatal_error: bool
+    review_log_path: Path | None
+    interrupted: bool = True
+
+
+@dataclass
 class ReviewRunnerConfig:
     """Configuration for ReviewRunner behavior.
 
@@ -164,8 +180,6 @@ class ReviewRunner:
         """
         import tempfile
 
-        from src.infra.clients.review_output_parser import ReviewResult
-
         # Check for early interrupt before starting
         guard = InterruptGuard(interrupt_event)
         if guard.is_interrupted():
@@ -175,7 +189,7 @@ class ReviewRunner:
             return ReviewOutput(
                 result=cast(
                     "ReviewResultProtocol",
-                    ReviewResult(
+                    _InterruptedReviewResult(
                         passed=False,
                         issues=[],
                         parse_error=None,
