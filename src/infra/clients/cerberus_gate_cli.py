@@ -236,6 +236,7 @@ class CerberusGateCLI:
             self._review_gate_bin(),
             "wait",
             "--json",
+            "--finalize",
             "--session-id",
             session_id,
         ]

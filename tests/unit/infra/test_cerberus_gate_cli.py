@@ -404,6 +404,7 @@ class TestSpawnCodeReview:
 
         assert len(runner.calls) == 1
         call_args = runner.calls[0][0]
+        assert "--finalize" in call_args
         assert "--extra" in call_args
         assert "arg" in call_args
 
