@@ -201,9 +201,9 @@ class TestFixerInterruptHandling:
         mock_runtime.options = {}
         mock_runtime.lint_cache = MagicMock()
 
-        # Create a mock UUID for predictable session_id
+        # Create a mock UUID for predictable agent_id (fixer-{uuid.hex[:8]})
         mock_uuid = MagicMock()
-        mock_uuid.__str__ = MagicMock(return_value="test-session-uuid-1234")
+        mock_uuid.hex = "abcd1234efgh5678"
 
         with (
             patch(
@@ -231,12 +231,12 @@ class TestFixerInterruptHandling:
 
         assert result.success is True
         assert result.log_path == "/mock/log/path/session.jsonl"
-        # session_id is now generated upfront, not from ResultMessage
-        mock_log_path.assert_called_once_with(tmp_path, "test-session-uuid-1234")
-        # Verify session_id was passed to client.query
+        # agent_id is used for log path (fixer-{uuid.hex[:8]})
+        mock_log_path.assert_called_once_with(tmp_path, "fixer-abcd1234")
+        # Verify agent_id was passed to client.query as session_id
         mock_client.query.assert_called_once()
         call_kwargs = mock_client.query.call_args
-        assert call_kwargs[1].get("session_id") == "test-session-uuid-1234"
+        assert call_kwargs[1].get("session_id") == "fixer-abcd1234"
 
     @pytest.mark.asyncio
     async def test_fixer_returns_interrupted_during_message_loop(
@@ -328,8 +328,9 @@ class TestFixerInterruptHandling:
         mock_runtime.options = {}
         mock_runtime.lint_cache = MagicMock()
 
+        # Create a mock UUID for predictable agent_id (fixer-{uuid.hex[:8]})
         mock_uuid = MagicMock()
-        mock_uuid.__str__ = MagicMock(return_value="interrupt-session-uuid")
+        mock_uuid.hex = "deadbeef12345678"
 
         with (
             patch(
@@ -359,4 +360,5 @@ class TestFixerInterruptHandling:
         assert result.success is None
         # Key assertion: log_path should be captured even on interrupt during loop
         assert result.log_path == "/mock/log/path/interrupted.jsonl"
-        mock_log_path.assert_called_once_with(tmp_path, "interrupt-session-uuid")
+        # agent_id is used for log path (fixer-{uuid.hex[:8]})
+        mock_log_path.assert_called_once_with(tmp_path, "fixer-deadbeef")
