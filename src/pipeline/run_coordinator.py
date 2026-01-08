@@ -536,16 +536,15 @@ class RunCoordinator:
         client = self.sdk_client_factory.create(runtime.options)
 
         pending_lint_commands: dict[str, tuple[str, str]] = {}
-        result_session_id: str | None = None
-        # Note: log_path requires session_id from ResultMessage, so it's only
-        # available after successful completion. On interrupt/timeout/error,
-        # log_path will be None since we never receive ResultMessage.
-        log_path: str | None = None
+        # Generate session_id upfront so we can derive log_path before the message loop.
+        # This ensures log_path is available even on interrupt/timeout/error.
+        session_id = str(uuid.uuid4())
+        log_path: str = str(get_claude_log_path(self.config.repo_path, session_id))
 
         try:
             async with asyncio.timeout(self.config.timeout_seconds):
                 async with client:
-                    await client.query(prompt)
+                    await client.query(prompt, session_id=session_id)
 
                     async for message in client.receive_response():
                         # Check for interrupt between messages
@@ -594,15 +593,8 @@ class RunCoordinator:
                                             )
                         elif msg_type == "ResultMessage":
                             result = getattr(message, "result", "") or ""
-                            result_session_id = getattr(message, "session_id", None)
                             if self.event_sink is not None:
                                 self.event_sink.on_fixer_completed(result)
-
-            # Capture log path from session ID
-            if result_session_id:
-                log_path = str(
-                    get_claude_log_path(self.config.repo_path, result_session_id)
-                )
 
             return FixerResult(success=True, log_path=log_path)
 

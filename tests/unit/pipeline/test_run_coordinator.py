@@ -178,8 +178,8 @@ class TestFixerInterruptHandling:
         mock_sdk_client_factory: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """Fixer should capture log path from session ID."""
-        # Create a mock client with session_id in ResultMessage
+        """Fixer should capture log path using upfront session_id."""
+        # Create a mock client
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -189,7 +189,6 @@ class TestFixerInterruptHandling:
         result_message.__class__.__name__ = "ResultMessage"
         type(result_message).__name__ = "ResultMessage"
         result_message.result = "Fixed!"
-        result_message.session_id = "test-session-abc123"
 
         async def mock_receive() -> AsyncGenerator[MagicMock, None]:
             yield result_message
@@ -202,11 +201,16 @@ class TestFixerInterruptHandling:
         mock_runtime.options = {}
         mock_runtime.lint_cache = MagicMock()
 
+        # Create a mock UUID for predictable session_id
+        mock_uuid = MagicMock()
+        mock_uuid.__str__ = MagicMock(return_value="test-session-uuid-1234")
+
         with (
             patch(
                 "src.pipeline.run_coordinator.AgentRuntimeBuilder"
             ) as mock_builder_class,
             patch("src.infra.tools.env.get_claude_log_path") as mock_log_path,
+            patch("src.pipeline.run_coordinator.uuid.uuid4", return_value=mock_uuid),
         ):
             mock_builder = MagicMock()
             mock_builder_class.return_value = mock_builder
@@ -227,7 +231,12 @@ class TestFixerInterruptHandling:
 
         assert result.success is True
         assert result.log_path == "/mock/log/path/session.jsonl"
-        mock_log_path.assert_called_once_with(tmp_path, "test-session-abc123")
+        # session_id is now generated upfront, not from ResultMessage
+        mock_log_path.assert_called_once_with(tmp_path, "test-session-uuid-1234")
+        # Verify session_id was passed to client.query
+        mock_client.query.assert_called_once()
+        call_kwargs = mock_client.query.call_args
+        assert call_kwargs[1].get("session_id") == "test-session-uuid-1234"
 
     @pytest.mark.asyncio
     async def test_fixer_returns_interrupted_during_message_loop(
@@ -284,3 +293,70 @@ class TestFixerInterruptHandling:
 
         assert result.interrupted is True
         assert result.success is None
+
+    @pytest.mark.asyncio
+    async def test_fixer_captures_log_path_on_interrupt_during_loop(
+        self,
+        coordinator: RunCoordinator,
+        mock_sdk_client_factory: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Fixer should capture log path even when interrupted during message loop (Finding 2 fix)."""
+        interrupt_event = asyncio.Event()
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        # Receive first message, then set interrupt before second
+        assistant_message = MagicMock()
+        assistant_message.__class__.__name__ = "AssistantMessage"
+        type(assistant_message).__name__ = "AssistantMessage"
+        assistant_message.content = []
+
+        async def mock_receive() -> AsyncGenerator[MagicMock, None]:
+            yield assistant_message
+            # Set interrupt after first message
+            interrupt_event.set()
+            yield MagicMock()
+
+        mock_client.receive_response = mock_receive
+        mock_sdk_client_factory.create.return_value = mock_client
+
+        mock_runtime = MagicMock()
+        mock_runtime.options = {}
+        mock_runtime.lint_cache = MagicMock()
+
+        mock_uuid = MagicMock()
+        mock_uuid.__str__ = MagicMock(return_value="interrupt-session-uuid")
+
+        with (
+            patch(
+                "src.pipeline.run_coordinator.AgentRuntimeBuilder"
+            ) as mock_builder_class,
+            patch("src.infra.tools.env.get_claude_log_path") as mock_log_path,
+            patch("src.pipeline.run_coordinator.uuid.uuid4", return_value=mock_uuid),
+        ):
+            mock_builder = MagicMock()
+            mock_builder_class.return_value = mock_builder
+            mock_builder.with_hooks.return_value = mock_builder
+            mock_builder.with_env.return_value = mock_builder
+            mock_builder.with_mcp.return_value = mock_builder
+            mock_builder.with_disallowed_tools.return_value = mock_builder
+            mock_builder.with_lint_tools.return_value = mock_builder
+            mock_builder.build.return_value = mock_runtime
+
+            mock_log_path.return_value = Path("/mock/log/path/interrupted.jsonl")
+
+            result = await coordinator._run_fixer_agent(
+                failure_output="Test failure",
+                attempt=1,
+                interrupt_event=interrupt_event,
+            )
+
+        assert result.interrupted is True
+        assert result.success is None
+        # Key assertion: log_path should be captured even on interrupt during loop
+        assert result.log_path == "/mock/log/path/interrupted.jsonl"
+        mock_log_path.assert_called_once_with(tmp_path, "interrupt-session-uuid")
