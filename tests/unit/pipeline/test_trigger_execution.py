@@ -46,12 +46,15 @@ def make_coordinator(
     *,
     validation_config: ValidationConfig | None = None,
     command_runner: FakeCommandRunner | None = None,
+    fixer_prompt: str | None = None,
 ) -> RunCoordinator:
     """Create a RunCoordinator with minimal fakes for trigger testing."""
     config = RunCoordinatorConfig(
         repo_path=tmp_path,
         timeout_seconds=60,
         validation_config=validation_config,
+        fixer_prompt=fixer_prompt
+        or "Fix attempt {attempt}/{max_attempts}: {failure_output}",
     )
     return RunCoordinator(
         config=config,
@@ -409,3 +412,311 @@ class TestEmptyCommandList:
         result = asyncio.run(coordinator.run_trigger_validation(dry_run=False))
 
         assert result.status == "passed"
+
+
+class TestFailureModeAbort:
+    """Tests for abort failure mode."""
+
+    def test_abort_sets_aborted_status(self, tmp_path: Path) -> None:
+        """ABORT mode sets result status to 'aborted'."""
+        runner = FakeCommandRunner()
+        runner.responses[("failing_cmd",)] = CommandResult(
+            command="failing_cmd", returncode=1, stdout="", stderr="error"
+        )
+
+        config = make_validation_config(
+            commands={"test": "failing_cmd"},
+            triggers=ValidationTriggersConfig(
+                epic_completion=EpicCompletionTriggerConfig(
+                    failure_mode=FailureMode.ABORT,
+                    commands=(TriggerCommandRef(ref="test"),),
+                    epic_depth=EpicDepth.TOP_LEVEL,
+                    fire_on=FireOn.SUCCESS,
+                )
+            ),
+        )
+        coordinator = make_coordinator(
+            tmp_path, validation_config=config, command_runner=runner
+        )
+        coordinator.queue_trigger_validation(
+            TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
+        )
+
+        result = asyncio.run(coordinator.run_trigger_validation(dry_run=False))
+
+        assert result.status == "aborted"
+        assert result.details is not None
+        assert "test" in result.details
+
+    def test_abort_clears_trigger_queue(self, tmp_path: Path) -> None:
+        """ABORT mode clears remaining triggers from queue."""
+        runner = FakeCommandRunner()
+        runner.responses[("failing_cmd",)] = CommandResult(
+            command="failing_cmd", returncode=1, stdout="", stderr="error"
+        )
+
+        config = make_validation_config(
+            commands={"test": "failing_cmd"},
+            triggers=ValidationTriggersConfig(
+                epic_completion=EpicCompletionTriggerConfig(
+                    failure_mode=FailureMode.ABORT,
+                    commands=(TriggerCommandRef(ref="test"),),
+                    epic_depth=EpicDepth.TOP_LEVEL,
+                    fire_on=FireOn.SUCCESS,
+                )
+            ),
+        )
+        coordinator = make_coordinator(
+            tmp_path, validation_config=config, command_runner=runner
+        )
+        # Queue multiple triggers
+        coordinator.queue_trigger_validation(
+            TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
+        )
+        coordinator.queue_trigger_validation(
+            TriggerType.EPIC_COMPLETION, {"epic_id": "epic-2"}
+        )
+
+        result = asyncio.run(coordinator.run_trigger_validation(dry_run=False))
+
+        assert result.status == "aborted"
+        # Queue should be cleared
+        assert len(coordinator._trigger_queue) == 0
+
+
+class TestFailureModeContinue:
+    """Tests for continue failure mode."""
+
+    def test_continue_returns_failed_status(self, tmp_path: Path) -> None:
+        """CONTINUE mode returns 'failed' status on failure."""
+        runner = FakeCommandRunner()
+        runner.responses[("failing_cmd",)] = CommandResult(
+            command="failing_cmd", returncode=1, stdout="", stderr="error"
+        )
+
+        config = make_validation_config(
+            commands={"test": "failing_cmd"},
+            triggers=ValidationTriggersConfig(
+                epic_completion=EpicCompletionTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(TriggerCommandRef(ref="test"),),
+                    epic_depth=EpicDepth.TOP_LEVEL,
+                    fire_on=FireOn.SUCCESS,
+                )
+            ),
+        )
+        coordinator = make_coordinator(
+            tmp_path, validation_config=config, command_runner=runner
+        )
+        coordinator.queue_trigger_validation(
+            TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
+        )
+
+        result = asyncio.run(coordinator.run_trigger_validation(dry_run=False))
+
+        assert result.status == "failed"
+        assert result.details is not None
+        assert "test" in result.details
+
+
+class TestFailureModeRemediate:
+    """Tests for remediate failure mode."""
+
+    def test_remediate_spawns_fixer_and_retries(self, tmp_path: Path) -> None:
+        """REMEDIATE mode spawns fixer and re-runs failed command."""
+        config = make_validation_config(
+            commands={"test": "test_cmd"},
+            triggers=ValidationTriggersConfig(
+                epic_completion=EpicCompletionTriggerConfig(
+                    failure_mode=FailureMode.REMEDIATE,
+                    max_retries=3,
+                    commands=(TriggerCommandRef(ref="test"),),
+                    epic_depth=EpicDepth.TOP_LEVEL,
+                    fire_on=FireOn.SUCCESS,
+                )
+            ),
+        )
+
+        # Create a stateful runner that fails first, then passes
+        class StatefulRunner:
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def run_async(self, cmd: str, **kwargs: object) -> CommandResult:
+                self.call_count += 1
+                if self.call_count == 1:
+                    return CommandResult(
+                        command="test_cmd", returncode=1, stdout="", stderr="lint error"
+                    )
+                return CommandResult(
+                    command="test_cmd", returncode=0, stdout="", stderr=""
+                )
+
+        stateful_runner = StatefulRunner()
+
+        # Track fixer calls
+        fixer_calls: list[int] = []
+
+        async def mock_fixer(
+            failure_output: str, attempt: int, spec: object = None
+        ) -> bool:
+            fixer_calls.append(attempt)
+            return True
+
+        coordinator = make_coordinator(tmp_path, validation_config=config)
+        coordinator.command_runner = stateful_runner  # type: ignore[assignment]
+        coordinator._run_fixer_agent = mock_fixer  # type: ignore[method-assign]
+        coordinator.queue_trigger_validation(
+            TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
+        )
+
+        result = asyncio.run(coordinator.run_trigger_validation(dry_run=False))
+
+        # Command should pass after fixer
+        assert result.status == "passed"
+        # Fixer should have been spawned once
+        assert len(fixer_calls) == 1
+        # Command should have been called twice (fail, then pass)
+        assert stateful_runner.call_count == 2
+
+    def test_remediate_exhaustion_aborts(self, tmp_path: Path) -> None:
+        """REMEDIATE mode aborts after max_retries exhausted."""
+        runner = FakeCommandRunner()
+        # Always fail
+        runner.responses[("test_cmd",)] = CommandResult(
+            command="test_cmd", returncode=1, stdout="", stderr="error"
+        )
+
+        config = make_validation_config(
+            commands={"test": "test_cmd"},
+            triggers=ValidationTriggersConfig(
+                epic_completion=EpicCompletionTriggerConfig(
+                    failure_mode=FailureMode.REMEDIATE,
+                    max_retries=2,
+                    commands=(TriggerCommandRef(ref="test"),),
+                    epic_depth=EpicDepth.TOP_LEVEL,
+                    fire_on=FireOn.SUCCESS,
+                )
+            ),
+        )
+
+        # Track fixer calls
+        fixer_calls: list[int] = []
+
+        async def mock_fixer(
+            failure_output: str, attempt: int, spec: object = None
+        ) -> bool:
+            fixer_calls.append(attempt)
+            return True  # Fixer "succeeds" but command still fails
+
+        coordinator = make_coordinator(
+            tmp_path, validation_config=config, command_runner=runner
+        )
+        coordinator._run_fixer_agent = mock_fixer  # type: ignore[method-assign]
+        coordinator.queue_trigger_validation(
+            TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
+        )
+
+        result = asyncio.run(coordinator.run_trigger_validation(dry_run=False))
+
+        assert result.status == "aborted"
+        assert result.details is not None
+        assert "2 remediation attempts" in result.details
+        # Fixer should have been spawned twice
+        assert len(fixer_calls) == 2
+
+    def test_max_retries_zero_no_fixer_spawned(self, tmp_path: Path) -> None:
+        """REMEDIATE with max_retries=0 aborts immediately without fixer."""
+        runner = FakeCommandRunner()
+        runner.responses[("test_cmd",)] = CommandResult(
+            command="test_cmd", returncode=1, stdout="", stderr="error"
+        )
+
+        config = make_validation_config(
+            commands={"test": "test_cmd"},
+            triggers=ValidationTriggersConfig(
+                epic_completion=EpicCompletionTriggerConfig(
+                    failure_mode=FailureMode.REMEDIATE,
+                    max_retries=0,
+                    commands=(TriggerCommandRef(ref="test"),),
+                    epic_depth=EpicDepth.TOP_LEVEL,
+                    fire_on=FireOn.SUCCESS,
+                )
+            ),
+        )
+
+        # Track fixer calls
+        fixer_calls: list[int] = []
+
+        async def mock_fixer(
+            failure_output: str, attempt: int, spec: object = None
+        ) -> bool:
+            fixer_calls.append(attempt)
+            return True
+
+        coordinator = make_coordinator(
+            tmp_path, validation_config=config, command_runner=runner
+        )
+        coordinator._run_fixer_agent = mock_fixer  # type: ignore[method-assign]
+        coordinator.queue_trigger_validation(
+            TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
+        )
+
+        result = asyncio.run(coordinator.run_trigger_validation(dry_run=False))
+
+        assert result.status == "aborted"
+        assert result.details is not None
+        assert "max_retries=0" in result.details
+        # No fixer should have been spawned
+        assert len(fixer_calls) == 0
+
+
+class TestSigintHandling:
+    """Tests for SIGINT handling during trigger validation."""
+
+    def test_sigint_aborts_validation(self, tmp_path: Path) -> None:
+        """SIGINT during validation aborts and clears queue."""
+        runner = FakeCommandRunner()
+        runner.responses[("slow_cmd",)] = CommandResult(
+            command="slow_cmd", returncode=0, stdout="", stderr=""
+        )
+
+        config = make_validation_config(
+            commands={"test": "slow_cmd"},
+            triggers=ValidationTriggersConfig(
+                epic_completion=EpicCompletionTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(TriggerCommandRef(ref="test"),),
+                    epic_depth=EpicDepth.TOP_LEVEL,
+                    fire_on=FireOn.SUCCESS,
+                )
+            ),
+        )
+        coordinator = make_coordinator(
+            tmp_path, validation_config=config, command_runner=runner
+        )
+        # Queue multiple triggers
+        coordinator.queue_trigger_validation(
+            TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
+        )
+        coordinator.queue_trigger_validation(
+            TriggerType.EPIC_COMPLETION, {"epic_id": "epic-2"}
+        )
+
+        # Test using the inner loop directly with a pre-set interrupted flag
+        validation_config = config
+        triggers_config = validation_config.validation_triggers
+        assert triggers_config is not None  # Satisfy type checker
+        base_pool = coordinator._build_base_pool(validation_config)
+
+        result = asyncio.run(
+            coordinator._run_trigger_validation_loop(
+                triggers_config, base_pool, dry_run=False, is_interrupted=lambda: True
+            )
+        )
+
+        assert result.status == "aborted"
+        assert result.details is not None
+        assert "SIGINT" in result.details
+        # Queue should be cleared
+        assert len(coordinator._trigger_queue) == 0

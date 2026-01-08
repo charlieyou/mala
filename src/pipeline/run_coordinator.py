@@ -18,9 +18,13 @@ Design principles:
 from __future__ import annotations
 
 import asyncio
+import signal
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from src.infra.agent_runtime import AgentRuntimeBuilder
 from src.infra.tools.locking import cleanup_agent_locks
@@ -37,6 +41,7 @@ from src.domain.validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from types import FrameType
 
     from src.core.protocols import (
         CommandRunnerPort,
@@ -593,8 +598,8 @@ class RunCoordinator:
         """Execute queued trigger validations.
 
         Processes each queued trigger sequentially. For each trigger, resolves
-        commands from the base pool, applies overrides, and executes with
-        fail-fast semantics (first failure stops remaining commands).
+        commands from the base pool, applies overrides, and executes. Handles
+        failure_mode (abort/continue/remediate) and SIGINT for graceful interrupts.
 
         Args:
             dry_run: If True, simulate execution without running commands.
@@ -626,11 +631,54 @@ class RunCoordinator:
         # Build base pool from commands config
         base_pool = self._build_base_pool(validation_config)
 
-        # Process each queued trigger
-        failed_trigger: str | None = None
-        failed_command: str | None = None
+        # Set up SIGINT handling
+        interrupted = False
+        original_handler = signal.getsignal(signal.SIGINT)
+
+        def sigint_handler(signum: int, frame: FrameType | None) -> None:
+            nonlocal interrupted
+            interrupted = True
+
+        signal.signal(signal.SIGINT, sigint_handler)
+
+        try:
+            return await self._run_trigger_validation_loop(
+                triggers_config,
+                base_pool,
+                dry_run,
+                lambda: interrupted,
+            )
+        finally:
+            signal.signal(signal.SIGINT, original_handler)
+
+    async def _run_trigger_validation_loop(
+        self,
+        triggers_config: ValidationTriggersConfig,
+        base_pool: dict[str, tuple[str, int | None]],
+        dry_run: bool,
+        is_interrupted: Callable[[], bool],
+    ) -> TriggerValidationResult:
+        """Inner loop for trigger validation with failure mode handling.
+
+        Args:
+            triggers_config: The trigger configuration.
+            base_pool: Map of command refs to (command, timeout).
+            dry_run: If True, simulate execution.
+            is_interrupted: Callable returning True if SIGINT received.
+
+        Returns:
+            TriggerValidationResult with status and details.
+        """
+        from src.domain.validation.config import FailureMode
 
         while self._trigger_queue:
+            # Check for SIGINT before processing next trigger
+            if is_interrupted():
+                self.clear_trigger_queue("sigint")
+                return TriggerValidationResult(
+                    status="aborted", details="Validation interrupted by SIGINT"
+                )
+
             trigger_type, _context = self._trigger_queue.pop(0)
 
             # Get the trigger config for this type
@@ -648,23 +696,153 @@ class RunCoordinator:
                 resolved_commands, dry_run=dry_run
             )
 
-            # Check for failures (fail-fast already stopped at first failure)
+            # Check for failures
+            failed_result: TriggerCommandResult | None = None
             for result in results:
                 if not result.passed:
-                    failed_trigger = trigger_type.value
-                    failed_command = result.ref
+                    failed_result = result
                     break
 
-            if failed_command:
-                break
+            if failed_result is None:
+                # All commands passed, continue to next trigger
+                continue
 
-        if failed_command:
-            return TriggerValidationResult(
-                status="failed",
-                details=f"Command '{failed_command}' failed in trigger {failed_trigger}",
-            )
+            # Handle failure based on failure_mode
+            failure_mode = trigger_config.failure_mode
+
+            if failure_mode == FailureMode.CONTINUE:
+                # Log failure but continue to next trigger
+                return TriggerValidationResult(
+                    status="failed",
+                    details=f"Command '{failed_result.ref}' failed in trigger {trigger_type.value}",
+                )
+
+            elif failure_mode == FailureMode.REMEDIATE:
+                # Attempt remediation with fixer agent
+                remediation_result = await self._run_trigger_remediation(
+                    trigger_type,
+                    trigger_config,
+                    resolved_commands,
+                    failed_result,
+                    dry_run,
+                    is_interrupted,
+                )
+                if remediation_result is not None:
+                    return remediation_result
+                # Remediation succeeded, continue to next trigger
+
+            else:  # ABORT (default)
+                self.clear_trigger_queue("run_aborted")
+                return TriggerValidationResult(
+                    status="aborted",
+                    details=f"Command '{failed_result.ref}' failed in trigger {trigger_type.value}",
+                )
 
         return TriggerValidationResult(status="passed")
+
+    async def _run_trigger_remediation(
+        self,
+        trigger_type: TriggerType,
+        trigger_config: BaseTriggerConfig,
+        resolved_commands: list[ResolvedCommand],
+        failed_result: TriggerCommandResult,
+        dry_run: bool,
+        is_interrupted: Callable[[], bool],
+    ) -> TriggerValidationResult | None:
+        """Run remediation loop for a failed trigger command.
+
+        Spawns fixer agent and re-runs failed command up to max_retries times.
+
+        Args:
+            trigger_type: The trigger type that failed.
+            trigger_config: The trigger's configuration.
+            resolved_commands: The resolved commands for this trigger.
+            failed_result: The failed command result.
+            dry_run: If True, simulate execution.
+            is_interrupted: Callable returning True if SIGINT received.
+
+        Returns:
+            TriggerValidationResult if remediation failed/aborted, None if succeeded.
+        """
+        max_retries = trigger_config.max_retries or 0
+
+        # max_retries=0 means no fixer spawned, immediate abort
+        if max_retries == 0:
+            self.clear_trigger_queue("run_aborted")
+            return TriggerValidationResult(
+                status="aborted",
+                details=f"Command '{failed_result.ref}' failed in trigger {trigger_type.value} (max_retries=0)",
+            )
+
+        # Find the failed command to re-run
+        failed_cmd = next(
+            (cmd for cmd in resolved_commands if cmd.ref == failed_result.ref), None
+        )
+        if failed_cmd is None:
+            # Shouldn't happen, but handle gracefully
+            self.clear_trigger_queue("run_aborted")
+            return TriggerValidationResult(
+                status="aborted",
+                details=f"Failed to find command '{failed_result.ref}' for remediation",
+            )
+
+        # Build failure output for fixer
+        failure_output = self._build_trigger_failure_output(failed_result)
+
+        for attempt in range(1, max_retries + 1):
+            # Check for SIGINT before fixer attempt
+            if is_interrupted():
+                self.clear_trigger_queue("sigint")
+                return TriggerValidationResult(
+                    status="aborted", details="Validation interrupted by SIGINT"
+                )
+
+            # Spawn fixer agent
+            await self._run_fixer_agent(
+                failure_output=failure_output,
+                attempt=attempt,
+            )
+
+            # Check for SIGINT after fixer
+            if is_interrupted():
+                self.clear_trigger_queue("sigint")
+                return TriggerValidationResult(
+                    status="aborted", details="Validation interrupted by SIGINT"
+                )
+
+            # Re-run the failed command
+            retry_results = await self._execute_trigger_commands(
+                [failed_cmd], dry_run=dry_run
+            )
+
+            if retry_results and retry_results[0].passed:
+                # Command passed after fixer, remediation succeeded
+                return None
+
+            # Update failure output for next attempt
+            if retry_results:
+                failure_output = self._build_trigger_failure_output(retry_results[0])
+
+        # Remediation exhausted - abort
+        self.clear_trigger_queue("run_aborted")
+        return TriggerValidationResult(
+            status="aborted",
+            details=f"Command '{failed_result.ref}' failed after {max_retries} remediation attempts",
+        )
+
+    def _build_trigger_failure_output(self, result: TriggerCommandResult) -> str:
+        """Build failure output string for fixer agent from trigger command result.
+
+        Args:
+            result: The failed trigger command result.
+
+        Returns:
+            Human-readable failure output.
+        """
+        lines: list[str] = [f"Command '{result.ref}' failed."]
+        if result.error_message:
+            lines.append(f"Error: {result.error_message}")
+        return "\n".join(lines)
 
     def _build_base_pool(
         self, validation_config: ValidationConfig
