@@ -1750,7 +1750,7 @@ class TestGlobalCustomCommandsDeepMerge:
             _fields_set=frozenset({"global_validation_commands"}),
         )
 
-        with pytest.raises(ConfigError, match=r"require a preset to inherit"):
+        with pytest.raises(ConfigError, match=r"(?i)partial override.*preset.*inherit"):
             merge_configs(None, user)
 
     def test_custom_commands_from_different_sources_merged(self) -> None:
