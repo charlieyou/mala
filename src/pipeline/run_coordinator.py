@@ -527,7 +527,7 @@ class RunCoordinator:
                 include_stop_hook=True,
                 include_mala_disallowed_tools_hook=False,
             )
-            .with_env()
+            .with_env(extra={"MALA_SDK_FLOW": "fixer"})
             .with_mcp()
             .with_disallowed_tools()
             .with_lint_tools(lint_tools)
@@ -537,6 +537,9 @@ class RunCoordinator:
 
         pending_lint_commands: dict[str, tuple[str, str]] = {}
         result_session_id: str | None = None
+        # Note: log_path requires session_id from ResultMessage, so it's only
+        # available after successful completion. On interrupt/timeout/error,
+        # log_path will be None since we never receive ResultMessage.
         log_path: str | None = None
 
         try:

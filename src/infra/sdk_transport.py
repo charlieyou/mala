@@ -86,10 +86,13 @@ def ensure_sigint_isolated_cli_transport() -> None:
                 if start_new_session and self._process is not None:
                     self._mala_sigint_pgid = self._process.pid
                     CommandRunner.register_sigint_pgid(self._mala_sigint_pgid)
+                    # Use MALA_SDK_FLOW env var if set, otherwise default to "implementer"
+                    flow = process_env.get("MALA_SDK_FLOW", "implementer")
                     logger.info(
-                        "sdk_subprocess_spawned pid=%s pgid=%s flow=implementer",
+                        "sdk_subprocess_spawned pid=%s pgid=%s flow=%s",
                         self._process.pid,
                         self._mala_sigint_pgid,
+                        flow,
                     )
 
                 if self._process.stdout:

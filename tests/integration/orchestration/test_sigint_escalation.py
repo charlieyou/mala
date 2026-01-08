@@ -1383,15 +1383,11 @@ class TestUnifiedSIGINTHandling:
     The complete end-to-end wiring from orchestrator to fixer is tested
     after T007 completes the wiring.
 
-    NOTE: test_sigint_during_fixer_marks_validation_not_passed is marked
-    xfail because it requires T007 to wire interrupt_event from orchestrator
-    to run_validation.
+    NOTE: test_sigint_during_fixer_marks_validation_not_passed will fail until
+    T007 wires interrupt_event from orchestrator to run_validation. This failure
+    serves as a "red gate" to indicate when wiring is incomplete.
     """
 
-    @pytest.mark.xfail(
-        reason="T007 not yet implemented: interrupt_event not wired from orchestrator to run_validation",
-        strict=True,
-    )
     def test_sigint_during_fixer_marks_validation_not_passed(
         self, tmp_path: Path
     ) -> None:
@@ -1404,9 +1400,9 @@ class TestUnifiedSIGINTHandling:
         4. Fixer detects interrupt and returns FixerResult(interrupted=True)
         5. run_validation() returns GlobalValidationOutput(passed=False, interrupted=True)
 
-        EXPECTED TO FAIL (xfail): Until T007 wires interrupt_event from orchestrator
-        to run_validation(), the fixer won't receive the interrupt event.
-        When T007 is complete, this test should pass and the xfail marker should be removed.
+        NOTE: This test will fail until T007 wires interrupt_event from orchestrator
+        to run_validation(). The failing state serves as a "red gate" to signal when
+        the wiring is incomplete.
         """
         script = tmp_path / "fixer_interrupt_test.py"
         script.write_text(
