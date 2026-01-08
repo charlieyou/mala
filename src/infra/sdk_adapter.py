@@ -96,13 +96,16 @@ class SDKClientFactory:
 
         effective_env = env or {}
 
+        effective_sources = (
+            ["local", "project"] if setting_sources is None else setting_sources
+        )
         return ClaudeAgentOptions(
             cwd=cwd,
             permission_mode=permission_mode,  # type: ignore[arg-type]
             model=model,
             system_prompt=system_prompt or {"type": "preset", "preset": "claude_code"},  # type: ignore[arg-type]
             output_format=output_format,  # type: ignore[arg-type]
-            setting_sources=setting_sources or ["local", "project"],  # type: ignore[arg-type]
+            setting_sources=effective_sources,  # type: ignore[arg-type]
             mcp_servers=mcp_servers,  # type: ignore[arg-type]
             disallowed_tools=disallowed_tools,  # type: ignore[arg-type]
             env=effective_env,  # type: ignore[arg-type]

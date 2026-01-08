@@ -120,8 +120,10 @@ class AgentRuntimeBuilder:
         self._agent_id = agent_id
         self._sdk_client_factory = sdk_client_factory
         self._mcp_server_factory = mcp_server_factory
-        # Normalize to list (e.g., tuple from config -> list)
-        self._setting_sources = list(setting_sources) if setting_sources else None
+        # Normalize to list (e.g., tuple from config -> list). Preserve empty list.
+        self._setting_sources = (
+            None if setting_sources is None else list(setting_sources)
+        )
 
         # Lint tools configuration
         self._lint_tools: set[str] | frozenset[str] | None = None
@@ -382,8 +384,15 @@ class AgentRuntimeBuilder:
 
         # Log and validate setting sources BEFORE any SDK initialization
         # (create_hook_matcher imports SDK types, so this must come first)
-        resolved_sources = self._setting_sources or ["local", "project"]
-        logger.info("Claude settings sources: %s", ", ".join(resolved_sources))
+        resolved_sources = (
+            ["local", "project"]
+            if self._setting_sources is None
+            else self._setting_sources
+        )
+        if resolved_sources:
+            logger.info("Claude settings sources: %s", ", ".join(resolved_sources))
+        else:
+            logger.info("Claude settings sources: (none)")
         if "local" in resolved_sources:
             local_settings_path = self._repo_path / ".claude/settings.local.json"
             if not local_settings_path.exists():

@@ -60,3 +60,13 @@ class TestSettingSources:
             ),
         )
         assert options.setting_sources == ["project", "user"]
+
+    def test_override_setting_sources_empty_list(
+        self, factory: SDKClientFactory, tmp_path: Path
+    ) -> None:
+        """Empty list preserves explicit override (no defaults)."""
+        options = cast(
+            "ClaudeAgentOptions",
+            factory.create_options(cwd=str(tmp_path), setting_sources=[]),
+        )
+        assert options.setting_sources == []

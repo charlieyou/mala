@@ -436,3 +436,29 @@ class TestAgentRuntimeBuilder:
         assert (
             "Claude settings file .claude/settings.local.json not found" in caplog.text
         )
+
+    @pytest.mark.unit
+    def test_setting_sources_empty_list_no_defaults(
+        self,
+        repo_path: Path,
+        factory: FakeSDKClientFactory,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Empty setting_sources does not fall back to defaults."""
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            AgentRuntimeBuilder(
+                repo_path,
+                "agent-empty-sources",
+                factory,
+                setting_sources=[],
+            ).with_mcp(servers={}).build()
+
+        assert "Claude settings sources: (none)" in caplog.text
+        assert (
+            "Claude settings file .claude/settings.local.json not found"
+            not in caplog.text
+        )
+        assert len(factory.created_options) == 1
+        assert factory.created_options[0]["setting_sources"] == []
