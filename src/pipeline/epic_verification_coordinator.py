@@ -307,7 +307,10 @@ class EpicVerificationCoordinator:
             if self.callbacks.is_issue_failed(issue_id):
                 continue
 
-            # Spawn agent for this issue with flow identifier for logging
+            # Spawn agent for this issue with flow identifier for logging.
+            # The flow="epic_remediation" param propagates via AgentSessionInput.flow
+            # to MALA_SDK_FLOW env var, which sdk_transport.py reads to emit:
+            # logger.info("sdk_subprocess_spawned pid=%s pgid=%s flow=%s", pid, pgid, flow)
             task = await self.callbacks.spawn_remediation(issue_id, "epic_remediation")
             if task:
                 task_pairs.append((issue_id, task))
