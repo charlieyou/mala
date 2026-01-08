@@ -245,6 +245,8 @@ class MalaOrchestrator:
         self._validation_failed: bool = False
         self._shutdown_requested: bool = False
         self._run_task: asyncio.Task[Any] | None = None
+        # Trigger state for periodic validation (see T009-T011)
+        self._non_epic_completed_count: int = 0
         self._prompt_validation_commands = build_prompt_validation_commands(
             self.repo_path,
             validation_config=self._validation_config,
@@ -923,6 +925,31 @@ class MalaOrchestrator:
         self._validation_failed = False
         self._shutdown_requested = False
         self._run_task = None
+
+    def _check_and_queue_periodic_trigger(self) -> None:
+        """Check if periodic trigger should fire and queue it if so.
+
+        Called after each non-epic issue completion. Increments
+        _non_epic_completed_count and queues a PERIODIC trigger when
+        the count reaches the configured interval.
+
+        Skeleton stub for T009 - actual implementation in T011.
+        """
+        raise NotImplementedError(
+            "_check_and_queue_periodic_trigger not implemented (see T011)"
+        )
+
+    def _fire_session_end_trigger(self) -> None:
+        """Queue session_end trigger validation if configured.
+
+        Called at the end of a session (before final validation).
+        Checks skip conditions and queues the trigger if appropriate.
+
+        Skeleton stub for T009 - actual implementation in T012.
+        """
+        raise NotImplementedError(
+            "_fire_session_end_trigger not implemented (see T012)"
+        )
 
     def _handle_sigint(
         self,

@@ -5,8 +5,13 @@ from __future__ import annotations
 from textwrap import dedent
 from typing import TYPE_CHECKING
 
+import pytest
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
+
+    from src.orchestration.orchestrator import MalaOrchestrator
 
 
 def test_config_loads_validation_triggers_via_normal_path(tmp_path: Path) -> None:
@@ -164,3 +169,101 @@ def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None
     )
     coordinator.clear_trigger_queue(reason="test cleanup")
     assert coordinator._trigger_queue == []
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_fires_periodic_trigger_at_interval(
+    tmp_path: Path,
+    make_orchestrator: Callable[..., MalaOrchestrator],
+) -> None:
+    """Test that orchestrator queues periodic trigger after interval issues complete.
+
+    This integration test exercises:
+    - Orchestrator main loop with periodic trigger configuration
+    - _non_epic_completed_count tracking
+    - _check_and_queue_periodic_trigger() being called on issue completion
+    - Trigger queued at RunCoordinator when interval is reached
+
+    Expected to FAIL until T011 implements the actual trigger integration.
+    """
+    import asyncio
+
+    from src.domain.validation.config import TriggerType
+    from src.pipeline.issue_result import IssueResult
+    from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
+
+    # Create issues for testing
+    fake_issues = FakeIssueProvider(
+        {
+            "issue-1": FakeIssue(id="issue-1", priority=1),
+            "issue-2": FakeIssue(id="issue-2", priority=2),
+        }
+    )
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+
+    # Create mala.yaml with periodic trigger interval=2
+    config_content = dedent("""\
+        preset: python-uv
+
+        validation_triggers:
+          periodic:
+            interval: 2
+            failure_mode: continue
+            commands:
+              - ref: lint
+    """)
+    config_file = tmp_path / "mala.yaml"
+    config_file.write_text(config_content)
+
+    orchestrator = make_orchestrator(
+        repo_path=tmp_path,
+        max_agents=2,
+        timeout_minutes=1,
+        max_issues=2,
+        issue_provider=fake_issues,
+        runs_dir=runs_dir,
+        lock_releaser=lambda _: 0,
+    )
+
+    # Track spawned issues and mock spawn to complete immediately
+    spawned: list[str] = []
+    original_spawn = orchestrator.spawn_agent
+
+    async def tracking_spawn(issue_id: str) -> asyncio.Task[IssueResult] | None:
+        spawned.append(issue_id)
+
+        async def work() -> IssueResult:
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,
+                summary="done",
+            )
+
+        return asyncio.create_task(work())
+
+    orchestrator.spawn_agent = tracking_spawn  # type: ignore[method-assign]
+
+    try:
+        await orchestrator.run()
+    finally:
+        orchestrator.spawn_agent = original_spawn  # type: ignore[method-assign]
+
+    # Verify both issues completed
+    assert len(spawned) == 2
+
+    # Verify _non_epic_completed_count was incremented
+    # This should be 2 after both issues complete
+    assert orchestrator._non_epic_completed_count == 2
+
+    # Verify periodic trigger was queued when interval (2) was reached
+    # Check the run_coordinator's trigger queue
+    trigger_queue = orchestrator.run_coordinator._trigger_queue
+    assert len(trigger_queue) >= 1, "Periodic trigger should be queued at interval"
+
+    # Find the periodic trigger in the queue
+    periodic_triggers = [
+        (t, ctx) for t, ctx in trigger_queue if t == TriggerType.PERIODIC
+    ]
+    assert len(periodic_triggers) >= 1, "At least one PERIODIC trigger should be queued"
