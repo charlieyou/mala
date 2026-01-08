@@ -568,10 +568,9 @@ def _merge_custom_command_deep(
         merged_timeout = preset_cmd.timeout
 
     # Merge 'allow_fail' field
-    # For YAML: check _fields_set; for programmatic: True is explicit
-    allow_fail_is_explicit = "allow_fail" in user_cmd_fields_set or (
-        is_programmatic and user_cmd.allow_fail
-    )
+    # For YAML: check _fields_set; for programmatic: always explicit
+    # (booleans are always non-None, so per docstring they're always explicit)
+    allow_fail_is_explicit = "allow_fail" in user_cmd_fields_set or is_programmatic
     if allow_fail_is_explicit:
         merged_allow_fail = user_cmd.allow_fail
     else:
