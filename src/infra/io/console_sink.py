@@ -139,7 +139,7 @@ class ConsoleEventSink(BaseEventSink):
         self,
         success_count: int,
         total_count: int,
-        run_validation_passed: bool,
+        run_validation_passed: bool | None,
         abort_reason: str | None = None,
     ) -> None:
         status_icon = "✓" if success_count == total_count else "✗"
@@ -147,14 +147,16 @@ class ConsoleEventSink(BaseEventSink):
         if abort_reason:
             status += f" (aborted: {abort_reason})"
         log("→", status, agent_id="run")
-        if run_validation_passed:
+        if run_validation_passed is True:
             log("✓", "RUN VALIDATION passed", agent_id="run")
-        else:
+        elif run_validation_passed is False:
             log(
                 "✗",
                 f"RUN VALIDATION {Colors.RED}failed{Colors.RESET}",
                 agent_id="run",
             )
+        else:
+            log("◦", "RUN VALIDATION skipped (interrupted)", agent_id="run")
 
     def on_ready_issues(self, issue_ids: list[str]) -> None:
         log("→", f"Ready issues ({len(issue_ids)}): {issue_ids}", agent_id="run")

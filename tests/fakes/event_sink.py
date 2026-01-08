@@ -62,7 +62,7 @@ class FakeEventSink:
         self,
         success_count: int,
         total_count: int,
-        run_validation_passed: bool,
+        run_validation_passed: bool | None,
         abort_reason: str | None = None,
     ) -> None:
         self._record(

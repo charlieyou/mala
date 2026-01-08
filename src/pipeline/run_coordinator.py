@@ -110,9 +110,11 @@ class GlobalValidationOutput:
 
     Attributes:
         passed: Whether validation passed.
+        interrupted: Whether validation was interrupted by SIGINT.
     """
 
     passed: bool
+    interrupted: bool = False
 
 
 @dataclass
@@ -228,7 +230,7 @@ class RunCoordinator:
 
         # Short-circuit on interrupt before doing any work
         if interrupt_event is not None and interrupt_event.is_set():
-            return GlobalValidationOutput(passed=True)
+            return GlobalValidationOutput(passed=False, interrupted=True)
 
         # Check if global validation is disabled
         if "global-validate" in (self.config.disable_validations or set()):
@@ -286,12 +288,13 @@ class RunCoordinator:
             except ValidationInterrupted:
                 if self.event_sink is not None:
                     self.event_sink.on_warning("Validation interrupted by SIGINT")
+                return GlobalValidationOutput(passed=False, interrupted=True)
             except Exception as e:
                 if self.event_sink is not None:
                     self.event_sink.on_warning(f"Validation runner error: {e}")
 
             if interrupt_event is not None and interrupt_event.is_set():
-                return GlobalValidationOutput(passed=True)
+                return GlobalValidationOutput(passed=False, interrupted=True)
 
             if result and result.passed:
                 if self.event_sink is not None:
@@ -310,7 +313,7 @@ class RunCoordinator:
 
             # Check for interrupt before spawning fixer
             if interrupt_event is not None and interrupt_event.is_set():
-                return GlobalValidationOutput(passed=True)
+                return GlobalValidationOutput(passed=False, interrupted=True)
 
             # Check if we have retries left
             if attempt >= self.config.max_gate_retries:
@@ -337,6 +340,10 @@ class RunCoordinator:
                 attempt=attempt,
                 spec=spec,
             )
+
+            # If interrupted during fixer run, exit early
+            if interrupt_event is not None and interrupt_event.is_set():
+                return GlobalValidationOutput(passed=False, interrupted=True)
 
             if not fixer_success:
                 # Fixer failure is logged via on_fixer_failed in _run_fixer_agent

@@ -409,9 +409,96 @@ class TestGlobalValidation:
                 input_data, interrupt_event=interrupt_event
             )
 
-        assert result.passed is True
+        assert result.passed is False
+        assert result.interrupted is True
         assert fixer_called is False
         assert run_metadata.run_validation is None
+
+    @pytest.mark.asyncio
+    async def test_global_validation_stops_retry_on_sigint_during_fixer(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """Global validation should stop retrying when SIGINT hits during fixer."""
+        from src.domain.validation.result import ValidationResult, ValidationStepResult
+
+        mock_gate_checker = MagicMock()
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            max_gate_retries=3,
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+        )
+
+        run_config = RunConfig(
+            max_agents=1,
+            timeout_minutes=None,
+            max_issues=None,
+            epic_id=None,
+            only_ids=None,
+        )
+        run_metadata = RunMetadata(tmp_path, run_config, "test")
+
+        async def mock_get_commit(path: Path) -> str:
+            return "abc123"
+
+        interrupt_event = asyncio.Event()
+
+        async def mock_fixer(
+            failure_output: str, attempt: int, spec: object = None
+        ) -> bool:
+            interrupt_event.set()
+            return False
+
+        mock_result = ValidationResult(
+            passed=False,
+            failure_reasons=["pytest failed"],
+            steps=[
+                ValidationStepResult(
+                    name="pytest",
+                    command="pytest",
+                    ok=False,
+                    returncode=1,
+                    stdout_tail="",
+                    duration_seconds=1.0,
+                )
+            ],
+        )
+
+        with (
+            patch(
+                "src.infra.git_utils.get_git_commit_async",
+                side_effect=mock_get_commit,
+            ),
+            patch.object(RunCoordinator, "_run_fixer_agent", side_effect=mock_fixer),
+            patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
+        ):
+            mock_runner_instance = MagicMock()
+            mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
+            MockRunner.return_value = mock_runner_instance
+
+            input_data = GlobalValidationInput(run_metadata=run_metadata)
+            result = await coordinator.run_validation(
+                input_data, interrupt_event=interrupt_event
+            )
+
+        assert result.passed is False
+        assert result.interrupted is True
+        assert run_metadata.run_validation is not None
+        assert run_metadata.run_validation.passed is False
+        assert mock_runner_instance.run_spec.call_count == 1
 
     @pytest.mark.asyncio
     async def test_global_validation_records_to_metadata(

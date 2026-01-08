@@ -884,7 +884,7 @@ class MalaOrchestrator:
     async def _finalize_run(
         self,
         run_metadata: RunMetadata,
-        run_validation_passed: bool,
+        run_validation_passed: bool | None,
     ) -> tuple[int, int]:
         """Log summary and return final results."""
         success_count = sum(1 for r in self._state.completed if r.success)
@@ -909,7 +909,7 @@ class MalaOrchestrator:
         print()
         if self.abort_run:
             return (0, total)
-        if not run_validation_passed:
+        if run_validation_passed is False:
             return (0, total)
         return (success_count, total)
 
@@ -1077,6 +1077,8 @@ class MalaOrchestrator:
                     validation_output = await self.run_coordinator.run_validation(
                         validation_input, interrupt_event=interrupt_event
                     )
+                    if validation_output.interrupted:
+                        return True
                     # Update _validation_failed so SIGINT handler can snapshot it
                     if not validation_output.passed:
                         self._validation_failed = True
@@ -1132,7 +1134,7 @@ class MalaOrchestrator:
                     self._abort_exit_code if self._abort_mode_active else exit_code
                 )
                 self._exit_code = final_exit_code
-                return await self._finalize_run(run_metadata, final_exit_code != 1)
+                return await self._finalize_run(run_metadata, None)
 
             # Global validation and finalization happen after lock cleanup
             # but before debug log cleanup (so they're captured in the debug log)
@@ -1144,6 +1146,8 @@ class MalaOrchestrator:
                     validation_output = await self.run_coordinator.run_validation(
                         validation_input, interrupt_event=interrupt_event
                     )
+                    if validation_output.interrupted:
+                        interrupt_event.set()
                     run_validation_passed = validation_output.passed
                 except asyncio.CancelledError:
                     # SIGINT during validation - use snapshotted exit code
@@ -1152,9 +1156,7 @@ class MalaOrchestrator:
                             self._abort_exit_code if self._abort_mode_active else 130
                         )
                         self._exit_code = final_exit_code
-                        return await self._finalize_run(
-                            run_metadata, final_exit_code != 1
-                        )
+                        return await self._finalize_run(run_metadata, None)
                     raise
 
             # Check if SIGINT occurred during final validation phase
@@ -1165,7 +1167,7 @@ class MalaOrchestrator:
                     self._abort_exit_code if self._abort_mode_active else 130
                 )
                 self._exit_code = final_exit_code
-                return await self._finalize_run(run_metadata, final_exit_code != 1)
+                return await self._finalize_run(run_metadata, None)
 
             # Store exit code for CLI access (validation failure overrides to 1)
             self._exit_code = 1 if not run_validation_passed else exit_code

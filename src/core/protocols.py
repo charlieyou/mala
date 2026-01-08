@@ -1424,7 +1424,7 @@ class MalaEventSink(Protocol):
         self,
         success_count: int,
         total_count: int,
-        run_validation_passed: bool,
+        run_validation_passed: bool | None,
         abort_reason: str | None = None,
     ) -> None:
         """Called when the orchestrator run completes.
@@ -1432,7 +1432,7 @@ class MalaEventSink(Protocol):
         Args:
             success_count: Number of issues completed successfully.
             total_count: Total number of issues processed.
-            run_validation_passed: Whether global validation (global validation) passed.
+            run_validation_passed: Whether global validation passed, or None if skipped.
             abort_reason: If run was aborted, the reason string.
         """
         ...
