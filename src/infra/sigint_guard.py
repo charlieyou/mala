@@ -14,11 +14,8 @@ Key components:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Coroutine  # noqa: TC003 - runtime for TypeVar
-from typing import TYPE_CHECKING, TypeVar
-
-if TYPE_CHECKING:
-    from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable, Coroutine  # noqa: TC003 - runtime for TypeVar
+from typing import TypeVar
 
 __all__ = [
     "FlowInterruptedError",
@@ -118,23 +115,29 @@ async def run_with_interrupt_checks(
                    an exception to trigger a retry.
         interrupt_event: Event to check between retries. If None, no
                         interrupt checking is performed.
-        max_retries: Maximum number of retry attempts (default 3).
+        max_retries: Maximum number of retry attempts (default 3, must be >= 1).
         retry_delay: Seconds to wait between retries (default 1.0).
 
     Returns:
         The result of a successful attempt_fn call.
 
     Raises:
-        FlowInterruptedError: If interrupted between retries.
+        FlowInterruptedError: If interrupted before or between retries.
+        ValueError: If max_retries < 1.
         Exception: The last exception from attempt_fn if all retries fail.
     """
+    if max_retries < 1:
+        raise ValueError("max_retries must be >= 1")
+
     guard = InterruptGuard(interrupt_event)
     last_exception: Exception | None = None
 
     for attempt in range(max_retries):
-        # Check for interrupt before each attempt (except first)
+        # Check for interrupt before each attempt
+        guard.raise_if_interrupted()
+
+        # Wait before retry (not before first attempt)
         if attempt > 0:
-            guard.raise_if_interrupted()
             interrupted = await await_interruptible(retry_delay, interrupt_event)
             if interrupted:
                 raise FlowInterruptedError("Flow interrupted during retry delay")
@@ -181,10 +184,31 @@ async def run_with_timeout_and_interrupt(
             result = await asyncio.wait_for(task, timeout=timeout)
             return (result, False, False)
         except TimeoutError:
+            # Ensure task is cancelled and awaited
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
             return (None, True, False)
 
     # Create waiter for interrupt event
     interrupt_task = asyncio.create_task(interrupt_event.wait())
+
+    async def cleanup_tasks(
+        cancel_main: bool = True, cancel_interrupt: bool = True
+    ) -> None:
+        """Cancel and await tasks to ensure proper cleanup."""
+        if cancel_main:
+            task.cancel()
+        if cancel_interrupt:
+            interrupt_task.cancel()
+        # Always await both to ensure cleanup
+        for t in [task, interrupt_task]:
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
 
     try:
         done, _ = await asyncio.wait(
@@ -194,16 +218,17 @@ async def run_with_timeout_and_interrupt(
         )
 
         if task in done:
-            # Main task completed
+            # Main task completed - cleanup interrupt_task
             interrupt_task.cancel()
             try:
                 await interrupt_task
             except asyncio.CancelledError:
                 pass
+            # Return result (may raise if coro raised)
             return (task.result(), False, False)
 
         if interrupt_task in done:
-            # Interrupt event was set
+            # Interrupt event was set - cleanup task
             task.cancel()
             try:
                 await task
@@ -212,20 +237,10 @@ async def run_with_timeout_and_interrupt(
             return (None, False, True)
 
         # Timeout reached (neither task completed)
-        task.cancel()
-        interrupt_task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        try:
-            await interrupt_task
-        except asyncio.CancelledError:
-            pass
+        await cleanup_tasks()
         return (None, True, False)
 
-    except Exception:
-        # Cleanup on unexpected error
-        task.cancel()
-        interrupt_task.cancel()
+    except BaseException:
+        # Cleanup on any error (including CancelledError)
+        await cleanup_tasks()
         raise

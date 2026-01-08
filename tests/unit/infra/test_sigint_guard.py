@@ -191,7 +191,45 @@ class TestRunWithInterruptChecks:
             await run_with_interrupt_checks(
                 fail, event, max_retries=3, retry_delay=10.0
             )
-        assert attempts == 1  # Aborted before second attempt
+        assert attempts == 0  # Aborted before first attempt (interrupt checked first)
+
+    @pytest.mark.asyncio
+    async def test_raises_value_error_when_max_retries_zero(self) -> None:
+        """Raises ValueError when max_retries is 0."""
+
+        async def success() -> str:
+            return "success"
+
+        with pytest.raises(ValueError, match="max_retries must be >= 1"):
+            await run_with_interrupt_checks(success, None, max_retries=0)
+
+    @pytest.mark.asyncio
+    async def test_raises_value_error_when_max_retries_negative(self) -> None:
+        """Raises ValueError when max_retries is negative."""
+
+        async def success() -> str:
+            return "success"
+
+        with pytest.raises(ValueError, match="max_retries must be >= 1"):
+            await run_with_interrupt_checks(success, None, max_retries=-1)
+
+    @pytest.mark.asyncio
+    async def test_aborts_before_first_attempt_when_already_interrupted(self) -> None:
+        """Aborts before first attempt when interrupt is already set."""
+        event = asyncio.Event()
+        event.set()
+        attempts = 0
+
+        async def count_attempts() -> str:
+            nonlocal attempts
+            attempts += 1
+            return "success"
+
+        with pytest.raises(FlowInterruptedError):
+            await run_with_interrupt_checks(
+                count_attempts, event, max_retries=3, retry_delay=0.001
+            )
+        assert attempts == 0  # Never attempted
 
 
 class TestRunWithTimeoutAndInterrupt:
