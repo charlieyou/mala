@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal
 
 from src.infra.agent_runtime import AgentRuntimeBuilder
 from src.infra.tools.locking import cleanup_agent_locks
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
         SDKClientFactoryProtocol,
     )
     from src.domain.validation.result import ValidationResult
-    from src.domain.validation.config import ValidationConfig
+    from src.domain.validation.config import TriggerType, ValidationConfig
     from src.domain.validation.spec import ValidationSpec
     from src.infra.io.log_output.run_metadata import (
         RunMetadata,
@@ -115,6 +115,19 @@ class GlobalValidationOutput:
 
     passed: bool
     interrupted: bool = False
+
+
+@dataclass(frozen=True)
+class TriggerValidationResult:
+    """Result from running trigger validation.
+
+    Attributes:
+        status: One of "passed", "failed", or "aborted".
+        details: Optional details about the result.
+    """
+
+    status: Literal["passed", "failed", "aborted"]
+    details: str | None = None
 
 
 @dataclass
@@ -208,6 +221,9 @@ class RunCoordinator:
     sdk_client_factory: SDKClientFactoryProtocol
     event_sink: MalaEventSink | None = None
     _active_fixer_ids: list[str] = field(default_factory=list, init=False)
+    _trigger_queue: list[tuple[TriggerType, dict[str, Any]]] = field(
+        default_factory=list, init=False
+    )
 
     async def run_validation(
         self,
@@ -521,3 +537,41 @@ class RunCoordinator:
         for agent_id in self._active_fixer_ids:
             cleanup_agent_locks(agent_id)
         self._active_fixer_ids.clear()
+
+    def queue_trigger_validation(
+        self, trigger_type: TriggerType, context: dict[str, Any]
+    ) -> None:
+        """Queue a trigger for validation.
+
+        Args:
+            trigger_type: The type of trigger (epic_completion, session_end, periodic).
+            context: Additional context for the trigger (e.g., issue_id, epic_id).
+        """
+        self._trigger_queue.append((trigger_type, context))
+
+    async def run_trigger_validation(
+        self, *, dry_run: bool = False
+    ) -> TriggerValidationResult:
+        """Execute queued trigger validations.
+
+        Args:
+            dry_run: If True, simulate execution without running commands.
+
+        Returns:
+            TriggerValidationResult with status and details.
+
+        Raises:
+            NotImplementedError: This is a skeleton - implementation in T007.
+        """
+        raise NotImplementedError(
+            "run_trigger_validation not yet implemented - see T007"
+        )
+
+    def clear_trigger_queue(self, reason: str) -> None:
+        """Clear the trigger queue, emitting skipped events.
+
+        Args:
+            reason: Why the queue is being cleared (for logging).
+        """
+        # Stub: In T013, this will emit skipped events via event_sink
+        self._trigger_queue.clear()
