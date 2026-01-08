@@ -84,10 +84,12 @@ class ReviewOutput:
     Attributes:
         result: The ReviewResultProtocol from the review.
         session_log_path: Path to the review session log (if captured).
+        interrupted: Whether the review was interrupted by SIGINT.
     """
 
     result: ReviewResultProtocol
     session_log_path: str | None = None
+    interrupted: bool = False
 
 
 @dataclass

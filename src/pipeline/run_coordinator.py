@@ -172,6 +172,21 @@ class TriggerCommandResult:
 
 
 @dataclass
+class FixerResult:
+    """Result from a fixer agent session.
+
+    Attributes:
+        success: Whether the fixer completed successfully. None if not evaluated.
+        interrupted: Whether the fixer was interrupted by SIGINT.
+        log_path: Path to the fixer session log (if captured).
+    """
+
+    success: bool | None
+    interrupted: bool = False
+    log_path: str | None = None
+
+
+@dataclass
 class SpecResultBuilder:
     """Builds ValidationResult to MetaValidationResult conversions.
 

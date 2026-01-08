@@ -157,6 +157,7 @@ class EpicVerificationResult:
         verdicts: Mapping of epic_id to its verdict.
         remediation_issues_created: Issue IDs created for remediation.
         ineligibility_reason: Human-readable explanation if epic was not eligible.
+        interrupted: Whether the verification was interrupted by SIGINT.
     """
 
     verified_count: int
@@ -165,6 +166,7 @@ class EpicVerificationResult:
     verdicts: dict[str, EpicVerdict]
     remediation_issues_created: list[str]
     ineligibility_reason: str | None = None
+    interrupted: bool = False
 
 
 @dataclass

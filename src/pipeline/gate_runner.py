@@ -84,10 +84,12 @@ class PerSessionGateOutput:
     Attributes:
         gate_result: The GateResult from the quality gate.
         new_log_offset: Updated log offset for next retry attempt.
+        interrupted: Whether the gate check was interrupted by SIGINT.
     """
 
     gate_result: GateResultProtocol
     new_log_offset: int
+    interrupted: bool = False
 
 
 @dataclass
