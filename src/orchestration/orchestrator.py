@@ -53,6 +53,7 @@ from src.pipeline.agent_session_runner import (
 from src.pipeline.issue_finalizer import (
     IssueFinalizeInput,
 )
+from src.domain.validation.config import TriggerType
 from src.pipeline.run_coordinator import (
     GlobalValidationInput,
 )
@@ -940,13 +941,27 @@ class MalaOrchestrator:
 
         Args:
             result: The completed issue's result (used to check epic membership).
-
-        Skeleton stub for T009 - actual implementation in T011.
         """
-        # T011: Increment _non_epic_completed_count for non-epic issues
-        # T011: Check if count matches configured interval
-        # T011: If match, queue PERIODIC trigger via run_coordinator.queue_trigger_validation()
-        pass
+        # Skip epic issues - only count non-epic completions
+        # For now, we count all completions since epic detection is not implemented here
+        self._non_epic_completed_count += 1
+
+        # Check if periodic trigger is configured
+        triggers = (
+            self._validation_config.validation_triggers
+            if self._validation_config
+            else None
+        )
+        if triggers is None or triggers.periodic is None:
+            return
+
+        # Check if count matches interval
+        interval = triggers.periodic.interval
+        if self._non_epic_completed_count % interval == 0:
+            self.run_coordinator.queue_trigger_validation(
+                TriggerType.PERIODIC,
+                {"completed_count": self._non_epic_completed_count},
+            )
 
     async def _fire_session_end_trigger(self) -> None:
         """Queue session_end trigger validation if configured.
