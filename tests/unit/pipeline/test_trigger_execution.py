@@ -26,6 +26,7 @@ from src.domain.validation.config import (
     FailureMode,
     EpicDepth,
     FireOn,
+    SessionEndTriggerConfig,
     TriggerCommandRef,
     TriggerType,
     ValidationConfig,
@@ -518,6 +519,54 @@ class TestFailureModeContinue:
         assert result.details is not None
         assert "test" in result.details
 
+    def test_continue_processes_remaining_triggers(self, tmp_path: Path) -> None:
+        """CONTINUE mode processes all queued triggers even after failure."""
+        runner = FakeCommandRunner()
+        runner.responses[("failing_cmd",)] = CommandResult(
+            command="failing_cmd", returncode=1, stdout="", stderr="error"
+        )
+        runner.responses[("second_cmd",)] = CommandResult(
+            command="second_cmd", returncode=0, stdout="", stderr=""
+        )
+
+        # Use CommandsConfig directly to set up two different commands
+        commands_config = CommandsConfig(
+            test=CommandConfig(command="failing_cmd"),
+            lint=CommandConfig(command="second_cmd"),
+        )
+        config = ValidationConfig(
+            commands=commands_config,
+            validation_triggers=ValidationTriggersConfig(
+                epic_completion=EpicCompletionTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(TriggerCommandRef(ref="test"),),
+                    epic_depth=EpicDepth.TOP_LEVEL,
+                    fire_on=FireOn.SUCCESS,
+                ),
+                session_end=SessionEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(TriggerCommandRef(ref="lint"),),
+                ),
+            ),
+        )
+        coordinator = make_coordinator(
+            tmp_path, validation_config=config, command_runner=runner
+        )
+
+        # Queue two triggers - first will fail, second should still run
+        coordinator.queue_trigger_validation(
+            TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
+        )
+        coordinator.queue_trigger_validation(TriggerType.SESSION_END, {})
+
+        result = asyncio.run(coordinator.run_trigger_validation(dry_run=False))
+
+        # Should report failed (from first trigger) but second should have run
+        assert result.status == "failed"
+        # Both commands should have been called
+        assert runner.has_call_containing("failing_cmd")
+        assert runner.has_call_containing("second_cmd")
+
 
 class TestFailureModeRemediate:
     """Tests for remediate failure mode."""
@@ -703,15 +752,22 @@ class TestSigintHandling:
             TriggerType.EPIC_COMPLETION, {"epic_id": "epic-2"}
         )
 
-        # Test using the inner loop directly with a pre-set interrupted flag
+        # Test using the inner loop directly with a pre-set interrupt event
         validation_config = config
         triggers_config = validation_config.validation_triggers
         assert triggers_config is not None  # Satisfy type checker
         base_pool = coordinator._build_base_pool(validation_config)
 
+        # Create an event that's already set (simulating SIGINT received)
+        interrupt_event = asyncio.Event()
+        interrupt_event.set()
+
         result = asyncio.run(
             coordinator._run_trigger_validation_loop(
-                triggers_config, base_pool, dry_run=False, is_interrupted=lambda: True
+                triggers_config,
+                base_pool,
+                dry_run=False,
+                interrupt_event=interrupt_event,
             )
         )
 

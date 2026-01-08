@@ -23,8 +23,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 from src.infra.agent_runtime import AgentRuntimeBuilder
 from src.infra.tools.locking import cleanup_agent_locks
@@ -631,13 +629,12 @@ class RunCoordinator:
         # Build base pool from commands config
         base_pool = self._build_base_pool(validation_config)
 
-        # Set up SIGINT handling
-        interrupted = False
+        # Set up SIGINT handling with asyncio.Event for async cancellation
+        interrupt_event = asyncio.Event()
         original_handler = signal.getsignal(signal.SIGINT)
 
         def sigint_handler(signum: int, frame: FrameType | None) -> None:
-            nonlocal interrupted
-            interrupted = True
+            interrupt_event.set()
 
         signal.signal(signal.SIGINT, sigint_handler)
 
@@ -646,7 +643,7 @@ class RunCoordinator:
                 triggers_config,
                 base_pool,
                 dry_run,
-                lambda: interrupted,
+                interrupt_event,
             )
         finally:
             signal.signal(signal.SIGINT, original_handler)
@@ -656,7 +653,7 @@ class RunCoordinator:
         triggers_config: ValidationTriggersConfig,
         base_pool: dict[str, tuple[str, int | None]],
         dry_run: bool,
-        is_interrupted: Callable[[], bool],
+        interrupt_event: asyncio.Event,
     ) -> TriggerValidationResult:
         """Inner loop for trigger validation with failure mode handling.
 
@@ -664,16 +661,19 @@ class RunCoordinator:
             triggers_config: The trigger configuration.
             base_pool: Map of command refs to (command, timeout).
             dry_run: If True, simulate execution.
-            is_interrupted: Callable returning True if SIGINT received.
+            interrupt_event: Event set when SIGINT received.
 
         Returns:
             TriggerValidationResult with status and details.
         """
         from src.domain.validation.config import FailureMode
 
+        # Track last failure for CONTINUE mode
+        last_failure: tuple[str, str] | None = None  # (command_ref, trigger_type)
+
         while self._trigger_queue:
             # Check for SIGINT before processing next trigger
-            if is_interrupted():
+            if interrupt_event.is_set():
                 self.clear_trigger_queue("sigint")
                 return TriggerValidationResult(
                     status="aborted", details="Validation interrupted by SIGINT"
@@ -691,10 +691,20 @@ class RunCoordinator:
                 trigger_type, trigger_config, base_pool
             )
 
-            # Execute commands with fail-fast
-            results = await self._execute_trigger_commands(
-                resolved_commands, dry_run=dry_run
+            # Execute commands with fail-fast and interrupt support
+            (
+                results,
+                was_interrupted,
+            ) = await self._execute_trigger_commands_interruptible(
+                resolved_commands, dry_run=dry_run, interrupt_event=interrupt_event
             )
+
+            # Check for interrupt during command execution
+            if was_interrupted:
+                self.clear_trigger_queue("sigint")
+                return TriggerValidationResult(
+                    status="aborted", details="Validation interrupted by SIGINT"
+                )
 
             # Check for failures
             failed_result: TriggerCommandResult | None = None
@@ -711,11 +721,9 @@ class RunCoordinator:
             failure_mode = trigger_config.failure_mode
 
             if failure_mode == FailureMode.CONTINUE:
-                # Log failure but continue to next trigger
-                return TriggerValidationResult(
-                    status="failed",
-                    details=f"Command '{failed_result.ref}' failed in trigger {trigger_type.value}",
-                )
+                # Record failure and continue to next trigger
+                last_failure = (failed_result.ref, trigger_type.value)
+                continue
 
             elif failure_mode == FailureMode.REMEDIATE:
                 # Attempt remediation with fixer agent
@@ -725,7 +733,7 @@ class RunCoordinator:
                     resolved_commands,
                     failed_result,
                     dry_run,
-                    is_interrupted,
+                    interrupt_event,
                 )
                 if remediation_result is not None:
                     return remediation_result
@@ -738,6 +746,14 @@ class RunCoordinator:
                     details=f"Command '{failed_result.ref}' failed in trigger {trigger_type.value}",
                 )
 
+        # All triggers processed - return failed if any CONTINUE failures occurred
+        if last_failure is not None:
+            cmd_ref, trigger_val = last_failure
+            return TriggerValidationResult(
+                status="failed",
+                details=f"Command '{cmd_ref}' failed in trigger {trigger_val}",
+            )
+
         return TriggerValidationResult(status="passed")
 
     async def _run_trigger_remediation(
@@ -747,7 +763,7 @@ class RunCoordinator:
         resolved_commands: list[ResolvedCommand],
         failed_result: TriggerCommandResult,
         dry_run: bool,
-        is_interrupted: Callable[[], bool],
+        interrupt_event: asyncio.Event,
     ) -> TriggerValidationResult | None:
         """Run remediation loop for a failed trigger command.
 
@@ -759,7 +775,7 @@ class RunCoordinator:
             resolved_commands: The resolved commands for this trigger.
             failed_result: The failed command result.
             dry_run: If True, simulate execution.
-            is_interrupted: Callable returning True if SIGINT received.
+            interrupt_event: Event set when SIGINT received.
 
         Returns:
             TriggerValidationResult if remediation failed/aborted, None if succeeded.
@@ -791,7 +807,7 @@ class RunCoordinator:
 
         for attempt in range(1, max_retries + 1):
             # Check for SIGINT before fixer attempt
-            if is_interrupted():
+            if interrupt_event.is_set():
                 self.clear_trigger_queue("sigint")
                 return TriggerValidationResult(
                     status="aborted", details="Validation interrupted by SIGINT"
@@ -804,16 +820,25 @@ class RunCoordinator:
             )
 
             # Check for SIGINT after fixer
-            if is_interrupted():
+            if interrupt_event.is_set():
                 self.clear_trigger_queue("sigint")
                 return TriggerValidationResult(
                     status="aborted", details="Validation interrupted by SIGINT"
                 )
 
-            # Re-run the failed command
-            retry_results = await self._execute_trigger_commands(
-                [failed_cmd], dry_run=dry_run
+            # Re-run the failed command with interrupt support
+            (
+                retry_results,
+                was_interrupted,
+            ) = await self._execute_trigger_commands_interruptible(
+                [failed_cmd], dry_run=dry_run, interrupt_event=interrupt_event
             )
+
+            if was_interrupted:
+                self.clear_trigger_queue("sigint")
+                return TriggerValidationResult(
+                    status="aborted", details="Validation interrupted by SIGINT"
+                )
 
             if retry_results and retry_results[0].passed:
                 # Command passed after fixer, remediation succeeded
@@ -1021,6 +1046,111 @@ class RunCoordinator:
                 break
 
         return results
+
+    async def _execute_trigger_commands_interruptible(
+        self,
+        commands: list[ResolvedCommand],
+        *,
+        dry_run: bool = False,
+        interrupt_event: asyncio.Event,
+    ) -> tuple[list[TriggerCommandResult], bool]:
+        """Execute resolved commands with interrupt support.
+
+        Wraps command execution in asyncio tasks that can be cancelled when
+        SIGINT is received. This ensures blocking subprocess waits are
+        immediately terminated.
+
+        Args:
+            commands: List of resolved commands to execute.
+            dry_run: If True, skip subprocess execution.
+            interrupt_event: Event set when SIGINT received.
+
+        Returns:
+            Tuple of (results, was_interrupted) where was_interrupted is True
+            if execution was cancelled due to SIGINT.
+        """
+        results: list[TriggerCommandResult] = []
+
+        for cmd in commands:
+            # Check interrupt before each command
+            if interrupt_event.is_set():
+                return results, True
+
+            if dry_run:
+                # Dry-run: all commands pass, no execution
+                results.append(
+                    TriggerCommandResult(
+                        ref=cmd.ref,
+                        passed=True,
+                        duration_seconds=0.0,
+                    )
+                )
+                continue
+
+            # Create task for command execution
+            cmd_task = asyncio.create_task(
+                self.command_runner.run_async(
+                    cmd.effective_command,
+                    timeout=cmd.effective_timeout,
+                    shell=True,
+                    cwd=self.config.repo_path,
+                )
+            )
+
+            # Create task for interrupt wait
+            interrupt_task = asyncio.create_task(interrupt_event.wait())
+
+            try:
+                # Wait for either command completion or interrupt
+                done, pending = await asyncio.wait(
+                    {cmd_task, interrupt_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                # Cancel pending tasks
+                for task in pending:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+
+                # Check if interrupted
+                if interrupt_task in done:
+                    # SIGINT received - cancel command and return
+                    return results, True
+
+                # Get command result
+                cmd_result = cmd_task.result()
+
+            except asyncio.CancelledError:
+                # Task was cancelled externally
+                return results, True
+
+            passed = cmd_result.returncode == 0 and not cmd_result.timed_out
+            error_message = None
+            if not passed:
+                if cmd_result.timed_out:
+                    error_message = "Command timed out"
+                elif cmd_result.stderr:
+                    error_message = cmd_result.stderr[:500]
+                else:
+                    error_message = f"Exit code {cmd_result.returncode}"
+
+            results.append(
+                TriggerCommandResult(
+                    ref=cmd.ref,
+                    passed=passed,
+                    duration_seconds=cmd_result.duration_seconds,
+                    error_message=error_message,
+                )
+            )
+
+            # Fail-fast: stop on first failure
+            if not passed:
+                break
+
+        return results, False
 
     def clear_trigger_queue(self, reason: str) -> None:
         """Clear the trigger queue, emitting skipped events.
