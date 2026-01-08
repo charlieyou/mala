@@ -180,7 +180,6 @@ def test_orchestrator_fires_periodic_trigger_at_interval(
     - Hook is invoked from finalize_callback after issue completion
     - Hook increments _non_epic_completed_count and queues trigger at interval
 
-    Expected to FAIL until T011 implements the actual trigger logic.
     The test directly invokes the hook to verify it exists and is wired up,
     then asserts on the expected behavior (counter increment, trigger queued).
     """
