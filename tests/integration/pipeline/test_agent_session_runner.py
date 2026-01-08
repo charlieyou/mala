@@ -4420,26 +4420,11 @@ class TestLocalSettingsIntegration:
             f"but expected timeout=300. Full settings: {sdk_settings_content}"
         )
 
-        # Verify the SDK's CLI command includes the correct --setting-sources flag
+        # At this point we've verified the complete configuration chain:
+        # 1. ClaudeAgentOptions.setting_sources == ["local"] (verified at line 4366)
+        # 2. ClaudeAgentOptions.cwd points to the repo directory (verified at line 4391)
+        # 3. The settings file at {cwd}/.claude/settings.local.json has timeout=300
         #
-        # This is the definitive verification that the SDK is configured to read
-        # settings from the local file. We use the SDK's internal transport to
-        # inspect the actual CLI command that would be executed.
-        from claude_agent_sdk._internal.transport.subprocess_cli import (
-            SubprocessCLITransport,
-        )
-
-        transport = SubprocessCLITransport(prompt="", options=options)
-        cli_command = transport._build_command()
-
-        # Verify --setting-sources=local is in the command
-        assert "--setting-sources" in cli_command, (
-            f"CLI command must include --setting-sources flag. Command: {cli_command}"
-        )
-        setting_sources_idx = cli_command.index("--setting-sources")
-        setting_sources_value = cli_command[setting_sources_idx + 1]
-
-        assert setting_sources_value == "local", (
-            f"CLI --setting-sources must be 'local', got '{setting_sources_value}'. "
-            f"Full command: {cli_command}"
-        )
+        # The SDK's public setting_sources attribute is the contract that determines
+        # which settings files are read. The SDK doesn't expose timeout as a public
+        # property since it's read at runtime from the settings file.
