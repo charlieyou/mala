@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 
 from src.infra.agent_runtime import AgentRuntimeBuilder
+from src.infra.tools.command_runner import CommandRunner
 from src.infra.tools.locking import cleanup_agent_locks
 from src.domain.validation.e2e import E2EStatus
 from src.domain.validation.config import ConfigError
@@ -650,6 +651,8 @@ class RunCoordinator:
 
         def sigint_handler(signum: int, frame: FrameType | None) -> None:
             interrupt_event.set()
+            # Send SIGTERM to any running subprocesses for immediate termination
+            CommandRunner.forward_sigint()
 
         signal.signal(signal.SIGINT, sigint_handler)
 
