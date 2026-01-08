@@ -5,7 +5,7 @@ Bugs:
 * fixers should be aware of the global validation commands so they can replicate runs
 
 New Features
-* Add code review to global kvalidations
+* Add code review to global validations
 
 Config
 * Interactive config setup
@@ -17,7 +17,11 @@ Config
 
 # Later
 
+Bugs
+* Locks are not cleaned up after interrupted tests
+
 New Features
+* refine --resume behavior -- should not affect prioritization 
 * Use cerberus for epic verification
 * Add fixer sessions and cerberus reviews to logs search
 * Worktree mode: each epic runs in a worktree, signals it is done to process in main branch, which merges it in + resolves conflicts
@@ -33,6 +37,7 @@ New Features
 Tech Debt
 * Use pydantic-settings, or some other library for config
 * Separate module used by reviewer and epic verifier for smart ticket creation: good descriptions, dependency awareness, deduplication
+* Run architecture reviews on submodules
 
 # Ideas
 * Inter-agent communication
