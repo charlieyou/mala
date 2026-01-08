@@ -948,7 +948,7 @@ class TestInterruptHandling:
                 self._interrupt_event = interrupt_event
                 self.queries: list[tuple[str, str | None]] = []
 
-            async def __aenter__(self) -> Self:
+            async def __aenter__(self) -> "InterruptingFakeClient":
                 return self
 
             async def __aexit__(self, *args: object) -> None:
