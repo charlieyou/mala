@@ -50,7 +50,7 @@ class EpicVerificationCallbacks:
     Attributes:
         get_parent_epic: Get the parent epic ID for an issue.
         verify_epic: Run epic verification, returns verification result.
-        spawn_remediation: Spawn an agent for a remediation issue.
+        spawn_remediation: Spawn an agent for a remediation issue (issue_id, flow).
         finalize_remediation: Finalize a remediation issue result.
         mark_completed: Mark an issue as completed in the coordinator.
         is_issue_failed: Check if an issue has failed.
@@ -63,7 +63,7 @@ class EpicVerificationCallbacks:
 
     get_parent_epic: Callable[[str], Awaitable[str | None]]
     verify_epic: Callable[[str, bool], Awaitable[EpicVerificationResult]]
-    spawn_remediation: Callable[[str], Awaitable[asyncio.Task[IssueResult] | None]]
+    spawn_remediation: Callable[..., Awaitable[asyncio.Task[IssueResult] | None]]
     finalize_remediation: Callable[[str, IssueResult, RunMetadata], Awaitable[None]]
     mark_completed: Callable[[str], None]
     is_issue_failed: Callable[[str], bool]
@@ -250,13 +250,9 @@ class EpicVerificationCoordinator:
             if self.callbacks.is_issue_failed(issue_id):
                 continue
 
-            # Spawn agent for this issue
-            task = await self.callbacks.spawn_remediation(issue_id)
+            # Spawn agent for this issue with flow identifier for logging
+            task = await self.callbacks.spawn_remediation(issue_id, "epic_remediation")
             if task:
-                logger.info(
-                    "remediation_task_spawned issue_id=%s flow=epic_remediation",
-                    issue_id,
-                )
                 task_pairs.append((issue_id, task))
 
         # Wait for all remediation tasks to complete

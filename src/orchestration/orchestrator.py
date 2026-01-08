@@ -410,7 +410,9 @@ class MalaOrchestrator:
                         epic_id, human_override=human_override
                     )
                 ),
-                spawn_remediation=lambda issue_id: self.spawn_agent(issue_id),
+                spawn_remediation=lambda issue_id, flow="implementer": self.spawn_agent(
+                    issue_id
+                ),
                 finalize_remediation=lambda issue_id, result, run_metadata: (
                     self._finalize_issue_result(issue_id, result, run_metadata)
                 ),

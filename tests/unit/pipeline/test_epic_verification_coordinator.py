@@ -95,7 +95,9 @@ class TestEpicVerificationInterruptHandling:
         callbacks.verify_epic = AsyncMock(side_effect=verify_epic)
 
         # Spawn remediation returns a task that completes immediately
-        async def spawn_remediation(issue_id: str) -> asyncio.Task[IssueResult]:
+        async def spawn_remediation(
+            issue_id: str, flow: str = "implementer"
+        ) -> asyncio.Task[IssueResult]:
             async def work() -> IssueResult:
                 return make_issue_result(issue_id)
 
@@ -147,7 +149,9 @@ class TestEpicVerificationInterruptHandling:
         cancelled_tasks: list[str] = []
         task_started_event = asyncio.Event()
 
-        async def spawn_remediation(issue_id: str) -> asyncio.Task[IssueResult]:
+        async def spawn_remediation(
+            issue_id: str, flow: str = "implementer"
+        ) -> asyncio.Task[IssueResult]:
             async def work() -> IssueResult:
                 try:
                     task_started_event.set()
@@ -204,7 +208,9 @@ class TestEpicVerificationInterruptHandling:
         """Verify that no new remediation tasks are spawned after interrupt."""
         spawned_issues: list[str] = []
 
-        async def spawn_remediation(issue_id: str) -> asyncio.Task[IssueResult]:
+        async def spawn_remediation(
+            issue_id: str, flow: str = "implementer"
+        ) -> asyncio.Task[IssueResult]:
             spawned_issues.append(issue_id)
 
             async def work() -> IssueResult:
