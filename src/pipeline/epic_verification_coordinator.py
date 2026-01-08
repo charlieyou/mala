@@ -97,7 +97,11 @@ class EpicVerificationCoordinator:
     epics_being_verified: set[str] = field(default_factory=set)
 
     async def check_epic_closure(
-        self, issue_id: str, run_metadata: RunMetadata
+        self,
+        issue_id: str,
+        run_metadata: RunMetadata,
+        *,
+        interrupt_event: asyncio.Event | None = None,
     ) -> None:
         """Check if closing this issue should also close its parent epic.
 
@@ -110,6 +114,8 @@ class EpicVerificationCoordinator:
         Args:
             issue_id: The issue that was just closed.
             run_metadata: Run metadata for recording remediation issue results.
+            interrupt_event: Optional event to signal interrupt. When set, the
+                verification loop exits early and remediation tasks are cancelled.
         """
         parent_epic = await self.callbacks.get_parent_epic(issue_id)
         if parent_epic is None or parent_epic in self.verified_epics:
@@ -123,7 +129,9 @@ class EpicVerificationCoordinator:
             # Mark as being verified to prevent parallel verification loops
             self.epics_being_verified.add(parent_epic)
             try:
-                await self._verify_epic_with_retries(parent_epic, run_metadata)
+                await self._verify_epic_with_retries(
+                    parent_epic, run_metadata, interrupt_event=interrupt_event
+                )
             finally:
                 # Always remove from being_verified set when done
                 self.epics_being_verified.discard(parent_epic)
@@ -133,14 +141,23 @@ class EpicVerificationCoordinator:
             self.callbacks.on_epic_closed(issue_id)
 
     async def _verify_epic_with_retries(
-        self, epic_id: str, run_metadata: RunMetadata
+        self,
+        epic_id: str,
+        run_metadata: RunMetadata,
+        *,
+        interrupt_event: asyncio.Event | None = None,
     ) -> None:
         """Run epic verification with retry loop.
 
         Args:
             epic_id: The epic to verify.
             run_metadata: Run metadata for recording remediation issue results.
+            interrupt_event: Optional event to signal interrupt.
         """
+        from src.infra.sigint_guard import InterruptGuard
+
+        guard = InterruptGuard(interrupt_event)
+
         # max_retries is the number of retries AFTER the first attempt
         # So total attempts = 1 (initial) + max_retries
         max_retries = self.config.max_retries
@@ -148,6 +165,10 @@ class EpicVerificationCoordinator:
         human_override = epic_id in self.epic_override_ids
 
         for attempt in range(1, max_attempts + 1):
+            # Check for interrupt before each retry iteration
+            if guard.is_interrupted():
+                return
+
             # Log attempt if retrying (attempt > 1)
             if attempt > 1:
                 self.callbacks.on_warning(
@@ -185,12 +206,15 @@ class EpicVerificationCoordinator:
             await self._execute_remediation_issues(
                 verification_result.remediation_issues_created,
                 run_metadata,
+                interrupt_event=interrupt_event,
             )
 
     async def _execute_remediation_issues(
         self,
         issue_ids: list[str],
         run_metadata: RunMetadata,
+        *,
+        interrupt_event: asyncio.Event | None = None,
     ) -> None:
         """Execute remediation issues and wait for their completion.
 
@@ -201,7 +225,13 @@ class EpicVerificationCoordinator:
         Args:
             issue_ids: List of remediation issue IDs to execute.
             run_metadata: Run metadata for recording issue results.
+            interrupt_event: Optional event to signal interrupt. When set,
+                spawning stops and pending tasks are cancelled.
         """
+        from src.infra.sigint_guard import InterruptGuard
+
+        guard = InterruptGuard(interrupt_event)
+
         if not issue_ids:
             return
 
@@ -209,6 +239,10 @@ class EpicVerificationCoordinator:
         task_pairs: list[tuple[str, asyncio.Task[IssueResult]]] = []
 
         for issue_id in issue_ids:
+            # Check for interrupt before spawning each remediation task
+            if guard.is_interrupted():
+                break
+
             # Skip if already failed (remediation issues are freshly created, so won't be completed)
             if self.callbacks.is_issue_failed(issue_id):
                 continue
@@ -223,7 +257,49 @@ class EpicVerificationCoordinator:
             return
 
         tasks = [pair[1] for pair in task_pairs]
-        await asyncio.gather(*tasks, return_exceptions=True)
+
+        # If interrupted, cancel all pending tasks
+        if guard.is_interrupted():
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            # Wait for cancellation to complete
+            await asyncio.gather(*tasks, return_exceptions=True)
+        else:
+            # Create a task to monitor interrupt event during gather
+            async def wait_for_interrupt() -> None:
+                if interrupt_event is not None:
+                    await interrupt_event.wait()
+
+            async def gather_tasks() -> list[IssueResult | BaseException]:
+                return await asyncio.gather(*tasks, return_exceptions=True)
+
+            interrupt_task = asyncio.create_task(wait_for_interrupt())
+            gather_task = asyncio.create_task(gather_tasks())
+
+            done, pending = await asyncio.wait(
+                [interrupt_task, gather_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            # If interrupt happened first, cancel all pending remediation tasks
+            if interrupt_task in done and gather_task in pending:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                # Wait for cancellation to complete
+                try:
+                    await gather_task
+                except asyncio.CancelledError:
+                    pass
+
+            # Clean up interrupt task if it's still pending
+            if interrupt_task in pending:
+                interrupt_task.cancel()
+                try:
+                    await interrupt_task
+                except asyncio.CancelledError:
+                    pass
 
         # Finalize each task result (close issue, record metadata, emit events)
         for issue_id, task in task_pairs:
