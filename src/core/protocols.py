@@ -1390,11 +1390,13 @@ class TriggerSummary:
         enabled: Whether this trigger is configured.
         failure_mode: The failure mode (e.g., "abort", "continue", "remediate").
         command_count: Number of commands configured for this trigger.
+        command_names: Names of commands configured for this trigger.
     """
 
     enabled: bool = False
     failure_mode: str | None = None
     command_count: int = 0
+    command_names: tuple[str, ...] = ()
 
 
 @dataclass

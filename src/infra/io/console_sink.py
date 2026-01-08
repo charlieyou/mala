@@ -152,19 +152,24 @@ class ConsoleEventSink(BaseEventSink):
         # Build trigger summary items for CLI output
         trigger_items: list[str] = []
 
+        def format_trigger(name: str, t: object) -> str:
+            """Format a trigger for CLI display, omitting mode if not set."""
+            mode = getattr(t, "failure_mode", None)
+            cmd_count = getattr(t, "command_count", 0)
+            if mode is not None:
+                return f"{name}({mode},{cmd_count}cmd)"
+            return f"{name}({cmd_count}cmd)"
+
         if triggers.epic_completion and triggers.epic_completion.enabled:
-            t = triggers.epic_completion
             trigger_items.append(
-                f"epic_completion({t.failure_mode},{t.command_count}cmd)"
+                format_trigger("epic_completion", triggers.epic_completion)
             )
 
         if triggers.session_end and triggers.session_end.enabled:
-            t = triggers.session_end
-            trigger_items.append(f"session_end({t.failure_mode},{t.command_count}cmd)")
+            trigger_items.append(format_trigger("session_end", triggers.session_end))
 
         if triggers.periodic and triggers.periodic.enabled:
-            t = triggers.periodic
-            trigger_items.append(f"periodic({t.failure_mode},{t.command_count}cmd)")
+            trigger_items.append(format_trigger("periodic", triggers.periodic))
 
         if trigger_items:
             triggers_str = " ".join(trigger_items)
@@ -184,29 +189,26 @@ class ConsoleEventSink(BaseEventSink):
         session = getattr(triggers, "session_end", None)
         periodic = getattr(triggers, "periodic", None)
 
-        if epic and getattr(epic, "enabled", False):
+        def log_trigger_detail(name: str, trigger: object) -> None:
+            """Log a single trigger's detailed configuration."""
+            mode = getattr(trigger, "failure_mode", None)
+            cmd_names = getattr(trigger, "command_names", ())
+            mode_str = mode if mode is not None else "unset"
+            commands_str = ", ".join(cmd_names) if cmd_names else "none"
             log_verbose(
                 "◦",
-                f"  epic_completion: mode={epic.failure_mode}, "
-                f"commands={epic.command_count}",
+                f"  {name}: mode={mode_str}, commands=[{commands_str}]",
                 agent_id="run",
             )
+
+        if epic and getattr(epic, "enabled", False):
+            log_trigger_detail("epic_completion", epic)
 
         if session and getattr(session, "enabled", False):
-            log_verbose(
-                "◦",
-                f"  session_end: mode={session.failure_mode}, "
-                f"commands={session.command_count}",
-                agent_id="run",
-            )
+            log_trigger_detail("session_end", session)
 
         if periodic and getattr(periodic, "enabled", False):
-            log_verbose(
-                "◦",
-                f"  periodic: mode={periodic.failure_mode}, "
-                f"commands={periodic.command_count}",
-                agent_id="run",
-            )
+            log_trigger_detail("periodic", periodic)
 
     def on_run_completed(
         self,

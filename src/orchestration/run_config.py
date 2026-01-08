@@ -43,10 +43,17 @@ def _build_trigger_summary(
         # Access attributes dynamically to avoid importing trigger config types
         failure_mode = getattr(trigger, "failure_mode", None)
         commands = getattr(trigger, "commands", ())
+        # Safely extract failure mode value - handles both Enum and string types
+        mode_value = (
+            getattr(failure_mode, "value", failure_mode) if failure_mode else None
+        )
+        # Extract command names for verbose logging
+        command_names = tuple(getattr(cmd, "ref", str(cmd)) for cmd in commands)
         return TriggerSummary(
             enabled=True,
-            failure_mode=failure_mode.value if failure_mode else None,
+            failure_mode=mode_value,
             command_count=len(commands),
+            command_names=command_names,
         )
 
     return ValidationTriggersSummary(
