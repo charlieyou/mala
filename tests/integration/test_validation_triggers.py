@@ -73,3 +73,62 @@ def test_config_loads_validation_triggers_via_normal_path(tmp_path: Path) -> Non
     assert triggers.periodic.interval == 5
     assert triggers.periodic.failure_mode == FailureMode.ABORT
     assert triggers.periodic.commands == ()
+
+
+def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None:
+    """Test that triggers can be queued and executed via RunCoordinator.
+
+    This test exercises RunCoordinator.queue_trigger_validation() →
+    run_trigger_validation() path.
+
+    Expected: FAILS with NotImplementedError (skeleton implementation).
+    After T007: Test passes.
+    """
+    import pytest
+
+    from src.domain.validation.config import TriggerType
+    from src.pipeline.run_coordinator import RunCoordinator, RunCoordinatorConfig
+
+    # Create minimal config
+    config = RunCoordinatorConfig(
+        repo_path=tmp_path,
+        timeout_seconds=60,
+    )
+
+    # Create RunCoordinator with minimal stubs
+    # We use None for dependencies since we expect NotImplementedError before they're used
+    coordinator = RunCoordinator(
+        config=config,
+        gate_checker=None,  # type: ignore[arg-type]
+        command_runner=None,  # type: ignore[arg-type]
+        env_config=None,  # type: ignore[arg-type]
+        lock_manager=None,  # type: ignore[arg-type]
+        sdk_client_factory=None,  # type: ignore[arg-type]
+    )
+
+    # Verify trigger queue starts empty
+    assert coordinator._trigger_queue == []
+
+    # Queue a trigger
+    coordinator.queue_trigger_validation(
+        TriggerType.EPIC_COMPLETION, {"issue_id": "test-123", "epic_id": "epic-1"}
+    )
+
+    # Verify trigger was queued
+    assert len(coordinator._trigger_queue) == 1
+    trigger_type, context = coordinator._trigger_queue[0]
+    assert trigger_type == TriggerType.EPIC_COMPLETION
+    assert context["issue_id"] == "test-123"
+
+    # Running trigger validation should raise NotImplementedError (skeleton)
+    import asyncio
+
+    async def run_and_expect_not_implemented() -> None:
+        with pytest.raises(NotImplementedError, match="run_trigger_validation not yet"):
+            await coordinator.run_trigger_validation()
+
+    asyncio.run(run_and_expect_not_implemented())
+
+    # Test clear_trigger_queue
+    coordinator.clear_trigger_queue(reason="test cleanup")
+    assert coordinator._trigger_queue == []

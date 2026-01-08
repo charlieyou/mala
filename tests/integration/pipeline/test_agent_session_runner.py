@@ -4429,6 +4429,8 @@ class TestLocalSettingsIntegration:
             sources = list(opts.setting_sources or [])
             if "local" not in sources:
                 return None
+            if opts.cwd is None:
+                return None
             settings_path = Path(opts.cwd) / ".claude" / "settings.local.json"
             if not settings_path.exists():
                 return None
@@ -4436,9 +4438,9 @@ class TestLocalSettingsIntegration:
             return cast("int | None", data.get("timeout"))
 
         class CapturingSDKClient:
-            def __init__(self, opts: ClaudeAgentOptions) -> None:
-                self.options = opts
-                self.timeout = _resolve_timeout_from_settings(opts)
+            def __init__(self, *, options: ClaudeAgentOptions) -> None:
+                self.options = options
+                self.timeout = _resolve_timeout_from_settings(options)
 
         # Acceptable here: we need to observe SDK client initialization without a
         # public SDK API for resolved settings, and we avoid private SDK internals.
