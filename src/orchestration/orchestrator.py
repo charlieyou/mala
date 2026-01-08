@@ -866,6 +866,11 @@ class MalaOrchestrator:
             await self._finalize_issue_result(issue_id, result, run_metadata)
             self.issue_coordinator.mark_completed(issue_id)
 
+            # T009: Hook for periodic trigger check after issue completion
+            self._check_and_queue_periodic_trigger(result)
+            # T011: Blocking wait location - after queueing, before next issue assignment
+            # await self.run_coordinator.run_trigger_validation() will be called here
+
         async def abort_callback(*, is_interrupt: bool = False) -> AbortResult:
             """Abort all active tasks."""
             return await self._abort_active_tasks(
@@ -926,20 +931,24 @@ class MalaOrchestrator:
         self._shutdown_requested = False
         self._run_task = None
 
-    def _check_and_queue_periodic_trigger(self) -> None:
+    def _check_and_queue_periodic_trigger(self, result: IssueResult) -> None:
         """Check if periodic trigger should fire and queue it if so.
 
         Called after each non-epic issue completion. Increments
         _non_epic_completed_count and queues a PERIODIC trigger when
         the count reaches the configured interval.
 
+        Args:
+            result: The completed issue's result (used to check epic membership).
+
         Skeleton stub for T009 - actual implementation in T011.
         """
-        raise NotImplementedError(
-            "_check_and_queue_periodic_trigger not implemented (see T011)"
-        )
+        # T011: Increment _non_epic_completed_count for non-epic issues
+        # T011: Check if count matches configured interval
+        # T011: If match, queue PERIODIC trigger via run_coordinator.queue_trigger_validation()
+        pass
 
-    def _fire_session_end_trigger(self) -> None:
+    async def _fire_session_end_trigger(self) -> None:
         """Queue session_end trigger validation if configured.
 
         Called at the end of a session (before final validation).
@@ -947,9 +956,11 @@ class MalaOrchestrator:
 
         Skeleton stub for T009 - actual implementation in T012.
         """
-        raise NotImplementedError(
-            "_fire_session_end_trigger not implemented (see T012)"
-        )
+        # T012: Check if session_end trigger is configured
+        # T012: Check skip conditions (no issues completed, abort requested, etc.)
+        # T012: Queue SESSION_END trigger via run_coordinator.queue_trigger_validation()
+        # T012: Await run_coordinator.run_trigger_validation() (blocking)
+        pass
 
     def _handle_sigint(
         self,
@@ -1173,6 +1184,10 @@ class MalaOrchestrator:
             # Global validation and finalization happen after lock cleanup
             # but before debug log cleanup (so they're captured in the debug log)
             success_count = sum(1 for r in self._state.completed if r.success)
+
+            # T009: Hook for session_end trigger before global validation
+            await self._fire_session_end_trigger()
+
             run_validation_passed = True
             if success_count > 0 and not self.abort_run:
                 try:
