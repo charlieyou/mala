@@ -2470,6 +2470,7 @@ class TestReviewUsesIssueCommits:
                 claude_session_id: str | None = None,
                 *,
                 commit_shas: Sequence[str] | None = None,
+                interrupt_event: asyncio.Event | None = None,
             ) -> ReviewResult:
                 captured_commit_lists.append(commit_shas)
                 return ReviewResult(
