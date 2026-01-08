@@ -82,7 +82,7 @@ class FakeCallbacks:
         return await self.fake_verifier.verify(epic_id, force)
 
     async def spawn_remediation(
-        self, issue_id: str
+        self, issue_id: str, flow: str = "implementer"
     ) -> asyncio.Task[IssueResult] | None:
         self.spawned_issues.append(issue_id)
         if self.spawn_raises:
