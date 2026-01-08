@@ -408,17 +408,18 @@ class RunCoordinator:
             if self.event_sink is not None:
                 self.event_sink.on_fixer_started(attempt, self.config.max_gate_retries)
 
-            fixer_success = await self._run_fixer_agent(
+            fixer_result = await self._run_fixer_agent(
                 failure_output=failure_output,
                 attempt=attempt,
                 spec=spec,
+                interrupt_event=interrupt_event,
             )
 
             # If interrupted during fixer run, exit early
-            if interrupt_event is not None and interrupt_event.is_set():
+            if fixer_result.interrupted:
                 return GlobalValidationOutput(passed=False, interrupted=True)
 
-            if not fixer_success:
+            if not fixer_result.success:
                 # Fixer failure is logged via on_fixer_failed in _run_fixer_agent
                 pass  # Continue to retry validation anyway
 
@@ -479,17 +480,27 @@ class RunCoordinator:
         failure_output: str,
         attempt: int,
         spec: ValidationSpec | None = None,
-    ) -> bool:
+        interrupt_event: asyncio.Event | None = None,
+    ) -> FixerResult:
         """Spawn a fixer agent to address global validation failures.
 
         Args:
             failure_output: Human-readable description of what failed.
             attempt: Current attempt number.
             spec: Optional ValidationSpec for extracting lint tool names.
+            interrupt_event: Optional event to monitor for interruption.
 
         Returns:
-            True if fixer agent completed successfully, False otherwise.
+            FixerResult indicating success/failure/interrupted status.
         """
+        from src.infra.sigint_guard import InterruptGuard
+        from src.infra.tools.env import get_claude_log_path
+
+        # Check for interrupt before starting
+        guard = InterruptGuard(interrupt_event)
+        if guard.is_interrupted():
+            return FixerResult(success=None, interrupted=True)
+
         agent_id = f"fixer-{uuid.uuid4().hex[:8]}"
         self._active_fixer_ids.append(agent_id)
 
@@ -525,6 +536,8 @@ class RunCoordinator:
         client = self.sdk_client_factory.create(runtime.options)
 
         pending_lint_commands: dict[str, tuple[str, str]] = {}
+        result_session_id: str | None = None
+        log_path: str | None = None
 
         try:
             async with asyncio.timeout(self.config.timeout_seconds):
@@ -532,6 +545,12 @@ class RunCoordinator:
                     await client.query(prompt)
 
                     async for message in client.receive_response():
+                        # Check for interrupt between messages
+                        if guard.is_interrupted():
+                            return FixerResult(
+                                success=None, interrupted=True, log_path=log_path
+                            )
+
                         # Use duck typing to avoid SDK imports
                         msg_type = type(message).__name__
                         if msg_type == "AssistantMessage":
@@ -572,19 +591,26 @@ class RunCoordinator:
                                             )
                         elif msg_type == "ResultMessage":
                             result = getattr(message, "result", "") or ""
+                            result_session_id = getattr(message, "session_id", None)
                             if self.event_sink is not None:
                                 self.event_sink.on_fixer_completed(result)
 
-            return True
+            # Capture log path from session ID
+            if result_session_id:
+                log_path = str(
+                    get_claude_log_path(self.config.repo_path, result_session_id)
+                )
+
+            return FixerResult(success=True, log_path=log_path)
 
         except TimeoutError:
             if self.event_sink is not None:
                 self.event_sink.on_fixer_failed("timeout")
-            return False
+            return FixerResult(success=False, log_path=log_path)
         except Exception as e:
             if self.event_sink is not None:
                 self.event_sink.on_fixer_failed(str(e))
-            return False
+            return FixerResult(success=False, log_path=log_path)
         finally:
             self._active_fixer_ids.remove(agent_id)
             cleanup_agent_locks(agent_id)
@@ -832,13 +858,14 @@ class RunCoordinator:
                 )
 
             # Spawn fixer agent
-            await self._run_fixer_agent(
+            fixer_result = await self._run_fixer_agent(
                 failure_output=failure_output,
                 attempt=attempt,
+                interrupt_event=interrupt_event,
             )
 
-            # Check for SIGINT after fixer
-            if interrupt_event.is_set():
+            # Check for SIGINT after fixer (either via result or event)
+            if fixer_result.interrupted or interrupt_event.is_set():
                 self.clear_trigger_queue("sigint")
                 return TriggerValidationResult(
                     status="aborted", details="Validation interrupted by SIGINT"

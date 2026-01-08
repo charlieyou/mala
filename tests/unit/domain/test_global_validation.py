@@ -279,13 +279,18 @@ class TestGlobalValidation:
         async def mock_get_commit(path: Path) -> str:
             return "abc123"
 
+        from src.pipeline.run_coordinator import FixerResult
+
         fixer_calls: list[tuple[str, int]] = []
 
         async def mock_fixer(
-            failure_output: str, attempt: int, spec: object = None
-        ) -> bool:
+            failure_output: str,
+            attempt: int,
+            spec: object = None,
+            interrupt_event: object = None,
+        ) -> FixerResult:
             fixer_calls.append((failure_output, attempt))
-            return True
+            return FixerResult(success=True)
 
         mock_result = ValidationResult(
             passed=False,
@@ -368,14 +373,19 @@ class TestGlobalValidation:
         async def mock_get_commit(path: Path) -> str:
             return "abc123"
 
+        from src.pipeline.run_coordinator import FixerResult
+
         fixer_called = False
 
         async def mock_fixer(
-            failure_output: str, attempt: int, spec: object = None
-        ) -> bool:
+            failure_output: str,
+            attempt: int,
+            spec: object = None,
+            interrupt_event: object = None,
+        ) -> FixerResult:
             nonlocal fixer_called
             fixer_called = True
-            return True
+            return FixerResult(success=True)
 
         interrupted_step = ValidationStepResult(
             name="pytest",
@@ -454,13 +464,19 @@ class TestGlobalValidation:
         async def mock_get_commit(path: Path) -> str:
             return "abc123"
 
-        interrupt_event = asyncio.Event()
+        from src.pipeline.run_coordinator import FixerResult
+
+        outer_interrupt_event = asyncio.Event()
 
         async def mock_fixer(
-            failure_output: str, attempt: int, spec: object = None
-        ) -> bool:
-            interrupt_event.set()
-            return False
+            failure_output: str,
+            attempt: int,
+            spec: object = None,
+            interrupt_event: object = None,
+        ) -> FixerResult:
+            outer_interrupt_event.set()
+            # Simulate fixer being interrupted - returns interrupted=True
+            return FixerResult(success=None, interrupted=True)
 
         mock_result = ValidationResult(
             passed=False,
@@ -491,7 +507,7 @@ class TestGlobalValidation:
 
             input_data = GlobalValidationInput(run_metadata=run_metadata)
             result = await coordinator.run_validation(
-                input_data, interrupt_event=interrupt_event
+                input_data, interrupt_event=outer_interrupt_event
             )
 
         assert result.passed is False

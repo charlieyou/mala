@@ -603,14 +603,19 @@ class TestFailureModeRemediate:
 
         stateful_runner = StatefulRunner()
 
+        from src.pipeline.run_coordinator import FixerResult
+
         # Track fixer calls
         fixer_calls: list[int] = []
 
         async def mock_fixer(
-            failure_output: str, attempt: int, spec: object = None
-        ) -> bool:
+            failure_output: str,
+            attempt: int,
+            spec: object = None,
+            interrupt_event: object = None,
+        ) -> FixerResult:
             fixer_calls.append(attempt)
-            return True
+            return FixerResult(success=True)
 
         coordinator = make_coordinator(tmp_path, validation_config=config)
         coordinator.command_runner = stateful_runner  # type: ignore[assignment]
@@ -649,14 +654,19 @@ class TestFailureModeRemediate:
             ),
         )
 
+        from src.pipeline.run_coordinator import FixerResult
+
         # Track fixer calls
         fixer_calls: list[int] = []
 
         async def mock_fixer(
-            failure_output: str, attempt: int, spec: object = None
-        ) -> bool:
+            failure_output: str,
+            attempt: int,
+            spec: object = None,
+            interrupt_event: object = None,
+        ) -> FixerResult:
             fixer_calls.append(attempt)
-            return True  # Fixer "succeeds" but command still fails
+            return FixerResult(success=True)  # Fixer "succeeds" but command still fails
 
         coordinator = make_coordinator(
             tmp_path, validation_config=config, command_runner=runner
@@ -694,14 +704,19 @@ class TestFailureModeRemediate:
             ),
         )
 
+        from src.pipeline.run_coordinator import FixerResult
+
         # Track fixer calls
         fixer_calls: list[int] = []
 
         async def mock_fixer(
-            failure_output: str, attempt: int, spec: object = None
-        ) -> bool:
+            failure_output: str,
+            attempt: int,
+            spec: object = None,
+            interrupt_event: object = None,
+        ) -> FixerResult:
             fixer_calls.append(attempt)
-            return True
+            return FixerResult(success=True)
 
         coordinator = make_coordinator(
             tmp_path, validation_config=config, command_runner=runner

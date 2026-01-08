@@ -1372,3 +1372,227 @@ if __name__ == "__main__":
             if proc.poll() is None:
                 proc.kill()
                 proc.wait()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only")
+class TestUnifiedSIGINTHandling:
+    """Integration tests for unified SIGINT propagation path.
+
+    These tests verify the interrupt handling components work correctly.
+    The complete end-to-end wiring from orchestrator to fixer is tested
+    after T007 completes the wiring.
+
+    NOTE: test_sigint_during_fixer_marks_validation_not_passed is marked
+    xfail because it requires T007 to wire interrupt_event from orchestrator
+    to run_validation.
+    """
+
+    @pytest.mark.xfail(
+        reason="T007 not yet implemented: interrupt_event not wired from orchestrator to run_validation",
+        strict=True,
+    )
+    def test_sigint_during_fixer_marks_validation_not_passed(
+        self, tmp_path: Path
+    ) -> None:
+        """SIGINT during fixer should mark validation as not passed.
+
+        This test verifies the complete interrupt propagation path:
+        1. Orchestrator receives SIGINT and sets interrupt_event
+        2. Event propagates to run_validation()
+        3. run_validation() passes event to _run_fixer_agent()
+        4. Fixer detects interrupt and returns FixerResult(interrupted=True)
+        5. run_validation() returns GlobalValidationOutput(passed=False, interrupted=True)
+
+        EXPECTED TO FAIL (xfail): Until T007 wires interrupt_event from orchestrator
+        to run_validation(), the fixer won't receive the interrupt event.
+        When T007 is complete, this test should pass and the xfail marker should be removed.
+        """
+        script = tmp_path / "fixer_interrupt_test.py"
+        script.write_text(
+            """
+import asyncio
+import signal
+import sys
+import time
+
+from pathlib import Path
+
+from src.orchestration.factory import OrchestratorConfig, OrchestratorDependencies, create_orchestrator
+from src.core.models import WatchConfig
+from tests.fakes.event_sink import FakeEventSink
+from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
+
+_orchestrator = None
+_agent_started = asyncio.Event()
+
+
+async def mock_agent(issue_id: str):
+    '''Mock agent that signals when started and waits for interrupt.'''
+    from src.pipeline.issue_result import IssueResult
+
+    # Signal that we're in the agent
+    _agent_started.set()
+
+    # Wait for interrupt (simulates agent doing work)
+    try:
+        await asyncio.sleep(60.0)
+    except asyncio.CancelledError:
+        pass
+
+    return IssueResult(issue_id=issue_id, agent_id="mock", success=False, summary="Interrupted")
+
+
+async def main():
+    global _orchestrator
+    tmp_dir = Path(sys.argv[1])
+    runs_dir = tmp_dir / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+
+    provider = FakeIssueProvider(
+        issues={"test-issue": FakeIssue(id="test-issue", status="open")}
+    )
+    event_sink = FakeEventSink()
+
+    config = OrchestratorConfig(
+        repo_path=tmp_dir,
+        max_agents=1,
+        max_issues=1,
+    )
+    deps = OrchestratorDependencies(
+        issue_provider=provider,
+        event_sink=event_sink,
+        runs_dir=runs_dir,
+    )
+    _orchestrator = create_orchestrator(config, deps=deps)
+    _orchestrator.run_implementer = mock_agent
+
+    watch_config = WatchConfig(enabled=True, poll_interval_seconds=0.1)
+
+    run_task = asyncio.create_task(_orchestrator.run(watch_config=watch_config))
+
+    # Wait for SIGINT handler to be installed
+    deadline = time.monotonic() + 15.0
+    while signal.getsignal(signal.SIGINT) is signal.default_int_handler:
+        if run_task.done():
+            try:
+                exc = run_task.exception()
+            except asyncio.CancelledError:
+                exc = None
+            if exc:
+                print(f"STARTUP_ERROR: {exc}", file=sys.stderr, flush=True)
+            sys.exit(1)
+        if time.monotonic() > deadline:
+            print("TIMEOUT: SIGINT handler not installed", file=sys.stderr, flush=True)
+            sys.exit(1)
+        await asyncio.sleep(0.01)
+
+    # Wait for agent to start
+    spawn_deadline = time.monotonic() + 15.0
+    while not _agent_started.is_set():
+        if run_task.done():
+            try:
+                exc = run_task.exception()
+            except asyncio.CancelledError:
+                exc = None
+            if exc:
+                print(f"AGENT_ERROR: {exc}", file=sys.stderr, flush=True)
+            else:
+                print("AGENT_NOT_STARTED", file=sys.stderr, flush=True)
+            sys.exit(1)
+        if time.monotonic() > spawn_deadline:
+            print("TIMEOUT: Agent not started", file=sys.stderr, flush=True)
+            sys.exit(1)
+        await asyncio.sleep(0.01)
+
+    print("READY", flush=True)
+
+    try:
+        await run_task
+    except asyncio.CancelledError:
+        pass
+
+    # Check the validation output - the interrupt should have propagated
+    # to mark validation as interrupted
+    if hasattr(_orchestrator, '_last_validation_output'):
+        output = _orchestrator._last_validation_output
+        if output and output.interrupted:
+            print("VALIDATION_INTERRUPTED", flush=True)
+        elif output and not output.passed:
+            print("VALIDATION_NOT_PASSED", flush=True)
+        else:
+            print("VALIDATION_PASSED", flush=True)
+    else:
+        print("NO_VALIDATION_OUTPUT", flush=True)
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    sys.exit(_orchestrator.exit_code)
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        if _orchestrator is not None:
+            sys.stdout.flush()
+        sys.exit(130)
+"""
+        )
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(REPO_ROOT)
+
+        proc = subprocess.Popen(
+            [sys.executable, str(script), str(tmp_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+
+        try:
+            ready, output, early_stderr = _wait_for_ready(proc, timeout=20.0)
+            if not ready:
+                if proc.poll() is not None:
+                    pytest.fail(
+                        f"Subprocess exited early with code {proc.returncode}. "
+                        f"Output: {output}\nStderr: {early_stderr}"
+                    )
+                stderr = _get_stderr(proc)
+                pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
+
+            # Send SIGINT while agent is running
+            _send_sigint_and_wait(proc, wait_after=0.5)
+
+            # Wait for exit - use double SIGINT to trigger abort mode for reliable exit
+            _send_sigint_and_wait(proc, wait_after=0.5)
+
+            # Wait for exit
+            try:
+                remaining_stdout, stderr = proc.communicate(timeout=10.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    remaining_stdout, stderr = proc.communicate(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    remaining_stdout, stderr = "", ""
+                pytest.fail(
+                    f"Process did not exit after double SIGINT. "
+                    f"Stdout: {output + remaining_stdout}\nStderr: {stderr}"
+                )
+
+            all_stdout = output + remaining_stdout
+
+            # The key assertion: validation should be marked as interrupted
+            # This will FAIL until T007 wires interrupt_event from orchestrator
+            assert "VALIDATION_INTERRUPTED" in all_stdout, (
+                f"Expected VALIDATION_INTERRUPTED in output. "
+                f"This test is expected to fail until T007 wires interrupt_event. "
+                f"Stdout: {all_stdout}\nStderr: {stderr}"
+            )
+
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
