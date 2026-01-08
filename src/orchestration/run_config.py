@@ -8,11 +8,52 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.core.protocols import EventRunConfig
+from src.core.protocols import (
+    EventRunConfig,
+    TriggerSummary,
+    ValidationTriggersSummary,
+)
 from src.infra.io.log_output.run_metadata import RunConfig, RunMetadata
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from src.domain.validation.config import ValidationTriggersConfig
+
+
+def _build_trigger_summary(
+    triggers_config: ValidationTriggersConfig | None,
+) -> ValidationTriggersSummary | None:
+    """Build a trigger summary from ValidationTriggersConfig.
+
+    Args:
+        triggers_config: The validation triggers configuration, or None.
+
+    Returns:
+        ValidationTriggersSummary if triggers are configured, None otherwise.
+    """
+    if triggers_config is None:
+        return None
+
+    def make_summary(
+        trigger: object | None,
+    ) -> TriggerSummary | None:
+        if trigger is None:
+            return None
+        # Access attributes dynamically to avoid importing trigger config types
+        failure_mode = getattr(trigger, "failure_mode", None)
+        commands = getattr(trigger, "commands", ())
+        return TriggerSummary(
+            enabled=True,
+            failure_mode=failure_mode.value if failure_mode else None,
+            command_count=len(commands),
+        )
+
+    return ValidationTriggersSummary(
+        epic_completion=make_summary(triggers_config.epic_completion),
+        session_end=make_summary(triggers_config.session_end),
+        periodic=make_summary(triggers_config.periodic),
+    )
 
 
 def build_event_run_config(
@@ -29,6 +70,7 @@ def build_event_run_config(
     prioritize_wip: bool,
     orphans_only: bool,
     cli_args: dict[str, object] | None,
+    validation_triggers: ValidationTriggersConfig | None = None,
 ) -> EventRunConfig:
     """Build EventRunConfig for on_run_started event.
 
@@ -46,6 +88,7 @@ def build_event_run_config(
         prioritize_wip: Whether to prioritize in-progress issues.
         orphans_only: Whether to only process issues without parent epic.
         cli_args: CLI arguments for logging.
+        validation_triggers: Validation triggers configuration from mala.yaml.
 
     Returns:
         EventRunConfig for the run.
@@ -64,6 +107,7 @@ def build_event_run_config(
         prioritize_wip=prioritize_wip,
         orphans_only=orphans_only,
         cli_args=cli_args,
+        validation_triggers=_build_trigger_summary(validation_triggers),
     )
 
 

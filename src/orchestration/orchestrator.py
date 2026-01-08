@@ -991,6 +991,12 @@ class MalaOrchestrator:
         self._exit_code = 0
         self._reset_sigint_state()
 
+        # Build validation triggers summary from the merged config
+        validation_triggers = (
+            self._validation_config.validation_triggers
+            if self._validation_config
+            else None
+        )
         run_config = build_event_run_config(
             repo_path=self.repo_path,
             max_agents=self.max_agents,
@@ -1005,6 +1011,7 @@ class MalaOrchestrator:
             prioritize_wip=self.prioritize_wip,
             orphans_only=self.orphans_only,
             cli_args=self.cli_args,
+            validation_triggers=validation_triggers,
         )
         self.event_sink.on_run_started(run_config)
 

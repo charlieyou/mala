@@ -777,6 +777,53 @@ class TestBuildEventRunConfig:
         assert set(config.only_ids) == {"bd-1", "bd-2"}
         assert config.review_enabled is True
         assert config.orphans_only is False
+        # Default validation_triggers is None
+        assert config.validation_triggers is None
+
+    def test_with_validation_triggers(self, tmp_path: Path) -> None:
+        """Should build EventRunConfig with validation triggers summary."""
+        from src.domain.validation.config import (
+            FailureMode,
+            SessionEndTriggerConfig,
+            TriggerCommandRef,
+            ValidationTriggersConfig,
+        )
+
+        triggers = ValidationTriggersConfig(
+            session_end=SessionEndTriggerConfig(
+                failure_mode=FailureMode.REMEDIATE,
+                commands=(
+                    TriggerCommandRef(ref="test"),
+                    TriggerCommandRef(ref="lint"),
+                ),
+            ),
+        )
+
+        config = build_event_run_config(
+            repo_path=tmp_path,
+            max_agents=2,
+            timeout_seconds=600,
+            max_issues=5,
+            max_gate_retries=3,
+            max_review_retries=2,
+            epic_id=None,
+            only_ids=None,
+            review_enabled=True,
+            review_disabled_reason=None,
+            prioritize_wip=False,
+            orphans_only=False,
+            cli_args=None,
+            validation_triggers=triggers,
+        )
+
+        assert config.validation_triggers is not None
+        assert config.validation_triggers.session_end is not None
+        assert config.validation_triggers.session_end.enabled is True
+        assert config.validation_triggers.session_end.failure_mode == "remediate"
+        assert config.validation_triggers.session_end.command_count == 2
+        # Other triggers should be None
+        assert config.validation_triggers.epic_completion is None
+        assert config.validation_triggers.periodic is None
 
 
 class TestBuildRunMetadata:

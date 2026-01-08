@@ -562,3 +562,57 @@ class TestConsoleEventSink:
         captured = capsys.readouterr()
         # Should include the word "failed" (red color codes are ANSI escape sequences)
         assert "failed" in captured.out
+
+    def test_on_run_started_with_triggers_logs_trigger_summary(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """on_run_started with triggers should log trigger summary."""
+        from src.core.protocols import TriggerSummary, ValidationTriggersSummary
+
+        sink = ConsoleEventSink()
+        triggers = ValidationTriggersSummary(
+            session_end=TriggerSummary(
+                enabled=True,
+                failure_mode="remediate",
+                command_count=2,
+            ),
+            periodic=TriggerSummary(
+                enabled=True,
+                failure_mode="continue",
+                command_count=1,
+            ),
+        )
+        config = EventRunConfig(
+            repo_path="/tmp/repo",
+            max_agents=2,
+            timeout_minutes=30,
+            max_issues=10,
+            max_gate_retries=3,
+            max_review_retries=2,
+            validation_triggers=triggers,
+        )
+
+        sink.on_run_started(config)
+
+        captured = capsys.readouterr()
+        # Should include trigger summary in output
+        assert "Triggers:" in captured.out
+        assert "session_end" in captured.out
+        assert "remediate" in captured.out
+        assert "periodic" in captured.out
+        assert "continue" in captured.out
+
+    def test_on_run_started_without_triggers_shows_verbose_message(self) -> None:
+        """on_run_started without triggers should only show verbose message."""
+        sink = ConsoleEventSink()
+        config = EventRunConfig(
+            repo_path="/tmp/repo",
+            max_agents=2,
+            timeout_minutes=30,
+            max_issues=10,
+            max_gate_retries=3,
+            max_review_retries=2,
+        )
+
+        # Should execute without error - verbose message won't show without verbose mode
+        sink.on_run_started(config)

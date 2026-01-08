@@ -135,6 +135,79 @@ class ConsoleEventSink(BaseEventSink):
             for item in items:
                 log("◦", f"  {item}", agent_id="run")
 
+        # Log validation triggers summary
+        self._log_triggers(config)
+
+    def _log_triggers(self, config: EventRunConfig) -> None:
+        """Log validation trigger configuration summary.
+
+        Shows which triggers are enabled, their failure modes, and command counts.
+        CLI output shows a compact summary; debug/verbose log shows full details.
+        """
+        triggers = config.validation_triggers
+        if triggers is None or not triggers.has_any_enabled():
+            log_verbose("◦", "Triggers: none configured", agent_id="run")
+            return
+
+        # Build trigger summary items for CLI output
+        trigger_items: list[str] = []
+
+        if triggers.epic_completion and triggers.epic_completion.enabled:
+            t = triggers.epic_completion
+            trigger_items.append(
+                f"epic_completion({t.failure_mode},{t.command_count}cmd)"
+            )
+
+        if triggers.session_end and triggers.session_end.enabled:
+            t = triggers.session_end
+            trigger_items.append(f"session_end({t.failure_mode},{t.command_count}cmd)")
+
+        if triggers.periodic and triggers.periodic.enabled:
+            t = triggers.periodic
+            trigger_items.append(f"periodic({t.failure_mode},{t.command_count}cmd)")
+
+        if trigger_items:
+            triggers_str = " ".join(trigger_items)
+            log("◐", f"Triggers: {triggers_str}", agent_id="run")
+
+        # Verbose/debug output with more detail per trigger
+        self._log_triggers_verbose(triggers)
+
+    def _log_triggers_verbose(self, triggers: object) -> None:
+        """Log detailed trigger configuration for debugging.
+
+        Args:
+            triggers: ValidationTriggersSummary object with trigger details.
+        """
+        # Get individual trigger summaries
+        epic = getattr(triggers, "epic_completion", None)
+        session = getattr(triggers, "session_end", None)
+        periodic = getattr(triggers, "periodic", None)
+
+        if epic and getattr(epic, "enabled", False):
+            log_verbose(
+                "◦",
+                f"  epic_completion: mode={epic.failure_mode}, "
+                f"commands={epic.command_count}",
+                agent_id="run",
+            )
+
+        if session and getattr(session, "enabled", False):
+            log_verbose(
+                "◦",
+                f"  session_end: mode={session.failure_mode}, "
+                f"commands={session.command_count}",
+                agent_id="run",
+            )
+
+        if periodic and getattr(periodic, "enabled", False):
+            log_verbose(
+                "◦",
+                f"  periodic: mode={periodic.failure_mode}, "
+                f"commands={periodic.command_count}",
+                agent_id="run",
+            )
+
     def on_run_completed(
         self,
         success_count: int,

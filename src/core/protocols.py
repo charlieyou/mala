@@ -1383,6 +1383,46 @@ class LoggerPort(Protocol):
 
 
 @dataclass
+class TriggerSummary:
+    """Summary of a single trigger configuration for logging.
+
+    Attributes:
+        enabled: Whether this trigger is configured.
+        failure_mode: The failure mode (e.g., "abort", "continue", "remediate").
+        command_count: Number of commands configured for this trigger.
+    """
+
+    enabled: bool = False
+    failure_mode: str | None = None
+    command_count: int = 0
+
+
+@dataclass
+class ValidationTriggersSummary:
+    """Summary of all validation triggers for logging.
+
+    Provides a lightweight summary of trigger configuration for CLI output
+    without importing the full ValidationConfig machinery.
+
+    Attributes:
+        epic_completion: Summary for epic completion trigger.
+        session_end: Summary for session end trigger.
+        periodic: Summary for periodic trigger.
+    """
+
+    epic_completion: TriggerSummary | None = None
+    session_end: TriggerSummary | None = None
+    periodic: TriggerSummary | None = None
+
+    def has_any_enabled(self) -> bool:
+        """Return True if any trigger is enabled."""
+        return any(
+            t is not None and t.enabled
+            for t in [self.epic_completion, self.session_end, self.periodic]
+        )
+
+
+@dataclass
 class EventRunConfig:
     """Configuration snapshot for a run, passed to on_run_started.
 
@@ -1402,6 +1442,7 @@ class EventRunConfig:
     prioritize_wip: bool = False
     orphans_only: bool = False
     cli_args: dict[str, object] | None = None
+    validation_triggers: ValidationTriggersSummary | None = None
 
 
 @runtime_checkable
