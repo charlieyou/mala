@@ -293,13 +293,15 @@ class EpicVerificationCoordinator:
 
             # If interrupt happened first, cancel all pending remediation tasks
             if interrupt_task in done and gather_task in pending:
+                # Cancel gather_task first to stop it from holding refs
+                gather_task.cancel()
+                # Then cancel all underlying remediation tasks
                 for task in tasks:
                     if not task.done():
                         task.cancel()
-                # Wait for cancellation to complete - await tasks directly
+                # Wait for all tasks to complete cancellation
                 await asyncio.gather(*tasks, return_exceptions=True)
-                # Also clean up gather_task
-                gather_task.cancel()
+                # Clean up gather_task
                 try:
                     await gather_task
                 except asyncio.CancelledError:
