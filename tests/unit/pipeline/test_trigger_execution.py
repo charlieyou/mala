@@ -892,7 +892,7 @@ class TestEpicCompletionTriggerIntegration:
         # epic-1 has a parent epic, so it's nested
         coordinator, queued, _ = self._make_epic_coordinator(
             trigger_config=trigger_config,
-            parent_epic_map={"epic-1": "parent-epic"},
+            parent_epic_map={"child-1": "epic-1", "epic-1": "parent-epic"},
         )
 
         # Run verification

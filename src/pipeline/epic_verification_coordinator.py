@@ -247,10 +247,11 @@ class EpicVerificationCoordinator:
         if trigger_config is None:
             return
 
+        # Cache parent lookup to avoid double await
+        epic_parent = await self.callbacks.get_parent_epic(epic_id)
+
         # Check epic_depth filter
         if trigger_config.epic_depth == EpicDepth.TOP_LEVEL:
-            # Check if epic has an epic parent (nested epic)
-            epic_parent = await self.callbacks.get_parent_epic(epic_id)
             if epic_parent is not None:
                 # Nested epic - don't fire for top_level filter
                 return
@@ -265,9 +266,7 @@ class EpicVerificationCoordinator:
         # Build context and queue the trigger
         context = {
             "epic_id": epic_id,
-            "depth": "top_level"
-            if await self.callbacks.get_parent_epic(epic_id) is None
-            else "nested",
+            "depth": "top_level" if epic_parent is None else "nested",
             "verification_result": "passed" if verification_passed else "failed",
         }
         self.callbacks.queue_trigger_validation(TriggerType.EPIC_COMPLETION, context)
