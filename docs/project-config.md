@@ -67,6 +67,8 @@ coverage:                # Optional. Omit to disable coverage
 reviewer_type: string             # Optional. "agent_sdk" (default) or "cerberus"
 agent_sdk_review_timeout: number  # Optional. Timeout in seconds (default: 600)
 agent_sdk_reviewer_model: string  # Optional. "sonnet" (default), "opus", or "haiku"
+
+claude_settings_sources: list     # Optional. SDK settings sources (default: [local, project])
 ```
 
 ## Field Reference
@@ -89,6 +91,7 @@ agent_sdk_reviewer_model: string  # Optional. "sonnet" (default), "opus", or "ha
 | `reviewer_type` | string | No | Reviewer: `agent_sdk` (default) or `cerberus` |
 | `agent_sdk_review_timeout` | integer | No | Timeout in seconds (default: 600) |
 | `agent_sdk_reviewer_model` | string | No | Model: `sonnet` (default), `opus`, or `haiku` |
+| `claude_settings_sources` | list | No | SDK settings sources: `local`, `project`, `user` (default: `[local, project]`) |
 
 *Required when `coverage` section is present.
 
@@ -357,6 +360,74 @@ commands:
 | Matches `config_files` | lint, format, typecheck |
 | Matches `setup_files` | setup, lint, format, typecheck |
 | `mala.yaml` | All commands |
+
+## Claude Settings Sources
+
+Control which Claude Code settings files the Claude Agent SDK uses during validation. This allows you to define mala-specific settings (e.g., timeouts, models) that differ from your interactive development sessions.
+
+### Configuration Methods
+
+Configure sources via mala.yaml, environment variable, or CLI flag:
+
+```yaml
+# mala.yaml (top-level key)
+preset: python-uv
+claude_settings_sources: [local, project]
+```
+
+```bash
+# Environment variable
+export MALA_CLAUDE_SETTINGS_SOURCES=local,project
+```
+
+```bash
+# CLI flag
+mala run --claude-settings-sources local,project,user
+```
+
+### Precedence
+
+Settings sources are resolved in this order (highest wins):
+
+1. CLI flag (`--claude-settings-sources`)
+2. Environment variable (`MALA_CLAUDE_SETTINGS_SOURCES`)
+3. mala.yaml (`claude_settings_sources`)
+4. Default: `[local, project]`
+
+### Valid Sources
+
+| Source | File Path | Description |
+|--------|-----------|-------------|
+| `local` | `.claude/settings.local.json` | Repository root, typically for validation-specific settings |
+| `project` | `.claude/settings.json` | Repository root, shared project settings |
+| `user` | `~/.claude/settings.json` | User's home directory, personal settings |
+
+The SDK merges settings with local > project > user precedence (first source wins for conflicts).
+
+### Breaking Change
+
+**Default changed from `[project, user]` to `[local, project]`.**
+
+This prioritizes validation-specific settings over user settings, ensuring reproducible validation across CI and developer machines.
+
+**Migration**: To restore old behavior, explicitly set:
+
+```yaml
+claude_settings_sources: [project, user]
+```
+
+### Recommendation
+
+For reproducible validation environments, commit `.claude/settings.local.json` to version control:
+
+```json
+// .claude/settings.local.json
+{
+  "timeout": 300
+}
+```
+
+This file is typically gitignored for interactive Claude Code use, but committing it ensures consistent validation across CI and all developers.
 
 ## Code Review Configuration
 
