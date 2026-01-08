@@ -27,6 +27,7 @@ from src.domain.validation.spec import (
     ValidationScope,
     build_validation_spec,
 )
+from src.infra.sigint_guard import InterruptGuard
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +152,11 @@ class GateRunner:
             )
         return self.per_session_spec
 
-    def run_per_session_gate(self, input: PerSessionGateInput) -> PerSessionGateOutput:
+    def run_per_session_gate(
+        self,
+        input: PerSessionGateInput,
+        interrupt_event: asyncio.Event | None = None,
+    ) -> PerSessionGateOutput:
         """Run quality gate check for a single issue.
 
         This is a synchronous method that performs blocking I/O.
@@ -159,10 +164,27 @@ class GateRunner:
 
         Args:
             input: PerSessionGateInput with issue_id, log_path, retry_state.
+            interrupt_event: Optional event to check for SIGINT interrupts.
 
         Returns:
             PerSessionGateOutput with gate_result and new_log_offset.
+            If interrupted, returns with interrupted=True.
         """
+        guard = InterruptGuard(interrupt_event)
+
+        # Check for interrupt before gate execution
+        if guard.is_interrupted():
+            # Return an empty gate result with interrupted=True
+            return PerSessionGateOutput(
+                gate_result=GateResult(
+                    passed=False,
+                    failure_reasons=["Gate check interrupted"],
+                    commit_hash=None,
+                ),
+                new_log_offset=input.retry_state.log_offset,
+                interrupted=True,
+            )
+
         spec = self._get_or_build_spec(input.spec)
         logger.debug(
             "Gate check: issue_id=%s attempt=%d",

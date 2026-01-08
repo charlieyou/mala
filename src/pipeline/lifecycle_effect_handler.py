@@ -12,15 +12,18 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from src.domain.lifecycle import Effect
 from src.domain.prompts import (
     get_default_validation_commands as _get_default_validation_commands,
 )
+from src.infra.sigint_guard import InterruptGuard
 from src.pipeline.review_formatter import format_review_issues
 
 if TYPE_CHECKING:
+    import asyncio
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
 
     from src.core.protocols import MalaEventSink
@@ -38,6 +41,8 @@ if TYPE_CHECKING:
         AgentSessionInput,
         SessionCallbacks,
     )
+
+T = TypeVar("T")
 
 
 @dataclass
@@ -543,3 +548,36 @@ class LifecycleEffectHandler:
             result,
             pending_query,
         )
+
+    async def run_effects(
+        self,
+        effect_fns: list[Callable[[], Awaitable[T]]],
+        interrupt_event: asyncio.Event | None = None,
+    ) -> tuple[list[T], bool]:
+        """Run a list of effect functions, stopping if interrupted.
+
+        This method iterates over effect functions and executes each one,
+        checking for interrupt between each effect. If interrupted, returns
+        partial results with remaining effects skipped.
+
+        Args:
+            effect_fns: List of async callables that produce effect results.
+            interrupt_event: Optional event to check for SIGINT interrupts.
+
+        Returns:
+            Tuple of (completed_results, was_interrupted) where:
+            - completed_results: List of results from successfully run effects.
+            - was_interrupted: True if iteration was stopped due to interrupt.
+        """
+        guard = InterruptGuard(interrupt_event)
+        results: list[T] = []
+
+        for effect_fn in effect_fns:
+            # Check interrupt before each effect
+            if guard.is_interrupted():
+                return (results, True)
+
+            result = await effect_fn()
+            results.append(result)
+
+        return (results, False)

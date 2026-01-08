@@ -32,6 +32,7 @@ from typing import (
 )
 
 from src.infra.agent_runtime import AgentRuntimeBuilder
+from src.infra.sigint_guard import FlowInterruptedError, InterruptGuard
 from src.domain.lifecycle import (
     Effect,
     ImplementerLifecycle,
@@ -295,6 +296,7 @@ class AgentSessionOutput:
         agent_id: The agent ID used for this session.
         review_log_path: Path to Cerberus review session log (if any).
         low_priority_review_issues: P2/P3 review issues to track as beads issues.
+        interrupted: Whether the session was interrupted by SIGINT.
     """
 
     success: bool
@@ -308,6 +310,7 @@ class AgentSessionOutput:
     agent_id: str = ""
     review_log_path: str | None = None
     low_priority_review_issues: list[ReviewIssueProtocol] | None = None
+    interrupted: bool = False
 
 
 @dataclass
@@ -728,6 +731,7 @@ class AgentSessionRunner:
         session_cfg: SessionConfig,
         state: SessionExecutionState,
         duration: float,
+        interrupted: bool = False,
     ) -> AgentSessionOutput:
         """Build session output from execution state.
 
@@ -735,6 +739,7 @@ class AgentSessionRunner:
             session_cfg: Session configuration with agent_id.
             state: Session execution state.
             duration: Total session duration in seconds.
+            interrupted: Whether the session was interrupted by SIGINT.
 
         Returns:
             AgentSessionOutput with all results and metadata.
@@ -754,6 +759,7 @@ class AgentSessionRunner:
                 "list[ReviewIssueProtocol] | None",
                 state.lifecycle_ctx.low_priority_review_issues or None,
             ),
+            interrupted=interrupted,
         )
 
     async def _handle_log_waiting(
@@ -837,6 +843,7 @@ class AgentSessionRunner:
         self,
         input: AgentSessionInput,
         tracer: TelemetrySpan | None = None,
+        interrupt_event: asyncio.Event | None = None,
     ) -> AgentSessionOutput:
         """Run an agent session for the given input.
 
@@ -850,10 +857,21 @@ class AgentSessionRunner:
         Args:
             input: AgentSessionInput with issue_id, prompt, etc.
             tracer: Optional telemetry span context.
+            interrupt_event: Optional event to check for SIGINT interrupts.
 
         Returns:
             AgentSessionOutput with success, summary, session_id, etc.
         """
+        guard = InterruptGuard(interrupt_event)
+
+        # Check for early interrupt before starting
+        if guard.is_interrupted():
+            return AgentSessionOutput(
+                success=False,
+                summary="Session interrupted before start",
+                interrupted=True,
+            )
+
         start_time = asyncio.get_event_loop().time()
         continuation_count = 0
         current_prompt = input.prompt
@@ -864,8 +882,19 @@ class AgentSessionRunner:
         current_resume_session_id = input.resume_session_id
         # Track whether we've already retried after a stale session error
         stale_session_retried = False
+        # Track whether session was interrupted
+        was_interrupted = False
+
+        # Initialize state outside loop for interrupt handling before first iteration
+        session_cfg: SessionConfig | None = None
+        state: SessionExecutionState | None = None
 
         while True:
+            # Check for interrupt at loop start
+            if guard.is_interrupted():
+                was_interrupted = True
+                break
+
             # Calculate remaining time to enforce overall session timeout
             loop = asyncio.get_event_loop()
             elapsed = loop.time() - start_time
@@ -890,6 +919,11 @@ class AgentSessionRunner:
                         session_input, session_cfg, state, tracer
                     )
                 # Normal completion - exit loop
+                break
+            except FlowInterruptedError:
+                # Session was interrupted by SIGINT
+                was_interrupted = True
+                state.final_result = "Session interrupted by SIGINT"
                 break
             except ContextPressureError as e:
                 # Delegate to handler for checkpoint fetch and continuation prompt
@@ -953,4 +987,15 @@ class AgentSessionRunner:
                 break
 
         duration = asyncio.get_event_loop().time() - start_time
-        return self._build_session_output(session_cfg, state, duration)
+
+        # Handle early interrupt before state was initialized
+        if session_cfg is None or state is None:
+            return AgentSessionOutput(
+                success=False,
+                summary="Session interrupted before initialization",
+                agent_id=agent_id,
+                duration_seconds=duration,
+                interrupted=was_interrupted,
+            )
+
+        return self._build_session_output(session_cfg, state, duration, was_interrupted)

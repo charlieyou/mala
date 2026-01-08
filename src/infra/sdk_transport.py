@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def ensure_sigint_isolated_cli_transport() -> None:
     """Patch Claude SDK SubprocessCLITransport to isolate SIGINT handling."""
@@ -82,6 +86,11 @@ def ensure_sigint_isolated_cli_transport() -> None:
                 if start_new_session and self._process is not None:
                     self._mala_sigint_pgid = self._process.pid
                     CommandRunner.register_sigint_pgid(self._mala_sigint_pgid)
+                    logger.info(
+                        "sdk_subprocess_spawned pid=%s pgid=%s flow=implementer",
+                        self._process.pid,
+                        self._mala_sigint_pgid,
+                    )
 
                 if self._process.stdout:
                     self._stdout_stream = TextReceiveStream(self._process.stdout)
