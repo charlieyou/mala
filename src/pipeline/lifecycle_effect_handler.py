@@ -549,20 +549,16 @@ class LifecycleEffectHandler:
             pending_query,
         )
 
-    async def run_effect_sequence(
+    async def run_effects(
         self,
         effect_fns: list[Callable[[], Awaitable[T]]],
         interrupt_event: asyncio.Event | None = None,
     ) -> tuple[list[T], bool]:
-        """Run a sequence of effect functions with interrupt checks between each.
+        """Run a list of effect functions, stopping if interrupted.
 
-        This is a helper method for orchestrating multiple async effects with
-        interrupt awareness. It executes each function in order, checking for
-        interrupt before each one. If interrupted, returns partial results with
-        remaining effects skipped.
-
-        This method is intended to be wired into the effect pipeline by T007
-        (orchestrator wiring) to provide interrupt-aware effect execution.
+        This method iterates over effect functions and executes each one,
+        checking for interrupt between each effect. If interrupted, returns
+        partial results with remaining effects skipped.
 
         Args:
             effect_fns: List of async callables that produce effect results.

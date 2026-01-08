@@ -289,10 +289,17 @@ class AsyncGateRunner:
         issue_id: str,
         log_path: Path,
         retry_state: RetryState,
+        interrupt_event: asyncio.Event | None = None,
     ) -> tuple[GateResult | GateResultProtocol, int]:
         """Synchronous gate check (blocking I/O).
 
         Delegates to GateRunner for actual gate checking logic.
+
+        Args:
+            issue_id: The issue being checked.
+            log_path: Path to the session log file.
+            retry_state: Current retry state for this issue.
+            interrupt_event: Optional event to check for SIGINT interrupts.
         """
         # Sync per_session_spec with gate_runner
         if self.per_session_spec is not None:
@@ -304,7 +311,7 @@ class AsyncGateRunner:
             retry_state=retry_state,
             spec=self.per_session_spec,
         )
-        output = self.gate_runner.run_per_session_gate(gate_input)
+        output = self.gate_runner.run_per_session_gate(gate_input, interrupt_event)
 
         # Sync cached spec back (gate_runner may have built it)
         if self.per_session_spec is None:
@@ -320,6 +327,7 @@ class AsyncGateRunner:
         issue_id: str,
         log_path: Path,
         retry_state: RetryState,
+        interrupt_event: asyncio.Event | None = None,
     ) -> tuple[GateResult | GateResultProtocol, int]:
         """Run quality gate check asynchronously (GateAsyncRunner protocol).
 
@@ -330,12 +338,13 @@ class AsyncGateRunner:
             issue_id: The issue being checked.
             log_path: Path to the session log file.
             retry_state: Current retry state for this issue.
+            interrupt_event: Optional event to check for SIGINT interrupts.
 
         Returns:
             Tuple of (GateResult, new_log_offset).
         """
         return await asyncio.to_thread(
-            self._run_gate_sync, issue_id, log_path, retry_state
+            self._run_gate_sync, issue_id, log_path, retry_state, interrupt_event
         )
 
     def get_last_gate_result(
