@@ -411,7 +411,7 @@ class MalaOrchestrator:
                     )
                 ),
                 spawn_remediation=lambda issue_id, flow="implementer": self.spawn_agent(
-                    issue_id
+                    issue_id, flow=flow
                 ),
                 finalize_remediation=lambda issue_id, result, run_metadata: (
                     self._finalize_issue_result(issue_id, result, run_metadata)
@@ -672,7 +672,9 @@ class MalaOrchestrator:
             on_abort=self._request_abort,
         )
 
-    async def run_implementer(self, issue_id: str) -> IssueResult:
+    async def run_implementer(
+        self, issue_id: str, *, flow: str = "implementer"
+    ) -> IssueResult:
         """Run implementer agent for a single issue with gate retry support.
 
         Delegates to AgentSessionRunner for SDK-specific session handling.
@@ -739,6 +741,7 @@ class MalaOrchestrator:
             issue_description=issue_description,
             agent_id=temp_agent_id,
             resume_session_id=resume_session_id,
+            flow=flow,
         )
 
         runner = AgentSessionRunner(
@@ -798,14 +801,16 @@ class MalaOrchestrator:
             review_log_path=output.review_log_path,
         )
 
-    async def spawn_agent(self, issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
+    async def spawn_agent(
+        self, issue_id: str, flow: str = "implementer"
+    ) -> asyncio.Task | None:  # type: ignore[type-arg]
         """Spawn a new agent task for an issue. Returns the Task if spawned, None otherwise."""
         if not await self.beads.claim_async(issue_id):
             self.issue_coordinator.mark_failed(issue_id)
             self.event_sink.on_claim_failed(issue_id, issue_id)
             return None
 
-        task = asyncio.create_task(self.run_implementer(issue_id))
+        task = asyncio.create_task(self.run_implementer(issue_id, flow=flow))
         self.event_sink.on_agent_started(issue_id, issue_id)
         return task
 

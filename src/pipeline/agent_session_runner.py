@@ -268,6 +268,7 @@ class AgentSessionInput:
         issue_description: Issue description for scope verification.
         agent_id: Optional pre-generated agent ID for lock management.
         resume_session_id: Optional session ID to resume from a prior run.
+        flow: Flow identifier for structured logging (e.g., "implementer", "epic_remediation").
     """
 
     issue_id: str
@@ -276,6 +277,7 @@ class AgentSessionInput:
     issue_description: str | None = None
     agent_id: str | None = None
     resume_session_id: str | None = None
+    flow: str = "implementer"
 
 
 @dataclass
@@ -455,7 +457,7 @@ class AgentSessionRunner:
                 setting_sources=self.config.setting_sources,
             )
             .with_hooks(deadlock_monitor=self.config.deadlock_monitor)
-            .with_env()
+            .with_env(extra={"MALA_SDK_FLOW": input.flow})
             .with_mcp()
             .with_disallowed_tools()
             .with_lint_tools(self.config.lint_tools)
