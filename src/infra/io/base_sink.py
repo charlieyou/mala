@@ -359,6 +359,61 @@ class BaseEventSink:
     def on_watch_idle(self, wait_seconds: float, issues_blocked: int | None) -> None:
         pass
 
+    # -------------------------------------------------------------------------
+    # Trigger validation lifecycle
+    # -------------------------------------------------------------------------
+
+    def on_trigger_validation_queued(
+        self, trigger_type: str, trigger_context: str
+    ) -> None:
+        pass
+
+    def on_trigger_validation_started(
+        self, trigger_type: str, commands: list[str]
+    ) -> None:
+        pass
+
+    def on_trigger_command_started(
+        self, trigger_type: str, command_ref: str, index: int
+    ) -> None:
+        pass
+
+    def on_trigger_command_completed(
+        self,
+        trigger_type: str,
+        command_ref: str,
+        index: int,
+        passed: bool,
+        duration_seconds: float,
+    ) -> None:
+        pass
+
+    def on_trigger_validation_passed(
+        self, trigger_type: str, duration_seconds: float
+    ) -> None:
+        pass
+
+    def on_trigger_validation_failed(
+        self, trigger_type: str, failed_command: str, failure_mode: str
+    ) -> None:
+        pass
+
+    def on_trigger_validation_skipped(self, trigger_type: str, reason: str) -> None:
+        pass
+
+    def on_trigger_remediation_started(
+        self, trigger_type: str, attempt: int, max_retries: int
+    ) -> None:
+        pass
+
+    def on_trigger_remediation_succeeded(self, trigger_type: str, attempt: int) -> None:
+        pass
+
+    def on_trigger_remediation_exhausted(
+        self, trigger_type: str, attempts: int
+    ) -> None:
+        pass
+
 
 class NullEventSink(BaseEventSink):
     """No-op event sink for testing.

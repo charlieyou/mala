@@ -495,3 +495,104 @@ class FakeEventSink:
             wait_seconds=wait_seconds,
             issues_blocked=issues_blocked,
         )
+
+    # -------------------------------------------------------------------------
+    # Trigger validation lifecycle
+    # -------------------------------------------------------------------------
+
+    def on_trigger_validation_queued(
+        self, trigger_type: str, trigger_context: str
+    ) -> None:
+        self._record(
+            "trigger_validation_queued",
+            trigger_type=trigger_type,
+            trigger_context=trigger_context,
+        )
+
+    def on_trigger_validation_started(
+        self, trigger_type: str, commands: list[str]
+    ) -> None:
+        self._record(
+            "trigger_validation_started",
+            trigger_type=trigger_type,
+            commands=commands,
+        )
+
+    def on_trigger_command_started(
+        self, trigger_type: str, command_ref: str, index: int
+    ) -> None:
+        self._record(
+            "trigger_command_started",
+            trigger_type=trigger_type,
+            command_ref=command_ref,
+            index=index,
+        )
+
+    def on_trigger_command_completed(
+        self,
+        trigger_type: str,
+        command_ref: str,
+        index: int,
+        passed: bool,
+        duration_seconds: float,
+    ) -> None:
+        self._record(
+            "trigger_command_completed",
+            trigger_type=trigger_type,
+            command_ref=command_ref,
+            index=index,
+            passed=passed,
+            duration_seconds=duration_seconds,
+        )
+
+    def on_trigger_validation_passed(
+        self, trigger_type: str, duration_seconds: float
+    ) -> None:
+        self._record(
+            "trigger_validation_passed",
+            trigger_type=trigger_type,
+            duration_seconds=duration_seconds,
+        )
+
+    def on_trigger_validation_failed(
+        self, trigger_type: str, failed_command: str, failure_mode: str
+    ) -> None:
+        self._record(
+            "trigger_validation_failed",
+            trigger_type=trigger_type,
+            failed_command=failed_command,
+            failure_mode=failure_mode,
+        )
+
+    def on_trigger_validation_skipped(self, trigger_type: str, reason: str) -> None:
+        self._record(
+            "trigger_validation_skipped",
+            trigger_type=trigger_type,
+            reason=reason,
+        )
+
+    def on_trigger_remediation_started(
+        self, trigger_type: str, attempt: int, max_retries: int
+    ) -> None:
+        self._record(
+            "trigger_remediation_started",
+            trigger_type=trigger_type,
+            attempt=attempt,
+            max_retries=max_retries,
+        )
+
+    def on_trigger_remediation_succeeded(self, trigger_type: str, attempt: int) -> None:
+        self._record(
+            "trigger_remediation_succeeded",
+            trigger_type=trigger_type,
+            attempt=attempt,
+        )
+
+    def on_trigger_remediation_exhausted(
+        self, trigger_type: str, attempts: int
+    ) -> None:
+        self._record(
+            "trigger_remediation_exhausted",
+            trigger_type=trigger_type,
+            attempts=attempts,
+        )

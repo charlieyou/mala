@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -625,6 +626,12 @@ class RunCoordinator:
             context: Additional context for the trigger (e.g., issue_id, epic_id).
         """
         self._trigger_queue.append((trigger_type, context))
+        # Emit queued event
+        if self.event_sink is not None:
+            context_str = ", ".join(f"{k}={v}" for k, v in context.items())
+            self.event_sink.on_trigger_validation_queued(
+                trigger_type.value, context_str
+            )
 
     async def run_trigger_validation(
         self, *, dry_run: bool = False
@@ -729,12 +736,25 @@ class RunCoordinator:
                 trigger_type, trigger_config, base_pool
             )
 
+            # Emit validation_started event
+            if self.event_sink is not None:
+                command_refs = [cmd.ref for cmd in resolved_commands]
+                self.event_sink.on_trigger_validation_started(
+                    trigger_type.value, command_refs
+                )
+
+            # Track start time for duration calculation
+            trigger_start_time = time.monotonic()
+
             # Execute commands with fail-fast and interrupt support
             (
                 results,
                 was_interrupted,
             ) = await self._execute_trigger_commands_interruptible(
-                resolved_commands, dry_run=dry_run, interrupt_event=interrupt_event
+                resolved_commands,
+                trigger_type=trigger_type,
+                dry_run=dry_run,
+                interrupt_event=interrupt_event,
             )
 
             # Check for interrupt during command execution
@@ -752,7 +772,12 @@ class RunCoordinator:
                     break
 
             if failed_result is None:
-                # All commands passed, continue to next trigger
+                # All commands passed - emit validation_passed
+                trigger_duration = time.monotonic() - trigger_start_time
+                if self.event_sink is not None:
+                    self.event_sink.on_trigger_validation_passed(
+                        trigger_type.value, trigger_duration
+                    )
                 continue
 
             # Handle failure based on failure_mode
@@ -761,6 +786,11 @@ class RunCoordinator:
             if failure_mode == FailureMode.CONTINUE:
                 # Record failure and continue to next trigger
                 last_failure = (failed_result.ref, trigger_type.value)
+                # Emit validation_failed event
+                if self.event_sink is not None:
+                    self.event_sink.on_trigger_validation_failed(
+                        trigger_type.value, failed_result.ref, "continue"
+                    )
                 continue
 
             elif failure_mode == FailureMode.REMEDIATE:
@@ -774,10 +804,21 @@ class RunCoordinator:
                     interrupt_event,
                 )
                 if remediation_result is not None:
+                    # Remediation exhausted/aborted - already emitted in _run_trigger_remediation
                     return remediation_result
-                # Remediation succeeded, continue to next trigger
+                # Remediation succeeded - emit validation_passed
+                trigger_duration = time.monotonic() - trigger_start_time
+                if self.event_sink is not None:
+                    self.event_sink.on_trigger_validation_passed(
+                        trigger_type.value, trigger_duration
+                    )
 
             else:  # ABORT (default)
+                # Emit validation_failed event
+                if self.event_sink is not None:
+                    self.event_sink.on_trigger_validation_failed(
+                        trigger_type.value, failed_result.ref, "abort"
+                    )
                 self.clear_trigger_queue("run_aborted")
                 return TriggerValidationResult(
                     status="aborted",
@@ -851,6 +892,12 @@ class RunCoordinator:
                     status="aborted", details="Validation interrupted by SIGINT"
                 )
 
+            # Emit remediation_started event
+            if self.event_sink is not None:
+                self.event_sink.on_trigger_remediation_started(
+                    trigger_type.value, attempt, max_retries
+                )
+
             # Spawn fixer agent
             fixer_result = await self._run_fixer_agent(
                 failure_output=failure_output,
@@ -870,7 +917,10 @@ class RunCoordinator:
                 retry_results,
                 was_interrupted,
             ) = await self._execute_trigger_commands_interruptible(
-                [failed_cmd], dry_run=dry_run, interrupt_event=interrupt_event
+                [failed_cmd],
+                trigger_type=trigger_type,
+                dry_run=dry_run,
+                interrupt_event=interrupt_event,
             )
 
             if was_interrupted:
@@ -881,13 +931,24 @@ class RunCoordinator:
 
             if retry_results and retry_results[0].passed:
                 # Command passed after fixer, remediation succeeded
+                if self.event_sink is not None:
+                    self.event_sink.on_trigger_remediation_succeeded(
+                        trigger_type.value, attempt
+                    )
                 return None
 
             # Update failure output for next attempt
             if retry_results:
                 failure_output = self._build_trigger_failure_output(retry_results[0])
 
-        # Remediation exhausted - abort
+        # Remediation exhausted - emit event and abort
+        if self.event_sink is not None:
+            self.event_sink.on_trigger_remediation_exhausted(
+                trigger_type.value, max_retries
+            )
+            self.event_sink.on_trigger_validation_failed(
+                trigger_type.value, failed_result.ref, "remediate"
+            )
         self.clear_trigger_queue("run_aborted")
         return TriggerValidationResult(
             status="aborted",
@@ -1090,6 +1151,7 @@ class RunCoordinator:
         self,
         commands: list[ResolvedCommand],
         *,
+        trigger_type: TriggerType,
         dry_run: bool = False,
         interrupt_event: asyncio.Event,
     ) -> tuple[list[TriggerCommandResult], bool]:
@@ -1101,6 +1163,7 @@ class RunCoordinator:
 
         Args:
             commands: List of resolved commands to execute.
+            trigger_type: The trigger type (for event emission).
             dry_run: If True, skip subprocess execution.
             interrupt_event: Event set when SIGINT received.
 
@@ -1110,13 +1173,26 @@ class RunCoordinator:
         """
         results: list[TriggerCommandResult] = []
 
-        for cmd in commands:
+        for index, cmd in enumerate(commands):
             # Check interrupt before each command
             if interrupt_event.is_set():
                 return results, True
 
+            # Emit command_started event
+            if self.event_sink is not None:
+                self.event_sink.on_trigger_command_started(
+                    trigger_type.value, cmd.ref, index
+                )
+
             if dry_run:
                 # Dry-run: all commands pass, no execution
+                duration = 0.0
+                passed = True
+                # Emit command_completed event
+                if self.event_sink is not None:
+                    self.event_sink.on_trigger_command_completed(
+                        trigger_type.value, cmd.ref, index, passed, duration
+                    )
                 results.append(
                     TriggerCommandResult(
                         ref=cmd.ref,
@@ -1176,6 +1252,16 @@ class RunCoordinator:
                 else:
                     error_message = f"Exit code {cmd_result.returncode}"
 
+            # Emit command_completed event
+            if self.event_sink is not None:
+                self.event_sink.on_trigger_command_completed(
+                    trigger_type.value,
+                    cmd.ref,
+                    index,
+                    passed,
+                    cmd_result.duration_seconds,
+                )
+
             results.append(
                 TriggerCommandResult(
                     ref=cmd.ref,
@@ -1197,5 +1283,10 @@ class RunCoordinator:
         Args:
             reason: Why the queue is being cleared (for logging).
         """
-        # Stub: In T013, this will emit skipped events via event_sink
+        # Emit skipped events for each remaining trigger
+        if self.event_sink is not None:
+            for trigger_type, _context in self._trigger_queue:
+                self.event_sink.on_trigger_validation_skipped(
+                    trigger_type.value, reason
+                )
         self._trigger_queue.clear()

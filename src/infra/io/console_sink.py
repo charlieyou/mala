@@ -598,6 +598,99 @@ class ConsoleEventSink(BaseEventSink):
                 agent_id="run",
             )
 
+    # -------------------------------------------------------------------------
+    # Trigger validation lifecycle
+    # -------------------------------------------------------------------------
+
+    def on_trigger_validation_queued(
+        self, trigger_type: str, trigger_context: str
+    ) -> None:
+        log("◦", f"[{trigger_type}] queued: {trigger_context}", agent_id="trigger")
+
+    def on_trigger_validation_started(
+        self, trigger_type: str, commands: list[str]
+    ) -> None:
+        cmds_str = ", ".join(commands) if commands else "(none)"
+        log("→", f"[{trigger_type}] validation_started: {cmds_str}", agent_id="trigger")
+
+    def on_trigger_command_started(
+        self, trigger_type: str, command_ref: str, index: int
+    ) -> None:
+        log(
+            "◦",
+            f"[{trigger_type}] command_started: {command_ref} (index={index})",
+            agent_id="trigger",
+        )
+
+    def on_trigger_command_completed(
+        self,
+        trigger_type: str,
+        command_ref: str,
+        index: int,
+        passed: bool,
+        duration_seconds: float,
+    ) -> None:
+        status = (
+            f"{Colors.GREEN}passed{Colors.RESET}"
+            if passed
+            else f"{Colors.RED}failed{Colors.RESET}"
+        )
+        log(
+            "◦",
+            f"[{trigger_type}] command_completed: {command_ref} {status} ({duration_seconds:.1f}s)",
+            agent_id="trigger",
+        )
+
+    def on_trigger_validation_passed(
+        self, trigger_type: str, duration_seconds: float
+    ) -> None:
+        log(
+            "✓",
+            f"{Colors.GREEN}[{trigger_type}] validation_passed{Colors.RESET} ({duration_seconds:.1f}s)",
+            agent_id="trigger",
+        )
+
+    def on_trigger_validation_failed(
+        self, trigger_type: str, failed_command: str, failure_mode: str
+    ) -> None:
+        log(
+            "✗",
+            f"{Colors.RED}[{trigger_type}] validation_failed{Colors.RESET}: {failed_command} (mode={failure_mode})",
+            agent_id="trigger",
+        )
+
+    def on_trigger_validation_skipped(self, trigger_type: str, reason: str) -> None:
+        log(
+            "◦",
+            f"{Colors.MUTED}[{trigger_type}] validation_skipped: {reason}{Colors.RESET}",
+            agent_id="trigger",
+        )
+
+    def on_trigger_remediation_started(
+        self, trigger_type: str, attempt: int, max_retries: int
+    ) -> None:
+        log(
+            "→",
+            f"[{trigger_type}] remediation_started: attempt {attempt}/{max_retries}",
+            agent_id="trigger",
+        )
+
+    def on_trigger_remediation_succeeded(self, trigger_type: str, attempt: int) -> None:
+        log(
+            "✓",
+            f"{Colors.GREEN}[{trigger_type}] remediation_succeeded{Colors.RESET} on attempt {attempt}",
+            agent_id="trigger",
+        )
+
+    def on_trigger_remediation_exhausted(
+        self, trigger_type: str, attempts: int
+    ) -> None:
+        log(
+            "✗",
+            f"{Colors.RED}[{trigger_type}] remediation_exhausted{Colors.RESET}: {attempts} attempts",
+            agent_id="trigger",
+        )
+
 
 # Protocol assertion to verify implementation compliance
 assert isinstance(ConsoleEventSink(), MalaEventSink)
