@@ -4378,16 +4378,32 @@ class TestLocalSettingsIntegration:
             "Should NOT warn about missing settings file since we created it"
         )
 
-        # CRITICAL: Verify SDK would read timeout=300 from local settings file
+        # CRITICAL: Verify SDK cwd matches config repo_path
         #
-        # The SDK passes --setting-sources=local and --cwd={path} to the CLI.
-        # The CLI reads .claude/settings.local.json relative to cwd.
-        # We verify the settings file at {options.cwd}/.claude/settings.local.json
-        # contains timeout=300, proving the SDK would read this merged timeout value.
+        # This ensures the SDK's --cwd flag points to the configured repo directory,
+        # which is required for the SDK to find .claude/settings.local.json.
         from pathlib import Path
 
         assert options.cwd is not None, "SDK options must have cwd set"
         sdk_cwd = Path(options.cwd)
+        repo_path = session_config_with_local_settings.repo_path
+
+        assert sdk_cwd.resolve() == repo_path.resolve(), (
+            f"SDK cwd must equal config repo_path. "
+            f"Got cwd={sdk_cwd}, expected repo_path={repo_path}"
+        )
+
+        # Verify SDK initialization will use timeout=300 from local settings file
+        #
+        # The SDK reads timeout from .claude/settings.local.json at runtime (not as
+        # a constructor parameter on ClaudeAgentOptions). We verify:
+        # 1. options.cwd == repo_path (verified above)
+        # 2. setting_sources=["local"] (verified above)
+        # 3. The settings file at that path contains timeout=300 (verified below)
+        #
+        # This combination proves the SDK will read timeout=300 during initialization
+        # because the CLI uses --cwd={repo_path} and --setting-sources=local to read
+        # .claude/settings.local.json from the repo directory.
         sdk_settings_path = sdk_cwd / ".claude" / "settings.local.json"
 
         assert sdk_settings_path.exists(), (
