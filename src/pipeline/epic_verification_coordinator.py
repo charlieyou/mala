@@ -15,6 +15,7 @@ Design principles:
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
     from src.core.models import EpicVerificationResult
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.pipeline.issue_result import IssueResult
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -250,6 +253,10 @@ class EpicVerificationCoordinator:
             # Spawn agent for this issue
             task = await self.callbacks.spawn_remediation(issue_id)
             if task:
+                logger.info(
+                    "remediation_task_spawned issue_id=%s flow=epic_remediation",
+                    issue_id,
+                )
                 task_pairs.append((issue_id, task))
 
         # Wait for all remediation tasks to complete
@@ -258,18 +265,20 @@ class EpicVerificationCoordinator:
 
         tasks = [pair[1] for pair in task_pairs]
 
-        # If interrupted, cancel all pending tasks
+        # If already interrupted, cancel all pending tasks
         if guard.is_interrupted():
             for task in tasks:
                 if not task.done():
                     task.cancel()
             # Wait for cancellation to complete
             await asyncio.gather(*tasks, return_exceptions=True)
+        elif interrupt_event is None:
+            # No interrupt event provided - just wait for all tasks normally
+            await asyncio.gather(*tasks, return_exceptions=True)
         else:
-            # Create a task to monitor interrupt event during gather
+            # Race between interrupt event and task completion
             async def wait_for_interrupt() -> None:
-                if interrupt_event is not None:
-                    await interrupt_event.wait()
+                await interrupt_event.wait()
 
             async def gather_tasks() -> list[IssueResult | BaseException]:
                 return await asyncio.gather(*tasks, return_exceptions=True)
@@ -287,7 +296,10 @@ class EpicVerificationCoordinator:
                 for task in tasks:
                     if not task.done():
                         task.cancel()
-                # Wait for cancellation to complete
+                # Wait for cancellation to complete - await tasks directly
+                await asyncio.gather(*tasks, return_exceptions=True)
+                # Also clean up gather_task
+                gather_task.cancel()
                 try:
                     await gather_task
                 except asyncio.CancelledError:
