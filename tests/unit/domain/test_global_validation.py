@@ -1095,7 +1095,9 @@ class TestGlobalValidationIntegration:
                 return ["issue-1"]
             return []
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -1158,7 +1160,9 @@ class TestGlobalValidationIntegration:
                 return ["issue-1"]
             return []
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -1239,7 +1243,9 @@ class TestGlobalValidationIntegration:
                 return ["issue-1"]
             return []
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -1310,7 +1316,9 @@ class TestGlobalValidationIntegration:
                 return ["issue-1"]
             return []
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",

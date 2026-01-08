@@ -930,7 +930,7 @@ from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 _orchestrator = None
 
 
-async def long_running_agent(issue_id: str):
+async def long_running_agent(issue_id: str, *, flow: str = "implementer"):
     '''Mock agent that sleeps until cancelled - keeps active_tasks populated.'''
     try:
         await asyncio.sleep(3600)  # Sleep for 1 hour (will be cancelled by SIGINT)
@@ -1172,7 +1172,7 @@ def _slow_handle_sigint(self, loop, drain_event, interrupt_event):
 MalaOrchestrator._handle_sigint = _slow_handle_sigint
 
 
-async def long_running_agent(issue_id: str):
+async def long_running_agent(issue_id: str, *, flow: str = "implementer"):
     '''Mock agent that sleeps until cancelled - keeps active_tasks populated.'''
     try:
         await asyncio.sleep(3600)  # Sleep for 1 hour (will be cancelled by SIGINT)
@@ -1388,7 +1388,9 @@ class TestUnifiedSIGINTHandling:
     serves as a "red gate" to indicate when wiring is incomplete.
     """
 
-    @pytest.mark.xfail(reason="T007: wiring interrupt_event from orchestrator to run_validation not yet implemented")
+    @pytest.mark.xfail(
+        reason="T007: wiring interrupt_event from orchestrator to run_validation not yet implemented"
+    )
     def test_sigint_during_fixer_marks_validation_not_passed(
         self, tmp_path: Path
     ) -> None:

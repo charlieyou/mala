@@ -158,7 +158,9 @@ class TestSpawnAgent:
         )
 
         # Replace run_implementer to return immediately
-        async def fake_run_implementer(issue_id: str) -> IssueResult:
+        async def fake_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id="test-agent",
@@ -286,7 +288,9 @@ class TestFailedTaskResetsIssue:
             lock_releaser=lambda _: 0,
         )
 
-        async def fake_run_implementer(issue_id: str) -> IssueResult:
+        async def fake_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -327,7 +331,9 @@ class TestFailedTaskResetsIssue:
             lock_releaser=lambda _: 0,
         )
 
-        async def fake_run_implementer(issue_id: str) -> IssueResult:
+        async def fake_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -464,7 +470,9 @@ class TestOrchestratorEvidenceCheckIntegration:
         log_path = tmp_path / "issue-123.jsonl"
         log_path.touch()
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -508,7 +516,9 @@ class TestOrchestratorEvidenceCheckIntegration:
         log_path = tmp_path / "issue-pass.jsonl"
         log_path.touch()
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -853,7 +863,9 @@ class TestGateFlowSequencing:
         log_path = tmp_path / "issue-noop.jsonl"
         log_path.touch()
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -897,7 +909,9 @@ class TestGateFlowSequencing:
         log_path = tmp_path / "issue-obsolete.jsonl"
         log_path.touch()
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -949,7 +963,9 @@ class TestRetryExhaustion:
         log_path = tmp_path / "issue-retry-fail.jsonl"
         log_path.touch()
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -997,7 +1013,9 @@ class TestRetryExhaustion:
         log_path = tmp_path / "issue-no-progress.jsonl"
         log_path.touch()
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -1067,7 +1085,9 @@ class TestGlobalValidation:
             lock_releaser=lambda _: 0,
         )
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -1109,7 +1129,9 @@ class TestGlobalValidation:
         log_path = tmp_path / "issue-pass.jsonl"
         log_path.touch()
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -1153,7 +1175,9 @@ class TestGlobalValidation:
         log_path = tmp_path / "issue-fail.jsonl"
         log_path.touch()
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -1234,7 +1258,9 @@ class TestValidationResultMetadata:
             validation_evidence=evidence,
         )
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             orchestrator.async_gate_runner.last_gate_results[issue_id] = gate_result
             return IssueResult(
                 issue_id=issue_id,
@@ -1323,7 +1349,9 @@ class TestValidationResultMetadata:
             validation_evidence=evidence,
         )
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             orchestrator.async_gate_runner.last_gate_results[issue_id] = gate_result
             return IssueResult(
                 issue_id=issue_id,
@@ -1414,7 +1442,9 @@ class TestResolutionRecordingInMetadata:
         log_path = tmp_path / "issue-no-change.jsonl"
         log_path.touch()
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -1486,7 +1516,9 @@ class TestResolutionRecordingInMetadata:
         log_path = tmp_path / "issue-obsolete.jsonl"
         log_path.touch()
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -1551,7 +1583,9 @@ class TestResolutionRecordingInMetadata:
         log_path = tmp_path / "issue-normal.jsonl"
         log_path.touch()
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -1618,7 +1652,9 @@ class TestEpicClosureAfterChildCompletion:
                 remediation_issues_created=[],
             )
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
             orchestrator._state.active_session_log_paths[issue_id] = log_path
@@ -1718,7 +1754,9 @@ class TestEpicClosureAfterChildCompletion:
         log_path = tmp_path / "failing-child.jsonl"
         log_path.touch()
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -1767,7 +1805,9 @@ class TestEpicClosureAfterChildCompletion:
                 remediation_issues_created=[],
             )
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             issues_processed.append(issue_id)
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
@@ -1868,7 +1908,9 @@ class TestEpicClosureAfterChildCompletion:
                 remediation_issues_created=[],
             )
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             issues_processed.append(issue_id)
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
@@ -2028,7 +2070,9 @@ class TestFailedRunEvidenceCheckEvidence:
             recorded_issues.append(issue)
             original_record(self, issue)
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def mock_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
             # Create log file with validation evidence
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_content = json.dumps(

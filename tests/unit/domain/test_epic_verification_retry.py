@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -32,6 +32,7 @@ from tests.fakes import (
 
 if TYPE_CHECKING:
     from src.core.models import EpicVerificationResult
+    from src.domain.validation.config import EpicCompletionTriggerConfig, TriggerType
     from src.infra.io.log_output.run_metadata import RunMetadata
 
 
@@ -126,6 +127,14 @@ class FakeCallbacks:
     def get_agent_id(self, issue_id: str) -> str:
         return "test-agent"
 
+    def queue_trigger_validation(
+        self, trigger_type: TriggerType, context: dict[str, Any]
+    ) -> None:
+        pass
+
+    def get_epic_completion_trigger(self) -> EpicCompletionTriggerConfig | None:
+        return None
+
     def to_callbacks(self) -> EpicVerificationCallbacks:
         """Convert to EpicVerificationCallbacks for coordinator injection."""
         return EpicVerificationCallbacks(
@@ -140,6 +149,8 @@ class FakeCallbacks:
             on_warning=self.on_warning,
             has_epic_verifier=lambda: self.has_epic_verifier,
             get_agent_id=self.get_agent_id,
+            queue_trigger_validation=self.queue_trigger_validation,
+            get_epic_completion_trigger=self.get_epic_completion_trigger,
         )
 
 
