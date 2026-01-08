@@ -879,7 +879,8 @@ class TestEpicCompletionTriggerIntegration:
 
         return coordinator, queued_triggers, callbacks
 
-    def test_epic_depth_top_level_nested_epic_does_not_fire(
+    @pytest.mark.asyncio
+    async def test_epic_depth_top_level_nested_epic_does_not_fire(
         self, tmp_path: Path
     ) -> None:
         """epic_depth=top_level: nested epic doesn't fire trigger."""
@@ -897,12 +898,15 @@ class TestEpicCompletionTriggerIntegration:
 
         # Run verification
         run_metadata = self._make_run_metadata(tmp_path)
-        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+        await coordinator.check_epic_closure("child-1", run_metadata)
 
         # No trigger should be queued for nested epic
         assert len(queued) == 0
 
-    def test_epic_depth_top_level_top_level_epic_fires(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_epic_depth_top_level_top_level_epic_fires(
+        self, tmp_path: Path
+    ) -> None:
         """epic_depth=top_level: top-level epic fires trigger."""
         trigger_config = EpicCompletionTriggerConfig(
             failure_mode=FailureMode.CONTINUE,
@@ -917,7 +921,7 @@ class TestEpicCompletionTriggerIntegration:
         )
 
         run_metadata = self._make_run_metadata(tmp_path)
-        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+        await coordinator.check_epic_closure("child-1", run_metadata)
 
         # Trigger should be queued
         assert len(queued) == 1
@@ -927,7 +931,8 @@ class TestEpicCompletionTriggerIntegration:
         assert context["depth"] == "top_level"
         assert context["verification_result"] == "passed"
 
-    def test_epic_depth_all_nested_epic_fires(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_epic_depth_all_nested_epic_fires(self, tmp_path: Path) -> None:
         """epic_depth=all: nested epic fires trigger."""
         trigger_config = EpicCompletionTriggerConfig(
             failure_mode=FailureMode.CONTINUE,
@@ -942,7 +947,7 @@ class TestEpicCompletionTriggerIntegration:
         )
 
         run_metadata = self._make_run_metadata(tmp_path)
-        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+        await coordinator.check_epic_closure("child-1", run_metadata)
 
         # Trigger should be queued even for nested epic
         assert len(queued) == 1
@@ -952,7 +957,8 @@ class TestEpicCompletionTriggerIntegration:
         assert context["depth"] == "nested"
         assert context["verification_result"] == "passed"
 
-    def test_fire_on_success_only_fires_on_pass(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_fire_on_success_only_fires_on_pass(self, tmp_path: Path) -> None:
         """fire_on=success: only fires when verification passes."""
         from src.core.models import EpicVerificationResult, EpicVerdict
 
@@ -989,12 +995,13 @@ class TestEpicCompletionTriggerIntegration:
         callbacks.verify_epic = verify_failed
 
         run_metadata = self._make_run_metadata(tmp_path)
-        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+        await coordinator.check_epic_closure("child-1", run_metadata)
 
         # No trigger should be queued on failure when fire_on=success
         assert len(queued) == 0
 
-    def test_fire_on_failure_only_fires_on_fail(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_fire_on_failure_only_fires_on_fail(self, tmp_path: Path) -> None:
         """fire_on=failure: only fires when verification fails."""
         trigger_config = EpicCompletionTriggerConfig(
             failure_mode=FailureMode.CONTINUE,
@@ -1009,12 +1016,13 @@ class TestEpicCompletionTriggerIntegration:
 
         # Default verify_epic returns passed, so trigger should not fire
         run_metadata = self._make_run_metadata(tmp_path)
-        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+        await coordinator.check_epic_closure("child-1", run_metadata)
 
         # No trigger should be queued on success when fire_on=failure
         assert len(queued) == 0
 
-    def test_fire_on_failure_fires_on_fail(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_fire_on_failure_fires_on_fail(self, tmp_path: Path) -> None:
         """fire_on=failure: fires when verification fails."""
         from src.core.models import EpicVerificationResult, EpicVerdict
 
@@ -1051,7 +1059,7 @@ class TestEpicCompletionTriggerIntegration:
         callbacks.verify_epic = verify_failed
 
         run_metadata = self._make_run_metadata(tmp_path)
-        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+        await coordinator.check_epic_closure("child-1", run_metadata)
 
         # Trigger should be queued
         assert len(queued) == 1
@@ -1059,7 +1067,8 @@ class TestEpicCompletionTriggerIntegration:
         assert trigger_type == TriggerType.EPIC_COMPLETION
         assert context["verification_result"] == "failed"
 
-    def test_fire_on_both_always_fires(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_fire_on_both_always_fires(self, tmp_path: Path) -> None:
         """fire_on=both: always fires."""
         trigger_config = EpicCompletionTriggerConfig(
             failure_mode=FailureMode.CONTINUE,
@@ -1073,13 +1082,14 @@ class TestEpicCompletionTriggerIntegration:
         )
 
         run_metadata = self._make_run_metadata(tmp_path)
-        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+        await coordinator.check_epic_closure("child-1", run_metadata)
 
         # Trigger should be queued on success
         assert len(queued) == 1
         assert queued[0][1]["verification_result"] == "passed"
 
-    def test_fire_on_both_fires_on_failure(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_fire_on_both_fires_on_failure(self, tmp_path: Path) -> None:
         """fire_on=both: fires on failure too."""
         from src.core.models import EpicVerificationResult, EpicVerdict
 
@@ -1116,13 +1126,14 @@ class TestEpicCompletionTriggerIntegration:
         callbacks.verify_epic = verify_failed
 
         run_metadata = self._make_run_metadata(tmp_path)
-        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+        await coordinator.check_epic_closure("child-1", run_metadata)
 
         # Trigger should be queued on failure too
         assert len(queued) == 1
         assert queued[0][1]["verification_result"] == "failed"
 
-    def test_leaf_epic_with_no_children_fires(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_leaf_epic_with_no_children_fires(self, tmp_path: Path) -> None:
         """Leaf epic (with no children) fires when verified."""
         trigger_config = EpicCompletionTriggerConfig(
             failure_mode=FailureMode.CONTINUE,
@@ -1137,13 +1148,14 @@ class TestEpicCompletionTriggerIntegration:
         )
 
         run_metadata = self._make_run_metadata(tmp_path)
-        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+        await coordinator.check_epic_closure("child-1", run_metadata)
 
         # Trigger should be queued
         assert len(queued) == 1
         assert queued[0][1]["epic_id"] == "epic-1"
 
-    def test_no_trigger_config_does_not_fire(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_no_trigger_config_does_not_fire(self, tmp_path: Path) -> None:
         """No epic_completion trigger configured: nothing fires."""
         coordinator, queued, _ = self._make_epic_coordinator(
             trigger_config=None,
@@ -1151,7 +1163,7 @@ class TestEpicCompletionTriggerIntegration:
         )
 
         run_metadata = self._make_run_metadata(tmp_path)
-        asyncio.run(coordinator.check_epic_closure("child-1", run_metadata))
+        await coordinator.check_epic_closure("child-1", run_metadata)
 
         # No trigger should be queued
         assert len(queued) == 0

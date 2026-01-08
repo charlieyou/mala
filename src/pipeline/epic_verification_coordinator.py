@@ -212,11 +212,10 @@ class EpicVerificationCoordinator:
                         f"Epic verification failed after {max_retries} retries for {epic_id}"
                     )
                 self.verified_epics.add(epic_id)
-                # Queue epic_completion trigger on failure (only if verification was attempted)
-                if verification_result.failed_count > 0:
-                    await self._maybe_queue_epic_completion_trigger(
-                        epic_id, verification_passed=False
-                    )
+                # Queue epic_completion trigger on failure (verification completed but didn't pass)
+                await self._maybe_queue_epic_completion_trigger(
+                    epic_id, verification_passed=False
+                )
                 return
 
             # Execute remediation issues before next verification attempt
