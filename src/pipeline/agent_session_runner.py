@@ -923,7 +923,8 @@ class AgentSessionRunner:
             except FlowInterruptedError:
                 # Session was interrupted by SIGINT
                 was_interrupted = True
-                state.final_result = "Session interrupted by SIGINT"
+                if state is not None:
+                    state.final_result = "Session interrupted by SIGINT"
                 break
             except ContextPressureError as e:
                 # Delegate to handler for checkpoint fetch and continuation prompt
