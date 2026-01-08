@@ -51,6 +51,7 @@ class ReviewResult:
     parse_error: str | None = None
     fatal_error: bool = False
     review_log_path: Path | None = None
+    interrupted: bool = False
 
 
 class ReviewOutputParser:

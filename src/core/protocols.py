@@ -28,6 +28,7 @@ from pathlib import Path
 from src.core.models import OrderPreference
 
 if TYPE_CHECKING:
+    import asyncio
     from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
     from types import TracebackType
     from typing import Self
@@ -232,6 +233,9 @@ class ReviewResultProtocol(Protocol):
 
     review_log_path: Path | None
     """Path to review session logs."""
+
+    interrupted: bool
+    """Whether the review was interrupted by SIGINT."""
 
 
 @runtime_checkable
@@ -761,6 +765,7 @@ class CodeReviewer(Protocol):
         claude_session_id: str | None = None,
         *,
         commit_shas: Sequence[str] | None = None,
+        interrupt_event: asyncio.Event | None = None,
     ) -> ReviewResultProtocol:
         """Run code review on a diff range.
 
@@ -771,6 +776,9 @@ class CodeReviewer(Protocol):
             claude_session_id: Optional Claude session ID for review attribution.
             commit_shas: Optional list of commit SHAs to review directly.
                 When provided, reviewers should scope to these commits only.
+            interrupt_event: Optional event to check for SIGINT interruption.
+                When set, reviewers should abort gracefully and return
+                a result with interrupted=True.
 
         Returns:
             ReviewResultProtocol with review outcome. On parse failure,

@@ -220,7 +220,7 @@ class ReviewRunner:
                 timeout=self.config.review_timeout,
                 claude_session_id=input.claude_session_id,
                 commit_shas=input.commit_shas,
-                interrupt_event=interrupt_event,  # type: ignore[call-arg]
+                interrupt_event=interrupt_event,
             )
 
             # Check if interrupted during review

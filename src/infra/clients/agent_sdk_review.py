@@ -151,9 +151,10 @@ class AgentSDKReviewer:
             return ReviewResult(
                 passed=False,
                 issues=[],
-                parse_error="Review interrupted",
+                parse_error=None,
                 fatal_error=False,
                 review_log_path=None,
+                interrupted=True,
             )
 
         # Use instance default_timeout if not specified
@@ -212,8 +213,8 @@ class AgentSDKReviewer:
 
         # Run agent session
         try:
-            response_text, log_path = await self._run_agent_session(
-                query, effective_timeout, claude_session_id
+            response_text, log_path, was_interrupted = await self._run_agent_session(
+                query, effective_timeout, claude_session_id, guard
             )
         except TimeoutError as e:
             if self.event_sink is not None:
@@ -245,6 +246,17 @@ class AgentSDKReviewer:
                 parse_error=error_msg,
                 fatal_error=False,
                 review_log_path=None,
+            )
+
+        # If interrupted during session, return with interrupted flag
+        if was_interrupted:
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error=None,
+                fatal_error=False,
+                review_log_path=log_path,
+                interrupted=True,
             )
 
         # Parse response
@@ -339,7 +351,8 @@ class AgentSDKReviewer:
         query: str,
         timeout: int,
         session_id: str | None,
-    ) -> tuple[str, Path | None]:
+        guard: object,
+    ) -> tuple[str, Path | None, bool]:
         """Run agent session and collect final output.
 
         Creates SDK client, opens session, sends query, streams responses,
@@ -349,9 +362,10 @@ class AgentSDKReviewer:
             query: Review query to send to the agent.
             timeout: Timeout in seconds.
             session_id: Optional session ID for telemetry.
+            guard: InterruptGuard for checking interrupt status.
 
         Returns:
-            Tuple of (raw response text, session log path).
+            Tuple of (raw response text, session log path, was_interrupted).
 
         Raises:
             TimeoutError: If agent session times out.
@@ -370,7 +384,7 @@ class AgentSDKReviewer:
 
         # Wrap the session in a timeout
         return await asyncio.wait_for(
-            self._execute_agent_session(client, query, session_id),
+            self._execute_agent_session(client, query, session_id, guard),
             timeout=timeout,
         )
 
@@ -379,16 +393,18 @@ class AgentSDKReviewer:
         client: object,
         query: str,
         session_id: str | None,
-    ) -> tuple[str, Path | None]:
+        guard: object,
+    ) -> tuple[str, Path | None, bool]:
         """Execute the agent session and collect output.
 
         Args:
             client: SDK client instance.
             query: Review query to send.
             session_id: Optional session ID for telemetry.
+            guard: InterruptGuard for checking interrupt status.
 
         Returns:
-            Tuple of (response text, session log path).
+            Tuple of (response text, session log path, was_interrupted).
         """
         from pathlib import Path as PathLib  # noqa: TC003 (runtime import for log_path)
 
@@ -397,11 +413,27 @@ class AgentSDKReviewer:
         result_session_id: str | None = None
         structured_output: object | None = None
         result_subtype: str | None = None
+        was_interrupted = False
 
         async with client:  # type: ignore[union-attr]
+            # Log subprocess spawned for reviewer flow
+            # Note: The actual subprocess PID is managed by sdk_transport, but we log
+            # here to indicate the reviewer flow has started for monitoring purposes
+            logger.info(
+                "sdk_subprocess_spawned pid=%s pgid=%s flow=reviewer",
+                "unknown",
+                "unknown",
+            )
+
             await client.query(query, session_id=session_id)  # type: ignore[union-attr]
 
             async for msg in client.receive_response():  # type: ignore[union-attr]
+                # Check for interrupt during iteration (Finding 4)
+                if guard.is_interrupted():  # type: ignore[union-attr]
+                    logger.info("Review interrupted during SDK session iteration")
+                    was_interrupted = True
+                    break
+
                 msg_type = getattr(msg, "type", None)
                 msg_subtype = getattr(msg, "subtype", None)
                 msg_class = type(msg).__name__
@@ -438,6 +470,14 @@ class AgentSDKReviewer:
                     if isinstance(result_text, str) and not response_text.strip():
                         response_text = result_text
 
+        # If interrupted, return early without checking structured output errors
+        if was_interrupted:
+            if result_session_id:
+                from src.infra.tools.env import get_claude_log_path
+
+                log_path = get_claude_log_path(self.repo_path, result_session_id)
+            return response_text, log_path, True
+
         if result_subtype == "error_max_structured_output_retries":
             raise StructuredOutputError(result_subtype)
 
@@ -453,7 +493,7 @@ class AgentSDKReviewer:
 
             log_path = get_claude_log_path(self.repo_path, result_session_id)
 
-        return response_text, log_path
+        return response_text, log_path, False
 
     def _parse_response(self, response_text: str) -> ReviewResult:
         """Parse JSON response into ReviewResult.

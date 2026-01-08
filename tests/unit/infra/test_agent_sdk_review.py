@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.infra.clients.agent_sdk_review import AgentSDKReviewer
@@ -24,6 +24,7 @@ from tests.fakes.event_sink import FakeEventSink
 from tests.fakes.sdk_client import FakeSDKClientFactory
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
     from pathlib import Path
 
 
@@ -851,9 +852,10 @@ class TestInterruptHandling:
             interrupt_event=interrupt_event,
         )
 
-        # Should return failed result with interrupt message
+        # Should return failed result with interrupted=True (Finding 2)
         assert result.passed is False
-        assert result.parse_error == "Review interrupted"
+        assert result.parse_error is None
+        assert result.interrupted is True
         assert result.fatal_error is False
 
         # No SDK client should have been created
@@ -882,10 +884,11 @@ class TestInterruptHandling:
         # Should not run agent session
         assert len(factory.clients) == 0
 
-        # Should return with appropriate fields
+        # Should return with appropriate fields (Finding 2: interrupted=True, not parse_error)
         assert result.passed is False
         assert result.issues == []
-        assert result.parse_error == "Review interrupted"
+        assert result.parse_error is None
+        assert result.interrupted is True
 
     async def test_reviewer_accepts_interrupt_event_parameter(
         self, tmp_path: Path
@@ -927,4 +930,76 @@ class TestInterruptHandling:
 
         # Should complete normally
         assert result.passed is True
+        assert result.interrupted is False
         assert len(factory.clients) == 1
+
+    async def test_reviewer_checks_interrupt_during_iteration(
+        self, tmp_path: Path
+    ) -> None:
+        """Reviewer should check interrupt_event during SDK session iteration (Finding 4)."""
+        # Create an interrupt event
+        interrupt_event = asyncio.Event()
+
+        # Create a custom client that sets interrupt during iteration
+        class InterruptingFakeClient:
+            """Fake client that sets interrupt event during message iteration."""
+
+            def __init__(self, interrupt_event: asyncio.Event) -> None:
+                self._interrupt_event = interrupt_event
+                self.queries: list[tuple[str, str | None]] = []
+
+            async def __aenter__(self) -> Self:
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                pass
+
+            async def query(self, prompt: str, session_id: str | None = None) -> None:
+                self.queries.append((prompt, session_id))
+
+            async def receive_response(self) -> AsyncIterator[object]:
+                """Yield messages, setting interrupt after first one."""
+                # First message
+                yield MagicMock(
+                    subtype="assistant",
+                    content=[{"type": "text", "text": "Starting review..."}],
+                )
+                # Set interrupt before second message
+                self._interrupt_event.set()
+                # Second message (should be skipped due to interrupt check)
+                yield MagicMock(
+                    subtype="assistant",
+                    content=[{"type": "text", "text": _make_review_json("PASS")}],
+                )
+
+        # Create a factory that returns our custom client
+        custom_client = InterruptingFakeClient(interrupt_event)
+        factory = MagicMock()
+        factory.create_options.return_value = {}
+        factory.create.return_value = custom_client
+
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer(
+                "HEAD~1..HEAD",
+                claude_session_id="test-session",
+                interrupt_event=interrupt_event,
+            )
+
+        # Should return interrupted=True because interrupt was set during iteration
+        assert result.passed is False
+        assert result.interrupted is True
+        assert result.parse_error is None
