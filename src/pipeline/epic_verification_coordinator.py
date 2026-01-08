@@ -255,12 +255,11 @@ class EpicVerificationCoordinator:
                 # Nested epic - don't fire for top_level filter
                 return
 
-        # Check fire_on filter
+        # Check fire_on filter: SUCCESS fires only on pass, FAILURE only on fail, BOTH always
         if trigger_config.fire_on == FireOn.SUCCESS and not verification_passed:
             return
         if trigger_config.fire_on == FireOn.FAILURE and verification_passed:
             return
-        # FireOn.BOTH always fires
 
         # Build context and queue the trigger
         context = {
