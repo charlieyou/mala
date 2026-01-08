@@ -270,3 +270,40 @@ class TestEpicVerificationInterruptHandling:
         # Verification should complete normally
         assert "epic-1" in coordinator.verified_epics
         callbacks.verify_epic.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_spawn_remediation_passes_flow_parameter(
+        self,
+        callbacks: EpicVerificationCallbacks,
+        run_metadata: MagicMock,
+    ) -> None:
+        """Verify that spawn_remediation is called with flow='epic_remediation'."""
+        captured_flows: list[str] = []
+
+        async def spawn_remediation(
+            issue_id: str, flow: str = "implementer"
+        ) -> asyncio.Task[IssueResult]:
+            captured_flows.append(flow)
+
+            async def work() -> IssueResult:
+                return make_issue_result(issue_id)
+
+            return asyncio.create_task(work())
+
+        callbacks.spawn_remediation = AsyncMock(side_effect=spawn_remediation)
+        callbacks.verify_epic = AsyncMock(
+            return_value=make_verification_result(
+                failed_count=1,
+                remediation_issues=["rem-1"],
+            )
+        )
+
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=1),
+            callbacks=callbacks,
+        )
+
+        await coordinator.check_epic_closure("issue-1", run_metadata)
+
+        # Verify flow parameter was passed as "epic_remediation"
+        assert captured_flows == ["epic_remediation"]
