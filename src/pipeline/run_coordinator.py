@@ -884,7 +884,9 @@ class RunCoordinator:
         # Build failure output for fixer
         failure_output = self._build_trigger_failure_output(failed_result)
 
+        attempts_made = 0
         for attempt in range(1, max_retries + 1):
+            attempts_made = attempt
             # Check for SIGINT before fixer attempt
             if interrupt_event.is_set():
                 self.clear_trigger_queue("sigint")
@@ -944,7 +946,7 @@ class RunCoordinator:
         # Remediation exhausted - emit event and abort
         if self.event_sink is not None:
             self.event_sink.on_trigger_remediation_exhausted(
-                trigger_type.value, max_retries
+                trigger_type.value, attempts_made
             )
             self.event_sink.on_trigger_validation_failed(
                 trigger_type.value, failed_result.ref, "remediate"
