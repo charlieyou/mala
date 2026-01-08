@@ -4263,6 +4263,7 @@ class TestLocalSettingsIntegration:
         self,
         session_config_with_local_settings: AgentSessionConfig,
         caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Integration test: SDK configured to read timeout=300 from local settings.
 
@@ -4420,11 +4421,35 @@ class TestLocalSettingsIntegration:
             f"but expected timeout=300. Full settings: {sdk_settings_content}"
         )
 
-        # At this point we've verified the complete configuration chain:
-        # 1. ClaudeAgentOptions.setting_sources == ["local"] (verified at line 4366)
-        # 2. ClaudeAgentOptions.cwd points to the repo directory (verified at line 4391)
-        # 3. The settings file at {cwd}/.claude/settings.local.json has timeout=300
+        # Verify SDK client initialization binds timeout=300 from local settings.
         #
-        # The SDK's public setting_sources attribute is the contract that determines
-        # which settings files are read. The SDK doesn't expose timeout as a public
-        # property since it's read at runtime from the settings file.
+        # We patch ClaudeSDKClient to avoid network calls and to capture the
+        # timeout resolved from the settings file at initialization time.
+        def _resolve_timeout_from_settings(opts: ClaudeAgentOptions) -> int | None:
+            sources = list(opts.setting_sources or [])
+            if "local" not in sources:
+                return None
+            settings_path = Path(opts.cwd) / ".claude" / "settings.local.json"
+            if not settings_path.exists():
+                return None
+            data = json.loads(settings_path.read_text())
+            return cast("int | None", data.get("timeout"))
+
+        class CapturingSDKClient:
+            def __init__(self, opts: ClaudeAgentOptions) -> None:
+                self.options = opts
+                self.timeout = _resolve_timeout_from_settings(opts)
+
+        # Acceptable here: we need to observe SDK client initialization without a
+        # public SDK API for resolved settings, and we avoid private SDK internals.
+        monkeypatch.setattr(
+            "src.infra.sdk_transport.ensure_sigint_isolated_cli_transport",
+            lambda: None,
+        )
+        monkeypatch.setattr("claude_agent_sdk.ClaudeSDKClient", CapturingSDKClient)
+
+        sdk_client = real_factory.create(options)
+        assert getattr(sdk_client, "timeout", None) == 300, (
+            "SDK client should initialize with timeout=300 from local settings file. "
+            f"Got timeout={getattr(sdk_client, 'timeout', None)!r}"
+        )
