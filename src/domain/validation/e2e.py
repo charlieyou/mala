@@ -219,13 +219,15 @@ class E2ERunner:
                 failure_reason=prereq.failure_reason(),
             )
 
+        repo_root = _resolve_repo_root(cwd)
+
         # Create fixture repo
         fixture_path = Path(tempfile.mkdtemp(prefix="mala-e2e-fixture-"))
         start_time = time.monotonic()
 
         try:
             # Write fixture files
-            setup_error = self._setup_fixture(fixture_path)
+            setup_error = self._setup_fixture(fixture_path, repo_root)
             if setup_error:
                 duration = time.monotonic() - start_time
                 return E2EResult(
@@ -237,7 +239,7 @@ class E2ERunner:
                 )
 
             # Run mala
-            result = self._run_mala(fixture_path, env, cwd)
+            result = self._run_mala(fixture_path, env, cwd, repo_root)
             result.fixture_path = fixture_path if self.config.keep_fixture else None
 
             return result
@@ -248,7 +250,7 @@ class E2ERunner:
             if not self.config.keep_fixture and fixture_path.exists():
                 shutil.rmtree(fixture_path, ignore_errors=True)
 
-    def _setup_fixture(self, repo_path: Path) -> str | None:
+    def _setup_fixture(self, repo_path: Path, repo_root: Path) -> str | None:
         """Set up the fixture repository.
 
         Args:
@@ -258,13 +260,17 @@ class E2ERunner:
             Error message if setup failed, None on success.
         """
         # Write fixture files using shared helper
-        write_fixture_repo(repo_path)
+        write_fixture_repo(repo_path, repo_root=repo_root)
 
         # Initialize git and beads using shared helper
         return init_fixture_repo(repo_path, self._command_runner)
 
     def _run_mala(
-        self, fixture_path: Path, env: Mapping[str, str], cwd: Path
+        self,
+        fixture_path: Path,
+        env: Mapping[str, str],
+        cwd: Path,
+        repo_root: Path,
     ) -> E2EResult:
         """Run mala on the fixture repo.
 
@@ -293,7 +299,6 @@ class E2ERunner:
 
         # Prefer invoking the local module to avoid mismatched global installs.
         # Ensure the repo root is on PYTHONPATH so src.cli.main is importable.
-        repo_root = Path(__file__).resolve().parents[3]
         pythonpath = child_env.get("PYTHONPATH", "")
         if str(repo_root) not in pythonpath.split(os.pathsep):
             child_env["PYTHONPATH"] = (
@@ -395,6 +400,18 @@ def _config_prefers_uv(repo_root: Path) -> bool:
         return True
 
     return (repo_root / "uv.lock").exists()
+
+
+def _resolve_repo_root(cwd: Path) -> Path:
+    """Resolve the repo root for running E2E.
+
+    Prefer the worktree root (cwd) when it appears to be a mala repo; otherwise
+    fall back to the installed package root.
+    """
+    for candidate in (cwd, *cwd.parents):
+        if (candidate / "src" / "cli" / "main.py").exists():
+            return candidate
+    return Path(__file__).resolve().parents[3]
 
 
 def _commands_use_uv(commands: Iterable[str]) -> bool:

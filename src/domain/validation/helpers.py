@@ -162,6 +162,9 @@ dev = [
     (repo_path / "mala.yaml").write_text(
         """preset: python-uv
 
+# Required when global_validation_commands is defined (empty = explicit opt-out)
+validation_triggers: {}
+
 global_validation_commands:
   test: "uv run pytest --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
 
@@ -173,7 +176,7 @@ coverage:
     )
 
 
-def write_fixture_repo(repo_path: Path) -> None:
+def write_fixture_repo(repo_path: Path, repo_root: Path | None = None) -> None:
     """Create a minimal fixture repository for E2E testing.
 
     Creates a simple Python project with a failing test that the
@@ -185,10 +188,10 @@ def write_fixture_repo(repo_path: Path) -> None:
 
     Args:
         repo_path: Path to create the fixture repository in.
+        repo_root: Optional repo root to source the fixture template from.
     """
-    fixture_root = (
-        Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "e2e-fixture"
-    )
+    root = repo_root or Path(__file__).resolve().parents[3]
+    fixture_root = root / "tests" / "fixtures" / "e2e-fixture"
     if fixture_root.exists():
         shutil.copytree(fixture_root, repo_path, dirs_exist_ok=True)
     else:

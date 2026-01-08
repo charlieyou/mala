@@ -16,6 +16,7 @@ from src.domain.validation.e2e import (
     E2EResult,
     E2ERunner,
     E2EStatus,
+    _resolve_repo_root,
     _commands_use_uv,
     _config_prefers_uv,
     _select_python_invoker,
@@ -499,6 +500,8 @@ class TestWriteFixtureFiles:
         # Verify test file has expected test
         test_content = (tmp_path / "tests" / "test_app.py").read_text()
         assert "assert add(2, 2) == 4" in test_content
+        mala_yaml = (tmp_path / "mala.yaml").read_text()
+        assert "validation_triggers:" in mala_yaml
 
     def test_fallback_used_when_template_missing(self, tmp_path: Path) -> None:
         """Test that write_fixture_repo falls back to programmatic generation.
@@ -525,6 +528,14 @@ class TestWriteFixtureFiles:
         # Verify content is correct
         content = (tmp_path / "src" / "app.py").read_text()
         assert "return a - b" in content
+        mala_yaml = (tmp_path / "mala.yaml").read_text()
+        assert "validation_triggers:" in mala_yaml
+
+    def test_uses_repo_root_fixture_when_available(self, tmp_path: Path) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        write_fixture_repo(tmp_path, repo_root=repo_root)
+        mala_yaml = (tmp_path / "mala.yaml").read_text()
+        assert "validation_triggers:" in mala_yaml
 
 
 class TestInitFixtureRepo:
@@ -676,6 +687,16 @@ class TestE2EInvokerSelection:
 
         invoker = _select_python_invoker(tmp_path)
         assert invoker == [sys.executable]
+
+
+class TestResolveRepoRoot:
+    def test_prefers_cwd_repo_root(self, tmp_path: Path) -> None:
+        repo_root = tmp_path / "repo"
+        (repo_root / "src" / "cli").mkdir(parents=True)
+        (repo_root / "src" / "cli" / "main.py").write_text("# ok\n")
+        cwd = repo_root / "subdir"
+        cwd.mkdir()
+        assert _resolve_repo_root(cwd) == repo_root
 
 
 class TestCheckE2EPrereqsLegacy:
