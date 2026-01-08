@@ -96,7 +96,6 @@ def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None
         ValidationConfig,
         ValidationTriggersConfig,
     )
-    from src.infra.tools.command_runner import CommandResult
     from src.pipeline.run_coordinator import RunCoordinator, RunCoordinatorConfig
     from tests.fakes import FakeEnvConfig
     from tests.fakes.command_runner import FakeCommandRunner
@@ -117,14 +116,8 @@ def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None
         ),
     )
 
-    # Create command runner with registered response
-    command_runner = FakeCommandRunner()
-    command_runner.responses[("uv run pytest",)] = CommandResult(
-        command="uv run pytest",
-        returncode=0,
-        stdout="",
-        stderr="",
-    )
+    # Create command runner that allows any command (intent is testing queue/execution flow)
+    command_runner = FakeCommandRunner(allow_unregistered=True)
 
     config = RunCoordinatorConfig(
         repo_path=tmp_path,

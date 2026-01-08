@@ -760,9 +760,13 @@ class RunCoordinator:
 
             base_cmd, base_timeout = base_pool[cmd_ref.ref]
 
-            # Apply overrides
-            effective_command = cmd_ref.command if cmd_ref.command else base_cmd
-            effective_timeout = cmd_ref.timeout if cmd_ref.timeout else base_timeout
+            # Apply overrides - use `is not None` to allow falsy values like timeout=0
+            effective_command = (
+                cmd_ref.command if cmd_ref.command is not None else base_cmd
+            )
+            effective_timeout = (
+                cmd_ref.timeout if cmd_ref.timeout is not None else base_timeout
+            )
 
             resolved.append(
                 ResolvedCommand(
