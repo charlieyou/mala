@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from src.infra.agent_runtime import AgentRuntimeBuilder
 from src.infra.tools.locking import cleanup_agent_locks
 from src.domain.validation.e2e import E2EStatus
+from src.domain.validation.config import ConfigError
 from src.domain.validation.spec import (
     ValidationContext,
     ValidationScope,
@@ -47,7 +48,12 @@ if TYPE_CHECKING:
         SDKClientFactoryProtocol,
     )
     from src.domain.validation.result import ValidationResult
-    from src.domain.validation.config import TriggerType, ValidationConfig
+    from src.domain.validation.config import (
+        BaseTriggerConfig,
+        TriggerType,
+        ValidationConfig,
+        ValidationTriggersConfig,
+    )
     from src.domain.validation.spec import ValidationSpec
     from src.infra.io.log_output.run_metadata import (
         RunMetadata,
@@ -128,6 +134,38 @@ class TriggerValidationResult:
 
     status: Literal["passed", "failed", "aborted"]
     details: str | None = None
+
+
+@dataclass(frozen=True)
+class ResolvedCommand:
+    """A trigger command resolved from the base pool with overrides applied.
+
+    Attributes:
+        ref: The command reference name (e.g., "test", "lint").
+        effective_command: The resolved command string to execute.
+        effective_timeout: The resolved timeout in seconds (None for system default).
+    """
+
+    ref: str
+    effective_command: str
+    effective_timeout: int | None
+
+
+@dataclass(frozen=True)
+class TriggerCommandResult:
+    """Result of executing a single trigger command.
+
+    Attributes:
+        ref: The command reference name.
+        passed: Whether the command succeeded.
+        duration_seconds: How long the command took.
+        error_message: Optional error message if the command failed.
+    """
+
+    ref: str
+    passed: bool
+    duration_seconds: float
+    error_message: str | None = None
 
 
 @dataclass
@@ -554,18 +592,253 @@ class RunCoordinator:
     ) -> TriggerValidationResult:
         """Execute queued trigger validations.
 
+        Processes each queued trigger sequentially. For each trigger, resolves
+        commands from the base pool, applies overrides, and executes with
+        fail-fast semantics (first failure stops remaining commands).
+
         Args:
             dry_run: If True, simulate execution without running commands.
+                All commands are treated as passed in dry-run mode.
 
         Returns:
             TriggerValidationResult with status and details.
 
         Raises:
-            NotImplementedError: This is a skeleton - implementation in T007.
+            ConfigError: If a command reference is not found in the base pool.
         """
-        raise NotImplementedError(
-            "run_trigger_validation not yet implemented - see T007"
-        )
+        # No triggers queued - return passed
+        if not self._trigger_queue:
+            return TriggerValidationResult(status="passed")
+
+        # Get validation config
+        validation_config = self.config.validation_config
+        if validation_config is None:
+            # No validation config - clear queue and return passed
+            self._trigger_queue.clear()
+            return TriggerValidationResult(status="passed")
+
+        triggers_config = validation_config.validation_triggers
+        if triggers_config is None:
+            # No triggers configured - clear queue and return passed
+            self._trigger_queue.clear()
+            return TriggerValidationResult(status="passed")
+
+        # Build base pool from commands config
+        base_pool = self._build_base_pool(validation_config)
+
+        # Process each queued trigger
+        failed_trigger: str | None = None
+        failed_command: str | None = None
+
+        while self._trigger_queue:
+            trigger_type, _context = self._trigger_queue.pop(0)
+
+            # Get the trigger config for this type
+            trigger_config = self._get_trigger_config(triggers_config, trigger_type)
+            if trigger_config is None:
+                continue
+
+            # Resolve commands from base pool
+            resolved_commands = self._resolve_trigger_commands(
+                trigger_type, trigger_config, base_pool
+            )
+
+            # Execute commands with fail-fast
+            results = await self._execute_trigger_commands(
+                resolved_commands, dry_run=dry_run
+            )
+
+            # Check for failures (fail-fast already stopped at first failure)
+            for result in results:
+                if not result.passed:
+                    failed_trigger = trigger_type.value
+                    failed_command = result.ref
+                    break
+
+            if failed_command:
+                break
+
+        if failed_command:
+            return TriggerValidationResult(
+                status="failed",
+                details=f"Command '{failed_command}' failed in trigger {failed_trigger}",
+            )
+
+        return TriggerValidationResult(status="passed")
+
+    def _build_base_pool(
+        self, validation_config: ValidationConfig
+    ) -> dict[str, tuple[str, int | None]]:
+        """Build the base command pool from validation config.
+
+        The base pool maps command names to (command_string, timeout) tuples.
+        Built-in commands (test, lint, format, typecheck, e2e) come from the
+        commands section. Custom commands are also included.
+
+        Args:
+            validation_config: The validation configuration.
+
+        Returns:
+            Dict mapping command ref names to (command, timeout) tuples.
+        """
+        pool: dict[str, tuple[str, int | None]] = {}
+        cmds = validation_config.commands
+
+        # Add built-in commands
+        if cmds.test is not None:
+            pool["test"] = (cmds.test.command, cmds.test.timeout)
+        if cmds.lint is not None:
+            pool["lint"] = (cmds.lint.command, cmds.lint.timeout)
+        if cmds.format is not None:
+            pool["format"] = (cmds.format.command, cmds.format.timeout)
+        if cmds.typecheck is not None:
+            pool["typecheck"] = (cmds.typecheck.command, cmds.typecheck.timeout)
+        if cmds.e2e is not None:
+            pool["e2e"] = (cmds.e2e.command, cmds.e2e.timeout)
+        if cmds.setup is not None:
+            pool["setup"] = (cmds.setup.command, cmds.setup.timeout)
+
+        # Add custom commands
+        for name, custom_cmd in cmds.custom_commands.items():
+            pool[name] = (custom_cmd.command, custom_cmd.timeout)
+
+        return pool
+
+    def _get_trigger_config(
+        self, triggers_config: ValidationTriggersConfig, trigger_type: TriggerType
+    ) -> BaseTriggerConfig | None:
+        """Get the trigger configuration for a specific trigger type.
+
+        Args:
+            triggers_config: The ValidationTriggersConfig.
+            trigger_type: The trigger type to look up.
+
+        Returns:
+            The trigger config if defined, None otherwise.
+        """
+        from src.domain.validation.config import TriggerType
+
+        if trigger_type == TriggerType.EPIC_COMPLETION:
+            return triggers_config.epic_completion
+        elif trigger_type == TriggerType.SESSION_END:
+            return triggers_config.session_end
+        elif trigger_type == TriggerType.PERIODIC:
+            return triggers_config.periodic
+        return None
+
+    def _resolve_trigger_commands(
+        self,
+        trigger_type: TriggerType,
+        trigger_config: BaseTriggerConfig,
+        base_pool: dict[str, tuple[str, int | None]],
+    ) -> list[ResolvedCommand]:
+        """Resolve trigger command refs to executable commands.
+
+        For each TriggerCommandRef in the trigger config, looks up the command
+        in the base pool and applies any overrides (command string, timeout).
+
+        Args:
+            trigger_type: The type of trigger (for error messages).
+            trigger_config: The trigger configuration with command refs.
+            base_pool: Dict mapping ref names to (command, timeout).
+
+        Returns:
+            List of ResolvedCommand with effective command and timeout.
+
+        Raises:
+            ConfigError: If a ref is not found in the base pool.
+        """
+        resolved: list[ResolvedCommand] = []
+
+        for cmd_ref in trigger_config.commands:
+            if cmd_ref.ref not in base_pool:
+                available = ", ".join(sorted(base_pool.keys()))
+                raise ConfigError(
+                    f"trigger {trigger_type.value} references unknown command "
+                    f"'{cmd_ref.ref}'. Available: {available}"
+                )
+
+            base_cmd, base_timeout = base_pool[cmd_ref.ref]
+
+            # Apply overrides
+            effective_command = cmd_ref.command if cmd_ref.command else base_cmd
+            effective_timeout = cmd_ref.timeout if cmd_ref.timeout else base_timeout
+
+            resolved.append(
+                ResolvedCommand(
+                    ref=cmd_ref.ref,
+                    effective_command=effective_command,
+                    effective_timeout=effective_timeout,
+                )
+            )
+
+        return resolved
+
+    async def _execute_trigger_commands(
+        self,
+        commands: list[ResolvedCommand],
+        *,
+        dry_run: bool = False,
+    ) -> list[TriggerCommandResult]:
+        """Execute resolved commands sequentially with fail-fast.
+
+        Executes each command in order. Stops immediately on the first failure
+        (fail-fast behavior). In dry-run mode, all commands are treated as
+        passed without actually executing them.
+
+        Args:
+            commands: List of resolved commands to execute.
+            dry_run: If True, skip subprocess execution.
+
+        Returns:
+            List of TriggerCommandResult for executed commands.
+        """
+        results: list[TriggerCommandResult] = []
+
+        for cmd in commands:
+            if dry_run:
+                # Dry-run: all commands pass, no execution
+                results.append(
+                    TriggerCommandResult(
+                        ref=cmd.ref,
+                        passed=True,
+                        duration_seconds=0.0,
+                    )
+                )
+                continue
+
+            # Execute the command
+            cmd_result = await self.command_runner.run_async(
+                cmd.effective_command,
+                timeout=cmd.effective_timeout,
+                shell=True,
+                cwd=self.config.repo_path,
+            )
+
+            passed = cmd_result.returncode == 0 and not cmd_result.timed_out
+            error_message = None
+            if not passed:
+                if cmd_result.timed_out:
+                    error_message = "Command timed out"
+                elif cmd_result.stderr:
+                    error_message = cmd_result.stderr[:500]
+                else:
+                    error_message = f"Exit code {cmd_result.returncode}"
+
+            results.append(
+                TriggerCommandResult(
+                    ref=cmd.ref,
+                    passed=passed,
+                    duration_seconds=cmd_result.duration_seconds,
+                    error_message=error_message,
+                )
+            )
+
+            # Fail-fast: stop on first failure
+            if not passed:
+                break
+
+        return results
 
     def clear_trigger_queue(self, reason: str) -> None:
         """Clear the trigger queue, emitting skipped events.

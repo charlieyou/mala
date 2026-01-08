@@ -79,32 +79,63 @@ def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None
     """Test that triggers can be queued and executed via RunCoordinator.
 
     This test exercises RunCoordinator.queue_trigger_validation() →
-    run_trigger_validation() path.
-
-    Expected: FAILS with NotImplementedError (skeleton implementation).
-    After T007: Test passes.
+    run_trigger_validation() path with a real trigger configuration.
     """
-    import pytest
+    import asyncio
     from unittest.mock import MagicMock
 
-    from src.domain.validation.config import TriggerType
+    from src.domain.validation.config import (
+        CommandConfig,
+        CommandsConfig,
+        EpicCompletionTriggerConfig,
+        EpicDepth,
+        FailureMode,
+        FireOn,
+        TriggerCommandRef,
+        TriggerType,
+        ValidationConfig,
+        ValidationTriggersConfig,
+    )
+    from src.infra.tools.command_runner import CommandResult
     from src.pipeline.run_coordinator import RunCoordinator, RunCoordinatorConfig
     from tests.fakes import FakeEnvConfig
     from tests.fakes.command_runner import FakeCommandRunner
     from tests.fakes.lock_manager import FakeLockManager
 
-    # Create minimal config
+    # Create a validation config with triggers
+    validation_config = ValidationConfig(
+        commands=CommandsConfig(
+            test=CommandConfig(command="uv run pytest"),
+        ),
+        validation_triggers=ValidationTriggersConfig(
+            epic_completion=EpicCompletionTriggerConfig(
+                failure_mode=FailureMode.CONTINUE,
+                commands=(TriggerCommandRef(ref="test"),),
+                epic_depth=EpicDepth.TOP_LEVEL,
+                fire_on=FireOn.SUCCESS,
+            )
+        ),
+    )
+
+    # Create command runner with registered response
+    command_runner = FakeCommandRunner()
+    command_runner.responses[("uv run pytest",)] = CommandResult(
+        command="uv run pytest",
+        returncode=0,
+        stdout="",
+        stderr="",
+    )
+
     config = RunCoordinatorConfig(
         repo_path=tmp_path,
         timeout_seconds=60,
+        validation_config=validation_config,
     )
 
-    # Create RunCoordinator with minimal fakes to ensure NotImplementedError
-    # is the only failure mode (not AttributeError from None dependencies)
     coordinator = RunCoordinator(
         config=config,
         gate_checker=MagicMock(),
-        command_runner=FakeCommandRunner(allow_unregistered=True),
+        command_runner=command_runner,
         env_config=FakeEnvConfig(),
         lock_manager=FakeLockManager(),
         sdk_client_factory=MagicMock(),
@@ -124,15 +155,19 @@ def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None
     assert trigger_type == TriggerType.EPIC_COMPLETION
     assert context["issue_id"] == "test-123"
 
-    # Running trigger validation should raise NotImplementedError (skeleton)
-    import asyncio
+    # Run trigger validation - should now succeed
+    async def run_validation() -> None:
+        result = await coordinator.run_trigger_validation()
+        assert result.status == "passed"
 
-    async def run_and_expect_not_implemented() -> None:
-        with pytest.raises(NotImplementedError, match="run_trigger_validation not yet"):
-            await coordinator.run_trigger_validation()
+    asyncio.run(run_validation())
 
-    asyncio.run(run_and_expect_not_implemented())
+    # Queue should be empty after execution
+    assert coordinator._trigger_queue == []
 
     # Test clear_trigger_queue
+    coordinator.queue_trigger_validation(
+        TriggerType.EPIC_COMPLETION, {"issue_id": "test-456"}
+    )
     coordinator.clear_trigger_queue(reason="test cleanup")
     assert coordinator._trigger_queue == []
