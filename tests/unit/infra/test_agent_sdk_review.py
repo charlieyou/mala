@@ -9,10 +9,12 @@ Tests the Agent SDK code reviewer implementation including:
 - Priority conversion
 - Telemetry warnings
 - overrides_disabled_setting behavior
+- Interrupt handling
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -823,3 +825,106 @@ class TestOverridesDisabledSetting:
         )
 
         assert reviewer.overrides_disabled_setting() is False
+
+
+class TestInterruptHandling:
+    """Test interrupt event handling in AgentSDKReviewer."""
+
+    async def test_reviewer_checks_interrupt_before_starting(
+        self, tmp_path: Path
+    ) -> None:
+        """Reviewer should check interrupt_event before starting review."""
+        factory = FakeSDKClientFactory()
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        # Set interrupt event before calling
+        interrupt_event = asyncio.Event()
+        interrupt_event.set()
+
+        # Should return early without calling SDK
+        result = await reviewer(
+            "HEAD~1..HEAD",
+            interrupt_event=interrupt_event,
+        )
+
+        # Should return failed result with interrupt message
+        assert result.passed is False
+        assert result.parse_error == "Review interrupted"
+        assert result.fatal_error is False
+
+        # No SDK client should have been created
+        assert len(factory.clients) == 0
+
+    async def test_reviewer_returns_interrupted_when_event_set(
+        self, tmp_path: Path
+    ) -> None:
+        """Reviewer should return appropriate result when interrupted."""
+        factory = FakeSDKClientFactory()
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        # Set interrupt event
+        interrupt_event = asyncio.Event()
+        interrupt_event.set()
+
+        result = await reviewer(
+            "HEAD~1..HEAD",
+            interrupt_event=interrupt_event,
+        )
+
+        # Should not run agent session
+        assert len(factory.clients) == 0
+
+        # Should return with appropriate fields
+        assert result.passed is False
+        assert result.issues == []
+        assert result.parse_error == "Review interrupted"
+
+    async def test_reviewer_accepts_interrupt_event_parameter(
+        self, tmp_path: Path
+    ) -> None:
+        """Reviewer __call__ should accept interrupt_event parameter."""
+        factory = FakeSDKClientFactory()
+        factory.configure_next_client(
+            messages=[
+                MagicMock(
+                    subtype="assistant",
+                    content=[{"type": "text", "text": _make_review_json("PASS")}],
+                )
+            ]
+        )
+
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        # Unset event should not interrupt
+        interrupt_event = asyncio.Event()
+
+        with patch(
+            "src.infra.clients.agent_sdk_review.CommandRunner"
+        ) as mock_runner_class:
+            mock_runner = AsyncMock()
+            mock_runner.run_async.return_value = MagicMock(
+                returncode=0, stdout=" 1 file changed", stderr=""
+            )
+            mock_runner_class.return_value = mock_runner
+
+            result = await reviewer(
+                "HEAD~1..HEAD",
+                claude_session_id="test-session",
+                interrupt_event=interrupt_event,
+            )
+
+        # Should complete normally
+        assert result.passed is True
+        assert len(factory.clients) == 1

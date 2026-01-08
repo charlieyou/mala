@@ -123,6 +123,7 @@ class AgentSDKReviewer:
         claude_session_id: str | None = None,
         *,
         commit_shas: Sequence[str] | None = None,
+        interrupt_event: asyncio.Event | None = None,
     ) -> ReviewResult:
         """Run code review using Agent SDK.
 
@@ -135,10 +136,26 @@ class AgentSDKReviewer:
             timeout: Maximum time for agent session (seconds). Uses default_timeout if None.
             claude_session_id: Optional session ID for telemetry.
             commit_shas: Specific commit SHAs being reviewed.
+            interrupt_event: Optional event to check for SIGINT interruption.
 
         Returns:
             ReviewResult with verdict and findings.
         """
+        from src.infra.sigint_guard import InterruptGuard
+
+        guard = InterruptGuard(interrupt_event)
+
+        # Check for early interrupt before starting
+        if guard.is_interrupted():
+            logger.info("Review interrupted before starting")
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error="Review interrupted",
+                fatal_error=False,
+                review_log_path=None,
+            )
+
         # Use instance default_timeout if not specified
         effective_timeout = timeout if timeout is not None else self.default_timeout
 

@@ -22,9 +22,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from src.infra.sigint_guard import InterruptGuard
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    import asyncio
+
     from src.core.protocols import (
         CodeReviewer,
         GateChecker,
@@ -141,7 +145,11 @@ class ReviewRunner:
     config: ReviewRunnerConfig = field(default_factory=ReviewRunnerConfig)
     gate_checker: GateChecker | None = None
 
-    async def run_review(self, input: ReviewInput) -> ReviewOutput:
+    async def run_review(
+        self,
+        input: ReviewInput,
+        interrupt_event: asyncio.Event | None = None,
+    ) -> ReviewOutput:
         """Run code review on the given commit.
 
         This method invokes the injected CodeReviewer with the appropriate
@@ -149,11 +157,34 @@ class ReviewRunner:
 
         Args:
             input: ReviewInput with commit_sha, issue_description, etc.
+            interrupt_event: Optional event to check for SIGINT interruption.
 
         Returns:
             ReviewOutput with result and optional session log path.
         """
         import tempfile
+
+        from src.infra.clients.review_output_parser import ReviewResult
+
+        # Check for early interrupt before starting
+        guard = InterruptGuard(interrupt_event)
+        if guard.is_interrupted():
+            logger.info(
+                "Review interrupted before starting: issue_id=%s", input.issue_id
+            )
+            return ReviewOutput(
+                result=cast(
+                    "ReviewResultProtocol",
+                    ReviewResult(
+                        passed=False,
+                        issues=[],
+                        parse_error=None,
+                        fatal_error=False,
+                        review_log_path=None,
+                    ),
+                ),
+                interrupted=True,
+            )
 
         # Build diff range
         # Use commit's own parent as default baseline, not HEAD~1
@@ -189,22 +220,28 @@ class ReviewRunner:
                 timeout=self.config.review_timeout,
                 claude_session_id=input.claude_session_id,
                 commit_shas=input.commit_shas,
+                interrupt_event=interrupt_event,  # type: ignore[call-arg]
             )
+
+            # Check if interrupted during review
+            was_interrupted = guard.is_interrupted()
 
             session_log_path = None
             if result.review_log_path:
                 session_log_path = str(result.review_log_path)
 
             logger.info(
-                "Review result: issue_id=%s passed=%s issues=%d",
+                "Review result: issue_id=%s passed=%s issues=%d interrupted=%s",
                 input.issue_id,
                 result.passed,
                 len(result.issues),
+                was_interrupted,
             )
 
             return ReviewOutput(
                 result=result,
                 session_log_path=session_log_path,
+                interrupted=was_interrupted,
             )
         finally:
             # Clean up context file after review completes (success or failure)

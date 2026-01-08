@@ -4,13 +4,16 @@ Tests the extracted code review orchestration logic using fake code reviewers,
 without actual Cerberus CLI or subprocess dependencies.
 """
 
-from collections.abc import Sequence
+from __future__ import annotations
+
+import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from src.core.protocols import ReviewResultProtocol
 from src.pipeline.review_runner import (
     NoProgressInput,
     ReviewInput,
@@ -18,14 +21,16 @@ from src.pipeline.review_runner import (
     ReviewRunner,
     ReviewRunnerConfig,
 )
-from src.core.protocols import (
-    ReviewIssueProtocol,
-    ReviewResultProtocol,
-)
 from tests.fakes.gate_checker import FakeGateChecker
 
 if TYPE_CHECKING:
-    from src.core.protocols import CodeReviewer, GateChecker
+    from collections.abc import Sequence
+
+    from src.core.protocols import (
+        CodeReviewer,
+        GateChecker,
+        ReviewIssueProtocol,
+    )
 
 
 @dataclass
@@ -76,6 +81,7 @@ class FakeCodeReviewer:
         claude_session_id: str | None = None,
         *,
         commit_shas: Sequence[str] | None = None,
+        interrupt_event: asyncio.Event | None = None,
     ) -> FakeReviewResult:
         """Record call and return configured result."""
         self.calls.append(
@@ -85,6 +91,7 @@ class FakeCodeReviewer:
                 "timeout": timeout,
                 "claude_session_id": claude_session_id,
                 "commit_shas": commit_shas,
+                "interrupt_event": interrupt_event,
             }
         )
         return self.result
@@ -478,6 +485,7 @@ class TestContextFileCleanup:
                 claude_session_id: str | None = None,
                 *,
                 commit_shas: Sequence[str] | None = None,
+                interrupt_event: asyncio.Event | None = None,
             ) -> FakeReviewResult:
                 nonlocal context_file_path
                 context_file_path = context_file
@@ -524,6 +532,7 @@ class TestContextFileCleanup:
                 claude_session_id: str | None = None,
                 *,
                 commit_shas: Sequence[str] | None = None,
+                interrupt_event: asyncio.Event | None = None,
             ) -> FakeReviewResult:
                 nonlocal context_file_path
                 context_file_path = context_file
@@ -568,3 +577,144 @@ class TestContextFileCleanup:
         await runner.run_review(review_input)
 
         assert fake_reviewer.calls[0]["context_file"] is None
+
+
+class TestReviewRunnerInterruptHandling:
+    """Test interrupt handling in ReviewRunner."""
+
+    @pytest.mark.asyncio
+    async def test_returns_interrupted_when_event_set_before_start(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Runner should return interrupted=True when event is set before starting."""
+        fake_reviewer = FakeCodeReviewer()
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
+
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_sha="abc123",
+        )
+
+        # Set interrupt event before starting
+        interrupt_event = asyncio.Event()
+        interrupt_event.set()
+
+        output = await runner.run_review(review_input, interrupt_event=interrupt_event)
+
+        # Should return interrupted output without calling reviewer
+        assert output.interrupted is True
+        assert output.result.passed is False
+        assert len(fake_reviewer.calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_passes_interrupt_event_to_reviewer(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Runner should pass interrupt_event to the code reviewer."""
+        fake_reviewer = FakeCodeReviewer()
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
+
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_sha="abc123",
+        )
+
+        interrupt_event = asyncio.Event()
+
+        await runner.run_review(review_input, interrupt_event=interrupt_event)
+
+        assert len(fake_reviewer.calls) == 1
+        assert fake_reviewer.calls[0]["interrupt_event"] is interrupt_event
+
+    @pytest.mark.asyncio
+    async def test_returns_interrupted_when_event_set_during_review(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Runner should return interrupted=True when event is set during review."""
+
+        class InterruptSettingReviewer:
+            """Reviewer that sets interrupt event during call."""
+
+            def overrides_disabled_setting(self) -> bool:
+                return True
+
+            async def __call__(
+                self,
+                diff_range: str,
+                context_file: Path | None = None,
+                timeout: int = 300,
+                claude_session_id: str | None = None,
+                *,
+                commit_shas: Sequence[str] | None = None,
+                interrupt_event: asyncio.Event | None = None,
+            ) -> FakeReviewResult:
+                # Simulate interrupt being set during review
+                if interrupt_event:
+                    interrupt_event.set()
+                return FakeReviewResult(passed=True, issues=[])
+
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", InterruptSettingReviewer())
+        )
+
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_sha="abc123",
+        )
+
+        interrupt_event = asyncio.Event()
+
+        output = await runner.run_review(review_input, interrupt_event=interrupt_event)
+
+        assert output.interrupted is True
+        # Result should still be from the reviewer
+        assert output.result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_not_interrupted_when_event_not_set(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Runner should return interrupted=False when event is never set."""
+        fake_reviewer = FakeCodeReviewer()
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
+
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_sha="abc123",
+        )
+
+        interrupt_event = asyncio.Event()
+
+        output = await runner.run_review(review_input, interrupt_event=interrupt_event)
+
+        assert output.interrupted is False
+        assert output.result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_not_interrupted_when_no_event_provided(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Runner should return interrupted=False when no event provided."""
+        fake_reviewer = FakeCodeReviewer()
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
+
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_sha="abc123",
+        )
+
+        # No interrupt_event provided (uses default None)
+        output = await runner.run_review(review_input)
+
+        assert output.interrupted is False
+        assert output.result.passed is True
