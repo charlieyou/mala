@@ -85,9 +85,13 @@ def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None
     After T007: Test passes.
     """
     import pytest
+    from unittest.mock import MagicMock
 
     from src.domain.validation.config import TriggerType
     from src.pipeline.run_coordinator import RunCoordinator, RunCoordinatorConfig
+    from tests.fakes import FakeEnvConfig
+    from tests.fakes.command_runner import FakeCommandRunner
+    from tests.fakes.lock_manager import FakeLockManager
 
     # Create minimal config
     config = RunCoordinatorConfig(
@@ -95,15 +99,15 @@ def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None
         timeout_seconds=60,
     )
 
-    # Create RunCoordinator with minimal stubs
-    # We use None for dependencies since we expect NotImplementedError before they're used
+    # Create RunCoordinator with minimal fakes to ensure NotImplementedError
+    # is the only failure mode (not AttributeError from None dependencies)
     coordinator = RunCoordinator(
         config=config,
-        gate_checker=None,  # type: ignore[arg-type]
-        command_runner=None,  # type: ignore[arg-type]
-        env_config=None,  # type: ignore[arg-type]
-        lock_manager=None,  # type: ignore[arg-type]
-        sdk_client_factory=None,  # type: ignore[arg-type]
+        gate_checker=MagicMock(),
+        command_runner=FakeCommandRunner(allow_unregistered=True),
+        env_config=FakeEnvConfig(),
+        lock_manager=FakeLockManager(),
+        sdk_client_factory=MagicMock(),
     )
 
     # Verify trigger queue starts empty
