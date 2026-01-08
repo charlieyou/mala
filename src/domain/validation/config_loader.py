@@ -580,7 +580,7 @@ def _build_config(data: dict[str, Any]) -> ValidationConfig:
     """Convert a validated YAML dict to a ValidationConfig dataclass.
 
     This function delegates to ValidationConfig.from_dict which handles
-    parsing of nested structures (commands, coverage, etc.).
+    parsing of nested structures (commands, coverage, validation_triggers, etc.).
 
     Args:
         data: Validated YAML dictionary.
@@ -591,26 +591,7 @@ def _build_config(data: dict[str, Any]) -> ValidationConfig:
     Raises:
         ConfigError: If any field has an invalid type or value.
     """
-    # Parse validation_triggers before delegating to from_dict
-    triggers_data = data.get("validation_triggers")
-    validation_triggers = _parse_validation_triggers(triggers_data)
-
-    # Build the base config
-    config = ValidationConfig.from_dict(data)
-
-    # If validation_triggers key was present in YAML, update config and _fields_set
-    if "validation_triggers" in data:
-        from dataclasses import replace
-
-        # Add validation_triggers to _fields_set so merger knows it was explicitly set
-        new_fields_set = config._fields_set | frozenset({"validation_triggers"})
-        config = replace(
-            config,
-            validation_triggers=validation_triggers,
-            _fields_set=new_fields_set,
-        )
-
-    return config
+    return ValidationConfig.from_dict(data)
 
 
 def _validate_config(config: ValidationConfig) -> None:

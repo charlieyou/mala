@@ -1073,6 +1073,26 @@ class ValidationConfig:
                     sources.append(source)
                 claude_settings_sources = tuple(sources)
 
+        # Parse validation_triggers - use lazy import to avoid circular dependency
+        validation_triggers: ValidationTriggersConfig | None = None
+        if "validation_triggers" in data:
+            fields_set.add("validation_triggers")
+            triggers_data = data["validation_triggers"]
+            if triggers_data is not None:
+                if not isinstance(triggers_data, dict):
+                    raise ConfigError(
+                        f"validation_triggers must be an object, "
+                        f"got {type(triggers_data).__name__}"
+                    )
+                # Lazy import to avoid circular dependency with config_loader
+                from src.domain.validation.config_loader import (
+                    _parse_validation_triggers,
+                )
+
+                validation_triggers = _parse_validation_triggers(
+                    cast("dict[str, object]", triggers_data)
+                )
+
         return cls(
             preset=preset,
             commands=commands,
@@ -1087,6 +1107,7 @@ class ValidationConfig:
             agent_sdk_review_timeout=agent_sdk_review_timeout,
             agent_sdk_reviewer_model=agent_sdk_reviewer_model,
             claude_settings_sources=claude_settings_sources,
+            validation_triggers=validation_triggers,
             _fields_set=frozenset(fields_set),
         )
 

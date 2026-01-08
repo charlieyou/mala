@@ -704,6 +704,52 @@ class TestValidationConfig:
         assert "agent_sdk_review_timeout" not in config._fields_set
         assert "agent_sdk_reviewer_model" not in config._fields_set
 
+    def test_from_dict_parses_validation_triggers(self) -> None:
+        """from_dict correctly parses validation_triggers field."""
+        data = {
+            "preset": "python-uv",
+            "validation_triggers": {
+                "periodic": {
+                    "interval": 3600,
+                    "failure_mode": "continue",
+                    "commands": [{"ref": "test"}],
+                }
+            },
+        }
+        config = ValidationConfig.from_dict(data)
+        assert config.validation_triggers is not None
+        assert config.validation_triggers.periodic is not None
+        assert config.validation_triggers.periodic.interval == 3600
+        assert "validation_triggers" in config._fields_set
+
+    def test_from_dict_validation_triggers_none_when_omitted(self) -> None:
+        """validation_triggers is None when not specified in dict."""
+        config = ValidationConfig.from_dict({"preset": "python-uv"})
+        assert config.validation_triggers is None
+        assert "validation_triggers" not in config._fields_set
+
+    def test_from_dict_validation_triggers_explicit_null(self) -> None:
+        """validation_triggers: null is tracked in _fields_set but value is None."""
+        data = {"preset": "python-uv", "validation_triggers": None}
+        config = ValidationConfig.from_dict(data)
+        assert config.validation_triggers is None
+        assert "validation_triggers" in config._fields_set
+
+    def test_from_dict_validation_triggers_empty_dict(self) -> None:
+        """validation_triggers: {} creates empty config with all triggers None."""
+        data = {"preset": "python-uv", "validation_triggers": {}}
+        config = ValidationConfig.from_dict(data)
+        assert config.validation_triggers is not None
+        assert config.validation_triggers.epic_completion is None
+        assert config.validation_triggers.session_end is None
+        assert config.validation_triggers.periodic is None
+        assert "validation_triggers" in config._fields_set
+
+    def test_from_dict_validation_triggers_invalid_type(self) -> None:
+        """validation_triggers with non-object type raises ConfigError."""
+        with pytest.raises(ConfigError, match="validation_triggers must be an object"):
+            ValidationConfig.from_dict({"validation_triggers": "invalid"})
+
 
 class TestClaudeSettingsSources:
     """Tests for claude_settings_sources field in ValidationConfig."""
