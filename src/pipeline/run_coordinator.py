@@ -1085,9 +1085,8 @@ class RunCoordinator:
         global_cmds = validation_config.global_validation_commands
 
         # Helper to get effective command (global override or base fallback)
-        # Global overrides base only when explicitly set AND non-None.
-        # Explicit null in global_validation_commands means "delete from pool"
-        # (documented semantic), but we still fall back to base if null.
+        # Global overrides base only when non-None. If global is None,
+        # fall back to base commands (null doesn't delete from pool).
         def get_effective_cmd(field_name: str) -> CommandConfig | None:
             global_cmd = getattr(global_cmds, field_name, None)
             # Use global if it has a value (explicit override with command)
