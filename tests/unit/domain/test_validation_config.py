@@ -2576,6 +2576,20 @@ class TestValidationTriggersConfigParsing:
         with pytest.raises(ConfigError, match="max_retries must be an integer"):
             _parse_validation_triggers(data)
 
+    def test_parse_negative_max_retries_raises_error(self) -> None:
+        """Negative max_retries values are rejected."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "session_end": {
+                "failure_mode": "remediate",
+                "max_retries": -1,
+            }
+        }
+
+        with pytest.raises(ConfigError, match=r"max_retries must be >= 0.*got -1"):
+            _parse_validation_triggers(data)
+
     def test_parse_boolean_interval_raises_error(self) -> None:
         """Boolean values for interval are rejected."""
         from src.domain.validation.config_loader import _parse_validation_triggers
@@ -2588,6 +2602,34 @@ class TestValidationTriggersConfigParsing:
         }
 
         with pytest.raises(ConfigError, match="interval must be an integer"):
+            _parse_validation_triggers(data)
+
+    def test_parse_zero_interval_raises_error(self) -> None:
+        """Zero interval is rejected (would cause division by zero)."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "periodic": {
+                "failure_mode": "abort",
+                "interval": 0,
+            }
+        }
+
+        with pytest.raises(ConfigError, match=r"interval must be >= 1.*got 0"):
+            _parse_validation_triggers(data)
+
+    def test_parse_negative_interval_raises_error(self) -> None:
+        """Negative interval values are rejected."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "periodic": {
+                "failure_mode": "abort",
+                "interval": -5,
+            }
+        }
+
+        with pytest.raises(ConfigError, match=r"interval must be >= 1.*got -5"):
             _parse_validation_triggers(data)
 
     def test_parse_empty_ref_string_raises_error(self) -> None:

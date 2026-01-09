@@ -354,6 +354,10 @@ def _parse_max_retries(
                 f"max_retries must be an integer for trigger {trigger_name}, "
                 f"got {type(max_retries).__name__}"
             )
+        if max_retries < 0:
+            raise ConfigError(
+                f"max_retries must be >= 0 for trigger {trigger_name}, got {max_retries}"
+            )
 
     return max_retries
 
@@ -812,6 +816,10 @@ def _parse_periodic_trigger(data: dict[str, Any]) -> PeriodicTriggerConfig:
         raise ConfigError(
             f"interval must be an integer for trigger {trigger_name}, "
             f"got {type(interval).__name__}"
+        )
+    if interval < 1:
+        raise ConfigError(
+            f"interval must be >= 1 for trigger {trigger_name}, got {interval}"
         )
 
     return PeriodicTriggerConfig(
