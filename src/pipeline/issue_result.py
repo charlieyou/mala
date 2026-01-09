@@ -34,3 +34,6 @@ class IssueResult:
     review_log_path: str | None = None  # Path to Cerberus review session log
     baseline_timestamp: int | None = None  # Commit freshness baseline for this run
     last_review_issues: list[dict[str, Any]] | None = None  # Review issues for resume
+    is_epic: bool = (
+        False  # True if this is an epic issue (for periodic trigger filtering)
+    )

@@ -1385,48 +1385,123 @@ class TestPeriodicTriggerIntegration:
 
 
 class TestEpicFilteringForPeriodicTrigger:
-    """Tests verifying that epics are filtered and don't reach periodic trigger path.
+    """Tests verifying epic guard in _check_and_queue_periodic_trigger.
 
-    The periodic trigger is only meant to count non-epic issue completions.
-    Epics are filtered by IssueManager.apply_filters before reaching the main loop,
-    so they never trigger _check_and_queue_periodic_trigger.
-
-    These tests verify the filtering behavior at the IssueManager level.
+    The periodic trigger must only count non-epic issue completions.
+    This is enforced by an explicit is_epic check in the method itself.
     """
 
-    def test_epics_filtered_from_issue_list(self) -> None:
-        """Epic issues are excluded by _apply_filters."""
-        from src.infra.issue_manager import IssueManager
+    def _make_orchestrator_with_periodic_trigger(
+        self, tmp_path: Path, interval: int
+    ) -> tuple:
+        """Create a mock orchestrator using the real periodic trigger method."""
+        from src.orchestration.orchestrator import MalaOrchestrator
 
-        issues = [
-            {"id": "task-1", "issue_type": "task"},
-            {"id": "epic-1", "issue_type": "epic"},
-            {"id": "task-2", "issue_type": "task"},
-        ]
-
-        filtered = IssueManager.apply_filters(
-            issues, exclude_ids=set(), epic_children=None, only_ids=None
+        config = ValidationConfig(
+            commands=CommandsConfig(),
+            validation_triggers=ValidationTriggersConfig(
+                periodic=PeriodicTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                    interval=interval,
+                )
+            ),
         )
 
-        # Only tasks should remain
-        assert len(filtered) == 2
-        ids = [i["id"] for i in filtered]
-        assert "task-1" in ids
-        assert "task-2" in ids
-        assert "epic-1" not in ids
+        class FakeRunCoordinator:
+            def __init__(self) -> None:
+                self._trigger_queue: list[tuple] = []
 
-    def test_epic_with_no_issue_type_not_filtered(self) -> None:
-        """Issues without issue_type field are not filtered (backward compat)."""
-        from src.infra.issue_manager import IssueManager
+            def queue_trigger_validation(
+                self, trigger_type: TriggerType, context: dict
+            ) -> None:
+                self._trigger_queue.append((trigger_type, context))
 
-        issues = [
-            {"id": "task-1"},  # No issue_type
-            {"id": "task-2", "issue_type": "task"},
-        ]
+        class MockOrchestrator:
+            def __init__(self) -> None:
+                self._validation_config = config
+                self._non_epic_completed_count = 0
+                self.run_coordinator = FakeRunCoordinator()
 
-        filtered = IssueManager.apply_filters(
-            issues, exclude_ids=set(), epic_children=None, only_ids=None
+        mock_orch = MockOrchestrator()
+        bound_method = MalaOrchestrator._check_and_queue_periodic_trigger.__get__(
+            mock_orch, MockOrchestrator
+        )
+        mock_orch._check_and_queue_periodic_trigger = bound_method  # type: ignore[attr-defined]
+        return mock_orch, mock_orch.run_coordinator._trigger_queue
+
+    def test_epic_issue_does_not_increment_counter(self, tmp_path: Path) -> None:
+        """Epic issues with is_epic=True do not increment the counter."""
+        orchestrator, queue = self._make_orchestrator_with_periodic_trigger(
+            tmp_path, interval=1
         )
 
-        # Both should remain
-        assert len(filtered) == 2
+        # Call with epic issue (is_epic=True)
+        epic_result = IssueResult(
+            issue_id="epic-1",
+            agent_id="epic-1-agent",
+            success=True,
+            summary="done",
+            is_epic=True,
+        )
+        orchestrator._check_and_queue_periodic_trigger(epic_result)
+
+        # Counter should NOT increment for epic
+        assert orchestrator._non_epic_completed_count == 0
+        # No trigger should fire
+        assert len(queue) == 0
+
+    def test_non_epic_issue_increments_counter(self, tmp_path: Path) -> None:
+        """Non-epic issues (is_epic=False) increment the counter."""
+        orchestrator, queue = self._make_orchestrator_with_periodic_trigger(
+            tmp_path, interval=1
+        )
+
+        # Call with non-epic issue (is_epic=False, the default)
+        task_result = IssueResult(
+            issue_id="task-1",
+            agent_id="task-1-agent",
+            success=True,
+            summary="done",
+            is_epic=False,
+        )
+        orchestrator._check_and_queue_periodic_trigger(task_result)
+
+        # Counter should increment
+        assert orchestrator._non_epic_completed_count == 1
+        # Trigger should fire (interval=1)
+        assert len(queue) == 1
+
+    def test_mixed_epic_and_non_epic_only_counts_non_epic(self, tmp_path: Path) -> None:
+        """Only non-epic issues are counted when processing a mix."""
+        orchestrator, queue = self._make_orchestrator_with_periodic_trigger(
+            tmp_path, interval=2
+        )
+
+        # Process: task, epic, task, epic, task (3 tasks, 2 epics)
+        results = [
+            IssueResult(
+                issue_id="task-1", agent_id="a", success=True, summary="", is_epic=False
+            ),
+            IssueResult(
+                issue_id="epic-1", agent_id="a", success=True, summary="", is_epic=True
+            ),
+            IssueResult(
+                issue_id="task-2", agent_id="a", success=True, summary="", is_epic=False
+            ),
+            IssueResult(
+                issue_id="epic-2", agent_id="a", success=True, summary="", is_epic=True
+            ),
+            IssueResult(
+                issue_id="task-3", agent_id="a", success=True, summary="", is_epic=False
+            ),
+        ]
+
+        for r in results:
+            orchestrator._check_and_queue_periodic_trigger(r)
+
+        # Only 3 non-epic issues should be counted
+        assert orchestrator._non_epic_completed_count == 3
+        # Trigger should fire once at count=2 (interval=2)
+        assert len(queue) == 1
+        assert queue[0][1]["completed_count"] == 2
