@@ -2,7 +2,9 @@
 
 **Token Efficiency:** Use `read_range` ≤120 lines. No narration ("Let me..."). No git archaeology. No whole-file summaries. Fix directly.
 
-The global validation (global validation) found issues that need to be fixed:
+**Failed command:** `{failed_command}`
+
+The global validation found issues that need to be fixed:
 
 {failure_output}
 
@@ -10,10 +12,7 @@ The global validation (global validation) found issues that need to be fixed:
 1. Analyze the validation failure output above
 2. Fix ALL issues causing the failure - including pre-existing errors in files that weren't touched by any agent
 3. Re-run the full validation suite on the ENTIRE codebase:
-   - `uv run pytest`
-   - `uvx ruff check .`
-   - `uvx ruff format .`
-   - `uvx ty check`
+{validation_commands}
 4. Commit your changes with message: `bd-run-validation: <description>`
 
 **Context:**

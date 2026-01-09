@@ -288,6 +288,7 @@ class TestGlobalValidation:
             attempt: int,
             spec: object = None,
             interrupt_event: object = None,
+            **kwargs: object,
         ) -> FixerResult:
             fixer_calls.append((failure_output, attempt))
             return FixerResult(success=True)
@@ -473,6 +474,7 @@ class TestGlobalValidation:
             attempt: int,
             spec: object = None,
             interrupt_event: object = None,
+            **kwargs: object,
         ) -> FixerResult:
             outer_interrupt_event.set()
             # Simulate fixer being interrupted - returns interrupted=True

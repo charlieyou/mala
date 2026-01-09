@@ -414,6 +414,7 @@ class RunCoordinator:
                 attempt=attempt,
                 spec=spec,
                 interrupt_event=interrupt_event,
+                failed_command=self._extract_failed_command(result),
             )
 
             # If interrupted during fixer run, exit early
@@ -476,12 +477,49 @@ class RunCoordinator:
             "\n".join(lines) if lines else "Validation failed (no details available)."
         )
 
+    def _build_validation_commands_string(self, spec: ValidationSpec | None) -> str:
+        """Build formatted validation commands string for fixer prompt.
+
+        Args:
+            spec: ValidationSpec containing commands. If None, returns a placeholder.
+
+        Returns:
+            Formatted string with commands as markdown list items.
+        """
+        if spec is None or not spec.commands:
+            return "   - (Run the appropriate validation commands for this project)"
+
+        lines = []
+        for cmd in spec.commands:
+            lines.append(f"   - `{cmd.command}`")
+        return "\n".join(lines)
+
+    def _extract_failed_command(self, result: ValidationResult | None) -> str:
+        """Extract the first failed command from a ValidationResult.
+
+        Args:
+            result: ValidationResult to extract from. If None, returns "unknown".
+
+        Returns:
+            The command string of the first failed step, or "unknown".
+        """
+        if result is None:
+            return "unknown"
+
+        failed_steps = [s for s in result.steps if not s.ok]
+        if failed_steps:
+            return failed_steps[0].command
+        return "unknown"
+
     async def _run_fixer_agent(
         self,
         failure_output: str,
         attempt: int,
         spec: ValidationSpec | None = None,
         interrupt_event: asyncio.Event | None = None,
+        *,
+        failed_command: str = "unknown",
+        validation_commands: str | None = None,
     ) -> FixerResult:
         """Spawn a fixer agent to address global validation failures.
 
@@ -490,6 +528,9 @@ class RunCoordinator:
             attempt: Current attempt number.
             spec: Optional ValidationSpec for extracting lint tool names.
             interrupt_event: Optional event to monitor for interruption.
+            failed_command: The command that failed (for prompt context).
+            validation_commands: Formatted list of validation commands to re-run.
+                If None, builds from spec or uses a placeholder.
 
         Returns:
             FixerResult indicating success/failure/interrupted status.
@@ -505,10 +546,16 @@ class RunCoordinator:
         agent_id = f"fixer-{uuid.uuid4().hex[:8]}"
         self._active_fixer_ids.append(agent_id)
 
+        # Build validation commands string if not provided
+        if validation_commands is None:
+            validation_commands = self._build_validation_commands_string(spec)
+
         prompt = self.config.fixer_prompt.format(
             attempt=attempt,
             max_attempts=self.config.max_gate_retries,
             failure_output=failure_output,
+            failed_command=failed_command,
+            validation_commands=validation_commands,
         )
 
         fixer_cwd = self.config.repo_path
@@ -905,6 +952,8 @@ class RunCoordinator:
                 failure_output=failure_output,
                 attempt=attempt,
                 interrupt_event=interrupt_event,
+                failed_command=failed_cmd.effective_command,
+                validation_commands=f"   - `{failed_cmd.effective_command}`",
             )
 
             # Check for SIGINT after fixer (either via result or event)

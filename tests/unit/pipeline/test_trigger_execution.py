@@ -613,6 +613,7 @@ class TestFailureModeRemediate:
             attempt: int,
             spec: object = None,
             interrupt_event: object = None,
+            **kwargs: object,
         ) -> FixerResult:
             fixer_calls.append(attempt)
             return FixerResult(success=True)
@@ -664,6 +665,7 @@ class TestFailureModeRemediate:
             attempt: int,
             spec: object = None,
             interrupt_event: object = None,
+            **kwargs: object,
         ) -> FixerResult:
             fixer_calls.append(attempt)
             return FixerResult(success=True)  # Fixer "succeeds" but command still fails
@@ -714,6 +716,7 @@ class TestFailureModeRemediate:
             attempt: int,
             spec: object = None,
             interrupt_event: object = None,
+            **kwargs: object,
         ) -> FixerResult:
             fixer_calls.append(attempt)
             return FixerResult(success=True)
