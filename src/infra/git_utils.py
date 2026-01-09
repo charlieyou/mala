@@ -5,6 +5,7 @@ Provides helpers for getting git repository information.
 
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from src.infra.tools.command_runner import CommandRunner, run_command_async
@@ -134,3 +135,106 @@ async def get_issue_commits_async(
         return []
 
     return [line.strip() for line in log_result.stdout.splitlines() if line.strip()]
+
+
+@dataclass(frozen=True)
+class DiffStat:
+    """Statistics about a git diff."""
+
+    total_lines: int
+    files_changed: list[str]
+
+
+async def get_diff_stat(
+    repo_path: Path,
+    from_commit: str,
+    to_commit: str = "HEAD",
+    timeout: float = DEFAULT_GIT_TIMEOUT,
+) -> DiffStat:
+    """Get diff statistics between commits.
+
+    Uses: git diff --stat <from_commit> <to_commit>
+
+    Args:
+        repo_path: Path to the git repository.
+        from_commit: The base commit.
+        to_commit: The target commit (default: HEAD).
+        timeout: Timeout in seconds for git operations.
+
+    Returns:
+        DiffStat with total lines changed and list of changed files.
+        Returns DiffStat(total_lines=0, files_changed=[]) for empty diff.
+
+    Raises:
+        ValueError: If git command fails (e.g., invalid commit).
+    """
+    runner = CommandRunner(cwd=repo_path, timeout_seconds=timeout)
+
+    result = await runner.run_async(
+        ["git", "diff", "--stat", from_commit, to_commit],
+    )
+
+    if not result.ok:
+        raise ValueError(f"git diff --stat failed: {result.stderr}")
+
+    stdout = result.stdout.strip()
+    if not stdout:
+        return DiffStat(total_lines=0, files_changed=[])
+
+    lines = stdout.split("\n")
+    files_changed: list[str] = []
+    total_lines = 0
+
+    for line in lines:
+        # File lines look like: "src/foo.py | 10 ++++---"
+        # Summary line looks like: "3 files changed, 10 insertions(+), 5 deletions(-)"
+        if "|" in line:
+            # Extract filename (before the |)
+            filename = line.split("|")[0].strip()
+            files_changed.append(filename)
+        elif "changed" in line:
+            # Parse summary line for total lines
+            # Matches: "X insertions(+)" and/or "Y deletions(-)"
+            insertions_match = re.search(r"(\d+) insertion", line)
+            deletions_match = re.search(r"(\d+) deletion", line)
+            if insertions_match:
+                total_lines += int(insertions_match.group(1))
+            if deletions_match:
+                total_lines += int(deletions_match.group(1))
+
+    return DiffStat(total_lines=total_lines, files_changed=files_changed)
+
+
+async def get_diff_content(
+    repo_path: Path,
+    from_commit: str,
+    to_commit: str = "HEAD",
+    timeout: float = DEFAULT_GIT_TIMEOUT,
+) -> str:
+    """Get unified diff content for review.
+
+    Uses: git diff <from_commit> <to_commit>
+    Note: Two-argument form, NOT range syntax.
+
+    Args:
+        repo_path: Path to the git repository.
+        from_commit: The base commit.
+        to_commit: The target commit (default: HEAD).
+        timeout: Timeout in seconds for git operations.
+
+    Returns:
+        Unified diff string. Empty string for no changes.
+
+    Raises:
+        ValueError: If git command fails (e.g., invalid commit).
+    """
+    runner = CommandRunner(cwd=repo_path, timeout_seconds=timeout)
+
+    result = await runner.run_async(
+        ["git", "diff", from_commit, to_commit],
+    )
+
+    if not result.ok:
+        raise ValueError(f"git diff failed: {result.stderr}")
+
+    return result.stdout

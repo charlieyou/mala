@@ -4,6 +4,7 @@ import pytest
 
 from src.infra import git_utils
 from src.infra import git_utils as infra_git_utils
+from src.infra.git_utils import DiffStat
 from src.infra.tools.command_runner import CommandResult
 
 
@@ -392,3 +393,274 @@ class TestGetIssueCommitsAsync:
 
         # Should get parent of the new (rebased) first commit
         assert result == "rebasebase"
+
+
+class TestGetDiffStat:
+    """Tests for get_diff_stat() function."""
+
+    @pytest.mark.asyncio
+    async def test_returns_stat_for_changes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should parse insertions and deletions from git diff --stat output."""
+        stat_output = (
+            " src/foo.py | 10 +++++-----\n"
+            " src/bar.py |  5 +++++\n"
+            " 2 files changed, 10 insertions(+), 5 deletions(-)\n"
+        )
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff", "--stat"],
+                    returncode=0,
+                    stdout=stat_output,
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.get_diff_stat(Path("/repo"), "abc123", "def456")
+
+        assert result.total_lines == 15  # 10 insertions + 5 deletions
+        assert result.files_changed == ["src/foo.py", "src/bar.py"]
+        assert mock_runner.calls[0] == ["git", "diff", "--stat", "abc123", "def456"]
+
+    @pytest.mark.asyncio
+    async def test_empty_diff_returns_zero(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Empty diff should return DiffStat with zero lines and empty files."""
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff", "--stat"],
+                    returncode=0,
+                    stdout="",
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.get_diff_stat(Path("/repo"), "abc123")
+
+        assert result == DiffStat(total_lines=0, files_changed=[])
+
+    @pytest.mark.asyncio
+    async def test_insertions_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Should handle diffs with only insertions."""
+        stat_output = (
+            " src/new.py | 20 ++++++++++++++++++++\n 1 file changed, 20 insertions(+)\n"
+        )
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff", "--stat"],
+                    returncode=0,
+                    stdout=stat_output,
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.get_diff_stat(Path("/repo"), "abc123")
+
+        assert result.total_lines == 20
+        assert result.files_changed == ["src/new.py"]
+
+    @pytest.mark.asyncio
+    async def test_deletions_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Should handle diffs with only deletions."""
+        stat_output = (
+            " src/old.py | 15 ---------------\n 1 file changed, 15 deletions(-)\n"
+        )
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff", "--stat"],
+                    returncode=0,
+                    stdout=stat_output,
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.get_diff_stat(Path("/repo"), "abc123")
+
+        assert result.total_lines == 15
+        assert result.files_changed == ["src/old.py"]
+
+    @pytest.mark.asyncio
+    async def test_raises_on_invalid_commit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should raise ValueError when git command fails."""
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff", "--stat"],
+                    returncode=128,
+                    stdout="",
+                    stderr="fatal: bad revision 'invalid'",
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        with pytest.raises(ValueError, match="git diff --stat failed"):
+            await git_utils.get_diff_stat(Path("/repo"), "invalid")
+
+    @pytest.mark.asyncio
+    async def test_uses_head_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Should default to HEAD when to_commit not specified."""
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff", "--stat"],
+                    returncode=0,
+                    stdout="",
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        await git_utils.get_diff_stat(Path("/repo"), "abc123")
+
+        assert mock_runner.calls[0] == ["git", "diff", "--stat", "abc123", "HEAD"]
+
+
+class TestGetDiffContent:
+    """Tests for get_diff_content() function."""
+
+    @pytest.mark.asyncio
+    async def test_returns_unified_diff(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Should return the raw unified diff output."""
+        diff_content = (
+            "diff --git a/src/foo.py b/src/foo.py\n"
+            "index abc123..def456 100644\n"
+            "--- a/src/foo.py\n"
+            "+++ b/src/foo.py\n"
+            "@@ -1,3 +1,4 @@\n"
+            " line1\n"
+            "+new line\n"
+            " line2\n"
+            " line3\n"
+        )
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff"],
+                    returncode=0,
+                    stdout=diff_content,
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.get_diff_content(Path("/repo"), "abc123", "def456")
+
+        assert result == diff_content
+        assert mock_runner.calls[0] == ["git", "diff", "abc123", "def456"]
+
+    @pytest.mark.asyncio
+    async def test_empty_diff_returns_empty_string(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Empty diff should return empty string."""
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff"],
+                    returncode=0,
+                    stdout="",
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.get_diff_content(Path("/repo"), "abc123")
+
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_raises_on_invalid_commit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should raise ValueError when git command fails."""
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff"],
+                    returncode=128,
+                    stdout="",
+                    stderr="fatal: bad revision 'invalid'",
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        with pytest.raises(ValueError, match="git diff failed"):
+            await git_utils.get_diff_content(Path("/repo"), "invalid")
+
+    @pytest.mark.asyncio
+    async def test_uses_head_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Should default to HEAD when to_commit not specified."""
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff"],
+                    returncode=0,
+                    stdout="",
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        await git_utils.get_diff_content(Path("/repo"), "abc123")
+
+        assert mock_runner.calls[0] == ["git", "diff", "abc123", "HEAD"]
+
+    @pytest.mark.asyncio
+    async def test_uses_two_argument_form_not_range(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should use 'git diff A B' not 'git diff A..B' range syntax."""
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff"],
+                    returncode=0,
+                    stdout="",
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        await git_utils.get_diff_content(Path("/repo"), "abc123", "def456")
+
+        # Verify command uses two separate arguments, not range syntax
+        cmd = mock_runner.calls[0]
+        assert cmd == ["git", "diff", "abc123", "def456"]
+        # Ensure no range syntax like ".." is present
+        assert not any(".." in arg for arg in cmd)
