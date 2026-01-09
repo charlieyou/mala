@@ -3,13 +3,15 @@
 Extracted from MalaOrchestrator to separate epic verification logic from orchestration.
 This module handles:
 - Checking if closing an issue should close its parent epic
-- Retry loop for epic verification
+- Retry loop for epic verification with interrupt support
 - Executing remediation issues when verification fails
+- Graceful cancellation of remediation tasks on interrupt
 
 Design principles:
 - Protocol-based callbacks for orchestrator-owned operations
 - State management: verified_epics, epics_being_verified sets
 - Explicit config for retry behavior
+- InterruptGuard for consistent interrupt checking
 """
 
 from __future__ import annotations
