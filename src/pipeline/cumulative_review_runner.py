@@ -180,10 +180,13 @@ class CumulativeReviewRunner:
 
         baseline = baseline_result.commit
 
-        # 2. Get diff stat
-        diff_stat = await self._git_utils.get_diff_stat(baseline, "HEAD")
+        # 2. Get current HEAD first (to avoid race condition with diff stat)
+        head_commit = await self._git_utils.get_head_commit()
 
-        # 3. Empty diff check
+        # 3. Get diff stat between baseline and HEAD
+        diff_stat = await self._git_utils.get_diff_stat(baseline, head_commit)
+
+        # 4. Empty diff check
         if diff_stat.total_lines == 0:
             self._logger.info("No changes since baseline %s, skipping review", baseline)
             return CumulativeReviewResult(
@@ -193,7 +196,7 @@ class CumulativeReviewRunner:
                 skip_reason="empty_diff",
             )
 
-        # 4. Large diff warning
+        # 5. Large diff warning
         if diff_stat.total_lines > self.LARGE_DIFF_THRESHOLD:
             self._logger.warning(
                 "Large diff (%d lines, %d files) - proceeding with review",
@@ -201,11 +204,10 @@ class CumulativeReviewRunner:
                 len(diff_stat.files_changed),
             )
 
-        # 5. Get current HEAD for baseline update
-        head_commit = await self._git_utils.get_head_commit()
-
         # 6. Execute review via ReviewRunner
-        # Create ReviewInput with the commit range (baseline to HEAD)
+        # Note: ReviewRunner uses commit_shas interface (not raw diff content).
+        # The CodeReviewer generates the diff from these commits internally.
+        # We pass the baseline and HEAD commits to review the entire range.
         review_input = ReviewInput(
             issue_id=issue_id or f"cumulative-{trigger_type.value}",
             repo_path=repo_path,
