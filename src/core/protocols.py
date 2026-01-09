@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from collections.abc import Callable, Sequence  # noqa: TC003 - Sequence needed at runtime for get_type_hints
+from collections.abc import Callable, Sequence  # noqa: TC003 - runtime needed: ReviewIssueProtocol defined here
 from pathlib import Path
 
 from src.core.models import OrderPreference
