@@ -1825,3 +1825,136 @@ class TestGlobalCustomCommandsDeepMerge:
         assert custom.command == "new-cmd"
         assert custom.timeout == 300
         assert custom.allow_fail is True
+
+
+class TestValidationTriggersNotInheritedFromPreset:
+    """Tests that validation_triggers are NOT inherited from preset.
+
+    Per spec: "Presets define only global_validation_commands (base pool), NOT
+    validation_triggers. Users must configure triggers themselves."
+
+    This ensures triggers are always project-defined, never inherited from presets.
+    """
+
+    def test_preset_triggers_not_inherited_when_user_has_none(self) -> None:
+        """User without validation_triggers does NOT inherit preset triggers."""
+        from src.domain.validation.config import (
+            FailureMode,
+            SessionEndTriggerConfig,
+            ValidationTriggersConfig,
+        )
+
+        # Preset has triggers defined (hypothetically - presets shouldn't but we test defense)
+        preset = ValidationConfig(
+            commands=CommandsConfig(test=CommandConfig(command="pytest")),
+            validation_triggers=ValidationTriggersConfig(
+                session_end=SessionEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                ),
+            ),
+        )
+        # User does not set validation_triggers
+        user = ValidationConfig(
+            commands=CommandsConfig(),
+            _fields_set=frozenset({"commands"}),
+        )
+
+        result = merge_configs(preset, user)
+
+        # Result should NOT have triggers - they are never inherited
+        assert result.validation_triggers is None
+
+    def test_user_triggers_preserved_when_preset_has_none(self) -> None:
+        """User's validation_triggers preserved when preset has none."""
+        from src.domain.validation.config import (
+            FailureMode,
+            SessionEndTriggerConfig,
+            ValidationTriggersConfig,
+        )
+
+        preset = ValidationConfig(
+            commands=CommandsConfig(test=CommandConfig(command="pytest")),
+            validation_triggers=None,  # Preset has no triggers (correct behavior)
+        )
+        user = ValidationConfig(
+            validation_triggers=ValidationTriggersConfig(
+                session_end=SessionEndTriggerConfig(
+                    failure_mode=FailureMode.ABORT,
+                    commands=(),
+                ),
+            ),
+            _fields_set=frozenset({"validation_triggers"}),
+        )
+
+        result = merge_configs(preset, user)
+
+        # User's triggers should be preserved
+        assert result.validation_triggers is not None
+        assert result.validation_triggers.session_end is not None
+        assert result.validation_triggers.session_end.failure_mode == FailureMode.ABORT
+
+    def test_user_triggers_override_preset_triggers(self) -> None:
+        """User's validation_triggers always take precedence over preset."""
+        from src.domain.validation.config import (
+            FailureMode,
+            SessionEndTriggerConfig,
+            ValidationTriggersConfig,
+        )
+
+        # Preset has triggers (hypothetically)
+        preset = ValidationConfig(
+            commands=CommandsConfig(test=CommandConfig(command="pytest")),
+            validation_triggers=ValidationTriggersConfig(
+                session_end=SessionEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                ),
+            ),
+        )
+        # User has different triggers
+        user = ValidationConfig(
+            validation_triggers=ValidationTriggersConfig(
+                session_end=SessionEndTriggerConfig(
+                    failure_mode=FailureMode.ABORT,
+                    commands=(),
+                ),
+            ),
+            _fields_set=frozenset({"validation_triggers"}),
+        )
+
+        result = merge_configs(preset, user)
+
+        # User's triggers should be used
+        assert result.validation_triggers is not None
+        assert result.validation_triggers.session_end is not None
+        assert result.validation_triggers.session_end.failure_mode == FailureMode.ABORT
+
+    def test_user_explicit_none_triggers_not_overridden_by_preset(self) -> None:
+        """User's explicit null for validation_triggers is not overridden by preset."""
+        from src.domain.validation.config import (
+            FailureMode,
+            SessionEndTriggerConfig,
+            ValidationTriggersConfig,
+        )
+
+        # Preset has triggers (hypothetically)
+        preset = ValidationConfig(
+            commands=CommandsConfig(test=CommandConfig(command="pytest")),
+            validation_triggers=ValidationTriggersConfig(
+                session_end=SessionEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                ),
+            ),
+        )
+        # User explicitly sets validation_triggers to None
+        user = ValidationConfig(
+            validation_triggers=None,
+            _fields_set=frozenset({"validation_triggers"}),  # Explicitly set
+        )
+
+        result = merge_configs(preset, user)
+
+        # User's explicit None should be preserved
+        assert result.validation_triggers is None
