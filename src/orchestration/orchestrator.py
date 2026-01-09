@@ -300,6 +300,7 @@ class MalaOrchestrator:
         self._validation_failed: bool = False
         self._shutdown_requested: bool = False
         self._run_task: asyncio.Task[Any] | None = None
+        self._interrupt_event: asyncio.Event | None = None
         # Trigger state for periodic validation (see T009-T011)
         self._non_epic_completed_count: int = 0
         self._prompt_validation_commands = build_prompt_validation_commands(
@@ -431,7 +432,7 @@ class MalaOrchestrator:
                 ),
                 trigger_epic_closure=lambda issue_id, run_metadata: (
                     self.epic_verification_coordinator.check_epic_closure(
-                        issue_id, run_metadata
+                        issue_id, run_metadata, interrupt_event=self._interrupt_event
                     )
                 ),
                 create_tracking_issues=self._create_review_tracking_issues,
@@ -968,8 +969,17 @@ class MalaOrchestrator:
         self,
         run_metadata: RunMetadata,
         run_validation_passed: bool | None,
+        *,
+        validation_ran: bool = True,
     ) -> tuple[int, int]:
-        """Log summary and return final results."""
+        """Log summary and return final results.
+
+        Args:
+            run_metadata: Run metadata for saving.
+            run_validation_passed: Whether validation passed (None if skipped/interrupted).
+            validation_ran: Whether validation was attempted. False if skipped due to
+                no issues completed. Defaults to True.
+        """
         success_count = sum(1 for r in self._state.completed if r.success)
         total = len(self._state.completed)
 
@@ -978,7 +988,11 @@ class MalaOrchestrator:
             self.abort_reason or "Unrecoverable error" if self.abort_run else None
         )
         self.event_sink.on_run_completed(
-            success_count, total, run_validation_passed, abort_reason
+            success_count,
+            total,
+            run_validation_passed,
+            abort_reason,
+            validation_ran=validation_ran,
         )
 
         if success_count > 0:
@@ -1006,6 +1020,7 @@ class MalaOrchestrator:
         self._validation_failed = False
         self._shutdown_requested = False
         self._run_task = None
+        self._interrupt_event = None
 
     def _check_and_queue_periodic_trigger(self, result: IssueResult) -> None:
         """Check if periodic trigger should fire and queue it if so.
@@ -1188,6 +1203,7 @@ class MalaOrchestrator:
         # Create events for SIGINT handling
         drain_event = asyncio.Event()
         interrupt_event = asyncio.Event()
+        self._interrupt_event = interrupt_event  # Store for callback access
         loop = asyncio.get_running_loop()
 
         # Install SIGINT handler using _handle_sigint for three-stage escalation
@@ -1278,8 +1294,10 @@ class MalaOrchestrator:
             # T009: Hook for session_end trigger before global validation
             await self._fire_session_end_trigger()
 
-            run_validation_passed = True
+            run_validation_passed: bool | None = None
+            validation_ran = False  # Track if validation was actually attempted
             if success_count > 0 and not self.abort_run:
+                validation_ran = True
                 try:
                     validation_input = GlobalValidationInput(run_metadata=run_metadata)
                     validation_output = await self.run_coordinator.run_validation(
@@ -1309,8 +1327,11 @@ class MalaOrchestrator:
                 return await self._finalize_run(run_metadata, None)
 
             # Store exit code for CLI access (validation failure overrides to 1)
-            self._exit_code = 1 if not run_validation_passed else exit_code
-            return await self._finalize_run(run_metadata, run_validation_passed)
+            # If validation didn't run (no issues), treat as passed for exit code
+            self._exit_code = 1 if run_validation_passed is False else exit_code
+            return await self._finalize_run(
+                run_metadata, run_validation_passed, validation_ran=validation_ran
+            )
         finally:
             # Restore original SIGINT handler
             signal.signal(signal.SIGINT, original_handler)

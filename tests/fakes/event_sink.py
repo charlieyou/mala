@@ -64,6 +64,8 @@ class FakeEventSink:
         total_count: int,
         run_validation_passed: bool | None,
         abort_reason: str | None = None,
+        *,
+        validation_ran: bool = True,
     ) -> None:
         self._record(
             "run_completed",
@@ -71,6 +73,7 @@ class FakeEventSink:
             total_count=total_count,
             run_validation_passed=run_validation_passed,
             abort_reason=abort_reason,
+            validation_ran=validation_ran,
         )
 
     def on_ready_issues(self, issue_ids: list[str]) -> None:

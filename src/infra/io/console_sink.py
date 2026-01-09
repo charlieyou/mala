@@ -216,6 +216,8 @@ class ConsoleEventSink(BaseEventSink):
         total_count: int,
         run_validation_passed: bool | None,
         abort_reason: str | None = None,
+        *,
+        validation_ran: bool = True,
     ) -> None:
         status_icon = "✓" if success_count == total_count else "✗"
         status = f"DONE {status_icon} {success_count}/{total_count} issues completed"
@@ -230,6 +232,8 @@ class ConsoleEventSink(BaseEventSink):
                 f"RUN VALIDATION {Colors.RED}failed{Colors.RESET}",
                 agent_id="run",
             )
+        elif not validation_ran:
+            log("◦", "RUN VALIDATION skipped (no issues to validate)", agent_id="run")
         else:
             log("◦", "RUN VALIDATION skipped (interrupted)", agent_id="run")
 

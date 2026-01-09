@@ -39,6 +39,8 @@ class BaseEventSink:
         total_count: int,
         run_validation_passed: bool | None,
         abort_reason: str | None = None,
+        *,
+        validation_ran: bool = True,
     ) -> None:
         pass
 
