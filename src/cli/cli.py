@@ -13,7 +13,9 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 import sys
+import warnings
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -375,6 +377,63 @@ def _emit_deprecation_warnings() -> None:
     as a placeholder for future deprecations.
     """
     pass
+
+
+def _check_cli_reviewer_type_deprecation(reviewer_type: str | None) -> None:
+    """Check for deprecated --reviewer-type CLI flag and emit warning.
+
+    Args:
+        reviewer_type: Value of --reviewer-type CLI argument, or None if not provided.
+    """
+    if reviewer_type is not None:
+        warnings.warn(
+            "DEPRECATION: --reviewer-type is deprecated. "
+            "Use validation_triggers.session_end.code_review.reviewer_type in config.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+
+def _check_legacy_review_config(
+    validation_config: object | None,
+    *,
+    logger: logging.Logger,
+) -> None:
+    """Check for deprecated top-level reviewer_type in config and emit warning.
+
+    Emits a warning when:
+    - Top-level reviewer_type is explicitly set in mala.yaml
+    - No code_review config exists in any validation trigger
+
+    Args:
+        validation_config: ValidationConfig from mala.yaml, or None if not loaded.
+        logger: Logger instance for emitting warnings.
+    """
+    if validation_config is None:
+        return
+
+    # Check if reviewer_type is in _fields_set (explicitly set by user)
+    fields_set = getattr(validation_config, "_fields_set", frozenset())
+    if "reviewer_type" not in fields_set:
+        return
+
+    # Check if new code_review config exists in any trigger
+    triggers = getattr(validation_config, "validation_triggers", None)
+    if triggers is not None:
+        for trigger_name in ("session_end", "epic_completion", "run_end", "periodic"):
+            trigger = getattr(triggers, trigger_name, None)
+            if trigger is not None:
+                code_review = getattr(trigger, "code_review", None)
+                if code_review is not None and getattr(code_review, "enabled", False):
+                    # New code_review config is present and enabled - no deprecation
+                    return
+
+    # Legacy config used without new code_review
+    logger.warning(
+        "DEPRECATION: Top-level 'reviewer_type' is deprecated for per-issue reviews. "
+        "Add 'validation_triggers.session_end.code_review.enabled: true' to preserve "
+        "current behavior. Legacy implicit reviews will be removed in the next major version."
+    )
 
 
 def _build_cli_args_metadata(
@@ -751,6 +810,15 @@ def run(
             rich_help_panel="Review Backend",
         ),
     ] = None,
+    reviewer_type: Annotated[
+        str | None,
+        typer.Option(
+            "--reviewer-type",
+            help="[DEPRECATED] Reviewer type ('cerberus' or 'agent_sdk'). Use config instead.",
+            rich_help_panel="Review Backend",
+            hidden=True,
+        ),
+    ] = None,
     epic_override: Annotated[
         list[str] | None,
         typer.Option(
@@ -800,6 +868,9 @@ def run(
 
     # Emit deprecation warnings for old flags (placeholder for future deprecations)
     _emit_deprecation_warnings()
+
+    # Check for deprecated --reviewer-type CLI flag
+    _check_cli_reviewer_type_deprecation(reviewer_type)
 
     # Validate max_issues (Typer min= doesn't work well with Optional[int])
     if max_issues is not None and max_issues < 1:
@@ -877,6 +948,26 @@ def run(
 
     # Build and configure MalaConfig from environment
     config = _lazy("MalaConfig").from_env(validate=False)
+
+    # Check for legacy review config deprecation (top-level reviewer_type)
+    # This needs to load ValidationConfig early to check _fields_set
+    from src.domain.validation.config_loader import ConfigMissingError, load_config
+
+    validation_config_for_deprecation = None
+    try:
+        validation_config_for_deprecation = load_config(repo_path)
+    except ConfigMissingError:
+        # Config missing - skip deprecation check
+        pass
+    except Exception:
+        # Invalid config - skip deprecation check (factory will handle errors properly)
+        pass
+
+    if validation_config_for_deprecation is not None:
+        _check_legacy_review_config(
+            validation_config_for_deprecation,
+            logger=logging.getLogger("mala.cli"),
+        )
 
     # Apply CLI overrides to config
     override_result = _apply_config_overrides(
