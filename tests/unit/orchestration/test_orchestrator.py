@@ -3489,3 +3489,408 @@ class TestSessionResume:
             assert "No prior session found" not in result.summary
             # Session ran - we have a session_id from the SDK
             assert result.session_id is not None
+
+
+class TestCaptureRunStartCommit:
+    """Tests for _capture_run_start_commit method."""
+
+    @pytest.mark.asyncio
+    async def test_captures_head_when_run_end_configured(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Captures HEAD commit when run_end trigger is configured."""
+        from src.domain.validation.config import (
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        # Create orchestrator with run_end trigger configured
+        triggers = ValidationTriggersConfig(
+            run_end=RunEndTriggerConfig(
+                failure_mode=FailureMode.CONTINUE,
+                commands=(),
+                fire_on=FireOn.SUCCESS,
+            )
+        )
+        validation_config = ValidationConfig(validation_triggers=triggers)
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+        # Inject validation config after creation
+        orchestrator._validation_config = validation_config
+
+        # Mock get_git_commit_async
+        with patch(
+            "src.orchestration.orchestrator.get_git_commit_async",
+            return_value="abc123",
+        ):
+            await orchestrator._capture_run_start_commit()
+
+        assert orchestrator._state.run_start_commit == "abc123"
+
+    @pytest.mark.asyncio
+    async def test_skips_capture_when_run_end_not_configured(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Skips capture when run_end trigger is not configured."""
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+
+        # Mock should not be called
+        with patch(
+            "src.orchestration.orchestrator.get_git_commit_async",
+            return_value="abc123",
+        ) as mock_get:
+            await orchestrator._capture_run_start_commit()
+            mock_get.assert_not_called()
+
+        assert orchestrator._state.run_start_commit is None
+
+    @pytest.mark.asyncio
+    async def test_skips_capture_when_already_captured(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Skips capture when run_start_commit already has a value."""
+        from src.domain.validation.config import (
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        triggers = ValidationTriggersConfig(
+            run_end=RunEndTriggerConfig(
+                failure_mode=FailureMode.CONTINUE,
+                commands=(),
+                fire_on=FireOn.SUCCESS,
+            )
+        )
+        validation_config = ValidationConfig(validation_triggers=triggers)
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+        orchestrator._validation_config = validation_config
+
+        # Pre-set the commit (simulating resumed run)
+        orchestrator._state.run_start_commit = "existing123"
+
+        with patch(
+            "src.orchestration.orchestrator.get_git_commit_async",
+            return_value="new456",
+        ) as mock_get:
+            await orchestrator._capture_run_start_commit()
+            mock_get.assert_not_called()
+
+        # Original value preserved
+        assert orchestrator._state.run_start_commit == "existing123"
+
+
+class TestFireRunEndTrigger:
+    """Tests for _fire_run_end_trigger method."""
+
+    @pytest.mark.asyncio
+    async def test_queues_trigger_on_success_when_fire_on_success(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Queues trigger when fire_on=SUCCESS and all issues succeeded."""
+        from src.domain.validation.config import (
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.domain.validation.config import TriggerType
+
+        triggers = ValidationTriggersConfig(
+            run_end=RunEndTriggerConfig(
+                failure_mode=FailureMode.CONTINUE,
+                commands=(),
+                fire_on=FireOn.SUCCESS,
+            )
+        )
+        validation_config = ValidationConfig(validation_triggers=triggers)
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+        orchestrator._validation_config = validation_config
+
+        # Mock queue_trigger_validation
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()
+
+        # All success: 3 success out of 3 total
+        await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
+
+        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once_with(
+            TriggerType.RUN_END,
+            {"success_count": 3, "total_count": 3},
+        )
+
+    @pytest.mark.asyncio
+    async def test_skips_trigger_on_failure_when_fire_on_success(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Skips trigger when fire_on=SUCCESS but some issues failed."""
+        from src.domain.validation.config import (
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        triggers = ValidationTriggersConfig(
+            run_end=RunEndTriggerConfig(
+                failure_mode=FailureMode.CONTINUE,
+                commands=(),
+                fire_on=FireOn.SUCCESS,
+            )
+        )
+        validation_config = ValidationConfig(validation_triggers=triggers)
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+        orchestrator._validation_config = validation_config
+
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()
+
+        # Some failure: 2 success out of 3 total
+        await orchestrator._fire_run_end_trigger(success_count=2, total_count=3)
+
+        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_queues_trigger_on_failure_when_fire_on_failure(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Queues trigger when fire_on=FAILURE and some issues failed."""
+        from src.domain.validation.config import (
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.domain.validation.config import TriggerType
+
+        triggers = ValidationTriggersConfig(
+            run_end=RunEndTriggerConfig(
+                failure_mode=FailureMode.CONTINUE,
+                commands=(),
+                fire_on=FireOn.FAILURE,
+            )
+        )
+        validation_config = ValidationConfig(validation_triggers=triggers)
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+        orchestrator._validation_config = validation_config
+
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()
+
+        # Some failure: 2 success out of 3 total
+        await orchestrator._fire_run_end_trigger(success_count=2, total_count=3)
+
+        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once_with(
+            TriggerType.RUN_END,
+            {"success_count": 2, "total_count": 3},
+        )
+
+    @pytest.mark.asyncio
+    async def test_skips_trigger_on_success_when_fire_on_failure(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Skips trigger when fire_on=FAILURE but all issues succeeded."""
+        from src.domain.validation.config import (
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        triggers = ValidationTriggersConfig(
+            run_end=RunEndTriggerConfig(
+                failure_mode=FailureMode.CONTINUE,
+                commands=(),
+                fire_on=FireOn.FAILURE,
+            )
+        )
+        validation_config = ValidationConfig(validation_triggers=triggers)
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+        orchestrator._validation_config = validation_config
+
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()
+
+        # All success: 3 success out of 3 total
+        await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
+
+        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_queues_trigger_always_when_fire_on_both(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Queues trigger on both success and failure when fire_on=BOTH."""
+        from src.domain.validation.config import (
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        triggers = ValidationTriggersConfig(
+            run_end=RunEndTriggerConfig(
+                failure_mode=FailureMode.CONTINUE,
+                commands=(),
+                fire_on=FireOn.BOTH,
+            )
+        )
+        validation_config = ValidationConfig(validation_triggers=triggers)
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+        orchestrator._validation_config = validation_config
+
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()
+
+        # Test with all success
+        await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
+        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once()
+        orchestrator.run_coordinator.queue_trigger_validation.reset_mock()
+
+        # Test with some failure
+        await orchestrator._fire_run_end_trigger(success_count=2, total_count=3)
+        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_when_abort_run_set(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Skips trigger when abort_run is True."""
+        from src.domain.validation.config import (
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        triggers = ValidationTriggersConfig(
+            run_end=RunEndTriggerConfig(
+                failure_mode=FailureMode.CONTINUE,
+                commands=(),
+                fire_on=FireOn.BOTH,
+            )
+        )
+        validation_config = ValidationConfig(validation_triggers=triggers)
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+        orchestrator._validation_config = validation_config
+
+        # Set abort
+        orchestrator.issue_coordinator.request_abort(reason="test")
+
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()
+
+        await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
+
+        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_successful_issues(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Skips trigger when success_count is 0."""
+        from src.domain.validation.config import (
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        triggers = ValidationTriggersConfig(
+            run_end=RunEndTriggerConfig(
+                failure_mode=FailureMode.CONTINUE,
+                commands=(),
+                fire_on=FireOn.BOTH,
+            )
+        )
+        validation_config = ValidationConfig(validation_triggers=triggers)
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+        orchestrator._validation_config = validation_config
+
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()
+
+        await orchestrator._fire_run_end_trigger(success_count=0, total_count=3)
+
+        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_when_run_end_not_configured(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Skips trigger when run_end trigger is not configured."""
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()
+
+        await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
+
+        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()

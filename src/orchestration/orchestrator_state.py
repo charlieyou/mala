@@ -28,6 +28,7 @@ class OrchestratorState:
         active_session_log_paths: Maps issue_id to session log path for deadlock handling.
         deadlock_cleaned_agents: Tracks agent IDs cleaned during deadlock resolution.
         deadlock_victim_issues: Tracks issue IDs killed due to deadlock resolution.
+        run_start_commit: HEAD commit captured at run start for baseline tracking.
     """
 
     agent_ids: dict[str, str] = field(default_factory=dict)
@@ -35,3 +36,4 @@ class OrchestratorState:
     active_session_log_paths: dict[str, Path] = field(default_factory=dict)
     deadlock_cleaned_agents: set[str] = field(default_factory=set)
     deadlock_victim_issues: set[str] = field(default_factory=set)
+    run_start_commit: str | None = None

@@ -54,7 +54,7 @@ from src.pipeline.agent_session_runner import (
 from src.pipeline.issue_finalizer import (
     IssueFinalizeInput,
 )
-from src.domain.validation.config import TriggerType
+from src.domain.validation.config import FireOn, TriggerType
 from src.pipeline.run_coordinator import (
     GlobalValidationInput,
 )
@@ -1067,11 +1067,11 @@ class MalaOrchestrator:
         Called early in run() to record the starting commit SHA for later
         diff calculations (cumulative code review, run_end trigger context).
 
-        Only raises NotImplementedError when run_end trigger is configured,
-        since that's when run_start_commit capture is needed.
+        Stores the commit in self._state.run_start_commit, which is later
+        transferred to run_metadata after it's created.
 
-        Raises:
-            NotImplementedError: When run_end trigger is configured (T011 pending).
+        Only captures when run_end trigger is configured, since that's when
+        run_start_commit capture is needed.
         """
         # Check if run_end trigger is configured
         triggers = (
@@ -1082,8 +1082,15 @@ class MalaOrchestrator:
         if triggers is None or triggers.run_end is None:
             return
 
-        # T011: Capture HEAD commit and store in run_metadata.run_start_commit
-        raise NotImplementedError("run_start_commit capture not implemented")
+        # Already captured (should not happen in normal flow, but guard for safety)
+        if self._state.run_start_commit is not None:
+            return
+
+        # Capture HEAD commit
+        head = await get_git_commit_async(self.repo_path)
+        if head:
+            self._state.run_start_commit = head
+            logger.debug(f"Captured run_start_commit: {head}")
 
     async def _fire_run_end_trigger(self, success_count: int, total_count: int) -> None:
         """Queue run_end trigger validation if configured.
@@ -1094,9 +1101,6 @@ class MalaOrchestrator:
         Args:
             success_count: Number of successfully completed issues.
             total_count: Total number of issues processed.
-
-        Raises:
-            NotImplementedError: When run_end trigger is configured (T011 pending).
         """
         # Skip if abort already requested
         if self.abort_run:
@@ -1115,8 +1119,30 @@ class MalaOrchestrator:
         if triggers is None or triggers.run_end is None:
             return
 
-        # T011: Queue RUN_END trigger validation
-        raise NotImplementedError("run_end trigger not implemented")
+        trigger_config = triggers.run_end
+
+        # Check fire_on filter
+        all_success = success_count == total_count
+        any_failure = success_count < total_count
+
+        should_fire = (
+            (trigger_config.fire_on == FireOn.SUCCESS and all_success)
+            or (trigger_config.fire_on == FireOn.FAILURE and any_failure)
+            or (trigger_config.fire_on == FireOn.BOTH)
+        )
+
+        if not should_fire:
+            logger.debug(
+                f"Skipping run_end trigger (fire_on={trigger_config.fire_on.value}, "
+                f"success={success_count}/{total_count})"
+            )
+            return
+
+        # Queue RUN_END trigger validation
+        self.run_coordinator.queue_trigger_validation(
+            TriggerType.RUN_END,
+            {"success_count": success_count, "total_count": total_count},
+        )
 
     async def _fire_session_end_trigger(self) -> None:
         """Queue session_end trigger validation if configured.
@@ -1281,6 +1307,11 @@ class MalaOrchestrator:
             version=__version__,
             runs_dir=runs_dir,
         )
+
+        # Transfer run_start_commit from state to metadata
+        if self._state.run_start_commit is not None:
+            run_metadata.run_start_commit = self._state.run_start_commit
+
         per_session_spec = build_validation_spec(
             self.repo_path,
             scope=ValidationScope.PER_SESSION,
