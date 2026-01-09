@@ -251,6 +251,7 @@ class IssueFinalizer:
             resolution=result.resolution,
             review_log_path=input.review_log_path,
             baseline_timestamp=result.baseline_timestamp,
+            last_review_issues=result.last_review_issues,
         )
         input.run_metadata.record_issue(issue_run)
 

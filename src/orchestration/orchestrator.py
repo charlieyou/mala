@@ -868,6 +868,7 @@ class MalaOrchestrator:
             session_log_path=output.log_path,
             review_log_path=output.review_log_path,
             baseline_timestamp=output.baseline_timestamp,
+            last_review_issues=output.last_review_issues,
         )
 
     async def spawn_agent(
