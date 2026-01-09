@@ -71,7 +71,9 @@ def make_test_prompts() -> SessionPrompts:
         ),
         review_followup=(
             "Review followup: {issue_id} attempt {attempt}/{max_attempts}\n"
-            "Issues: {review_issues}"
+            "Issues: {review_issues}\n"
+            "Commands: {lint_command} {format_command} {typecheck_command} "
+            "{custom_commands_section} {test_command}"
         ),
         idle_resume="Continue on issue {issue_id}.",
     )
@@ -2638,6 +2640,7 @@ class TestBuildSessionOutput:
         lifecycle_ctx.success = True
         lifecycle_ctx.retry_state.gate_attempt = 1
         lifecycle_ctx.retry_state.review_attempt = 1
+        lifecycle_ctx.retry_state.baseline_timestamp = 1700000000
 
         log_path = tmp_path / "session.jsonl"
         state = SessionExecutionState(
@@ -2660,6 +2663,7 @@ class TestBuildSessionOutput:
         assert output.duration_seconds == 123.45
         assert output.agent_id == "test-123-abc12345"
         assert output.review_log_path == "/path/to/review.log"
+        assert output.baseline_timestamp == 1700000000
 
     @pytest.mark.unit
     def test_build_session_output_failure(
@@ -2693,6 +2697,7 @@ class TestBuildSessionOutput:
         lifecycle_ctx.success = False
         lifecycle_ctx.retry_state.gate_attempt = 3
         lifecycle_ctx.retry_state.review_attempt = 0
+        lifecycle_ctx.retry_state.baseline_timestamp = 1700000001
 
         state = SessionExecutionState(
             lifecycle=lifecycle,
@@ -2712,6 +2717,7 @@ class TestBuildSessionOutput:
         assert output.review_attempts == 0
         assert output.duration_seconds == 45.0
         assert output.agent_id == "test-fail-abc"
+        assert output.baseline_timestamp == 1700000001
 
     @pytest.mark.unit
     def test_build_session_output_with_resolution(

@@ -63,7 +63,9 @@ def make_test_prompts() -> SessionPrompts:
         ),
         review_followup=(
             "Review followup: {issue_id} attempt {attempt}/{max_attempts}\n"
-            "Issues: {review_issues}"
+            "Issues: {review_issues}\n"
+            "Commands: {lint_command} {format_command} {typecheck_command} "
+            "{custom_commands_section} {test_command}"
         ),
         idle_resume="Continue on issue {issue_id}.",
     )

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from src.domain.lifecycle import Effect
 from src.domain.prompts import (
+    build_custom_commands_section,
     get_default_validation_commands as _get_default_validation_commands,
 )
 from src.infra.sigint_guard import InterruptGuard
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
         ReviewOutcome,
         TransitionResult,
     )
+    from src.domain.validation.config import PromptValidationCommands
 
     from .agent_session_runner import (
         AgentSessionConfig,
@@ -214,6 +216,7 @@ def _build_review_retry_prompt(
     repo_path: Path,
     max_review_retries: int,
     review_followup_template: str,
+    validation_commands: "PromptValidationCommands",
 ) -> str:
     """Build the follow-up prompt for review retry.
 
@@ -224,6 +227,7 @@ def _build_review_retry_prompt(
         repo_path: Repository path for formatting issue paths.
         max_review_retries: Maximum number of review retries.
         review_followup_template: Template for review follow-up prompts.
+        validation_commands: Validation commands for the prompt.
 
     Returns:
         Formatted prompt string for the agent to address review issues.
@@ -232,11 +236,19 @@ def _build_review_retry_prompt(
         review_result.issues,  # type: ignore[arg-type]  # ReviewIssue ⊂ ReviewIssueProtocol
         base_path=repo_path,
     )
+    custom_commands_section = build_custom_commands_section(
+        validation_commands.custom_commands
+    )
     return review_followup_template.format(
         attempt=lifecycle_ctx.retry_state.review_attempt,
         max_attempts=max_review_retries,
         review_issues=review_issues_text,
         issue_id=issue_id,
+        lint_command=validation_commands.lint,
+        format_command=validation_commands.format,
+        typecheck_command=validation_commands.typecheck,
+        custom_commands_section=custom_commands_section,
+        test_command=validation_commands.test,
     )
 
 
@@ -533,6 +545,10 @@ class LifecycleEffectHandler:
         # Build pending_query only for SEND_REVIEW_RETRY
         pending_query = None
         if result.effect == Effect.SEND_REVIEW_RETRY:
+            cmds = (
+                self.config.prompt_validation_commands
+                or _get_default_validation_commands()
+            )
             pending_query = _build_review_retry_prompt(
                 review_result,
                 lifecycle_ctx,
@@ -540,6 +556,7 @@ class LifecycleEffectHandler:
                 self.config.repo_path,
                 self.config.max_review_retries,
                 self.config.prompts.review_followup,
+                cmds,
             )
 
         return _make_review_effect_result(

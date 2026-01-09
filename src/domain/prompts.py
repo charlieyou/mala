@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from src.domain.validation.config import PromptValidationCommands, ValidationConfig
 
 
-def _build_custom_commands_section(
+def build_custom_commands_section(
     custom_commands: tuple[tuple[str, str, int, bool], ...],
 ) -> str:
     """Build the custom commands section for the implementer prompt.
@@ -140,7 +140,7 @@ def format_implementer_prompt(
         Formatted prompt string.
     """
     # Build custom_commands_section from custom_commands tuple
-    custom_commands_section = _build_custom_commands_section(
+    custom_commands_section = build_custom_commands_section(
         validation_commands.custom_commands
     )
 
