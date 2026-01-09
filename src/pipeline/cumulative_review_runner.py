@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
     from src.core.protocols import IssueProvider, ReviewRunnerProtocol
     from src.domain.validation.config import CodeReviewConfig, TriggerType
-    from src.infra.git_utils import DiffStat, GitUtils
+    from src.infra.git_utils import GitUtils
     from src.infra.io.log_output.run_metadata import RunMetadata
 
 
@@ -68,25 +68,6 @@ class BaselineResult:
 
     commit: str | None
     skip_reason: str | None = None
-
-
-@dataclass(frozen=True)
-class DiffResult:
-    """Result of diff generation between commits.
-
-    Attributes:
-        baseline_commit: The base commit SHA.
-        head_commit: The target commit SHA.
-        stat: Statistics about the diff.
-        content: The actual diff content (may be truncated for large diffs).
-        truncated: Whether the diff was truncated due to size.
-    """
-
-    baseline_commit: str
-    head_commit: str
-    stat: DiffStat
-    content: str
-    truncated: bool
 
 
 @dataclass(frozen=True)
@@ -178,12 +159,121 @@ class CumulativeReviewRunner:
 
         Returns:
             CumulativeReviewResult with status, findings, and new baseline.
-
-        Raises:
-            NotImplementedError: This method is a skeleton pending T007-T008.
         """
-        raise NotImplementedError(
-            "CumulativeReviewRunner.run_review not yet implemented"
+        from src.domain.validation.config import TriggerType as TT
+        from src.pipeline.review_runner import ReviewInput
+
+        # 1. Determine baseline
+        baseline_result = await self._get_baseline_commit(
+            trigger_type, config, run_metadata, issue_id=issue_id, epic_id=epic_id
+        )
+        if baseline_result.commit is None:
+            self._logger.info(
+                "Skipping cumulative review: %s", baseline_result.skip_reason
+            )
+            return CumulativeReviewResult(
+                status="skipped",
+                findings=(),
+                new_baseline_commit=None,
+                skip_reason=baseline_result.skip_reason,
+            )
+
+        baseline = baseline_result.commit
+
+        # 2. Get diff stat
+        diff_stat = await self._git_utils.get_diff_stat(baseline, "HEAD")
+
+        # 3. Empty diff check
+        if diff_stat.total_lines == 0:
+            self._logger.info("No changes since baseline %s, skipping review", baseline)
+            return CumulativeReviewResult(
+                status="skipped",
+                findings=(),
+                new_baseline_commit=None,
+                skip_reason="empty_diff",
+            )
+
+        # 4. Large diff warning
+        if diff_stat.total_lines > self.LARGE_DIFF_THRESHOLD:
+            self._logger.warning(
+                "Large diff (%d lines, %d files) - proceeding with review",
+                diff_stat.total_lines,
+                len(diff_stat.files_changed),
+            )
+
+        # 5. Get current HEAD for baseline update
+        head_commit = await self._git_utils.get_head_commit()
+
+        # 6. Execute review via ReviewRunner
+        # Create ReviewInput with the commit range (baseline to HEAD)
+        review_input = ReviewInput(
+            issue_id=issue_id or f"cumulative-{trigger_type.value}",
+            repo_path=repo_path,
+            commit_shas=[baseline, head_commit],
+            issue_description=f"Cumulative review for {trigger_type.value}",
+        )
+
+        try:
+            review_output = await self._review_runner.run_review(
+                review_input, interrupt_event
+            )
+        except Exception as e:
+            self._logger.error("Review execution failed: %s", e)
+            # execution_error - do NOT update baseline
+            return CumulativeReviewResult(
+                status="failed",
+                findings=(),
+                new_baseline_commit=None,
+                skip_reason=f"execution_error: {e}",
+            )
+
+        # 7. Extract findings from review result
+        findings: list[ReviewFinding] = []
+        for issue in review_output.result.issues:
+            findings.append(
+                ReviewFinding(
+                    file=getattr(issue, "file", "unknown"),
+                    line_start=getattr(issue, "line_start", 0),
+                    line_end=getattr(issue, "line_end", 0),
+                    priority=getattr(issue, "priority", 2),
+                    title=getattr(issue, "title", "Review finding"),
+                    body=getattr(issue, "body", ""),
+                    reviewer="cumulative_review",
+                )
+            )
+
+        # 8. Create beads issues for findings
+        for finding in findings:
+            try:
+                await self._beads_client.create_issue_async(
+                    title=finding.title,
+                    description=finding.body,
+                    priority=f"P{finding.priority}",
+                    tags=["code-review", trigger_type.value],
+                )
+            except Exception as e:
+                self._logger.warning("Failed to create beads issue: %s", e)
+
+        # 9. Update baseline on completion (success or completed_with_findings)
+        # Key format: "run_end" or "epic_completion:<epic_id>"
+        if trigger_type == TT.EPIC_COMPLETION and epic_id:
+            key = f"epic_completion:{epic_id}"
+        elif trigger_type == TT.RUN_END:
+            key = "run_end"
+        else:
+            key = trigger_type.value
+
+        run_metadata.last_cumulative_review_commits[key] = head_commit
+        self._logger.debug("Updated baseline for %s to %s", key, head_commit)
+
+        # Both passed and failed reviews are "success" status - review completed
+        # "failed" status is reserved for execution errors
+        status: Literal["success", "skipped", "failed"] = "success"
+
+        return CumulativeReviewResult(
+            status=status,
+            findings=tuple(findings),
+            new_baseline_commit=head_commit,
         )
 
     async def _get_baseline_commit(
@@ -318,24 +408,3 @@ class CumulativeReviewRunner:
             )
 
         return BaselineResult(commit=baseline)
-
-    def _generate_diff(
-        self,
-        baseline_commit: str,
-        head_commit: str,
-        repo_path: Path,
-    ) -> DiffResult:
-        """Generate diff between baseline and HEAD commits.
-
-        Args:
-            baseline_commit: The base commit SHA.
-            head_commit: The target commit SHA (typically HEAD).
-            repo_path: Path to the git repository.
-
-        Returns:
-            DiffResult with statistics and content.
-
-        Raises:
-            NotImplementedError: This method is a skeleton pending T008.
-        """
-        raise NotImplementedError()

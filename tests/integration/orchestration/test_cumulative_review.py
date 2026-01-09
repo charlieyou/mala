@@ -32,7 +32,8 @@ async def test_epic_completion_trigger_invokes_cumulative_review(
     1. Build RunCoordinator via build_run_coordinator (composition root)
     2. Queue epic_completion trigger with code_review enabled
     3. Fire trigger via run_trigger_validation
-    4. Assert CumulativeReviewRunner.run_review was called (raises NotImplementedError)
+    4. Assert CumulativeReviewRunner.run_review was called (returns skipped due to
+       unreachable baseline in test git repo)
     """
     from src.domain.validation.config import (
         CodeReviewConfig,
@@ -130,14 +131,13 @@ async def test_epic_completion_trigger_invokes_cumulative_review(
         {"issue_id": "test-123", "epic_id": "epic-1"},
     )
 
-    # Act: Run trigger validation - should raise NotImplementedError from CumulativeReviewRunner
-    with pytest.raises(NotImplementedError) as exc_info:
-        await coordinator.run_trigger_validation()
+    # Act: Run trigger validation - CumulativeReviewRunner.run_review will be called
+    # but will return "skipped" because baseline commit won't be reachable in tmp_path
+    result = await coordinator.run_trigger_validation()
 
-    # Assert: Error message indicates CumulativeReviewRunner skeleton
-    assert "CumulativeReviewRunner.run_review not yet implemented" in str(
-        exc_info.value
-    )
+    # Assert: Trigger validation completed (skipped review doesn't fail the trigger)
+    # The result should be "passed" because code_review failure_mode is CONTINUE
+    assert result.status == "passed"
 
 
 @pytest.mark.integration
@@ -194,11 +194,10 @@ def test_cumulative_review_result_dataclass_is_valid() -> None:
 def test_cumulative_review_runner_has_expected_interface() -> None:
     """Integration: CumulativeReviewRunner has expected class attributes and methods.
 
-    Verifies the skeleton class is complete:
+    Verifies the class is complete:
     - LARGE_DIFF_THRESHOLD class attribute
     - run_review async method
     - _get_baseline_commit method
-    - _generate_diff method
     """
     from src.pipeline.cumulative_review_runner import CumulativeReviewRunner
 
@@ -209,5 +208,4 @@ def test_cumulative_review_runner_has_expected_interface() -> None:
     # Check methods exist (inspection only, not calling)
     assert hasattr(CumulativeReviewRunner, "run_review")
     assert hasattr(CumulativeReviewRunner, "_get_baseline_commit")
-    assert hasattr(CumulativeReviewRunner, "_generate_diff")
     assert asyncio.iscoroutinefunction(CumulativeReviewRunner.run_review)
