@@ -223,6 +223,16 @@ class CumulativeReviewRunner:
         except Exception as e:
             self._logger.error("Review execution failed: %s", e)
             # execution_error - do NOT update baseline
+            # Respect failure_mode: CONTINUE returns skipped, others return failed
+            from src.domain.validation.config import FailureMode
+
+            if config.failure_mode == FailureMode.CONTINUE:
+                return CumulativeReviewResult(
+                    status="skipped",
+                    findings=(),
+                    new_baseline_commit=None,
+                    skip_reason=f"execution_error: {e}",
+                )
             return CumulativeReviewResult(
                 status="failed",
                 findings=(),

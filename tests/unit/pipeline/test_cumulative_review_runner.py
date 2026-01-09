@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from src.domain.validation.config import TriggerType
+from src.domain.validation.config import FailureMode, TriggerType
 from src.pipeline.cumulative_review_runner import CumulativeReviewRunner
 
 if TYPE_CHECKING:
@@ -26,6 +26,7 @@ class FakeCodeReviewConfig:
     """Fake CodeReviewConfig for testing."""
 
     baseline: str | None = None
+    failure_mode: FailureMode = FailureMode.ABORT
 
 
 @dataclass
@@ -675,6 +676,33 @@ class TestRunReviewExecution:
         )
 
         assert result.status == "failed"
+        assert "execution_error" in (result.skip_reason or "")
+        assert result.new_baseline_commit is None
+        # Baseline should NOT be updated
+        assert "run_end" not in metadata.last_cumulative_review_commits
+
+    @pytest.mark.asyncio
+    async def test_execution_error_with_continue_failure_mode_returns_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        """Execution error with failure_mode=CONTINUE returns skipped status."""
+        git_utils = FakeGitUtils(head_commit="abc1234")
+        review_runner = FakeReviewRunner(should_raise=RuntimeError("Review failed"))
+        runner, _, _, _ = make_runner(git_utils=git_utils, review_runner=review_runner)
+        metadata = FakeRunMetadata(
+            run_start_commit="baseline-sha",
+            last_cumulative_review_commits={},
+        )
+
+        result = await runner.run_review(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(failure_mode=FailureMode.CONTINUE),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+            repo_path=tmp_path,
+            interrupt_event=asyncio.Event(),
+        )
+
+        assert result.status == "skipped"
         assert "execution_error" in (result.skip_reason or "")
         assert result.new_baseline_commit is None
         # Baseline should NOT be updated
