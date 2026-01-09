@@ -1,17 +1,17 @@
 """Integration tests for CumulativeReviewRunner skeleton.
 
 This test verifies:
-1. RunCoordinator wiring triggers CumulativeReviewRunner via real path
+1. build_run_coordinator wires CumulativeReviewRunner via composition root
 2. CumulativeReviewRunner.run_review raises NotImplementedError (skeleton behavior)
 3. CumulativeReviewResult dataclass is properly defined
 
-The test exercises: trigger firing → RunCoordinator → CumulativeReviewRunner
+The test exercises: trigger firing → RunCoordinator (via build_run_coordinator) →
+CumulativeReviewRunner
 """
 
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
@@ -28,8 +28,8 @@ async def test_epic_completion_trigger_invokes_cumulative_review(
 ) -> None:
     """Integration: epic_completion trigger with code_review fires CumulativeReviewRunner.
 
-    This test exercises the real wiring path:
-    1. Create RunCoordinator with CumulativeReviewRunner wired
+    This test exercises the composition root wiring path:
+    1. Build RunCoordinator via build_run_coordinator (composition root)
     2. Queue epic_completion trigger with code_review enabled
     3. Fire trigger via run_trigger_validation
     4. Assert CumulativeReviewRunner.run_review was called (raises NotImplementedError)
@@ -42,65 +42,16 @@ async def test_epic_completion_trigger_invokes_cumulative_review(
         EpicDepth,
         FailureMode,
         FireOn,
+        PromptValidationCommands,
         TriggerType,
         ValidationConfig,
         ValidationTriggersConfig,
     )
-    from src.infra.clients.beads_client import BeadsClient
-    from src.infra.git_utils import DiffStat
-    from src.pipeline.cumulative_review_runner import (
-        CumulativeReviewRunner,
-        GitUtilsProtocol,
-    )
-    from src.pipeline.review_runner import ReviewRunner, ReviewRunnerConfig
-    from src.pipeline.run_coordinator import RunCoordinator, RunCoordinatorConfig
-    from tests.fakes import FakeEnvConfig
+    from src.orchestration.orchestration_wiring import build_run_coordinator
+    from src.orchestration.types import PipelineConfig, RuntimeDeps
+    from tests.fakes import FakeEnvConfig, FakeIssueProvider
     from tests.fakes.command_runner import FakeCommandRunner
     from tests.fakes.lock_manager import FakeLockManager
-
-    # Create minimal dependencies
-    test_logger = logging.getLogger("test_cumulative_review")
-
-    # Create fake git_utils that satisfies the protocol
-    class FakeGitUtils(GitUtilsProtocol):
-        async def get_diff_stat(
-            self,
-            repo_path: Path,
-            from_commit: str,
-            to_commit: str = "HEAD",
-        ) -> DiffStat:
-            return DiffStat(total_lines=100, files_changed=["test.py"])
-
-        async def get_diff_content(
-            self,
-            repo_path: Path,
-            from_commit: str,
-            to_commit: str = "HEAD",
-        ) -> str:
-            return "diff content"
-
-    # ReviewRunner with mock CodeReviewer
-    mock_code_reviewer = MagicMock()
-    review_runner = ReviewRunner(
-        code_reviewer=mock_code_reviewer,
-        config=ReviewRunnerConfig(),
-    )
-
-    # BeadsClient
-    beads_client = BeadsClient(repo_path=tmp_path)
-
-    # Create CumulativeReviewRunner
-    cumulative_runner = CumulativeReviewRunner(
-        review_runner=review_runner,
-        git_utils=FakeGitUtils(),
-        beads_client=beads_client,
-        logger=test_logger,
-    )
-
-    # Create mock run_metadata
-    mock_run_metadata = MagicMock()
-    mock_run_metadata.run_start_commit = "abc123"
-    mock_run_metadata.last_cumulative_review_commits = {}
 
     # Create code_review config for trigger
     code_review_config = CodeReviewConfig(
@@ -126,26 +77,52 @@ async def test_epic_completion_trigger_invokes_cumulative_review(
         ),
     )
 
-    # Create command runner
-    command_runner = FakeCommandRunner(allow_unregistered=True)
-
-    config = RunCoordinatorConfig(
-        repo_path=tmp_path,
-        timeout_seconds=60,
-        validation_config=validation_config,
-    )
-
-    # Create RunCoordinator with CumulativeReviewRunner wired
-    coordinator = RunCoordinator(
-        config=config,
-        gate_checker=MagicMock(),
-        command_runner=command_runner,
+    # Create RuntimeDeps with minimal fakes
+    mock_code_reviewer = MagicMock()
+    runtime = RuntimeDeps(
+        evidence_check=MagicMock(),
+        code_reviewer=mock_code_reviewer,
+        beads=FakeIssueProvider({}),
+        event_sink=MagicMock(),
+        command_runner=FakeCommandRunner(allow_unregistered=True),
         env_config=FakeEnvConfig(),
         lock_manager=FakeLockManager(),
-        sdk_client_factory=MagicMock(),
-        cumulative_review_runner=cumulative_runner,
-        run_metadata=mock_run_metadata,
+        mala_config=MagicMock(),
     )
+
+    # Create PipelineConfig
+    pipeline = PipelineConfig(
+        repo_path=tmp_path,
+        timeout_seconds=60,
+        max_gate_retries=3,
+        max_review_retries=3,
+        disabled_validations=set(),
+        context_restart_threshold=0.9,
+        context_limit=200000,
+        prompts=MagicMock(fixer_prompt="Fix the issue"),
+        prompt_validation_commands=PromptValidationCommands(
+            lint="echo lint",
+            format="echo format",
+            typecheck="echo typecheck",
+            test="echo test",
+            custom_commands=(),
+        ),
+        validation_config=validation_config,
+        validation_config_missing=False,
+    )
+
+    # Build RunCoordinator via composition root - this wires CumulativeReviewRunner
+    coordinator = build_run_coordinator(
+        runtime=runtime,
+        pipeline=pipeline,
+        sdk_client_factory=MagicMock(),
+    )
+
+    # Create mock run_metadata and wire it
+    mock_run_metadata = MagicMock()
+    mock_run_metadata.run_start_commit = "abc123"
+    mock_run_metadata.last_cumulative_review_commits = {}
+    coordinator.run_metadata = mock_run_metadata
 
     # Queue epic_completion trigger
     coordinator.queue_trigger_validation(

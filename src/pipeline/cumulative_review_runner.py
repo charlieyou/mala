@@ -19,43 +19,17 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     import asyncio
     from pathlib import Path
 
+    from src.core.protocols import IssueProvider
     from src.domain.validation.config import CodeReviewConfig, TriggerType
-    from src.infra.clients.beads_client import BeadsClient
-    from src.infra.git_utils import DiffStat
+    from src.infra.git_utils import DiffStat, GitUtils
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.pipeline.review_runner import ReviewRunner
-
-
-class GitUtilsProtocol(Protocol):
-    """Protocol for git operations needed by CumulativeReviewRunner.
-
-    This protocol wraps the async functions from src.infra.git_utils module
-    to enable dependency injection for testing.
-    """
-
-    async def get_diff_stat(
-        self,
-        repo_path: Path,
-        from_commit: str,
-        to_commit: str = "HEAD",
-    ) -> DiffStat:
-        """Get diff statistics between commits."""
-        ...
-
-    async def get_diff_content(
-        self,
-        repo_path: Path,
-        from_commit: str,
-        to_commit: str = "HEAD",
-    ) -> str:
-        """Get diff content between commits."""
-        ...
 
 
 logger = logging.getLogger(__name__)
@@ -151,8 +125,8 @@ class CumulativeReviewRunner:
     def __init__(
         self,
         review_runner: ReviewRunner,
-        git_utils: GitUtilsProtocol,
-        beads_client: BeadsClient,
+        git_utils: GitUtils,
+        beads_client: IssueProvider,
         logger: logging.Logger,
     ) -> None:
         """Initialize CumulativeReviewRunner.
@@ -160,7 +134,7 @@ class CumulativeReviewRunner:
         Args:
             review_runner: ReviewRunner for executing code reviews.
             git_utils: Git operations provider for diff generation.
-            beads_client: Client for beads issue operations.
+            beads_client: IssueProvider for beads issue operations.
             logger: Logger instance for this runner.
         """
         self._review_runner = review_runner

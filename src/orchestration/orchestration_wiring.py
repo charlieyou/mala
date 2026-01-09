@@ -43,6 +43,7 @@ from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,
 )
+from src.pipeline.cumulative_review_runner import CumulativeReviewRunner
 
 if TYPE_CHECKING:
     import asyncio
@@ -99,6 +100,33 @@ def build_review_runner(runtime: RuntimeDeps, pipeline: PipelineConfig) -> Revie
     )
 
 
+def build_cumulative_review_runner(
+    runtime: RuntimeDeps,
+    pipeline: PipelineConfig,
+) -> CumulativeReviewRunner:
+    """Build CumulativeReviewRunner for code_review in triggers."""
+    import logging
+
+    from src.infra.git_utils import GitUtils
+
+    # Build ReviewRunner for code reviews
+    review_runner = ReviewRunner(
+        code_reviewer=runtime.code_reviewer,
+        config=ReviewRunnerConfig(),
+        gate_checker=runtime.evidence_check,
+    )
+
+    # Build GitUtils wrapper
+    git_utils = GitUtils(repo_path=pipeline.repo_path)
+
+    return CumulativeReviewRunner(
+        review_runner=review_runner,
+        git_utils=git_utils,
+        beads_client=runtime.beads,
+        logger=logging.getLogger("mala.cumulative_review"),
+    )
+
+
 def build_run_coordinator(
     runtime: RuntimeDeps,
     pipeline: PipelineConfig,
@@ -116,6 +144,10 @@ def build_run_coordinator(
         validation_config=pipeline.validation_config,
         validation_config_missing=pipeline.validation_config_missing,
     )
+
+    # Build CumulativeReviewRunner for code_review in triggers
+    cumulative_review_runner = build_cumulative_review_runner(runtime, pipeline)
+
     return RunCoordinator(
         config=config,
         gate_checker=runtime.evidence_check,
@@ -124,6 +156,7 @@ def build_run_coordinator(
         lock_manager=runtime.lock_manager,
         sdk_client_factory=sdk_client_factory,
         event_sink=runtime.event_sink,
+        cumulative_review_runner=cumulative_review_runner,
     )
 
 

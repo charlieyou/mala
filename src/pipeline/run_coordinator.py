@@ -1363,10 +1363,20 @@ class RunCoordinator:
 
         # Check if CumulativeReviewRunner is wired
         if self.cumulative_review_runner is None:
+            if self.event_sink is not None:
+                self.event_sink.on_warning(
+                    f"code_review enabled for {trigger_type.value} but "
+                    "CumulativeReviewRunner not wired"
+                )
             return
 
         # Check if run_metadata is available
         if self.run_metadata is None:
+            if self.event_sink is not None:
+                self.event_sink.on_warning(
+                    f"code_review enabled for {trigger_type.value} but "
+                    "run_metadata not available"
+                )
             return
 
         # Run cumulative code review

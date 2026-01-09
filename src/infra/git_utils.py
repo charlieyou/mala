@@ -286,3 +286,49 @@ async def get_diff_content(
         raise ValueError(f"git diff failed: {result.stderr}")
 
     return result.stdout
+
+
+@dataclass
+class GitUtils:
+    """Wrapper class for git operations needed by CumulativeReviewRunner.
+
+    This class wraps the module-level async functions to enable dependency
+    injection for testing. It holds the repo_path as instance state.
+
+    Attributes:
+        repo_path: Path to the git repository.
+    """
+
+    repo_path: Path
+
+    async def get_diff_stat(
+        self,
+        from_commit: str,
+        to_commit: str = "HEAD",
+    ) -> DiffStat:
+        """Get diff statistics between commits.
+
+        Args:
+            from_commit: The base commit.
+            to_commit: The target commit (default: HEAD).
+
+        Returns:
+            DiffStat with total lines changed and list of changed files.
+        """
+        return await get_diff_stat(self.repo_path, from_commit, to_commit)
+
+    async def get_diff_content(
+        self,
+        from_commit: str,
+        to_commit: str = "HEAD",
+    ) -> str:
+        """Get unified diff content between commits.
+
+        Args:
+            from_commit: The base commit.
+            to_commit: The target commit (default: HEAD).
+
+        Returns:
+            Unified diff string.
+        """
+        return await get_diff_content(self.repo_path, from_commit, to_commit)
