@@ -1022,7 +1022,7 @@ class MalaOrchestrator:
         self._run_task = None
         self._interrupt_event = None
 
-    def _check_and_queue_periodic_trigger(self, result: IssueResult) -> None:
+    def _check_and_queue_periodic_trigger(self, _result: IssueResult) -> None:
         """Check if periodic trigger should fire and queue it if so.
 
         Called after each non-epic issue completion. Increments
@@ -1030,11 +1030,12 @@ class MalaOrchestrator:
         the count reaches the configured interval.
 
         Note: This method is only called for non-epic issues because the main
-        loop filters out epics via IssueManager._apply_filters. Epic completions
+        loop filters out epics via IssueManager.apply_filters. Epic completions
         are handled separately through EpicVerificationCoordinator.
 
         Args:
-            result: The completed issue's result.
+            _result: The completed issue's result (unused; kept for signature
+                consistency with other completion callbacks).
         """
         # Increment counter for non-epic completions
         # (Epics are filtered upstream and never reach this path)

@@ -1183,6 +1183,9 @@ class TestPeriodicTriggerIntegration:
     - Trigger fires at exact interval multiples (5, 10, 15...)
     - interval=1 fires on every issue completion
     - Counter < interval means no trigger fired
+
+    These tests use the REAL MalaOrchestrator._check_and_queue_periodic_trigger
+    method bound to a minimal mock object to ensure production code is tested.
     """
 
     def _make_orchestrator_with_periodic_trigger(
@@ -1190,11 +1193,16 @@ class TestPeriodicTriggerIntegration:
         tmp_path: Path,
         interval: int,
     ) -> tuple:
-        """Create an orchestrator with periodic trigger configured.
+        """Create a mock orchestrator using the real periodic trigger method.
+
+        Uses MalaOrchestrator._check_and_queue_periodic_trigger bound to a
+        minimal mock object, ensuring we test the actual production code.
 
         Returns:
-            Tuple of (orchestrator, trigger_queue list).
+            Tuple of (mock_orchestrator, trigger_queue list).
         """
+        from src.orchestration.orchestrator import MalaOrchestrator
+
         # Create validation config with periodic trigger
         config = ValidationConfig(
             commands=CommandsConfig(),
@@ -1207,8 +1215,7 @@ class TestPeriodicTriggerIntegration:
             ),
         )
 
-        # Create a minimal orchestrator with mocked dependencies
-        # We need to mock just enough to test _check_and_queue_periodic_trigger
+        # Create minimal mock with required attributes for _check_and_queue_periodic_trigger
         class FakeRunCoordinator:
             def __init__(self) -> None:
                 self._trigger_queue: list[tuple] = []
@@ -1218,33 +1225,22 @@ class TestPeriodicTriggerIntegration:
             ) -> None:
                 self._trigger_queue.append((trigger_type, context))
 
-        class FakeOrchestrator:
+        class MockOrchestrator:
+            """Mock with minimal attributes needed by the real method."""
+
             def __init__(self) -> None:
                 self._validation_config = config
                 self._non_epic_completed_count = 0
                 self.run_coordinator = FakeRunCoordinator()
 
-            def _check_and_queue_periodic_trigger(self, result: IssueResult) -> None:
-                """Direct copy of orchestrator method for isolated testing."""
-                self._non_epic_completed_count += 1
+        mock_orch = MockOrchestrator()
+        # Bind the REAL method from MalaOrchestrator to our mock
+        bound_method = MalaOrchestrator._check_and_queue_periodic_trigger.__get__(
+            mock_orch, MockOrchestrator
+        )
+        mock_orch._check_and_queue_periodic_trigger = bound_method  # type: ignore[attr-defined]
 
-                triggers = (
-                    self._validation_config.validation_triggers
-                    if self._validation_config
-                    else None
-                )
-                if triggers is None or triggers.periodic is None:
-                    return
-
-                interval = triggers.periodic.interval
-                if self._non_epic_completed_count % interval == 0:
-                    self.run_coordinator.queue_trigger_validation(
-                        TriggerType.PERIODIC,
-                        {"completed_count": self._non_epic_completed_count},
-                    )
-
-        orchestrator = FakeOrchestrator()
-        return orchestrator, orchestrator.run_coordinator._trigger_queue
+        return mock_orch, mock_orch.run_coordinator._trigger_queue
 
     def _make_issue_result(self, issue_id: str) -> IssueResult:
         """Create a minimal IssueResult for testing."""
@@ -1340,7 +1336,9 @@ class TestPeriodicTriggerIntegration:
 
     def test_no_periodic_config_no_trigger(self, tmp_path: Path) -> None:
         """No periodic trigger configured means counter increments but no trigger."""
-        # Create orchestrator without periodic trigger
+        from src.orchestration.orchestrator import MalaOrchestrator
+
+        # Create config without periodic trigger
         config = ValidationConfig(
             commands=CommandsConfig(),
             validation_triggers=ValidationTriggersConfig(
@@ -1357,29 +1355,18 @@ class TestPeriodicTriggerIntegration:
             ) -> None:
                 self._trigger_queue.append((trigger_type, context))
 
-        class FakeOrchestrator:
+        class MockOrchestrator:
             def __init__(self) -> None:
                 self._validation_config = config
                 self._non_epic_completed_count = 0
                 self.run_coordinator = FakeRunCoordinator()
 
-            def _check_and_queue_periodic_trigger(self, result: IssueResult) -> None:
-                self._non_epic_completed_count += 1
-                triggers = (
-                    self._validation_config.validation_triggers
-                    if self._validation_config
-                    else None
-                )
-                if triggers is None or triggers.periodic is None:
-                    return
-                interval = triggers.periodic.interval
-                if self._non_epic_completed_count % interval == 0:
-                    self.run_coordinator.queue_trigger_validation(
-                        TriggerType.PERIODIC,
-                        {"completed_count": self._non_epic_completed_count},
-                    )
-
-        orchestrator = FakeOrchestrator()
+        mock_orch = MockOrchestrator()
+        # Bind the REAL method
+        bound_method = MalaOrchestrator._check_and_queue_periodic_trigger.__get__(
+            mock_orch, MockOrchestrator
+        )
+        mock_orch._check_and_queue_periodic_trigger = bound_method  # type: ignore[attr-defined]
 
         # Complete 5 issues
         for i in range(5):
@@ -1389,12 +1376,12 @@ class TestPeriodicTriggerIntegration:
                 success=True,
                 summary="done",
             )
-            orchestrator._check_and_queue_periodic_trigger(result)
+            mock_orch._check_and_queue_periodic_trigger(result)  # type: ignore[arg-type]
 
         # Counter should increment
-        assert orchestrator._non_epic_completed_count == 5
+        assert mock_orch._non_epic_completed_count == 5
         # No triggers queued
-        assert len(orchestrator.run_coordinator._trigger_queue) == 0
+        assert len(mock_orch.run_coordinator._trigger_queue) == 0
 
 
 class TestEpicFilteringForPeriodicTrigger:
