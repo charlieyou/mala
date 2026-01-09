@@ -153,7 +153,7 @@ async def get_diff_stat(
 ) -> DiffStat:
     """Get diff statistics between commits.
 
-    Uses: git diff --stat <from_commit> <to_commit>
+    Uses: git diff --numstat <from_commit> <to_commit>
 
     Args:
         repo_path: Path to the git repository.
@@ -171,38 +171,70 @@ async def get_diff_stat(
     runner = CommandRunner(cwd=repo_path, timeout_seconds=timeout)
 
     result = await runner.run_async(
-        ["git", "diff", "--stat", from_commit, to_commit],
+        ["git", "diff", "--numstat", from_commit, to_commit],
     )
 
     if not result.ok:
-        raise ValueError(f"git diff --stat failed: {result.stderr}")
+        raise ValueError(f"git diff --numstat failed: {result.stderr}")
 
     stdout = result.stdout.strip()
     if not stdout:
         return DiffStat(total_lines=0, files_changed=[])
 
-    lines = stdout.split("\n")
     files_changed: list[str] = []
     total_lines = 0
 
-    for line in lines:
-        # File lines look like: "src/foo.py | 10 ++++---"
-        # Summary line looks like: "3 files changed, 10 insertions(+), 5 deletions(-)"
-        if "|" in line:
-            # Extract filename (before the |)
-            filename = line.split("|")[0].strip()
+    for line in stdout.split("\n"):
+        # numstat format: "added\tremoved\tfilename"
+        # For binary files: "-\t-\tfilename"
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            added, removed, filename = parts[0], parts[1], parts[2]
+            # Handle renames: "old_name -> new_name" -> use new_name
+            if " => " in filename:
+                # Format: "{prefix/}{old => new}{/suffix}" or "old => new"
+                filename = _parse_rename_path(filename)
             files_changed.append(filename)
-        elif "changed" in line:
-            # Parse summary line for total lines
-            # Matches: "X insertions(+)" and/or "Y deletions(-)"
-            insertions_match = re.search(r"(\d+) insertion", line)
-            deletions_match = re.search(r"(\d+) deletion", line)
-            if insertions_match:
-                total_lines += int(insertions_match.group(1))
-            if deletions_match:
-                total_lines += int(deletions_match.group(1))
+            # Binary files show "-" for added/removed
+            if added != "-":
+                total_lines += int(added)
+            if removed != "-":
+                total_lines += int(removed)
 
     return DiffStat(total_lines=total_lines, files_changed=files_changed)
+
+
+def _parse_rename_path(path: str) -> str:
+    """Parse git rename path to extract the new filename.
+
+    Handles formats like:
+    - "old.py => new.py"
+    - "{old.py => new.py}"
+    - "dir/{old.py => new.py}"
+    - "{dir1 => dir2}/file.py"
+    """
+    # Simple case: "old => new"
+    if " => " in path and "{" not in path:
+        return path.split(" => ")[1]
+
+    # Complex case with braces: extract and reconstruct
+    # e.g., "dir/{old.py => new.py}" -> "dir/new.py"
+    result = []
+    i = 0
+    while i < len(path):
+        if path[i] == "{":
+            # Find closing brace
+            end = path.index("}", i)
+            inner = path[i + 1 : end]
+            # Extract the "new" part after " => "
+            if " => " in inner:
+                new_part = inner.split(" => ")[1]
+                result.append(new_part)
+            i = end + 1
+        else:
+            result.append(path[i])
+            i += 1
+    return "".join(result)
 
 
 async def get_diff_content(

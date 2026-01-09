@@ -402,18 +402,15 @@ class TestGetDiffStat:
     async def test_returns_stat_for_changes(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Should parse insertions and deletions from git diff --stat output."""
-        stat_output = (
-            " src/foo.py | 10 +++++-----\n"
-            " src/bar.py |  5 +++++\n"
-            " 2 files changed, 10 insertions(+), 5 deletions(-)\n"
-        )
+        """Should parse insertions and deletions from git diff --numstat output."""
+        # numstat format: "added\tremoved\tfilename"
+        numstat_output = "5\t5\tsrc/foo.py\n5\t0\tsrc/bar.py\n"
         mock_runner = MockCommandRunner(
             responses=[
                 CommandResult(
-                    command=["git", "diff", "--stat"],
+                    command=["git", "diff", "--numstat"],
                     returncode=0,
-                    stdout=stat_output,
+                    stdout=numstat_output,
                 ),
             ]
         )
@@ -423,9 +420,9 @@ class TestGetDiffStat:
 
         result = await git_utils.get_diff_stat(Path("/repo"), "abc123", "def456")
 
-        assert result.total_lines == 15  # 10 insertions + 5 deletions
+        assert result.total_lines == 15  # 5+5 + 5+0
         assert result.files_changed == ["src/foo.py", "src/bar.py"]
-        assert mock_runner.calls[0] == ["git", "diff", "--stat", "abc123", "def456"]
+        assert mock_runner.calls[0] == ["git", "diff", "--numstat", "abc123", "def456"]
 
     @pytest.mark.asyncio
     async def test_empty_diff_returns_zero(
@@ -435,7 +432,7 @@ class TestGetDiffStat:
         mock_runner = MockCommandRunner(
             responses=[
                 CommandResult(
-                    command=["git", "diff", "--stat"],
+                    command=["git", "diff", "--numstat"],
                     returncode=0,
                     stdout="",
                 ),
@@ -452,15 +449,13 @@ class TestGetDiffStat:
     @pytest.mark.asyncio
     async def test_insertions_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Should handle diffs with only insertions."""
-        stat_output = (
-            " src/new.py | 20 ++++++++++++++++++++\n 1 file changed, 20 insertions(+)\n"
-        )
+        numstat_output = "20\t0\tsrc/new.py\n"
         mock_runner = MockCommandRunner(
             responses=[
                 CommandResult(
-                    command=["git", "diff", "--stat"],
+                    command=["git", "diff", "--numstat"],
                     returncode=0,
-                    stdout=stat_output,
+                    stdout=numstat_output,
                 ),
             ]
         )
@@ -476,15 +471,13 @@ class TestGetDiffStat:
     @pytest.mark.asyncio
     async def test_deletions_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Should handle diffs with only deletions."""
-        stat_output = (
-            " src/old.py | 15 ---------------\n 1 file changed, 15 deletions(-)\n"
-        )
+        numstat_output = "0\t15\tsrc/old.py\n"
         mock_runner = MockCommandRunner(
             responses=[
                 CommandResult(
-                    command=["git", "diff", "--stat"],
+                    command=["git", "diff", "--numstat"],
                     returncode=0,
-                    stdout=stat_output,
+                    stdout=numstat_output,
                 ),
             ]
         )
@@ -505,7 +498,7 @@ class TestGetDiffStat:
         mock_runner = MockCommandRunner(
             responses=[
                 CommandResult(
-                    command=["git", "diff", "--stat"],
+                    command=["git", "diff", "--numstat"],
                     returncode=128,
                     stdout="",
                     stderr="fatal: bad revision 'invalid'",
@@ -516,7 +509,7 @@ class TestGetDiffStat:
             infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
         )
 
-        with pytest.raises(ValueError, match="git diff --stat failed"):
+        with pytest.raises(ValueError, match="git diff --numstat failed"):
             await git_utils.get_diff_stat(Path("/repo"), "invalid")
 
     @pytest.mark.asyncio
@@ -525,7 +518,7 @@ class TestGetDiffStat:
         mock_runner = MockCommandRunner(
             responses=[
                 CommandResult(
-                    command=["git", "diff", "--stat"],
+                    command=["git", "diff", "--numstat"],
                     returncode=0,
                     stdout="",
                 ),
@@ -537,7 +530,50 @@ class TestGetDiffStat:
 
         await git_utils.get_diff_stat(Path("/repo"), "abc123")
 
-        assert mock_runner.calls[0] == ["git", "diff", "--stat", "abc123", "HEAD"]
+        assert mock_runner.calls[0] == ["git", "diff", "--numstat", "abc123", "HEAD"]
+
+    @pytest.mark.asyncio
+    async def test_handles_binary_files(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Should handle binary files (shown as - for added/removed)."""
+        numstat_output = "10\t5\tsrc/code.py\n-\t-\timage.png\n"
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff", "--numstat"],
+                    returncode=0,
+                    stdout=numstat_output,
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.get_diff_stat(Path("/repo"), "abc123")
+
+        assert result.total_lines == 15  # Binary files don't add to line count
+        assert result.files_changed == ["src/code.py", "image.png"]
+
+    @pytest.mark.asyncio
+    async def test_handles_renames(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Should extract new filename from rename format."""
+        numstat_output = "0\t0\told.py => new.py\n5\t3\tdir/{old.py => new.py}\n"
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff", "--numstat"],
+                    returncode=0,
+                    stdout=numstat_output,
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.get_diff_stat(Path("/repo"), "abc123")
+
+        assert result.files_changed == ["new.py", "dir/new.py"]
 
 
 class TestGetDiffContent:
