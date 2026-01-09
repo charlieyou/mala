@@ -1,9 +1,5 @@
 # Roadmap to v1
 
-Bugs:
-* --resume does not continue a session 
-* fixers should be aware of the global validation commands so they can replicate runs
-
 New Features
 * Add code review to global validations
 
@@ -38,6 +34,8 @@ Tech Debt
 * Use pydantic-settings, or some other library for config
 * Separate module used by reviewer and epic verifier for smart ticket creation: good descriptions, dependency awareness, deduplication
 * Run architecture reviews on submodules
+
+* Generalize the quality gate commands into applying to different stages, eg. epic verification. Similar to what was done with the global validations
 
 # Ideas
 * Inter-agent communication
