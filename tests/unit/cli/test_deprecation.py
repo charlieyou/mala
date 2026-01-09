@@ -20,6 +20,7 @@ from src.cli.cli import _check_cli_reviewer_type_deprecation
 from src.orchestration.factory import (
     _check_legacy_review_config,
     _extract_reviewer_config,
+    _get_new_code_review_reviewer_type,
     _has_new_code_review_config,
 )
 
@@ -251,6 +252,45 @@ class TestLegacyReviewConfigDeprecation:
         assert "DEPRECATION" in caplog.text
 
 
+class TestGetNewCodeReviewReviewerType:
+    """Test _get_new_code_review_reviewer_type helper."""
+
+    def test_returns_none_for_none_config(self) -> None:
+        """Returns None when config is None."""
+        assert _get_new_code_review_reviewer_type(None) is None
+
+    def test_returns_none_when_no_triggers(self) -> None:
+        """Returns None when validation_triggers is None."""
+        config = MockValidationConfig(validation_triggers=None)
+        assert _get_new_code_review_reviewer_type(config) is None
+
+    def test_returns_none_when_code_review_disabled(self) -> None:
+        """Returns None when code_review exists but is disabled."""
+        config = MockValidationConfig(
+            validation_triggers=MockTriggersConfig(
+                session_end=MockTriggerConfig(
+                    code_review=MockCodeReviewConfig(
+                        enabled=False, reviewer_type="cerberus"
+                    )
+                )
+            )
+        )
+        assert _get_new_code_review_reviewer_type(config) is None
+
+    def test_returns_reviewer_type_from_enabled_code_review(self) -> None:
+        """Returns reviewer_type from enabled code_review config."""
+        config = MockValidationConfig(
+            validation_triggers=MockTriggersConfig(
+                session_end=MockTriggerConfig(
+                    code_review=MockCodeReviewConfig(
+                        enabled=True, reviewer_type="agent_sdk"
+                    )
+                )
+            )
+        )
+        assert _get_new_code_review_reviewer_type(config) == "agent_sdk"
+
+
 class TestExtractReviewerConfigPrecedence:
     """Test reviewer_type precedence in _extract_reviewer_config."""
 
@@ -263,19 +303,23 @@ class TestExtractReviewerConfigPrecedence:
         result = _extract_reviewer_config(config, cli_reviewer_type="cerberus")
         assert result.reviewer_type == "cerberus"
 
-    def test_config_used_when_new_code_review_present(self) -> None:
-        """Config reviewer_type used when new code_review config exists."""
+    def test_trigger_code_review_reviewer_type_used(self) -> None:
+        """Trigger's code_review.reviewer_type is used, not top-level."""
         config = MockValidationConfig(
-            reviewer_type="agent_sdk",
+            reviewer_type="agent_sdk",  # Top-level legacy value (should be ignored)
             validation_triggers=MockTriggersConfig(
                 session_end=MockTriggerConfig(
-                    code_review=MockCodeReviewConfig(enabled=True)
+                    code_review=MockCodeReviewConfig(
+                        enabled=True,
+                        reviewer_type="cerberus",  # This should be used
+                    )
                 )
             ),
         )
         # CLI override should be ignored when new config exists
-        result = _extract_reviewer_config(config, cli_reviewer_type="cerberus")
-        assert result.reviewer_type == "agent_sdk"
+        result = _extract_reviewer_config(config, cli_reviewer_type="agent_sdk")
+        # Should use the trigger's code_review.reviewer_type, not top-level or CLI
+        assert result.reviewer_type == "cerberus"
 
     def test_legacy_config_used_when_no_cli_override(self) -> None:
         """Legacy config reviewer_type used when no CLI override."""
@@ -311,16 +355,19 @@ class TestConfigPrecedence:
     def test_new_config_takes_precedence_over_cli(self) -> None:
         """New code_review config takes precedence over CLI --reviewer-type."""
         config = MockValidationConfig(
-            reviewer_type="agent_sdk",
+            reviewer_type="agent_sdk",  # Top-level (ignored)
             validation_triggers=MockTriggersConfig(
                 session_end=MockTriggerConfig(
-                    code_review=MockCodeReviewConfig(enabled=True)
+                    code_review=MockCodeReviewConfig(
+                        enabled=True,
+                        reviewer_type="cerberus",  # This wins
+                    )
                 )
             ),
         )
         # Even with CLI override, new config wins
-        result = _extract_reviewer_config(config, cli_reviewer_type="cerberus")
-        assert result.reviewer_type == "agent_sdk"
+        result = _extract_reviewer_config(config, cli_reviewer_type="agent_sdk")
+        assert result.reviewer_type == "cerberus"
 
     def test_cli_takes_precedence_over_legacy_config(self) -> None:
         """CLI --reviewer-type takes precedence over legacy top-level config."""

@@ -152,6 +152,35 @@ def _derive_config(
     )
 
 
+def _get_new_code_review_reviewer_type(
+    validation_config: object | None,
+) -> str | None:
+    """Get reviewer_type from first enabled code_review in triggers.
+
+    Args:
+        validation_config: A ValidationConfig instance, or None.
+
+    Returns:
+        The reviewer_type from the first enabled code_review config,
+        or None if no enabled code_review config exists.
+    """
+    if validation_config is None:
+        return None
+
+    triggers = getattr(validation_config, "validation_triggers", None)
+    if triggers is None:
+        return None
+
+    for trigger_name in ("session_end", "epic_completion", "run_end", "periodic"):
+        trigger = getattr(triggers, trigger_name, None)
+        if trigger is not None:
+            code_review = getattr(trigger, "code_review", None)
+            if code_review is not None and getattr(code_review, "enabled", False):
+                # Return the reviewer_type from this code_review config
+                return getattr(code_review, "reviewer_type", "cerberus")
+    return None
+
+
 def _has_new_code_review_config(validation_config: object | None) -> bool:
     """Check if validation_config has any enabled code_review in triggers.
 
@@ -161,20 +190,7 @@ def _has_new_code_review_config(validation_config: object | None) -> bool:
     Returns:
         True if any trigger has code_review.enabled=True.
     """
-    if validation_config is None:
-        return False
-
-    triggers = getattr(validation_config, "validation_triggers", None)
-    if triggers is None:
-        return False
-
-    for trigger_name in ("session_end", "epic_completion", "run_end", "periodic"):
-        trigger = getattr(triggers, trigger_name, None)
-        if trigger is not None:
-            code_review = getattr(trigger, "code_review", None)
-            if code_review is not None and getattr(code_review, "enabled", False):
-                return True
-    return False
+    return _get_new_code_review_reviewer_type(validation_config) is not None
 
 
 def _check_legacy_review_config(validation_config: object | None) -> None:
@@ -215,7 +231,7 @@ def _extract_reviewer_config(
     """Extract reviewer configuration from a ValidationConfig.
 
     Applies precedence:
-    1. New code_review config in triggers (uses config's reviewer_type)
+    1. New code_review config in triggers (uses trigger's code_review.reviewer_type)
     2. CLI --reviewer-type (deprecated, used as fallback)
     3. Top-level reviewer_type in config (legacy)
 
@@ -226,18 +242,19 @@ def _extract_reviewer_config(
     Returns:
         _ReviewerConfig with reviewer settings.
     """
-    # Determine effective reviewer_type with precedence
-    config_reviewer_type = getattr(validation_config, "reviewer_type", "agent_sdk")
-
-    if _has_new_code_review_config(validation_config):
-        # New config takes precedence - use config's reviewer_type
-        effective_reviewer_type = config_reviewer_type
+    # Check for new code_review config first - it takes precedence
+    new_config_reviewer_type = _get_new_code_review_reviewer_type(validation_config)
+    if new_config_reviewer_type is not None:
+        # New config takes precedence - use trigger's code_review.reviewer_type
+        effective_reviewer_type = new_config_reviewer_type
     elif cli_reviewer_type is not None:
         # CLI override (deprecated) takes precedence over legacy config
         effective_reviewer_type = cli_reviewer_type
     else:
-        # Fall back to config's reviewer_type (legacy or default)
-        effective_reviewer_type = config_reviewer_type
+        # Fall back to top-level config's reviewer_type (legacy or default)
+        effective_reviewer_type = getattr(
+            validation_config, "reviewer_type", "agent_sdk"
+        )
 
     return _ReviewerConfig(
         reviewer_type=effective_reviewer_type,
