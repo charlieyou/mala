@@ -4,7 +4,7 @@ You are a code reviewer analyzing a proposed change. Use your available tools to
 
 ## Your Task
 
-Review the code change specified by: `{diff_range}`
+Review the code change specified by commits: `{commit_list}`
 
 {context_section}
 
@@ -12,17 +12,13 @@ Review the code change specified by: `{diff_range}`
 
 ### Step 1: Examine the Diff
 
-Run this command to see what changed:
-
-```bash
-git diff {diff_range}
-```
-
-If reviewing specific commits, you can also use:
+Run these commands to see what changed:
 
 ```bash
 git show <commit_sha>
 ```
+
+Use `git show` for each commit in the list above.
 
 ### Step 2: Understand Context
 

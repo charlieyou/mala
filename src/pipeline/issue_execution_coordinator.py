@@ -89,7 +89,7 @@ class CoordinatorConfig:
         max_issues: Maximum issues to process (None = unlimited).
         epic_id: Only process tasks under this epic.
         only_ids: List of issue IDs to process exclusively.
-        prioritize_wip: Prioritize in_progress issues before open issues.
+        include_wip: Include in_progress issues in scope (no ordering changes).
         focus: Legacy flag for epic grouping (use order_preference instead).
         orphans_only: Only process issues with no parent epic.
         order_preference: Issue ordering (focus, epic-priority, issue-priority, or input).
@@ -99,7 +99,7 @@ class CoordinatorConfig:
     max_issues: int | None = None
     epic_id: str | None = None
     only_ids: list[str] | None = None
-    prioritize_wip: bool = False
+    include_wip: bool = False
     focus: bool = True
     orphans_only: bool = False
     order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY
@@ -113,7 +113,7 @@ class IssueExecutionCoordinator:
     - Concurrent agent limiting (max_agents)
     - Issue count limiting (max_issues)
     - Epic and only_ids filtering
-    - WIP prioritization and focus grouping
+    - WIP inclusion and focus grouping
 
     The coordinator uses callbacks for agent spawning and finalization,
     keeping SDK-specific logic in the orchestrator.
@@ -330,7 +330,7 @@ class IssueExecutionCoordinator:
                             epic_id=self.config.epic_id,
                             only_ids=self.config.only_ids,
                             suppress_warn_ids=suppress_warn_ids,
-                            prioritize_wip=self.config.prioritize_wip,
+                            include_wip=self.config.include_wip,
                             focus=self.config.focus,
                             orphans_only=self.config.orphans_only,
                             order_preference=self.config.order_preference,

@@ -1,7 +1,7 @@
 """Tests for AgentSDKReviewer.
 
 Tests the Agent SDK code reviewer implementation including:
-- Empty diff short-circuiting (both diff_range and commit_shas)
+- Empty commit list short-circuiting
 - Successful review scenarios (PASS/FAIL/NEEDS_WORK)
 - JSON parsing with fallbacks
 - Error handling (timeout, SDK failures)
@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 from src.infra.clients.agent_sdk_review import AgentSDKReviewer
 from tests.fakes.event_sink import FakeEventSink
@@ -65,36 +65,6 @@ def _make_issue(
 class TestEmptyDiffSkipsAgentSession:
     """Test that empty diffs short-circuit before agent session."""
 
-    async def test_empty_diff_skips_agent_session(self, tmp_path: Path) -> None:
-        """Empty diff range returns PASS without running agent session."""
-        factory = FakeSDKClientFactory()
-        reviewer = AgentSDKReviewer(
-            repo_path=tmp_path,
-            review_agent_prompt="Review the code",
-            sdk_client_factory=factory,
-        )
-
-        # Mock git diff --stat to return empty output
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout="", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer("HEAD~1..HEAD")
-
-        # Should pass without issues
-        assert result.passed is True
-        assert result.issues == []
-        assert result.parse_error is None
-        assert result.fatal_error is False
-
-        # No SDK client should have been created
-        assert len(factory.clients) == 0
-
     async def test_empty_commit_sha_list_skips_agent_session(
         self, tmp_path: Path
     ) -> None:
@@ -107,43 +77,7 @@ class TestEmptyDiffSkipsAgentSession:
         )
 
         # Empty list should short-circuit without calling git diff
-        result = await reviewer(
-            "HEAD~1..HEAD",
-            commit_shas=[],  # Empty list
-        )
-
-        # Should pass without issues
-        assert result.passed is True
-        assert result.issues == []
-
-        # No SDK client should have been created
-        assert len(factory.clients) == 0
-
-    async def test_commit_sha_with_empty_diff_skips_agent_session(
-        self, tmp_path: Path
-    ) -> None:
-        """Commit SHA with empty diff returns PASS without running agent session."""
-        factory = FakeSDKClientFactory()
-        reviewer = AgentSDKReviewer(
-            repo_path=tmp_path,
-            review_agent_prompt="Review the code",
-            sdk_client_factory=factory,
-        )
-
-        # Mock git diff --stat for commit SHA to return empty
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout="", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer(
-                "HEAD~1..HEAD",
-                commit_shas=["abc123"],
-            )
+        result = await reviewer(commit_shas=[])
 
         # Should pass without issues
         assert result.passed is True
@@ -175,17 +109,9 @@ class TestSuccessfulReview:
             sdk_client_factory=factory,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            # Non-empty diff
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+        result = await reviewer(
+            commit_shas=["abc123"], claude_session_id="test-session"
+        )
 
         assert result.passed is True
         assert result.issues == []
@@ -220,16 +146,9 @@ class TestSuccessfulReview:
             sdk_client_factory=factory,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+        result = await reviewer(
+            commit_shas=["abc123"], claude_session_id="test-session"
+        )
 
         assert result.passed is False
         assert len(result.issues) == 1
@@ -254,16 +173,9 @@ class TestSuccessfulReview:
             sdk_client_factory=factory,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+        result = await reviewer(
+            commit_shas=["abc123"], claude_session_id="test-session"
+        )
 
         assert result.passed is False
 
@@ -291,16 +203,9 @@ class TestMalformedJsonResponse:
             event_sink=event_sink,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+        result = await reviewer(
+            commit_shas=["abc123"], claude_session_id="test-session"
+        )
 
         assert result.passed is False
         assert result.parse_error is not None
@@ -326,16 +231,9 @@ class TestMalformedJsonResponse:
             sdk_client_factory=factory,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+        result = await reviewer(
+            commit_shas=["abc123"], claude_session_id="test-session"
+        )
 
         assert result.passed is True
         assert result.parse_error is None
@@ -359,18 +257,11 @@ class TestTimeoutHandling:
             event_sink=event_sink,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer(
-                "HEAD~1..HEAD", claude_session_id="test-session", timeout=10
-            )
+        result = await reviewer(
+            commit_shas=["abc123"],
+            claude_session_id="test-session",
+            timeout=10,
+        )
 
         assert result.passed is False
         assert result.parse_error is not None
@@ -398,16 +289,9 @@ class TestSDKClientCreationFailure:
             event_sink=event_sink,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+        result = await reviewer(
+            commit_shas=["abc123"], claude_session_id="test-session"
+        )
 
         assert result.passed is False
         assert result.parse_error is not None
@@ -443,20 +327,11 @@ class TestContextFileLoading:
             sdk_client_factory=factory,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer(
-                "HEAD~1..HEAD",
-                context_file=context_file,
-                claude_session_id="test-session",
-            )
+        result = await reviewer(
+            commit_shas=["abc123"],
+            context_file=context_file,
+            claude_session_id="test-session",
+        )
 
         assert result.passed is True
         # Verify context was included in query
@@ -489,16 +364,9 @@ class TestPriorityConversion:
             sdk_client_factory=factory,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+        result = await reviewer(
+            commit_shas=["abc123"], claude_session_id="test-session"
+        )
 
         assert result.issues[0].priority == 1
 
@@ -523,16 +391,9 @@ class TestPriorityConversion:
             sdk_client_factory=factory,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+        result = await reviewer(
+            commit_shas=["abc123"], claude_session_id="test-session"
+        )
 
         assert result.issues[0].priority == 2
 
@@ -561,16 +422,9 @@ class TestP0Priority:
             sdk_client_factory=factory,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+        result = await reviewer(
+            commit_shas=["abc123"], claude_session_id="test-session"
+        )
 
         assert result.passed is False
         assert len(result.issues) == 1
@@ -597,16 +451,9 @@ class TestP0Priority:
             sdk_client_factory=factory,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+        result = await reviewer(
+            commit_shas=["abc123"], claude_session_id="test-session"
+        )
 
         assert result.passed is False
         assert len(result.issues) == 1
@@ -638,16 +485,9 @@ class TestMissingRequiredFields:
             event_sink=event_sink,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+        result = await reviewer(
+            commit_shas=["abc123"], claude_session_id="test-session"
+        )
 
         assert result.passed is False
         assert result.parse_error is not None
@@ -675,16 +515,9 @@ class TestMissingRequiredFields:
             event_sink=event_sink,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+        result = await reviewer(
+            commit_shas=["abc123"], claude_session_id="test-session"
+        )
 
         # Should fail because consensus_verdict is missing (empty string)
         assert result.passed is False
@@ -714,16 +547,9 @@ class TestMissingRequiredFields:
             event_sink=event_sink,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+        result = await reviewer(
+            commit_shas=["abc123"], claude_session_id="test-session"
+        )
 
         assert result.passed is False
         assert result.parse_error is not None
@@ -754,16 +580,9 @@ class TestTelemetryWarning:
             event_sink=event_sink,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+        result = await reviewer(
+            commit_shas=["abc123"], claude_session_id="test-session"
+        )
 
         assert result.passed is False
         # Check that warning was emitted
@@ -792,16 +611,9 @@ class TestStructuredOutput:
             sdk_client_factory=factory,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer("HEAD~1..HEAD", claude_session_id="test-session")
+        result = await reviewer(
+            commit_shas=["abc123"], claude_session_id="test-session"
+        )
 
         assert result.passed is True
         assert result.parse_error is None
@@ -811,6 +623,43 @@ class TestStructuredOutput:
         output_format = factory.created_options[0].get("output_format")
         assert isinstance(output_format, dict)
         assert output_format.get("type") == "json_schema"
+
+
+class TestSDKFlowConfiguration:
+    """Test that SDK options include correct flow identifier for subprocess logging."""
+
+    async def test_sdk_options_include_mala_sdk_flow_reviewer(
+        self, tmp_path: Path
+    ) -> None:
+        """SDK options should set MALA_SDK_FLOW=reviewer for subprocess logging.
+
+        The sdk_transport.py module logs 'sdk_subprocess_spawned pid=%s pgid=%s flow=%s'
+        when spawning a subprocess, using the MALA_SDK_FLOW env var for the flow value.
+        This test verifies AgentSDKReviewer sets the correct flow for PID capture/monitoring.
+        """
+        factory = FakeSDKClientFactory()
+        factory.configure_next_client(
+            messages=[
+                MagicMock(
+                    subtype="assistant",
+                    content=[{"type": "text", "text": _make_review_json("PASS")}],
+                )
+            ]
+        )
+
+        reviewer = AgentSDKReviewer(
+            repo_path=tmp_path,
+            review_agent_prompt="Review the code",
+            sdk_client_factory=factory,
+        )
+
+        await reviewer(commit_shas=["abc123"], claude_session_id="test-session")
+
+        # MALA_SDK_FLOW should be set to "reviewer" in SDK options
+        # This ensures sdk_transport.py logs: sdk_subprocess_spawned pid=%s pgid=%s flow=reviewer
+        assert factory.created_options, "Expected SDK options to be created"
+        env = factory.created_options[0].get("env")
+        assert env == {"MALA_SDK_FLOW": "reviewer"}
 
 
 class TestOverridesDisabledSetting:
@@ -848,7 +697,7 @@ class TestInterruptHandling:
 
         # Should return early without calling SDK
         result = await reviewer(
-            "HEAD~1..HEAD",
+            commit_shas=["abc123"],
             interrupt_event=interrupt_event,
         )
 
@@ -877,7 +726,7 @@ class TestInterruptHandling:
         interrupt_event.set()
 
         result = await reviewer(
-            "HEAD~1..HEAD",
+            commit_shas=["abc123"],
             interrupt_event=interrupt_event,
         )
 
@@ -913,20 +762,11 @@ class TestInterruptHandling:
         # Unset event should not interrupt
         interrupt_event = asyncio.Event()
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer(
-                "HEAD~1..HEAD",
-                claude_session_id="test-session",
-                interrupt_event=interrupt_event,
-            )
+        result = await reviewer(
+            commit_shas=["abc123"],
+            claude_session_id="test-session",
+            interrupt_event=interrupt_event,
+        )
 
         # Should complete normally
         assert result.passed is True
@@ -984,20 +824,11 @@ class TestInterruptHandling:
             sdk_client_factory=factory,
         )
 
-        with patch(
-            "src.infra.clients.agent_sdk_review.CommandRunner"
-        ) as mock_runner_class:
-            mock_runner = AsyncMock()
-            mock_runner.run_async.return_value = MagicMock(
-                returncode=0, stdout=" 1 file changed", stderr=""
-            )
-            mock_runner_class.return_value = mock_runner
-
-            result = await reviewer(
-                "HEAD~1..HEAD",
-                claude_session_id="test-session",
-                interrupt_event=interrupt_event,
-            )
+        result = await reviewer(
+            commit_shas=["abc123"],
+            claude_session_id="test-session",
+            interrupt_event=interrupt_event,
+        )
 
         # Should return interrupted=True because interrupt was set during iteration
         assert result.passed is False

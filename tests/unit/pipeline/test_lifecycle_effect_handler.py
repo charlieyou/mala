@@ -51,6 +51,7 @@ class FakeReviewResult:
     issues: list[FakeReviewIssue] = field(default_factory=list)
     parse_error: str | None = None
     fatal_error: bool = False
+    interrupted: bool = False
 
 
 def make_test_prompts() -> SessionPrompts:

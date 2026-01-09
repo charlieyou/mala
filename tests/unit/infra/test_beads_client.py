@@ -950,10 +950,10 @@ class TestGetReadyMethodsConsistentOrdering:
         assert ids_result == issues_ids
 
     @pytest.mark.asyncio
-    async def test_both_methods_consistent_with_prioritize_wip(
+    async def test_both_methods_consistent_with_include_wip(
         self, tmp_path: Path
     ) -> None:
-        """Both methods should have consistent ordering with prioritize_wip=True."""
+        """Both methods should have consistent ordering with include_wip=True."""
         beads = BeadsClient(tmp_path)
 
         ready_response = json.dumps(
@@ -994,15 +994,15 @@ class TestGetReadyMethodsConsistentOrdering:
             mp.setattr(beads, "_run_subprocess_async", mock_run)
             mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
 
-            ids_result = await beads.get_ready_async(prioritize_wip=True, focus=False)
+            ids_result = await beads.get_ready_async(include_wip=True, focus=False)
             issues_result = await beads.get_ready_issues_async(
-                prioritize_wip=True, focus=False
+                include_wip=True, focus=False
             )
 
-        # Both methods should return in_progress task first
+        # Both methods should return consistent ordering
         issues_ids = [str(i["id"]) for i in issues_result]
         assert ids_result == issues_ids
-        assert ids_result[0] == "task-2"  # WIP comes first
+        assert ids_result == ["task-1", "task-2"]
 
     @pytest.mark.asyncio
     async def test_both_methods_consistent_with_focus_false(
@@ -1112,19 +1112,19 @@ class TestPipelineSteps:
             {"id": "b", "priority": 1},
             {"id": "c", "priority": 2},
         ]
-        result = beads._sort_issues(issues, focus=False, prioritize_wip=False)
+        result = beads._sort_issues(issues, focus=False, include_wip=False)
         assert [r["id"] for r in result] == ["b", "c", "a"]
 
-    def test_sort_issues_prioritizes_wip(self, tmp_path: Path) -> None:
-        """_sort_issues puts in_progress first when prioritize_wip=True."""
+    def test_sort_issues_include_wip(self, tmp_path: Path) -> None:
+        """_sort_issues does not reorder based on include_wip."""
         beads = BeadsClient(tmp_path)
         issues = [
             {"id": "a", "priority": 1, "status": "open"},
             {"id": "b", "priority": 2, "status": "in_progress"},
             {"id": "c", "priority": 3, "status": "open"},
         ]
-        result = beads._sort_issues(issues, focus=False, prioritize_wip=True)
-        assert result[0]["id"] == "b"  # in_progress first
+        result = beads._sort_issues(issues, focus=False, include_wip=True)
+        assert [r["id"] for r in result] == ["a", "b", "c"]
 
     def test_sort_issues_by_epic_groups(self, tmp_path: Path) -> None:
         """_sort_issues groups by parent_epic when focus=True."""
@@ -1149,7 +1149,7 @@ class TestPipelineSteps:
                 "updated_at": "2025-01-01",
             },
         ]
-        result = beads._sort_issues(issues, focus=True, prioritize_wip=False)
+        result = beads._sort_issues(issues, focus=True, include_wip=False)
         # epic-2 has lower min priority (1), so it comes first
         assert result[0]["id"] == "b"
         # epic-1 issues grouped together
@@ -1162,7 +1162,7 @@ class TestWipFallbackOnReadyFailure:
 
     @pytest.mark.asyncio
     async def test_returns_wip_issues_when_ready_fails(self, tmp_path: Path) -> None:
-        """When bd ready fails but prioritize_wip=True, should still return WIP issues."""
+        """When bd ready fails but include_wip=True, should still return WIP issues."""
         beads = BeadsClient(tmp_path)
 
         async def mock_run_async(cmd: list[str]) -> CommandResult:
@@ -1181,7 +1181,7 @@ class TestWipFallbackOnReadyFailure:
             mp.setattr(
                 beads, "_run_subprocess_async", AsyncMock(side_effect=mock_run_async)
             )
-            result = await beads.get_ready_async(prioritize_wip=True)
+            result = await beads.get_ready_async(include_wip=True)
 
         assert result == ["wip-1"]
 
@@ -1189,7 +1189,7 @@ class TestWipFallbackOnReadyFailure:
     async def test_returns_empty_when_ready_fails_and_not_wip(
         self, tmp_path: Path
     ) -> None:
-        """When bd ready fails and prioritize_wip=False, should return empty list."""
+        """When bd ready fails and include_wip=False, should return empty list."""
         beads = BeadsClient(tmp_path)
 
         async def mock_run_async(cmd: list[str]) -> CommandResult:
@@ -1202,7 +1202,7 @@ class TestWipFallbackOnReadyFailure:
             mp.setattr(
                 beads, "_run_subprocess_async", AsyncMock(side_effect=mock_run_async)
             )
-            result = await beads.get_ready_async(prioritize_wip=False)
+            result = await beads.get_ready_async(include_wip=False)
 
         assert result == []
 
@@ -1573,10 +1573,10 @@ class TestOrphansOnlyIntegration:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_orphans_only_combined_with_prioritize_wip(
+    async def test_orphans_only_combined_with_include_wip(
         self, tmp_path: Path
     ) -> None:
-        """orphans_only should work correctly with prioritize_wip=True."""
+        """orphans_only should work correctly with include_wip=True."""
         beads = BeadsClient(tmp_path)
 
         ready_response = json.dumps(
@@ -1633,17 +1633,16 @@ class TestOrphansOnlyIntegration:
             mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
 
             result = await beads.get_ready_async(
-                orphans_only=True, prioritize_wip=True, focus=False
+                orphans_only=True, include_wip=True, focus=False
             )
 
-        # Should only include orphan tasks, and WIP should come first
+        # Should only include orphan tasks
         assert "wip-orphan" in result
         assert "orphan-1" in result
         assert "parented-1" not in result
         assert "wip-parented" not in result
         assert len(result) == 2
-        # WIP orphan should come first due to prioritize_wip
-        assert result[0] == "wip-orphan"
+        assert result == ["orphan-1", "wip-orphan"]
 
     @pytest.mark.asyncio
     async def test_orphans_only_treats_empty_string_parent_as_orphan(

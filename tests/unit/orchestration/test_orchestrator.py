@@ -803,7 +803,7 @@ class TestLockDirNestedCreation:
             epic_id: str | None = None,
             only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
+            include_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
             order_preference: OrderPreference = OrderPreference.FOCUS,
@@ -1672,7 +1672,7 @@ class TestEpicClosureAfterChildCompletion:
             epic_id: str | None = None,
             only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
+            include_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
             order_preference: OrderPreference = OrderPreference.FOCUS,
@@ -1826,7 +1826,7 @@ class TestEpicClosureAfterChildCompletion:
             epic_id: str | None = None,
             only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
+            include_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
             order_preference: OrderPreference = OrderPreference.FOCUS,
@@ -1929,7 +1929,7 @@ class TestEpicClosureAfterChildCompletion:
             epic_id: str | None = None,
             only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
+            include_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
             order_preference: OrderPreference = OrderPreference.FOCUS,
@@ -2106,7 +2106,7 @@ class TestFailedRunEvidenceCheckEvidence:
             epic_id: str | None = None,
             only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
+            include_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
             order_preference: OrderPreference = OrderPreference.FOCUS,
@@ -2188,285 +2188,6 @@ def _make_mock_log_provider(log_file: Path) -> object:
     return MockLogProvider()
 
 
-class TestBaselineCommitSelection:
-    """Tests for baseline commit selection in run_implementer.
-
-    Verifies that:
-    - Resumed sessions use git-derived baseline (parent of first issue commit)
-    - Fresh issues use current HEAD as baseline
-    """
-
-    @pytest.mark.asyncio
-    async def test_fresh_issue_uses_current_head_as_baseline(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
-    ) -> None:
-        """Fresh issue with no prior commits should use HEAD as baseline."""
-
-        # Create a fake log file for the session
-        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / "test-session.jsonl"
-        log_file.write_text('{"type": "result"}\n')
-
-        # Create mala.yaml for build_validation_spec
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-
-        orchestrator = make_orchestrator(
-            repo_path=tmp_path,
-            max_agents=1,
-            timeout_minutes=1,
-            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
-        )
-
-        # Track what baseline is used when running review
-        captured_baseline: list[str | None] = []
-
-        # Mock to capture the baseline passed to review
-        async def mock_run_review(
-            diff_range: str,
-            context_file: Path | None = None,
-            timeout: int = 300,
-            claude_session_id: str | None = None,
-            *,
-            commit_shas: Sequence[str] | None = None,
-        ) -> MagicMock:
-            # Extract baseline from diff_range (format: "baseline..HEAD")
-            baseline = diff_range.split("..")[0] if ".." in diff_range else None
-            captured_baseline.append(baseline)
-            result = MagicMock()
-            result.passed = True
-            result.issues = []
-            result.parse_error = None
-            result.fatal_error = False
-            result.review_log_path = None
-            return result
-
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client.query = AsyncMock()
-
-        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
-            yield ResultMessage(
-                subtype="result",
-                session_id="test-session",
-                result="ISSUE_NO_CHANGE: Already implemented",
-                duration_ms=1000,
-                duration_api_ms=800,
-                is_error=False,
-                num_turns=1,
-                total_cost_usd=0.01,
-                usage=None,
-            )
-
-        mock_client.receive_response = mock_receive_response
-
-        with (
-            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
-            patch(
-                "src.orchestration.orchestrator.get_git_branch_async",
-                return_value="main",
-            ),
-            # HEAD commit for fresh issue
-            patch(
-                "src.orchestration.orchestrator.get_git_commit_async",
-                return_value="headabc123",
-            ),
-            # No prior commits for this issue
-            patch(
-                "src.orchestration.orchestrator.get_baseline_for_issue",
-                return_value=None,
-            ),
-            patch.object(
-                orchestrator.code_reviewer,
-                "__call__",
-                side_effect=mock_run_review,
-            ),
-            patch.object(
-                orchestrator.beads,
-                "get_issue_description_async",
-                return_value="Test issue",
-            ),
-            patch.object(orchestrator, "_is_review_enabled", return_value=True),
-            patch.object(orchestrator._session_config, "review_enabled", True),
-        ):
-            await orchestrator.run_implementer("fresh-issue")
-
-        # For fresh issues, review should receive current HEAD as baseline
-        # (if review was called; if not, we verified get_git_commit_async was used)
-
-    @pytest.mark.asyncio
-    async def test_resumed_issue_uses_git_derived_baseline(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
-    ) -> None:
-        """Resumed issue should use parent of first issue commit as baseline."""
-
-        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / "resumed-session.jsonl"
-        log_file.write_text('{"type": "result"}\n')
-
-        orchestrator = make_orchestrator(
-            repo_path=tmp_path,
-            max_agents=1,
-            timeout_minutes=1,
-            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
-        )
-
-        captured_baseline: list[str | None] = []
-
-        async def mock_run_review(
-            diff_range: str,
-            context_file: Path | None = None,
-            timeout: int = 300,
-            claude_session_id: str | None = None,
-            *,
-            commit_shas: Sequence[str] | None = None,
-        ) -> MagicMock:
-            # Extract baseline from diff_range (format: "baseline..HEAD")
-            baseline = diff_range.split("..")[0] if ".." in diff_range else None
-            captured_baseline.append(baseline)
-            result = MagicMock()
-            result.passed = True
-            result.issues = []
-            result.parse_error = None
-            result.fatal_error = False
-            result.review_log_path = None
-            return result
-
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client.query = AsyncMock()
-
-        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
-            yield ResultMessage(
-                subtype="result",
-                session_id="resumed-session",
-                result="ISSUE_NO_CHANGE: Already implemented",
-                duration_ms=1000,
-                duration_api_ms=800,
-                is_error=False,
-                num_turns=1,
-                total_cost_usd=0.01,
-                usage=None,
-            )
-
-        mock_client.receive_response = mock_receive_response
-
-        with (
-            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
-            patch(
-                "src.orchestration.orchestrator.get_git_branch_async",
-                return_value="main",
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_git_commit_async",
-                return_value="currenthead",
-            ),
-            # Prior commits exist - return parent of first commit
-            patch(
-                "src.orchestration.orchestrator.get_baseline_for_issue",
-                return_value="parentofirst",
-            ),
-            patch.object(
-                orchestrator.code_reviewer,
-                "__call__",
-                side_effect=mock_run_review,
-            ),
-            patch.object(
-                orchestrator.beads,
-                "get_issue_description_async",
-                return_value="Test issue",
-            ),
-            patch.object(orchestrator, "_is_review_enabled", return_value=True),
-            patch.object(orchestrator._session_config, "review_enabled", True),
-        ):
-            await orchestrator.run_implementer("resumed-issue")
-
-        # For resumed issues, baseline should be the git-derived one (parent of first commit)
-        # not the current HEAD
-
-    @pytest.mark.asyncio
-    async def test_baseline_selection_priority(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
-    ) -> None:
-        """Verify get_baseline_for_issue is called first, HEAD used as fallback."""
-
-        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / "order-test-session.jsonl"
-        log_file.write_text('{"type": "result"}\n')
-
-        orchestrator = make_orchestrator(
-            repo_path=tmp_path,
-            max_agents=1,
-            timeout_minutes=1,
-            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
-        )
-
-        call_order: list[str] = []
-
-        async def mock_get_baseline_for_issue(
-            repo_path: Path, issue_id: str, timeout: float = 5.0
-        ) -> str | None:
-            call_order.append("get_baseline_for_issue")
-            return None  # Fresh issue
-
-        async def mock_get_git_commit_async(cwd: Path, timeout: float = 5.0) -> str:
-            call_order.append("get_git_commit_async")
-            return "fallbackhead"
-
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client.query = AsyncMock()
-
-        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
-            yield ResultMessage(
-                subtype="result",
-                session_id="order-test-session",
-                result="Done",
-                duration_ms=500,
-                duration_api_ms=400,
-                is_error=False,
-                num_turns=1,
-                total_cost_usd=0.005,
-                usage=None,
-            )
-
-        mock_client.receive_response = mock_receive_response
-
-        with (
-            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
-            patch(
-                "src.orchestration.orchestrator.get_git_branch_async",
-                return_value="main",
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_git_commit_async",
-                side_effect=mock_get_git_commit_async,
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_baseline_for_issue",
-                side_effect=mock_get_baseline_for_issue,
-            ),
-            patch.object(
-                orchestrator.beads,
-                "get_issue_description_async",
-                return_value="Test",
-            ),
-            patch.object(orchestrator, "_is_review_enabled", return_value=True),
-            patch.object(orchestrator._session_config, "review_enabled", True),
-        ):
-            await orchestrator.run_implementer("priority-test")
-
-        # get_baseline_for_issue should be called first
-        assert call_order[0] == "get_baseline_for_issue"
-        # When it returns None (fresh issue), get_git_commit_async should be called
-        assert "get_git_commit_async" in call_order
-
-
 class TestReviewUsesIssueCommits:
     """Tests that external review scopes to commits for the active issue.
 
@@ -2508,12 +2229,11 @@ class TestReviewUsesIssueCommits:
 
             async def __call__(
                 self,
-                diff_range: str,
                 context_file: Path | None = None,
                 timeout: int = 300,
                 claude_session_id: str | None = None,
                 *,
-                commit_shas: Sequence[str] | None = None,
+                commit_shas: Sequence[str],
                 interrupt_event: asyncio.Event | None = None,
             ) -> ReviewResult:
                 captured_commit_lists.append(commit_shas)
@@ -2587,10 +2307,6 @@ class TestReviewUsesIssueCommits:
             patch(
                 "src.orchestration.orchestrator.get_git_commit_async",
                 side_effect=mock_get_git_commit_async,
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_baseline_for_issue",
-                return_value=None,
             ),
             patch(
                 "src.infra.git_utils.get_issue_commits_async",
@@ -2854,7 +2570,7 @@ class TestOrchestratorFactory:
             max_gate_retries=5,
             max_review_retries=2,
             disable_validations={"coverage"},
-            prioritize_wip=True,
+            include_wip=True,
             focus=False,
         )
         orchestrator = create_orchestrator(config)
@@ -2867,7 +2583,7 @@ class TestOrchestratorFactory:
         assert orchestrator.only_ids == ["issue-1", "issue-2"]
         assert orchestrator.max_gate_retries == 5
         assert orchestrator.max_review_retries == 2
-        assert orchestrator.prioritize_wip is True
+        assert orchestrator.include_wip is True
         assert orchestrator.focus is False
 
     def test_create_orchestrator_with_custom_mala_config(self, tmp_path: Path) -> None:
@@ -2945,7 +2661,7 @@ class TestOrchestratorFactory:
         assert config.max_gate_retries == 3
         assert config.max_review_retries == 3
         assert config.disable_validations is None
-        assert config.prioritize_wip is False
+        assert config.include_wip is False
         assert config.focus is True
 
     def test_orchestrator_dependencies_all_optional(self) -> None:
@@ -3576,13 +3292,13 @@ class TestSigintEscalation:
 
 
 class TestSessionResume:
-    """Tests for session resume functionality when prioritize_wip is enabled."""
+    """Tests for session resume functionality when include_wip is enabled."""
 
     @pytest.mark.asyncio
     async def test_resume_calls_lookup_for_wip_issues(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """When prioritize_wip=True, lookup_prior_session should be called."""
+        """When include_wip=True, lookup_prior_session should be called."""
         fake_issues = FakeIssueProvider(
             {"test-issue": FakeIssue(id="test-issue", priority=1)}
         )
@@ -3600,7 +3316,7 @@ class TestSessionResume:
             issue_provider=fake_issues,
             runs_dir=runs_dir,
             lock_releaser=lambda _: 0,
-            prioritize_wip=True,
+            include_wip=True,
             log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
         )
 
@@ -3634,10 +3350,6 @@ class TestSessionResume:
             patch(
                 "src.orchestration.orchestrator.get_git_commit_async",
                 return_value="abc123",
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_baseline_for_issue",
-                return_value="baseline123",
             ),
             patch.object(
                 orchestrator.beads,
@@ -3673,7 +3385,7 @@ class TestSessionResume:
             issue_provider=fake_issues,
             runs_dir=runs_dir,
             lock_releaser=lambda _: 0,
-            prioritize_wip=True,
+            include_wip=True,
             strict_resume=True,
         )
 
@@ -3685,10 +3397,6 @@ class TestSessionResume:
             patch(
                 "src.orchestration.orchestrator.get_git_commit_async",
                 return_value="abc123",
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_baseline_for_issue",
-                return_value="baseline123",
             ),
             patch.object(
                 orchestrator.beads,
@@ -3728,7 +3436,7 @@ class TestSessionResume:
             issue_provider=fake_issues,
             runs_dir=runs_dir,
             lock_releaser=lambda _: 0,
-            prioritize_wip=True,
+            include_wip=True,
             strict_resume=False,  # Default lenient mode
             log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
         )
@@ -3763,10 +3471,6 @@ class TestSessionResume:
             patch(
                 "src.orchestration.orchestrator.get_git_commit_async",
                 return_value="abc123",
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_baseline_for_issue",
-                return_value="baseline123",
             ),
             patch.object(
                 orchestrator.beads,

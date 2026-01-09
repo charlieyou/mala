@@ -123,11 +123,11 @@ async def test_real_agent_review_flow(test_repo: Path) -> None:
     sdk_factory = SDKClientFactory()
 
     # Minimal review prompt focused on speed (minimize token usage)
-    review_prompt = """You are a code reviewer. Review the git diff and output JSON.
+    review_prompt = """You are a code reviewer. Review the listed commits and output JSON.
 
 Instructions:
-1. Run `git diff HEAD~1..HEAD` to see the changes
-2. Return a JSON verdict immediately after viewing the diff
+1. Run `git show <commit_sha>` for the commit provided
+2. Return a JSON verdict immediately after viewing the commit
 
 Output this exact JSON structure (no other text):
 ```json
@@ -151,12 +151,18 @@ Only use FAIL if there's a serious bug. This is a simple function, so PASS is ex
     )
 
     # Run review on the last commit
+    last_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=test_repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
     result = await reviewer(
-        diff_range="HEAD~1..HEAD",
         context_file=None,
         timeout=120,
         claude_session_id=None,
-        commit_shas=None,
+        commit_shas=[last_commit],
     )
 
     # Validate ReviewResult structure
@@ -184,8 +190,8 @@ Only use FAIL if there's a serious bug. This is a simple function, so PASS is ex
 
 
 @pytest.mark.asyncio
-async def test_empty_diff_skips_agent(test_repo: Path) -> None:
-    """Test that empty diff returns PASS without running agent."""
+async def test_empty_commit_list_skips_agent(test_repo: Path) -> None:
+    """Test that empty commit list returns PASS without running agent."""
     sdk_factory = SDKClientFactory()
 
     reviewer = AgentSDKReviewer(
@@ -197,16 +203,14 @@ async def test_empty_diff_skips_agent(test_repo: Path) -> None:
         default_timeout=60,
     )
 
-    # HEAD..HEAD is always empty (no changes)
     result = await reviewer(
-        diff_range="HEAD..HEAD",
         context_file=None,
         timeout=60,
         claude_session_id=None,
-        commit_shas=None,
+        commit_shas=[],
     )
 
-    # Empty diff should short-circuit to PASS
+    # Empty commit list should short-circuit to PASS
     assert result.passed is True
     assert result.issues == []
     assert result.parse_error is None

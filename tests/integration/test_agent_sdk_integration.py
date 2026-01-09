@@ -226,32 +226,17 @@ class TestReviewRunnerIntegration:
             ]
         )
 
-        # Patch SDKClientFactory, prompts loading, and CommandRunner
+        # Patch SDKClientFactory and prompts loading
         with (
             patch(
                 "src.infra.sdk_adapter.SDKClientFactory",
                 return_value=fake_sdk_factory,
             ),
             patch("src.domain.prompts.load_prompts") as mock_load_prompts,
-            patch(
-                "src.infra.clients.agent_sdk_review.CommandRunner"
-            ) as mock_runner_class,
         ):
             mock_prompts = MagicMock()
             mock_prompts.review_agent_prompt = "Review the code changes"
             mock_load_prompts.return_value = mock_prompts
-
-            # Mock git diff --stat to return non-empty (changes exist)
-            async def run_async_mock(*args: object, **kwargs: object) -> MagicMock:
-                return MagicMock(
-                    returncode=0,
-                    stdout=" 1 file changed, 10 insertions(+)",
-                    stderr="",
-                )
-
-            mock_runner = MagicMock()
-            mock_runner.run_async = run_async_mock
-            mock_runner_class.return_value = mock_runner
 
             # Create reviewer via factory path
             reviewer = _create_code_reviewer(
@@ -277,9 +262,8 @@ class TestReviewRunnerIntegration:
             review_input = ReviewInput(
                 issue_id="test-issue-1",
                 repo_path=tmp_path,
-                commit_sha="abc123",
                 issue_description="Test issue for integration",
-                baseline_commit="def456",
+                commit_shas=["abc123"],
                 claude_session_id="integration-test-session",
             )
 
@@ -296,6 +280,6 @@ class TestReviewRunnerIntegration:
             assert len(fake_sdk_factory.clients) == 1
             client = fake_sdk_factory.clients[0]
             assert len(client.queries) == 1
-            # Verify query included the diff range
+            # Verify query included the commit list
             query_text = client.queries[0][0]
-            assert "def456..abc123" in query_text
+            assert "abc123" in query_text

@@ -847,7 +847,7 @@ def test_run_validation_flags_defaults(
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_orch_config is not None
     assert DummyOrchestrator.last_orch_config.disable_validations is None
-    assert DummyOrchestrator.last_orch_config.prioritize_wip is False
+    assert DummyOrchestrator.last_orch_config.include_wip is False
     assert DummyOrchestrator.last_orch_config.focus is True
 
 
@@ -924,7 +924,7 @@ def test_run_order_epic_priority_composes_with_resume(
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_orch_config is not None
     assert DummyOrchestrator.last_orch_config.focus is True
-    assert DummyOrchestrator.last_orch_config.prioritize_wip is True
+    assert DummyOrchestrator.last_orch_config.include_wip is True
 
 
 def test_run_order_input_with_scope_ids(
@@ -1010,10 +1010,10 @@ def test_run_order_input_with_scope_epic_fails(
     ["--resume", "-r"],
     ids=["resume_long", "resume_short"],
 )
-def test_run_resume_flags_set_prioritize_wip(
+def test_run_resume_flags_set_include_wip(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, flag: str
 ) -> None:
-    """Test that --resume and -r set prioritize_wip=True via CLI parsing."""
+    """Test that --resume and -r set include_wip=True via CLI parsing."""
     from typer.testing import CliRunner
 
     cli = _reload_cli(monkeypatch)
@@ -1034,7 +1034,7 @@ def test_run_resume_flags_set_prioritize_wip(
 
     assert result.exit_code == 0
     assert DummyOrchestrator.last_orch_config is not None
-    assert DummyOrchestrator.last_orch_config.prioritize_wip is True
+    assert DummyOrchestrator.last_orch_config.include_wip is True
 
 
 def test_strict_without_resume_raises_error(
@@ -1488,7 +1488,7 @@ def test_dry_run_passes_flags_to_beads_client(
 
     assert DummyBeadsClient.last_kwargs is not None
     assert DummyBeadsClient.last_kwargs["only_ids"] == ["id-1", "id-2"]
-    assert DummyBeadsClient.last_kwargs["prioritize_wip"] is True
+    assert DummyBeadsClient.last_kwargs["include_wip"] is True
     assert DummyBeadsClient.last_kwargs["focus"] is False
 
 
@@ -1651,7 +1651,7 @@ class TestHandleDryRun:
 
         assert DummyBeadsClient.last_kwargs is not None
         assert DummyBeadsClient.last_kwargs["only_ids"] == ["id-1", "id-2"]
-        assert DummyBeadsClient.last_kwargs["prioritize_wip"] is True
+        assert DummyBeadsClient.last_kwargs["include_wip"] is True
         assert DummyBeadsClient.last_kwargs["focus"] is True
         assert (
             DummyBeadsClient.last_kwargs["order_preference"]

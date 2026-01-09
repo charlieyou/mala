@@ -78,7 +78,7 @@ class FakeIssueProvider:
         epic_id: str | None = None,
         only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
-        prioritize_wip: bool = False,
+        include_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
         order_preference: OrderPreference = OrderPreference.FOCUS,
@@ -90,9 +90,9 @@ class FakeIssueProvider:
         from src.infra.issue_manager import IssueManager
 
         exclude = exclude_ids or set()
-        # Collect eligible issues - include in_progress when prioritize_wip=True
+        # Collect eligible issues - include in_progress when include_wip=True
         # "open" status = ready for pickup (matches `bd ready` which returns open+unblocked)
-        eligible_statuses = {"open", "in_progress"} if prioritize_wip else {"open"}
+        eligible_statuses = {"open", "in_progress"} if include_wip else {"open"}
         candidates: list[dict[str, object]] = []
 
         for issue_id, issue in self.issues.items():
@@ -123,7 +123,7 @@ class FakeIssueProvider:
 
         # Delegate sorting to IssueManager for behavioral parity
         sorted_issues = IssueManager.sort_issues(
-            candidates, focus, prioritize_wip, only_ids, order_preference
+            candidates, focus, include_wip, only_ids, order_preference
         )
         return [str(i["id"]) for i in sorted_issues]
 

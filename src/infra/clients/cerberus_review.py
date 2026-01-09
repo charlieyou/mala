@@ -93,12 +93,11 @@ class DefaultReviewer:
 
     async def __call__(
         self,
-        diff_range: str,
         context_file: Path | None = None,
         timeout: int = 300,
         claude_session_id: str | None = None,
         *,
-        commit_shas: Sequence[str] | None = None,
+        commit_shas: Sequence[str],
         interrupt_event: asyncio.Event | None = None,
     ) -> ReviewResult:
         cli = self._get_cli()
@@ -125,12 +124,7 @@ class DefaultReviewer:
                 review_log_path=None,
             )
 
-        use_commits = bool(commit_shas)
-
-        # Check for empty diff (short-circuit without spawning review-gate)
-        # This avoids parse errors or failures when there's nothing to review.
-        # Only applies to range-based reviews; commit lists are reviewed directly.
-        if not use_commits and await cli.check_diff_empty(diff_range, runner):
+        if not commit_shas:
             return ReviewResult(
                 passed=True,
                 issues=[],
@@ -141,7 +135,6 @@ class DefaultReviewer:
 
         # Spawn code review
         spawn_result = await cli.spawn_code_review(
-            diff_range=diff_range,
             runner=runner,
             env=env,
             timeout=timeout,
@@ -167,10 +160,9 @@ class DefaultReviewer:
                     )
                 resolve_result = await cli.resolve_gate(runner, env)
                 if resolve_result.success:
-                    logger.info("Stale gate resolved: diff_range=%s", diff_range)
+                    logger.info("Stale gate resolved")
                     # Retry spawn after resolving the stale gate
                     spawn_result = await cli.spawn_code_review(
-                        diff_range=diff_range,
                         runner=runner,
                         env=env,
                         timeout=timeout,
@@ -239,9 +231,7 @@ class DefaultReviewer:
         )
 
         if wait_result.timed_out:
-            logger.warning(
-                "Review timeout: diff_range=%s after=%ds", diff_range, timeout
-            )
+            logger.warning("Review timeout after=%ds", timeout)
             return ReviewResult(
                 passed=False,
                 issues=[],
@@ -257,8 +247,7 @@ class DefaultReviewer:
             event_sink=self.event_sink,
         )
         logger.info(
-            "Review completed: diff_range=%s passed=%s issues=%d",
-            diff_range,
+            "Review completed: passed=%s issues=%d",
             result.passed,
             len(result.issues),
         )

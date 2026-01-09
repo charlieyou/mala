@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from src.infra.clients.review_output_parser import ReviewIssue, ReviewResult
-from src.infra.tools.command_runner import CommandRunner
 
 logger = logging.getLogger(__name__)
 
@@ -117,12 +116,11 @@ class AgentSDKReviewer:
 
     async def __call__(
         self,
-        diff_range: str,
         context_file: Path | None = None,
         timeout: int | None = None,
         claude_session_id: str | None = None,
         *,
-        commit_shas: Sequence[str] | None = None,
+        commit_shas: Sequence[str],
         interrupt_event: asyncio.Event | None = None,
     ) -> ReviewResult:
         """Run code review using Agent SDK.
@@ -131,7 +129,6 @@ class AgentSDKReviewer:
         provides review instructions, and collects JSON output.
 
         Args:
-            diff_range: Git diff range (e.g., "HEAD~1..HEAD").
             context_file: Optional file with implementation context.
             timeout: Maximum time for agent session (seconds). Uses default_timeout if None.
             claude_session_id: Optional session ID for telemetry.
@@ -160,56 +157,20 @@ class AgentSDKReviewer:
         # Use instance default_timeout if not specified
         effective_timeout = timeout if timeout is not None else self.default_timeout
 
-        # Check for empty diff (short-circuit without running agent)
-        # For commit_shas, check each commit individually
-        if commit_shas is not None:
-            # Empty list means no commits to review
-            if len(commit_shas) == 0:
-                return ReviewResult(
-                    passed=True,
-                    issues=[],
-                    parse_error=None,
-                    fatal_error=False,
-                    review_log_path=None,
-                )
-            all_empty = True
-            for sha in commit_shas:
-                try:
-                    if not await self._check_diff_empty(f"{sha}^..{sha}"):
-                        all_empty = False
-                        break
-                except TimeoutError:
-                    # Git diff check timed out - assume not empty, proceed with review
-                    logger.warning(f"Git diff check timed out for {sha}, proceeding")
-                    all_empty = False
-                    break
-            if all_empty:
-                return ReviewResult(
-                    passed=True,
-                    issues=[],
-                    parse_error=None,
-                    fatal_error=False,
-                    review_log_path=None,
-                )
-        else:
-            try:
-                if await self._check_diff_empty(diff_range):
-                    return ReviewResult(
-                        passed=True,
-                        issues=[],
-                        parse_error=None,
-                        fatal_error=False,
-                        review_log_path=None,
-                    )
-            except TimeoutError:
-                # Git diff check timed out - proceed with review anyway
-                logger.warning("Git diff check timed out, proceeding with review")
+        if not commit_shas:
+            return ReviewResult(
+                passed=True,
+                issues=[],
+                parse_error=None,
+                fatal_error=False,
+                review_log_path=None,
+            )
 
         # Load context file if provided
         context = await self._load_context(context_file)
 
         # Create review query
-        query = self._create_review_query(diff_range, context, commit_shas)
+        query = self._create_review_query(context, commit_shas)
 
         # Run agent session
         try:
@@ -270,23 +231,6 @@ class AgentSDKReviewer:
             review_log_path=log_path,
         )
 
-    async def _check_diff_empty(self, diff_range: str) -> bool:
-        """Check if diff range is empty using git diff --stat.
-
-        Args:
-            diff_range: Git diff range to check.
-
-        Returns:
-            True if the diff is empty, False otherwise.
-        """
-        runner = CommandRunner(cwd=self.repo_path)
-        result = await runner.run_async(
-            ["git", "diff", "--stat", diff_range],
-            timeout=30,
-        )
-        # Empty diff has no output
-        return result.returncode == 0 and not result.stdout.strip()
-
     async def _load_context(self, context_file: Path | None) -> str:
         """Load context file asynchronously.
 
@@ -304,16 +248,14 @@ class AgentSDKReviewer:
 
     def _create_review_query(
         self,
-        diff_range: str,
         context: str,
         commit_shas: Sequence[str] | None,
     ) -> str:
         """Construct review query for agent.
 
-        Combines review instructions, diff range, context, and tool usage guidance.
+        Combines review instructions, commit list, context, and tool usage guidance.
 
         Args:
-            diff_range: Git diff range to review.
             context: Context from context file.
             commit_shas: Optional specific commit SHAs.
 
@@ -321,19 +263,16 @@ class AgentSDKReviewer:
             Formatted query string for the agent.
         """
         prompt = self.review_agent_prompt
-        has_diff_placeholder = "{diff_range}" in prompt
+        has_commit_placeholder = "{commit_list}" in prompt
         has_context_placeholder = "{context_section}" in prompt
         context_section = f"## Implementation Context\n{context}" if context else ""
 
-        if has_diff_placeholder:
-            prompt = prompt.replace("{diff_range}", diff_range)
+        if has_commit_placeholder:
+            prompt = prompt.replace("{commit_list}", ", ".join(commit_shas or []))
         if has_context_placeholder:
             prompt = prompt.replace("{context_section}", context_section)
 
         parts = [prompt]
-
-        if not has_diff_placeholder:
-            parts.append(f"\n\n## Diff Range\n{diff_range}")
 
         if commit_shas:
             parts.append(f"\n\n## Specific Commits\n{', '.join(commit_shas)}")

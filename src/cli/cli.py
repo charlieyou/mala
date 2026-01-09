@@ -490,7 +490,7 @@ def _handle_dry_run(
     Args:
         repo_path: Path to the repository.
         scope_config: Parsed scope configuration (epic, ids, orphans, or all).
-        resume: Whether to prioritize WIP issues (--resume flag).
+        resume: Whether to include WIP issues (--resume flag).
         order_preference: Issue ordering preference (OrderPreference enum).
 
     Raises:
@@ -509,7 +509,7 @@ def _handle_dry_run(
         issues = await beads.get_ready_issues_async(
             epic_id=epic_id,
             only_ids=only_ids,
-            prioritize_wip=resume,
+            include_wip=resume,
             focus=focus,
             orphans_only=orphans_only,
             order_preference=order_preference,
@@ -681,7 +681,7 @@ def run(
         typer.Option(
             "--resume/--no-resume",
             "-r",
-            help="Prioritize in_progress issues AND attempt to resume their prior Claude sessions",
+            help="Include in_progress issues AND attempt to resume their prior Claude sessions",
             rich_help_panel="Scope & Ordering",
         ),
     ] = False,
@@ -934,7 +934,7 @@ def run(
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
         disable_validations=disable_set,
-        prioritize_wip=resume,
+        include_wip=resume,
         strict_resume=strict,
         focus=focus,
         order_preference=order_preference,

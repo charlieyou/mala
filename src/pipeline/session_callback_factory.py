@@ -14,6 +14,7 @@ Design principles:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from src.pipeline.agent_session_runner import SessionCallbacks
@@ -22,12 +23,36 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from src.core.protocols import GateResultProtocol, LogProvider, ReviewResultProtocol
-    from src.domain.lifecycle import RetryState
-    from src.domain.evidence_check import GateResult
+    from src.core.protocols import (
+        LogProvider,
+        MalaEventSink,
+    )
+    from src.domain.lifecycle import (
+        GateOutcome,
+        RetryState,
+        ReviewIssue,
+        ReviewOutcome,
+    )
     from src.domain.validation.spec import ValidationSpec
-    from src.core.protocols import MalaEventSink
     from src.pipeline.review_runner import ReviewRunner
+
+
+@dataclass
+class _InterruptedReviewResultWrapper:
+    """Wrapper for ReviewResultProtocol that ensures interrupted flag is correct.
+
+    When a review completes but SIGINT fires before the guard is checked,
+    the original result may have interrupted=False while the ReviewOutput
+    has interrupted=True. This wrapper copies all fields from the original
+    result but overrides interrupted to True.
+    """
+
+    passed: bool
+    issues: list[ReviewIssue]
+    parse_error: str | None
+    fatal_error: bool
+    review_log_path: Path | None = None
+    interrupted: bool = True
 
 
 class GateAsyncRunner(Protocol):
@@ -38,7 +63,7 @@ class GateAsyncRunner(Protocol):
         issue_id: str,
         log_path: Path,
         retry_state: RetryState,
-    ) -> tuple[GateResult | GateResultProtocol, int]:
+    ) -> tuple[GateOutcome, int]:
         """Run quality gate check asynchronously."""
         ...
 
@@ -120,43 +145,53 @@ class SessionCallbackFactory:
             SessionCallbacks with gate, review, and logging callbacks.
         """
         # Import here to avoid circular imports
-        from src.infra.git_utils import get_git_commit_async, get_issue_commits_async
+        from src.infra.git_utils import get_issue_commits_async
         from src.pipeline.review_runner import NoProgressInput, ReviewInput
 
         async def on_gate_check(
             issue_id: str, log_path: Path, retry_state: RetryState
-        ) -> tuple[GateResult | GateResultProtocol, int]:
-            return await self._gate_async_runner.run_gate_async(
+        ) -> tuple[GateOutcome, int]:
+            result, offset = await self._gate_async_runner.run_gate_async(
                 issue_id, log_path, retry_state
             )
+            return result, offset  # type: ignore[return-value]
 
         async def on_review_check(
             issue_id: str,
             issue_desc: str | None,
-            baseline: str | None,
             session_id: str | None,
-            retry_state: RetryState,
-        ) -> ReviewResultProtocol:
-            current_head = await get_git_commit_async(self._repo_path)
+            _retry_state: RetryState,  # unused after removing timestamp filtering
+        ) -> ReviewOutcome:
             self._review_runner.config.capture_session_log = self._is_verbose()
             commit_shas = await get_issue_commits_async(
                 self._repo_path,
                 issue_id,
-                since_timestamp=retry_state.baseline_timestamp,
             )
             review_input = ReviewInput(
                 issue_id=issue_id,
                 repo_path=self._repo_path,
-                commit_sha=current_head,
                 issue_description=issue_desc,
-                baseline_commit=baseline,
-                commit_shas=commit_shas or None,
+                commit_shas=commit_shas,
                 claude_session_id=session_id,
             )
             output = await self._review_runner.run_review(review_input)
             if output.session_log_path:
                 self._on_review_log_path(issue_id, output.session_log_path)
-            return output.result
+
+            # Propagate interrupted flag: if output.interrupted is True but
+            # the result's interrupted flag is False (e.g., SIGINT fired after
+            # reviewer completed), wrap the result to ensure correct flag.
+            result: ReviewOutcome = output.result  # type: ignore[assignment]
+            if output.interrupted and not getattr(result, "interrupted", False):
+                result = _InterruptedReviewResultWrapper(
+                    passed=result.passed,
+                    issues=list(result.issues),
+                    parse_error=result.parse_error,
+                    fatal_error=result.fatal_error,
+                    review_log_path=getattr(result, "review_log_path", None),
+                    interrupted=True,
+                )
+            return result
 
         def on_review_no_progress(
             log_path: Path,

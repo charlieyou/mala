@@ -1,4 +1,8 @@
-"""Integration test for baseline timestamp persistence across resume."""
+"""Integration test for baseline timestamp persistence across resume.
+
+The baseline_timestamp is persisted and reused for gate checking, but
+commit filtering does not use baseline_timestamp (always passes None).
+"""
 
 from __future__ import annotations
 
@@ -95,7 +99,7 @@ async def test_resume_reuses_persisted_baseline_timestamp(
     )
 
     commit_since: list[int | None] = []
-    commit_shas_seen: list[Sequence[str] | None] = []
+    commit_shas_seen: list[Sequence[str]] = []
 
     async def fake_get_issue_commits_async(
         repo_path: Path,
@@ -109,11 +113,10 @@ async def test_resume_reuses_persisted_baseline_timestamp(
 
     async def fake_reviewer(
         *,
-        diff_range: str,
         context_file: Path | None = None,
         timeout: int = 300,
         claude_session_id: str | None = None,
-        commit_shas: Sequence[str] | None = None,
+        commit_shas: Sequence[str],
         interrupt_event: object | None = None,
     ) -> ReviewResult:
         commit_shas_seen.append(commit_shas)
@@ -132,7 +135,7 @@ async def test_resume_reuses_persisted_baseline_timestamp(
         gate_checker=gate_checker_run2,
         code_reviewer=fake_reviewer,
         runs_dir=runs_dir,
-        prioritize_wip=True,
+        include_wip=True,
         disable_validations={"global-validate"},
     )
     orchestrator_run2._sdk_client_factory = sdk_factory_run2  # test-only override
@@ -145,7 +148,7 @@ async def test_resume_reuses_persisted_baseline_timestamp(
         call["baseline_timestamp"] == baseline_timestamp
         for call in gate_checker_run2.check_with_resolution_calls
     )
-    assert commit_since == [baseline_timestamp]
+    assert commit_since == [None]  # commit filtering no longer uses baseline_timestamp
     assert commit_shas_seen == [["c1", "c2"]]
     assert any(
         resume == session_id_run1
@@ -172,10 +175,6 @@ async def _run_with_fake_git(
         patch(
             "src.orchestration.orchestrator.get_git_commit_async",
             return_value="abc123",
-        ),
-        patch(
-            "src.orchestration.orchestrator.get_baseline_for_issue",
-            return_value="baseline123",
         ),
         patch(
             "src.infra.git_utils.get_git_commit_async",

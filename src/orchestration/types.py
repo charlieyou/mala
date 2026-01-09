@@ -63,7 +63,7 @@ class OrchestratorConfig:
         max_gate_retries: Maximum quality gate retry attempts per issue.
         max_review_retries: Maximum code review retry attempts per issue.
         disable_validations: Set of validation types to disable.
-        prioritize_wip: Prioritize in_progress issues before open issues.
+        include_wip: Include in_progress issues in scope (no ordering changes).
         focus: Only work on one epic at a time.
         order_preference: Issue ordering preference (focus, epic-priority, issue-priority, or input).
         cli_args: CLI arguments for logging and metadata.
@@ -82,7 +82,7 @@ class OrchestratorConfig:
     max_gate_retries: int = 3
     max_review_retries: int = 3
     disable_validations: set[str] | None = None
-    prioritize_wip: bool = False
+    include_wip: bool = False
     focus: bool = True
     order_preference: OrderPreference = _OrderPreference.EPIC_PRIORITY
     cli_args: dict[str, object] | None = None
@@ -213,7 +213,7 @@ class IssueFilterConfig:
         max_issues: Maximum issues to process (None = unlimited).
         epic_id: Only process tasks under this epic.
         only_ids: List of issue IDs to process exclusively.
-        prioritize_wip: Prioritize in_progress issues before open issues.
+        include_wip: Include in_progress issues in scope (no ordering changes).
         focus: Only work on one epic at a time.
         orphans_only: Only process issues with no parent epic.
         epic_override_ids: Epic IDs to close without verification.
@@ -224,7 +224,7 @@ class IssueFilterConfig:
     max_issues: int | None = None
     epic_id: str | None = None
     only_ids: list[str] | None = None
-    prioritize_wip: bool = False
+    include_wip: bool = False
     focus: bool = True
     orphans_only: bool = False
     epic_override_ids: set[str] = field(default_factory=set)

@@ -93,19 +93,15 @@ class ReviewInput:
     Attributes:
         issue_id: The issue being reviewed.
         repo_path: Path to the repository.
-        commit_sha: Current commit SHA to review.
         issue_description: Issue description for scope verification.
-        baseline_commit: Baseline commit for cumulative diff.
-        commit_shas: Optional list of commit SHAs to review directly.
+        commit_shas: List of commit SHAs to review directly.
         claude_session_id: Optional Claude session ID for external review context.
     """
 
     issue_id: str
     repo_path: Path
-    commit_sha: str
+    commit_shas: list[str]
     issue_description: str | None = None
-    baseline_commit: str | None = None
-    commit_shas: list[str] | None = None
     claude_session_id: str | None = None
 
 
@@ -212,12 +208,25 @@ class ReviewRunner:
                 interrupted=True,
             )
 
-        # Build diff range (baseline is required)
-        if input.baseline_commit is None:
-            raise ValueError("ReviewInput.baseline_commit must be set")
-        diff_range = f"{input.baseline_commit}..{input.commit_sha}"
+        if not input.commit_shas:
+            logger.info("Review skipped (no commits): issue_id=%s", input.issue_id)
+            return ReviewOutput(
+                result=cast(
+                    "ReviewResultProtocol",
+                    _FatalReviewResult(
+                        passed=True,
+                        issues=[],
+                        parse_error=None,
+                        fatal_error=False,
+                        review_log_path=None,
+                    ),
+                ),
+                interrupted=False,
+            )
         logger.info(
-            "Review started: issue_id=%s diff_range=%s", input.issue_id, diff_range
+            "Review started: issue_id=%s commits=%d",
+            input.issue_id,
+            len(input.commit_shas),
         )
 
         # Create context file if issue_description provided
@@ -241,7 +250,6 @@ class ReviewRunner:
                 temp_file.close()
             try:
                 result = await self.code_reviewer(
-                    diff_range=diff_range,
                     context_file=context_file,
                     timeout=self.config.review_timeout,
                     claude_session_id=input.claude_session_id,

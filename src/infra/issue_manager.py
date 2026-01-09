@@ -252,7 +252,7 @@ class IssueManager:
     def sort_issues(
         issues: list[dict[str, object]],
         focus: bool,
-        prioritize_wip: bool,
+        include_wip: bool,
         only_ids: list[str] | None = None,
         order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
     ) -> list[dict[str, object]]:
@@ -261,7 +261,8 @@ class IssueManager:
         Args:
             issues: List of issue dicts to sort.
             focus: Legacy flag (ignored when order_preference is set explicitly).
-            prioritize_wip: If True, put in_progress issues first (ignored for INPUT order).
+            include_wip: Scope-only flag; in_progress issues are included upstream.
+                Ordering is unaffected by include_wip.
             only_ids: Optional list of issue IDs for input order preservation.
             order_preference: Issue ordering (focus, epic-priority, issue-priority, or input).
                 This is the authoritative source of truth for ordering.
@@ -273,7 +274,7 @@ class IssueManager:
             return issues
 
         # INPUT order: preserve user-specified order from only_ids
-        # Note: prioritize_wip is ignored for INPUT order to preserve exact user order
+        # Note: include_wip is ignored for ordering to preserve exact user order
         if order_preference == OrderPreference.INPUT and only_ids:
             # Create index map for O(1) lookup
             id_order = {id_: idx for idx, id_ in enumerate(only_ids)}
@@ -299,10 +300,7 @@ class IssueManager:
             # EPIC_PRIORITY (default): group by epic, return all
             result = IssueManager.sort_by_epic_groups(list(issues))
 
-        if prioritize_wip:
-            return sorted(
-                result, key=lambda i: 0 if i.get("status") == "in_progress" else 1
-            )
+        # include_wip intentionally does not alter ordering; it only affects scope
         return result
 
     @staticmethod

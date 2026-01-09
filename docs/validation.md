@@ -46,13 +46,13 @@ This prevents hung agents from blocking issue processing indefinitely.
 
 External review via Cerberus is enabled by default. After the deterministic gate passes:
 
-1. **Review spawns**: Cerberus `review-gate` spawns external reviewers (Codex, Gemini, Claude) to review the diff
-2. **Scope verification**: Reviewers check the diff against the issue description and acceptance criteria to catch incomplete implementations
+1. **Review spawns**: Cerberus `review-gate` spawns external reviewers (Codex, Gemini, Claude) to review the issue commits
+2. **Scope verification**: Reviewers check the commit list against the issue description and acceptance criteria to catch incomplete implementations
 3. **Consensus**: All available reviewers must unanimously pass for the review to pass
 4. **Review failure handling**: If any reviewer finds errors, orchestrator resumes the SAME session with:
    - List of issues (file, line, priority, message) from all reviewers
    - Instructions to fix errors and re-run validations
-   - Cumulative diff from baseline (includes all work across retry attempts)
+   - Commit list for the issue (includes all work across retry attempts)
 5. **Re-gating**: After fixes, runs both deterministic gate AND external review again
 
 Review retries are capped at `max_review_retries` (default: 3). Use `--disable review` to disable. Review-gate args can be configured with `--review-spawn-args`, `--review-wait-args`, and `--review-env`.

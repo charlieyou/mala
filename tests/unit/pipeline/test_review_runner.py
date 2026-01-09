@@ -75,18 +75,16 @@ class FakeCodeReviewer:
 
     async def __call__(
         self,
-        diff_range: str,
         context_file: Path | None = None,
         timeout: int = 300,
         claude_session_id: str | None = None,
         *,
-        commit_shas: Sequence[str] | None = None,
+        commit_shas: Sequence[str],
         interrupt_event: asyncio.Event | None = None,
     ) -> FakeReviewResult:
         """Record call and return configured result."""
         self.calls.append(
             {
-                "diff_range": diff_range,
                 "context_file": context_file,
                 "timeout": timeout,
                 "claude_session_id": claude_session_id,
@@ -126,8 +124,7 @@ class TestReviewRunnerBasics:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
-            baseline_commit="base123",
+            commit_shas=["commit1"],
         )
 
         output = await runner.run_review(review_input)
@@ -154,9 +151,7 @@ class TestReviewRunnerBasics:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
             issue_description="Fix the bug",
-            baseline_commit="def456",
             commit_shas=["commit1", "commit2"],
             claude_session_id="session-123",
         )
@@ -165,8 +160,7 @@ class TestReviewRunnerBasics:
 
         assert len(fake_reviewer.calls) == 1
         call = fake_reviewer.calls[0]
-        # New signature: diff_range, context_file, timeout
-        assert call["diff_range"] == "def456..abc123"
+        # New signature: commit_shas, context_file, timeout
         assert call["timeout"] == 600
         # context_file should be set when issue_description is provided
         assert call["context_file"] is not None
@@ -195,8 +189,7 @@ class TestReviewRunnerBasics:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
-            baseline_commit="base123",
+            commit_shas=["commit1"],
         )
 
         output = await runner.run_review(review_input)
@@ -219,9 +212,8 @@ class TestReviewRunnerBasics:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
             issue_description=None,  # No description
-            baseline_commit="base123",
+            commit_shas=["commit1"],
         )
 
         await runner.run_review(review_input)
@@ -231,13 +223,13 @@ class TestReviewRunnerBasics:
         assert call["context_file"] is None
 
     @pytest.mark.asyncio
-    async def test_run_review_requires_baseline(
+    async def test_run_review_skips_when_no_commits(
         self,
         fake_reviewer: FakeCodeReviewer,
         config: ReviewRunnerConfig,
         tmp_path: Path,
     ) -> None:
-        """Runner should require baseline_commit to be provided."""
+        """Runner should skip review when commit list is empty."""
         runner = ReviewRunner(
             code_reviewer=cast("CodeReviewer", fake_reviewer),
             config=config,
@@ -246,12 +238,12 @@ class TestReviewRunnerBasics:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
-            baseline_commit=None,  # No baseline
+            commit_shas=[],
         )
 
-        with pytest.raises(ValueError, match="baseline_commit"):
-            await runner.run_review(review_input)
+        output = await runner.run_review(review_input)
+        assert output.result.passed is True
+        assert fake_reviewer.calls == []
 
 
 class TestReviewRunnerResults:
@@ -267,8 +259,7 @@ class TestReviewRunnerResults:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
-            baseline_commit="base123",
+            commit_shas=["commit1"],
         )
 
         output = await runner.run_review(review_input)
@@ -297,8 +288,7 @@ class TestReviewRunnerResults:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
-            baseline_commit="base123",
+            commit_shas=["commit1"],
         )
 
         output = await runner.run_review(review_input)
@@ -321,8 +311,7 @@ class TestReviewRunnerResults:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
-            baseline_commit="base123",
+            commit_shas=["commit1"],
         )
 
         output = await runner.run_review(review_input)
@@ -340,12 +329,11 @@ class TestReviewRunnerResults:
 
             async def __call__(
                 self,
-                diff_range: str,
                 context_file: Path | None = None,
                 timeout: int = 300,
                 claude_session_id: str | None = None,
                 *,
-                commit_shas: Sequence[str] | None = None,
+                commit_shas: Sequence[str],
                 interrupt_event: asyncio.Event | None = None,
             ) -> FakeReviewResult:
                 raise RuntimeError("boom")
@@ -355,8 +343,7 @@ class TestReviewRunnerResults:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
-            baseline_commit="base123",
+            commit_shas=["commit1"],
         )
 
         output = await runner.run_review(review_input)
@@ -516,12 +503,11 @@ class TestContextFileCleanup:
 
             async def __call__(
                 self,
-                diff_range: str,
                 context_file: Path | None = None,
                 timeout: int = 300,
                 claude_session_id: str | None = None,
                 *,
-                commit_shas: Sequence[str] | None = None,
+                commit_shas: Sequence[str],
                 interrupt_event: asyncio.Event | None = None,
             ) -> FakeReviewResult:
                 nonlocal context_file_path
@@ -536,9 +522,8 @@ class TestContextFileCleanup:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
             issue_description="Fix the bug",
-            baseline_commit="base123",
+            commit_shas=["commit1"],
         )
 
         await runner.run_review(review_input)
@@ -564,12 +549,11 @@ class TestContextFileCleanup:
 
             async def __call__(
                 self,
-                diff_range: str,
                 context_file: Path | None = None,
                 timeout: int = 300,
                 claude_session_id: str | None = None,
                 *,
-                commit_shas: Sequence[str] | None = None,
+                commit_shas: Sequence[str],
                 interrupt_event: asyncio.Event | None = None,
             ) -> FakeReviewResult:
                 nonlocal context_file_path
@@ -584,9 +568,8 @@ class TestContextFileCleanup:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
             issue_description="Fix the bug",
-            baseline_commit="base123",
+            commit_shas=["commit1"],
         )
 
         output = await runner.run_review(review_input)
@@ -610,9 +593,8 @@ class TestContextFileCleanup:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
             issue_description=None,  # No description
-            baseline_commit="base123",
+            commit_shas=["commit1"],
         )
 
         # Should not raise any errors
@@ -636,8 +618,7 @@ class TestReviewRunnerInterruptHandling:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
-            baseline_commit="base123",
+            commit_shas=["commit1"],
         )
 
         # Set interrupt event before starting
@@ -663,8 +644,7 @@ class TestReviewRunnerInterruptHandling:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
-            baseline_commit="base123",
+            commit_shas=["commit1"],
         )
 
         interrupt_event = asyncio.Event()
@@ -689,12 +669,11 @@ class TestReviewRunnerInterruptHandling:
 
             async def __call__(
                 self,
-                diff_range: str,
                 context_file: Path | None = None,
                 timeout: int = 300,
                 claude_session_id: str | None = None,
                 *,
-                commit_shas: Sequence[str] | None = None,
+                commit_shas: Sequence[str],
                 interrupt_event: asyncio.Event | None = None,
             ) -> FakeReviewResult:
                 # Simulate interrupt being set during review
@@ -709,8 +688,7 @@ class TestReviewRunnerInterruptHandling:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
-            baseline_commit="base123",
+            commit_shas=["commit1"],
         )
 
         interrupt_event = asyncio.Event()
@@ -733,8 +711,7 @@ class TestReviewRunnerInterruptHandling:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
-            baseline_commit="base123",
+            commit_shas=["commit1"],
         )
 
         interrupt_event = asyncio.Event()
@@ -756,8 +733,7 @@ class TestReviewRunnerInterruptHandling:
         review_input = ReviewInput(
             issue_id="test-123",
             repo_path=tmp_path,
-            commit_sha="abc123",
-            baseline_commit="base123",
+            commit_shas=["commit1"],
         )
 
         # No interrupt_event provided (uses default None)

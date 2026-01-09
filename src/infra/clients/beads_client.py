@@ -278,7 +278,7 @@ class BeadsClient:
         self,
         issues: list[dict[str, object]],
         focus: bool,
-        prioritize_wip: bool,
+        include_wip: bool,
         only_ids: list[str] | None = None,
         order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
     ) -> list[dict[str, object]]:
@@ -287,7 +287,7 @@ class BeadsClient:
         Delegates to IssueManager.sort_issues for actual logic.
         """
         return IssueManager.sort_issues(
-            issues, focus, prioritize_wip, only_ids, order_preference
+            issues, focus, include_wip, only_ids, order_preference
         )
 
     def _sort_by_epic_groups_sync(
@@ -332,7 +332,7 @@ class BeadsClient:
         epic_id: str | None = None,
         only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
-        prioritize_wip: bool = False,
+        include_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
         order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
@@ -343,11 +343,11 @@ class BeadsClient:
         if epic_id and not epic_children:
             return []
         issues, ok = await self._fetch_base_issues()
-        if not ok and not prioritize_wip:
-            # WIP fallback: when prioritize_wip=True, continue even if bd ready fails
+        if not ok and not include_wip:
+            # WIP fallback: when include_wip=True, continue even if bd ready fails
             # so we can still return in-progress issues (intentional design)
             return []
-        if prioritize_wip:
+        if include_wip:
             wip = await self._fetch_wip_issues()
             wip = IssueManager.filter_blocked_wip(wip)
             issues = self._merge_wip_issues(issues, wip)
@@ -358,7 +358,7 @@ class BeadsClient:
         if orphans_only:
             enriched = IssueManager.filter_orphans_only(enriched)
         return self._sort_issues(
-            enriched, focus, prioritize_wip, only_ids, order_preference
+            enriched, focus, include_wip, only_ids, order_preference
         )
 
     async def get_ready_async(
@@ -367,7 +367,7 @@ class BeadsClient:
         epic_id: str | None = None,
         only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
-        prioritize_wip: bool = False,
+        include_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
         order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
@@ -379,7 +379,7 @@ class BeadsClient:
             epic_id: Optional epic ID to filter by - only return children of this epic.
             only_ids: Optional list of issue IDs to include exclusively.
             suppress_warn_ids: Optional set of issue IDs to suppress from warnings.
-            prioritize_wip: If True, sort in_progress issues before open issues.
+            include_wip: If True, include in_progress issues in the scope.
             focus: If True, group tasks by parent epic and complete one epic at a time.
                 When focus=True, groups are sorted by (epic_priority, max_updated DESC)
                 and within groups by (priority, updated DESC). Falls back to min_priority
@@ -390,14 +390,14 @@ class BeadsClient:
 
         Returns:
             List of issue IDs sorted by priority (lower = higher priority).
-            When prioritize_wip is True, in_progress issues come first.
+            When include_wip is True, in_progress issues are included in results.
         """
         filtered = await self._fetch_and_filter_issues(
             exclude_ids=exclude_ids,
             epic_id=epic_id,
             only_ids=only_ids,
             suppress_warn_ids=suppress_warn_ids,
-            prioritize_wip=prioritize_wip,
+            include_wip=include_wip,
             focus=focus,
             orphans_only=orphans_only,
             order_preference=order_preference,
@@ -410,7 +410,7 @@ class BeadsClient:
         epic_id: str | None = None,
         only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
-        prioritize_wip: bool = False,
+        include_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
         order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
@@ -425,7 +425,7 @@ class BeadsClient:
             epic_id: Optional epic ID to filter by - only return children of this epic.
             only_ids: Optional list of issue IDs to include exclusively.
             suppress_warn_ids: Optional set of issue IDs to suppress from warnings.
-            prioritize_wip: If True, sort in_progress issues before open issues.
+            include_wip: If True, include in_progress issues in the scope.
             focus: Legacy flag for epic grouping (use order_preference instead).
             orphans_only: If True, only return issues with no parent epic.
             order_preference: Issue ordering (focus, epic-priority, issue-priority, or input).
@@ -439,7 +439,7 @@ class BeadsClient:
             epic_id=epic_id,
             only_ids=only_ids,
             suppress_warn_ids=suppress_warn_ids,
-            prioritize_wip=prioritize_wip,
+            include_wip=include_wip,
             focus=focus,
             orphans_only=orphans_only,
             order_preference=order_preference,

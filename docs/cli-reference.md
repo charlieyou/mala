@@ -18,7 +18,7 @@
 |------|---------|-------------|
 | `--scope`, `-s` | `all` | Scope filter: `all`, `epic:<id>`, `ids:<id,...>`, `orphans` |
 | `--order` | `epic-priority` | Issue ordering mode (see [Order Modes](#order-modes)) |
-| `--resume`, `-r` | false | Prioritize in_progress issues before open issues |
+| `--resume`, `-r` | false | Include in_progress issues alongside open issues |
 
 ### Order Modes
 

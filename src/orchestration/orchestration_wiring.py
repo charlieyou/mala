@@ -136,7 +136,7 @@ def build_issue_coordinator(
         max_issues=filters.max_issues,
         epic_id=filters.epic_id,
         only_ids=filters.only_ids,
-        prioritize_wip=filters.prioritize_wip,
+        include_wip=filters.include_wip,
         focus=filters.focus,
         orphans_only=filters.orphans_only,
         order_preference=filters.order_preference,

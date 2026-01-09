@@ -1326,7 +1326,6 @@ class TestAgentSessionRunnerEventSink:
         async def on_review_check(
             issue_id: str,
             description: str | None,
-            baseline: str | None,
             session_id: str | None,
             _retry_state: RetryState,
         ) -> ReviewResult:
@@ -1425,7 +1424,6 @@ class TestAgentSessionRunnerEventSink:
         async def on_review_check(
             issue_id: str,
             description: str | None,
-            baseline: str | None,
             session_id: str | None,
             _retry_state: RetryState,
         ) -> ReviewResult:

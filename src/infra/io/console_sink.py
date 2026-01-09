@@ -47,8 +47,8 @@ class ConsoleEventSink(BaseEventSink):
             log("◦", f"Epic: {config.epic_id}", agent_id="run")
         if config.only_ids:
             log("◦", f"Issues: {', '.join(config.only_ids)}", agent_id="run")
-        if config.prioritize_wip:
-            log("◦", "Mode: prioritize WIP", agent_id="run")
+        if config.include_wip:
+            log("◦", "Mode: include WIP", agent_id="run")
         if config.orphans_only:
             log("◦", "Mode: orphans only", agent_id="run")
         self._log_config(config)

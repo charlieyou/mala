@@ -74,7 +74,7 @@ def build_event_run_config(
     only_ids: list[str] | None,
     review_enabled: bool,
     review_disabled_reason: str | None,
-    prioritize_wip: bool,
+    include_wip: bool,
     orphans_only: bool,
     cli_args: dict[str, object] | None,
     validation_triggers: ValidationTriggersConfig | None = None,
@@ -92,7 +92,7 @@ def build_event_run_config(
         only_ids: List of issue IDs to process exclusively.
         review_enabled: Whether code review is enabled.
         review_disabled_reason: Reason review is disabled (if any).
-        prioritize_wip: Whether to prioritize in-progress issues.
+        include_wip: Whether to include in-progress issues in scope.
         orphans_only: Whether to only process issues without parent epic.
         cli_args: CLI arguments for logging.
         validation_triggers: Validation triggers configuration from mala.yaml.
@@ -111,7 +111,7 @@ def build_event_run_config(
         only_ids=only_ids,
         review_enabled=review_enabled,
         review_disabled_reason=review_disabled_reason,
-        prioritize_wip=prioritize_wip,
+        include_wip=include_wip,
         orphans_only=orphans_only,
         cli_args=cli_args,
         validation_triggers=_build_trigger_summary(validation_triggers),

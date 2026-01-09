@@ -149,30 +149,27 @@ class CerberusGateCLI:
 
     async def spawn_code_review(
         self,
-        diff_range: str,
         runner: CommandRunnerPort,
         env: dict[str, str],
         timeout: int,
+        *,
+        commit_shas: Sequence[str],
         spawn_args: tuple[str, ...] = (),
         context_file: Path | None = None,
-        commit_shas: Sequence[str] | None = None,
     ) -> SpawnResult:
         """Spawn a code review subprocess.
 
         Args:
-            diff_range: Git diff range to review (e.g., "baseline..HEAD").
             runner: CommandRunnerPort instance for subprocess execution.
             env: Environment variables for the command.
             timeout: Timeout in seconds.
+            commit_shas: List of commit SHAs for commit-based review.
             spawn_args: Additional arguments for spawn-code-review.
             context_file: Optional context file path.
-            commit_shas: Optional list of commit SHAs for commit-based review.
 
         Returns:
             SpawnResult with success/failure status and error details.
         """
-        use_commits = bool(commit_shas)
-
         spawn_cmd = [self._review_gate_bin(), "spawn-code-review"]
         # Always exclude .beads/ directory (auto-generated issue tracker files)
         spawn_cmd.extend(["--exclude", ".beads/"])
@@ -182,12 +179,8 @@ class CerberusGateCLI:
             spawn_cmd.extend(["--context-file", str(context_file)])
         if spawn_args:
             spawn_cmd.extend(spawn_args)
-        if use_commits:
-            spawn_cmd.append("--commit")
-            spawn_cmd.extend(commit_shas or [])
-        else:
-            # Diff range is a positional argument
-            spawn_cmd.append(diff_range)
+        spawn_cmd.append("--commit")
+        spawn_cmd.extend(commit_shas)
 
         result = await runner.run_async(spawn_cmd, env=env, timeout=timeout)
         if result.timed_out:
@@ -304,33 +297,6 @@ class CerberusGateCLI:
             )
         except Exception as e:
             return ResolveResult(success=False, error_detail=str(e))
-
-    async def check_diff_empty(
-        self, diff_range: str, runner: CommandRunnerPort
-    ) -> bool:
-        """Check if the diff range has no changes.
-
-        Uses git diff --stat to check if there are any changes in the range.
-        If the command fails, returns False to proceed with review (fail-open).
-
-        Args:
-            diff_range: Git diff range to check (e.g., "baseline..HEAD").
-            runner: CommandRunnerPort instance to execute git command.
-
-        Returns:
-            True if the diff is empty (no changes), False otherwise.
-        """
-        try:
-            result = await runner.run_async(
-                ["git", "diff", "--stat", diff_range],
-                timeout=30,
-            )
-            if result.returncode == 0 and not result.stdout.strip():
-                return True
-        except Exception:
-            # If diff check fails, proceed with review anyway (fail-open)
-            pass
-        return False
 
     @staticmethod
     def extract_wait_timeout(args: tuple[str, ...]) -> int | None:

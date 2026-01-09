@@ -826,11 +826,8 @@ class TestAlreadyActiveGateError:
                 "src.infra.clients.cerberus_review.CommandRunner"
             ) as mock_runner_class:
                 mock_runner = AsyncMock()
-                # Sequence: git diff, spawn (fail), resolve, spawn (ok), wait
+                # Sequence: spawn (fail), resolve, spawn (ok), wait
                 mock_runner.run_async.side_effect = [
-                    MagicMock(
-                        returncode=0, stdout=" 1 file changed"
-                    ),  # git diff (non-empty)
                     spawn_fail_result,
                     resolve_result,
                     spawn_ok_result,
@@ -839,7 +836,7 @@ class TestAlreadyActiveGateError:
                 mock_runner_class.return_value = mock_runner
 
                 with patch.dict("os.environ", {"CLAUDE_SESSION_ID": "test-session"}):
-                    result = await reviewer("baseline..HEAD")
+                    result = await reviewer(commit_shas=["abc123"])
 
             assert result.passed is True
             assert result.fatal_error is False
@@ -847,7 +844,6 @@ class TestAlreadyActiveGateError:
 
             # Verify call sequence
             calls = [call[0][0] for call in mock_runner.run_async.call_args_list]
-            assert any("diff" in str(c) for c in calls)
             assert any("spawn-code-review" in str(c) for c in calls)
             assert any("resolve" in str(c) for c in calls)
             assert any("wait" in str(c) for c in calls)
@@ -891,9 +887,6 @@ class TestAlreadyActiveGateError:
             ) as mock_runner_class:
                 mock_runner = AsyncMock()
                 mock_runner.run_async.side_effect = [
-                    MagicMock(
-                        returncode=0, stdout=" 1 file changed"
-                    ),  # git diff (non-empty)
                     spawn_fail_result,
                     resolve_result,
                     spawn_still_active,
@@ -901,7 +894,7 @@ class TestAlreadyActiveGateError:
                 mock_runner_class.return_value = mock_runner
 
                 with patch.dict("os.environ", {"CLAUDE_SESSION_ID": "test-session"}):
-                    result = await reviewer("baseline..HEAD")
+                    result = await reviewer(commit_shas=["abc123"])
 
             # Should be fatal error (another session owns the gate)
             assert result.passed is False
@@ -938,16 +931,13 @@ class TestAlreadyActiveGateError:
             ) as mock_runner_class:
                 mock_runner = AsyncMock()
                 mock_runner.run_async.side_effect = [
-                    MagicMock(
-                        returncode=0, stdout=" 1 file changed"
-                    ),  # git diff (non-empty)
                     spawn_fail_result,
                     resolve_result,
                 ]
                 mock_runner_class.return_value = mock_runner
 
                 with patch.dict("os.environ", {"CLAUDE_SESSION_ID": "test-session"}):
-                    result = await reviewer("baseline..HEAD")
+                    result = await reviewer(commit_shas=["abc123"])
 
             # Retryable error (not fatal)
             assert result.passed is False

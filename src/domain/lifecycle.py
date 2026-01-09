@@ -154,6 +154,11 @@ class ReviewOutcome(Protocol):
         """List of issues found during review."""
         ...
 
+    @property
+    def interrupted(self) -> bool:
+        """Whether the review was interrupted by SIGINT."""
+        ...
+
 
 class LifecycleState(Enum):
     """States in the implementer lifecycle."""

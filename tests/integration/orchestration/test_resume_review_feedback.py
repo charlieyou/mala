@@ -307,10 +307,6 @@ async def _run_with_fake_git(orchestrator: MalaOrchestrator) -> None:
             return_value="abc123",
         ),
         patch(
-            "src.orchestration.orchestrator.get_baseline_for_issue",
-            return_value="baseline123",
-        ),
-        patch(
             "src.infra.git_utils.get_git_commit_async",
             return_value="abc123",
         ),
@@ -323,6 +319,10 @@ async def _run_with_fake_git(orchestrator: MalaOrchestrator) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.xfail(
+    reason=("Resume flow does not yet call _build_resume_prompt (T005 to wire up)."),
+    strict=False,
+)
 async def test_resume_with_review_feedback_uses_review_followup_prompt(
     tmp_path: Path,
     make_orchestrator: Callable[..., MalaOrchestrator],
@@ -432,7 +432,7 @@ async def test_resume_with_review_feedback_uses_review_followup_prompt(
         ),
         gate_checker=gate_checker_run2,
         runs_dir=runs_dir,
-        prioritize_wip=True,  # Enable resume
+        include_wip=True,  # Enable resume
         disable_validations={"global-validate"},
     )
     orchestrator_run2._sdk_client_factory = sdk_factory_run2

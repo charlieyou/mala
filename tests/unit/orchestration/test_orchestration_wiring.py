@@ -114,7 +114,7 @@ def mock_issue_filter_config() -> IssueFilterConfig:
         max_issues=10,
         epic_id="test-epic",
         only_ids=["issue-1", "issue-2"],
-        prioritize_wip=True,
+        include_wip=True,
         focus=True,
         orphans_only=False,
         epic_override_ids={"epic-1"},
@@ -232,7 +232,7 @@ class TestBuildIssueCoordinator:
         assert coordinator.config.max_issues == 10
         assert coordinator.config.epic_id == "test-epic"
         assert coordinator.config.only_ids == ["issue-1", "issue-2"]
-        assert coordinator.config.prioritize_wip is True
+        assert coordinator.config.include_wip is True
         assert coordinator.config.focus is True
         assert coordinator.config.orphans_only is False
 

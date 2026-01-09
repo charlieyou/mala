@@ -188,8 +188,15 @@ async def test_review_gate_full_flow(tmp_path: Path, review_gate_bin: Path) -> N
     are acceptable - the key is no fatal_error which indicates protocol problems.
     Uses @flaky to retry on transient failures.
     """
-    base_sha = _setup_git_repo(tmp_path)
+    _setup_git_repo(tmp_path)
     session_id = f"test-{uuid.uuid4()}"
+    head_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
     reviewer = DefaultReviewer(
         repo_path=tmp_path,
@@ -198,9 +205,9 @@ async def test_review_gate_full_flow(tmp_path: Path, review_gate_bin: Path) -> N
     )
 
     result = await reviewer(
-        diff_range=f"{base_sha}..HEAD",
         claude_session_id=session_id,
         timeout=120,
+        commit_shas=[head_sha],
     )
 
     # Key assertion: no fatal errors - proves protocol compatibility
@@ -222,7 +229,6 @@ async def test_review_gate_commits_scope(tmp_path: Path, review_gate_bin: Path) 
     )
 
     result = await reviewer(
-        diff_range=f"{commits[0]}..HEAD",
         claude_session_id=session_id,
         timeout=120,
         commit_shas=[commits[1]],
@@ -242,10 +248,10 @@ async def test_review_gate_commits_scope(tmp_path: Path, review_gate_bin: Path) 
 
 
 @pytest.mark.asyncio
-async def test_review_gate_empty_diff_shortcircuit(
+async def test_review_gate_empty_commit_shortcircuit(
     tmp_path: Path, review_gate_bin: Path
 ) -> None:
-    """Empty diff should short-circuit to PASS without spawning reviewers."""
+    """Empty commit list should short-circuit to PASS without spawning reviewers."""
     # Create a simple repo with one commit - no second commit means empty diff
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(
@@ -268,15 +274,6 @@ async def test_review_gate_empty_diff_shortcircuit(
         check=True,
         capture_output=True,
     )
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    base_sha = result.stdout.strip()
-
     session_id = f"test-{uuid.uuid4()}"
 
     reviewer = DefaultReviewer(
@@ -284,13 +281,12 @@ async def test_review_gate_empty_diff_shortcircuit(
         bin_path=review_gate_bin,
     )
 
-    # base_sha..HEAD has no changes (HEAD == base_sha)
     result = await reviewer(
-        diff_range=f"{base_sha}..HEAD",
         claude_session_id=session_id,
+        commit_shas=[],
     )
 
-    # Empty diff should pass immediately without spawning reviewers
+    # Empty commit list should pass immediately without spawning reviewers
     assert result.passed is True
     assert result.parse_error is None
     assert result.issues == []

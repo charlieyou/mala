@@ -498,7 +498,7 @@ class IssueProvider(Protocol):
         epic_id: str | None = None,
         only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
-        prioritize_wip: bool = False,
+        include_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
         order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
@@ -510,13 +510,13 @@ class IssueProvider(Protocol):
             epic_id: Optional epic ID to filter by - only return children.
             only_ids: Optional list of issue IDs to include exclusively.
             suppress_warn_ids: Set of issue IDs to suppress from warnings.
-            prioritize_wip: If True, sort in_progress issues first.
+            include_wip: If True, include in_progress issues in the scope.
             focus: If True, group tasks by parent epic.
             orphans_only: If True, only return issues with no parent epic.
             order_preference: Issue ordering (focus, epic-priority, issue-priority, or input).
 
         Returns:
-            List of issue IDs sorted by priority (lower = higher priority).
+            List of issue IDs sorted by order_preference (lower priority = higher).
         """
         ...
 
@@ -759,23 +759,20 @@ class CodeReviewer(Protocol):
 
     async def __call__(
         self,
-        diff_range: str,
         context_file: Path | None = None,
         timeout: int = 300,
         claude_session_id: str | None = None,
         *,
-        commit_shas: Sequence[str] | None = None,
+        commit_shas: Sequence[str],
         interrupt_event: asyncio.Event | None = None,
     ) -> ReviewResultProtocol:
-        """Run code review on a diff range.
+        """Run code review on a specific set of commits.
 
         Args:
-            diff_range: Git diff range to review (e.g., "baseline..HEAD").
             context_file: Optional path to file with issue description context.
             timeout: Timeout in seconds for the review operation.
             claude_session_id: Optional Claude session ID for review attribution.
-            commit_shas: Optional list of commit SHAs to review directly.
-                When provided, reviewers should scope to these commits only.
+            commit_shas: List of commit SHAs to review directly.
             interrupt_event: Optional event to check for SIGINT interruption.
                 When set, reviewers should abort gracefully and return
                 a result with interrupted=True.
@@ -1441,7 +1438,7 @@ class EventRunConfig:
     only_ids: list[str] | None = None
     review_enabled: bool = True  # Cerberus code review enabled
     review_disabled_reason: str | None = None
-    prioritize_wip: bool = False
+    include_wip: bool = False
     orphans_only: bool = False
     cli_args: dict[str, object] | None = None
     validation_triggers: ValidationTriggersSummary | None = None

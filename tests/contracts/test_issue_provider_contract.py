@@ -141,23 +141,22 @@ class TestFakeIssueProviderContract:
         assert issue1_idx < issue2_idx
 
     @pytest.mark.integration
-    async def test_get_ready_prioritize_wip_includes_in_progress(
+    async def test_get_ready_include_wip_includes_in_progress(
         self, fake_provider: FakeIssueProvider
     ) -> None:
-        """get_ready_async with prioritize_wip=True includes in_progress issues first."""
+        """get_ready_async with include_wip=True includes in_progress issues."""
         # Claim issue-2 to make it in_progress
         await fake_provider.claim_async("issue-2")
-        # Without prioritize_wip, in_progress issues are excluded
+        # Without include_wip, in_progress issues are excluded
         ready_normal = await fake_provider.get_ready_async(
-            prioritize_wip=False, order_preference=OrderPreference.EPIC_PRIORITY
+            include_wip=False, order_preference=OrderPreference.EPIC_PRIORITY
         )
         assert "issue-2" not in ready_normal
-        # With prioritize_wip, in_progress issues are included and sorted first
+        # With include_wip, in_progress issues are included (ordering unchanged)
         ready_wip = await fake_provider.get_ready_async(
-            prioritize_wip=True, order_preference=OrderPreference.EPIC_PRIORITY
+            include_wip=True, order_preference=OrderPreference.EPIC_PRIORITY
         )
         assert "issue-2" in ready_wip
-        assert ready_wip.index("issue-2") == 0  # in_progress comes first
 
     @pytest.mark.integration
     async def test_claim_marks_in_progress(

@@ -347,7 +347,7 @@ class TestSortIssues:
 
     def test_empty_list_returns_empty(self) -> None:
         """Should return empty list for empty input."""
-        result = IssueManager.sort_issues([], focus=True, prioritize_wip=True)
+        result = IssueManager.sort_issues([], focus=True, include_wip=True)
         assert result == []
 
     def test_sorts_by_priority_when_focus_false(self) -> None:
@@ -357,18 +357,18 @@ class TestSortIssues:
             {"id": "b", "priority": 1},
             {"id": "c", "priority": 2},
         ]
-        result = IssueManager.sort_issues(issues, focus=False, prioritize_wip=False)
+        result = IssueManager.sort_issues(issues, focus=False, include_wip=False)
         assert [r["id"] for r in result] == ["b", "c", "a"]
 
-    def test_prioritizes_wip_when_enabled(self) -> None:
-        """With prioritize_wip=True, in_progress should come first."""
+    def test_include_wip_when_enabled(self) -> None:
+        """With include_wip=True, ordering should remain priority-based."""
         issues = [
             {"id": "a", "priority": 1, "status": "open"},
             {"id": "b", "priority": 2, "status": "in_progress"},
             {"id": "c", "priority": 3, "status": "open"},
         ]
-        result = IssueManager.sort_issues(issues, focus=False, prioritize_wip=True)
-        assert result[0]["id"] == "b"
+        result = IssueManager.sort_issues(issues, focus=False, include_wip=True)
+        assert [r["id"] for r in result] == ["a", "b", "c"]
 
     def test_uses_epic_groups_when_focus_true(self) -> None:
         """With focus=True, should group by parent epic."""
@@ -392,12 +392,12 @@ class TestSortIssues:
                 "updated_at": "2025-01-01",
             },
         ]
-        result = IssueManager.sort_issues(issues, focus=True, prioritize_wip=False)
+        result = IssueManager.sort_issues(issues, focus=True, include_wip=False)
         # epic-2 has lower min priority, so comes first
         assert result[0]["id"] == "b"
 
     def test_combines_focus_and_wip_priority(self) -> None:
-        """Should apply both focus grouping and WIP prioritization."""
+        """Should apply focus grouping without reordering WIP status."""
         issues = [
             {
                 "id": "a",
@@ -414,9 +414,8 @@ class TestSortIssues:
                 "updated_at": "2025-01-01",
             },
         ]
-        result = IssueManager.sort_issues(issues, focus=True, prioritize_wip=True)
-        # WIP should come first even though lower priority
-        assert result[0]["id"] == "b"
+        result = IssueManager.sort_issues(issues, focus=True, include_wip=True)
+        assert [r["id"] for r in result] == ["a", "b"]
 
 
 class TestFindMissingIds:

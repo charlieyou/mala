@@ -761,7 +761,7 @@ class TestBuildEventRunConfig:
             only_ids=["bd-1", "bd-2"],
             review_enabled=True,
             review_disabled_reason=None,
-            prioritize_wip=False,
+            include_wip=False,
             orphans_only=False,
             cli_args={"verbose": True},
         )
@@ -810,7 +810,7 @@ class TestBuildEventRunConfig:
             only_ids=None,
             review_enabled=True,
             review_disabled_reason=None,
-            prioritize_wip=False,
+            include_wip=False,
             orphans_only=False,
             cli_args=None,
             validation_triggers=triggers,

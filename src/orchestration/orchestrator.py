@@ -24,11 +24,7 @@ from src.domain.prompts import (
 # Future imports for T005 - _build_resume_prompt will use these
 # from src.domain.prompts import build_custom_commands_section
 # from src.pipeline.review_formatter import format_review_issues
-from src.infra.git_utils import (
-    get_baseline_for_issue,
-    get_git_branch_async,
-    get_git_commit_async,
-)
+from src.infra.git_utils import get_git_branch_async, get_git_commit_async
 from src.infra.io.log_output.run_metadata import (
     lookup_prior_session_info,
     remove_run_marker,
@@ -255,7 +251,7 @@ class MalaOrchestrator:
         self._disabled_validations = derived.disabled_validations
         self._validation_config = derived.validation_config
         self._validation_config_missing = derived.validation_config_missing
-        self.prioritize_wip = orch_config.prioritize_wip
+        self.include_wip = orch_config.include_wip
         self.strict_resume = orch_config.strict_resume
         self.focus = orch_config.focus
         self.orphans_only = orch_config.orphans_only
@@ -399,7 +395,7 @@ class MalaOrchestrator:
             max_issues=self._max_issues,
             epic_id=self.epic_id,
             only_ids=self.only_ids,
-            prioritize_wip=self.prioritize_wip,
+            include_wip=self.include_wip,
             focus=self.focus,
             orphans_only=self.orphans_only,
             epic_override_ids=self.epic_override_ids,
@@ -754,10 +750,6 @@ class MalaOrchestrator:
 
         # Prepare session inputs (before deadlock registration for strict-resume early exit)
         issue_description = await self.beads.get_issue_description_async(issue_id)
-        baseline_commit = await get_baseline_for_issue(self.repo_path, issue_id)
-        if baseline_commit is None:
-            baseline_commit = await get_git_commit_async(self.repo_path)
-
         prompt = format_implementer_prompt(
             self._prompts.implementer_prompt,
             issue_id=issue_id,
@@ -767,11 +759,11 @@ class MalaOrchestrator:
             lock_dir=get_lock_dir(),
         )
 
-        # Look up prior session for resumption when prioritize_wip is enabled
+        # Look up prior session for resumption when include_wip is enabled
         # Must happen BEFORE deadlock registration to avoid leaking agent on strict early exit
         resume_session_id: str | None = None
         baseline_timestamp: int | None = None
-        if self.prioritize_wip:
+        if self.include_wip:
             prior_session = lookup_prior_session_info(self.repo_path, issue_id)
             resume_session_id = prior_session.session_id if prior_session else None
             baseline_timestamp = (
@@ -812,7 +804,6 @@ class MalaOrchestrator:
         session_input = AgentSessionInput(
             issue_id=issue_id,
             prompt=prompt,
-            baseline_commit=baseline_commit,
             issue_description=issue_description,
             agent_id=temp_agent_id,
             resume_session_id=resume_session_id,
@@ -1145,7 +1136,7 @@ class MalaOrchestrator:
             only_ids=self.only_ids,
             review_enabled=self._is_review_enabled(),
             review_disabled_reason=self.review_disabled_reason,
-            prioritize_wip=self.prioritize_wip,
+            include_wip=self.include_wip,
             orphans_only=self.orphans_only,
             cli_args=self.cli_args,
             validation_triggers=validation_triggers,

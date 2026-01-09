@@ -5,7 +5,6 @@ Tests the cerberus_gate_cli module including:
 - Environment merging
 - Spawn/wait/resolve subprocess operations
 - Timeout extraction
-- Empty diff detection
 """
 
 from __future__ import annotations
@@ -174,74 +173,6 @@ class TestExtractWaitTimeout:
         assert CerberusGateCLI.extract_wait_timeout(args) is None
 
 
-class TestCheckDiffEmpty:
-    """Tests for empty diff detection."""
-
-    @pytest.mark.asyncio
-    async def test_returns_true_for_empty_diff(self, tmp_path: Path) -> None:
-        """Returns True when git diff --stat shows no changes."""
-        cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = FakeCommandRunner(allow_unregistered=True)
-        runner.responses[("git", "diff", "--stat", "baseline..HEAD")] = CommandResult(
-            command=["git", "diff", "--stat", "baseline..HEAD"],
-            returncode=0,
-            stdout="",
-        )
-
-        result = await cli.check_diff_empty("baseline..HEAD", runner)
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_returns_false_for_non_empty_diff(self, tmp_path: Path) -> None:
-        """Returns False when git diff --stat shows changes."""
-        cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = FakeCommandRunner(allow_unregistered=True)
-        runner.responses[("git", "diff", "--stat", "baseline..HEAD")] = CommandResult(
-            command=["git", "diff", "--stat", "baseline..HEAD"],
-            returncode=0,
-            stdout=" 1 file changed, 10 insertions(+)",
-        )
-
-        result = await cli.check_diff_empty("baseline..HEAD", runner)
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_returns_false_on_git_error(self, tmp_path: Path) -> None:
-        """Returns False (fail-open) when git diff fails."""
-        cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = FakeCommandRunner(allow_unregistered=True)
-        runner.responses[("git", "diff", "--stat", "baseline..HEAD")] = CommandResult(
-            command=["git", "diff", "--stat", "baseline..HEAD"],
-            returncode=1,
-            stdout="",
-        )
-
-        result = await cli.check_diff_empty("baseline..HEAD", runner)
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_returns_false_on_exception(self, tmp_path: Path) -> None:
-        """Returns False (fail-open) when exception is raised."""
-        cli = CerberusGateCLI(repo_path=tmp_path)
-
-        class ExceptionRaisingRunner(FakeCommandRunner):
-            async def run_async(
-                self,
-                cmd: list[str] | str,
-                env: Mapping[str, str] | None = None,
-                timeout: float | None = None,
-                use_process_group: bool | None = None,
-                shell: bool = False,
-                cwd: Path | None = None,
-            ) -> CommandResult:
-                raise Exception("git not found")
-
-        runner = ExceptionRaisingRunner()
-
-        result = await cli.check_diff_empty("baseline..HEAD", runner)
-        assert result is False
-
-
 class TestSpawnCodeReview:
     """Tests for spawn-code-review subprocess."""
 
@@ -252,10 +183,10 @@ class TestSpawnCodeReview:
         runner = FakeCommandRunner(allow_unregistered=True)
 
         result = await cli.spawn_code_review(
-            diff_range="baseline..HEAD",
             runner=runner,
             env={"CLAUDE_SESSION_ID": "test"},
             timeout=300,
+            commit_shas=["commit1"],
         )
 
         assert result.success is True
@@ -287,10 +218,10 @@ class TestSpawnCodeReview:
         timeout_runner = TimeoutRunner()
 
         result = await cli.spawn_code_review(
-            diff_range="baseline..HEAD",
             runner=timeout_runner,
             env={"CLAUDE_SESSION_ID": "test"},
             timeout=300,
+            commit_shas=["commit1"],
         )
 
         assert result.success is False
@@ -322,10 +253,10 @@ class TestSpawnCodeReview:
         runner = AlreadyActiveRunner()
 
         result = await cli.spawn_code_review(
-            diff_range="baseline..HEAD",
             runner=runner,
             env={"CLAUDE_SESSION_ID": "test"},
             timeout=300,
+            commit_shas=["commit1"],
         )
 
         assert result.success is False
@@ -358,10 +289,10 @@ class TestSpawnCodeReview:
         runner = FailingRunner()
 
         result = await cli.spawn_code_review(
-            diff_range="baseline..HEAD",
             runner=runner,
             env={"CLAUDE_SESSION_ID": "test"},
             timeout=300,
+            commit_shas=["commit1"],
         )
 
         assert result.success is False
@@ -376,11 +307,11 @@ class TestSpawnCodeReview:
 
         context_file = tmp_path / "context.md"
         await cli.spawn_code_review(
-            diff_range="baseline..HEAD",
             runner=runner,
             env={"CLAUDE_SESSION_ID": "test"},
             timeout=300,
             context_file=context_file,
+            commit_shas=["commit1"],
         )
 
         assert len(runner.calls) == 1
@@ -395,11 +326,11 @@ class TestSpawnCodeReview:
         runner = FakeCommandRunner(allow_unregistered=True)
 
         await cli.spawn_code_review(
-            diff_range="baseline..HEAD",
             runner=runner,
             env={"CLAUDE_SESSION_ID": "test"},
             timeout=300,
             spawn_args=("--extra", "arg"),
+            commit_shas=["commit1"],
         )
 
         assert len(runner.calls) == 1
@@ -414,7 +345,6 @@ class TestSpawnCodeReview:
         runner = FakeCommandRunner(allow_unregistered=True)
 
         await cli.spawn_code_review(
-            diff_range="baseline..HEAD",
             runner=runner,
             env={"CLAUDE_SESSION_ID": "test"},
             timeout=300,

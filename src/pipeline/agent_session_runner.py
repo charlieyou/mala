@@ -120,7 +120,7 @@ GateCheckCallback = Callable[
     Coroutine[Any, Any, tuple["GateOutcome", int]],
 ]
 ReviewCheckCallback = Callable[
-    [str, str | None, str | None, str | None, "RetryState"],
+    [str, str | None, str | None, "RetryState"],
     Coroutine[Any, Any, "ReviewOutcome"],
 ]
 ReviewNoProgressCallback = Callable[
@@ -264,7 +264,6 @@ class AgentSessionInput:
     Attributes:
         issue_id: The issue ID being worked on.
         prompt: The initial prompt to send to the agent.
-        baseline_commit: Optional baseline commit for diff comparison.
         issue_description: Issue description for scope verification.
         agent_id: Optional pre-generated agent ID for lock management.
         resume_session_id: Optional session ID to resume from a prior run.
@@ -274,7 +273,6 @@ class AgentSessionInput:
 
     issue_id: str
     prompt: str
-    baseline_commit: str | None = None
     issue_description: str | None = None
     agent_id: str | None = None
     resume_session_id: str | None = None
@@ -332,7 +330,7 @@ class SessionCallbacks:
         on_gate_check: Async callback to run quality gate check.
             Args: (issue_id, log_path, retry_state) -> (GateResult, new_offset)
         on_review_check: Async callback to run external review (Cerberus).
-            Args: (issue_id, issue_description, baseline_commit, session_id, retry_state) -> ReviewOutcome
+            Args: (issue_id, issue_description, session_id, retry_state) -> ReviewOutcome
         on_review_no_progress: Sync callback to check if no progress on review retry.
             Args: (log_path, log_offset, prev_commit, curr_commit) -> bool
         get_log_path: Callback to get log path from session ID.
@@ -660,7 +658,6 @@ class AgentSessionRunner:
                 review_result = await self.callbacks.on_review_check(
                     input.issue_id,
                     input.issue_description,
-                    input.baseline_commit,
                     lifecycle_ctx.session_id,
                     lifecycle_ctx.retry_state,
                 )
@@ -916,7 +913,6 @@ class AgentSessionRunner:
             session_input = AgentSessionInput(
                 issue_id=input.issue_id,
                 prompt=current_prompt,
-                baseline_commit=input.baseline_commit,
                 issue_description=input.issue_description,
                 resume_session_id=current_resume_session_id,
                 baseline_timestamp=input.baseline_timestamp,
