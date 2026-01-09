@@ -1,8 +1,11 @@
 """Unit tests for EpicVerificationCoordinator interrupt handling.
 
-These tests verify that epic verification properly handles interrupt events:
-- Exits retry loop when interrupted
-- Cancels remediation tasks when interrupted
+Tests verify that epic verification properly handles interrupt events:
+- test_epic_verification_checks_interrupt_before_retry: Exits retry loop when interrupted
+- test_epic_verification_cancels_remediation_on_interrupt: Cancels remediation tasks
+- test_epic_verification_stops_spawning_on_interrupt: No new tasks spawned after interrupt
+- test_epic_verification_works_without_interrupt_event: Normal operation without interrupt
+- test_spawn_remediation_passes_flow_parameter: Verifies flow="epic_remediation" is passed
 """
 
 import asyncio
