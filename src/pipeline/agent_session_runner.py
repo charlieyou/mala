@@ -904,11 +904,16 @@ class AgentSessionRunner:
         """
         guard = InterruptGuard(interrupt_event)
 
+        # Use provided agent_id or generate one to preserve lock continuity across restarts
+        # Computed early so it's available for early interrupt returns
+        agent_id = input.agent_id or f"{input.issue_id}-{uuid.uuid4().hex[:8]}"
+
         # Check for early interrupt before starting
         if guard.is_interrupted():
             return AgentSessionOutput(
                 success=False,
                 summary="Session interrupted before start",
+                agent_id=agent_id,
                 interrupted=True,
                 baseline_timestamp=input.baseline_timestamp,
             )
@@ -916,8 +921,6 @@ class AgentSessionRunner:
         start_time = asyncio.get_event_loop().time()
         continuation_count = 0
         current_prompt = input.prompt
-        # Use provided agent_id or generate one to preserve lock continuity across restarts
-        agent_id = input.agent_id or f"{input.issue_id}-{uuid.uuid4().hex[:8]}"
         # Only use resume_session_id on first iteration; clear after to avoid resuming
         # exhausted sessions on context pressure restarts
         current_resume_session_id = input.resume_session_id

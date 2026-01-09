@@ -1,11 +1,16 @@
 """Unit tests for AgentSessionRunner.
 
-Tests the P0/P1 filtering logic in _build_session_output().
+Tests the P0/P1 filtering logic in _build_session_output() and early interrupt
+path to ensure agent_id is preserved.
 """
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
+from pathlib import Path
+
+import pytest
 
 from src.domain.lifecycle import (
     ImplementerLifecycle,
@@ -14,9 +19,13 @@ from src.domain.lifecycle import (
     RetryState,
 )
 from src.pipeline.agent_session_runner import (
+    AgentSessionConfig,
+    AgentSessionInput,
     AgentSessionRunner,
+    SessionCallbacks,
     SessionConfig,
     SessionExecutionState,
+    SessionPrompts,
 )
 
 
@@ -357,3 +366,132 @@ class TestBuildSessionOutputFiltering:
             "body",
             "reviewer",
         }
+
+
+@dataclass
+class FakeSDKClientFactory:
+    """Fake SDK client factory for testing."""
+
+    def create_client(
+        self,
+        options: object,
+        query: str,
+    ) -> object:
+        raise NotImplementedError("Should not be called in early interrupt tests")
+
+    def with_resume(self, options: object, session_id: str) -> object:
+        raise NotImplementedError("Should not be called in early interrupt tests")
+
+
+def make_prompts() -> SessionPrompts:
+    """Create minimal SessionPrompts for testing."""
+    return SessionPrompts(
+        gate_followup="gate prompt",
+        review_followup="review prompt",
+        idle_resume="idle prompt",
+        checkpoint_request="checkpoint prompt",
+        continuation="continuation prompt",
+    )
+
+
+class TestEarlyInterruptPath:
+    """Tests for early SIGINT interrupt handling in run_session."""
+
+    @pytest.mark.asyncio
+    async def test_early_interrupt_returns_agent_id_when_provided(self) -> None:
+        """run_session returns provided agent_id on early interrupt."""
+        # Set up pre-signaled interrupt event
+        interrupt_event = asyncio.Event()
+        interrupt_event.set()
+
+        config = AgentSessionConfig(
+            repo_path=Path("/tmp/test-repo"),
+            timeout_seconds=300,
+            prompts=make_prompts(),
+        )
+        runner = AgentSessionRunner(
+            config=config,
+            sdk_client_factory=FakeSDKClientFactory(),  # type: ignore[arg-type]
+            callbacks=SessionCallbacks(),
+        )
+
+        session_input = AgentSessionInput(
+            issue_id="test-issue",
+            prompt="test prompt",
+            agent_id="my-custom-agent-id",
+        )
+
+        output = await runner.run_session(
+            session_input, interrupt_event=interrupt_event
+        )
+
+        assert output.interrupted is True
+        assert output.agent_id == "my-custom-agent-id"
+        assert output.success is False
+        assert "interrupted" in output.summary.lower()
+
+    @pytest.mark.asyncio
+    async def test_early_interrupt_generates_agent_id_when_not_provided(self) -> None:
+        """run_session generates and returns agent_id on early interrupt."""
+        # Set up pre-signaled interrupt event
+        interrupt_event = asyncio.Event()
+        interrupt_event.set()
+
+        config = AgentSessionConfig(
+            repo_path=Path("/tmp/test-repo"),
+            timeout_seconds=300,
+            prompts=make_prompts(),
+        )
+        runner = AgentSessionRunner(
+            config=config,
+            sdk_client_factory=FakeSDKClientFactory(),  # type: ignore[arg-type]
+            callbacks=SessionCallbacks(),
+        )
+
+        session_input = AgentSessionInput(
+            issue_id="test-issue",
+            prompt="test prompt",
+            # agent_id not provided - should be generated
+        )
+
+        output = await runner.run_session(
+            session_input, interrupt_event=interrupt_event
+        )
+
+        assert output.interrupted is True
+        assert output.agent_id != ""
+        assert output.agent_id.startswith("test-issue-")
+        assert output.success is False
+
+    @pytest.mark.asyncio
+    async def test_early_interrupt_preserves_baseline_timestamp(self) -> None:
+        """run_session preserves baseline_timestamp on early interrupt."""
+        # Set up pre-signaled interrupt event
+        interrupt_event = asyncio.Event()
+        interrupt_event.set()
+
+        config = AgentSessionConfig(
+            repo_path=Path("/tmp/test-repo"),
+            timeout_seconds=300,
+            prompts=make_prompts(),
+        )
+        runner = AgentSessionRunner(
+            config=config,
+            sdk_client_factory=FakeSDKClientFactory(),  # type: ignore[arg-type]
+            callbacks=SessionCallbacks(),
+        )
+
+        session_input = AgentSessionInput(
+            issue_id="test-issue",
+            prompt="test prompt",
+            agent_id="agent-123",
+            baseline_timestamp=1700000000,
+        )
+
+        output = await runner.run_session(
+            session_input, interrupt_event=interrupt_event
+        )
+
+        assert output.interrupted is True
+        assert output.baseline_timestamp == 1700000000
+        assert output.agent_id == "agent-123"
