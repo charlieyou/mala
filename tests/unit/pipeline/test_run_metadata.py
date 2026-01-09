@@ -1589,7 +1589,7 @@ class TestParseTimestamp:
 class TestExtractSessionFromRun:
     """Test extract_session_from_run function for SessionInfo extraction."""
 
-    def test_extracts_last_review_issues(self) -> None:
+    def test_extracts_last_review_issues(self, tmp_path: Path) -> None:
         """Test that last_review_issues is extracted into SessionInfo."""
         review_issues = [
             {"issue": "Missing error handling", "severity": "error"},
@@ -1606,7 +1606,7 @@ class TestExtractSessionFromRun:
                 }
             },
         }
-        path = Path("/tmp/run.json")
+        path = tmp_path / "run.json"
 
         result = extract_session_from_run(data, path, "issue-abc")
 
@@ -1615,7 +1615,9 @@ class TestExtractSessionFromRun:
         assert len(result.last_review_issues) == 2
         assert result.last_review_issues[0]["issue"] == "Missing error handling"
 
-    def test_old_format_without_last_review_issues_returns_none(self) -> None:
+    def test_old_format_without_last_review_issues_returns_none(
+        self, tmp_path: Path
+    ) -> None:
         """Test backward compat: old format without field returns None."""
         data = {
             "run_id": "run-old",
@@ -1628,7 +1630,7 @@ class TestExtractSessionFromRun:
                 }
             },
         }
-        path = Path("/tmp/old_run.json")
+        path = tmp_path / "old_run.json"
 
         result = extract_session_from_run(data, path, "issue-legacy")
 
@@ -1636,7 +1638,7 @@ class TestExtractSessionFromRun:
         assert result.session_id == "session-old"
         assert result.last_review_issues is None
 
-    def test_handles_invalid_last_review_issues_type(self) -> None:
+    def test_handles_invalid_last_review_issues_type(self, tmp_path: Path) -> None:
         """Test that non-list last_review_issues is treated as None."""
         data = {
             "run_id": "run-invalid",
@@ -1648,14 +1650,14 @@ class TestExtractSessionFromRun:
                 }
             },
         }
-        path = Path("/tmp/invalid_run.json")
+        path = tmp_path / "invalid_run.json"
 
         result = extract_session_from_run(data, path, "issue-bad")
 
         assert result is not None
         assert result.last_review_issues is None
 
-    def test_handles_null_last_review_issues(self) -> None:
+    def test_handles_null_last_review_issues(self, tmp_path: Path) -> None:
         """Test that null last_review_issues is handled correctly."""
         data = {
             "run_id": "run-null",
@@ -1667,14 +1669,14 @@ class TestExtractSessionFromRun:
                 }
             },
         }
-        path = Path("/tmp/null_run.json")
+        path = tmp_path / "null_run.json"
 
         result = extract_session_from_run(data, path, "issue-null")
 
         assert result is not None
         assert result.last_review_issues is None
 
-    def test_forward_compat_extra_keys_ignored(self) -> None:
+    def test_forward_compat_extra_keys_ignored(self, tmp_path: Path) -> None:
         """Test forward compat: extra unknown keys don't crash."""
         data = {
             "run_id": "run-future",
@@ -1691,7 +1693,7 @@ class TestExtractSessionFromRun:
                 }
             },
         }
-        path = Path("/tmp/future_run.json")
+        path = tmp_path / "future_run.json"
 
         result = extract_session_from_run(data, path, "issue-future")
 
@@ -1699,27 +1701,27 @@ class TestExtractSessionFromRun:
         assert result.session_id == "session-future"
         assert result.last_review_issues == [{"issue": "Valid issue"}]
 
-    def test_returns_none_for_missing_issue(self) -> None:
+    def test_returns_none_for_missing_issue(self, tmp_path: Path) -> None:
         """Test that missing issue returns None."""
         data = {
             "run_id": "run-1",
             "started_at": "2024-01-01T10:00:00Z",
             "issues": {"other-issue": {"session_id": "session-1"}},
         }
-        path = Path("/tmp/run.json")
+        path = tmp_path / "run.json"
 
         result = extract_session_from_run(data, path, "nonexistent-issue")
 
         assert result is None
 
-    def test_returns_none_for_invalid_issues_dict(self) -> None:
+    def test_returns_none_for_invalid_issues_dict(self, tmp_path: Path) -> None:
         """Test that non-dict issues field returns None."""
         data = {
             "run_id": "run-1",
             "started_at": "2024-01-01T10:00:00Z",
             "issues": "not a dict",
         }
-        path = Path("/tmp/run.json")
+        path = tmp_path / "run.json"
 
         result = extract_session_from_run(data, path, "any-issue")
 
@@ -1750,7 +1752,9 @@ class TestLookupPriorSessionInfoWithReviewIssues:
                 },
             }
 
-            (runs_dir / "2024-01-15T10-00-00_run.json").write_text(json.dumps(run_data))
+            (runs_dir / "2024-01-15T10-00-00_run.json").write_text(
+                json.dumps(run_data), encoding="utf-8"
+            )
 
             with patch(
                 "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
@@ -1782,7 +1786,9 @@ class TestLookupPriorSessionInfoWithReviewIssues:
                 },
             }
 
-            (runs_dir / "2024-01-10T10-00-00_run.json").write_text(json.dumps(run_data))
+            (runs_dir / "2024-01-10T10-00-00_run.json").write_text(
+                json.dumps(run_data), encoding="utf-8"
+            )
 
             with patch(
                 "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
