@@ -1,0 +1,529 @@
+# Validation Triggers
+
+Validation triggers let you run validation commands at specific checkpoints during a mala session. Instead of running all validations at session end, you can configure fast checks after each epic and comprehensive checks only at the end.
+
+## Overview
+
+The trigger system provides:
+
+- **Faster feedback**: Run appropriate validations at each checkpoint (e.g., lint after each epic)
+- **Cost-effective validation**: Run expensive tests only when needed (e.g., E2E tests at session end)
+- **Flexible strategies**: Different failure modes per trigger (abort, continue, or auto-fix)
+
+## Configuration
+
+Triggers are configured in `mala.yaml` using two sections:
+
+1. **Base command pool** (`global_validation_commands`): Defines available commands
+2. **Trigger configuration** (`validation_triggers`): Specifies when and how to run them
+
+```yaml
+preset: python-uv
+
+# Base command pool (preset provides: test, lint, typecheck, format)
+# Add custom commands to the pool
+global_validation_commands:
+  import-linter:
+    command: "uv run lint-imports"
+    timeout: 60
+  security-scan:
+    command: "uv run bandit -r src/"
+    timeout: 120
+
+# When to run which commands
+validation_triggers:
+  epic_completion:
+    epic_depth: top_level
+    fire_on: success
+    failure_mode: continue
+    commands:
+      - ref: lint
+      - ref: typecheck
+
+  session_end:
+    failure_mode: remediate
+    max_retries: 3
+    commands:
+      - ref: test
+      - ref: lint
+      - ref: typecheck
+
+  periodic:
+    interval: 10
+    failure_mode: continue
+    commands:
+      - ref: lint
+```
+
+## Trigger Types
+
+### epic_completion
+
+Fires when an epic (story/milestone) completes verification.
+
+| Field | Required | Values | Description |
+|-------|----------|--------|-------------|
+| `epic_depth` | Yes | `top_level`, `all` | Which epics trigger validation |
+| `fire_on` | Yes | `success`, `failure`, `both` | When to fire based on verification result |
+| `failure_mode` | Yes | `abort`, `continue`, `remediate` | How to handle validation failures |
+| `max_retries` | When remediate | Integer | Retry attempts for remediation |
+| `commands` | No | List | Commands to run (empty = no validation) |
+
+**epic_depth values:**
+- `top_level`: Only epics with no epic parent (root-level epics)
+- `all`: All epics including nested ones
+
+**fire_on values:**
+- `success`: Fire only when epic verification passes
+- `failure`: Fire only when epic verification fails
+- `both`: Fire regardless of verification result
+
+```yaml
+validation_triggers:
+  epic_completion:
+    epic_depth: top_level
+    fire_on: success
+    failure_mode: continue
+    commands:
+      - ref: typecheck
+        timeout: 60
+      - ref: lint
+```
+
+### session_end
+
+Fires when all issues complete and the session ends normally.
+
+| Field | Required | Values | Description |
+|-------|----------|--------|-------------|
+| `failure_mode` | Yes | `abort`, `continue`, `remediate` | How to handle validation failures |
+| `max_retries` | When remediate | Integer | Retry attempts for remediation |
+| `commands` | No | List | Commands to run (empty = no validation) |
+
+**Skip conditions:**
+- Session was aborted (e.g., user pressed Ctrl+C)
+- No successful work completed (`success_count == 0`)
+
+```yaml
+validation_triggers:
+  session_end:
+    failure_mode: remediate
+    max_retries: 3
+    commands:
+      - ref: test
+        command: "uv run pytest --cov --cov-report=html"
+        timeout: 600
+      - ref: lint
+      - ref: security-scan
+```
+
+### periodic
+
+Fires after a specified number of non-epic issues complete.
+
+| Field | Required | Values | Description |
+|-------|----------|--------|-------------|
+| `interval` | Yes | Integer | Number of issues between validations |
+| `failure_mode` | Yes | `abort`, `continue`, `remediate` | How to handle validation failures |
+| `max_retries` | When remediate | Integer | Retry attempts for remediation |
+| `commands` | No | List | Commands to run (empty = no validation) |
+
+The counter increments only for non-epic issues (epic completions don't count). Validations fire at `interval`, `2*interval`, `3*interval`, etc.
+
+```yaml
+validation_triggers:
+  periodic:
+    interval: 5
+    failure_mode: continue
+    commands:
+      - ref: lint
+      - ref: typecheck
+```
+
+## Failure Modes
+
+Each trigger must specify a `failure_mode`:
+
+| Mode | Behavior |
+|------|----------|
+| `abort` | Stop the run immediately on validation failure |
+| `continue` | Log the failure and continue processing issues |
+| `remediate` | Spawn a fixer agent to attempt repairs, retry up to `max_retries` times |
+
+### Remediation
+
+When `failure_mode: remediate` is set:
+
+1. Validation runs
+2. If it fails, a fixer agent spawns with the failure output
+3. Fixer attempts to commit fixes
+4. Validation re-runs
+5. Steps 2-4 repeat up to `max_retries` times
+6. If still failing after all retries, the run aborts
+
+`max_retries` counts fixer attempts:
+- `max_retries: 0` - No fixer, abort immediately on failure
+- `max_retries: 1` - One fixer attempt after initial failure
+- `max_retries: 3` - Three fixer attempts
+
+```yaml
+validation_triggers:
+  session_end:
+    failure_mode: remediate
+    max_retries: 3
+    commands:
+      - ref: test
+      - ref: lint
+```
+
+## Command List Structure
+
+Each trigger has a `commands` list that references the base command pool.
+
+### Command Entry Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `ref` | Yes | Name of command in base pool |
+| `command` | No | Override the command string |
+| `timeout` | No | Override the timeout in seconds |
+
+### String Shorthand
+
+For simple references without overrides:
+
+```yaml
+commands:
+  - ref: lint
+  - ref: typecheck
+```
+
+### Full Object Form
+
+For overrides:
+
+```yaml
+commands:
+  - ref: test
+    command: "uv run pytest --cov"
+    timeout: 600
+  - ref: lint
+    timeout: 120
+```
+
+### Override Resolution
+
+When overriding, unspecified fields inherit from the base pool:
+
+```yaml
+# Base pool
+global_validation_commands:
+  test:
+    command: "uv run pytest"
+    timeout: 300
+
+# Trigger
+validation_triggers:
+  session_end:
+    failure_mode: continue
+    commands:
+      - ref: test
+        timeout: 600  # Overrides timeout, inherits command
+```
+
+Result: `command="uv run pytest"`, `timeout=600`
+
+### Running Same Command Multiple Times
+
+The same `ref` can appear multiple times with different configurations:
+
+```yaml
+commands:
+  - ref: test
+    command: "uv run pytest -m fast"
+    timeout: 60
+  - ref: test
+    command: "uv run pytest -m slow"
+    timeout: 600
+```
+
+### Empty Commands
+
+An empty or omitted `commands` list means no validation runs, but the trigger still fires:
+
+```yaml
+validation_triggers:
+  epic_completion:
+    epic_depth: all
+    fire_on: both
+    failure_mode: continue
+    commands: []  # No validation, just marks the checkpoint
+```
+
+## Execution Behavior
+
+### Sequential Execution
+
+Commands within a trigger execute sequentially in declaration order. If a command fails, remaining commands are skipped (fail-fast).
+
+### Trigger Queuing
+
+Multiple triggers queue and execute sequentially. No parallel validation runs.
+
+### Blocking
+
+Global trigger validation **blocks new issue assignments** to prevent workspace conflicts. Active agents continue running, but no new issues start until validation completes.
+
+## Migration Guide
+
+### From `validate_every`
+
+The `validate_every` field is deprecated. Replace with `periodic` trigger:
+
+**Before:**
+```yaml
+preset: python-uv
+validate_every: 5
+```
+
+**After:**
+```yaml
+preset: python-uv
+validation_triggers:
+  periodic:
+    interval: 5
+    failure_mode: continue
+    commands:
+      - ref: lint
+      - ref: typecheck
+```
+
+### From `global_validation_commands` Without Triggers
+
+If you have `global_validation_commands` but no `validation_triggers`, mala now requires explicit trigger configuration:
+
+**Before:**
+```yaml
+preset: python-uv
+global_validation_commands:
+  test:
+    command: "uv run pytest --cov"
+```
+
+**After:**
+```yaml
+preset: python-uv
+global_validation_commands:
+  test:
+    command: "uv run pytest --cov"
+
+validation_triggers:
+  session_end:
+    failure_mode: remediate
+    max_retries: 3
+    commands:
+      - ref: test
+      - ref: lint
+      - ref: typecheck
+```
+
+### Opting Out of Validation
+
+To explicitly disable all validation triggers (no validation at any checkpoint):
+
+```yaml
+preset: python-uv
+validation_triggers: {}  # Empty triggers block
+```
+
+## Example Configurations
+
+### Fast Feedback at Epic Completion
+
+Run quick checks after each epic, comprehensive tests at session end:
+
+```yaml
+preset: python-uv
+
+validation_triggers:
+  epic_completion:
+    epic_depth: top_level
+    fire_on: success
+    failure_mode: continue
+    commands:
+      - ref: typecheck
+        timeout: 60
+      - ref: lint
+        timeout: 60
+
+  session_end:
+    failure_mode: remediate
+    max_retries: 3
+    commands:
+      - ref: test
+        timeout: 600
+      - ref: lint
+      - ref: typecheck
+```
+
+### Periodic Lint Checks
+
+Keep code clean during long sessions:
+
+```yaml
+preset: python-uv
+
+validation_triggers:
+  periodic:
+    interval: 5
+    failure_mode: continue
+    commands:
+      - ref: lint
+      - ref: typecheck
+
+  session_end:
+    failure_mode: remediate
+    max_retries: 2
+    commands:
+      - ref: test
+```
+
+### Strict Security Checks
+
+Abort on any security issues:
+
+```yaml
+preset: python-uv
+
+global_validation_commands:
+  security-scan:
+    command: "uv run bandit -r src/"
+    timeout: 120
+
+validation_triggers:
+  epic_completion:
+    epic_depth: top_level
+    fire_on: success
+    failure_mode: abort  # Stop immediately on security issues
+    commands:
+      - ref: security-scan
+
+  session_end:
+    failure_mode: remediate
+    max_retries: 3
+    commands:
+      - ref: test
+      - ref: lint
+      - ref: security-scan
+```
+
+### Custom Commands Only
+
+Define and use only custom commands:
+
+```yaml
+commands:
+  lint: "uvx ruff check ."
+  test: "uv run pytest"
+
+global_validation_commands:
+  import-linter:
+    command: "uvx --from import-linter lint-imports"
+    timeout: 60
+  mypy:
+    command: "uv run mypy src/"
+    timeout: 120
+
+validation_triggers:
+  session_end:
+    failure_mode: remediate
+    max_retries: 2
+    commands:
+      - ref: test
+      - ref: lint
+      - ref: import-linter
+      - ref: mypy
+```
+
+## Troubleshooting
+
+### Error: `validation_triggers required`
+
+```
+validation_triggers required when global_validation_commands is defined.
+See migration guide at https://docs.mala.ai/migration/validation-triggers
+```
+
+**Cause:** You have `global_validation_commands` defined but no `validation_triggers`.
+
+**Solution:** Add a `validation_triggers` block or use `validation_triggers: {}` to opt out.
+
+### Error: `validate_every is deprecated`
+
+```
+validate_every is deprecated. Use validation_triggers.periodic with interval field.
+See migration guide at https://docs.mala.ai/migration/validation-triggers
+```
+
+**Cause:** Using the old `validate_every` field.
+
+**Solution:** Replace with `validation_triggers.periodic`:
+
+```yaml
+validation_triggers:
+  periodic:
+    interval: 5
+    failure_mode: continue
+    commands:
+      - ref: lint
+```
+
+### Error: `failure_mode required`
+
+```
+failure_mode required for trigger epic_completion
+```
+
+**Cause:** Missing required `failure_mode` field.
+
+**Solution:** Add `failure_mode: abort`, `continue`, or `remediate`.
+
+### Error: `max_retries required when failure_mode=remediate`
+
+```
+max_retries required when failure_mode=remediate for trigger session_end
+```
+
+**Cause:** Using `failure_mode: remediate` without specifying `max_retries`.
+
+**Solution:** Add `max_retries` with an integer value.
+
+### Error: `trigger X references unknown command`
+
+```
+epic_completion trigger references unknown command 'typo_test'. Available: test, lint, typecheck
+```
+
+**Cause:** A command `ref` doesn't match any command in the base pool.
+
+**Solution:** Check the command name matches one in `commands` or `global_validation_commands`.
+
+### Error: `epic_depth required` / `fire_on required`
+
+```
+epic_depth required for trigger epic_completion
+```
+
+**Cause:** Missing required field for `epic_completion` trigger.
+
+**Solution:** Add both `epic_depth` and `fire_on` fields.
+
+### Error: `interval required`
+
+```
+interval required for trigger periodic
+```
+
+**Cause:** Missing `interval` field for `periodic` trigger.
+
+**Solution:** Add `interval` with an integer value (number of issues between validations).

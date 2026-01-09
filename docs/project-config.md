@@ -69,6 +69,11 @@ agent_sdk_review_timeout: number  # Optional. Timeout in seconds (default: 600)
 agent_sdk_reviewer_model: string  # Optional. "sonnet" (default), "opus", or "haiku"
 
 claude_settings_sources: list     # Optional. SDK settings sources (default: [local, project])
+
+validation_triggers:             # Optional. See validation-triggers.md
+  epic_completion: object        # Run validation when epics complete
+  session_end: object            # Run validation at session end
+  periodic: object               # Run validation periodically
 ```
 
 ## Field Reference
@@ -92,6 +97,7 @@ claude_settings_sources: list     # Optional. SDK settings sources (default: [lo
 | `agent_sdk_review_timeout` | integer | No | Timeout in seconds (default: 600) |
 | `agent_sdk_reviewer_model` | string | No | Model: `sonnet` (default), `opus`, or `haiku` |
 | `claude_settings_sources` | list | No | SDK settings sources: `local`, `project`, `user` (default: `[local, project]`) |
+| `validation_triggers` | object | No | Trigger configuration. See [validation-triggers.md](validation-triggers.md) |
 
 *Required when `coverage` section is present.
 
