@@ -387,6 +387,7 @@ def build_validation_spec(
     from src.domain.validation.config_loader import (
         ConfigMissingError,
         _validate_migration,
+        _validate_trigger_command_refs,
         load_config,
     )
     from src.domain.validation.config_merger import merge_configs
@@ -431,6 +432,9 @@ def build_validation_spec(
 
     # Validate migration on effective merged config (catches deprecated patterns)
     _validate_migration(merged_config)
+
+    # Validate trigger command refs exist in effective base pool (fail fast at startup)
+    _validate_trigger_command_refs(merged_config)
 
     # Ensure at least one command is defined after merge
     if not merged_config.has_any_command():

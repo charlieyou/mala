@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.domain.validation.config import (
+        BaseTriggerConfig,
         CerberusConfig,
         CodeReviewConfig,
     )
@@ -971,3 +972,63 @@ def _validate_migration(config: ValidationConfig) -> None:
             "    commands:\n"
             "      - ref: test"
         )
+
+
+def _validate_trigger_command_refs(config: ValidationConfig) -> None:
+    """Validate that all trigger command refs exist in the effective base pool.
+
+    The base pool is constructed from the merged config (commands + global_validation_commands),
+    following the same logic as run_coordinator._build_base_pool. This validation ensures
+    invalid refs are caught at startup rather than at runtime when triggers fire.
+
+    Args:
+        config: The effective merged ValidationConfig (after preset merge).
+
+    Raises:
+        ConfigError: If any trigger references a command that doesn't exist in the base pool.
+    """
+    from src.domain.validation.config import TriggerType
+
+    triggers = config.validation_triggers
+    if triggers is None:
+        return  # No triggers configured
+
+    # Build base pool following run_coordinator._build_base_pool logic:
+    # - Built-in commands: global_validation_commands overrides commands
+    # - Custom commands: from global_validation_commands only
+    base_pool: set[str] = set()
+    base_cmds = config.commands
+    global_cmds = config.global_validation_commands
+
+    # Add built-in commands (global overrides base)
+    for cmd_name in ("test", "lint", "format", "typecheck", "e2e", "setup"):
+        global_cmd = getattr(global_cmds, cmd_name, None)
+        if global_cmd is not None:
+            base_pool.add(cmd_name)
+        else:
+            base_cmd = getattr(base_cmds, cmd_name, None)
+            if base_cmd is not None:
+                base_pool.add(cmd_name)
+
+    # Add custom commands from global_validation_commands
+    for name in global_cmds.custom_commands:
+        base_pool.add(name)
+
+    # Validate each configured trigger's command refs
+    trigger_configs: list[tuple[TriggerType, BaseTriggerConfig | None]] = [
+        (TriggerType.EPIC_COMPLETION, triggers.epic_completion),
+        (TriggerType.SESSION_END, triggers.session_end),
+        (TriggerType.PERIODIC, triggers.periodic),
+        (TriggerType.RUN_END, triggers.run_end),
+    ]
+
+    for trigger_type, trigger_config in trigger_configs:
+        if trigger_config is None:
+            continue
+        for cmd_ref in trigger_config.commands:
+            if cmd_ref.ref not in base_pool:
+                available = ", ".join(sorted(base_pool)) if base_pool else "(none)"
+                raise ConfigError(
+                    f"trigger {trigger_type.value} references unknown command "
+                    f"'{cmd_ref.ref}'. Available: {available}"
+                )

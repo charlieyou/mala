@@ -1246,3 +1246,114 @@ class TestConfigMissingSemanticsConsistency:
             cmd for cmd in spec.commands if cmd.name == "typecheck"
         )
         assert spec_typecheck_cmd.command == prompt_commands.typecheck
+
+
+class TestTriggerCommandRefValidation:
+    """Tests for trigger command ref validation at startup.
+
+    Per mala-553g: Invalid trigger command refs must be caught at config load /
+    spec build time, not at runtime when triggers fire.
+    """
+
+    def test_invalid_trigger_ref_fails_at_spec_build(self, tmp_path: Path) -> None:
+        """build_validation_spec raises ConfigError for invalid trigger command ref."""
+        import pytest
+
+        from src.domain.validation.config import ConfigError
+
+        # Create mala.yaml with trigger referencing non-existent command
+        yaml_content = """\
+preset: python-uv
+commands:
+  test: uv run pytest
+  lint: uvx ruff check .
+global_validation_commands:
+  test: uv run pytest --cov
+validation_triggers:
+  session_end:
+    failure_mode: continue
+    commands:
+      - ref: typo_command
+"""
+        (tmp_path / "mala.yaml").write_text(yaml_content)
+
+        with pytest.raises(
+            ConfigError,
+            match=r"trigger session_end references unknown command 'typo_command'",
+        ):
+            build_validation_spec(tmp_path)
+
+    def test_valid_trigger_refs_pass_validation(self, tmp_path: Path) -> None:
+        """build_validation_spec succeeds when all trigger refs exist in base pool."""
+        # Create mala.yaml with valid trigger refs
+        yaml_content = """\
+preset: python-uv
+commands:
+  test: uv run pytest
+  lint: uvx ruff check .
+global_validation_commands:
+  test: uv run pytest --cov
+validation_triggers:
+  session_end:
+    failure_mode: continue
+    commands:
+      - ref: test
+      - ref: lint
+"""
+        (tmp_path / "mala.yaml").write_text(yaml_content)
+
+        # Should not raise - all refs exist
+        spec = build_validation_spec(tmp_path)
+        assert spec is not None
+
+    def test_custom_command_ref_in_trigger_validated(self, tmp_path: Path) -> None:
+        """Trigger can reference custom command from global_validation_commands."""
+        yaml_content = """\
+preset: python-uv
+commands:
+  test: uv run pytest
+global_validation_commands:
+  custom_check: my-custom-command
+validation_triggers:
+  session_end:
+    failure_mode: continue
+    commands:
+      - ref: custom_check
+"""
+        (tmp_path / "mala.yaml").write_text(yaml_content)
+
+        # Should not raise - custom_check exists in global_validation_commands
+        spec = build_validation_spec(tmp_path)
+        assert spec is not None
+
+    def test_invalid_ref_error_lists_available_commands(self, tmp_path: Path) -> None:
+        """Error message includes list of available commands."""
+        import pytest
+
+        from src.domain.validation.config import ConfigError
+
+        yaml_content = """\
+preset: python-uv
+commands:
+  test: uv run pytest
+  lint: uvx ruff check .
+global_validation_commands:
+  custom: my-custom
+validation_triggers:
+  epic_completion:
+    failure_mode: abort
+    epic_depth: top_level
+    fire_on: success
+    commands:
+      - ref: nonexistent
+"""
+        (tmp_path / "mala.yaml").write_text(yaml_content)
+
+        with pytest.raises(ConfigError) as exc_info:
+            build_validation_spec(tmp_path)
+
+        error_msg = str(exc_info.value)
+        # Should list available commands from base pool
+        assert "custom" in error_msg
+        assert "lint" in error_msg
+        assert "test" in error_msg
