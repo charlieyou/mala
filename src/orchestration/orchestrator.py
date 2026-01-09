@@ -810,9 +810,10 @@ class MalaOrchestrator:
                     issue_id,
                 )
                 # Build resume prompt if prior session has review issues
-                if prior_session and prior_session.last_review_issues:
+                # _build_resume_prompt returns None if no issues, so call unconditionally
+                if prior_session:
                     resume_prompt = _build_resume_prompt(
-                        prior_session.last_review_issues,
+                        prior_session.last_review_issues or [],
                         self._prompts,
                         self._prompt_validation_commands,
                         issue_id,
