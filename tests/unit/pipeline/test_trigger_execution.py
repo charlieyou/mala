@@ -76,13 +76,17 @@ def make_coordinator(
 def make_validation_config(
     *,
     commands: dict[str, str | None] | None = None,
+    global_commands: dict[str, str | None] | None = None,
     triggers: ValidationTriggersConfig | None = None,
 ) -> ValidationConfig:
     """Create a ValidationConfig with specified commands and triggers.
 
     Args:
-        commands: Dict mapping command names to command strings.
+        commands: Dict mapping base command names to command strings.
             Example: {"test": "pytest", "lint": "ruff check ."}
+        global_commands: Dict mapping command names to command strings for
+            global_validation_commands (the trigger base pool per spec).
+            If not specified, commands are also used as the global pool.
         triggers: ValidationTriggersConfig for validation_triggers field.
     """
     cmd_configs: dict[str, CommandConfig | None] = {}
@@ -100,8 +104,27 @@ def make_validation_config(
         typecheck=cmd_configs.get("typecheck"),
     )
 
+    # Build global_validation_commands (the trigger base pool per spec)
+    # If global_commands not specified, use commands as the global pool
+    global_cmd_configs: dict[str, CommandConfig | None] = {}
+    global_source = global_commands if global_commands is not None else commands
+    if global_source:
+        for name, cmd_str in global_source.items():
+            if cmd_str is not None:
+                global_cmd_configs[name] = CommandConfig(command=cmd_str)
+            else:
+                global_cmd_configs[name] = None
+
+    global_commands_config = CommandsConfig(
+        test=global_cmd_configs.get("test"),
+        lint=global_cmd_configs.get("lint"),
+        format=global_cmd_configs.get("format"),
+        typecheck=global_cmd_configs.get("typecheck"),
+    )
+
     return ValidationConfig(
         commands=commands_config,
+        global_validation_commands=global_commands_config,
         validation_triggers=triggers,
     )
 

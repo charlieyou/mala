@@ -29,7 +29,7 @@ from src.infra.agent_runtime import AgentRuntimeBuilder
 from src.infra.tools.command_runner import CommandRunner
 from src.infra.tools.locking import cleanup_agent_locks
 from src.domain.validation.e2e import E2EStatus
-from src.domain.validation.config import ConfigError
+from src.domain.validation.config import CommandConfig, ConfigError
 from src.domain.validation.spec import (
     ValidationContext,
     ValidationScope,
@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from src.domain.validation.result import ValidationResult
     from src.domain.validation.config import (
         BaseTriggerConfig,
+        CommandConfig,
         TriggerType,
         ValidationConfig,
         ValidationTriggersConfig,
@@ -1063,34 +1064,47 @@ class RunCoordinator:
         """Build the base command pool from validation config.
 
         The base pool maps command names to (command_string, timeout) tuples.
-        Built-in commands (test, lint, format, typecheck, e2e) come from the
-        commands section. Custom commands are also included.
+        Per the validation triggers spec, the base pool comes from
+        global_validation_commands (with commands as fallback for built-ins).
+
+        For built-in commands (test, lint, format, typecheck, e2e, setup):
+        - Use global_validation_commands override if explicitly set
+        - Otherwise fall back to commands section
+
+        Custom commands come directly from global_validation_commands.
 
         Args:
-            validation_config: The validation configuration.
+            validation_config: The validation configuration (should be merged
+                with preset before calling).
 
         Returns:
             Dict mapping command ref names to (command, timeout) tuples.
         """
         pool: dict[str, tuple[str, int | None]] = {}
-        cmds = validation_config.commands
+        base_cmds = validation_config.commands
+        global_cmds = validation_config.global_validation_commands
 
-        # Add built-in commands
-        if cmds.test is not None:
-            pool["test"] = (cmds.test.command, cmds.test.timeout)
-        if cmds.lint is not None:
-            pool["lint"] = (cmds.lint.command, cmds.lint.timeout)
-        if cmds.format is not None:
-            pool["format"] = (cmds.format.command, cmds.format.timeout)
-        if cmds.typecheck is not None:
-            pool["typecheck"] = (cmds.typecheck.command, cmds.typecheck.timeout)
-        if cmds.e2e is not None:
-            pool["e2e"] = (cmds.e2e.command, cmds.e2e.timeout)
-        if cmds.setup is not None:
-            pool["setup"] = (cmds.setup.command, cmds.setup.timeout)
+        # Helper to check if a field was explicitly set in global_validation_commands
+        def is_global_explicit(field_name: str) -> bool:
+            if global_cmds._fields_set:
+                return field_name in global_cmds._fields_set
+            # If no _fields_set tracking, check if the value is non-None
+            return getattr(global_cmds, field_name, None) is not None
 
-        # Add custom commands
-        for name, custom_cmd in cmds.custom_commands.items():
+        # Helper to get effective command (global override or base fallback)
+        def get_effective_cmd(field_name: str) -> CommandConfig | None:
+            if is_global_explicit(field_name):
+                return getattr(global_cmds, field_name, None)
+            return getattr(base_cmds, field_name, None)
+
+        # Add built-in commands (global overrides base)
+        for cmd_name in ("test", "lint", "format", "typecheck", "e2e", "setup"):
+            cmd = get_effective_cmd(cmd_name)
+            if cmd is not None:
+                pool[cmd_name] = (cmd.command, cmd.timeout)
+
+        # Add custom commands from global_validation_commands
+        for name, custom_cmd in global_cmds.custom_commands.items():
             pool[name] = (custom_cmd.command, custom_cmd.timeout)
 
         return pool

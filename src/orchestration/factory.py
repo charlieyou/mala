@@ -504,6 +504,8 @@ def create_orchestrator(
     """
     from src.domain.validation.config import ConfigError
     from src.domain.validation.config_loader import ConfigMissingError, load_config
+    from src.domain.validation.config_merger import merge_configs
+    from src.domain.validation.preset_registry import PresetRegistry
     from src.infra.io.config import MalaConfig
 
     from .orchestrator import MalaOrchestrator
@@ -515,7 +517,14 @@ def create_orchestrator(
     validation_config = None
     validation_config_missing = False
     try:
-        validation_config = load_config(config.repo_path)
+        user_config = load_config(config.repo_path)
+        # Merge with preset if specified (required for trigger base pool)
+        if user_config.preset is not None:
+            registry = PresetRegistry()
+            preset_config = registry.get(user_config.preset)
+            validation_config = merge_configs(preset_config, user_config)
+        else:
+            validation_config = user_config
         yaml_claude_settings_sources = validation_config.claude_settings_sources
         reviewer_config = _extract_reviewer_config(validation_config)
     except ConfigMissingError:

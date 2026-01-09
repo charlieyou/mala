@@ -278,6 +278,9 @@ def merge_configs(
     # User value is used directly - if not set, remains None
     merged_triggers = user.validation_triggers
 
+    # claude_settings_sources: User value always takes precedence (presets don't define this)
+    merged_claude_settings_sources = user.claude_settings_sources
+
     return ValidationConfig(
         preset=user.preset,  # Keep user's preset reference
         commands=merged_commands,
@@ -292,6 +295,7 @@ def merge_configs(
         agent_sdk_review_timeout=merged_timeout,
         agent_sdk_reviewer_model=merged_model,
         validation_triggers=merged_triggers,
+        claude_settings_sources=merged_claude_settings_sources,
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 
