@@ -151,8 +151,9 @@ class SessionCallbackFactory:
             SessionCallbacks with gate, review, and logging callbacks.
         """
         # Import here to avoid circular imports
+        from src.core.models import ReviewInput
         from src.infra.git_utils import get_issue_commits_async
-        from src.pipeline.review_runner import NoProgressInput, ReviewInput
+        from src.pipeline.review_runner import NoProgressInput
 
         async def on_gate_check(
             issue_id: str, log_path: Path, retry_state: RetryState

@@ -162,8 +162,8 @@ class CumulativeReviewRunner:
         Returns:
             CumulativeReviewResult with status, findings, and new baseline.
         """
+        from src.core.models import ReviewInput
         from src.domain.validation.config import TriggerType as TT
-        from src.pipeline.review_runner import ReviewInput
 
         # 1. Determine baseline
         baseline_result = await self._get_baseline_commit(

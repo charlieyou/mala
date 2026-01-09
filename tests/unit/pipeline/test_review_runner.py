@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from src.core.models import ReviewInput
 from src.core.protocols import ReviewResultProtocol
 from src.pipeline.review_runner import (
     NoProgressInput,
-    ReviewInput,
     ReviewOutput,
     ReviewRunner,
     ReviewRunnerConfig,

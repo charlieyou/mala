@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     import asyncio
 
+    from src.core.models import ReviewInput
     from src.core.protocols import (
         CodeReviewer,
         GateChecker,
@@ -82,32 +83,6 @@ class ReviewRunnerConfig:
     # Deprecated fields (kept for backward compatibility with orchestrator)
     thinking_mode: str | None = None
     capture_session_log: bool = False
-
-
-@dataclass
-class ReviewInput:
-    """Input for running a code review.
-
-    Bundles all data needed to run a single review check.
-
-    Attributes:
-        issue_id: The issue being reviewed.
-        repo_path: Path to the repository.
-        issue_description: Issue description for scope verification.
-        commit_shas: List of commit SHAs to review directly.
-        claude_session_id: Optional Claude session ID for external review context.
-        diff_content: Optional pre-computed diff content for cumulative reviews.
-            When provided, the reviewer should use this diff instead of computing
-            it from commit_shas. This supports cumulative review workflows where
-            the diff is explicitly generated from a baseline..HEAD range.
-    """
-
-    issue_id: str
-    repo_path: Path
-    commit_shas: list[str]
-    issue_description: str | None = None
-    claude_session_id: str | None = None
-    diff_content: str | None = None
 
 
 @dataclass

@@ -15,10 +15,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.core.models import ReviewInput
 from src.infra.clients.agent_sdk_review import AgentSDKReviewer
 from src.infra.clients.cerberus_review import DefaultReviewer
 from src.orchestration.factory import _create_code_reviewer, _get_reviewer_config
-from src.pipeline.review_runner import ReviewInput, ReviewRunner, ReviewRunnerConfig
+from src.pipeline.review_runner import ReviewRunner, ReviewRunnerConfig
 from tests.fakes.event_sink import FakeEventSink
 from tests.fakes.sdk_client import FakeSDKClientFactory
 
