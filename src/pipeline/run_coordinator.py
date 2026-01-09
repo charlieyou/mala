@@ -64,6 +64,7 @@ if TYPE_CHECKING:
         RunMetadata,
         ValidationResult as MetaValidationResult,
     )
+    from src.pipeline.cumulative_review_runner import CumulativeReviewRunner
 
 
 class _FixerPromptNotSet:
@@ -278,6 +279,8 @@ class RunCoordinator:
     lock_manager: LockManagerPort
     sdk_client_factory: SDKClientFactoryProtocol
     event_sink: MalaEventSink | None = None
+    cumulative_review_runner: CumulativeReviewRunner | None = None
+    run_metadata: RunMetadata | None = None
     _active_fixer_ids: list[str] = field(default_factory=list, init=False)
     _trigger_queue: list[tuple[TriggerType, dict[str, Any]]] = field(
         default_factory=list, init=False
@@ -771,7 +774,7 @@ class RunCoordinator:
                     status="aborted", details="Validation interrupted by SIGINT"
                 )
 
-            trigger_type, _context = self._trigger_queue.pop(0)
+            trigger_type, context = self._trigger_queue.pop(0)
 
             # Get the trigger config for this type
             trigger_config = self._get_trigger_config(triggers_config, trigger_type)
@@ -819,7 +822,12 @@ class RunCoordinator:
                     break
 
             if failed_result is None:
-                # All commands passed - emit validation_passed
+                # All commands passed - run code_review if configured
+                await self._run_trigger_code_review(
+                    trigger_type, trigger_config, context, interrupt_event
+                )
+
+                # Emit validation_passed
                 trigger_duration = time.monotonic() - trigger_start_time
                 if self.event_sink is not None:
                     self.event_sink.on_trigger_validation_passed(
@@ -1327,6 +1335,50 @@ class RunCoordinator:
                 break
 
         return results, False
+
+    async def _run_trigger_code_review(
+        self,
+        trigger_type: TriggerType,
+        trigger_config: BaseTriggerConfig,
+        context: dict[str, Any],
+        interrupt_event: asyncio.Event,
+    ) -> None:
+        """Run code review if configured for this trigger.
+
+        Checks if code_review is enabled in the trigger config and invokes
+        CumulativeReviewRunner if so.
+
+        Args:
+            trigger_type: The type of trigger firing.
+            trigger_config: The trigger configuration.
+            context: Trigger context with issue_id, epic_id, etc.
+            interrupt_event: Event to check for SIGINT interruption.
+
+        Raises:
+            NotImplementedError: If CumulativeReviewRunner.run_review is not implemented.
+        """
+        # Check if code_review is configured and enabled
+        if trigger_config.code_review is None or not trigger_config.code_review.enabled:
+            return
+
+        # Check if CumulativeReviewRunner is wired
+        if self.cumulative_review_runner is None:
+            return
+
+        # Check if run_metadata is available
+        if self.run_metadata is None:
+            return
+
+        # Run cumulative code review
+        await self.cumulative_review_runner.run_review(
+            trigger_type=trigger_type,
+            config=trigger_config.code_review,
+            run_metadata=self.run_metadata,
+            repo_path=self.config.repo_path,
+            interrupt_event=interrupt_event,
+            issue_id=context.get("issue_id"),
+            epic_id=context.get("epic_id"),
+        )
 
     def clear_trigger_queue(self, reason: str) -> None:
         """Clear the trigger queue, emitting skipped events.

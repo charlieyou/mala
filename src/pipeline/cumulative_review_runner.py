@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 if TYPE_CHECKING:
     import asyncio
@@ -30,6 +30,33 @@ if TYPE_CHECKING:
     from src.infra.git_utils import DiffStat
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.pipeline.review_runner import ReviewRunner
+
+
+class GitUtilsProtocol(Protocol):
+    """Protocol for git operations needed by CumulativeReviewRunner.
+
+    This protocol wraps the async functions from src.infra.git_utils module
+    to enable dependency injection for testing.
+    """
+
+    async def get_diff_stat(
+        self,
+        repo_path: Path,
+        from_commit: str,
+        to_commit: str = "HEAD",
+    ) -> DiffStat:
+        """Get diff statistics between commits."""
+        ...
+
+    async def get_diff_content(
+        self,
+        repo_path: Path,
+        from_commit: str,
+        to_commit: str = "HEAD",
+    ) -> str:
+        """Get diff content between commits."""
+        ...
+
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +151,7 @@ class CumulativeReviewRunner:
     def __init__(
         self,
         review_runner: ReviewRunner,
+        git_utils: GitUtilsProtocol,
         beads_client: BeadsClient,
         logger: logging.Logger,
     ) -> None:
@@ -131,10 +159,12 @@ class CumulativeReviewRunner:
 
         Args:
             review_runner: ReviewRunner for executing code reviews.
+            git_utils: Git operations provider for diff generation.
             beads_client: Client for beads issue operations.
             logger: Logger instance for this runner.
         """
         self._review_runner = review_runner
+        self._git_utils = git_utils
         self._beads_client = beads_client
         self._logger = logger
 

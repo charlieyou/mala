@@ -1,11 +1,11 @@
 """Integration tests for CumulativeReviewRunner skeleton.
 
 This test verifies:
-1. CumulativeReviewRunner can be instantiated with real dependencies
-2. The run_review method raises NotImplementedError (skeleton behavior)
+1. RunCoordinator wiring triggers CumulativeReviewRunner via real path
+2. CumulativeReviewRunner.run_review raises NotImplementedError (skeleton behavior)
 3. CumulativeReviewResult dataclass is properly defined
 
-The skeleton is ready for T007-T008 implementation and T012 integration.
+The test exercises: trigger firing → RunCoordinator → CumulativeReviewRunner
 """
 
 from __future__ import annotations
@@ -23,51 +23,78 @@ if TYPE_CHECKING:
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_cumulative_review_runner_raises_not_implemented(
+async def test_epic_completion_trigger_invokes_cumulative_review(
     tmp_path: Path,
 ) -> None:
-    """Integration: CumulativeReviewRunner.run_review raises NotImplementedError.
+    """Integration: epic_completion trigger with code_review fires CumulativeReviewRunner.
 
-    This test verifies the skeleton is properly wired:
-    1. Class can be instantiated with protocol dependencies
-    2. run_review raises NotImplementedError (not import/wiring errors)
-    3. Error message indicates this is expected skeleton behavior
+    This test exercises the real wiring path:
+    1. Create RunCoordinator with CumulativeReviewRunner wired
+    2. Queue epic_completion trigger with code_review enabled
+    3. Fire trigger via run_trigger_validation
+    4. Assert CumulativeReviewRunner.run_review was called (raises NotImplementedError)
     """
     from src.domain.validation.config import (
         CodeReviewConfig,
+        CommandConfig,
+        CommandsConfig,
+        EpicCompletionTriggerConfig,
+        EpicDepth,
         FailureMode,
+        FireOn,
         TriggerType,
+        ValidationConfig,
+        ValidationTriggersConfig,
     )
     from src.infra.clients.beads_client import BeadsClient
-    from src.pipeline.cumulative_review_runner import CumulativeReviewRunner
+    from src.infra.git_utils import DiffStat
+    from src.pipeline.cumulative_review_runner import (
+        CumulativeReviewRunner,
+        GitUtilsProtocol,
+    )
     from src.pipeline.review_runner import ReviewRunner, ReviewRunnerConfig
+    from src.pipeline.run_coordinator import RunCoordinator, RunCoordinatorConfig
+    from tests.fakes import FakeEnvConfig
+    from tests.fakes.command_runner import FakeCommandRunner
+    from tests.fakes.lock_manager import FakeLockManager
 
     # Create minimal dependencies
-    logger = logging.getLogger("test_cumulative_review")
+    test_logger = logging.getLogger("test_cumulative_review")
 
-    # ReviewRunner requires a CodeReviewer - use a mock for skeleton test
+    # Create fake git_utils that satisfies the protocol
+    class FakeGitUtils(GitUtilsProtocol):
+        async def get_diff_stat(
+            self,
+            repo_path: Path,
+            from_commit: str,
+            to_commit: str = "HEAD",
+        ) -> DiffStat:
+            return DiffStat(total_lines=100, files_changed=["test.py"])
+
+        async def get_diff_content(
+            self,
+            repo_path: Path,
+            from_commit: str,
+            to_commit: str = "HEAD",
+        ) -> str:
+            return "diff content"
+
+    # ReviewRunner with mock CodeReviewer
     mock_code_reviewer = MagicMock()
     review_runner = ReviewRunner(
         code_reviewer=mock_code_reviewer,
         config=ReviewRunnerConfig(),
     )
 
-    # BeadsClient requires repo_path
+    # BeadsClient
     beads_client = BeadsClient(repo_path=tmp_path)
 
     # Create CumulativeReviewRunner
-    runner = CumulativeReviewRunner(
+    cumulative_runner = CumulativeReviewRunner(
         review_runner=review_runner,
+        git_utils=FakeGitUtils(),
         beads_client=beads_client,
-        logger=logger,
-    )
-
-    # Create minimal config
-    code_review_config = CodeReviewConfig(
-        enabled=True,
-        reviewer_type="cerberus",
-        failure_mode=FailureMode.CONTINUE,
-        baseline="since_run_start",
+        logger=test_logger,
     )
 
     # Create mock run_metadata
@@ -75,20 +102,62 @@ async def test_cumulative_review_runner_raises_not_implemented(
     mock_run_metadata.run_start_commit = "abc123"
     mock_run_metadata.last_cumulative_review_commits = {}
 
-    interrupt_event = asyncio.Event()
+    # Create code_review config for trigger
+    code_review_config = CodeReviewConfig(
+        enabled=True,
+        reviewer_type="cerberus",
+        failure_mode=FailureMode.CONTINUE,
+        baseline="since_run_start",
+    )
 
-    # Act: Call run_review and expect NotImplementedError
+    # Create validation config with epic_completion trigger that has code_review
+    validation_config = ValidationConfig(
+        commands=CommandsConfig(
+            test=CommandConfig(command="echo test"),
+        ),
+        validation_triggers=ValidationTriggersConfig(
+            epic_completion=EpicCompletionTriggerConfig(
+                failure_mode=FailureMode.CONTINUE,
+                commands=(),  # No commands - just code_review
+                epic_depth=EpicDepth.TOP_LEVEL,
+                fire_on=FireOn.SUCCESS,
+                code_review=code_review_config,
+            )
+        ),
+    )
+
+    # Create command runner
+    command_runner = FakeCommandRunner(allow_unregistered=True)
+
+    config = RunCoordinatorConfig(
+        repo_path=tmp_path,
+        timeout_seconds=60,
+        validation_config=validation_config,
+    )
+
+    # Create RunCoordinator with CumulativeReviewRunner wired
+    coordinator = RunCoordinator(
+        config=config,
+        gate_checker=MagicMock(),
+        command_runner=command_runner,
+        env_config=FakeEnvConfig(),
+        lock_manager=FakeLockManager(),
+        sdk_client_factory=MagicMock(),
+        cumulative_review_runner=cumulative_runner,
+        run_metadata=mock_run_metadata,
+    )
+
+    # Queue epic_completion trigger
+    coordinator.queue_trigger_validation(
+        TriggerType.EPIC_COMPLETION,
+        {"issue_id": "test-123", "epic_id": "epic-1"},
+    )
+
+    # Act: Run trigger validation - should raise NotImplementedError from CumulativeReviewRunner
     with pytest.raises(NotImplementedError) as exc_info:
-        await runner.run_review(
-            trigger_type=TriggerType.EPIC_COMPLETION,
-            config=code_review_config,
-            run_metadata=mock_run_metadata,
-            repo_path=tmp_path,
-            interrupt_event=interrupt_event,
-            epic_id="epic-123",
-        )
+        await coordinator.run_trigger_validation()
 
-    # Assert: Error message indicates skeleton behavior
+    # Assert: Error message indicates CumulativeReviewRunner skeleton
     assert "CumulativeReviewRunner.run_review not yet implemented" in str(
         exc_info.value
     )
