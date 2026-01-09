@@ -60,3 +60,40 @@ async def test_cli_transport_registers_sigint_pgid(
 
     await transport.close()
     assert command_runner._SIGINT_FORWARD_PGIDS == set()
+
+
+@unix_only
+@pytest.mark.asyncio
+async def test_cli_transport_logs_sdk_subprocess_spawned_with_flow(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """CLI transport logs sdk_subprocess_spawned with pid, pgid, and flow from env."""
+    import logging
+
+    monkeypatch.setenv("CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK", "1")
+    monkeypatch.setenv("MALA_SDK_FLOW", "epic_remediation")
+    command_runner._SIGINT_FORWARD_PGIDS.clear()
+    ensure_sigint_isolated_cli_transport()
+
+    async def fake_open_process(*args: object, **kwargs: object) -> FakeProcess:
+        return FakeProcess(pid=9002)
+
+    monkeypatch.setattr(anyio, "open_process", fake_open_process)
+
+    from claude_agent_sdk._internal.transport import subprocess_cli
+
+    options = ClaudeAgentOptions(cli_path="/bin/echo")
+    transport = subprocess_cli.SubprocessCLITransport(prompt="hi", options=options)
+
+    with caplog.at_level(logging.INFO, logger="src.infra.sdk_transport"):
+        await transport.connect()
+
+    # Verify sdk_subprocess_spawned log was emitted with correct flow
+    log_records = [r for r in caplog.records if "sdk_subprocess_spawned" in r.message]
+    assert len(log_records) == 1
+    assert "pid=9002" in log_records[0].message
+    assert "pgid=9002" in log_records[0].message
+    assert "flow=epic_remediation" in log_records[0].message
+
+    await transport.close()
