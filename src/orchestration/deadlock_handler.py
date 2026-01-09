@@ -196,12 +196,11 @@ class DeadlockHandler:
             # Reset status to open so issue can be picked up again after blocker finishes
             if await self._callbacks.reopen_issue(victim_issue_id):
                 logger.info(
-                    "Reopened issue %s for retry after blocker completes", victim_issue_id
+                    "Reopened issue %s for retry after blocker completes",
+                    victim_issue_id,
                 )
             else:
-                logger.warning(
-                    "Failed to reopen issue %s for retry", victim_issue_id
-                )
+                logger.warning("Failed to reopen issue %s for retry", victim_issue_id)
 
     async def abort_active_tasks(
         self,

@@ -10,6 +10,7 @@ isinstance checks work correctly in the runner.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
-    from src.core.protocols import McpServerFactory, SDKClientProtocol
+    from src.core.protocols import McpServerFactory, ReviewIssueProtocol, SDKClientProtocol
     from src.domain.lifecycle import RetryState
     from src.pipeline.agent_session_runner import (
         SessionConfig,
@@ -1322,7 +1323,7 @@ class TestAgentSessionRunnerEventSink:
             )
 
         captured_session_id: str | None = None
-        captured_previous_findings: list[object] | None = None
+        captured_previous_findings: Sequence[ReviewIssueProtocol] | None = None
 
         async def on_review_check(
             issue_id: str,
@@ -1330,7 +1331,7 @@ class TestAgentSessionRunnerEventSink:
             session_id: str | None,
             _retry_state: RetryState,
             author_context: str | None,
-            previous_findings: list[object] | None,
+            previous_findings: Sequence[ReviewIssueProtocol] | None,
         ) -> ReviewResult:
             nonlocal captured_session_id, captured_previous_findings
             captured_session_id = session_id
@@ -1427,7 +1428,7 @@ class TestAgentSessionRunnerEventSink:
                 1000,
             )
 
-        captured_previous_findings: list[list[object] | None] = []
+        captured_previous_findings: list[Sequence[ReviewIssueProtocol] | None] = []
 
         async def on_review_check(
             issue_id: str,
@@ -1435,7 +1436,7 @@ class TestAgentSessionRunnerEventSink:
             session_id: str | None,
             _retry_state: RetryState,
             author_context: str | None,
-            previous_findings: list[object] | None,
+            previous_findings: Sequence[ReviewIssueProtocol] | None,
         ) -> ReviewResult:
             nonlocal review_check_count
             review_check_count += 1
@@ -1443,7 +1444,9 @@ class TestAgentSessionRunnerEventSink:
             captured_previous_findings.append(previous_findings)  # type: ignore[arg-type]
             if review_check_count == 1:
                 # First check: previous_findings should be None
-                assert previous_findings is None, "First review should have no previous_findings"
+                assert previous_findings is None, (
+                    "First review should have no previous_findings"
+                )
                 # First check fails with errors
                 return ReviewResult(
                     passed=False,
@@ -1462,8 +1465,12 @@ class TestAgentSessionRunnerEventSink:
                 )
             else:
                 # Second check: previous_findings should contain the issues from first review
-                assert previous_findings is not None, "Retry should have previous_findings"
-                assert len(previous_findings) == 1, "Should have 1 issue from first review"
+                assert previous_findings is not None, (
+                    "Retry should have previous_findings"
+                )
+                assert len(previous_findings) == 1, (
+                    "Should have 1 issue from first review"
+                )
                 # Second check passes
                 return ReviewResult(passed=True, issues=[], parse_error=None)
 
