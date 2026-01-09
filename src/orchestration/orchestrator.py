@@ -1313,6 +1313,9 @@ class MalaOrchestrator:
         if self._state.run_start_commit is not None:
             run_metadata.run_start_commit = self._state.run_start_commit
 
+        # Inject run_metadata into run_coordinator for cumulative code review
+        self.run_coordinator.run_metadata = run_metadata
+
         per_session_spec = build_validation_spec(
             self.repo_path,
             scope=ValidationScope.PER_SESSION,

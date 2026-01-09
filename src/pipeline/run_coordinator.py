@@ -831,8 +831,13 @@ class RunCoordinator:
                 )
 
                 # Handle code review failure based on code_review.failure_mode
-                if review_result is not None and review_result.status == "failed":
-                    review_failure_mode = trigger_config.code_review.failure_mode  # type: ignore[union-attr]
+                code_review_config = trigger_config.code_review
+                if (
+                    review_result is not None
+                    and code_review_config is not None
+                    and review_result.status == "failed"
+                ):
+                    review_failure_mode = code_review_config.failure_mode
                     if review_failure_mode == FailureMode.ABORT:
                         if self.event_sink is not None:
                             self.event_sink.on_trigger_validation_failed(
@@ -1388,6 +1393,12 @@ class RunCoordinator:
         """
         # Check if code_review is configured and enabled
         if trigger_config.code_review is None or not trigger_config.code_review.enabled:
+            return None
+
+        # Skip code_review in fixer/remediation context to prevent loops.
+        # Note: Fixer agents are separate processes (MALA_SDK_FLOW=fixer) that don't
+        # call run_trigger_validation, so this guard is defensive.
+        if context.get("is_fixer_session"):
             return None
 
         # Check if CumulativeReviewRunner is wired

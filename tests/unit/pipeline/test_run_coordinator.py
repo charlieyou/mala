@@ -681,3 +681,43 @@ class TestRunTriggerCodeReview:
             "CumulativeReviewRunner not wired"
             in mock_event_sink.on_warning.call_args[0][0]
         )
+
+    @pytest.mark.asyncio
+    async def test_skips_code_review_in_fixer_session(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock],
+    ) -> None:
+        """_run_trigger_code_review skips review when is_fixer_session is True."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerCommandRef,
+            TriggerType,
+        )
+
+        coordinator, mock_review_runner = coordinator_with_review_runner
+
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            failure_mode=FailureMode.CONTINUE,
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(TriggerCommandRef(ref="test"),),
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+
+        interrupt_event = asyncio.Event()
+        # Pass is_fixer_session=True in context
+        result = await coordinator._run_trigger_code_review(
+            TriggerType.RUN_END,
+            trigger_config,
+            {"is_fixer_session": True},
+            interrupt_event,
+        )
+
+        assert result is None
+        mock_review_runner.run_review.assert_not_called()
