@@ -237,6 +237,13 @@ class ReviewRunner:
                 f"{input.author_context}"
             )
         context_text = "\n\n".join(context_parts).strip()
+        # Log warning if author_context was provided but didn't make it to context
+        # This shouldn't happen in practice but helps debug if wiring is broken
+        if input.author_context and not context_text:
+            logger.warning(
+                "author_context provided but context_text is empty: issue_id=%s",
+                input.issue_id,
+            )
         if context_text:
             temp_file = tempfile.NamedTemporaryFile(
                 mode="w",

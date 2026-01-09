@@ -22,14 +22,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence  # noqa: TC003 - Sequence needed at runtime for get_type_hints
 from pathlib import Path
 
 from src.core.models import OrderPreference
 
 if TYPE_CHECKING:
     import asyncio
-    from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
+    from collections.abc import AsyncIterator, Iterator, Mapping
     from types import TracebackType
     from typing import Self
 
