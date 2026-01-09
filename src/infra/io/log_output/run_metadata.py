@@ -468,8 +468,8 @@ class RunMetadata:
 
         # Load cumulative review baseline fields (with backward-compat defaults)
         metadata.run_start_commit = data.get("run_start_commit")
-        metadata.last_cumulative_review_commits = data.get(
-            "last_cumulative_review_commits", {}
+        metadata.last_cumulative_review_commits = dict(
+            data.get("last_cumulative_review_commits", {})
         )
 
         return metadata
