@@ -2,6 +2,8 @@ preset: python-uv
 
 validation_triggers:
   session_end:
+    failure_mode: remediate
+    max_retries: 3
     code_review:
       enabled: true
       reviewer_type: cerberus
