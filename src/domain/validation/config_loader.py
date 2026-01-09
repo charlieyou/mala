@@ -498,9 +498,7 @@ def _parse_session_end_trigger(data: dict[str, Any]) -> SessionEndTriggerConfig:
     )
 
 
-_PERIODIC_FIELDS = frozenset(
-    {"failure_mode", "max_retries", "commands", "interval", "code_review"}
-)
+_PERIODIC_FIELDS = frozenset({"failure_mode", "max_retries", "commands", "interval"})
 
 
 def _parse_periodic_trigger(data: dict[str, Any]) -> PeriodicTriggerConfig:
@@ -537,19 +535,11 @@ def _parse_periodic_trigger(data: dict[str, Any]) -> PeriodicTriggerConfig:
             f"got {type(interval).__name__}"
         )
 
-    # Parse code_review (optional)
-    code_review = None
-    if "code_review" in data:
-        code_review_data = data["code_review"]
-        if code_review_data is not None:
-            code_review = _parse_code_review_config(code_review_data)
-
     return PeriodicTriggerConfig(
         failure_mode=failure_mode,
         commands=commands,
         max_retries=max_retries,
         interval=interval,
-        code_review=code_review,
     )
 
 

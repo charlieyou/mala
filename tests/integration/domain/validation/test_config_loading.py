@@ -89,26 +89,6 @@ class TestCodeReviewParsing:
         ):
             load_config(tmp_path)
 
-    def test_periodic_code_review_raises_not_implemented(self, tmp_path: Path) -> None:
-        """Integration test: periodic trigger with code_review raises NotImplementedError."""
-        yaml_content = dedent("""\
-            preset: python-uv
-            validation_triggers:
-              periodic:
-                commands: []
-                failure_mode: continue
-                interval: 60
-                code_review:
-                  enabled: true
-        """)
-        config_file = tmp_path / "mala.yaml"
-        config_file.write_text(yaml_content)
-
-        with pytest.raises(
-            NotImplementedError, match="code_review parsing not yet implemented"
-        ):
-            load_config(tmp_path)
-
 
 class TestRunEndTriggerParsing:
     """Tests for run_end trigger parsing."""
