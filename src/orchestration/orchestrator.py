@@ -1029,11 +1029,15 @@ class MalaOrchestrator:
         _non_epic_completed_count and queues a PERIODIC trigger when
         the count reaches the configured interval.
 
+        Note: This method is only called for non-epic issues because the main
+        loop filters out epics via IssueManager._apply_filters. Epic completions
+        are handled separately through EpicVerificationCoordinator.
+
         Args:
-            result: The completed issue's result (used to check epic membership).
+            result: The completed issue's result.
         """
-        # Skip epic issues - only count non-epic completions
-        # For now, we count all completions since epic detection is not implemented here
+        # Increment counter for non-epic completions
+        # (Epics are filtered upstream and never reach this path)
         self._non_epic_completed_count += 1
 
         # Check if periodic trigger is configured

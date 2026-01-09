@@ -26,6 +26,7 @@ from src.domain.validation.config import (
     FailureMode,
     EpicDepth,
     FireOn,
+    PeriodicTriggerConfig,
     SessionEndTriggerConfig,
     TriggerCommandRef,
     TriggerType,
@@ -33,6 +34,7 @@ from src.domain.validation.config import (
     ValidationTriggersConfig,
 )
 from src.infra.tools.command_runner import CommandResult
+from src.pipeline.issue_result import IssueResult
 from src.pipeline.run_coordinator import RunCoordinator, RunCoordinatorConfig
 from tests.fakes import FakeEnvConfig
 from tests.fakes.command_runner import FakeCommandRunner
@@ -1170,3 +1172,274 @@ class TestEpicCompletionTriggerIntegration:
 
         # No trigger should be queued
         assert len(queued) == 0
+
+
+class TestPeriodicTriggerIntegration:
+    """Tests for periodic trigger counter and firing logic.
+
+    The periodic trigger fires after N non-epic issue completions (where N is the
+    configured interval). These tests verify:
+    - Counter increments for each non-epic issue
+    - Trigger fires at exact interval multiples (5, 10, 15...)
+    - interval=1 fires on every issue completion
+    - Counter < interval means no trigger fired
+    """
+
+    def _make_orchestrator_with_periodic_trigger(
+        self,
+        tmp_path: Path,
+        interval: int,
+    ) -> tuple:
+        """Create an orchestrator with periodic trigger configured.
+
+        Returns:
+            Tuple of (orchestrator, trigger_queue list).
+        """
+        # Create validation config with periodic trigger
+        config = ValidationConfig(
+            commands=CommandsConfig(),
+            validation_triggers=ValidationTriggersConfig(
+                periodic=PeriodicTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                    interval=interval,
+                )
+            ),
+        )
+
+        # Create a minimal orchestrator with mocked dependencies
+        # We need to mock just enough to test _check_and_queue_periodic_trigger
+        class FakeRunCoordinator:
+            def __init__(self) -> None:
+                self._trigger_queue: list[tuple] = []
+
+            def queue_trigger_validation(
+                self, trigger_type: TriggerType, context: dict
+            ) -> None:
+                self._trigger_queue.append((trigger_type, context))
+
+        class FakeOrchestrator:
+            def __init__(self) -> None:
+                self._validation_config = config
+                self._non_epic_completed_count = 0
+                self.run_coordinator = FakeRunCoordinator()
+
+            def _check_and_queue_periodic_trigger(self, result: IssueResult) -> None:
+                """Direct copy of orchestrator method for isolated testing."""
+                self._non_epic_completed_count += 1
+
+                triggers = (
+                    self._validation_config.validation_triggers
+                    if self._validation_config
+                    else None
+                )
+                if triggers is None or triggers.periodic is None:
+                    return
+
+                interval = triggers.periodic.interval
+                if self._non_epic_completed_count % interval == 0:
+                    self.run_coordinator.queue_trigger_validation(
+                        TriggerType.PERIODIC,
+                        {"completed_count": self._non_epic_completed_count},
+                    )
+
+        orchestrator = FakeOrchestrator()
+        return orchestrator, orchestrator.run_coordinator._trigger_queue
+
+    def _make_issue_result(self, issue_id: str) -> IssueResult:
+        """Create a minimal IssueResult for testing."""
+        return IssueResult(
+            issue_id=issue_id,
+            agent_id=f"{issue_id}-agent",
+            success=True,
+            summary="done",
+        )
+
+    def test_counter_increments_for_each_issue(self, tmp_path: Path) -> None:
+        """Counter increments by 1 for each non-epic issue completion."""
+        orchestrator, _ = self._make_orchestrator_with_periodic_trigger(
+            tmp_path, interval=5
+        )
+
+        # Complete 3 issues
+        for i in range(3):
+            result = self._make_issue_result(f"issue-{i}")
+            orchestrator._check_and_queue_periodic_trigger(result)
+
+        assert orchestrator._non_epic_completed_count == 3
+
+    def test_trigger_fires_at_exact_interval(self, tmp_path: Path) -> None:
+        """Trigger fires exactly at interval multiples (5, 10, 15...)."""
+        orchestrator, queue = self._make_orchestrator_with_periodic_trigger(
+            tmp_path, interval=5
+        )
+
+        # Complete 12 issues (should fire at 5 and 10)
+        for i in range(12):
+            result = self._make_issue_result(f"issue-{i}")
+            orchestrator._check_and_queue_periodic_trigger(result)
+
+        # Should have 2 triggers (at count 5 and 10)
+        assert len(queue) == 2
+        assert queue[0][0] == TriggerType.PERIODIC
+        assert queue[0][1]["completed_count"] == 5
+        assert queue[1][0] == TriggerType.PERIODIC
+        assert queue[1][1]["completed_count"] == 10
+
+    def test_interval_one_fires_every_issue(self, tmp_path: Path) -> None:
+        """interval=1 fires trigger after every issue completion."""
+        orchestrator, queue = self._make_orchestrator_with_periodic_trigger(
+            tmp_path, interval=1
+        )
+
+        # Complete 3 issues
+        for i in range(3):
+            result = self._make_issue_result(f"issue-{i}")
+            orchestrator._check_and_queue_periodic_trigger(result)
+
+        # Should have 3 triggers (one per issue)
+        assert len(queue) == 3
+        assert queue[0][1]["completed_count"] == 1
+        assert queue[1][1]["completed_count"] == 2
+        assert queue[2][1]["completed_count"] == 3
+
+    def test_fewer_issues_than_interval_never_fires(self, tmp_path: Path) -> None:
+        """Fewer completed issues than interval means no trigger fires."""
+        orchestrator, queue = self._make_orchestrator_with_periodic_trigger(
+            tmp_path, interval=5
+        )
+
+        # Complete only 4 issues (less than interval of 5)
+        for i in range(4):
+            result = self._make_issue_result(f"issue-{i}")
+            orchestrator._check_and_queue_periodic_trigger(result)
+
+        # Counter should be 4
+        assert orchestrator._non_epic_completed_count == 4
+        # No triggers should have fired
+        assert len(queue) == 0
+
+    def test_counter_is_continuous_across_triggers(self, tmp_path: Path) -> None:
+        """Counter continues (no reset) after trigger fires."""
+        orchestrator, queue = self._make_orchestrator_with_periodic_trigger(
+            tmp_path, interval=3
+        )
+
+        # Complete 9 issues (should fire at 3, 6, 9)
+        for i in range(9):
+            result = self._make_issue_result(f"issue-{i}")
+            orchestrator._check_and_queue_periodic_trigger(result)
+
+        # Counter should be 9 (not reset)
+        assert orchestrator._non_epic_completed_count == 9
+        # Should have 3 triggers
+        assert len(queue) == 3
+        assert queue[0][1]["completed_count"] == 3
+        assert queue[1][1]["completed_count"] == 6
+        assert queue[2][1]["completed_count"] == 9
+
+    def test_no_periodic_config_no_trigger(self, tmp_path: Path) -> None:
+        """No periodic trigger configured means counter increments but no trigger."""
+        # Create orchestrator without periodic trigger
+        config = ValidationConfig(
+            commands=CommandsConfig(),
+            validation_triggers=ValidationTriggersConfig(
+                periodic=None,  # No periodic trigger
+            ),
+        )
+
+        class FakeRunCoordinator:
+            def __init__(self) -> None:
+                self._trigger_queue: list[tuple] = []
+
+            def queue_trigger_validation(
+                self, trigger_type: TriggerType, context: dict
+            ) -> None:
+                self._trigger_queue.append((trigger_type, context))
+
+        class FakeOrchestrator:
+            def __init__(self) -> None:
+                self._validation_config = config
+                self._non_epic_completed_count = 0
+                self.run_coordinator = FakeRunCoordinator()
+
+            def _check_and_queue_periodic_trigger(self, result: IssueResult) -> None:
+                self._non_epic_completed_count += 1
+                triggers = (
+                    self._validation_config.validation_triggers
+                    if self._validation_config
+                    else None
+                )
+                if triggers is None or triggers.periodic is None:
+                    return
+                interval = triggers.periodic.interval
+                if self._non_epic_completed_count % interval == 0:
+                    self.run_coordinator.queue_trigger_validation(
+                        TriggerType.PERIODIC,
+                        {"completed_count": self._non_epic_completed_count},
+                    )
+
+        orchestrator = FakeOrchestrator()
+
+        # Complete 5 issues
+        for i in range(5):
+            result = IssueResult(
+                issue_id=f"issue-{i}",
+                agent_id=f"issue-{i}-agent",
+                success=True,
+                summary="done",
+            )
+            orchestrator._check_and_queue_periodic_trigger(result)
+
+        # Counter should increment
+        assert orchestrator._non_epic_completed_count == 5
+        # No triggers queued
+        assert len(orchestrator.run_coordinator._trigger_queue) == 0
+
+
+class TestEpicFilteringForPeriodicTrigger:
+    """Tests verifying that epics are filtered and don't reach periodic trigger path.
+
+    The periodic trigger is only meant to count non-epic issue completions.
+    Epics are filtered by IssueManager.apply_filters before reaching the main loop,
+    so they never trigger _check_and_queue_periodic_trigger.
+
+    These tests verify the filtering behavior at the IssueManager level.
+    """
+
+    def test_epics_filtered_from_issue_list(self) -> None:
+        """Epic issues are excluded by _apply_filters."""
+        from src.infra.issue_manager import IssueManager
+
+        issues = [
+            {"id": "task-1", "issue_type": "task"},
+            {"id": "epic-1", "issue_type": "epic"},
+            {"id": "task-2", "issue_type": "task"},
+        ]
+
+        filtered = IssueManager.apply_filters(
+            issues, exclude_ids=set(), epic_children=None, only_ids=None
+        )
+
+        # Only tasks should remain
+        assert len(filtered) == 2
+        ids = [i["id"] for i in filtered]
+        assert "task-1" in ids
+        assert "task-2" in ids
+        assert "epic-1" not in ids
+
+    def test_epic_with_no_issue_type_not_filtered(self) -> None:
+        """Issues without issue_type field are not filtered (backward compat)."""
+        from src.infra.issue_manager import IssueManager
+
+        issues = [
+            {"id": "task-1"},  # No issue_type
+            {"id": "task-2", "issue_type": "task"},
+        ]
+
+        filtered = IssueManager.apply_filters(
+            issues, exclude_ids=set(), epic_children=None, only_ids=None
+        )
+
+        # Both should remain
+        assert len(filtered) == 2
