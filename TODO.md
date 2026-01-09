@@ -2,6 +2,7 @@
 
 Bugs
 * Ruff is making fixes in global val that are not being committed
+* failure mode and retry max not needed when commands are null
 
 New Features
 * Add code review to global validations
@@ -38,7 +39,9 @@ Tech Debt
 * Separate module used by reviewer and epic verifier for smart ticket creation: good descriptions, dependency awareness, deduplication
 * Run architecture reviews on submodules
 
-* Generalize the quality gate commands into applying to different stages, eg. epic verification. Similar to what was done with the global validations
+Config: Make it actually make sense / be consistent
+* top level validation block that has commands and triggers under it?
+* add config for evidence check, separate validation from code review?
 
 # Ideas
 * Inter-agent communication
