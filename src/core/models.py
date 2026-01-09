@@ -22,13 +22,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
-
-    from src.core.protocols import ReviewIssueProtocol
 
 
 class OrderPreference(Enum):
@@ -282,5 +280,5 @@ class ReviewInput:
     issue_description: str | None = None
     claude_session_id: str | None = None
     author_context: str | None = None
-    previous_findings: Sequence[ReviewIssueProtocol] | None = None
+    previous_findings: Sequence[Any] | None = None
     diff_content: str | None = None
