@@ -337,20 +337,24 @@ class GitUtils:
         """Get the baseline commit for an issue from git history.
 
         Finds the first commit with "bd-{issue_id}:" prefix and returns its parent.
+        Delegates to the module-level get_baseline_for_issue() function.
 
         Args:
             issue_id: The issue ID (e.g., "mala-123").
 
         Returns:
-            The commit hash of the parent of the first issue commit, or None if
-            no commits exist for this issue.
+            The commit hash of the parent of the first issue commit, or None if:
+            - No commits exist for this issue (fresh issue)
+            - The first commit is the root commit (no parent)
+            - Git commands fail
         """
         return await get_baseline_for_issue(self.repo_path, issue_id)
 
     async def get_head_commit(self) -> str:
-        """Get the current HEAD commit hash.
+        """Get the current HEAD commit hash (short form).
 
         Returns:
-            Short commit hash of HEAD, or empty string if not available.
+            Short commit hash (7 chars) of HEAD, or empty string if git command
+            fails (e.g., not a git repository).
         """
         return await get_git_commit_async(self.repo_path)
