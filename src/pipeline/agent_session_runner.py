@@ -269,6 +269,7 @@ class AgentSessionInput:
         agent_id: Optional pre-generated agent ID for lock management.
         resume_session_id: Optional session ID to resume from a prior run.
         flow: Flow identifier for structured logging (e.g., "implementer", "epic_remediation").
+        baseline_timestamp: Optional baseline timestamp to persist across resumes.
     """
 
     issue_id: str
@@ -278,6 +279,7 @@ class AgentSessionInput:
     agent_id: str | None = None
     resume_session_id: str | None = None
     flow: str = "implementer"
+    baseline_timestamp: int | None = None
 
 
 @dataclass
@@ -299,6 +301,7 @@ class AgentSessionOutput:
         review_log_path: Path to Cerberus review session log (if any).
         low_priority_review_issues: P2/P3 review issues to track as beads issues.
         interrupted: Whether the session was interrupted by SIGINT.
+        baseline_timestamp: Baseline timestamp used for commit freshness checks.
     """
 
     success: bool
@@ -313,6 +316,7 @@ class AgentSessionOutput:
     review_log_path: str | None = None
     low_priority_review_issues: list[ReviewIssueProtocol] | None = None
     interrupted: bool = False
+    baseline_timestamp: int | None = None
 
 
 @dataclass
@@ -445,7 +449,10 @@ class AgentSessionRunner:
         )
         lifecycle = ImplementerLifecycle(lifecycle_config)
         lifecycle_ctx = LifecycleContext()
-        lifecycle_ctx.retry_state.baseline_timestamp = int(time.time())
+        baseline_timestamp = input.baseline_timestamp
+        if baseline_timestamp is None or baseline_timestamp <= 0:
+            baseline_timestamp = int(time.time())
+        lifecycle_ctx.retry_state.baseline_timestamp = baseline_timestamp
 
         # Build session components using AgentRuntimeBuilder
         runtime = (
@@ -762,6 +769,7 @@ class AgentSessionRunner:
                 state.lifecycle_ctx.low_priority_review_issues or None,
             ),
             interrupted=interrupted,
+            baseline_timestamp=state.lifecycle_ctx.retry_state.baseline_timestamp,
         )
 
     async def _handle_log_waiting(
@@ -872,6 +880,7 @@ class AgentSessionRunner:
                 success=False,
                 summary="Session interrupted before start",
                 interrupted=True,
+                baseline_timestamp=input.baseline_timestamp,
             )
 
         start_time = asyncio.get_event_loop().time()
@@ -909,6 +918,7 @@ class AgentSessionRunner:
                 baseline_commit=input.baseline_commit,
                 issue_description=input.issue_description,
                 resume_session_id=current_resume_session_id,
+                baseline_timestamp=input.baseline_timestamp,
             )
             session_cfg, state = self._initialize_session(session_input, agent_id)
 

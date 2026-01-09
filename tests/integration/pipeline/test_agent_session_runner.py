@@ -31,6 +31,8 @@ from src.pipeline.message_stream_processor import (
     MessageIterationState,
 )
 from src.domain.evidence_check import GateResult
+from src.domain.validation.config import PromptValidationCommands
+from src.domain.validation.config import PromptValidationCommands
 from tests.fakes import FakeLintCache
 from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 
@@ -92,6 +94,17 @@ def make_result_message(
         num_turns=1,
         session_id=session_id,
         result=result,
+    )
+
+
+def make_prompt_validation_commands() -> PromptValidationCommands:
+    """Create PromptValidationCommands for retry prompt tests."""
+    return PromptValidationCommands(
+        lint="uvx ruff check .",
+        format="uvx ruff format .",
+        typecheck="uvx ty check",
+        test="uv run pytest",
+        custom_commands=(),
     )
 
 
@@ -3536,6 +3549,7 @@ class TestBuildReviewRetryPrompt:
             repo_path=tmp_path,
             max_review_retries=3,
             review_followup_template=make_test_prompts().review_followup,
+            validation_commands=make_prompt_validation_commands(),
         )
 
         # Verify prompt contains key elements
@@ -3561,6 +3575,7 @@ class TestBuildReviewRetryPrompt:
             repo_path=tmp_path,
             max_review_retries=5,
             review_followup_template=make_test_prompts().review_followup,
+            validation_commands=make_prompt_validation_commands(),
         )
 
         assert isinstance(prompt, str)
