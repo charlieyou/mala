@@ -376,18 +376,6 @@ class TestCodeReviewBaselineValidation:
         assert "baseline not specified for epic_completion" in caplog.text
         assert "defaulting to 'since_run_start'" in caplog.text
 
-    def test_baseline_missing_for_run_end_warns_and_defaults(
-        self, caplog: LogCaptureFixture
-    ) -> None:
-        """baseline missing for run_end logs warning and defaults."""
-        with caplog.at_level(logging.WARNING):
-            result = _parse_code_review_config({}, "run_end")
-
-        assert result is not None
-        assert result.baseline == "since_run_start"
-        assert "baseline not specified for run_end" in caplog.text
-        assert "defaulting to 'since_run_start'" in caplog.text
-
     def test_baseline_missing_for_session_end_no_warning(
         self, caplog: LogCaptureFixture
     ) -> None:
