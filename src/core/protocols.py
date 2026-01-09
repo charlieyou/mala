@@ -931,6 +931,7 @@ class ReviewInputProtocol(Protocol):
     commit_shas: list[str]
     issue_description: str | None
     claude_session_id: str | None
+    diff_content: str | None
 
 
 @runtime_checkable

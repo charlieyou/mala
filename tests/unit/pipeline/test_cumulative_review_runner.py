@@ -55,10 +55,12 @@ class FakeGitUtils:
     head_commit: str = "abc1234"
     reachable_commits: set[str] = field(default_factory=set)
     diff_stat: FakeDiffStat = field(default_factory=FakeDiffStat)
+    diff_content: str = "diff --git a/file.py b/file.py\n+added line"
     get_baseline_for_issue_calls: list[str] = field(default_factory=list)
     get_head_commit_calls: int = 0
     is_commit_reachable_calls: list[str] = field(default_factory=list)
     get_diff_stat_calls: list[tuple[str, str]] = field(default_factory=list)
+    get_diff_content_calls: list[tuple[str, str]] = field(default_factory=list)
 
     async def get_baseline_for_issue(self, issue_id: str) -> str | None:
         """Return configured baseline for issue_id."""
@@ -84,6 +86,11 @@ class FakeGitUtils:
         """Return configured diff stat."""
         self.get_diff_stat_calls.append((from_commit, to_commit))
         return self.diff_stat
+
+    async def get_diff_content(self, from_commit: str, to_commit: str = "HEAD") -> str:
+        """Return configured diff content."""
+        self.get_diff_content_calls.append((from_commit, to_commit))
+        return self.diff_content
 
 
 @dataclass
@@ -616,6 +623,35 @@ class TestRunReviewExecution:
         assert result.status == "success"
         assert result.new_baseline_commit == "abc1234"
         assert len(reviewer.run_review_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_diff_content_passed_to_reviewer(self, tmp_path: Path) -> None:
+        """diff_content is fetched and passed to ReviewRunner."""
+        expected_diff = "diff --git a/test.py b/test.py\n+new code"
+        git_utils = FakeGitUtils(
+            head_commit="abc1234",
+            diff_content=expected_diff,
+        )
+        runner, git, reviewer, _ = make_runner(git_utils=git_utils)
+        metadata = FakeRunMetadata(run_start_commit="baseline-sha")
+
+        await runner.run_review(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+            repo_path=tmp_path,
+            interrupt_event=asyncio.Event(),
+        )
+
+        # Verify get_diff_content was called with correct args
+        assert len(git.get_diff_content_calls) == 1
+        assert git.get_diff_content_calls[0] == ("baseline-sha", "abc1234")
+
+        # Verify diff_content was passed to reviewer
+        assert len(reviewer.run_review_calls) == 1
+        review_input = reviewer.run_review_calls[0]
+        assert hasattr(review_input, "diff_content")
+        assert review_input.diff_content == expected_diff
 
     @pytest.mark.asyncio
     async def test_execution_error_returns_failed_no_baseline_update(

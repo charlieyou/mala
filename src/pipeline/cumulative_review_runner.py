@@ -204,15 +204,16 @@ class CumulativeReviewRunner:
                 len(diff_stat.files_changed),
             )
 
-        # 6. Execute review via ReviewRunner
-        # Note: ReviewRunner uses commit_shas interface (not raw diff content).
-        # The CodeReviewer generates the diff from these commits internally.
-        # We pass the baseline and HEAD commits to review the entire range.
+        # 6. Get diff content for the review
+        diff_content = await self._git_utils.get_diff_content(baseline, head_commit)
+
+        # 7. Execute review via ReviewRunner with diff content
         review_input = ReviewInput(
             issue_id=issue_id or f"cumulative-{trigger_type.value}",
             repo_path=repo_path,
             commit_shas=[baseline, head_commit],
             issue_description=f"Cumulative review for {trigger_type.value}",
+            diff_content=diff_content,
         )
 
         try:
@@ -229,7 +230,7 @@ class CumulativeReviewRunner:
                 skip_reason=f"execution_error: {e}",
             )
 
-        # 7. Extract findings from review result
+        # 8. Extract findings from review result
         findings: list[ReviewFinding] = []
         for issue in review_output.result.issues:
             findings.append(
@@ -244,7 +245,7 @@ class CumulativeReviewRunner:
                 )
             )
 
-        # 8. Create beads issues for findings
+        # 9. Create beads issues for findings
         for finding in findings:
             try:
                 await self._beads_client.create_issue_async(
@@ -256,7 +257,7 @@ class CumulativeReviewRunner:
             except Exception as e:
                 self._logger.warning("Failed to create beads issue: %s", e)
 
-        # 9. Update baseline on completion (success or completed_with_findings)
+        # 10. Update baseline on completion (success or completed_with_findings)
         # Key format: "run_end" or "epic_completion:<epic_id>"
         if trigger_type == TT.EPIC_COMPLETION and epic_id:
             key = f"epic_completion:{epic_id}"
