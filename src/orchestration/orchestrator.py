@@ -716,7 +716,8 @@ class MalaOrchestrator:
 
         # Track failed issues before finalize to ensure they're recorded
         # even if finalize raises (e.g., mark_needs_followup callback fails)
-        if not result.success:
+        # Skip deadlock victims - they should be retried after blocker completes
+        if not result.success and issue_id not in self._state.deadlock_victim_issues:
             self.failed_issues.add(issue_id)
 
         # Delegate to finalizer, ensuring cleanup happens even if finalize raises
