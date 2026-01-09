@@ -186,14 +186,18 @@ class TestParseCodeReviewConfig:
                 {"enabled": True, "reviewer_type": "invalid"}, "session_end"
             )
 
-    def test_reviewer_type_invalid_rejected_even_when_disabled(self) -> None:
-        """Invalid reviewer_type raises ConfigError even when disabled."""
-        with pytest.raises(
-            ConfigError, match=r"code_review\.reviewer_type must be 'cerberus' or"
-        ):
-            _parse_code_review_config(
-                {"enabled": False, "reviewer_type": "invalid"}, "session_end"
-            )
+    def test_reviewer_type_invalid_allowed_when_disabled(self) -> None:
+        """Invalid reviewer_type is allowed when enabled: false.
+
+        Per spec, only error on invalid reviewer_type when enabled: true.
+        """
+        result = _parse_code_review_config(
+            {"enabled": False, "reviewer_type": "invalid"}, "session_end"
+        )
+        assert result is not None
+        assert result.enabled is False
+        # Value is preserved even though invalid (won't be used since disabled)
+        assert result.reviewer_type == "invalid"
 
     def test_failure_mode_continue(self) -> None:
         """failure_mode continue is parsed."""
@@ -373,8 +377,31 @@ class TestCodeReviewBaselineValidation:
 
         assert result is not None
         assert result.baseline == "since_run_start"
-        assert "baseline not specified for epic_completion" in caplog.text
+        assert "baseline not specified for epic_completion trigger" in caplog.text
         assert "defaulting to 'since_run_start'" in caplog.text
+
+    def test_baseline_missing_for_run_end_warns_and_defaults(
+        self, caplog: LogCaptureFixture
+    ) -> None:
+        """baseline missing for run_end logs warning and defaults."""
+        with caplog.at_level(logging.WARNING):
+            result = _parse_code_review_config({}, "run_end")
+
+        assert result is not None
+        assert result.baseline == "since_run_start"
+        assert "baseline not specified for run_end trigger" in caplog.text
+        assert "defaulting to 'since_run_start'" in caplog.text
+
+    def test_baseline_explicit_null_for_run_end_warns_and_defaults(
+        self, caplog: LogCaptureFixture
+    ) -> None:
+        """baseline: null for run_end triggers warning and default."""
+        with caplog.at_level(logging.WARNING):
+            result = _parse_code_review_config({"baseline": None}, "run_end")
+
+        assert result is not None
+        assert result.baseline == "since_run_start"
+        assert "baseline not specified for run_end trigger" in caplog.text
 
     def test_baseline_missing_for_session_end_no_warning(
         self, caplog: LogCaptureFixture
@@ -387,17 +414,21 @@ class TestCodeReviewBaselineValidation:
         assert result.baseline is None
         assert "baseline" not in caplog.text
 
-    def test_baseline_explicit_null_for_epic_completion_no_default(
+    def test_baseline_explicit_null_for_epic_completion_warns_and_defaults(
         self, caplog: LogCaptureFixture
     ) -> None:
-        """baseline: null for epic_completion does not trigger default warning."""
+        """baseline: null for epic_completion triggers warning and default.
+
+        Explicit null is treated like missing because baseline is required
+        for epic_completion and run_end triggers.
+        """
         with caplog.at_level(logging.WARNING):
             result = _parse_code_review_config({"baseline": None}, "epic_completion")
 
         assert result is not None
-        # When baseline key is present (even with null), don't log missing warning
-        # but still leave baseline as None since null was explicit
-        assert result.baseline is None
+        # Explicit null counts as missing since baseline is required
+        assert result.baseline == "since_run_start"
+        assert "baseline not specified for epic_completion trigger" in caplog.text
 
 
 class TestCodeReviewFullConfig:

@@ -529,17 +529,13 @@ def _parse_code_review_config(
                 f"got {type(rt_val).__name__}"
             )
         if rt_val not in ("cerberus", "agent_sdk"):
-            # ERROR if enabled: true with invalid reviewer_type
+            # ERROR only if enabled: true with invalid reviewer_type
+            # When disabled, allow invalid value (per spec)
             if enabled:
                 raise ConfigError(
                     f"code_review.reviewer_type must be 'cerberus' or 'agent_sdk' "
                     f"for trigger {trigger_name}, got '{rt_val}'"
                 )
-            # Still error even if not enabled - invalid value is invalid
-            raise ConfigError(
-                f"code_review.reviewer_type must be 'cerberus' or 'agent_sdk' "
-                f"for trigger {trigger_name}, got '{rt_val}'"
-            )
         reviewer_type = rt_val  # type: ignore[assignment]
 
     # Parse failure_mode (optional, defaults to CONTINUE)
@@ -621,15 +617,15 @@ def _parse_code_review_config(
             else:
                 baseline = bl_val  # type: ignore[assignment]
 
-    # WARN if baseline missing for epic_completion - default to since_run_start
-    if trigger_name == "epic_completion" and baseline is None:
-        if "baseline" not in data:
-            logger.warning(
-                "code_review.baseline not specified for %s trigger; "
-                "defaulting to 'since_run_start'",
-                trigger_name,
-            )
-            baseline = "since_run_start"
+    # WARN if baseline missing/null for epic_completion/run_end - default to since_run_start
+    # Explicit null counts as missing since baseline is required for these triggers
+    if trigger_name in ("epic_completion", "run_end") and baseline is None:
+        logger.warning(
+            "code_review.baseline not specified for %s trigger; "
+            "defaulting to 'since_run_start'",
+            trigger_name,
+        )
+        baseline = "since_run_start"
 
     # Parse cerberus (optional)
     cerberus = None
