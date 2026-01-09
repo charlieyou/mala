@@ -379,8 +379,8 @@ class GitUtils:
         """Get the current HEAD commit hash (short form).
 
         Returns:
-            Short commit hash (7 chars) of HEAD, or empty string if git command
-            fails (e.g., not a git repository).
+            Short commit hash of HEAD (uses git's default abbreviation length),
+            or empty string if git command fails (e.g., not a git repository).
         """
         return await get_git_commit_async(self.repo_path)
 
