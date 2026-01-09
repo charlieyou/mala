@@ -7,7 +7,7 @@ of a single issue implementation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -33,3 +33,4 @@ class IssueResult:
     session_log_path: Path | None = None  # Path to session log file
     review_log_path: str | None = None  # Path to Cerberus review session log
     baseline_timestamp: int | None = None  # Commit freshness baseline for this run
+    last_review_issues: list[dict[str, Any]] | None = None  # Review issues for resume

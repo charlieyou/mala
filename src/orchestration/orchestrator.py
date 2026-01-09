@@ -7,6 +7,7 @@ import logging
 import signal
 import time
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from src.domain.validation.spec import (
@@ -19,6 +20,10 @@ from src.domain.prompts import (
     format_implementer_prompt,
     load_prompts,
 )
+
+# Future imports for T005 - _build_resume_prompt will use these
+# from src.domain.prompts import build_custom_commands_section
+# from src.pipeline.review_formatter import format_review_issues
 from src.infra.git_utils import (
     get_baseline_for_issue,
     get_git_branch_async,
@@ -120,6 +125,59 @@ LOG_FILE_POLL_INTERVAL = 0.5
 
 # SIGINT escalation timing constant (5s window for counting consecutive Ctrl-C)
 ESCALATION_WINDOW_SECONDS = 5.0
+
+
+@dataclass(frozen=True)
+class StoredReviewIssue:
+    """Typed adapter for review issues loaded from metadata."""
+
+    file: str
+    line_start: int
+    line_end: int
+    priority: int | None
+    title: str
+    body: str
+    reviewer: str
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> StoredReviewIssue:
+        def to_int(val: object, default: int) -> int:
+            if val is None:
+                return default
+            try:
+                return int(val)  # type: ignore[arg-type]
+            except (ValueError, TypeError):
+                return default
+
+        line_start = to_int(d.get("line_start"), 0)
+        return cls(
+            file=str(d.get("file", "unknown")),
+            line_start=line_start,
+            line_end=to_int(d.get("line_end"), line_start),
+            priority=d.get("priority"),
+            title=str(d.get("title", "Unknown issue")),
+            body=str(d.get("body", "")),
+            reviewer=str(d.get("reviewer", "unknown")),
+        )
+
+
+def _build_resume_prompt(
+    review_issues: list[dict[str, Any]],
+    prompts: PromptProvider,
+    validation_commands: str,
+) -> str | None:
+    """Build a resume prompt with review feedback.
+
+    Args:
+        review_issues: List of review issue dicts from prior session.
+        prompts: Prompt templates provider.
+        validation_commands: Validation commands string for prompt.
+
+    Returns:
+        Formatted review followup prompt, or None if not yet implemented.
+    """
+    # Stub: T005 will implement the actual logic
+    return None
 
 
 class MalaOrchestrator:

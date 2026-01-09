@@ -174,6 +174,8 @@ class IssueRun:
     review_log_path: str | None = None
     # Baseline timestamp used for commit freshness checks
     baseline_timestamp: int | None = None
+    # Review issues from last review (for resume with feedback)
+    last_review_issues: list[dict[str, Any]] | None = None
 
 
 @dataclass
@@ -907,6 +909,7 @@ class SessionInfo:
     metadata_path: Path
     repo_path: str | None
     baseline_timestamp: int | None = None
+    last_review_issues: list[dict[str, Any]] | None = None
 
 
 def extract_session_from_run(
@@ -938,6 +941,12 @@ def extract_session_from_run(
     raw_session_id = issue_data.get("session_id")
     session_id = raw_session_id if isinstance(raw_session_id, str) else None
 
+    # Extract last_review_issues (list of dicts or None)
+    raw_review_issues = issue_data.get("last_review_issues")
+    last_review_issues = (
+        raw_review_issues if isinstance(raw_review_issues, list) else None
+    )
+
     return SessionInfo(
         run_id=data.get("run_id") or "",
         session_id=session_id,
@@ -953,6 +962,7 @@ def extract_session_from_run(
             if isinstance(issue_data.get("baseline_timestamp"), int)
             else None
         ),
+        last_review_issues=last_review_issues,
     )
 
 

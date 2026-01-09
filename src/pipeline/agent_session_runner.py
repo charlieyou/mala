@@ -317,6 +317,7 @@ class AgentSessionOutput:
     low_priority_review_issues: list[ReviewIssueProtocol] | None = None
     interrupted: bool = False
     baseline_timestamp: int | None = None
+    last_review_issues: list[dict[str, Any]] | None = None
 
 
 @dataclass
