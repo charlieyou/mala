@@ -341,6 +341,7 @@ class MalaOrchestrator:
             lambda: self.evidence_check,
             on_session_log_path=self._on_session_log_path,
             on_review_log_path=self._on_review_log_path,
+            interrupt_event_getter=lambda: self._interrupt_event,
         )
         self._session_config = build_session_config(
             pipeline,

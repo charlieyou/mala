@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Protocol
 from src.pipeline.agent_session_runner import SessionCallbacks
 
 if TYPE_CHECKING:
+    import asyncio
     from collections.abc import Callable
     from pathlib import Path
 
@@ -63,6 +64,7 @@ class GateAsyncRunner(Protocol):
         issue_id: str,
         log_path: Path,
         retry_state: RetryState,
+        interrupt_event: asyncio.Event | None = None,
     ) -> tuple[GateOutcome, int]:
         """Run quality gate check asynchronously."""
         ...
@@ -99,6 +101,7 @@ class SessionCallbackFactory:
         on_review_log_path: Callable[[str, str], None],
         get_per_session_spec: GetPerSessionSpec,
         is_verbose: IsVerboseCheck,
+        get_interrupt_event: Callable[[], asyncio.Event | None] | None = None,
     ) -> None:
         """Initialize the factory with dependencies.
 
@@ -113,11 +116,13 @@ class SessionCallbackFactory:
             on_review_log_path: Callback when review log path becomes known.
             get_per_session_spec: Callable to get current per-session spec.
             is_verbose: Callable to check verbose mode.
+            get_interrupt_event: Callable to get the interrupt event (late-bound).
 
         Note:
-            log_provider, event_sink, and evidence_check are callables to support
-            late-bound lookups. This allows tests to patch orchestrator attributes
-            after factory construction and have the patches take effect.
+            log_provider, event_sink, evidence_check, and get_interrupt_event are
+            callables to support late-bound lookups. This allows tests to patch
+            orchestrator attributes after factory construction and have the
+            patches take effect.
         """
         self._gate_async_runner = gate_async_runner
         self._review_runner = review_runner
@@ -129,6 +134,7 @@ class SessionCallbackFactory:
         self._on_review_log_path = on_review_log_path
         self._get_per_session_spec = get_per_session_spec
         self._is_verbose = is_verbose
+        self._get_interrupt_event = get_interrupt_event or (lambda: None)
 
     def build(
         self,
@@ -152,7 +158,7 @@ class SessionCallbackFactory:
             issue_id: str, log_path: Path, retry_state: RetryState
         ) -> tuple[GateOutcome, int]:
             result, offset = await self._gate_async_runner.run_gate_async(
-                issue_id, log_path, retry_state
+                issue_id, log_path, retry_state, self._get_interrupt_event()
             )
             return result, offset  # type: ignore[return-value]
 
@@ -174,7 +180,9 @@ class SessionCallbackFactory:
                 commit_shas=commit_shas,
                 claude_session_id=session_id,
             )
-            output = await self._review_runner.run_review(review_input)
+            output = await self._review_runner.run_review(
+                review_input, self._get_interrupt_event()
+            )
             if output.session_log_path:
                 self._on_review_log_path(issue_id, output.session_log_path)
 

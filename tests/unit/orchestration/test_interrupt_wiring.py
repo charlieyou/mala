@@ -319,3 +319,146 @@ class TestInterruptWiring:
 
         # Verify interrupt_event was passed to run_session
         assert captured_interrupt_event is interrupt_event
+
+    async def test_gate_callback_passes_interrupt_event(
+        self, tmp_path: Path, tmp_runs_dir: Path
+    ) -> None:
+        """Gate callback from SessionCallbackFactory passes interrupt_event.
+
+        This audit test verifies that the on_gate_check callback correctly
+        passes the interrupt_event to AsyncGateRunner.run_gate_async.
+        """
+        from src.orchestration.factory import create_orchestrator
+        from tests.fakes.event_sink import FakeEventSink
+        from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
+
+        provider = FakeIssueProvider(
+            issues={"test-issue": FakeIssue(id="test-issue", status="open")}
+        )
+        event_sink = FakeEventSink()
+
+        config = OrchestratorConfig(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+        )
+        deps = OrchestratorDependencies(
+            issue_provider=provider,
+            event_sink=event_sink,
+            runs_dir=tmp_runs_dir,
+        )
+        orchestrator = create_orchestrator(config, deps=deps)
+
+        # Set up _interrupt_event as if run() had started
+        interrupt_event = asyncio.Event()
+        orchestrator._interrupt_event = interrupt_event
+
+        # Capture the interrupt_event passed to run_gate_async
+        captured_interrupt_event: asyncio.Event | None = None
+
+        from src.domain.evidence_check import GateResult
+        from src.domain.lifecycle import RetryState
+
+        async def mock_run_gate_async(
+            issue_id: str,
+            log_path: object,
+            retry_state: RetryState,
+            interrupt_event: asyncio.Event | None = None,
+        ) -> tuple[GateResult, int]:
+            nonlocal captured_interrupt_event
+            captured_interrupt_event = interrupt_event
+            return GateResult(passed=True, failure_reasons=[], commit_hash=None), 0
+
+        orchestrator.async_gate_runner.run_gate_async = mock_run_gate_async  # type: ignore[method-assign]
+
+        # Build callbacks and invoke the gate check callback
+        callbacks = orchestrator.session_callback_factory.build("test-issue")
+
+        # Call the gate callback
+        assert callbacks.on_gate_check is not None
+        await callbacks.on_gate_check("test-issue", tmp_path / "test.log", RetryState())
+
+        # Verify interrupt_event was passed
+        assert captured_interrupt_event is interrupt_event
+
+    async def test_review_callback_passes_interrupt_event(
+        self, tmp_path: Path, tmp_runs_dir: Path
+    ) -> None:
+        """Review callback from SessionCallbackFactory passes interrupt_event.
+
+        This audit test verifies that the on_review_check callback correctly
+        passes the interrupt_event to ReviewRunner.run_review.
+        """
+        from unittest.mock import AsyncMock
+
+        from src.orchestration.factory import create_orchestrator
+        from tests.fakes.event_sink import FakeEventSink
+        from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
+
+        provider = FakeIssueProvider(
+            issues={"test-issue": FakeIssue(id="test-issue", status="open")}
+        )
+        event_sink = FakeEventSink()
+
+        config = OrchestratorConfig(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+        )
+        deps = OrchestratorDependencies(
+            issue_provider=provider,
+            event_sink=event_sink,
+            runs_dir=tmp_runs_dir,
+        )
+        orchestrator = create_orchestrator(config, deps=deps)
+
+        # Set up _interrupt_event as if run() had started
+        interrupt_event = asyncio.Event()
+        orchestrator._interrupt_event = interrupt_event
+
+        # Capture the interrupt_event passed to run_review
+        captured_interrupt_event: asyncio.Event | None = None
+
+        from src.domain.lifecycle import RetryState
+        from src.pipeline.review_runner import ReviewOutput
+
+        async def mock_run_review(
+            input: object,
+            interrupt_event: asyncio.Event | None = None,
+        ) -> ReviewOutput:
+            nonlocal captured_interrupt_event
+            captured_interrupt_event = interrupt_event
+            # Return a mock result
+            mock_result = MagicMock()
+            mock_result.passed = True
+            mock_result.issues = []
+            mock_result.parse_error = None
+            mock_result.fatal_error = False
+            mock_result.review_log_path = None
+            return ReviewOutput(result=mock_result)
+
+        orchestrator.review_runner.run_review = mock_run_review  # type: ignore[method-assign]
+
+        # Mock get_issue_commits_async to return a commit
+        async def mock_get_commits(repo_path: object, issue_id: str) -> list[str]:
+            return ["abc123"]
+
+        # Build callbacks and invoke the review check callback
+        callbacks = orchestrator.session_callback_factory.build("test-issue")
+
+        # Call the review callback
+        assert callbacks.on_review_check is not None
+
+        # We need to patch the git import inside the closure
+        from unittest.mock import patch
+
+        with patch(
+            "src.infra.git_utils.get_issue_commits_async",
+            new=AsyncMock(return_value=["abc123"]),
+        ):
+            await callbacks.on_review_check(
+                "test-issue", "test description", "session-123", RetryState()
+            )
+
+        # Verify interrupt_event was passed
+        assert captured_interrupt_event is interrupt_event

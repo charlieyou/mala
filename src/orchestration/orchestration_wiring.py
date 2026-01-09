@@ -255,8 +255,24 @@ def build_session_callback_factory(
     evidence_check_getter: Callable,
     on_session_log_path: Callable[[str, Path], None],
     on_review_log_path: Callable[[str, str], None],
+    interrupt_event_getter: Callable | None = None,
 ) -> SessionCallbackFactory:
-    """Build SessionCallbackFactory."""
+    """Build SessionCallbackFactory.
+
+    Args:
+        runtime: Runtime dependencies.
+        pipeline: Pipeline configuration.
+        async_gate_runner: Async gate runner for quality checks.
+        review_runner: Review runner for code reviews.
+        log_provider_getter: Callable to get log provider.
+        evidence_check_getter: Callable to get evidence check.
+        on_session_log_path: Callback when session log path becomes known.
+        on_review_log_path: Callback when review log path becomes known.
+        interrupt_event_getter: Callable to get the interrupt event (late-bound).
+
+    Returns:
+        Configured SessionCallbackFactory.
+    """
     return SessionCallbackFactory(
         gate_async_runner=async_gate_runner,
         review_runner=review_runner,
@@ -268,6 +284,7 @@ def build_session_callback_factory(
         on_review_log_path=on_review_log_path,
         get_per_session_spec=lambda: async_gate_runner.per_session_spec,
         is_verbose=is_verbose_enabled,
+        get_interrupt_event=interrupt_event_getter,
     )
 
 
