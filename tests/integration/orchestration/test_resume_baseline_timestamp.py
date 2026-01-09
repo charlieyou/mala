@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -14,6 +13,12 @@ from src.infra.tools.env import encode_repo_path, get_claude_log_path
 from tests.fakes.gate_checker import FakeGateChecker
 from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 from tests.fakes.sdk_client import FakeSDKClientFactory
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+    from pathlib import Path
+
+    from src.orchestration.orchestrator import MalaOrchestrator
 
 
 def _read_latest_run_metadata(runs_dir: Path, repo_path: Path) -> dict:
@@ -36,7 +41,7 @@ def _read_latest_run_metadata(runs_dir: Path, repo_path: Path) -> dict:
 @pytest.mark.asyncio
 async def test_resume_reuses_persisted_baseline_timestamp(
     tmp_path: Path,
-    make_orchestrator,
+    make_orchestrator: Callable[..., MalaOrchestrator],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     issue_id = "issue-123"
@@ -151,7 +156,11 @@ async def test_resume_reuses_persisted_baseline_timestamp(
     assert run2_metadata["issues"][issue_id]["baseline_timestamp"] == baseline_timestamp
 
 
-async def _run_with_fake_git(orchestrator, *, get_issue_commits=None) -> None:
+async def _run_with_fake_git(
+    orchestrator: MalaOrchestrator,
+    *,
+    get_issue_commits: Callable[..., object] | None = None,
+) -> None:
     import contextlib
     from unittest.mock import patch
 

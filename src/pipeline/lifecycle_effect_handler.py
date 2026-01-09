@@ -216,7 +216,7 @@ def _build_review_retry_prompt(
     repo_path: Path,
     max_review_retries: int,
     review_followup_template: str,
-    validation_commands: "PromptValidationCommands",
+    validation_commands: PromptValidationCommands,
 ) -> str:
     """Build the follow-up prompt for review retry.
 

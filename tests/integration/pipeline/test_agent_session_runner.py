@@ -32,7 +32,6 @@ from src.pipeline.message_stream_processor import (
 )
 from src.domain.evidence_check import GateResult
 from src.domain.validation.config import PromptValidationCommands
-from src.domain.validation.config import PromptValidationCommands
 from tests.fakes import FakeLintCache
 from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 
