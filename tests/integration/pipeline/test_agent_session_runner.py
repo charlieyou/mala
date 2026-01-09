@@ -10,7 +10,6 @@ isinstance checks work correctly in the runner.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -37,10 +36,14 @@ from tests.fakes import FakeLintCache
 from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable
+    from collections.abc import AsyncIterator, Callable, Sequence
     from pathlib import Path
 
-    from src.core.protocols import McpServerFactory, ReviewIssueProtocol, SDKClientProtocol
+    from src.core.protocols import (
+        McpServerFactory,
+        ReviewIssueProtocol,
+        SDKClientProtocol,
+    )
     from src.domain.lifecycle import RetryState
     from src.pipeline.agent_session_runner import (
         SessionConfig,
