@@ -3645,13 +3645,15 @@ class TestSessionResume:
                 return_value="Test issue",
             ),
             patch(
-                "src.orchestration.orchestrator.lookup_prior_session",
-                return_value="prior-session-id",
+                "src.orchestration.orchestrator.lookup_prior_session_info",
+                return_value=MagicMock(
+                    session_id="prior-session-id", baseline_timestamp=1700000000
+                ),
             ) as mock_lookup,
         ):
             await orchestrator.run_implementer("test-issue")
 
-            # Verify lookup_prior_session was called with correct args
+            # Verify lookup_prior_session_info was called with correct args
             mock_lookup.assert_called_once_with(tmp_path, "test-issue")
 
     @pytest.mark.asyncio
@@ -3694,7 +3696,7 @@ class TestSessionResume:
                 return_value="Test issue",
             ),
             patch(
-                "src.orchestration.orchestrator.lookup_prior_session",
+                "src.orchestration.orchestrator.lookup_prior_session_info",
                 return_value=None,  # No prior session
             ),
         ):
@@ -3772,7 +3774,7 @@ class TestSessionResume:
                 return_value="Test issue",
             ),
             patch(
-                "src.orchestration.orchestrator.lookup_prior_session",
+                "src.orchestration.orchestrator.lookup_prior_session_info",
                 return_value=None,  # No prior session
             ),
         ):

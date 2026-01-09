@@ -172,6 +172,8 @@ class IssueRun:
     resolution: IssueResolution | None = None
     # Cerberus review session log path (verbose mode only)
     review_log_path: str | None = None
+    # Baseline timestamp used for commit freshness checks
+    baseline_timestamp: int | None = None
 
 
 @dataclass
@@ -439,6 +441,11 @@ class RunMetadata:
                 validation=validation,
                 resolution=resolution,
                 review_log_path=issue_data.get("review_log_path"),
+                baseline_timestamp=(
+                    issue_data.get("baseline_timestamp")
+                    if isinstance(issue_data.get("baseline_timestamp"), int)
+                    else None
+                ),
             )
             metadata.issues[issue_id] = issue
 
@@ -899,6 +906,7 @@ class SessionInfo:
     log_path: str | None
     metadata_path: Path
     repo_path: str | None
+    baseline_timestamp: int | None = None
 
 
 def extract_session_from_run(
@@ -940,6 +948,11 @@ def extract_session_from_run(
         log_path=issue_data.get("log_path"),
         metadata_path=path,
         repo_path=_get_repo_path_from_run(data, path),
+        baseline_timestamp=(
+            issue_data.get("baseline_timestamp")
+            if isinstance(issue_data.get("baseline_timestamp"), int)
+            else None
+        ),
     )
 
 
@@ -983,11 +996,11 @@ def find_sessions_for_issue(
     )
 
 
-def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
-    """Look up the session ID from a prior run on this issue.
+def lookup_prior_session_info(repo_path: Path, issue_id: str) -> SessionInfo | None:
+    """Look up the most recent session info from prior runs on this issue.
 
     Scans run metadata files in the repo's runs directory, finds entries
-    for the given issue, and returns the session_id from the most recent
+    for the given issue, and returns the SessionInfo from the most recent
     run (sorted by started_at timestamp descending, with run_id as tiebreaker).
 
     Files are sorted by filename descending before scanning (leveraging the
@@ -1000,7 +1013,7 @@ def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
         issue_id: The issue ID to look up.
 
     Returns:
-        Session ID from the most recent run on this issue, or None if not found.
+        SessionInfo from the most recent run on this issue, or None if not found.
     """
     runs_dir = get_repo_runs_dir(repo_path)
     if not runs_dir.exists():
@@ -1009,8 +1022,8 @@ def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
     # Sort files by filename descending (newest first based on timestamp prefix)
     json_files = sorted(runs_dir.glob("*.json"), key=lambda p: p.name, reverse=True)
 
-    # Track best match: (started_at_ts, run_id, session_id)
-    best: tuple[float, str, str] | None = None
+    # Track best match: (started_at_ts, run_id, session_info)
+    best: tuple[float, str, SessionInfo] | None = None
 
     for json_path in json_files:
         # Early-exit: if we have a match and current file's timestamp prefix
@@ -1032,16 +1045,8 @@ def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
         if data is None:
             continue
 
-        issues = data.get("issues", {})
-        if not isinstance(issues, dict):
-            continue
-
-        issue_data = issues.get(issue_id)
-        if not isinstance(issue_data, dict):
-            continue
-
-        session_id = issue_data.get("session_id")
-        if not isinstance(session_id, str) or not session_id:
+        session_info = extract_session_from_run(data, json_path, issue_id)
+        if session_info is None or not session_info.session_id:
             continue
 
         # Parse started_at for sorting
@@ -1055,9 +1060,15 @@ def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
             or timestamp > best[0]
             or (timestamp == best[0] and run_id < best[1])
         ):
-            best = (timestamp, run_id, session_id)
+            best = (timestamp, run_id, session_info)
 
     return best[2] if best else None
+
+
+def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
+    """Look up the session ID from a prior run on this issue."""
+    info = lookup_prior_session_info(repo_path, issue_id)
+    return info.session_id if info is not None else None
 
 
 def parse_timestamp(ts: str) -> float:

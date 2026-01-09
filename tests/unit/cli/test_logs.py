@@ -659,6 +659,7 @@ class TestFindSessionsForIssue:
                             "session_id": "sess-abc",
                             "status": "success",
                             "log_path": "/path/to/log.jsonl",
+                            "baseline_timestamp": 1700000000,
                         },
                     },
                 }
@@ -681,6 +682,7 @@ class TestFindSessionsForIssue:
         assert session.log_path == "/path/to/log.jsonl"
         assert session.metadata_path == run_file
         assert session.repo_path == "/home/user/project"
+        assert session.baseline_timestamp == 1700000000
 
     def test_sort_by_run_started_at_desc(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

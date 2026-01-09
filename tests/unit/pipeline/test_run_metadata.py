@@ -28,6 +28,7 @@ from src.infra.io.log_output.run_metadata import (
     get_running_instances,
     get_running_instances_for_dir,
     lookup_prior_session,
+    lookup_prior_session_info,
     parse_timestamp,
     remove_run_marker,
     write_run_marker,
@@ -103,9 +104,11 @@ class TestIssueRun:
             status="success",
             duration_seconds=60.0,
             validation=validation,
+            baseline_timestamp=1234567890,
         )
         assert issue.validation is not None
         assert issue.validation.passed is True
+        assert issue.baseline_timestamp == 1234567890
 
     def test_issue_run_with_resolution(self) -> None:
         resolution = IssueResolution(
@@ -222,6 +225,7 @@ class TestRunMetadataSerialization:
                 evidence={"test": True, "commit_found": True},
             ),
             validation=validation,
+            baseline_timestamp=1700000000,
         )
         metadata.record_issue(issue1)
 
@@ -274,6 +278,7 @@ class TestRunMetadataSerialization:
         assert "pytest" in issue1_data["validation"]["commands_run"]
         assert issue1_data["validation"]["coverage_percent"] == 87.5
         assert issue1_data["validation"]["artifacts"]["log_dir"] == "/tmp/logs"
+        assert issue1_data["baseline_timestamp"] == 1700000000
 
         # Check issue with resolution
         issue2_data = data["issues"]["test-2"]
@@ -320,6 +325,7 @@ class TestRunMetadataSerialization:
                     evidence={"test": True, "commit_found": True},
                 ),
                 validation=validation,
+                baseline_timestamp=1700000001,
             )
             metadata.record_issue(issue1)
 
@@ -375,6 +381,7 @@ class TestRunMetadataSerialization:
             assert issue1_loaded.validation.coverage_percent == 87.5
             assert issue1_loaded.validation.artifacts is not None
             assert issue1_loaded.validation.artifacts.log_dir == Path("/tmp/logs")
+            assert issue1_loaded.baseline_timestamp == 1700000001
 
             # Verify issue with resolution
             assert "test-2" in loaded.issues
@@ -1120,6 +1127,38 @@ class TestLookupPriorSession:
                 result = lookup_prior_session(repo_path, "issue-123")
 
             assert result == "new-session-xyz"
+
+    def test_lookup_info_includes_baseline_timestamp(self) -> None:
+        """Test that lookup_prior_session_info returns baseline_timestamp."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            runs_dir = repo_path / ".mala" / "runs"
+            runs_dir.mkdir(parents=True)
+
+            run_data = {
+                "run_id": "run-1",
+                "started_at": "2024-01-01T10:00:00Z",
+                "issues": {
+                    "issue-123": {
+                        "session_id": "session-abc",
+                        "baseline_timestamp": 1700000000,
+                    }
+                },
+            }
+
+            (runs_dir / "2024-01-01T10-00-00_run1.json").write_text(
+                json.dumps(run_data)
+            )
+
+            with patch(
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                return_value=runs_dir,
+            ):
+                result = lookup_prior_session_info(repo_path, "issue-123")
+
+            assert result is not None
+            assert result.session_id == "session-abc"
+            assert result.baseline_timestamp == 1700000000
 
     def test_lookup_returns_none_if_missing(self) -> None:
         """Test that lookup returns None when no matching issue found."""

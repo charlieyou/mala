@@ -83,7 +83,7 @@ class ReviewInput:
         repo_path: Path to the repository.
         commit_sha: Current commit SHA to review.
         issue_description: Issue description for scope verification.
-        baseline_commit: Optional baseline commit for cumulative diff.
+        baseline_commit: Baseline commit for cumulative diff.
         commit_shas: Optional list of commit SHAs to review directly.
         claude_session_id: Optional Claude session ID for external review context.
     """
@@ -200,11 +200,10 @@ class ReviewRunner:
                 interrupted=True,
             )
 
-        # Build diff range
-        # Use commit's own parent as default baseline, not HEAD~1
-        # This ensures historical reviews compare against the correct base
-        baseline = input.baseline_commit or f"{input.commit_sha}~1"
-        diff_range = f"{baseline}..{input.commit_sha}"
+        # Build diff range (baseline is required)
+        if input.baseline_commit is None:
+            raise ValueError("ReviewInput.baseline_commit must be set")
+        diff_range = f"{input.baseline_commit}..{input.commit_sha}"
         logger.info(
             "Review started: issue_id=%s diff_range=%s", input.issue_id, diff_range
         )

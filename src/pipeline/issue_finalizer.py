@@ -250,6 +250,7 @@ class IssueFinalizer:
             validation=gate_metadata.validation_result,
             resolution=result.resolution,
             review_log_path=input.review_log_path,
+            baseline_timestamp=result.baseline_timestamp,
         )
         input.run_metadata.record_issue(issue_run)
 

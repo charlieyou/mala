@@ -127,6 +127,7 @@ class TestReviewRunnerBasics:
             issue_id="test-123",
             repo_path=tmp_path,
             commit_sha="abc123",
+            baseline_commit="base123",
         )
 
         output = await runner.run_review(review_input)
@@ -195,6 +196,7 @@ class TestReviewRunnerBasics:
             issue_id="test-123",
             repo_path=tmp_path,
             commit_sha="abc123",
+            baseline_commit="base123",
         )
 
         output = await runner.run_review(review_input)
@@ -219,6 +221,7 @@ class TestReviewRunnerBasics:
             repo_path=tmp_path,
             commit_sha="abc123",
             issue_description=None,  # No description
+            baseline_commit="base123",
         )
 
         await runner.run_review(review_input)
@@ -228,13 +231,13 @@ class TestReviewRunnerBasics:
         assert call["context_file"] is None
 
     @pytest.mark.asyncio
-    async def test_run_review_diff_range_without_baseline(
+    async def test_run_review_requires_baseline(
         self,
         fake_reviewer: FakeCodeReviewer,
         config: ReviewRunnerConfig,
         tmp_path: Path,
     ) -> None:
-        """Runner should use commit's parent as baseline when not provided."""
+        """Runner should require baseline_commit to be provided."""
         runner = ReviewRunner(
             code_reviewer=cast("CodeReviewer", fake_reviewer),
             config=config,
@@ -247,12 +250,8 @@ class TestReviewRunnerBasics:
             baseline_commit=None,  # No baseline
         )
 
-        await runner.run_review(review_input)
-
-        assert len(fake_reviewer.calls) == 1
-        call = fake_reviewer.calls[0]
-        # Uses commit's own parent, not HEAD~1, for correct historical reviews
-        assert call["diff_range"] == "abc123~1..abc123"
+        with pytest.raises(ValueError, match="baseline_commit"):
+            await runner.run_review(review_input)
 
 
 class TestReviewRunnerResults:
@@ -269,6 +268,7 @@ class TestReviewRunnerResults:
             issue_id="test-123",
             repo_path=tmp_path,
             commit_sha="abc123",
+            baseline_commit="base123",
         )
 
         output = await runner.run_review(review_input)
@@ -298,6 +298,7 @@ class TestReviewRunnerResults:
             issue_id="test-123",
             repo_path=tmp_path,
             commit_sha="abc123",
+            baseline_commit="base123",
         )
 
         output = await runner.run_review(review_input)
@@ -321,6 +322,7 @@ class TestReviewRunnerResults:
             issue_id="test-123",
             repo_path=tmp_path,
             commit_sha="abc123",
+            baseline_commit="base123",
         )
 
         output = await runner.run_review(review_input)
@@ -501,6 +503,7 @@ class TestContextFileCleanup:
             repo_path=tmp_path,
             commit_sha="abc123",
             issue_description="Fix the bug",
+            baseline_commit="base123",
         )
 
         await runner.run_review(review_input)
@@ -548,6 +551,7 @@ class TestContextFileCleanup:
             repo_path=tmp_path,
             commit_sha="abc123",
             issue_description="Fix the bug",
+            baseline_commit="base123",
         )
 
         with pytest.raises(RuntimeError, match="Review failed"):
@@ -571,6 +575,7 @@ class TestContextFileCleanup:
             repo_path=tmp_path,
             commit_sha="abc123",
             issue_description=None,  # No description
+            baseline_commit="base123",
         )
 
         # Should not raise any errors
@@ -595,6 +600,7 @@ class TestReviewRunnerInterruptHandling:
             issue_id="test-123",
             repo_path=tmp_path,
             commit_sha="abc123",
+            baseline_commit="base123",
         )
 
         # Set interrupt event before starting
@@ -621,6 +627,7 @@ class TestReviewRunnerInterruptHandling:
             issue_id="test-123",
             repo_path=tmp_path,
             commit_sha="abc123",
+            baseline_commit="base123",
         )
 
         interrupt_event = asyncio.Event()
@@ -666,6 +673,7 @@ class TestReviewRunnerInterruptHandling:
             issue_id="test-123",
             repo_path=tmp_path,
             commit_sha="abc123",
+            baseline_commit="base123",
         )
 
         interrupt_event = asyncio.Event()
@@ -689,6 +697,7 @@ class TestReviewRunnerInterruptHandling:
             issue_id="test-123",
             repo_path=tmp_path,
             commit_sha="abc123",
+            baseline_commit="base123",
         )
 
         interrupt_event = asyncio.Event()
@@ -711,6 +720,7 @@ class TestReviewRunnerInterruptHandling:
             issue_id="test-123",
             repo_path=tmp_path,
             commit_sha="abc123",
+            baseline_commit="base123",
         )
 
         # No interrupt_event provided (uses default None)

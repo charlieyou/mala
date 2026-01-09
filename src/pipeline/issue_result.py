@@ -32,3 +32,4 @@ class IssueResult:
     low_priority_review_issues: list[ReviewIssueProtocol] | None = None  # P2/P3 issues
     session_log_path: Path | None = None  # Path to session log file
     review_log_path: str | None = None  # Path to Cerberus review session log
+    baseline_timestamp: int | None = None  # Commit freshness baseline for this run

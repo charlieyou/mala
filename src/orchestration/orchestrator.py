@@ -25,7 +25,7 @@ from src.infra.git_utils import (
     get_git_commit_async,
 )
 from src.infra.io.log_output.run_metadata import (
-    lookup_prior_session,
+    lookup_prior_session_info,
     remove_run_marker,
     write_run_marker,
 )
@@ -712,8 +712,13 @@ class MalaOrchestrator:
         # Look up prior session for resumption when prioritize_wip is enabled
         # Must happen BEFORE deadlock registration to avoid leaking agent on strict early exit
         resume_session_id: str | None = None
+        baseline_timestamp: int | None = None
         if self.prioritize_wip:
-            resume_session_id = lookup_prior_session(self.repo_path, issue_id)
+            prior_session = lookup_prior_session_info(self.repo_path, issue_id)
+            resume_session_id = prior_session.session_id if prior_session else None
+            baseline_timestamp = (
+                prior_session.baseline_timestamp if prior_session else None
+            )
             if resume_session_id:
                 logger.debug(
                     "Resuming session %s for issue %s",
@@ -754,6 +759,7 @@ class MalaOrchestrator:
             agent_id=temp_agent_id,
             resume_session_id=resume_session_id,
             flow=flow,
+            baseline_timestamp=baseline_timestamp,
         )
 
         runner = AgentSessionRunner(
@@ -811,6 +817,7 @@ class MalaOrchestrator:
             low_priority_review_issues=output.low_priority_review_issues,
             session_log_path=output.log_path,
             review_log_path=output.review_log_path,
+            baseline_timestamp=output.baseline_timestamp,
         )
 
     async def spawn_agent(
