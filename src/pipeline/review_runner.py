@@ -55,6 +55,18 @@ class _InterruptedReviewResult:
 
 
 @dataclass
+class _FatalReviewResult:
+    """Minimal ReviewResultProtocol implementation for fatal review errors."""
+
+    passed: bool
+    issues: list[object]
+    parse_error: str | None
+    fatal_error: bool
+    review_log_path: Path | None
+    interrupted: bool = False
+
+
+@dataclass
 class ReviewRunnerConfig:
     """Configuration for ReviewRunner behavior.
 
@@ -227,14 +239,34 @@ class ReviewRunner:
             if temp_file is not None and input.issue_description is not None:
                 temp_file.write(input.issue_description)
                 temp_file.close()
-            result = await self.code_reviewer(
-                diff_range=diff_range,
-                context_file=context_file,
-                timeout=self.config.review_timeout,
-                claude_session_id=input.claude_session_id,
-                commit_shas=input.commit_shas,
-                interrupt_event=interrupt_event,
-            )
+            try:
+                result = await self.code_reviewer(
+                    diff_range=diff_range,
+                    context_file=context_file,
+                    timeout=self.config.review_timeout,
+                    claude_session_id=input.claude_session_id,
+                    commit_shas=input.commit_shas,
+                    interrupt_event=interrupt_event,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Review failed: issue_id=%s error=%s",
+                    input.issue_id,
+                    exc,
+                )
+                return ReviewOutput(
+                    result=cast(
+                        "ReviewResultProtocol",
+                        _FatalReviewResult(
+                            passed=False,
+                            issues=[],
+                            parse_error=str(exc),
+                            fatal_error=True,
+                            review_log_path=None,
+                        ),
+                    ),
+                    interrupted=guard.is_interrupted(),
+                )
 
             # Check if interrupted during review
             was_interrupted = guard.is_interrupted()

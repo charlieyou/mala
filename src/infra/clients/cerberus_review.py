@@ -27,6 +27,7 @@ from src.infra.tools.command_runner import CommandRunner
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    import asyncio
     from collections.abc import Sequence
 
     from src.core.protocols import MalaEventSink
@@ -98,6 +99,7 @@ class DefaultReviewer:
         claude_session_id: str | None = None,
         *,
         commit_shas: Sequence[str] | None = None,
+        interrupt_event: asyncio.Event | None = None,
     ) -> ReviewResult:
         cli = self._get_cli()
 

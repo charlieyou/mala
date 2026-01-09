@@ -330,6 +330,41 @@ class TestReviewRunnerResults:
         assert output.result.passed is False
         assert output.result.parse_error == "Invalid JSON output"
 
+    @pytest.mark.asyncio
+    async def test_review_exception_returns_fatal_error(self, tmp_path: Path) -> None:
+        """Runner should convert reviewer exceptions into fatal errors."""
+
+        class ExplodingReviewer:
+            def overrides_disabled_setting(self) -> bool:
+                return True
+
+            async def __call__(
+                self,
+                diff_range: str,
+                context_file: Path | None = None,
+                timeout: int = 300,
+                claude_session_id: str | None = None,
+                *,
+                commit_shas: Sequence[str] | None = None,
+                interrupt_event: asyncio.Event | None = None,
+            ) -> FakeReviewResult:
+                raise RuntimeError("boom")
+
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", ExplodingReviewer()))
+
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_sha="abc123",
+            baseline_commit="base123",
+        )
+
+        output = await runner.run_review(review_input)
+
+        assert output.result.passed is False
+        assert output.result.fatal_error is True
+        assert output.result.parse_error == "boom"
+
 
 class TestReviewRunnerNoProgress:
     """Test no-progress detection."""
@@ -554,8 +589,10 @@ class TestContextFileCleanup:
             baseline_commit="base123",
         )
 
-        with pytest.raises(RuntimeError, match="Review failed"):
-            await runner.run_review(review_input)
+        output = await runner.run_review(review_input)
+
+        assert output.result.fatal_error is True
+        assert output.result.parse_error == "Review failed"
 
         # Context file should still be cleaned up even after exception
         assert context_file_path is not None
