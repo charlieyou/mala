@@ -1723,6 +1723,125 @@ class TestSessionEndTriggerIntegration:
         # Context should have correct success_count (2 successful)
         assert queue[0][1]["success_count"] == 2
 
+    async def test_blocking_prevents_assignment_until_validation_completes(
+        self, tmp_path: Path
+    ) -> None:
+        """Blocking wait prevents next issue assignment until validation completes.
+
+        This test verifies that _fire_session_end_trigger does not return until
+        run_trigger_validation() completes, thus preventing subsequent code
+        (like assigning the next issue) from running while validation is in progress.
+        """
+        import asyncio
+        from dataclasses import dataclass, field
+        from src.orchestration.orchestrator import MalaOrchestrator
+
+        config = ValidationConfig(
+            commands=CommandsConfig(),
+            validation_triggers=ValidationTriggersConfig(
+                session_end=SessionEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                )
+            ),
+        )
+
+        @dataclass
+        class FakeState:
+            completed: list[IssueResult] = field(default_factory=list)
+
+        class FakeIssueCoordinator:
+            def __init__(self) -> None:
+                self._abort_run = False
+
+            @property
+            def abort_run(self) -> bool:
+                return self._abort_run
+
+            def request_abort(self, reason: str) -> None:
+                self._abort_run = True
+
+        # Track ordering of events to prove blocking behavior
+        events: list[str] = []
+        validation_started = asyncio.Event()
+        validation_can_finish = asyncio.Event()
+
+        class FakeRunCoordinator:
+            def __init__(self) -> None:
+                self._trigger_queue: list[tuple] = []
+
+            def queue_trigger_validation(
+                self, trigger_type: TriggerType, context: dict
+            ) -> None:
+                self._trigger_queue.append((trigger_type, context))
+
+            async def run_trigger_validation(self) -> TriggerValidationResult:
+                events.append("validation_started")
+                validation_started.set()
+                # Wait until test allows us to complete
+                await validation_can_finish.wait()
+                events.append("validation_finished")
+                return TriggerValidationResult(status="passed")
+
+        class MockOrchestrator:
+            def __init__(self) -> None:
+                self._validation_config = config
+                self._state = FakeState()
+                self.issue_coordinator = FakeIssueCoordinator()
+                self.run_coordinator = FakeRunCoordinator()
+
+            @property
+            def abort_run(self) -> bool:
+                return self.issue_coordinator.abort_run
+
+        mock_orch = MockOrchestrator()
+        mock_orch._state.completed = [
+            IssueResult(
+                issue_id="issue-1",
+                agent_id="agent-1",
+                success=True,
+                summary="done",
+            )
+        ]
+
+        bound_method = MalaOrchestrator._fire_session_end_trigger.__get__(
+            mock_orch, MockOrchestrator
+        )
+        mock_orch._fire_session_end_trigger = bound_method  # type: ignore[attr-defined]
+
+        # Start the trigger firing (will block on validation)
+        trigger_task = asyncio.create_task(
+            mock_orch._fire_session_end_trigger()  # type: ignore[arg-type]
+        )
+
+        # Wait for validation to start
+        await asyncio.wait_for(validation_started.wait(), timeout=1.0)
+
+        # While validation is in progress, trigger_task should not be done
+        # This proves blocking: we can't proceed past _fire_session_end_trigger
+        # until validation completes
+        assert not trigger_task.done(), "Trigger should be blocked during validation"
+        events.append("checked_blocking")
+
+        # Now allow validation to finish
+        validation_can_finish.set()
+
+        # Wait for the trigger task to complete
+        await asyncio.wait_for(trigger_task, timeout=1.0)
+        events.append("trigger_returned")
+
+        # Verify the order of events proves blocking behavior:
+        # 1. Validation started
+        # 2. We checked that trigger was still blocked
+        # 3. Validation finished (after we allowed it)
+        # 4. Trigger returned (only after validation finished)
+        assert events == [
+            "validation_started",
+            "checked_blocking",
+            "validation_finished",
+            "trigger_returned",
+        ]
+
     async def test_abort_result_sets_orchestrator_abort_run(
         self, tmp_path: Path
     ) -> None:
