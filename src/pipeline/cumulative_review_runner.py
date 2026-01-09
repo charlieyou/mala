@@ -173,37 +173,103 @@ class CumulativeReviewRunner:
             "CumulativeReviewRunner.run_review not yet implemented"
         )
 
-    def _get_baseline_commit(
+    async def _get_baseline_commit(
         self,
         trigger_type: TriggerType,
         config: CodeReviewConfig,
         run_metadata: RunMetadata,
         *,
+        issue_id: str | None = None,
         epic_id: str | None = None,
     ) -> str | None:
         """Determine the baseline commit for cumulative review.
 
-        Logic depends on config.baseline setting:
-        - "since_run_start": Use run_metadata.run_start_commit
-        - "since_last_review": Use last_cumulative_review_commits[key]
+        Logic depends on trigger type and config.baseline setting:
 
-        The key format is:
-        - "run_end" for TriggerType.RUN_END
-        - "epic_completion:<epic_id>" for TriggerType.EPIC_COMPLETION
+        For session_end:
+        - Calls get_baseline_for_issue() to find parent of first issue commit
+
+        For epic_completion / run_end with "since_run_start":
+        - Use run_metadata.run_start_commit
+        - Fallback if None: log warning, return current HEAD
+
+        For epic_completion / run_end with "since_last_review":
+        - Look up run_metadata.last_cumulative_review_commits[key]
+        - Key format: "run_end" or "epic_completion:<epic_id>"
+        - Fallback if not found: use since_run_start behavior
 
         Args:
             trigger_type: The type of trigger firing.
             config: Code review configuration.
             run_metadata: Current run metadata.
+            issue_id: Issue ID for session_end triggers.
             epic_id: Epic ID for epic_completion triggers.
 
         Returns:
             Baseline commit SHA, or None if no baseline available.
-
-        Raises:
-            NotImplementedError: This method is a skeleton pending T007.
         """
-        raise NotImplementedError()
+        from src.domain.validation.config import TriggerType as TT
+
+        # session_end: Use issue-specific baseline from git history
+        if trigger_type == TT.SESSION_END:
+            if not issue_id:
+                self._logger.warning(
+                    "session_end trigger without issue_id, cannot determine baseline"
+                )
+                return None
+            baseline = await self._git_utils.get_baseline_for_issue(issue_id)
+            if baseline is None:
+                self._logger.debug(
+                    "No commits found for issue %s, skipping review", issue_id
+                )
+            return baseline
+
+        # epic_completion / run_end: Use baseline mode from config
+        baseline_mode = config.baseline or "since_run_start"
+
+        if baseline_mode == "since_last_review":
+            # Build lookup key
+            if trigger_type == TT.EPIC_COMPLETION:
+                if not epic_id:
+                    self._logger.warning(
+                        "epic_completion trigger without epic_id, "
+                        "falling back to since_run_start"
+                    )
+                else:
+                    key = f"epic_completion:{epic_id}"
+                    baseline = run_metadata.last_cumulative_review_commits.get(key)
+                    if baseline:
+                        self._logger.debug(
+                            "Using last review baseline for %s: %s", key, baseline
+                        )
+                        return baseline
+                    self._logger.debug(
+                        "No previous review for %s, falling back to since_run_start",
+                        key,
+                    )
+            elif trigger_type == TT.RUN_END:
+                key = "run_end"
+                baseline = run_metadata.last_cumulative_review_commits.get(key)
+                if baseline:
+                    self._logger.debug(
+                        "Using last review baseline for %s: %s", key, baseline
+                    )
+                    return baseline
+                self._logger.debug(
+                    "No previous review for run_end, falling back to since_run_start"
+                )
+            # Fall through to since_run_start behavior
+
+        # since_run_start (or fallback): Use run_start_commit
+        if run_metadata.run_start_commit:
+            return run_metadata.run_start_commit
+
+        # Fallback: Capture current HEAD (resume case without run_start_commit)
+        self._logger.warning(
+            "run_start_commit not set (possible resume), capturing HEAD as baseline"
+        )
+        head = await self._git_utils.get_head_commit()
+        return head if head else None
 
     def _generate_diff(
         self,

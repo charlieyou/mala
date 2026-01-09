@@ -1,0 +1,332 @@
+"""Unit tests for CumulativeReviewRunner baseline determination.
+
+Tests _get_baseline_commit() logic for all trigger types and baseline modes.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+import pytest
+
+from src.domain.validation.config import TriggerType
+from src.pipeline.cumulative_review_runner import CumulativeReviewRunner
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
+
+    from src.core.protocols import ReviewIssueProtocol
+
+
+@dataclass
+class FakeCodeReviewConfig:
+    """Fake CodeReviewConfig for testing."""
+
+    baseline: str | None = None
+
+
+@dataclass
+class FakeRunMetadata:
+    """Fake RunMetadata for testing baseline determination."""
+
+    run_start_commit: str | None = None
+    last_cumulative_review_commits: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class FakeGitUtils:
+    """Fake GitUtils for testing.
+
+    Configurable responses for baseline/HEAD lookups.
+    """
+
+    baseline_for_issue: dict[str, str | None] = field(default_factory=dict)
+    head_commit: str = "abc1234"
+    get_baseline_for_issue_calls: list[str] = field(default_factory=list)
+    get_head_commit_calls: int = 0
+
+    async def get_baseline_for_issue(self, issue_id: str) -> str | None:
+        """Return configured baseline for issue_id."""
+        self.get_baseline_for_issue_calls.append(issue_id)
+        return self.baseline_for_issue.get(issue_id)
+
+    async def get_head_commit(self) -> str:
+        """Return configured HEAD commit."""
+        self.get_head_commit_calls += 1
+        return self.head_commit
+
+
+@dataclass
+class FakeReviewResult:
+    """Fake ReviewResultProtocol for testing."""
+
+    passed: bool = True
+    issues: Sequence[ReviewIssueProtocol] = field(default_factory=list)
+    parse_error: str | None = None
+    fatal_error: bool = False
+    review_log_path: Path | None = None
+
+
+class FakeReviewRunner:
+    """Fake ReviewRunnerProtocol for testing."""
+
+    async def run_review(
+        self,
+        input: object,
+        interrupt_event: object = None,
+    ) -> FakeReviewResult:
+        return FakeReviewResult()
+
+
+class FakeBeadsClient:
+    """Fake IssueProvider for testing."""
+
+    pass
+
+
+def make_runner(
+    git_utils: FakeGitUtils | None = None,
+) -> CumulativeReviewRunner:
+    """Create a CumulativeReviewRunner with fake dependencies."""
+    return CumulativeReviewRunner(
+        review_runner=FakeReviewRunner(),  # type: ignore[arg-type]
+        git_utils=git_utils or FakeGitUtils(),  # type: ignore[arg-type]
+        beads_client=FakeBeadsClient(),  # type: ignore[arg-type]
+        logger=logging.getLogger("test"),
+    )
+
+
+class TestGetBaselineCommitSessionEnd:
+    """Tests for session_end trigger type."""
+
+    @pytest.mark.asyncio
+    async def test_session_end_with_issue_commits_returns_baseline(self) -> None:
+        """session_end with existing issue commits returns parent of first commit."""
+        git_utils = FakeGitUtils(baseline_for_issue={"mala-123": "parent-sha"})
+        runner = make_runner(git_utils)
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.SESSION_END,
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
+            run_metadata=FakeRunMetadata(),  # type: ignore[arg-type]
+            issue_id="mala-123",
+        )
+
+        assert result == "parent-sha"
+        assert git_utils.get_baseline_for_issue_calls == ["mala-123"]
+
+    @pytest.mark.asyncio
+    async def test_session_end_no_commits_returns_none(self) -> None:
+        """session_end with no issue commits returns None."""
+        git_utils = FakeGitUtils(baseline_for_issue={})
+        runner = make_runner(git_utils)
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.SESSION_END,
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
+            run_metadata=FakeRunMetadata(),  # type: ignore[arg-type]
+            issue_id="mala-456",
+        )
+
+        assert result is None
+        assert git_utils.get_baseline_for_issue_calls == ["mala-456"]
+
+    @pytest.mark.asyncio
+    async def test_session_end_without_issue_id_returns_none(self) -> None:
+        """session_end without issue_id returns None."""
+        git_utils = FakeGitUtils()
+        runner = make_runner(git_utils)
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.SESSION_END,
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
+            run_metadata=FakeRunMetadata(),  # type: ignore[arg-type]
+        )
+
+        assert result is None
+        assert git_utils.get_baseline_for_issue_calls == []
+
+
+class TestGetBaselineCommitSinceRunStart:
+    """Tests for since_run_start baseline mode."""
+
+    @pytest.mark.asyncio
+    async def test_run_end_since_run_start_returns_run_start_commit(self) -> None:
+        """run_end with since_run_start uses run_metadata.run_start_commit."""
+        runner = make_runner()
+        metadata = FakeRunMetadata(run_start_commit="run-start-sha")
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+        )
+
+        assert result == "run-start-sha"
+
+    @pytest.mark.asyncio
+    async def test_epic_completion_since_run_start_returns_run_start_commit(
+        self,
+    ) -> None:
+        """epic_completion with since_run_start uses run_metadata.run_start_commit."""
+        runner = make_runner()
+        metadata = FakeRunMetadata(run_start_commit="epic-start-sha")
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.EPIC_COMPLETION,
+            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+            epic_id="epic-001",
+        )
+
+        assert result == "epic-start-sha"
+
+    @pytest.mark.asyncio
+    async def test_default_baseline_mode_is_since_run_start(self) -> None:
+        """When baseline is None, defaults to since_run_start behavior."""
+        runner = make_runner()
+        metadata = FakeRunMetadata(run_start_commit="default-start-sha")
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(baseline=None),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+        )
+
+        assert result == "default-start-sha"
+
+
+class TestGetBaselineCommitSinceLastReview:
+    """Tests for since_last_review baseline mode."""
+
+    @pytest.mark.asyncio
+    async def test_run_end_since_last_review_uses_stored_baseline(self) -> None:
+        """run_end with since_last_review looks up last_cumulative_review_commits."""
+        runner = make_runner()
+        metadata = FakeRunMetadata(
+            run_start_commit="run-start-sha",
+            last_cumulative_review_commits={"run_end": "last-review-sha"},
+        )
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+        )
+
+        assert result == "last-review-sha"
+
+    @pytest.mark.asyncio
+    async def test_epic_completion_since_last_review_uses_stored_baseline(
+        self,
+    ) -> None:
+        """epic_completion with since_last_review looks up epic-specific key."""
+        runner = make_runner()
+        metadata = FakeRunMetadata(
+            run_start_commit="run-start-sha",
+            last_cumulative_review_commits={
+                "epic_completion:epic-001": "epic-review-sha"
+            },
+        )
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.EPIC_COMPLETION,
+            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+            epic_id="epic-001",
+        )
+
+        assert result == "epic-review-sha"
+
+    @pytest.mark.asyncio
+    async def test_since_last_review_fallback_to_run_start(self) -> None:
+        """since_last_review falls back to run_start_commit if no stored baseline."""
+        runner = make_runner()
+        metadata = FakeRunMetadata(
+            run_start_commit="fallback-sha",
+            last_cumulative_review_commits={},
+        )
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+        )
+
+        assert result == "fallback-sha"
+
+    @pytest.mark.asyncio
+    async def test_epic_completion_without_epic_id_falls_back(self) -> None:
+        """epic_completion without epic_id falls back to since_run_start."""
+        runner = make_runner()
+        metadata = FakeRunMetadata(
+            run_start_commit="fallback-sha",
+            last_cumulative_review_commits={
+                "epic_completion:epic-001": "epic-review-sha"
+            },
+        )
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.EPIC_COMPLETION,
+            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+            # No epic_id provided
+        )
+
+        assert result == "fallback-sha"
+
+
+class TestGetBaselineCommitFallbacks:
+    """Tests for fallback behavior when run_start_commit is missing."""
+
+    @pytest.mark.asyncio
+    async def test_missing_run_start_commit_captures_head(self) -> None:
+        """When run_start_commit is None, captures current HEAD."""
+        git_utils = FakeGitUtils(head_commit="current-head-sha")
+        runner = make_runner(git_utils)
+        metadata = FakeRunMetadata(run_start_commit=None)
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+        )
+
+        assert result == "current-head-sha"
+        assert git_utils.get_head_commit_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_missing_run_start_and_empty_head_returns_none(self) -> None:
+        """When run_start_commit is None and HEAD is empty, returns None."""
+        git_utils = FakeGitUtils(head_commit="")
+        runner = make_runner(git_utils)
+        metadata = FakeRunMetadata(run_start_commit=None)
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+        )
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_since_last_review_fallback_to_head_when_no_run_start(self) -> None:
+        """since_last_review with no stored baseline and no run_start captures HEAD."""
+        git_utils = FakeGitUtils(head_commit="head-fallback-sha")
+        runner = make_runner(git_utils)
+        metadata = FakeRunMetadata(
+            run_start_commit=None,
+            last_cumulative_review_commits={},
+        )
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+        )
+
+        assert result == "head-fallback-sha"

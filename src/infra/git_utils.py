@@ -332,3 +332,25 @@ class GitUtils:
             Unified diff string.
         """
         return await get_diff_content(self.repo_path, from_commit, to_commit)
+
+    async def get_baseline_for_issue(self, issue_id: str) -> str | None:
+        """Get the baseline commit for an issue from git history.
+
+        Finds the first commit with "bd-{issue_id}:" prefix and returns its parent.
+
+        Args:
+            issue_id: The issue ID (e.g., "mala-123").
+
+        Returns:
+            The commit hash of the parent of the first issue commit, or None if
+            no commits exist for this issue.
+        """
+        return await get_baseline_for_issue(self.repo_path, issue_id)
+
+    async def get_head_commit(self) -> str:
+        """Get the current HEAD commit hash.
+
+        Returns:
+            Short commit hash of HEAD, or empty string if not available.
+        """
+        return await get_git_commit_async(self.repo_path)
