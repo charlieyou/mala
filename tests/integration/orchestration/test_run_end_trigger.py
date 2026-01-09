@@ -71,7 +71,7 @@ async def test_run_end_trigger_queued_on_success(
         trigger_queued_events.append((trigger_type, context))
         original_on_trigger(trigger_type, context)
 
-    orchestrator.event_sink.on_trigger_validation_queued = track_trigger
+    orchestrator.event_sink.on_trigger_validation_queued = track_trigger  # type: ignore[method-assign]
 
     # Mock spawn_agent to complete immediately with success
     async def mock_spawn(issue_id: str) -> asyncio.Task[IssueResult] | None:

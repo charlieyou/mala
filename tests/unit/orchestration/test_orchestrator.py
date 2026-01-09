@@ -3636,7 +3636,7 @@ class TestFireRunEndTrigger:
         orchestrator._validation_config = validation_config
 
         # Mock queue_trigger_validation
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
 
         # All success: 3 success out of 3 total
         await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
@@ -3676,7 +3676,7 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
 
         # Some failure: 2 success out of 3 total
         await orchestrator._fire_run_end_trigger(success_count=2, total_count=3)
@@ -3714,7 +3714,7 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
 
         # Some failure: 2 success out of 3 total
         await orchestrator._fire_run_end_trigger(success_count=2, total_count=3)
@@ -3754,7 +3754,7 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
 
         # All success: 3 success out of 3 total
         await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
@@ -3791,7 +3791,7 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
 
         # Test with all success
         await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
@@ -3835,7 +3835,7 @@ class TestFireRunEndTrigger:
         # Set abort
         orchestrator.issue_coordinator.request_abort(reason="test")
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
 
         await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
 
@@ -3871,7 +3871,7 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
 
         await orchestrator._fire_run_end_trigger(success_count=0, total_count=3)
 
@@ -3889,7 +3889,7 @@ class TestFireRunEndTrigger:
             max_issues=1,
         )
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
 
         await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
 
