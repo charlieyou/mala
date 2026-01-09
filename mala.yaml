@@ -1,7 +1,29 @@
 preset: python-uv
 
-# Required when global_validation_commands is defined (empty = explicit opt-out)
-validation_triggers: {}
+validation_triggers:
+  session_end:
+    code_review:
+      enabled: true
+      reviewer_type: cerberus
+      finding_threshold: P1
+
+  run_end:
+    fire_on: success
+    failure_mode: continue
+    commands:
+      - ref: setup
+      - ref: format
+      - ref: lint
+      - ref: typecheck
+      - ref: import-linter
+      - ref: test
+      - ref: e2e
+
+    code_review:
+      enabled: true
+      reviewer_type: cerberus
+      baseline: since_last_review
+      finding_threshold: P0
 
 global_validation_commands:
   test:
@@ -17,6 +39,4 @@ global_validation_commands:
 coverage:
   format: xml
   file: coverage.xml
-  threshold: 72
-
-reviewer_type: cerberus
+  threshold: 90
