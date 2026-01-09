@@ -21,4 +21,10 @@ The external reviewers found the following issues:
 ```
 6. Commit your changes with message: `bd-{issue_id}: <description>` (multiple commits allowed; use the prefix on each)
 
+**Disputing findings:** Your final summary message will be passed to the reviewer on retry. If you believe a finding is a **false positive**:
+- State clearly: "P1 at line X is a false positive because..."
+- Reference exact line numbers that establish invariants or guarantees
+- Example: "Line 287 already calls `merge_config()` which guarantees non-None value"
+- Be specific—vague defenses ("the code is correct") will be ignored
+
 Note: The orchestrator will re-run both the quality gate and external review after your fixes.
