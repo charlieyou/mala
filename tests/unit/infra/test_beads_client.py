@@ -1573,9 +1573,7 @@ class TestOrphansOnlyIntegration:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_orphans_only_combined_with_include_wip(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_orphans_only_combined_with_include_wip(self, tmp_path: Path) -> None:
         """orphans_only should work correctly with include_wip=True."""
         beads = BeadsClient(tmp_path)
 

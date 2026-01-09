@@ -180,9 +180,7 @@ class TestIncludeWipFlag:
         ]
 
         result_true = IssueManager.sort_issues(issues, focus=False, include_wip=True)
-        result_false = IssueManager.sort_issues(
-            issues, focus=False, include_wip=False
-        )
+        result_false = IssueManager.sort_issues(issues, focus=False, include_wip=False)
 
         assert [r["id"] for r in result_true] == [r["id"] for r in result_false]
 
