@@ -3,6 +3,7 @@
 Provides helpers for getting git repository information.
 """
 
+import codecs
 import logging
 import re
 from dataclasses import dataclass
@@ -196,7 +197,7 @@ async def get_diff_stat(
                 filename = _parse_rename_path(filename)
             # Git quotes paths containing spaces or special characters
             if filename.startswith('"') and filename.endswith('"'):
-                filename = filename[1:-1]
+                filename = _unquote_git_path(filename[1:-1])
             files_changed.append(filename)
             # Binary files show "-" for added/removed
             if added != "-":
@@ -205,6 +206,15 @@ async def get_diff_stat(
                 total_lines += int(removed)
 
     return DiffStat(total_lines=total_lines, files_changed=files_changed)
+
+
+def _unquote_git_path(path: str) -> str:
+    """Unescape special characters in a git-quoted path.
+
+    Git escapes special characters inside quoted paths using backslash sequences:
+    \" for ", \\\\ for \\, \\t for tab, etc. Uses unicode_escape decoder to handle this.
+    """
+    return codecs.decode(path, "unicode_escape")
 
 
 def _parse_rename_path(path: str) -> str:

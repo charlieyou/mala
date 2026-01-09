@@ -597,6 +597,36 @@ class TestGetDiffStat:
         assert result.files_changed == ["path with spaces.py", "normal.py"]
 
     @pytest.mark.asyncio
+    async def test_handles_quoted_paths_with_escaped_characters(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should unescape special characters in quoted paths.
+
+        Git escapes special characters inside quoted paths, e.g., a file named
+        foo"bar.py is output as "foo\"bar.py".
+        """
+        # Git escapes: \" for ", \\ for \, \t for tab, etc.
+        numstat_output = (
+            '5\t3\t"foo\\"bar.py"\n2\t1\t"path\\\\with\\\\backslashes.py"\n'
+        )
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff", "--numstat"],
+                    returncode=0,
+                    stdout=numstat_output,
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.get_diff_stat(Path("/repo"), "abc123")
+
+        assert result.files_changed == ['foo"bar.py', "path\\with\\backslashes.py"]
+
+    @pytest.mark.asyncio
     async def test_handles_renames_with_non_arrow_braces(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
