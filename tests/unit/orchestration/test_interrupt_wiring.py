@@ -389,7 +389,7 @@ class TestInterruptWiring:
         This audit test verifies that the on_review_check callback correctly
         passes the interrupt_event to ReviewRunner.run_review.
         """
-        from unittest.mock import AsyncMock
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         from src.orchestration.factory import create_orchestrator
         from tests.fakes.event_sink import FakeEventSink
@@ -439,18 +439,11 @@ class TestInterruptWiring:
 
         orchestrator.review_runner.run_review = mock_run_review  # type: ignore[method-assign]
 
-        # Mock get_issue_commits_async to return a commit
-        async def mock_get_commits(repo_path: object, issue_id: str) -> list[str]:
-            return ["abc123"]
-
         # Build callbacks and invoke the review check callback
         callbacks = orchestrator.session_callback_factory.build("test-issue")
 
         # Call the review callback
         assert callbacks.on_review_check is not None
-
-        # We need to patch the git import inside the closure
-        from unittest.mock import patch
 
         with patch(
             "src.infra.git_utils.get_issue_commits_async",
