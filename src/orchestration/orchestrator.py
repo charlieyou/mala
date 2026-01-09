@@ -1061,6 +1061,32 @@ class MalaOrchestrator:
                 {"completed_count": self._non_epic_completed_count},
             )
 
+    async def _capture_run_start_commit(self) -> None:
+        """Capture HEAD commit at the start of the run.
+
+        Called early in run() to record the starting commit SHA for later
+        diff calculations (cumulative code review, run_end trigger context).
+
+        Note: Skeleton implementation - T011 will implement fully.
+        """
+        # T011: Capture HEAD commit and store in run_metadata.run_start_commit
+        pass
+
+    async def _fire_run_end_trigger(self, success_count: int, total_count: int) -> None:
+        """Queue run_end trigger validation if configured.
+
+        Called after all issues are processed (after session_end trigger,
+        before global validation).
+
+        Args:
+            success_count: Number of successfully completed issues.
+            total_count: Total number of issues processed.
+
+        Note: Skeleton implementation - T011 will implement fully.
+        """
+        # T011: Check if run_end trigger is configured and queue it
+        pass
+
     async def _fire_session_end_trigger(self) -> None:
         """Queue session_end trigger validation if configured.
 
@@ -1194,6 +1220,9 @@ class MalaOrchestrator:
             validation_triggers=validation_triggers,
         )
         self.event_sink.on_run_started(run_config)
+
+        # T010: Capture HEAD at run start for cumulative review diff calculations
+        await self._capture_run_start_commit()
 
         get_lock_dir().mkdir(parents=True, exist_ok=True)
         base_runs_dir = self._runs_dir if self._runs_dir is not None else get_runs_dir()
@@ -1330,6 +1359,9 @@ class MalaOrchestrator:
 
             # T009: Hook for session_end trigger before global validation
             await self._fire_session_end_trigger()
+
+            # T010: Hook for run_end trigger after all processing
+            await self._fire_run_end_trigger(success_count, len(self._state.completed))
 
             run_validation_passed: bool | None = None
             validation_ran = False  # Track if validation was actually attempted
