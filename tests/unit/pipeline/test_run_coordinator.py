@@ -362,3 +362,322 @@ class TestFixerInterruptHandling:
         assert result.log_path == "/mock/log/path/interrupted.jsonl"
         # agent_id is used for log path (fixer-{uuid.hex[:8]})
         mock_log_path.assert_called_once_with(tmp_path, "fixer-deadbeef")
+
+
+class TestGetTriggerConfig:
+    """Test _get_trigger_config method."""
+
+    @pytest.fixture
+    def coordinator(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> RunCoordinator:
+        """Create a RunCoordinator with test dependencies."""
+        mock_gate_checker = MagicMock()
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
+        )
+        return RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+        )
+
+    def test_get_trigger_config_run_end(
+        self,
+        coordinator: RunCoordinator,
+    ) -> None:
+        """_get_trigger_config returns run_end config for TriggerType.RUN_END."""
+        from src.domain.validation.config import (
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerCommandRef,
+            TriggerType,
+            ValidationTriggersConfig,
+        )
+
+        run_end_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(TriggerCommandRef(ref="test"),),
+            fire_on=FireOn.SUCCESS,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=run_end_config)
+
+        result = coordinator._get_trigger_config(triggers_config, TriggerType.RUN_END)
+
+        assert result is not None
+        assert result == run_end_config
+
+    def test_get_trigger_config_epic_completion(
+        self,
+        coordinator: RunCoordinator,
+    ) -> None:
+        """_get_trigger_config returns epic_completion config."""
+        from src.domain.validation.config import (
+            EpicCompletionTriggerConfig,
+            EpicDepth,
+            FailureMode,
+            FireOn,
+            TriggerCommandRef,
+            TriggerType,
+            ValidationTriggersConfig,
+        )
+
+        epic_config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(TriggerCommandRef(ref="test"),),
+            epic_depth=EpicDepth.TOP_LEVEL,
+            fire_on=FireOn.SUCCESS,
+        )
+        triggers_config = ValidationTriggersConfig(epic_completion=epic_config)
+
+        result = coordinator._get_trigger_config(
+            triggers_config, TriggerType.EPIC_COMPLETION
+        )
+
+        assert result is not None
+        assert result == epic_config
+
+    def test_get_trigger_config_session_end(
+        self,
+        coordinator: RunCoordinator,
+    ) -> None:
+        """_get_trigger_config returns session_end config."""
+        from src.domain.validation.config import (
+            FailureMode,
+            SessionEndTriggerConfig,
+            TriggerCommandRef,
+            TriggerType,
+            ValidationTriggersConfig,
+        )
+
+        session_config = SessionEndTriggerConfig(
+            failure_mode=FailureMode.REMEDIATE,
+            commands=(TriggerCommandRef(ref="lint"),),
+        )
+        triggers_config = ValidationTriggersConfig(session_end=session_config)
+
+        result = coordinator._get_trigger_config(
+            triggers_config, TriggerType.SESSION_END
+        )
+
+        assert result is not None
+        assert result == session_config
+
+    def test_get_trigger_config_returns_none_for_unconfigured(
+        self,
+        coordinator: RunCoordinator,
+    ) -> None:
+        """_get_trigger_config returns None when trigger type not configured."""
+        from src.domain.validation.config import (
+            EpicCompletionTriggerConfig,
+            EpicDepth,
+            FailureMode,
+            FireOn,
+            TriggerCommandRef,
+            TriggerType,
+            ValidationTriggersConfig,
+        )
+
+        # Create a triggers config with only epic_completion
+        epic_config = EpicCompletionTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(TriggerCommandRef(ref="test"),),
+            epic_depth=EpicDepth.TOP_LEVEL,
+            fire_on=FireOn.SUCCESS,
+        )
+        triggers_config = ValidationTriggersConfig(epic_completion=epic_config)
+
+        # RUN_END is not configured
+        result = coordinator._get_trigger_config(triggers_config, TriggerType.RUN_END)
+
+        assert result is None
+
+
+class TestRunTriggerCodeReview:
+    """Test _run_trigger_code_review method."""
+
+    @pytest.fixture
+    def coordinator_with_review_runner(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> tuple[RunCoordinator, MagicMock]:
+        """Create a RunCoordinator with a mock CumulativeReviewRunner."""
+        mock_gate_checker = MagicMock()
+        mock_review_runner = MagicMock()
+        mock_run_metadata = MagicMock()
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=mock_run_metadata,
+        )
+        return coordinator, mock_review_runner
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_code_review_disabled(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock],
+    ) -> None:
+        """_run_trigger_code_review returns None when code_review is disabled."""
+        from src.domain.validation.config import (
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerCommandRef,
+            TriggerType,
+        )
+
+        coordinator, mock_review_runner = coordinator_with_review_runner
+
+        # Create a trigger config without code_review
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(TriggerCommandRef(ref="test"),),
+            fire_on=FireOn.SUCCESS,
+        )
+
+        interrupt_event = asyncio.Event()
+        result = await coordinator._run_trigger_code_review(
+            TriggerType.RUN_END,
+            trigger_config,
+            {},
+            interrupt_event,
+        )
+
+        assert result is None
+        mock_review_runner.run_review.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_review_result_when_enabled(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock],
+    ) -> None:
+        """_run_trigger_code_review returns result from CumulativeReviewRunner."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerCommandRef,
+            TriggerType,
+        )
+        from src.pipeline.cumulative_review_runner import CumulativeReviewResult
+
+        coordinator, mock_review_runner = coordinator_with_review_runner
+
+        # Create a trigger config with code_review enabled
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            failure_mode=FailureMode.CONTINUE,
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(TriggerCommandRef(ref="test"),),
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+
+        # Mock the review result
+        expected_result = CumulativeReviewResult(
+            status="success",
+            findings=(),
+            new_baseline_commit="abc123",
+        )
+        mock_review_runner.run_review = AsyncMock(return_value=expected_result)
+
+        interrupt_event = asyncio.Event()
+        result = await coordinator._run_trigger_code_review(
+            TriggerType.RUN_END,
+            trigger_config,
+            {"issue_id": "test-issue"},
+            interrupt_event,
+        )
+
+        assert result == expected_result
+        mock_review_runner.run_review.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_runner_not_wired(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """_run_trigger_code_review returns None and logs warning when runner not wired."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerCommandRef,
+            TriggerType,
+        )
+
+        mock_gate_checker = MagicMock()
+        mock_event_sink = MagicMock()
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            event_sink=mock_event_sink,
+            # No cumulative_review_runner wired
+        )
+
+        code_review_config = CodeReviewConfig(enabled=True)
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(TriggerCommandRef(ref="test"),),
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+
+        interrupt_event = asyncio.Event()
+        result = await coordinator._run_trigger_code_review(
+            TriggerType.RUN_END,
+            trigger_config,
+            {},
+            interrupt_event,
+        )
+
+        assert result is None
+        mock_event_sink.on_warning.assert_called_once()
+        assert (
+            "CumulativeReviewRunner not wired"
+            in mock_event_sink.on_warning.call_args[0][0]
+        )

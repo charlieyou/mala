@@ -64,7 +64,10 @@ if TYPE_CHECKING:
         RunMetadata,
         ValidationResult as MetaValidationResult,
     )
-    from src.pipeline.cumulative_review_runner import CumulativeReviewRunner
+    from src.pipeline.cumulative_review_runner import (
+        CumulativeReviewResult,
+        CumulativeReviewRunner,
+    )
 
 
 class _FixerPromptNotSet:
@@ -823,9 +826,30 @@ class RunCoordinator:
 
             if failed_result is None:
                 # All commands passed - run code_review if configured
-                await self._run_trigger_code_review(
+                review_result = await self._run_trigger_code_review(
                     trigger_type, trigger_config, context, interrupt_event
                 )
+
+                # Handle code review failure based on code_review.failure_mode
+                if review_result is not None and review_result.status == "failed":
+                    review_failure_mode = trigger_config.code_review.failure_mode  # type: ignore[union-attr]
+                    if review_failure_mode == FailureMode.ABORT:
+                        if self.event_sink is not None:
+                            self.event_sink.on_trigger_validation_failed(
+                                trigger_type.value, "code_review", "abort"
+                            )
+                        self.clear_trigger_queue("code_review_failed")
+                        return TriggerValidationResult(
+                            status="aborted",
+                            details=f"Code review failed in trigger {trigger_type.value}",
+                        )
+                    elif review_failure_mode == FailureMode.CONTINUE:
+                        last_failure = ("code_review", trigger_type.value)
+                        if self.event_sink is not None:
+                            self.event_sink.on_trigger_validation_failed(
+                                trigger_type.value, "code_review", "continue"
+                            )
+                    # REMEDIATE is not supported for code_review - fall through to passed
 
                 # Emit validation_passed
                 trigger_duration = time.monotonic() - trigger_start_time
@@ -1086,6 +1110,8 @@ class RunCoordinator:
             return triggers_config.session_end
         elif trigger_type == TriggerType.PERIODIC:
             return triggers_config.periodic
+        elif trigger_type == TriggerType.RUN_END:
+            return triggers_config.run_end
         return None
 
     def _resolve_trigger_commands(
@@ -1342,7 +1368,7 @@ class RunCoordinator:
         trigger_config: BaseTriggerConfig,
         context: dict[str, Any],
         interrupt_event: asyncio.Event,
-    ) -> None:
+    ) -> CumulativeReviewResult | None:
         """Run code review if configured for this trigger.
 
         Checks if code_review is enabled in the trigger config and invokes
@@ -1354,12 +1380,15 @@ class RunCoordinator:
             context: Trigger context with issue_id, epic_id, etc.
             interrupt_event: Event to check for SIGINT interruption.
 
+        Returns:
+            CumulativeReviewResult if review ran, None if skipped or not configured.
+
         Raises:
             NotImplementedError: If CumulativeReviewRunner.run_review is not implemented.
         """
         # Check if code_review is configured and enabled
         if trigger_config.code_review is None or not trigger_config.code_review.enabled:
-            return
+            return None
 
         # Check if CumulativeReviewRunner is wired
         if self.cumulative_review_runner is None:
@@ -1368,7 +1397,7 @@ class RunCoordinator:
                     f"code_review enabled for {trigger_type.value} but "
                     "CumulativeReviewRunner not wired"
                 )
-            return
+            return None
 
         # Check if run_metadata is available
         if self.run_metadata is None:
@@ -1377,10 +1406,10 @@ class RunCoordinator:
                     f"code_review enabled for {trigger_type.value} but "
                     "run_metadata not available"
                 )
-            return
+            return None
 
         # Run cumulative code review
-        await self.cumulative_review_runner.run_review(
+        return await self.cumulative_review_runner.run_review(
             trigger_type=trigger_type,
             config=trigger_config.code_review,
             run_metadata=self.run_metadata,
