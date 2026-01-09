@@ -638,6 +638,7 @@ def create_orchestrator(
         validation_config_missing = True
         if cli_reviewer_type is not None:
             reviewer_config = _ReviewerConfig(reviewer_type=cli_reviewer_type)
+        # else: reviewer_config keeps its default from line 618
     except ConfigError:
         # Invalid config (syntax error, schema violation, etc.) - fail fast
         raise

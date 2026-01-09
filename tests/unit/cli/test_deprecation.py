@@ -29,13 +29,13 @@ class TestCliReviewerTypeDeprecation:
     """Test --reviewer-type CLI flag deprecation warning."""
 
     def test_emits_warning_when_reviewer_type_provided(self) -> None:
-        """--reviewer-type flag emits DeprecationWarning."""
+        """--reviewer-type flag emits UserWarning (visible by default)."""
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             _check_cli_reviewer_type_deprecation("cerberus")
 
             assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
+            assert issubclass(w[0].category, UserWarning)
             assert "--reviewer-type is deprecated" in str(w[0].message)
             assert "validation_triggers.session_end.code_review" in str(w[0].message)
 
@@ -54,7 +54,7 @@ class TestCliReviewerTypeDeprecation:
             _check_cli_reviewer_type_deprecation("agent_sdk")
 
             assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
+            assert issubclass(w[0].category, UserWarning)
 
 
 # Minimal mock classes to simulate ValidationConfig structure

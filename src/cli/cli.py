@@ -385,10 +385,11 @@ def _check_cli_reviewer_type_deprecation(reviewer_type: str | None) -> None:
         reviewer_type: Value of --reviewer-type CLI argument, or None if not provided.
     """
     if reviewer_type is not None:
+        # Use UserWarning (not DeprecationWarning) so it's visible by default
         warnings.warn(
             "DEPRECATION: --reviewer-type is deprecated. "
             "Use validation_triggers.session_end.code_review.reviewer_type in config.",
-            DeprecationWarning,
+            UserWarning,
             stacklevel=2,
         )
 
