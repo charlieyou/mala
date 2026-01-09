@@ -1061,13 +1061,40 @@ class MalaOrchestrator:
         Called at the end of a session (before final validation).
         Checks skip conditions and queues the trigger if appropriate.
 
-        Skeleton stub for T009 - actual implementation in T012.
+        Skip conditions:
+        - abort_run=True: Abort takes precedence over session end trigger
+        - success_count==0: Nothing to validate if no issues succeeded
         """
-        # T012: Check if session_end trigger is configured
-        # T012: Check skip conditions (no issues completed, abort requested, etc.)
-        # T012: Queue SESSION_END trigger via run_coordinator.queue_trigger_validation()
-        # T012: Await run_coordinator.run_trigger_validation() (blocking)
-        pass
+        # Skip if abort already requested
+        if self.abort_run:
+            return
+
+        # Skip if no successful issues
+        success_count = sum(1 for r in self._state.completed if r.success)
+        if success_count == 0:
+            return
+
+        # Check if session_end trigger is configured
+        triggers = (
+            self._validation_config.validation_triggers
+            if self._validation_config
+            else None
+        )
+        if triggers is None or triggers.session_end is None:
+            return
+
+        # Queue SESSION_END trigger
+        self.run_coordinator.queue_trigger_validation(
+            TriggerType.SESSION_END,
+            {"success_count": success_count},
+        )
+
+        # Blocking wait for trigger validation
+        result = await self.run_coordinator.run_trigger_validation()
+
+        # If trigger validation aborted, set orchestrator abort_run flag
+        if result.status == "aborted":
+            self.issue_coordinator.request_abort(reason="Session end trigger aborted")
 
     def _handle_sigint(
         self,

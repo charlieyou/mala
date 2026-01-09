@@ -35,7 +35,11 @@ from src.domain.validation.config import (
 )
 from src.infra.tools.command_runner import CommandResult
 from src.pipeline.issue_result import IssueResult
-from src.pipeline.run_coordinator import RunCoordinator, RunCoordinatorConfig
+from src.pipeline.run_coordinator import (
+    RunCoordinator,
+    RunCoordinatorConfig,
+    TriggerValidationResult,
+)
 from tests.fakes import FakeEnvConfig
 from tests.fakes.command_runner import FakeCommandRunner
 from tests.fakes.lock_manager import FakeLockManager
@@ -1505,3 +1509,336 @@ class TestEpicFilteringForPeriodicTrigger:
         # Trigger should fire once at count=2 (interval=2)
         assert len(queue) == 1
         assert queue[0][1]["completed_count"] == 2
+
+
+class TestSessionEndTriggerIntegration:
+    """Tests for session_end trigger firing and skip conditions.
+
+    The session_end trigger fires once at the end of a session before global
+    validation. These tests verify:
+    - Trigger fires when success_count > 0 and not abort_run
+    - Trigger skipped when abort_run=True
+    - Trigger skipped when success_count==0
+    - Blocking wait prevents next issue assignment during validation
+    - Abort result from trigger sets orchestrator abort_run flag
+
+    These tests use the REAL MalaOrchestrator._fire_session_end_trigger
+    method bound to a minimal mock object to ensure production code is tested.
+    """
+
+    def _make_orchestrator_with_session_end_trigger(
+        self,
+        tmp_path: Path,
+        *,
+        abort_run: bool = False,
+        completed_results: list[IssueResult] | None = None,
+    ) -> tuple:
+        """Create a mock orchestrator using the real session end trigger method.
+
+        Uses MalaOrchestrator._fire_session_end_trigger bound to a
+        minimal mock object, ensuring we test the actual production code.
+
+        Args:
+            tmp_path: pytest tmp_path fixture
+            abort_run: Whether to set abort_run flag
+            completed_results: List of completed issue results
+
+        Returns:
+            Tuple of (mock_orchestrator, trigger_queue list, run_trigger_validation_calls list).
+        """
+        from dataclasses import dataclass, field
+        from src.orchestration.orchestrator import MalaOrchestrator
+
+        # Create validation config with session_end trigger
+        config = ValidationConfig(
+            commands=CommandsConfig(),
+            validation_triggers=ValidationTriggersConfig(
+                session_end=SessionEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                )
+            ),
+        )
+
+        @dataclass
+        class FakeState:
+            completed: list[IssueResult] = field(default_factory=list)
+
+        class FakeIssueCoordinator:
+            def __init__(self) -> None:
+                self._abort_run = abort_run
+                self._abort_reason: str | None = None
+
+            @property
+            def abort_run(self) -> bool:
+                return self._abort_run
+
+            def request_abort(self, reason: str) -> None:
+                self._abort_run = True
+                self._abort_reason = reason
+
+        class FakeRunCoordinator:
+            def __init__(self) -> None:
+                self._trigger_queue: list[tuple] = []
+                self._run_trigger_validation_calls: list = []
+                self._next_result = TriggerValidationResult(status="passed")
+
+            def queue_trigger_validation(
+                self, trigger_type: TriggerType, context: dict
+            ) -> None:
+                self._trigger_queue.append((trigger_type, context))
+
+            async def run_trigger_validation(self) -> TriggerValidationResult:
+                self._run_trigger_validation_calls.append(True)
+                return self._next_result
+
+        class MockOrchestrator:
+            """Mock with minimal attributes needed by the real method."""
+
+            def __init__(self) -> None:
+                self._validation_config = config
+                self._state = FakeState()
+                self.issue_coordinator = FakeIssueCoordinator()
+                self.run_coordinator = FakeRunCoordinator()
+
+            @property
+            def abort_run(self) -> bool:
+                return self.issue_coordinator.abort_run
+
+        mock_orch = MockOrchestrator()
+        if completed_results:
+            mock_orch._state.completed = completed_results
+
+        # Bind the REAL method from MalaOrchestrator to our mock
+        bound_method = MalaOrchestrator._fire_session_end_trigger.__get__(
+            mock_orch, MockOrchestrator
+        )
+        mock_orch._fire_session_end_trigger = bound_method  # type: ignore[attr-defined]
+
+        return (
+            mock_orch,
+            mock_orch.run_coordinator._trigger_queue,
+            mock_orch.run_coordinator._run_trigger_validation_calls,
+        )
+
+    def _make_issue_result(self, issue_id: str, success: bool = True) -> IssueResult:
+        """Create a minimal IssueResult for testing."""
+        return IssueResult(
+            issue_id=issue_id,
+            agent_id=f"{issue_id}-agent",
+            success=success,
+            summary="done",
+        )
+
+    async def test_fires_when_success_count_positive_and_not_abort(
+        self, tmp_path: Path
+    ) -> None:
+        """Session end trigger fires when success_count > 0 and not abort_run."""
+        completed = [self._make_issue_result("issue-1", success=True)]
+        orchestrator, queue, validation_calls = (
+            self._make_orchestrator_with_session_end_trigger(
+                tmp_path, abort_run=False, completed_results=completed
+            )
+        )
+
+        await orchestrator._fire_session_end_trigger()
+
+        # Trigger should be queued
+        assert len(queue) == 1
+        assert queue[0][0] == TriggerType.SESSION_END
+        assert queue[0][1]["success_count"] == 1
+
+        # run_trigger_validation should be called (blocking)
+        assert len(validation_calls) == 1
+
+    async def test_skipped_when_abort_run_true(self, tmp_path: Path) -> None:
+        """Session end trigger skipped when abort_run=True."""
+        completed = [self._make_issue_result("issue-1", success=True)]
+        orchestrator, queue, validation_calls = (
+            self._make_orchestrator_with_session_end_trigger(
+                tmp_path, abort_run=True, completed_results=completed
+            )
+        )
+
+        await orchestrator._fire_session_end_trigger()
+
+        # Trigger should NOT be queued (abort takes precedence)
+        assert len(queue) == 0
+        # run_trigger_validation should NOT be called
+        assert len(validation_calls) == 0
+
+    async def test_skipped_when_success_count_zero(self, tmp_path: Path) -> None:
+        """Session end trigger skipped when success_count==0."""
+        # All issues failed
+        completed = [
+            self._make_issue_result("issue-1", success=False),
+            self._make_issue_result("issue-2", success=False),
+        ]
+        orchestrator, queue, validation_calls = (
+            self._make_orchestrator_with_session_end_trigger(
+                tmp_path, abort_run=False, completed_results=completed
+            )
+        )
+
+        await orchestrator._fire_session_end_trigger()
+
+        # Trigger should NOT be queued (nothing to validate)
+        assert len(queue) == 0
+        # run_trigger_validation should NOT be called
+        assert len(validation_calls) == 0
+
+    async def test_skipped_when_no_completed_issues(self, tmp_path: Path) -> None:
+        """Session end trigger skipped when no issues completed."""
+        orchestrator, queue, validation_calls = (
+            self._make_orchestrator_with_session_end_trigger(
+                tmp_path, abort_run=False, completed_results=[]
+            )
+        )
+
+        await orchestrator._fire_session_end_trigger()
+
+        # Trigger should NOT be queued (empty list means success_count=0)
+        assert len(queue) == 0
+        assert len(validation_calls) == 0
+
+    async def test_blocking_wait_calls_run_trigger_validation(
+        self, tmp_path: Path
+    ) -> None:
+        """Session end trigger blocks by calling run_trigger_validation synchronously."""
+        completed = [
+            self._make_issue_result("issue-1", success=True),
+            self._make_issue_result("issue-2", success=True),
+            self._make_issue_result("issue-3", success=False),
+        ]
+        orchestrator, queue, validation_calls = (
+            self._make_orchestrator_with_session_end_trigger(
+                tmp_path, abort_run=False, completed_results=completed
+            )
+        )
+
+        await orchestrator._fire_session_end_trigger()
+
+        # Verify blocking wait happened
+        assert len(validation_calls) == 1
+        # Context should have correct success_count (2 successful)
+        assert queue[0][1]["success_count"] == 2
+
+    async def test_abort_result_sets_orchestrator_abort_run(
+        self, tmp_path: Path
+    ) -> None:
+        """Abort result from trigger validation sets orchestrator abort_run flag."""
+        completed = [self._make_issue_result("issue-1", success=True)]
+        orchestrator, _, _ = self._make_orchestrator_with_session_end_trigger(
+            tmp_path, abort_run=False, completed_results=completed
+        )
+
+        # Set next result to aborted
+        orchestrator.run_coordinator._next_result = TriggerValidationResult(
+            status="aborted"
+        )
+
+        await orchestrator._fire_session_end_trigger()
+
+        # abort_run should now be True
+        assert orchestrator.abort_run is True
+        assert orchestrator.issue_coordinator._abort_reason == (
+            "Session end trigger aborted"
+        )
+
+    async def test_passed_result_does_not_set_abort(self, tmp_path: Path) -> None:
+        """Passed result from trigger validation does not set abort_run."""
+        completed = [self._make_issue_result("issue-1", success=True)]
+        orchestrator, _, _ = self._make_orchestrator_with_session_end_trigger(
+            tmp_path, abort_run=False, completed_results=completed
+        )
+
+        await orchestrator._fire_session_end_trigger()
+
+        # abort_run should remain False
+        assert orchestrator.abort_run is False
+
+    async def test_failed_result_does_not_set_abort(self, tmp_path: Path) -> None:
+        """Failed result from trigger validation does not set abort_run (only aborted does)."""
+        completed = [self._make_issue_result("issue-1", success=True)]
+        orchestrator, _, _ = self._make_orchestrator_with_session_end_trigger(
+            tmp_path, abort_run=False, completed_results=completed
+        )
+
+        # Set next result to failed (not aborted)
+        orchestrator.run_coordinator._next_result = TriggerValidationResult(
+            status="failed"
+        )
+
+        await orchestrator._fire_session_end_trigger()
+
+        # abort_run should remain False (only "aborted" sets it)
+        assert orchestrator.abort_run is False
+
+    async def test_no_session_end_config_no_trigger(self, tmp_path: Path) -> None:
+        """No session_end trigger configured means no trigger fires."""
+        from src.orchestration.orchestrator import MalaOrchestrator
+        from dataclasses import dataclass, field
+
+        # Create config without session_end trigger
+        config = ValidationConfig(
+            commands=CommandsConfig(),
+            validation_triggers=ValidationTriggersConfig(
+                session_end=None,
+            ),
+        )
+
+        @dataclass
+        class FakeState:
+            completed: list[IssueResult] = field(default_factory=list)
+
+        class FakeIssueCoordinator:
+            @property
+            def abort_run(self) -> bool:
+                return False
+
+        class FakeRunCoordinator:
+            def __init__(self) -> None:
+                self._trigger_queue: list[tuple] = []
+                self._run_trigger_validation_calls: list = []
+
+            def queue_trigger_validation(
+                self, trigger_type: TriggerType, context: dict
+            ) -> None:
+                self._trigger_queue.append((trigger_type, context))
+
+            async def run_trigger_validation(self) -> TriggerValidationResult:
+                self._run_trigger_validation_calls.append(True)
+                return TriggerValidationResult(status="passed")
+
+        class MockOrchestrator:
+            def __init__(self) -> None:
+                self._validation_config = config
+                self._state = FakeState()
+                self.issue_coordinator = FakeIssueCoordinator()
+                self.run_coordinator = FakeRunCoordinator()
+
+            @property
+            def abort_run(self) -> bool:
+                return self.issue_coordinator.abort_run
+
+        mock_orch = MockOrchestrator()
+        mock_orch._state.completed = [
+            IssueResult(
+                issue_id="issue-1",
+                agent_id="issue-1-agent",
+                success=True,
+                summary="done",
+            )
+        ]
+
+        bound_method = MalaOrchestrator._fire_session_end_trigger.__get__(
+            mock_orch, MockOrchestrator
+        )
+        mock_orch._fire_session_end_trigger = bound_method  # type: ignore[attr-defined]
+
+        await mock_orch._fire_session_end_trigger()  # type: ignore[arg-type]
+
+        # No trigger should be queued
+        assert len(mock_orch.run_coordinator._trigger_queue) == 0
+        # run_trigger_validation should not be called
+        assert len(mock_orch.run_coordinator._run_trigger_validation_calls) == 0
