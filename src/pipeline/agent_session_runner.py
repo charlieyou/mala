@@ -751,6 +751,32 @@ class AgentSessionRunner:
         Returns:
             AgentSessionOutput with all results and metadata.
         """
+        # Filter P0/P1 issues when session failed due to review
+        last_review_issues: list[dict[str, Any]] | None = None
+        if (
+            not state.lifecycle_ctx.success
+            and state.lifecycle_ctx.last_review_result is not None
+            and state.lifecycle_ctx.retry_state.review_attempt > 0
+        ):
+            blocking_issues = [
+                issue
+                for issue in state.lifecycle_ctx.last_review_result.issues
+                if issue.priority is not None and issue.priority <= 1
+            ]
+            if blocking_issues:
+                last_review_issues = [
+                    {
+                        "file": issue.file,
+                        "line_start": issue.line_start,
+                        "line_end": issue.line_end,
+                        "priority": issue.priority,
+                        "title": issue.title,
+                        "body": issue.body,
+                        "reviewer": issue.reviewer,
+                    }
+                    for issue in blocking_issues
+                ]
+
         return AgentSessionOutput(
             success=state.lifecycle_ctx.success,
             summary=state.final_result,
@@ -768,6 +794,7 @@ class AgentSessionRunner:
             ),
             interrupted=interrupted,
             baseline_timestamp=state.lifecycle_ctx.retry_state.baseline_timestamp,
+            last_review_issues=last_review_issues,
         )
 
     async def _handle_log_waiting(
