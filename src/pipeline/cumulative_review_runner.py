@@ -21,6 +21,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from src.domain.validation.config import FailureMode
+
 if TYPE_CHECKING:
     import asyncio
     from pathlib import Path
@@ -224,8 +226,6 @@ class CumulativeReviewRunner:
             self._logger.error("Review execution failed: %s", e)
             # execution_error - do NOT update baseline
             # Respect failure_mode: CONTINUE returns skipped, others return failed
-            from src.domain.validation.config import FailureMode
-
             if config.failure_mode == FailureMode.CONTINUE:
                 return CumulativeReviewResult(
                     status="skipped",
