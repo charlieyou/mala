@@ -1303,9 +1303,13 @@ class MalaOrchestrator:
                     validation_output = await self.run_coordinator.run_validation(
                         validation_input, interrupt_event=interrupt_event
                     )
+                    # Map interrupted validation to None (not False)
+                    # Acceptance criteria: validation_ran=True + run_validation_passed=None → exit 130
                     if validation_output.interrupted:
                         interrupt_event.set()
-                    run_validation_passed = validation_output.passed
+                        run_validation_passed = None
+                    else:
+                        run_validation_passed = validation_output.passed
                 except asyncio.CancelledError:
                     # SIGINT during validation - use snapshotted exit code
                     if interrupt_event.is_set() or self._shutdown_requested:
@@ -1326,9 +1330,17 @@ class MalaOrchestrator:
                 self._exit_code = final_exit_code
                 return await self._finalize_run(run_metadata, None)
 
-            # Store exit code for CLI access (validation failure overrides to 1)
-            # If validation didn't run (no issues), treat as passed for exit code
-            self._exit_code = 1 if run_validation_passed is False else exit_code
+            # Store exit code for CLI access
+            # - validation_passed=False → exit 1 (failure)
+            # - validation_passed=None (interrupted) → exit 130
+            # - validation_passed=True or validation didn't run → use loop exit_code
+            if run_validation_passed is False:
+                self._exit_code = 1
+            elif run_validation_passed is None and validation_ran:
+                # Validation was attempted but interrupted
+                self._exit_code = 130
+            else:
+                self._exit_code = exit_code
             return await self._finalize_run(
                 run_metadata, run_validation_passed, validation_ran=validation_ran
             )

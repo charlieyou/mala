@@ -40,13 +40,12 @@ class TestInterruptWiring:
     the callback chains from orchestrator to all flow components.
     """
 
-    def test_orchestrator_stores_interrupt_event(
+    def test_interrupt_event_none_before_run(
         self, tmp_path: Path, tmp_runs_dir: Path
     ) -> None:
-        """MalaOrchestrator._interrupt_event is set during run().
+        """MalaOrchestrator._interrupt_event is None before run() is called.
 
-        This verifies the interrupt_event is stored on the orchestrator
-        instance so callbacks can access it.
+        This is a precondition check - the interrupt_event is created in run().
         """
         from src.orchestration.factory import create_orchestrator
         from tests.fakes.event_sink import FakeEventSink
@@ -206,5 +205,70 @@ class TestInterruptWiring:
             loop.close()
 
         # Verify interrupt_event was passed to run_validation
+        assert captured_interrupt_event is not None
+        assert isinstance(captured_interrupt_event, asyncio.Event)
+
+    def test_issue_coordinator_receives_interrupt_event(
+        self, tmp_path: Path, tmp_runs_dir: Path
+    ) -> None:
+        """IssueExecutionCoordinator.run_loop receives interrupt_event from orchestrator.
+
+        This audit test verifies interrupt_event is passed from orchestrator.run()
+        to issue_coordinator.run_loop().
+        """
+        from src.core.models import WatchConfig
+        from src.orchestration.factory import create_orchestrator
+        from tests.fakes.event_sink import FakeEventSink
+        from tests.fakes.issue_provider import FakeIssueProvider
+
+        provider = FakeIssueProvider()
+        event_sink = FakeEventSink()
+
+        config = OrchestratorConfig(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+        )
+        deps = OrchestratorDependencies(
+            issue_provider=provider,
+            event_sink=event_sink,
+            runs_dir=tmp_runs_dir,
+        )
+        orchestrator = create_orchestrator(config, deps=deps)
+
+        # Capture the interrupt_event passed to run_loop
+        captured_interrupt_event: asyncio.Event | None = None
+
+        async def mock_run_loop(  # noqa: ANN202
+            *,
+            spawn_callback,  # noqa: ANN001
+            finalize_callback,  # noqa: ANN001
+            abort_callback,  # noqa: ANN001
+            watch_config,  # noqa: ANN001
+            validation_config=None,  # noqa: ANN001
+            drain_event=None,  # noqa: ANN001
+            interrupt_event=None,  # noqa: ANN001
+            validation_callback=None,  # noqa: ANN001
+            sleep_fn=asyncio.sleep,  # noqa: ANN001
+        ):
+            nonlocal captured_interrupt_event
+            captured_interrupt_event = interrupt_event
+            # Return empty result immediately
+            from src.core.models import RunResult
+
+            return RunResult(issues_spawned=0, exit_code=0, exit_reason="completed")
+
+        orchestrator.issue_coordinator.run_loop = mock_run_loop  # type: ignore[method-assign]
+
+        watch_config = WatchConfig(enabled=False)
+
+        # Use new event loop to avoid pytest conflicts
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(orchestrator.run(watch_config=watch_config))
+        finally:
+            loop.close()
+
+        # Verify interrupt_event was passed to run_loop
         assert captured_interrupt_event is not None
         assert isinstance(captured_interrupt_event, asyncio.Event)
