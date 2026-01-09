@@ -56,6 +56,54 @@ async def test_get_git_commit_async_timeout(monkeypatch: pytest.MonkeyPatch) -> 
     assert result == ""
 
 
+# --- Tests for is_commit_reachable ---
+
+
+@pytest.mark.asyncio
+async def test_is_commit_reachable_returns_true(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """is_commit_reachable returns True when commit exists locally."""
+
+    async def mock_run_command_async(
+        cmd: list[str], cwd: Path, timeout_seconds: float | None = None
+    ) -> CommandResult:
+        # git cat-file -e returns 0 for existing objects
+        assert cmd == ["git", "cat-file", "-e", "abc1234"]
+        return CommandResult(command=cmd, returncode=0, stdout="")
+
+    monkeypatch.setattr(infra_git_utils, "run_command_async", mock_run_command_async)
+
+    result = await git_utils.is_commit_reachable(Path("/repo"), "abc1234")
+
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_is_commit_reachable_returns_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """is_commit_reachable returns False when commit doesn't exist locally."""
+
+    async def mock_run_command_async(
+        cmd: list[str], cwd: Path, timeout_seconds: float | None = None
+    ) -> CommandResult:
+        # git cat-file -e returns non-zero for missing objects
+        assert cmd == ["git", "cat-file", "-e", "missing123"]
+        return CommandResult(
+            command=cmd,
+            returncode=128,
+            stdout="",
+            stderr="fatal: Not a valid object name missing123",
+        )
+
+    monkeypatch.setattr(infra_git_utils, "run_command_async", mock_run_command_async)
+
+    result = await git_utils.is_commit_reachable(Path("/repo"), "missing123")
+
+    assert result is False
+
+
 # --- Tests for get_baseline_for_issue ---
 
 

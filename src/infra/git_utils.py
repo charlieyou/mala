@@ -41,6 +41,31 @@ async def get_git_branch_async(cwd: Path, timeout: float = DEFAULT_GIT_TIMEOUT) 
     return ""
 
 
+async def is_commit_reachable(
+    repo_path: Path, commit: str, timeout: float = DEFAULT_GIT_TIMEOUT
+) -> bool:
+    """Check if a commit is reachable in the local repository.
+
+    Uses `git cat-file -e` to verify the commit object exists locally.
+    This is important for shallow clones where a baseline commit may
+    exist logically but not be present in the local clone.
+
+    Args:
+        repo_path: Path to the git repository.
+        commit: The commit SHA to check.
+        timeout: Timeout in seconds for git operations.
+
+    Returns:
+        True if the commit is reachable locally, False otherwise.
+    """
+    result = await run_command_async(
+        ["git", "cat-file", "-e", commit],
+        cwd=repo_path,
+        timeout_seconds=timeout,
+    )
+    return result.ok
+
+
 async def get_baseline_for_issue(
     repo_path: Path, issue_id: str, timeout: float = DEFAULT_GIT_TIMEOUT
 ) -> str | None:
@@ -358,3 +383,17 @@ class GitUtils:
             fails (e.g., not a git repository).
         """
         return await get_git_commit_async(self.repo_path)
+
+    async def is_commit_reachable(self, commit: str) -> bool:
+        """Check if a commit is reachable in the local repository.
+
+        Verifies the commit object exists locally. Important for shallow clones
+        where a baseline commit may exist logically but not be present locally.
+
+        Args:
+            commit: The commit SHA to check.
+
+        Returns:
+            True if the commit is reachable locally, False otherwise.
+        """
+        return await is_commit_reachable(self.repo_path, commit)

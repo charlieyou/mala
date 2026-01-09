@@ -40,13 +40,15 @@ class FakeRunMetadata:
 class FakeGitUtils:
     """Fake GitUtils for testing.
 
-    Configurable responses for baseline/HEAD lookups.
+    Configurable responses for baseline/HEAD lookups and reachability checks.
     """
 
     baseline_for_issue: dict[str, str | None] = field(default_factory=dict)
     head_commit: str = "abc1234"
+    reachable_commits: set[str] = field(default_factory=set)
     get_baseline_for_issue_calls: list[str] = field(default_factory=list)
     get_head_commit_calls: int = 0
+    is_commit_reachable_calls: list[str] = field(default_factory=list)
 
     async def get_baseline_for_issue(self, issue_id: str) -> str | None:
         """Return configured baseline for issue_id."""
@@ -57,6 +59,14 @@ class FakeGitUtils:
         """Return configured HEAD commit."""
         self.get_head_commit_calls += 1
         return self.head_commit
+
+    async def is_commit_reachable(self, commit: str) -> bool:
+        """Return True if commit is in reachable_commits, or all_reachable."""
+        self.is_commit_reachable_calls.append(commit)
+        # If reachable_commits is empty, treat all commits as reachable (default)
+        if not self.reachable_commits:
+            return True
+        return commit in self.reachable_commits
 
 
 @dataclass
@@ -115,12 +125,13 @@ class TestGetBaselineCommitSessionEnd:
             issue_id="mala-123",
         )
 
-        assert result == "parent-sha"
+        assert result.commit == "parent-sha"
+        assert result.skip_reason is None
         assert git_utils.get_baseline_for_issue_calls == ["mala-123"]
 
     @pytest.mark.asyncio
-    async def test_session_end_no_commits_returns_none(self) -> None:
-        """session_end with no issue commits returns None."""
+    async def test_session_end_no_commits_returns_none_with_skip_reason(self) -> None:
+        """session_end with no issue commits returns None with skip_reason."""
         git_utils = FakeGitUtils(baseline_for_issue={})
         runner = make_runner(git_utils)
 
@@ -131,12 +142,15 @@ class TestGetBaselineCommitSessionEnd:
             issue_id="mala-456",
         )
 
-        assert result is None
+        assert result.commit is None
+        assert result.skip_reason == "no commits found for issue mala-456"
         assert git_utils.get_baseline_for_issue_calls == ["mala-456"]
 
     @pytest.mark.asyncio
-    async def test_session_end_without_issue_id_returns_none(self) -> None:
-        """session_end without issue_id returns None."""
+    async def test_session_end_without_issue_id_returns_none_with_skip_reason(
+        self,
+    ) -> None:
+        """session_end without issue_id returns None with skip_reason."""
         git_utils = FakeGitUtils()
         runner = make_runner(git_utils)
 
@@ -146,7 +160,8 @@ class TestGetBaselineCommitSessionEnd:
             run_metadata=FakeRunMetadata(),  # type: ignore[arg-type]
         )
 
-        assert result is None
+        assert result.commit is None
+        assert result.skip_reason == "session_end trigger missing issue_id"
         assert git_utils.get_baseline_for_issue_calls == []
 
 
@@ -165,7 +180,8 @@ class TestGetBaselineCommitSinceRunStart:
             run_metadata=metadata,  # type: ignore[arg-type]
         )
 
-        assert result == "run-start-sha"
+        assert result.commit == "run-start-sha"
+        assert result.skip_reason is None
 
     @pytest.mark.asyncio
     async def test_epic_completion_since_run_start_returns_run_start_commit(
@@ -182,7 +198,8 @@ class TestGetBaselineCommitSinceRunStart:
             epic_id="epic-001",
         )
 
-        assert result == "epic-start-sha"
+        assert result.commit == "epic-start-sha"
+        assert result.skip_reason is None
 
     @pytest.mark.asyncio
     async def test_default_baseline_mode_is_since_run_start(self) -> None:
@@ -196,7 +213,8 @@ class TestGetBaselineCommitSinceRunStart:
             run_metadata=metadata,  # type: ignore[arg-type]
         )
 
-        assert result == "default-start-sha"
+        assert result.commit == "default-start-sha"
+        assert result.skip_reason is None
 
 
 class TestGetBaselineCommitSinceLastReview:
@@ -217,7 +235,8 @@ class TestGetBaselineCommitSinceLastReview:
             run_metadata=metadata,  # type: ignore[arg-type]
         )
 
-        assert result == "last-review-sha"
+        assert result.commit == "last-review-sha"
+        assert result.skip_reason is None
 
     @pytest.mark.asyncio
     async def test_epic_completion_since_last_review_uses_stored_baseline(
@@ -239,7 +258,8 @@ class TestGetBaselineCommitSinceLastReview:
             epic_id="epic-001",
         )
 
-        assert result == "epic-review-sha"
+        assert result.commit == "epic-review-sha"
+        assert result.skip_reason is None
 
     @pytest.mark.asyncio
     async def test_since_last_review_fallback_to_run_start(self) -> None:
@@ -256,7 +276,8 @@ class TestGetBaselineCommitSinceLastReview:
             run_metadata=metadata,  # type: ignore[arg-type]
         )
 
-        assert result == "fallback-sha"
+        assert result.commit == "fallback-sha"
+        assert result.skip_reason is None
 
     @pytest.mark.asyncio
     async def test_epic_completion_without_epic_id_falls_back(self) -> None:
@@ -276,7 +297,8 @@ class TestGetBaselineCommitSinceLastReview:
             # No epic_id provided
         )
 
-        assert result == "fallback-sha"
+        assert result.commit == "fallback-sha"
+        assert result.skip_reason is None
 
 
 class TestGetBaselineCommitFallbacks:
@@ -295,12 +317,15 @@ class TestGetBaselineCommitFallbacks:
             run_metadata=metadata,  # type: ignore[arg-type]
         )
 
-        assert result == "current-head-sha"
+        assert result.commit == "current-head-sha"
+        assert result.skip_reason is None
         assert git_utils.get_head_commit_calls == 1
 
     @pytest.mark.asyncio
-    async def test_missing_run_start_and_empty_head_returns_none(self) -> None:
-        """When run_start_commit is None and HEAD is empty, returns None."""
+    async def test_missing_run_start_and_empty_head_returns_none_with_skip_reason(
+        self,
+    ) -> None:
+        """When run_start_commit is None and HEAD is empty, returns None with reason."""
         git_utils = FakeGitUtils(head_commit="")
         runner = make_runner(git_utils)
         metadata = FakeRunMetadata(run_start_commit=None)
@@ -311,7 +336,8 @@ class TestGetBaselineCommitFallbacks:
             run_metadata=metadata,  # type: ignore[arg-type]
         )
 
-        assert result is None
+        assert result.commit is None
+        assert result.skip_reason == "could not determine baseline commit"
 
     @pytest.mark.asyncio
     async def test_since_last_review_fallback_to_head_when_no_run_start(self) -> None:
@@ -329,4 +355,96 @@ class TestGetBaselineCommitFallbacks:
             run_metadata=metadata,  # type: ignore[arg-type]
         )
 
-        assert result == "head-fallback-sha"
+        assert result.commit == "head-fallback-sha"
+        assert result.skip_reason is None
+
+
+class TestGetBaselineCommitReachability:
+    """Tests for baseline commit reachability checks (shallow clone handling)."""
+
+    @pytest.mark.asyncio
+    async def test_unreachable_baseline_returns_skip_reason(self) -> None:
+        """When baseline commit is unreachable, returns None with skip_reason."""
+        git_utils = FakeGitUtils(
+            head_commit="abc1234",
+            reachable_commits={"abc1234"},  # Only HEAD is reachable
+        )
+        runner = make_runner(git_utils)
+        metadata = FakeRunMetadata(run_start_commit="unreachable-sha")
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+        )
+
+        assert result.commit is None
+        assert result.skip_reason is not None
+        assert "unreachable-sha" in result.skip_reason
+        assert "not reachable" in result.skip_reason
+        assert git_utils.is_commit_reachable_calls == ["unreachable-sha"]
+
+    @pytest.mark.asyncio
+    async def test_reachable_baseline_returns_commit(self) -> None:
+        """When baseline commit is reachable, returns the commit."""
+        git_utils = FakeGitUtils(
+            head_commit="abc1234",
+            reachable_commits={"run-start-sha", "abc1234"},
+        )
+        runner = make_runner(git_utils)
+        metadata = FakeRunMetadata(run_start_commit="run-start-sha")
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+        )
+
+        assert result.commit == "run-start-sha"
+        assert result.skip_reason is None
+        assert git_utils.is_commit_reachable_calls == ["run-start-sha"]
+
+    @pytest.mark.asyncio
+    async def test_session_end_unreachable_baseline_returns_skip_reason(self) -> None:
+        """session_end with unreachable baseline returns None with skip_reason."""
+        git_utils = FakeGitUtils(
+            baseline_for_issue={"mala-123": "issue-baseline-sha"},
+            reachable_commits={"abc1234"},  # Baseline not in set
+        )
+        runner = make_runner(git_utils)
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.SESSION_END,
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
+            run_metadata=FakeRunMetadata(),  # type: ignore[arg-type]
+            issue_id="mala-123",
+        )
+
+        assert result.commit is None
+        assert result.skip_reason is not None
+        assert "issue-baseline-sha" in result.skip_reason
+        assert "not reachable" in result.skip_reason
+
+    @pytest.mark.asyncio
+    async def test_since_last_review_unreachable_stored_baseline(self) -> None:
+        """since_last_review with unreachable stored baseline returns skip_reason."""
+        git_utils = FakeGitUtils(
+            head_commit="abc1234",
+            reachable_commits={"abc1234"},  # Only HEAD is reachable
+        )
+        runner = make_runner(git_utils)
+        metadata = FakeRunMetadata(
+            run_start_commit="also-unreachable",
+            last_cumulative_review_commits={"run_end": "stored-baseline-sha"},
+        )
+
+        result = await runner._get_baseline_commit(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+        )
+
+        assert result.commit is None
+        assert result.skip_reason is not None
+        assert "stored-baseline-sha" in result.skip_reason
+        assert "not reachable" in result.skip_reason
