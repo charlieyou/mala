@@ -945,8 +945,14 @@ class MalaOrchestrator:
 
             # T009: Hook for periodic trigger check after issue completion
             self._check_and_queue_periodic_trigger(result)
-            # T011: Blocking wait location - after queueing, before next issue assignment
-            # await self.run_coordinator.run_trigger_validation() will be called here
+            # T011: Blocking wait - execute queued triggers before next issue assignment
+            # This covers both PERIODIC triggers (queued above) and EPIC_COMPLETION triggers
+            # (queued via epic_verification_coordinator during _finalize_issue_result)
+            trigger_result = await self.run_coordinator.run_trigger_validation()
+            if trigger_result.status == "aborted":
+                self.issue_coordinator.request_abort(
+                    reason="Trigger validation aborted"
+                )
 
         async def abort_callback(*, is_interrupt: bool = False) -> AbortResult:
             """Abort all active tasks."""

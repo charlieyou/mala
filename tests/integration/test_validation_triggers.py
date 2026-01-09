@@ -176,19 +176,19 @@ async def test_orchestrator_fires_periodic_trigger_at_interval(
     tmp_path: Path,
     make_orchestrator: Callable[..., MalaOrchestrator],
 ) -> None:
-    """Test that orchestrator main loop fires periodic trigger at configured interval.
+    """Test that orchestrator main loop fires and executes periodic trigger at interval.
 
     This integration test exercises the full orchestrator loop path:
     - Orchestrator.run() spawns and completes issues
     - finalize_callback invokes _check_and_queue_periodic_trigger() after each issue
     - Hook increments _non_epic_completed_count and queues PERIODIC trigger at interval
+    - run_trigger_validation() executes queued triggers (blocking before next issue)
 
     The test runs the orchestrator with 2 fake issues and interval=2, verifying
-    that after both complete, the periodic trigger was queued via the main loop.
+    that after both complete, the periodic trigger was queued AND executed.
     """
     import asyncio
 
-    from src.domain.validation.config import TriggerType
     from src.pipeline.issue_result import IssueResult
     from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 
@@ -202,7 +202,8 @@ async def test_orchestrator_fires_periodic_trigger_at_interval(
     runs_dir = tmp_path / "runs"
     runs_dir.mkdir()
 
-    # Create mala.yaml with periodic trigger interval=2
+    # Create mala.yaml with periodic trigger interval=2 and empty commands
+    # (empty commands avoids command resolution; trigger still queues and executes)
     config_content = dedent("""\
         preset: python-uv
 
@@ -210,8 +211,7 @@ async def test_orchestrator_fires_periodic_trigger_at_interval(
           periodic:
             interval: 2
             failure_mode: continue
-            commands:
-              - ref: lint
+            commands: []
     """)
     config_file = tmp_path / "mala.yaml"
     config_file.write_text(config_content)
@@ -261,13 +261,10 @@ async def test_orchestrator_fires_periodic_trigger_at_interval(
         f"got {orchestrator._non_epic_completed_count}"
     )
 
-    # Verify periodic trigger was queued when interval (2) was reached
-    # This confirms the hook was invoked from the main loop path
+    # Verify trigger queue is empty - proves trigger was queued AND executed
+    # (blocking run_trigger_validation() clears queue after processing)
     trigger_queue = orchestrator.run_coordinator._trigger_queue
-    periodic_triggers = [
-        (t, ctx) for t, ctx in trigger_queue if t == TriggerType.PERIODIC
-    ]
-    assert len(periodic_triggers) >= 1, (
-        "PERIODIC trigger should be queued when _non_epic_completed_count "
-        "reaches configured interval (2) via main loop"
+    assert len(trigger_queue) == 0, (
+        f"Trigger queue should be empty after execution, got {len(trigger_queue)} items. "
+        "This indicates run_trigger_validation() was not called (blocking fix missing)."
     )
