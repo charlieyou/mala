@@ -94,7 +94,11 @@ class TestValidationRanParameter:
         """validation_ran=False when no issues to validate.
 
         When no issues complete successfully, validation is skipped and
-        validation_ran should be False. Exit code should be 0.
+        validation_ran should be False.
+
+        Exit code semantics (per task acceptance criteria):
+        - validation_ran=False + run_validation_passed=None → exit 0 (skipped)
+        - validation_ran=True + run_validation_passed=None → exit 130 (interrupted)
         """
         script = tmp_path / "validation_skipped_test.py"
         script.write_text(

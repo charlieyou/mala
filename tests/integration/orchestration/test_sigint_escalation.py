@@ -1544,3 +1544,226 @@ if __name__ == "__main__":
             if proc.poll() is None:
                 proc.kill()
                 proc.wait()
+
+    def test_sigint_during_validation_marks_validation_interrupted(
+        self, tmp_path: Path
+    ) -> None:
+        """SIGINT during validation marks validation as interrupted with correct semantics.
+
+        This test verifies that when SIGINT occurs:
+        1. on_run_completed is called with run_validation_passed=None
+        2. on_run_completed is called with validation_ran=True (validation was attempted)
+        3. Exit code is 130 (interrupted)
+
+        This validates the acceptance criteria that interrupt during validation
+        produces: validation_ran=True + run_validation_passed=None → exit 130.
+        """
+        script = tmp_path / "validation_interrupt_test.py"
+        script.write_text(
+            """
+import asyncio
+import signal
+import sys
+import time
+from pathlib import Path
+
+from src.orchestration.factory import OrchestratorConfig, OrchestratorDependencies, create_orchestrator
+from src.core.models import PeriodicValidationConfig, WatchConfig
+from src.pipeline.issue_result import IssueResult
+from src.pipeline.run_coordinator import GlobalValidationOutput
+from tests.fakes.event_sink import FakeEventSink
+from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
+
+_orchestrator = None
+_validation_started = asyncio.Event()
+
+
+class CapturingEventSink(FakeEventSink):
+    '''Event sink that captures on_run_completed parameters.'''
+    def __init__(self):
+        super().__init__()
+        self.run_validation_passed = "NOT_CALLED"
+        self.validation_ran = "NOT_CALLED"
+
+    def on_run_completed(
+        self,
+        success_count: int,
+        total_count: int,
+        run_validation_passed,
+        abort_reason=None,
+        *,
+        validation_ran: bool = True,
+    ) -> None:
+        self.run_validation_passed = run_validation_passed
+        self.validation_ran = validation_ran
+
+
+async def mock_agent(issue_id: str, *, flow: str = "implementer") -> IssueResult:
+    '''Mock agent that returns success immediately.'''
+    return IssueResult(
+        issue_id=issue_id,
+        agent_id="mock",
+        success=True,
+        summary="Success",
+    )
+
+
+async def slow_validation(validation_input, *, interrupt_event=None):
+    '''Mock validation that signals start and waits for interrupt.'''
+    global _validation_started
+    _validation_started.set()
+    # Wait for interrupt_event or timeout
+    if interrupt_event:
+        try:
+            await asyncio.wait_for(interrupt_event.wait(), timeout=60.0)
+            return GlobalValidationOutput(passed=False, interrupted=True)
+        except asyncio.TimeoutError:
+            return GlobalValidationOutput(passed=True, interrupted=False)
+        except asyncio.CancelledError:
+            return GlobalValidationOutput(passed=False, interrupted=True)
+    else:
+        await asyncio.sleep(60.0)
+        return GlobalValidationOutput(passed=True, interrupted=False)
+
+
+async def main():
+    global _orchestrator
+    tmp_dir = Path(sys.argv[1])
+    runs_dir = tmp_dir / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+
+    provider = FakeIssueProvider(
+        issues={"test-issue": FakeIssue(id="test-issue", status="open")}
+    )
+    event_sink = CapturingEventSink()
+
+    config = OrchestratorConfig(
+        repo_path=tmp_dir,
+        max_agents=1,
+        max_issues=1,
+    )
+    deps = OrchestratorDependencies(
+        issue_provider=provider,
+        event_sink=event_sink,
+        runs_dir=runs_dir,
+    )
+    _orchestrator = create_orchestrator(config, deps=deps)
+    _orchestrator.run_implementer = mock_agent
+    _orchestrator.run_coordinator.run_validation = slow_validation
+
+    # Enable validation to run after 1 issue completes
+    validation_config = PeriodicValidationConfig(validate_every=1)
+    watch_config = WatchConfig(enabled=False)  # Single run mode
+
+    run_task = asyncio.create_task(
+        _orchestrator.run(
+            watch_config=watch_config,
+            validation_config=validation_config,
+        )
+    )
+
+    # Wait for SIGINT handler to be installed
+    deadline = time.monotonic() + 15.0
+    while signal.getsignal(signal.SIGINT) is signal.default_int_handler:
+        if run_task.done():
+            sys.exit(1)
+        if time.monotonic() > deadline:
+            sys.exit(1)
+        await asyncio.sleep(0.01)
+
+    # Wait for validation to start (agent completes quickly, then validation runs)
+    spawn_deadline = time.monotonic() + 15.0
+    while not _validation_started.is_set():
+        if run_task.done():
+            # Run completed before validation started - check result
+            break
+        if time.monotonic() > spawn_deadline:
+            print("TIMEOUT: Validation not started", file=sys.stderr, flush=True)
+            sys.exit(1)
+        await asyncio.sleep(0.01)
+
+    print("READY", flush=True)
+
+    try:
+        await run_task
+    except asyncio.CancelledError:
+        pass
+
+    # Report the captured values
+    print(f"RUN_VALIDATION_PASSED={event_sink.run_validation_passed}", flush=True)
+    print(f"VALIDATION_RAN={event_sink.validation_ran}", flush=True)
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    sys.exit(_orchestrator.exit_code)
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        sys.exit(130)
+"""
+        )
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(REPO_ROOT)
+
+        proc = subprocess.Popen(
+            [sys.executable, str(script), str(tmp_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+
+        try:
+            ready, output, early_stderr = _wait_for_ready(proc, timeout=20.0)
+            if not ready:
+                if proc.poll() is not None:
+                    pytest.fail(
+                        f"Subprocess exited early with code {proc.returncode}. "
+                        f"Output: {output}\nStderr: {early_stderr}"
+                    )
+                stderr = _get_stderr(proc)
+                pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
+
+            # Send double SIGINT to trigger abort mode during validation
+            _send_sigint_and_wait(proc, wait_after=0.3)
+            _send_sigint_and_wait(proc, wait_after=0.3)
+
+            # Wait for exit
+            try:
+                remaining_stdout, stderr = proc.communicate(timeout=10.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    remaining_stdout, stderr = proc.communicate(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    remaining_stdout, stderr = "", ""
+                pytest.fail(
+                    f"Process did not exit after double SIGINT. "
+                    f"Stdout: {output + remaining_stdout}\nStderr: {stderr}"
+                )
+
+            all_stdout = output + remaining_stdout
+
+            # Should exit with 130 (abort mode)
+            assert proc.returncode == 130, (
+                f"Expected exit code 130, got {proc.returncode}. "
+                f"Stdout: {all_stdout}\nStderr: {stderr}"
+            )
+
+            # Verify validation_ran=True and run_validation_passed=None
+            # (validation was attempted but interrupted)
+            assert "RUN_VALIDATION_PASSED=None" in all_stdout, (
+                f"Expected RUN_VALIDATION_PASSED=None. Stdout: {all_stdout}"
+            )
+            assert "VALIDATION_RAN=True" in all_stdout, (
+                f"Expected VALIDATION_RAN=True. Stdout: {all_stdout}"
+            )
+
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()

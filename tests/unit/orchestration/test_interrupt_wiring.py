@@ -102,7 +102,7 @@ class TestInterruptWiring:
         orchestrator._interrupt_event = interrupt_event
 
         # Mock the epic verification coordinator to capture the call
-        captured_interrupt_event = None
+        captured_interrupt_event: asyncio.Event | None = None
 
         async def mock_check_epic_closure(
             issue_id: str,
@@ -113,16 +113,20 @@ class TestInterruptWiring:
             nonlocal captured_interrupt_event
             captured_interrupt_event = interrupt_event
 
-        orchestrator.epic_verification_coordinator.check_epic_closure = (
+        orchestrator.epic_verification_coordinator.check_epic_closure = (  # type: ignore[method-assign]
             mock_check_epic_closure
         )
 
         # Call the trigger_epic_closure callback via issue_finalizer
-        run_metadata = MagicMock(spec=RunMetadata)
+        mock_run_metadata = MagicMock(spec=RunMetadata)
         trigger_callback = orchestrator.issue_finalizer.callbacks.trigger_epic_closure
 
-        # Run async callback
-        asyncio.run(trigger_callback("test-issue", run_metadata))
+        # Run async callback - use a new event loop to avoid pytest conflicts
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(trigger_callback("test-issue", mock_run_metadata))
+        finally:
+            loop.close()
 
         # Verify interrupt_event was passed
         assert captured_interrupt_event is interrupt_event
@@ -183,18 +187,23 @@ class TestInterruptWiring:
                 summary="Success",
             )
 
-        orchestrator.run_implementer = mock_implementer
+        orchestrator.run_implementer = mock_implementer  # type: ignore[method-assign]
 
         # Run orchestrator (will trigger validation due to validate_every=1)
         validation_config = PeriodicValidationConfig(validate_every=1)
         watch_config = WatchConfig(enabled=False)
 
-        asyncio.run(
-            orchestrator.run(
-                watch_config=watch_config,
-                validation_config=validation_config,
+        # Use new event loop to avoid pytest conflicts
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(
+                orchestrator.run(
+                    watch_config=watch_config,
+                    validation_config=validation_config,
+                )
             )
-        )
+        finally:
+            loop.close()
 
         # Verify interrupt_event was passed to run_validation
         assert captured_interrupt_event is not None
