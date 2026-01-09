@@ -14,14 +14,22 @@ The trigger system provides:
 
 Triggers are configured in `mala.yaml` using two sections:
 
-1. **Base command pool** (`global_validation_commands`): Defines available commands
+1. **Base command pool**: Merged from `commands` (preset or explicit) + `global_validation_commands`
 2. **Trigger configuration** (`validation_triggers`): Specifies when and how to run them
 
-```yaml
-preset: python-uv
+### Base Pool Construction
 
-# Base command pool (preset provides: test, lint, typecheck, format)
-# Add custom commands to the pool
+The base command pool determines which commands can be referenced in triggers:
+
+- **Built-in commands** (`test`, `lint`, `format`, `typecheck`, `e2e`, `setup`): Use `global_validation_commands` if set, otherwise fall back to `commands` (from preset or explicit config)
+- **Custom commands**: Merge `commands.custom_commands` + `global_validation_commands` custom commands (global wins on conflicts)
+
+This means presets provide built-in commands by default, and `global_validation_commands` can override them or add new ones.
+
+```yaml
+preset: python-uv  # Provides test, lint, typecheck, format in commands
+
+# Override preset commands or add custom ones to the pool
 global_validation_commands:
   import-linter:
     command: "uv run lint-imports"
@@ -239,25 +247,29 @@ commands:
 
 ### Override Resolution
 
-When overriding, unspecified fields inherit from the base pool:
+When overriding, unspecified fields inherit from the base pool. The base pool is built from `commands` (preset) with `global_validation_commands` as overrides:
 
 ```yaml
-# Base pool
+preset: python-uv  # Provides commands.test = "uv run pytest"
+
+# Override the preset's test command
 global_validation_commands:
   test:
-    command: "uv run pytest"
+    command: "uv run pytest --cov"
     timeout: 300
 
-# Trigger
+# Trigger with per-trigger override
 validation_triggers:
   session_end:
     failure_mode: continue
     commands:
       - ref: test
-        timeout: 600  # Overrides timeout, inherits command
+        timeout: 600  # Overrides timeout, inherits command from global_validation_commands
 ```
 
-Result: `command="uv run pytest"`, `timeout=600`
+Result: `command="uv run pytest --cov"`, `timeout=600`
+
+If `global_validation_commands.test` were not defined, the trigger would use the preset's `commands.test` command.
 
 ### Running Same Command Multiple Times
 
