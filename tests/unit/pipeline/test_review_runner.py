@@ -78,6 +78,7 @@ class FakeCodeReviewer:
         context_file: Path | None = None,
         timeout: int = 300,
         claude_session_id: str | None = None,
+        author_context: str | None = None,
         *,
         commit_shas: Sequence[str],
         interrupt_event: asyncio.Event | None = None,
@@ -88,6 +89,7 @@ class FakeCodeReviewer:
                 "context_file": context_file,
                 "timeout": timeout,
                 "claude_session_id": claude_session_id,
+                "author_context": author_context,
                 "commit_shas": commit_shas,
                 "interrupt_event": interrupt_event,
             }
@@ -332,6 +334,7 @@ class TestReviewRunnerResults:
                 context_file: Path | None = None,
                 timeout: int = 300,
                 claude_session_id: str | None = None,
+                author_context: str | None = None,
                 *,
                 commit_shas: Sequence[str],
                 interrupt_event: asyncio.Event | None = None,
@@ -487,6 +490,53 @@ class TestContextFileCleanup:
     """Test context file cleanup after review completes."""
 
     @pytest.mark.asyncio
+    async def test_author_context_in_context_file(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Author context should be appended to the context file."""
+        captured_text: str | None = None
+
+        @dataclass
+        class CapturingReviewer:
+            """Reviewer that captures the context file contents."""
+
+            def overrides_disabled_setting(self) -> bool:
+                return True
+
+            async def __call__(
+                self,
+                context_file: Path | None = None,
+                timeout: int = 300,
+                claude_session_id: str | None = None,
+                author_context: str | None = None,
+                *,
+                commit_shas: Sequence[str],
+                interrupt_event: asyncio.Event | None = None,
+            ) -> FakeReviewResult:
+                nonlocal captured_text
+                assert context_file is not None
+                captured_text = context_file.read_text()
+                return FakeReviewResult(passed=True, issues=[])
+
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", CapturingReviewer()))
+
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            issue_description="Fix the bug",
+            author_context="This is a false positive because X.",
+            commit_shas=["commit1"],
+        )
+
+        await runner.run_review(review_input)
+
+        assert captured_text is not None
+        assert "Fix the bug" in captured_text
+        assert "Author context:" in captured_text
+        assert "This is a false positive because X." in captured_text
+
+    @pytest.mark.asyncio
     async def test_context_file_cleaned_up_after_success(
         self,
         tmp_path: Path,
@@ -506,6 +556,7 @@ class TestContextFileCleanup:
                 context_file: Path | None = None,
                 timeout: int = 300,
                 claude_session_id: str | None = None,
+                author_context: str | None = None,
                 *,
                 commit_shas: Sequence[str],
                 interrupt_event: asyncio.Event | None = None,
@@ -552,6 +603,7 @@ class TestContextFileCleanup:
                 context_file: Path | None = None,
                 timeout: int = 300,
                 claude_session_id: str | None = None,
+                author_context: str | None = None,
                 *,
                 commit_shas: Sequence[str],
                 interrupt_event: asyncio.Event | None = None,
@@ -672,6 +724,7 @@ class TestReviewRunnerInterruptHandling:
                 context_file: Path | None = None,
                 timeout: int = 300,
                 claude_session_id: str | None = None,
+                author_context: str | None = None,
                 *,
                 commit_shas: Sequence[str],
                 interrupt_event: asyncio.Event | None = None,

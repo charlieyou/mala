@@ -120,7 +120,7 @@ GateCheckCallback = Callable[
     Coroutine[Any, Any, tuple["GateOutcome", int]],
 ]
 ReviewCheckCallback = Callable[
-    [str, str | None, str | None, "RetryState"],
+    [str, str | None, str | None, "RetryState", str | None],
     Coroutine[Any, Any, "ReviewOutcome"],
 ]
 ReviewNoProgressCallback = Callable[
@@ -330,7 +330,8 @@ class SessionCallbacks:
         on_gate_check: Async callback to run quality gate check.
             Args: (issue_id, log_path, retry_state) -> (GateResult, new_offset)
         on_review_check: Async callback to run external review (Cerberus).
-            Args: (issue_id, issue_description, session_id, retry_state) -> ReviewOutcome
+            Args: (issue_id, issue_description, session_id, retry_state, author_context)
+                -> ReviewOutcome
         on_review_no_progress: Sync callback to check if no progress on review retry.
             Args: (log_path, log_offset, prev_commit, curr_commit) -> bool
         get_log_path: Callback to get log path from session ID.
@@ -655,11 +656,15 @@ class AgentSessionRunner:
                     lifecycle_ctx.session_id[:8] if lifecycle_ctx.session_id else None,
                 )
                 review_start = time.time()
+                author_context = None
+                if lifecycle_ctx.retry_state.review_attempt > 1:
+                    author_context = lifecycle_ctx.final_result or None
                 review_result = await self.callbacks.on_review_check(
                     input.issue_id,
                     input.issue_description,
                     lifecycle_ctx.session_id,
                     lifecycle_ctx.retry_state,
+                    author_context,
                 )
                 review_duration = time.time() - review_start
                 issue_count = len(review_result.issues) if review_result.issues else 0

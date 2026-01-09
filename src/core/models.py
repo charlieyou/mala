@@ -263,6 +263,7 @@ class ReviewInput:
         issue_description: Issue description for scope verification.
         commit_shas: List of commit SHAs to review directly.
         claude_session_id: Optional Claude session ID for external review context.
+        author_context: Optional author-provided context for the reviewer.
         diff_content: Optional pre-computed diff content for cumulative reviews.
             When provided, the reviewer should use this diff instead of computing
             it from commit_shas. This supports cumulative review workflows where
@@ -274,4 +275,5 @@ class ReviewInput:
     commit_shas: list[str]
     issue_description: str | None = None
     claude_session_id: str | None = None
+    author_context: str | None = None
     diff_content: str | None = None

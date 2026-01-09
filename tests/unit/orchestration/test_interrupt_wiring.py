@@ -428,6 +428,7 @@ class TestInterruptWiring:
         ) -> ReviewOutput:
             nonlocal captured_interrupt_event
             captured_interrupt_event = interrupt_event
+            assert getattr(input, "author_context", None) == "author context"
             # Return a mock result
             mock_result = MagicMock()
             mock_result.passed = True
@@ -450,7 +451,11 @@ class TestInterruptWiring:
             new=AsyncMock(return_value=["abc123"]),
         ):
             await callbacks.on_review_check(
-                "test-issue", "test description", "session-123", RetryState()
+                "test-issue",
+                "test description",
+                "session-123",
+                RetryState(),
+                "author context",
             )
 
         # Verify interrupt_event was passed

@@ -96,10 +96,12 @@ class DefaultReviewer:
         context_file: Path | None = None,
         timeout: int = 300,
         claude_session_id: str | None = None,
+        author_context: str | None = None,
         *,
         commit_shas: Sequence[str],
         interrupt_event: asyncio.Event | None = None,
     ) -> ReviewResult:
+        _ = author_context
         cli = self._get_cli()
 
         # Validate review-gate binary exists and is executable before proceeding

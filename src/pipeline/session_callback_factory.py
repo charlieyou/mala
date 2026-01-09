@@ -168,6 +168,7 @@ class SessionCallbackFactory:
             issue_desc: str | None,
             session_id: str | None,
             _retry_state: RetryState,  # unused after removing timestamp filtering
+            author_context: str | None,
         ) -> ReviewOutcome:
             self._review_runner.config.capture_session_log = self._is_verbose()
             commit_shas = await get_issue_commits_async(
@@ -180,6 +181,7 @@ class SessionCallbackFactory:
                 issue_description=issue_desc,
                 commit_shas=commit_shas,
                 claude_session_id=session_id,
+                author_context=author_context,
             )
             output = await self._review_runner.run_review(
                 review_input, self._get_interrupt_event()

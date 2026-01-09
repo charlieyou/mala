@@ -119,6 +119,7 @@ class AgentSDKReviewer:
         context_file: Path | None = None,
         timeout: int | None = None,
         claude_session_id: str | None = None,
+        author_context: str | None = None,
         *,
         commit_shas: Sequence[str],
         interrupt_event: asyncio.Event | None = None,
@@ -170,7 +171,7 @@ class AgentSDKReviewer:
         context = await self._load_context(context_file)
 
         # Create review query
-        query = self._create_review_query(context, commit_shas)
+        query = self._create_review_query(context, commit_shas, author_context)
 
         # Run agent session
         try:
@@ -250,6 +251,7 @@ class AgentSDKReviewer:
         self,
         context: str,
         commit_shas: Sequence[str] | None,
+        author_context: str | None,
     ) -> str:
         """Construct review query for agent.
 
@@ -258,6 +260,7 @@ class AgentSDKReviewer:
         Args:
             context: Context from context file.
             commit_shas: Optional specific commit SHAs.
+            author_context: Optional author-provided review context.
 
         Returns:
             Formatted query string for the agent.
@@ -279,6 +282,9 @@ class AgentSDKReviewer:
 
         if context and not has_context_placeholder:
             parts.append(f"\n\n## Implementation Context\n{context}")
+
+        if author_context:
+            parts.append(f"\n\n## Author Context\n{author_context}")
 
         # Output Format section is already in the prompt file (review_agent.md)
         # - Do not duplicate it here to avoid conflicting instructions

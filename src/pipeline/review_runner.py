@@ -209,11 +209,17 @@ class ReviewRunner:
             len(input.commit_shas),
         )
 
-        # Create context file if issue_description provided
+        # Create context file if issue_description or author_context provided
         # Use NamedTemporaryFile to avoid permission issues on shared systems
         context_file: Path | None = None
         temp_file = None
+        context_parts: list[str] = []
         if input.issue_description:
+            context_parts.append(input.issue_description)
+        if input.author_context:
+            context_parts.append(f"Author context:\n{input.author_context}")
+        context_text = "\n\n".join(context_parts).strip()
+        if context_text:
             temp_file = tempfile.NamedTemporaryFile(
                 mode="w",
                 prefix=f"review-context-{input.issue_id}-",
@@ -225,36 +231,18 @@ class ReviewRunner:
 
         try:
             # Write and close inside try block to ensure cleanup on failure
-            if temp_file is not None and input.issue_description is not None:
-                temp_file.write(input.issue_description)
+            if temp_file is not None:
+                temp_file.write(context_text)
                 temp_file.close()
-            try:
-                result = await self.code_reviewer(
-                    context_file=context_file,
-                    timeout=self.config.review_timeout,
-                    claude_session_id=input.claude_session_id,
-                    commit_shas=input.commit_shas,
-                    interrupt_event=interrupt_event,
-                )
-            except Exception as exc:
-                logger.exception(
-                    "Review failed: issue_id=%s error=%s",
-                    input.issue_id,
-                    exc,
-                )
-                return ReviewOutput(
-                    result=cast(
-                        "ReviewResultProtocol",
-                        _FatalReviewResult(
-                            passed=False,
-                            issues=[],
-                            parse_error=str(exc),
-                            fatal_error=True,
-                            review_log_path=None,
-                        ),
-                    ),
-                    interrupted=guard.is_interrupted(),
-                )
+
+            result = await self.code_reviewer(
+                context_file=context_file,
+                timeout=self.config.review_timeout,
+                claude_session_id=input.claude_session_id,
+                author_context=input.author_context,
+                commit_shas=input.commit_shas,
+                interrupt_event=interrupt_event,
+            )
 
             # Check if interrupted during review
             was_interrupted = guard.is_interrupted()
@@ -275,6 +263,25 @@ class ReviewRunner:
                 result=result,
                 session_log_path=session_log_path,
                 interrupted=was_interrupted,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Review failed: issue_id=%s error=%s",
+                input.issue_id,
+                exc,
+            )
+            return ReviewOutput(
+                result=cast(
+                    "ReviewResultProtocol",
+                    _FatalReviewResult(
+                        passed=False,
+                        issues=[],
+                        parse_error=str(exc),
+                        fatal_error=True,
+                        review_log_path=None,
+                    ),
+                ),
+                interrupted=guard.is_interrupted(),
             )
         finally:
             # Clean up context file after review completes (success or failure)

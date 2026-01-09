@@ -116,6 +116,7 @@ async def test_resume_reuses_persisted_baseline_timestamp(
         context_file: Path | None = None,
         timeout: int = 300,
         claude_session_id: str | None = None,
+        author_context: str | None = None,
         commit_shas: Sequence[str],
         interrupt_event: object | None = None,
     ) -> ReviewResult:

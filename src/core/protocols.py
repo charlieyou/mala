@@ -762,6 +762,7 @@ class CodeReviewer(Protocol):
         context_file: Path | None = None,
         timeout: int = 300,
         claude_session_id: str | None = None,
+        author_context: str | None = None,
         *,
         commit_shas: Sequence[str],
         interrupt_event: asyncio.Event | None = None,
@@ -772,6 +773,7 @@ class CodeReviewer(Protocol):
             context_file: Optional path to file with issue description context.
             timeout: Timeout in seconds for the review operation.
             claude_session_id: Optional Claude session ID for review attribution.
+            author_context: Optional author-provided context for the reviewer.
             commit_shas: List of commit SHAs to review directly.
             interrupt_event: Optional event to check for SIGINT interruption.
                 When set, reviewers should abort gracefully and return
@@ -931,6 +933,7 @@ class ReviewInputProtocol(Protocol):
     commit_shas: list[str]
     issue_description: str | None
     claude_session_id: str | None
+    author_context: str | None
     diff_content: str | None
 
 

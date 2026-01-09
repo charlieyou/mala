@@ -1328,6 +1328,7 @@ class TestAgentSessionRunnerEventSink:
             description: str | None,
             session_id: str | None,
             _retry_state: RetryState,
+            author_context: str | None,
         ) -> ReviewResult:
             nonlocal captured_session_id
             captured_session_id = session_id
@@ -1426,6 +1427,7 @@ class TestAgentSessionRunnerEventSink:
             description: str | None,
             session_id: str | None,
             _retry_state: RetryState,
+            author_context: str | None,
         ) -> ReviewResult:
             nonlocal review_check_count
             review_check_count += 1
