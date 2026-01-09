@@ -123,13 +123,13 @@ class TestParseCodeReviewConfig:
 
     def test_none_returns_none(self) -> None:
         """None data returns None."""
-        result = _parse_code_review_config(None, "session_end")
+        result = _parse_code_review_config(None, "session_end")  # type: ignore[arg-type]
         assert result is None
 
     def test_not_dict_rejected(self) -> None:
         """Non-dict code_review raises ConfigError."""
         with pytest.raises(ConfigError, match="code_review must be an object"):
-            _parse_code_review_config("invalid", "session_end")
+            _parse_code_review_config("invalid", "session_end")  # type: ignore[arg-type]
 
     def test_defaults(self) -> None:
         """Empty dict returns defaults for session_end."""
