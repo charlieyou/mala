@@ -1071,7 +1071,9 @@ class RunCoordinator:
         - Use global_validation_commands override if explicitly set
         - Otherwise fall back to commands section
 
-        Custom commands come directly from global_validation_commands.
+        For custom commands:
+        - Start with commands.custom_commands as base
+        - Overlay global_validation_commands.custom_commands (overrides base)
 
         Args:
             validation_config: The validation configuration (should be merged
@@ -1101,7 +1103,9 @@ class RunCoordinator:
             if cmd is not None:
                 pool[cmd_name] = (cmd.command, cmd.timeout)
 
-        # Add custom commands from global_validation_commands
+        # Add custom commands: base commands as fallback, global overrides
+        for name, custom_cmd in base_cmds.custom_commands.items():
+            pool[name] = (custom_cmd.command, custom_cmd.timeout)
         for name, custom_cmd in global_cmds.custom_commands.items():
             pool[name] = (custom_cmd.command, custom_cmd.timeout)
 

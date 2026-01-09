@@ -22,6 +22,7 @@ from src.domain.validation.config import (
     CommandConfig,
     CommandsConfig,
     ConfigError,
+    CustomCommandConfig,
     EpicCompletionTriggerConfig,
     FailureMode,
     EpicDepth,
@@ -277,6 +278,88 @@ class TestCommandResolution:
 
         with pytest.raises(ConfigError, match=r"(?i)unknown command.*typo"):
             asyncio.run(coordinator.run_trigger_validation(dry_run=False))
+
+    def test_base_custom_commands_included_in_pool(self, tmp_path: Path) -> None:
+        """Custom commands from base commands section are included in pool."""
+        runner = FakeCommandRunner()
+        runner.responses[("ci_script",)] = CommandResult(
+            command="ci_script", returncode=0, stdout="", stderr=""
+        )
+
+        # Create config with custom command only in base commands section
+        # (not in global_validation_commands)
+        commands_config = CommandsConfig(
+            custom_commands={"ci": CustomCommandConfig(command="ci_script")}
+        )
+        global_commands_config = CommandsConfig()  # Empty - no custom commands
+
+        config = ValidationConfig(
+            commands=commands_config,
+            global_validation_commands=global_commands_config,
+            validation_triggers=ValidationTriggersConfig(
+                epic_completion=EpicCompletionTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(TriggerCommandRef(ref="ci"),),
+                    epic_depth=EpicDepth.TOP_LEVEL,
+                    fire_on=FireOn.SUCCESS,
+                )
+            ),
+        )
+        coordinator = make_coordinator(
+            tmp_path, validation_config=config, command_runner=runner
+        )
+        coordinator.queue_trigger_validation(
+            TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
+        )
+
+        result = asyncio.run(coordinator.run_trigger_validation(dry_run=False))
+
+        assert result.status == "passed"
+        assert len(runner.calls) == 1
+        args, _ = runner.calls[0]
+        assert args == ("ci_script",)
+
+    def test_global_custom_commands_override_base(self, tmp_path: Path) -> None:
+        """Custom commands in global_validation_commands override base commands."""
+        runner = FakeCommandRunner()
+        runner.responses[("global_ci_script",)] = CommandResult(
+            command="global_ci_script", returncode=0, stdout="", stderr=""
+        )
+
+        # Base has "ci" -> "base_ci_script", global has "ci" -> "global_ci_script"
+        commands_config = CommandsConfig(
+            custom_commands={"ci": CustomCommandConfig(command="base_ci_script")}
+        )
+        global_commands_config = CommandsConfig(
+            custom_commands={"ci": CustomCommandConfig(command="global_ci_script")}
+        )
+
+        config = ValidationConfig(
+            commands=commands_config,
+            global_validation_commands=global_commands_config,
+            validation_triggers=ValidationTriggersConfig(
+                epic_completion=EpicCompletionTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(TriggerCommandRef(ref="ci"),),
+                    epic_depth=EpicDepth.TOP_LEVEL,
+                    fire_on=FireOn.SUCCESS,
+                )
+            ),
+        )
+        coordinator = make_coordinator(
+            tmp_path, validation_config=config, command_runner=runner
+        )
+        coordinator.queue_trigger_validation(
+            TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
+        )
+
+        result = asyncio.run(coordinator.run_trigger_validation(dry_run=False))
+
+        assert result.status == "passed"
+        assert len(runner.calls) == 1
+        args, _ = runner.calls[0]
+        # Global should override base
+        assert args == ("global_ci_script",)
 
 
 class TestFailFast:
