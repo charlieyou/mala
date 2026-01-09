@@ -157,6 +157,33 @@ class TestCommandResolution:
 
         assert result.status == "passed"
 
+    def test_null_global_command_falls_back_to_base(self, tmp_path: Path) -> None:
+        """Null in global_validation_commands falls back to base commands."""
+        # When global_validation_commands.test is None but commands.test exists,
+        # the base pool should include test from commands (fallback behavior)
+        commands_config = CommandsConfig(test=CommandConfig(command="base pytest"))
+        global_commands_config = CommandsConfig(test=None)  # Explicitly None
+        config = ValidationConfig(
+            commands=commands_config,
+            global_validation_commands=global_commands_config,
+            validation_triggers=ValidationTriggersConfig(
+                epic_completion=EpicCompletionTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(TriggerCommandRef(ref="test"),),
+                    epic_depth=EpicDepth.TOP_LEVEL,
+                    fire_on=FireOn.SUCCESS,
+                )
+            ),
+        )
+        coordinator = make_coordinator(tmp_path, validation_config=config)
+        coordinator.queue_trigger_validation(
+            TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
+        )
+
+        # Should resolve "test" from base commands, not fail
+        result = asyncio.run(coordinator.run_trigger_validation(dry_run=True))
+        assert result.status == "passed"
+
     def test_command_override_replaces_base_command(self, tmp_path: Path) -> None:
         """Command override in trigger replaces base pool command string."""
         runner = FakeCommandRunner()
