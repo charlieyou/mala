@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     import pathlib
 
 from src.domain.validation.config import (
+    CerberusConfig,
+    CodeReviewConfig,
     CommandConfig,
     CommandsConfig,
     ConfigError,
@@ -28,8 +30,10 @@ from src.domain.validation.config import (
     PeriodicTriggerConfig,
     PresetNotFoundError,
     PromptValidationCommands,
+    RunEndTriggerConfig,
     SessionEndTriggerConfig,
     TriggerCommandRef,
+    TriggerType,
     ValidationConfig,
     ValidationTriggersConfig,
     YamlCoverageConfig,
@@ -1419,6 +1423,182 @@ class TestPeriodicTriggerConfig:
         assert config.commands == (cmd_ref,)
 
 
+class TestRunEndTriggerConfig:
+    """Tests for RunEndTriggerConfig dataclass."""
+
+    def test_construction_with_defaults(self) -> None:
+        """fire_on defaults to SUCCESS."""
+        config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+        )
+        assert config.fire_on == FireOn.SUCCESS
+        assert config.failure_mode == FailureMode.ABORT
+        assert config.commands == ()
+        assert config.max_retries is None
+
+    def test_construction_with_fire_on(self) -> None:
+        """fire_on can be explicitly set."""
+        config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            fire_on=FireOn.BOTH,
+        )
+        assert config.fire_on == FireOn.BOTH
+
+    def test_fire_on_failure(self) -> None:
+        """fire_on can be FAILURE."""
+        config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+            fire_on=FireOn.FAILURE,
+        )
+        assert config.fire_on == FireOn.FAILURE
+
+    def test_commands_list_coerced_to_tuple(self) -> None:
+        """List commands are coerced to tuple via inherited __post_init__."""
+        cmd_ref = TriggerCommandRef(ref="test")
+        config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=[cmd_ref],  # type: ignore[arg-type]
+        )
+        assert isinstance(config.commands, tuple)
+        assert config.commands == (cmd_ref,)
+
+    def test_is_frozen(self) -> None:
+        """RunEndTriggerConfig is immutable."""
+        config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+        )
+        with pytest.raises(AttributeError):
+            config.fire_on = FireOn.FAILURE  # type: ignore[misc]
+
+
+class TestCerberusConfig:
+    """Tests for CerberusConfig dataclass."""
+
+    def test_defaults(self) -> None:
+        """CerberusConfig has sensible defaults."""
+        config = CerberusConfig()
+        assert config.timeout == 300
+        assert config.spawn_args == ()
+        assert config.wait_args == ()
+        assert config.env == ()
+
+    def test_with_all_fields(self) -> None:
+        """All fields can be set on construction."""
+        config = CerberusConfig(
+            timeout=600,
+            spawn_args=("--verbose", "--debug"),
+            wait_args=("--timeout=300",),
+            env=(("API_KEY", "secret"), ("DEBUG", "1")),
+        )
+        assert config.timeout == 600
+        assert config.spawn_args == ("--verbose", "--debug")
+        assert config.wait_args == ("--timeout=300",)
+        assert config.env == (("API_KEY", "secret"), ("DEBUG", "1"))
+
+    def test_is_frozen(self) -> None:
+        """CerberusConfig is immutable."""
+        config = CerberusConfig()
+        with pytest.raises(AttributeError):
+            config.timeout = 600  # type: ignore[misc]
+
+
+class TestCodeReviewConfig:
+    """Tests for CodeReviewConfig dataclass."""
+
+    def test_defaults(self) -> None:
+        """CodeReviewConfig has sensible defaults."""
+        config = CodeReviewConfig()
+        assert config.enabled is False
+        assert config.reviewer_type == "cerberus"
+        assert config.failure_mode == FailureMode.CONTINUE
+        assert config.max_retries == 3
+        assert config.finding_threshold == "none"
+        assert config.baseline is None
+        assert config.cerberus is None
+
+    def test_with_all_fields(self) -> None:
+        """All fields can be set on construction."""
+        cerberus = CerberusConfig(timeout=600)
+        config = CodeReviewConfig(
+            enabled=True,
+            reviewer_type="agent_sdk",
+            failure_mode=FailureMode.ABORT,
+            max_retries=5,
+            finding_threshold="P1",
+            baseline="since_run_start",
+            cerberus=cerberus,
+        )
+        assert config.enabled is True
+        assert config.reviewer_type == "agent_sdk"
+        assert config.failure_mode == FailureMode.ABORT
+        assert config.max_retries == 5
+        assert config.finding_threshold == "P1"
+        assert config.baseline == "since_run_start"
+        assert config.cerberus == cerberus
+
+    def test_reviewer_type_cerberus(self) -> None:
+        """reviewer_type can be cerberus."""
+        config = CodeReviewConfig(reviewer_type="cerberus")
+        assert config.reviewer_type == "cerberus"
+
+    def test_finding_threshold_values(self) -> None:
+        """finding_threshold accepts all valid values."""
+        for threshold in ("P0", "P1", "P2", "P3", "none"):
+            config = CodeReviewConfig(finding_threshold=threshold)  # type: ignore[arg-type]
+            assert config.finding_threshold == threshold
+
+    def test_baseline_since_last_review(self) -> None:
+        """baseline can be since_last_review."""
+        config = CodeReviewConfig(baseline="since_last_review")
+        assert config.baseline == "since_last_review"
+
+    def test_is_frozen(self) -> None:
+        """CodeReviewConfig is immutable."""
+        config = CodeReviewConfig()
+        with pytest.raises(AttributeError):
+            config.enabled = True  # type: ignore[misc]
+
+
+class TestTriggerType:
+    """Tests for TriggerType enum."""
+
+    def test_has_run_end(self) -> None:
+        """TriggerType has RUN_END value."""
+        assert TriggerType.RUN_END.value == "run_end"
+
+    def test_all_values(self) -> None:
+        """TriggerType has all expected values."""
+        values = {t.value for t in TriggerType}
+        assert values == {"epic_completion", "session_end", "periodic", "run_end"}
+
+
+class TestBaseTriggerConfigCodeReview:
+    """Tests for code_review field in BaseTriggerConfig."""
+
+    def test_code_review_default_none(self) -> None:
+        """code_review defaults to None."""
+        config = SessionEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+        )
+        assert config.code_review is None
+
+    def test_code_review_can_be_set(self) -> None:
+        """code_review can be explicitly set."""
+        review_config = CodeReviewConfig(enabled=True)
+        config = SessionEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+            code_review=review_config,
+        )
+        assert config.code_review == review_config
+        assert config.code_review.enabled is True
+
+
 class TestValidationTriggersConfig:
     """Tests for ValidationTriggersConfig dataclass."""
 
@@ -1457,6 +1637,15 @@ class TestValidationTriggersConfig:
         config = ValidationTriggersConfig(periodic=periodic_config)
         assert config.is_empty() is False
 
+    def test_is_empty_with_run_end(self) -> None:
+        """is_empty returns False when run_end is set."""
+        run_end_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+        )
+        config = ValidationTriggersConfig(run_end=run_end_config)
+        assert config.is_empty() is False
+
     def test_is_empty_with_all_triggers(self) -> None:
         """is_empty returns False when all triggers are set."""
         epic_config = EpicCompletionTriggerConfig(
@@ -1474,10 +1663,16 @@ class TestValidationTriggersConfig:
             commands=(),
             interval=300,
         )
+        run_end_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            fire_on=FireOn.BOTH,
+        )
         config = ValidationTriggersConfig(
             epic_completion=epic_config,
             session_end=session_config,
             periodic=periodic_config,
+            run_end=run_end_config,
         )
         assert config.is_empty() is False
 
@@ -1487,6 +1682,7 @@ class TestValidationTriggersConfig:
         assert config.epic_completion is None
         assert config.session_end is None
         assert config.periodic is None
+        assert config.run_end is None
 
     def test_is_frozen(self) -> None:
         """ValidationTriggersConfig is immutable."""

@@ -40,6 +40,7 @@ class TriggerType(Enum):
     EPIC_COMPLETION = "epic_completion"  # When an epic (story/milestone) completes
     SESSION_END = "session_end"  # When a session ends
     PERIODIC = "periodic"  # At regular time intervals
+    RUN_END = "run_end"  # When mala run completes
 
 
 class FailureMode(Enum):
@@ -238,6 +239,46 @@ class TriggerCommandRef:
     timeout: int | None = None
 
 
+@dataclass(frozen=True)
+class CerberusConfig:
+    """Cerberus-specific settings.
+
+    Attributes:
+        timeout: Timeout in seconds for cerberus operations.
+        spawn_args: Additional arguments for spawn command.
+        wait_args: Additional arguments for wait command.
+        env: Environment variables as key-value pairs.
+    """
+
+    timeout: int = 300
+    spawn_args: tuple[str, ...] = field(default_factory=tuple)
+    wait_args: tuple[str, ...] = field(default_factory=tuple)
+    env: tuple[tuple[str, str], ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class CodeReviewConfig:
+    """Unified code review configuration.
+
+    Attributes:
+        enabled: Whether code review is enabled.
+        reviewer_type: Type of reviewer to use.
+        failure_mode: How to handle review failures.
+        max_retries: Maximum number of retry attempts.
+        finding_threshold: Minimum severity to report findings.
+        baseline: What code to include in review.
+        cerberus: Cerberus-specific settings if reviewer_type is "cerberus".
+    """
+
+    enabled: bool = False
+    reviewer_type: Literal["cerberus", "agent_sdk"] = "cerberus"
+    failure_mode: FailureMode = FailureMode.CONTINUE
+    max_retries: int = 3
+    finding_threshold: Literal["P0", "P1", "P2", "P3", "none"] = "none"
+    baseline: Literal["since_run_start", "since_last_review"] | None = None
+    cerberus: CerberusConfig | None = None
+
+
 @dataclass(frozen=True, kw_only=True)
 class BaseTriggerConfig:
     """Base configuration for validation triggers.
@@ -248,11 +289,13 @@ class BaseTriggerConfig:
         failure_mode: How to handle validation failures.
         commands: Commands to run when the trigger fires.
         max_retries: Maximum number of retry attempts on failure. None means no retries.
+        code_review: Optional code review configuration for this trigger.
     """
 
     failure_mode: FailureMode
     commands: tuple[TriggerCommandRef, ...]
     max_retries: int | None = None
+    code_review: CodeReviewConfig | None = None
 
     def __post_init__(self) -> None:
         """Normalize commands to tuple for immutability."""
@@ -299,6 +342,19 @@ class PeriodicTriggerConfig(BaseTriggerConfig):
     interval: int
 
 
+@dataclass(frozen=True, kw_only=True)
+class RunEndTriggerConfig(BaseTriggerConfig):
+    """Configuration for run end triggers.
+
+    Triggers validation when mala run completes.
+
+    Attributes:
+        fire_on: When to fire based on completion status.
+    """
+
+    fire_on: FireOn = FireOn.SUCCESS
+
+
 @dataclass(frozen=True)
 class ValidationTriggersConfig:
     """Configuration for all validation triggers.
@@ -309,11 +365,13 @@ class ValidationTriggersConfig:
         epic_completion: Configuration for epic completion triggers.
         session_end: Configuration for session end triggers.
         periodic: Configuration for periodic triggers.
+        run_end: Configuration for run end triggers.
     """
 
     epic_completion: EpicCompletionTriggerConfig | None = None
     session_end: SessionEndTriggerConfig | None = None
     periodic: PeriodicTriggerConfig | None = None
+    run_end: RunEndTriggerConfig | None = None
 
     def is_empty(self) -> bool:
         """Return True if no triggers are configured."""
@@ -321,6 +379,7 @@ class ValidationTriggersConfig:
             self.epic_completion is None
             and self.session_end is None
             and self.periodic is None
+            and self.run_end is None
         )
 
 
