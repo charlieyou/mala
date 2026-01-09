@@ -1,5 +1,8 @@
 # Roadmap to v1
 
+Bugs
+* Ruff is making fixes in global val that are not being committed
+
 New Features
 * Add code review to global validations
 
@@ -17,7 +20,6 @@ Bugs
 * Locks are not cleaned up after interrupted tests
 
 New Features
-* refine --resume behavior -- should not affect prioritization 
 * Use cerberus for epic verification
 * Add fixer sessions and cerberus reviews to logs search
 * Worktree mode: each epic runs in a worktree, signals it is done to process in main branch, which merges it in + resolves conflicts
@@ -25,6 +27,7 @@ New Features
 * CLI flag to control which beads issue types are processed (currently just tasks)
 * Issue retry in same run
 * Clean up uncommitted changes after agent timeout / soft kill
+* Implementers can use author context to communicate to reviewer
 
 * Use Amp/Codex in the main agent loop (waiting until they have hooks)
 
