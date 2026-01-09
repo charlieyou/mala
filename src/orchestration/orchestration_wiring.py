@@ -120,7 +120,7 @@ def build_cumulative_review_runner(
     git_utils = GitUtils(repo_path=pipeline.repo_path)
 
     return CumulativeReviewRunner(
-        review_runner=review_runner,
+        review_runner=review_runner,  # type: ignore[arg-type]  # ReviewRunner ⊂ ReviewRunnerProtocol
         git_utils=git_utils,
         beads_client=runtime.beads,
         logger=logging.getLogger("mala.cumulative_review"),

@@ -920,6 +920,60 @@ class GateChecker(Protocol):
 
 
 @runtime_checkable
+class ReviewInputProtocol(Protocol):
+    """Protocol for review input data.
+
+    Matches the shape of review_runner.ReviewInput for structural typing.
+    """
+
+    issue_id: str
+    repo_path: Path
+    commit_shas: list[str]
+    issue_description: str | None
+    claude_session_id: str | None
+
+
+@runtime_checkable
+class ReviewOutputProtocol(Protocol):
+    """Protocol for review output data.
+
+    Matches the shape of review_runner.ReviewOutput for structural typing.
+    """
+
+    result: ReviewResultProtocol
+    session_log_path: str | None
+    interrupted: bool
+
+
+@runtime_checkable
+class ReviewRunnerProtocol(Protocol):
+    """Protocol for review runner operations.
+
+    Provides an interface for running code reviews on commits. This allows
+    modules to depend on the protocol rather than the concrete ReviewRunner
+    implementation, avoiding circular imports in the pipeline layer.
+
+    The canonical implementation is ReviewRunner in src/pipeline/review_runner.py.
+    """
+
+    async def run_review(
+        self,
+        input: ReviewInputProtocol,
+        interrupt_event: asyncio.Event | None = None,
+    ) -> ReviewOutputProtocol:
+        """Run code review on the given input.
+
+        Args:
+            input: ReviewInput with commit_sha, issue_description, etc.
+            interrupt_event: Optional event to check for SIGINT interruption.
+
+        Returns:
+            ReviewOutput with result and optional session log path.
+        """
+        ...
+
+
+@runtime_checkable
 class EpicVerifierProtocol(Protocol):
     """Protocol for epic verification to avoid importing concrete EpicVerifier.
 

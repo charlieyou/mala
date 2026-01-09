@@ -25,11 +25,10 @@ if TYPE_CHECKING:
     import asyncio
     from pathlib import Path
 
-    from src.core.protocols import IssueProvider
+    from src.core.protocols import IssueProvider, ReviewRunnerProtocol
     from src.domain.validation.config import CodeReviewConfig, TriggerType
     from src.infra.git_utils import DiffStat, GitUtils
     from src.infra.io.log_output.run_metadata import RunMetadata
-    from src.pipeline.review_runner import ReviewRunner
 
 
 logger = logging.getLogger(__name__)
@@ -124,7 +123,7 @@ class CumulativeReviewRunner:
 
     def __init__(
         self,
-        review_runner: ReviewRunner,
+        review_runner: ReviewRunnerProtocol,
         git_utils: GitUtils,
         beads_client: IssueProvider,
         logger: logging.Logger,
@@ -132,7 +131,7 @@ class CumulativeReviewRunner:
         """Initialize CumulativeReviewRunner.
 
         Args:
-            review_runner: ReviewRunner for executing code reviews.
+            review_runner: ReviewRunnerProtocol for executing code reviews.
             git_utils: Git operations provider for diff generation.
             beads_client: IssueProvider for beads issue operations.
             logger: Logger instance for this runner.
