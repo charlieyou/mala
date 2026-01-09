@@ -1106,8 +1106,8 @@ class MalaOrchestrator:
         if self.abort_run:
             return
 
-        # Skip if no successful issues
-        if success_count == 0:
+        # Skip if no issues were processed
+        if total_count == 0:
             return
 
         # Check if run_end trigger is configured
