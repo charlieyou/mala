@@ -25,6 +25,7 @@ from src.infra.io.log_output.run_metadata import (
     ValidationResult,
     cleanup_debug_logging,
     configure_debug_logging,
+    extract_session_from_run,
     get_running_instances,
     get_running_instances_for_dir,
     lookup_prior_session,
@@ -124,6 +125,33 @@ class TestIssueRun:
         )
         assert issue.resolution is not None
         assert issue.resolution.outcome == ResolutionOutcome.NO_CHANGE
+
+    def test_issue_run_with_last_review_issues(self) -> None:
+        """Test IssueRun with last_review_issues field."""
+        review_issues = [
+            {"issue": "Missing test coverage", "severity": "warning"},
+            {"issue": "Consider adding docstring", "severity": "info"},
+        ]
+        issue = IssueRun(
+            issue_id="test-4",
+            agent_id="agent-review",
+            status="success",
+            duration_seconds=45.0,
+            last_review_issues=review_issues,
+        )
+        assert issue.last_review_issues is not None
+        assert len(issue.last_review_issues) == 2
+        assert issue.last_review_issues[0]["issue"] == "Missing test coverage"
+
+    def test_issue_run_without_last_review_issues_defaults_to_none(self) -> None:
+        """Test IssueRun without last_review_issues has None default."""
+        issue = IssueRun(
+            issue_id="test-5",
+            agent_id="agent-no-review",
+            status="success",
+            duration_seconds=20.0,
+        )
+        assert issue.last_review_issues is None
 
 
 class TestRunMetadata:
@@ -1556,3 +1584,212 @@ class TestParseTimestamp:
         """Test that None input returns 0.0 (via TypeError)."""
         # The function catches TypeError for this case
         assert parse_timestamp(None) == 0.0  # type: ignore[arg-type]
+
+
+class TestExtractSessionFromRun:
+    """Test extract_session_from_run function for SessionInfo extraction."""
+
+    def test_extracts_last_review_issues(self) -> None:
+        """Test that last_review_issues is extracted into SessionInfo."""
+        review_issues = [
+            {"issue": "Missing error handling", "severity": "error"},
+            {"issue": "Add docstring", "severity": "info"},
+        ]
+        data = {
+            "run_id": "run-123",
+            "started_at": "2024-01-15T10:00:00Z",
+            "issues": {
+                "issue-abc": {
+                    "session_id": "session-xyz",
+                    "status": "success",
+                    "last_review_issues": review_issues,
+                }
+            },
+        }
+        path = Path("/tmp/run.json")
+
+        result = extract_session_from_run(data, path, "issue-abc")
+
+        assert result is not None
+        assert result.last_review_issues is not None
+        assert len(result.last_review_issues) == 2
+        assert result.last_review_issues[0]["issue"] == "Missing error handling"
+
+    def test_old_format_without_last_review_issues_returns_none(self) -> None:
+        """Test backward compat: old format without field returns None."""
+        data = {
+            "run_id": "run-old",
+            "started_at": "2024-01-01T10:00:00Z",
+            "issues": {
+                "issue-legacy": {
+                    "session_id": "session-old",
+                    "status": "done",
+                    # No last_review_issues field
+                }
+            },
+        }
+        path = Path("/tmp/old_run.json")
+
+        result = extract_session_from_run(data, path, "issue-legacy")
+
+        assert result is not None
+        assert result.session_id == "session-old"
+        assert result.last_review_issues is None
+
+    def test_handles_invalid_last_review_issues_type(self) -> None:
+        """Test that non-list last_review_issues is treated as None."""
+        data = {
+            "run_id": "run-invalid",
+            "started_at": "2024-01-01T10:00:00Z",
+            "issues": {
+                "issue-bad": {
+                    "session_id": "session-bad",
+                    "last_review_issues": "not a list",  # Invalid type
+                }
+            },
+        }
+        path = Path("/tmp/invalid_run.json")
+
+        result = extract_session_from_run(data, path, "issue-bad")
+
+        assert result is not None
+        assert result.last_review_issues is None
+
+    def test_handles_null_last_review_issues(self) -> None:
+        """Test that null last_review_issues is handled correctly."""
+        data = {
+            "run_id": "run-null",
+            "started_at": "2024-01-01T10:00:00Z",
+            "issues": {
+                "issue-null": {
+                    "session_id": "session-null",
+                    "last_review_issues": None,
+                }
+            },
+        }
+        path = Path("/tmp/null_run.json")
+
+        result = extract_session_from_run(data, path, "issue-null")
+
+        assert result is not None
+        assert result.last_review_issues is None
+
+    def test_forward_compat_extra_keys_ignored(self) -> None:
+        """Test forward compat: extra unknown keys don't crash."""
+        data = {
+            "run_id": "run-future",
+            "started_at": "2024-01-01T10:00:00Z",
+            "future_field": "unknown_value",  # Future field at run level
+            "issues": {
+                "issue-future": {
+                    "session_id": "session-future",
+                    "status": "success",
+                    "another_future_field": {
+                        "nested": "data"
+                    },  # Future field at issue level
+                    "last_review_issues": [{"issue": "Valid issue"}],
+                }
+            },
+        }
+        path = Path("/tmp/future_run.json")
+
+        result = extract_session_from_run(data, path, "issue-future")
+
+        assert result is not None
+        assert result.session_id == "session-future"
+        assert result.last_review_issues == [{"issue": "Valid issue"}]
+
+    def test_returns_none_for_missing_issue(self) -> None:
+        """Test that missing issue returns None."""
+        data = {
+            "run_id": "run-1",
+            "started_at": "2024-01-01T10:00:00Z",
+            "issues": {"other-issue": {"session_id": "session-1"}},
+        }
+        path = Path("/tmp/run.json")
+
+        result = extract_session_from_run(data, path, "nonexistent-issue")
+
+        assert result is None
+
+    def test_returns_none_for_invalid_issues_dict(self) -> None:
+        """Test that non-dict issues field returns None."""
+        data = {
+            "run_id": "run-1",
+            "started_at": "2024-01-01T10:00:00Z",
+            "issues": "not a dict",
+        }
+        path = Path("/tmp/run.json")
+
+        result = extract_session_from_run(data, path, "any-issue")
+
+        assert result is None
+
+
+class TestLookupPriorSessionInfoWithReviewIssues:
+    """Test lookup_prior_session_info includes last_review_issues."""
+
+    def test_lookup_info_includes_last_review_issues(self) -> None:
+        """Test that lookup_prior_session_info returns last_review_issues."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            runs_dir = repo_path / ".mala" / "runs"
+            runs_dir.mkdir(parents=True)
+
+            review_issues = [
+                {"issue": "Fix linting error", "line": 42},
+            ]
+            run_data = {
+                "run_id": "run-review",
+                "started_at": "2024-01-15T10:00:00Z",
+                "issues": {
+                    "issue-with-review": {
+                        "session_id": "session-reviewed",
+                        "last_review_issues": review_issues,
+                    }
+                },
+            }
+
+            (runs_dir / "2024-01-15T10-00-00_run.json").write_text(json.dumps(run_data))
+
+            with patch(
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                return_value=runs_dir,
+            ):
+                result = lookup_prior_session_info(repo_path, "issue-with-review")
+
+            assert result is not None
+            assert result.session_id == "session-reviewed"
+            assert result.last_review_issues is not None
+            assert len(result.last_review_issues) == 1
+            assert result.last_review_issues[0]["issue"] == "Fix linting error"
+
+    def test_lookup_info_without_review_issues_returns_none_field(self) -> None:
+        """Test lookup_prior_session_info without last_review_issues."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            runs_dir = repo_path / ".mala" / "runs"
+            runs_dir.mkdir(parents=True)
+
+            run_data = {
+                "run_id": "run-no-review",
+                "started_at": "2024-01-10T10:00:00Z",
+                "issues": {
+                    "issue-no-review": {
+                        "session_id": "session-no-review",
+                        # No last_review_issues
+                    }
+                },
+            }
+
+            (runs_dir / "2024-01-10T10-00-00_run.json").write_text(json.dumps(run_data))
+
+            with patch(
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                return_value=runs_dir,
+            ):
+                result = lookup_prior_session_info(repo_path, "issue-no-review")
+
+            assert result is not None
+            assert result.session_id == "session-no-review"
+            assert result.last_review_issues is None
