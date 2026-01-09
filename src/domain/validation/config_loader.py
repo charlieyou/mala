@@ -24,7 +24,6 @@ from src.domain.validation.config import (
     FailureMode,
     FireOn,
     PeriodicTriggerConfig,
-    RunEndTriggerConfig,
     SessionEndTriggerConfig,
     TriggerCommandRef,
     ValidationConfig,
@@ -34,7 +33,7 @@ from src.domain.validation.config import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.domain.validation.config import CodeReviewConfig
+    from src.domain.validation.config import CodeReviewConfig, RunEndTriggerConfig
 
 
 class ConfigMissingError(ConfigError):
@@ -560,6 +559,11 @@ def _parse_run_end_trigger(data: dict[str, Any]) -> RunEndTriggerConfig:
     Raises:
         ConfigError: If required fields missing, invalid, or unknown fields present.
     """
+    # Import here to avoid circular import at module level
+    from src.domain.validation.config import (
+        RunEndTriggerConfig as RunEndTriggerConfigClass,
+    )
+
     trigger_name = "run_end"
 
     # Validate unknown fields
@@ -597,7 +601,7 @@ def _parse_run_end_trigger(data: dict[str, Any]) -> RunEndTriggerConfig:
         if code_review_data is not None:
             code_review = _parse_code_review_config(code_review_data)
 
-    return RunEndTriggerConfig(
+    return RunEndTriggerConfigClass(
         failure_mode=failure_mode,
         commands=commands,
         max_retries=max_retries,
