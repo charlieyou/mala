@@ -2,7 +2,7 @@
 
 Tests for:
 - --reviewer-type CLI flag deprecation warning
-- Legacy top-level reviewer_type config deprecation warning
+- Legacy top-level reviewer_type config deprecation warning (in factory)
 - Config takes precedence over CLI
 """
 
@@ -16,9 +16,11 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     import pytest
 
-from src.cli.cli import (
-    _check_cli_reviewer_type_deprecation,
+from src.cli.cli import _check_cli_reviewer_type_deprecation
+from src.orchestration.factory import (
     _check_legacy_review_config,
+    _extract_reviewer_config,
+    _has_new_code_review_config,
 )
 
 
@@ -85,8 +87,56 @@ class MockValidationConfig:
     """Mock validation config for testing."""
 
     reviewer_type: Literal["agent_sdk", "cerberus"] = "agent_sdk"
+    agent_sdk_review_timeout: int = 600
+    agent_sdk_reviewer_model: Literal["sonnet", "opus", "haiku"] = "sonnet"
     validation_triggers: MockTriggersConfig | None = None
     _fields_set: frozenset[str] = field(default_factory=frozenset)
+
+
+class TestHasNewCodeReviewConfig:
+    """Test _has_new_code_review_config helper."""
+
+    def test_returns_false_for_none(self) -> None:
+        """Returns False when config is None."""
+        assert _has_new_code_review_config(None) is False
+
+    def test_returns_false_when_no_triggers(self) -> None:
+        """Returns False when validation_triggers is None."""
+        config = MockValidationConfig(validation_triggers=None)
+        assert _has_new_code_review_config(config) is False
+
+    def test_returns_false_when_code_review_disabled(self) -> None:
+        """Returns False when code_review exists but is disabled."""
+        config = MockValidationConfig(
+            validation_triggers=MockTriggersConfig(
+                session_end=MockTriggerConfig(
+                    code_review=MockCodeReviewConfig(enabled=False)
+                )
+            )
+        )
+        assert _has_new_code_review_config(config) is False
+
+    def test_returns_true_when_code_review_enabled(self) -> None:
+        """Returns True when code_review is enabled in any trigger."""
+        config = MockValidationConfig(
+            validation_triggers=MockTriggersConfig(
+                session_end=MockTriggerConfig(
+                    code_review=MockCodeReviewConfig(enabled=True)
+                )
+            )
+        )
+        assert _has_new_code_review_config(config) is True
+
+    def test_returns_true_for_epic_completion_trigger(self) -> None:
+        """Returns True when code_review enabled in epic_completion."""
+        config = MockValidationConfig(
+            validation_triggers=MockTriggersConfig(
+                epic_completion=MockTriggerConfig(
+                    code_review=MockCodeReviewConfig(enabled=True)
+                )
+            )
+        )
+        assert _has_new_code_review_config(config) is True
 
 
 class TestLegacyReviewConfigDeprecation:
@@ -96,9 +146,8 @@ class TestLegacyReviewConfigDeprecation:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """No warning when config is None."""
-        logger = logging.getLogger("test")
         with caplog.at_level(logging.WARNING):
-            _check_legacy_review_config(None, logger=logger)
+            _check_legacy_review_config(None)
 
         assert "DEPRECATION" not in caplog.text
 
@@ -110,9 +159,8 @@ class TestLegacyReviewConfigDeprecation:
             reviewer_type="agent_sdk",
             _fields_set=frozenset(),  # reviewer_type not in fields_set
         )
-        logger = logging.getLogger("test")
         with caplog.at_level(logging.WARNING):
-            _check_legacy_review_config(config, logger=logger)
+            _check_legacy_review_config(config)
 
         assert "DEPRECATION" not in caplog.text
 
@@ -125,9 +173,8 @@ class TestLegacyReviewConfigDeprecation:
             _fields_set=frozenset({"reviewer_type"}),
             validation_triggers=None,
         )
-        logger = logging.getLogger("test")
         with caplog.at_level(logging.WARNING):
-            _check_legacy_review_config(config, logger=logger)
+            _check_legacy_review_config(config)
 
         assert "DEPRECATION" in caplog.text
         assert "reviewer_type" in caplog.text
@@ -146,9 +193,8 @@ class TestLegacyReviewConfigDeprecation:
                 )
             ),
         )
-        logger = logging.getLogger("test")
         with caplog.at_level(logging.WARNING):
-            _check_legacy_review_config(config, logger=logger)
+            _check_legacy_review_config(config)
 
         assert "DEPRECATION" not in caplog.text
 
@@ -165,9 +211,8 @@ class TestLegacyReviewConfigDeprecation:
                 )
             ),
         )
-        logger = logging.getLogger("test")
         with caplog.at_level(logging.WARNING):
-            _check_legacy_review_config(config, logger=logger)
+            _check_legacy_review_config(config)
 
         assert "DEPRECATION" in caplog.text
 
@@ -184,9 +229,8 @@ class TestLegacyReviewConfigDeprecation:
                 )
             ),
         )
-        logger = logging.getLogger("test")
         with caplog.at_level(logging.WARNING):
-            _check_legacy_review_config(config, logger=logger)
+            _check_legacy_review_config(config)
 
         assert "DEPRECATION" not in caplog.text
 
@@ -201,21 +245,59 @@ class TestLegacyReviewConfigDeprecation:
                 session_end=MockTriggerConfig(code_review=None)
             ),
         )
-        logger = logging.getLogger("test")
         with caplog.at_level(logging.WARNING):
-            _check_legacy_review_config(config, logger=logger)
+            _check_legacy_review_config(config)
 
         assert "DEPRECATION" in caplog.text
 
 
-class TestConfigPrecedence:
-    """Test that config takes precedence over CLI for reviewer settings.
+class TestExtractReviewerConfigPrecedence:
+    """Test reviewer_type precedence in _extract_reviewer_config."""
 
-    Note: The actual precedence is enforced in the factory via _extract_reviewer_config
-    which reads from ValidationConfig. The CLI flag is deprecated and only emits
-    a warning - it doesn't actually override anything since it's not wired to
-    any logic. These tests document the expected behavior.
-    """
+    def test_cli_override_used_when_no_new_config(self) -> None:
+        """CLI --reviewer-type is used when no new code_review config exists."""
+        config = MockValidationConfig(
+            reviewer_type="agent_sdk",  # Legacy config value
+            validation_triggers=None,
+        )
+        result = _extract_reviewer_config(config, cli_reviewer_type="cerberus")
+        assert result.reviewer_type == "cerberus"
+
+    def test_config_used_when_new_code_review_present(self) -> None:
+        """Config reviewer_type used when new code_review config exists."""
+        config = MockValidationConfig(
+            reviewer_type="agent_sdk",
+            validation_triggers=MockTriggersConfig(
+                session_end=MockTriggerConfig(
+                    code_review=MockCodeReviewConfig(enabled=True)
+                )
+            ),
+        )
+        # CLI override should be ignored when new config exists
+        result = _extract_reviewer_config(config, cli_reviewer_type="cerberus")
+        assert result.reviewer_type == "agent_sdk"
+
+    def test_legacy_config_used_when_no_cli_override(self) -> None:
+        """Legacy config reviewer_type used when no CLI override."""
+        config = MockValidationConfig(
+            reviewer_type="cerberus",
+            validation_triggers=None,
+        )
+        result = _extract_reviewer_config(config, cli_reviewer_type=None)
+        assert result.reviewer_type == "cerberus"
+
+    def test_default_used_when_nothing_set(self) -> None:
+        """Default reviewer_type used when nothing is set."""
+        config = MockValidationConfig(
+            reviewer_type="agent_sdk",  # Default
+            validation_triggers=None,
+        )
+        result = _extract_reviewer_config(config, cli_reviewer_type=None)
+        assert result.reviewer_type == "agent_sdk"
+
+
+class TestConfigPrecedence:
+    """Test that config takes precedence over CLI for reviewer settings."""
 
     def test_cli_flag_is_hidden_and_deprecated(self) -> None:
         """CLI --reviewer-type flag should be hidden and emit deprecation warning."""
@@ -225,3 +307,26 @@ class TestConfigPrecedence:
 
             assert len(w) == 1
             assert "deprecated" in str(w[0].message).lower()
+
+    def test_new_config_takes_precedence_over_cli(self) -> None:
+        """New code_review config takes precedence over CLI --reviewer-type."""
+        config = MockValidationConfig(
+            reviewer_type="agent_sdk",
+            validation_triggers=MockTriggersConfig(
+                session_end=MockTriggerConfig(
+                    code_review=MockCodeReviewConfig(enabled=True)
+                )
+            ),
+        )
+        # Even with CLI override, new config wins
+        result = _extract_reviewer_config(config, cli_reviewer_type="cerberus")
+        assert result.reviewer_type == "agent_sdk"
+
+    def test_cli_takes_precedence_over_legacy_config(self) -> None:
+        """CLI --reviewer-type takes precedence over legacy top-level config."""
+        config = MockValidationConfig(
+            reviewer_type="agent_sdk",  # Legacy value
+            validation_triggers=None,  # No new config
+        )
+        result = _extract_reviewer_config(config, cli_reviewer_type="cerberus")
+        assert result.reviewer_type == "cerberus"
