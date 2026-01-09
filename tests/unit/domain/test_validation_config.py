@@ -2134,6 +2134,7 @@ class TestValidationTriggersConfigParsing:
         assert result.epic_completion is None
         assert result.session_end is None
         assert result.periodic is None
+        assert result.run_end is None
 
     def test_parse_all_triggers_with_all_fields(self) -> None:
         """All trigger types parse correctly with all fields."""
@@ -2155,6 +2156,11 @@ class TestValidationTriggersConfigParsing:
                 "interval": 10,
                 "failure_mode": "abort",
                 "commands": [],
+            },
+            "run_end": {
+                "fire_on": "failure",
+                "failure_mode": "continue",
+                "commands": [{"ref": "cleanup"}],
             },
         }
 
@@ -2181,6 +2187,13 @@ class TestValidationTriggersConfigParsing:
         assert result.periodic.interval == 10
         assert result.periodic.failure_mode == FailureMode.ABORT
         assert result.periodic.commands == ()
+
+        # run_end
+        assert result.run_end is not None
+        assert result.run_end.fire_on == FireOn.FAILURE
+        assert result.run_end.failure_mode == FailureMode.CONTINUE
+        assert len(result.run_end.commands) == 1
+        assert result.run_end.commands[0].ref == "cleanup"
 
     def test_parse_enum_failure_mode_values(self) -> None:
         """All FailureMode enum values parse correctly."""
@@ -2388,6 +2401,83 @@ class TestValidationTriggersConfigParsing:
 
         with pytest.raises(ConfigError, match="interval required for trigger periodic"):
             _parse_validation_triggers(data)
+
+    def test_parse_run_end_trigger_defaults(self) -> None:
+        """run_end trigger uses default fire_on=success when not specified."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "run_end": {
+                "failure_mode": "continue",
+                "commands": [],
+            }
+        }
+
+        result = _parse_validation_triggers(data)
+        assert result is not None
+        assert result.run_end is not None
+        assert result.run_end.fire_on == FireOn.SUCCESS
+        assert result.run_end.failure_mode == FailureMode.CONTINUE
+
+    def test_parse_run_end_trigger_with_fire_on(self) -> None:
+        """run_end trigger parses fire_on field."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        for fire_on, expected in [
+            ("success", FireOn.SUCCESS),
+            ("failure", FireOn.FAILURE),
+            ("both", FireOn.BOTH),
+        ]:
+            data = {
+                "run_end": {
+                    "fire_on": fire_on,
+                    "failure_mode": "abort",
+                    "commands": [],
+                }
+            }
+
+            result = _parse_validation_triggers(data)
+            assert result is not None
+            assert result.run_end is not None
+            assert result.run_end.fire_on == expected
+
+    def test_parse_run_end_trigger_invalid_fire_on(self) -> None:
+        """run_end trigger rejects invalid fire_on value."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "run_end": {
+                "fire_on": "invalid",
+                "failure_mode": "continue",
+                "commands": [],
+            }
+        }
+
+        with pytest.raises(ConfigError, match="Invalid fire_on 'invalid'"):
+            _parse_validation_triggers(data)
+
+    def test_parse_run_end_trigger_with_code_review(self) -> None:
+        """run_end trigger parses code_review block."""
+        from src.domain.validation.config_loader import _parse_validation_triggers
+
+        data = {
+            "run_end": {
+                "fire_on": "success",
+                "failure_mode": "continue",
+                "commands": [],
+                "code_review": {
+                    "enabled": True,
+                    "baseline": "since_run_start",
+                },
+            }
+        }
+
+        result = _parse_validation_triggers(data)
+        assert result is not None
+        assert result.run_end is not None
+        assert result.run_end.code_review is not None
+        assert result.run_end.code_review.enabled is True
+        assert result.run_end.code_review.baseline == "since_run_start"
 
     def test_parse_invalid_failure_mode_raises_error(self) -> None:
         """Invalid failure_mode string raises ConfigError."""

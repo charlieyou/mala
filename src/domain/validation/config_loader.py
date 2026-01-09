@@ -24,6 +24,7 @@ from src.domain.validation.config import (
     FailureMode,
     FireOn,
     PeriodicTriggerConfig,
+    RunEndTriggerConfig,
     SessionEndTriggerConfig,
     TriggerCommandRef,
     ValidationConfig,
@@ -830,7 +831,75 @@ def _parse_periodic_trigger(data: dict[str, Any]) -> PeriodicTriggerConfig:
     )
 
 
-_VALIDATION_TRIGGERS_FIELDS = frozenset({"epic_completion", "session_end", "periodic"})
+_RUN_END_FIELDS = frozenset(
+    {"failure_mode", "max_retries", "commands", "fire_on", "code_review"}
+)
+
+
+def _parse_run_end_trigger(data: dict[str, Any]) -> RunEndTriggerConfig:
+    """Parse run_end trigger config.
+
+    Args:
+        data: The run_end config dict.
+
+    Returns:
+        RunEndTriggerConfig instance.
+
+    Raises:
+        ConfigError: If required fields missing, invalid, or unknown fields present.
+    """
+    trigger_name = "run_end"
+
+    # Validate unknown fields
+    unknown = set(data.keys()) - _RUN_END_FIELDS
+    if unknown:
+        first = sorted(str(k) for k in unknown)[0]
+        raise ConfigError(f"Unknown field '{first}' in trigger {trigger_name}")
+
+    failure_mode = _parse_failure_mode(data, trigger_name)
+    max_retries = _parse_max_retries(data, trigger_name, failure_mode)
+    commands = _parse_commands_list(data, trigger_name)
+
+    # Parse fire_on (optional, default=SUCCESS)
+    fire_on = FireOn.SUCCESS
+    if "fire_on" in data:
+        fire_on_val = data["fire_on"]
+        if not isinstance(fire_on_val, str):
+            raise ConfigError(
+                f"fire_on must be a string for trigger {trigger_name}, "
+                f"got {type(fire_on_val).__name__}"
+            )
+        fire_on_map = {
+            "success": FireOn.SUCCESS,
+            "failure": FireOn.FAILURE,
+            "both": FireOn.BOTH,
+        }
+        if fire_on_val not in fire_on_map:
+            raise ConfigError(
+                f"Invalid fire_on '{fire_on_val}' for trigger {trigger_name}. "
+                f"Must be one of: success, failure, both"
+            )
+        fire_on = fire_on_map[fire_on_val]
+
+    # Parse code_review (optional)
+    code_review = None
+    if "code_review" in data:
+        code_review_data = data["code_review"]
+        if code_review_data is not None:
+            code_review = _parse_code_review_config(code_review_data, trigger_name)
+
+    return RunEndTriggerConfig(
+        failure_mode=failure_mode,
+        commands=commands,
+        max_retries=max_retries,
+        fire_on=fire_on,
+        code_review=code_review,
+    )
+
+
+_VALIDATION_TRIGGERS_FIELDS = frozenset(
+    {"epic_completion", "session_end", "periodic", "run_end"}
+)
 
 
 def _parse_validation_triggers(
@@ -892,10 +961,21 @@ def _parse_validation_triggers(
                 )
             periodic = _parse_periodic_trigger(periodic_data)
 
+    run_end = None
+    if "run_end" in data:
+        run_end_data = data["run_end"]
+        if run_end_data is not None:
+            if not isinstance(run_end_data, dict):
+                raise ConfigError(
+                    f"run_end must be an object, got {type(run_end_data).__name__}"
+                )
+            run_end = _parse_run_end_trigger(run_end_data)
+
     return ValidationTriggersConfig(
         epic_completion=epic_completion,
         session_end=session_end,
         periodic=periodic,
+        run_end=run_end,
     )
 
 

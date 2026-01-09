@@ -140,6 +140,32 @@ validation_triggers:
       - ref: typecheck
 ```
 
+### run_end
+
+Fires when the entire mala run completes (after all issues and session_end).
+
+| Field | Required | Values | Description |
+|-------|----------|--------|-------------|
+| `fire_on` | No | `success`, `failure`, `both` | When to fire (default: `success`) |
+| `failure_mode` | Yes | `abort`, `continue`, `remediate` | How to handle validation failures |
+| `max_retries` | When remediate | Integer | Retry attempts for remediation |
+| `commands` | No | List | Commands to run (empty = no validation) |
+
+**fire_on values:**
+- `success`: Fire only when all issues succeeded
+- `failure`: Fire only when any issue failed
+- `both`: Fire regardless of issue results
+
+```yaml
+validation_triggers:
+  run_end:
+    fire_on: success
+    failure_mode: continue
+    commands:
+      - ref: test
+      - ref: lint
+```
+
 ## Failure Modes
 
 Each trigger must specify a `failure_mode`:
@@ -273,6 +299,95 @@ Multiple triggers queue and execute sequentially. No parallel validation runs.
 ### Blocking
 
 Global trigger validation **blocks new issue assignments** to prevent workspace conflicts. Active agents continue running, but no new issues start until validation completes.
+
+## Code Review
+
+Each trigger can optionally include a `code_review` block to run automated code reviews after validation commands pass.
+
+### Configuration
+
+| Field | Required | Values | Default | Description |
+|-------|----------|--------|---------|-------------|
+| `enabled` | No | Boolean | `false` | Whether to run code review |
+| `reviewer_type` | No | `cerberus`, `agent_sdk` | `cerberus` | Which reviewer to use |
+| `failure_mode` | No | `abort`, `continue`, `remediate` | `continue` | How to handle review failures |
+| `max_retries` | No | Integer | `3` | Retry attempts for remediation |
+| `finding_threshold` | No | `P0`, `P1`, `P2`, `P3`, `none` | `none` | Minimum severity to report |
+| `baseline` | When cumulative | `since_run_start`, `since_last_review` | - | What code to include |
+| `cerberus` | No | Object | - | Cerberus-specific settings |
+
+### Per-Issue Code Review (session_end)
+
+Reviews code changes from each completed issue:
+
+```yaml
+validation_triggers:
+  session_end:
+    failure_mode: continue
+    commands:
+      - ref: lint
+      - ref: test
+    code_review:
+      enabled: true
+      reviewer_type: cerberus
+      failure_mode: continue
+      finding_threshold: P1
+```
+
+### Cumulative Code Review (epic_completion, run_end)
+
+Reviews accumulated changes since a baseline. Requires the `baseline` field:
+
+- `since_run_start`: Review all changes since the run began
+- `since_last_review`: Review changes since the last successful review at this trigger point
+
+```yaml
+validation_triggers:
+  epic_completion:
+    epic_depth: top_level
+    fire_on: success
+    failure_mode: continue
+    commands:
+      - ref: lint
+    code_review:
+      enabled: true
+      reviewer_type: cerberus
+      failure_mode: continue
+      baseline: since_run_start
+      finding_threshold: P1
+
+  run_end:
+    fire_on: success
+    failure_mode: continue
+    commands:
+      - ref: test
+    code_review:
+      enabled: true
+      baseline: since_last_review
+      finding_threshold: P0
+```
+
+### Cerberus-Specific Settings
+
+When using `reviewer_type: cerberus`, additional settings are available:
+
+```yaml
+code_review:
+  enabled: true
+  reviewer_type: cerberus
+  cerberus:
+    timeout: 300
+    spawn_args: ["--verbose"]
+    wait_args: []
+    env: [["API_KEY", "xxx"]]
+```
+
+| Field | Description |
+|-------|-------------|
+| `timeout` | Review timeout in seconds (default: 300) |
+| `spawn_args` | Additional arguments when spawning reviewer |
+| `wait_args` | Additional arguments when waiting for results |
+| `env` | Environment variables as key-value pairs |
 
 ## Migration Guide
 
