@@ -1596,7 +1596,7 @@ class TestBaseTriggerConfigCodeReview:
             code_review=review_config,
         )
         assert config.code_review == review_config
-        assert config.code_review.enabled is True
+        assert review_config.enabled is True
 
 
 class TestValidationTriggersConfig:
