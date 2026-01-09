@@ -16,7 +16,6 @@ from src.domain.validation.e2e import (
     E2EResult,
     E2ERunner,
     E2EStatus,
-    _resolve_repo_root,
     _commands_use_uv,
     _config_prefers_uv,
     _select_python_invoker,
@@ -687,16 +686,6 @@ class TestE2EInvokerSelection:
 
         invoker = _select_python_invoker(tmp_path)
         assert invoker == [sys.executable]
-
-
-class TestResolveRepoRoot:
-    def test_prefers_cwd_repo_root(self, tmp_path: Path) -> None:
-        repo_root = tmp_path / "repo"
-        (repo_root / "src" / "cli").mkdir(parents=True)
-        (repo_root / "src" / "cli" / "main.py").write_text("# ok\n")
-        cwd = repo_root / "subdir"
-        cwd.mkdir()
-        assert _resolve_repo_root(cwd) == repo_root
 
 
 class TestCheckE2EPrereqsLegacy:

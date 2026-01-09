@@ -405,13 +405,10 @@ def _config_prefers_uv(repo_root: Path) -> bool:
 def _resolve_repo_root(cwd: Path) -> Path:
     """Resolve the repo root for running E2E.
 
-    Prefer the worktree root (cwd) when it appears to be a mala repo; otherwise
-    fall back to the installed package root.
+    The E2E runner expects to be invoked with cwd set to the repo/worktree root,
+    so treat the working directory as the repo root.
     """
-    for candidate in (cwd, *cwd.parents):
-        if (candidate / "src" / "cli" / "main.py").exists():
-            return candidate
-    return Path(__file__).resolve().parents[3]
+    return cwd
 
 
 def _commands_use_uv(commands: Iterable[str]) -> bool:
