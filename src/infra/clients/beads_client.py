@@ -605,7 +605,7 @@ class BeadsClient:
         return result.returncode == 0
 
     async def reopen_issue_async(self, issue_id: str) -> bool:
-        """Reopen an issue by setting status to ready.
+        """Reopen an issue by setting status to open.
 
         Used by deadlock resolution to reset victim issues so they can be
         picked up again after the blocker completes.
@@ -617,7 +617,7 @@ class BeadsClient:
             True if successfully reopened, False otherwise.
         """
         result = await self._run_subprocess_async(
-            ["bd", "update", issue_id, "--status", "ready"]
+            ["bd", "update", issue_id, "--status", "open"]
         )
         return result.returncode == 0
 
