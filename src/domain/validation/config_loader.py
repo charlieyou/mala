@@ -1022,9 +1022,10 @@ def _validate_trigger_command_refs(config: ValidationConfig) -> None:
         (TriggerType.RUN_END, triggers.run_end),
     ]
 
-    for trigger_type, trigger_config in trigger_configs:
-        if trigger_config is None:
+    for trigger_type, maybe_config in trigger_configs:
+        if maybe_config is None:
             continue
+        trigger_config: BaseTriggerConfig = maybe_config
         for cmd_ref in trigger_config.commands:
             if cmd_ref.ref not in base_pool:
                 available = ", ".join(sorted(base_pool)) if base_pool else "(none)"
