@@ -1067,10 +1067,23 @@ class MalaOrchestrator:
         Called early in run() to record the starting commit SHA for later
         diff calculations (cumulative code review, run_end trigger context).
 
-        Note: Skeleton implementation - T011 will implement fully.
+        Only raises NotImplementedError when run_end trigger is configured,
+        since that's when run_start_commit capture is needed.
+
+        Raises:
+            NotImplementedError: When run_end trigger is configured (T011 pending).
         """
+        # Check if run_end trigger is configured
+        triggers = (
+            self._validation_config.validation_triggers
+            if self._validation_config
+            else None
+        )
+        if triggers is None or triggers.run_end is None:
+            return
+
         # T011: Capture HEAD commit and store in run_metadata.run_start_commit
-        pass
+        raise NotImplementedError("run_start_commit capture not implemented")
 
     async def _fire_run_end_trigger(self, success_count: int, total_count: int) -> None:
         """Queue run_end trigger validation if configured.
@@ -1082,10 +1095,28 @@ class MalaOrchestrator:
             success_count: Number of successfully completed issues.
             total_count: Total number of issues processed.
 
-        Note: Skeleton implementation - T011 will implement fully.
+        Raises:
+            NotImplementedError: When run_end trigger is configured (T011 pending).
         """
-        # T011: Check if run_end trigger is configured and queue it
-        pass
+        # Skip if abort already requested
+        if self.abort_run:
+            return
+
+        # Skip if no successful issues
+        if success_count == 0:
+            return
+
+        # Check if run_end trigger is configured
+        triggers = (
+            self._validation_config.validation_triggers
+            if self._validation_config
+            else None
+        )
+        if triggers is None or triggers.run_end is None:
+            return
+
+        # T011: Queue RUN_END trigger validation
+        raise NotImplementedError("run_end trigger not implemented")
 
     async def _fire_session_end_trigger(self) -> None:
         """Queue session_end trigger validation if configured.
