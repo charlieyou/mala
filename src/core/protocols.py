@@ -934,6 +934,7 @@ class ReviewInputProtocol(Protocol):
     issue_description: str | None
     claude_session_id: str | None
     author_context: str | None
+    previous_findings: Sequence[ReviewIssueProtocol] | None
     diff_content: str | None
 
 

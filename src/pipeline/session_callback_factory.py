@@ -21,12 +21,13 @@ from src.pipeline.agent_session_runner import SessionCallbacks
 
 if TYPE_CHECKING:
     import asyncio
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from src.core.protocols import (
         LogProvider,
         MalaEventSink,
+        ReviewIssueProtocol,
     )
     from src.domain.lifecycle import (
         GateOutcome,
@@ -169,6 +170,7 @@ class SessionCallbackFactory:
             session_id: str | None,
             _retry_state: RetryState,  # unused after removing timestamp filtering
             author_context: str | None,
+            previous_findings: Sequence[ReviewIssueProtocol] | None,
         ) -> ReviewOutcome:
             self._review_runner.config.capture_session_log = self._is_verbose()
             commit_shas = await get_issue_commits_async(
@@ -182,6 +184,7 @@ class SessionCallbackFactory:
                 commit_shas=commit_shas,
                 claude_session_id=session_id,
                 author_context=author_context,
+                previous_findings=previous_findings,
             )
             output = await self._review_runner.run_review(
                 review_input, self._get_interrupt_event()

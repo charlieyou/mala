@@ -25,7 +25,10 @@ from enum import Enum
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
+
+    from src.core.protocols import ReviewIssueProtocol
 
 
 class OrderPreference(Enum):
@@ -264,6 +267,9 @@ class ReviewInput:
         commit_shas: List of commit SHAs to review directly.
         claude_session_id: Optional Claude session ID for external review context.
         author_context: Optional author-provided context for the reviewer.
+        previous_findings: Optional list of issues from the previous review attempt.
+            When provided, these are included in the context so the reviewer can
+            see what was disputed and verify claims before re-flagging.
         diff_content: Optional pre-computed diff content for cumulative reviews.
             When provided, the reviewer should use this diff instead of computing
             it from commit_shas. This supports cumulative review workflows where
@@ -276,4 +282,5 @@ class ReviewInput:
     issue_description: str | None = None
     claude_session_id: str | None = None
     author_context: str | None = None
+    previous_findings: Sequence[ReviewIssueProtocol] | None = None
     diff_content: str | None = None

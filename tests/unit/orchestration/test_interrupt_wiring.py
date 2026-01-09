@@ -456,6 +456,7 @@ class TestInterruptWiring:
                 "session-123",
                 RetryState(),
                 "author context",
+                None,  # previous_findings
             )
 
         # Verify interrupt_event was passed

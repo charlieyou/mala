@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from src.infra.sigint_guard import InterruptGuard
+from src.pipeline.review_formatter import format_review_issues
 
 logger = logging.getLogger(__name__)
 
@@ -209,13 +210,24 @@ class ReviewRunner:
             len(input.commit_shas),
         )
 
-        # Create context file if issue_description or author_context provided
+        # Create context file if issue_description, previous_findings, or author_context provided
         # Use NamedTemporaryFile to avoid permission issues on shared systems
         context_file: Path | None = None
         temp_file = None
         context_parts: list[str] = []
         if input.issue_description:
             context_parts.append(input.issue_description)
+        # Include previous findings so reviewer knows what was flagged before
+        if input.previous_findings:
+            formatted_findings = format_review_issues(
+                input.previous_findings, base_path=input.repo_path
+            )
+            context_parts.append(
+                "## Previous Review Findings (for context)\n\n"
+                "These issues were flagged in the previous review attempt. "
+                "The implementer may have addressed them or disputed them below.\n\n"
+                f"{formatted_findings}"
+            )
         if input.author_context:
             context_parts.append(
                 "## Implementer's Response to Previous Review Findings\n\n"

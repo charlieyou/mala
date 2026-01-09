@@ -22,7 +22,7 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
@@ -120,7 +120,14 @@ GateCheckCallback = Callable[
     Coroutine[Any, Any, tuple["GateOutcome", int]],
 ]
 ReviewCheckCallback = Callable[
-    [str, str | None, str | None, "RetryState", str | None],
+    [
+        str,
+        str | None,
+        str | None,
+        "RetryState",
+        str | None,
+        Sequence["ReviewIssueProtocol"] | None,
+    ],
     Coroutine[Any, Any, "ReviewOutcome"],
 ]
 ReviewNoProgressCallback = Callable[
@@ -657,14 +664,22 @@ class AgentSessionRunner:
                 )
                 review_start = time.time()
                 author_context = None
+                previous_findings: Sequence[ReviewIssueProtocol] | None = None
                 if lifecycle_ctx.retry_state.review_attempt > 1:
                     author_context = lifecycle_ctx.final_result or None
+                    # Pass previous findings so reviewer knows what was disputed
+                    if lifecycle_ctx.last_review_result is not None:
+                        previous_findings = cast(
+                            "Sequence[ReviewIssueProtocol]",
+                            lifecycle_ctx.last_review_result.issues,
+                        )
                 review_result = await self.callbacks.on_review_check(
                     input.issue_id,
                     input.issue_description,
                     lifecycle_ctx.session_id,
                     lifecycle_ctx.retry_state,
                     author_context,
+                    previous_findings,
                 )
                 review_duration = time.time() - review_start
                 issue_count = len(review_result.issues) if review_result.issues else 0
