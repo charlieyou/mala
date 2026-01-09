@@ -171,7 +171,10 @@ class AgentSDKReviewer:
         context = await self._load_context(context_file)
 
         # Create review query
-        query = self._create_review_query(context, commit_shas, author_context)
+        # author_context is already included in context (from context_file)
+        # with prominent formatting by review_runner.py
+        _ = author_context
+        query = self._create_review_query(context, commit_shas)
 
         # Run agent session
         try:
@@ -251,16 +254,16 @@ class AgentSDKReviewer:
         self,
         context: str,
         commit_shas: Sequence[str] | None,
-        author_context: str | None,
     ) -> str:
         """Construct review query for agent.
 
-        Combines review instructions, commit list, context, and tool usage guidance.
+        Combines review instructions, commit list, and context.
+        Note: author_context is already included in context by review_runner.py.
 
         Args:
-            context: Context from context file.
+            context: Context from context file (includes issue description and
+                author's response to previous review findings).
             commit_shas: Optional specific commit SHAs.
-            author_context: Optional author-provided review context.
 
         Returns:
             Formatted query string for the agent.
@@ -281,10 +284,9 @@ class AgentSDKReviewer:
             parts.append(f"\n\n## Specific Commits\n{', '.join(commit_shas)}")
 
         if context and not has_context_placeholder:
+            # Context file already contains issue description and author's response
+            # to previous review findings (formatted by review_runner.py)
             parts.append(f"\n\n## Implementation Context\n{context}")
-
-        if author_context:
-            parts.append(f"\n\n## Author Context\n{author_context}")
 
         # Output Format section is already in the prompt file (review_agent.md)
         # - Do not duplicate it here to avoid conflicting instructions

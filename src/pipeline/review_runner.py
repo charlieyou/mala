@@ -217,7 +217,13 @@ class ReviewRunner:
         if input.issue_description:
             context_parts.append(input.issue_description)
         if input.author_context:
-            context_parts.append(f"Author context:\n{input.author_context}")
+            context_parts.append(
+                "## Implementer's Response to Previous Review Findings\n\n"
+                "The implementer provided the following context about their changes. "
+                "Pay close attention to any claims about false positives or disputed findings - "
+                "verify these claims before re-flagging the same issues.\n\n"
+                f"{input.author_context}"
+            )
         context_text = "\n\n".join(context_parts).strip()
         if context_text:
             temp_file = tempfile.NamedTemporaryFile(

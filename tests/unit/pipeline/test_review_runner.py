@@ -533,7 +533,9 @@ class TestContextFileCleanup:
 
         assert captured_text is not None
         assert "Fix the bug" in captured_text
-        assert "Author context:" in captured_text
+        # Check for the new prominent header and guidance
+        assert "## Implementer's Response to Previous Review Findings" in captured_text
+        assert "false positives or disputed findings" in captured_text
         assert "This is a false positive because X." in captured_text
 
     @pytest.mark.asyncio

@@ -101,6 +101,8 @@ class DefaultReviewer:
         commit_shas: Sequence[str],
         interrupt_event: asyncio.Event | None = None,
     ) -> ReviewResult:
+        # author_context is already included in context_file by review_runner.py
+        # with prominent formatting to highlight implementer's response to previous findings
         _ = author_context
         cli = self._get_cli()
 
