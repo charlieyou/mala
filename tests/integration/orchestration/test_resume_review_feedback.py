@@ -268,6 +268,7 @@ def test_build_resume_prompt_returns_formatted_prompt(tmp_path: Path) -> None:
         issue_id="test-123",
         max_review_retries=3,
         repo_path=tmp_path,
+        prior_run_id="run-prior",
     )
 
     assert result is not None
@@ -304,6 +305,7 @@ def test_build_resume_prompt_returns_none_when_no_issues(tmp_path: Path) -> None
         issue_id="test-123",
         max_review_retries=3,
         repo_path=tmp_path,
+        prior_run_id="run-xyz",
     )
 
     assert result is None
@@ -495,6 +497,7 @@ async def test_resume_with_review_feedback_uses_review_followup_prompt(
             str,
             int,
             Path,
+            str,
         ]
     ] = []
     original_build_resume = _build_resume_prompt
@@ -506,6 +509,7 @@ async def test_resume_with_review_feedback_uses_review_followup_prompt(
         issue_id: str,
         max_review_retries: int,
         repo_path: Path,
+        prior_run_id: str,
     ) -> str | None:
         build_resume_prompt_calls.append(
             (
@@ -515,6 +519,7 @@ async def test_resume_with_review_feedback_uses_review_followup_prompt(
                 issue_id,
                 max_review_retries,
                 repo_path,
+                prior_run_id,
             )  # type: ignore[arg-type]
         )
         return original_build_resume(
@@ -524,6 +529,7 @@ async def test_resume_with_review_feedback_uses_review_followup_prompt(
             issue_id,
             max_review_retries,
             repo_path,
+            prior_run_id,
         )
 
     with patch.object(orch_module, "_build_resume_prompt", mock_build_resume):

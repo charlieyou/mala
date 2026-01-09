@@ -164,6 +164,7 @@ def _build_resume_prompt(
     issue_id: str,
     max_review_retries: int,
     repo_path: Path,
+    prior_run_id: str,
 ) -> str | None:
     """Build a resume prompt with review feedback.
 
@@ -174,6 +175,7 @@ def _build_resume_prompt(
         issue_id: The issue ID being implemented.
         max_review_retries: Maximum review retry attempts.
         repo_path: Repository path for path relativization.
+        prior_run_id: Run ID of the prior session for logging.
 
     Returns:
         Formatted review followup prompt, or None if no issues.
@@ -184,8 +186,9 @@ def _build_resume_prompt(
     issues = [StoredReviewIssue.from_dict(d) for d in review_issues]
 
     logger.info(
-        "Using review_followup for resume: %d issues from prior run",
+        "Using review_followup for resume: %d issues from prior run %s",
         len(issues),
+        prior_run_id,
     )
 
     review_issues_text = format_review_issues(issues, base_path=repo_path)
@@ -815,6 +818,7 @@ class MalaOrchestrator:
                         issue_id,
                         self.max_review_retries,
                         self.repo_path,
+                        prior_session.run_id,
                     )
                     if resume_prompt:
                         prompt = resume_prompt

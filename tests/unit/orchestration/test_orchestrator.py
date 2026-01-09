@@ -3524,6 +3524,7 @@ class TestBuildResumePrompt:
             issue_id="test-issue",
             max_review_retries=3,
             repo_path=tmp_path,
+            prior_run_id="run-123",
         )
 
         assert result is None
@@ -3578,6 +3579,7 @@ class TestBuildResumePrompt:
             issue_id="test-123",
             max_review_retries=3,
             repo_path=tmp_path,
+            prior_run_id="run-456",
         )
 
         assert result is not None
@@ -3618,6 +3620,7 @@ class TestBuildResumePrompt:
             issue_id="test-issue",
             max_review_retries=5,
             repo_path=tmp_path,
+            prior_run_id="run-789",
         )
 
         assert result == "Attempt 1/5"
@@ -3653,6 +3656,7 @@ class TestBuildResumePrompt:
             issue_id="test-issue",
             max_review_retries=3,
             repo_path=tmp_path,
+            prior_run_id="run-abc",
         )
 
         assert result is not None
