@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.domain.prompts import PromptProvider
+    from src.domain.validation.config import PromptValidationCommands
     from src.orchestration.orchestrator import MalaOrchestrator
 
 
@@ -230,28 +231,81 @@ def test_stored_review_issue_line_end_defaults_to_line_start() -> None:
     assert issue.line_end == 42
 
 
-# --- Stub behavior test (expected to fail until T005) ---
+# --- _build_resume_prompt behavior tests ---
 
 
-def test_build_resume_prompt_stub_returns_none() -> None:
-    """_build_resume_prompt stub returns None (T005 will implement)."""
+def test_build_resume_prompt_returns_formatted_prompt(tmp_path: Path) -> None:
+    """_build_resume_prompt returns formatted prompt when issues present."""
     from src.domain.prompts import PromptProvider
+    from src.domain.validation.config import PromptValidationCommands
 
     prompts = PromptProvider(
         implementer_prompt="impl",
-        review_followup_prompt="followup: {{ISSUES}}\n{{VALIDATION_COMMANDS}}",
+        review_followup_prompt=(
+            "Attempt {attempt}/{max_attempts}\n"
+            "Issues: {review_issues}\n"
+            "Issue ID: {issue_id}"
+        ),
         gate_followup_prompt="gate",
         fixer_prompt="fixer",
         idle_resume_prompt="idle",
         checkpoint_request_prompt="checkpoint",
         continuation_prompt="continuation",
     )
-    review_issues = [{"file": "a.py", "title": "Issue"}]
+    validation_commands = PromptValidationCommands(
+        lint="lint",
+        format="format",
+        typecheck="typecheck",
+        test="test",
+        custom_commands=(),
+    )
+    review_issues = [{"file": "a.py", "title": "Issue", "line_start": 1}]
 
-    result = _build_resume_prompt(review_issues, prompts, "# validation commands")
+    result = _build_resume_prompt(
+        review_issues,
+        prompts,
+        validation_commands,
+        issue_id="test-123",
+        max_review_retries=3,
+        repo_path=tmp_path,
+    )
 
-    # Stub returns None - this test documents current behavior
-    # T005 will change this to return a formatted prompt
+    assert result is not None
+    assert "Attempt 1/3" in result
+    assert "Issue ID: test-123" in result
+
+
+def test_build_resume_prompt_returns_none_when_no_issues(tmp_path: Path) -> None:
+    """_build_resume_prompt returns None when no issues."""
+    from src.domain.prompts import PromptProvider
+    from src.domain.validation.config import PromptValidationCommands
+
+    prompts = PromptProvider(
+        implementer_prompt="impl",
+        review_followup_prompt="followup",
+        gate_followup_prompt="gate",
+        fixer_prompt="fixer",
+        idle_resume_prompt="idle",
+        checkpoint_request_prompt="checkpoint",
+        continuation_prompt="continuation",
+    )
+    validation_commands = PromptValidationCommands(
+        lint="lint",
+        format="format",
+        typecheck="typecheck",
+        test="test",
+        custom_commands=(),
+    )
+
+    result = _build_resume_prompt(
+        review_issues=[],
+        prompts=prompts,
+        validation_commands=validation_commands,
+        issue_id="test-123",
+        max_review_retries=3,
+        repo_path=tmp_path,
+    )
+
     assert result is None
 
 
@@ -319,10 +373,6 @@ async def _run_with_fake_git(orchestrator: MalaOrchestrator) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason=("Resume flow does not yet call _build_resume_prompt (T005 to wire up)."),
-    strict=False,
-)
 async def test_resume_with_review_feedback_uses_review_followup_prompt(
     tmp_path: Path,
     make_orchestrator: Callable[..., MalaOrchestrator],
@@ -333,9 +383,6 @@ async def test_resume_with_review_feedback_uses_review_followup_prompt(
     This integration test verifies the full flow:
     1. Run 1: Session completes with review issues stored in metadata
     2. Run 2: Resume picks up stored issues and uses review_followup prompt
-
-    EXPECTED TO FAIL: Currently _build_resume_prompt returns None (stub).
-    T005 will implement the actual logic and this test will pass.
     """
     issue_id = "issue-123"
     runs_dir = tmp_path / "runs"
@@ -441,29 +488,51 @@ async def test_resume_with_review_feedback_uses_review_followup_prompt(
     import src.orchestration.orchestrator as orch_module
 
     build_resume_prompt_calls: list[
-        tuple[list[dict[str, Any]], PromptProvider, str]
+        tuple[
+            list[dict[str, Any]],
+            PromptProvider,
+            PromptValidationCommands,
+            str,
+            int,
+            Path,
+        ]
     ] = []
     original_build_resume = _build_resume_prompt
 
     def mock_build_resume(
         review_issues: list[dict[str, Any]],
         prompts: object,
-        validation_commands: str,
+        validation_commands: PromptValidationCommands,
+        issue_id: str,
+        max_review_retries: int,
+        repo_path: Path,
     ) -> str | None:
-        build_resume_prompt_calls.append((review_issues, prompts, validation_commands))  # type: ignore[arg-type]
-        return original_build_resume(review_issues, prompts, validation_commands)  # type: ignore[arg-type]
+        build_resume_prompt_calls.append(
+            (
+                review_issues,
+                prompts,
+                validation_commands,
+                issue_id,
+                max_review_retries,
+                repo_path,
+            )  # type: ignore[arg-type]
+        )
+        return original_build_resume(
+            review_issues,
+            prompts,  # type: ignore[arg-type]
+            validation_commands,
+            issue_id,
+            max_review_retries,
+            repo_path,
+        )
 
     with patch.object(orch_module, "_build_resume_prompt", mock_build_resume):
         await _run_with_fake_git(orchestrator_run2)
 
     # Verify that when the session was resumed, _build_resume_prompt was called
     # with the stored review issues.
-    # This will fail because the orchestrator doesn't yet call _build_resume_prompt.
-    # T005 will wire this up.
     assert len(build_resume_prompt_calls) > 0, (
-        "_build_resume_prompt was not called during resume. "
-        "T005 needs to wire up the orchestrator to call _build_resume_prompt "
-        "when resuming with stored review issues."
+        "_build_resume_prompt was not called during resume."
     )
 
     # Verify the call was made with the correct review issues

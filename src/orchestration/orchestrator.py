@@ -21,9 +21,8 @@ from src.domain.prompts import (
     load_prompts,
 )
 
-# Future imports for T005 - _build_resume_prompt will use these
-# from src.domain.prompts import build_custom_commands_section
-# from src.pipeline.review_formatter import format_review_issues
+from src.domain.prompts import build_custom_commands_section
+from src.pipeline.review_formatter import format_review_issues
 from src.infra.git_utils import get_git_branch_async, get_git_commit_async
 from src.infra.io.log_output.run_metadata import (
     lookup_prior_session_info,
@@ -93,6 +92,7 @@ if TYPE_CHECKING:
         LogProvider,
     )
     from src.domain.prompts import PromptProvider
+    from src.domain.validation.config import PromptValidationCommands
     from src.infra.io.config import MalaConfig
     from src.core.protocols import MalaEventSink
     from src.infra.io.log_output.run_metadata import RunMetadata
@@ -160,20 +160,49 @@ class StoredReviewIssue:
 def _build_resume_prompt(
     review_issues: list[dict[str, Any]],
     prompts: PromptProvider,
-    validation_commands: str,
+    validation_commands: PromptValidationCommands,
+    issue_id: str,
+    max_review_retries: int,
+    repo_path: Path,
 ) -> str | None:
     """Build a resume prompt with review feedback.
 
     Args:
         review_issues: List of review issue dicts from prior session.
         prompts: Prompt templates provider.
-        validation_commands: Validation commands string for prompt.
+        validation_commands: Validation commands for the prompt.
+        issue_id: The issue ID being implemented.
+        max_review_retries: Maximum review retry attempts.
+        repo_path: Repository path for path relativization.
 
     Returns:
-        Formatted review followup prompt, or None if not yet implemented.
+        Formatted review followup prompt, or None if no issues.
     """
-    # Stub: T005 will implement the actual logic
-    return None
+    if not review_issues:
+        return None
+
+    issues = [StoredReviewIssue.from_dict(d) for d in review_issues]
+
+    logger.info(
+        "Using review_followup for resume: %d issues from prior run",
+        len(issues),
+    )
+
+    review_issues_text = format_review_issues(issues, base_path=repo_path)
+
+    return prompts.review_followup_prompt.format(
+        attempt=1,
+        max_attempts=max_review_retries,
+        review_issues=review_issues_text,
+        issue_id=issue_id,
+        lint_command=validation_commands.lint,
+        format_command=validation_commands.format,
+        typecheck_command=validation_commands.typecheck,
+        test_command=validation_commands.test,
+        custom_commands_section=build_custom_commands_section(
+            validation_commands.custom_commands
+        ),
+    )
 
 
 class MalaOrchestrator:
@@ -777,6 +806,18 @@ class MalaOrchestrator:
                     resume_session_id,
                     issue_id,
                 )
+                # Build resume prompt if prior session has review issues
+                if prior_session and prior_session.last_review_issues:
+                    resume_prompt = _build_resume_prompt(
+                        prior_session.last_review_issues,
+                        self._prompts,
+                        self._prompt_validation_commands,
+                        issue_id,
+                        self.max_review_retries,
+                        self.repo_path,
+                    )
+                    if resume_prompt:
+                        prompt = resume_prompt
             elif self.strict_resume:
                 # Strict mode: fail issue if no prior session found
                 logger.warning(

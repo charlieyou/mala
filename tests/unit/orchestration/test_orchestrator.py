@@ -3491,6 +3491,174 @@ class TestSessionResume:
             assert result.session_id is not None
 
 
+class TestBuildResumePrompt:
+    """Tests for _build_resume_prompt function."""
+
+    def test_returns_none_when_no_issues(self, tmp_path: Path) -> None:
+        """Returns None when review_issues is empty."""
+        from src.domain.prompts import PromptProvider
+        from src.domain.validation.config import PromptValidationCommands
+        from src.orchestration.orchestrator import _build_resume_prompt
+
+        prompts = PromptProvider(
+            implementer_prompt="impl",
+            review_followup_prompt="followup: {review_issues}",
+            gate_followup_prompt="gate",
+            fixer_prompt="fixer",
+            idle_resume_prompt="idle",
+            checkpoint_request_prompt="checkpoint",
+            continuation_prompt="continuation",
+        )
+        validation_commands = PromptValidationCommands(
+            lint="lint",
+            format="format",
+            typecheck="typecheck",
+            test="test",
+            custom_commands=(),
+        )
+
+        result = _build_resume_prompt(
+            review_issues=[],
+            prompts=prompts,
+            validation_commands=validation_commands,
+            issue_id="test-issue",
+            max_review_retries=3,
+            repo_path=tmp_path,
+        )
+
+        assert result is None
+
+    def test_formats_prompt_with_review_issues(self, tmp_path: Path) -> None:
+        """Formats review_followup_prompt with issues and validation commands."""
+        from src.domain.prompts import PromptProvider
+        from src.domain.validation.config import PromptValidationCommands
+        from src.orchestration.orchestrator import _build_resume_prompt
+
+        prompts = PromptProvider(
+            implementer_prompt="impl",
+            review_followup_prompt=(
+                "Attempt {attempt}/{max_attempts}\n"
+                "Issues:\n{review_issues}\n"
+                "Issue: {issue_id}\n"
+                "Lint: {lint_command}\n"
+                "Format: {format_command}\n"
+                "Typecheck: {typecheck_command}\n"
+                "Test: {test_command}\n"
+                "{custom_commands_section}"
+            ),
+            gate_followup_prompt="gate",
+            fixer_prompt="fixer",
+            idle_resume_prompt="idle",
+            checkpoint_request_prompt="checkpoint",
+            continuation_prompt="continuation",
+        )
+        validation_commands = PromptValidationCommands(
+            lint="uvx ruff check .",
+            format="uvx ruff format .",
+            typecheck="uvx ty check",
+            test="uv run pytest",
+            custom_commands=(),
+        )
+        review_issues = [
+            {
+                "file": str(tmp_path / "src/main.py"),
+                "line_start": 10,
+                "line_end": 15,
+                "priority": 0,
+                "title": "Fix critical bug",
+                "body": "This needs immediate attention",
+                "reviewer": "cerberus",
+            },
+        ]
+
+        result = _build_resume_prompt(
+            review_issues=review_issues,
+            prompts=prompts,
+            validation_commands=validation_commands,
+            issue_id="test-123",
+            max_review_retries=3,
+            repo_path=tmp_path,
+        )
+
+        assert result is not None
+        assert "Attempt 1/3" in result
+        assert "Issue: test-123" in result
+        assert "Fix critical bug" in result
+        assert "uvx ruff check ." in result
+        assert "uvx ty check" in result
+
+    def test_uses_attempt_1_for_resume(self, tmp_path: Path) -> None:
+        """Resume always uses attempt=1 since retry counters reset."""
+        from src.domain.prompts import PromptProvider
+        from src.domain.validation.config import PromptValidationCommands
+        from src.orchestration.orchestrator import _build_resume_prompt
+
+        prompts = PromptProvider(
+            implementer_prompt="impl",
+            review_followup_prompt="Attempt {attempt}/{max_attempts}",
+            gate_followup_prompt="gate",
+            fixer_prompt="fixer",
+            idle_resume_prompt="idle",
+            checkpoint_request_prompt="checkpoint",
+            continuation_prompt="continuation",
+        )
+        validation_commands = PromptValidationCommands(
+            lint="lint",
+            format="format",
+            typecheck="typecheck",
+            test="test",
+            custom_commands=(),
+        )
+        review_issues = [{"file": "a.py", "title": "Issue"}]
+
+        result = _build_resume_prompt(
+            review_issues=review_issues,
+            prompts=prompts,
+            validation_commands=validation_commands,
+            issue_id="test-issue",
+            max_review_retries=5,
+            repo_path=tmp_path,
+        )
+
+        assert result == "Attempt 1/5"
+
+    def test_includes_custom_commands_section(self, tmp_path: Path) -> None:
+        """Custom commands are included in the prompt."""
+        from src.domain.prompts import PromptProvider
+        from src.domain.validation.config import PromptValidationCommands
+        from src.orchestration.orchestrator import _build_resume_prompt
+
+        prompts = PromptProvider(
+            implementer_prompt="impl",
+            review_followup_prompt="{custom_commands_section}",
+            gate_followup_prompt="gate",
+            fixer_prompt="fixer",
+            idle_resume_prompt="idle",
+            checkpoint_request_prompt="checkpoint",
+            continuation_prompt="continuation",
+        )
+        validation_commands = PromptValidationCommands(
+            lint="lint",
+            format="format",
+            typecheck="typecheck",
+            test="test",
+            custom_commands=(("security-check", "npm audit", 60, False),),
+        )
+        review_issues = [{"file": "a.py", "title": "Issue"}]
+
+        result = _build_resume_prompt(
+            review_issues=review_issues,
+            prompts=prompts,
+            validation_commands=validation_commands,
+            issue_id="test-issue",
+            max_review_retries=3,
+            repo_path=tmp_path,
+        )
+
+        assert result is not None
+        assert "security-check" in result or "npm audit" in result
+
+
 class TestCaptureRunStartCommit:
     """Tests for _capture_run_start_commit method."""
 
