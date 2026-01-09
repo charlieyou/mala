@@ -255,3 +255,67 @@ class TestInterruptWiring:
         # Verify interrupt_event was passed to run_loop
         assert captured_interrupt_event is not None
         assert isinstance(captured_interrupt_event, asyncio.Event)
+
+    async def test_run_implementer_passes_interrupt_event_to_session_runner(
+        self, tmp_path: Path, tmp_runs_dir: Path
+    ) -> None:
+        """run_implementer passes interrupt_event to AgentSessionRunner.run_session.
+
+        This audit test verifies that MalaOrchestrator.run_implementer correctly
+        wires self._interrupt_event into the session runner call.
+        """
+        from unittest.mock import AsyncMock, patch
+
+        from src.orchestration.factory import create_orchestrator
+        from src.pipeline.agent_session_runner import AgentSessionOutput
+        from tests.fakes.event_sink import FakeEventSink
+        from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
+
+        provider = FakeIssueProvider(
+            issues={"test-issue": FakeIssue(id="test-issue", status="open")}
+        )
+        event_sink = FakeEventSink()
+
+        config = OrchestratorConfig(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+        )
+        deps = OrchestratorDependencies(
+            issue_provider=provider,
+            event_sink=event_sink,
+            runs_dir=tmp_runs_dir,
+        )
+        orchestrator = create_orchestrator(config, deps=deps)
+
+        # Set up _interrupt_event as if run() had started
+        interrupt_event = asyncio.Event()
+        orchestrator._interrupt_event = interrupt_event
+
+        # Capture the interrupt_event passed to run_session
+        captured_interrupt_event: asyncio.Event | None = None
+
+        async def mock_run_session(
+            input,  # noqa: ANN001
+            tracer=None,  # noqa: ANN001
+            interrupt_event: asyncio.Event | None = None,
+        ) -> AgentSessionOutput:
+            nonlocal captured_interrupt_event
+            captured_interrupt_event = interrupt_event
+            return AgentSessionOutput(
+                success=True,
+                summary="Success",
+                agent_id="mock-agent",
+                session_id="mock-session",
+            )
+
+        # Patch AgentSessionRunner to use our mock
+        with patch("src.orchestration.orchestrator.AgentSessionRunner") as MockRunner:
+            mock_runner_instance = AsyncMock()
+            mock_runner_instance.run_session = mock_run_session
+            MockRunner.return_value = mock_runner_instance
+
+            await orchestrator.run_implementer("test-issue")
+
+        # Verify interrupt_event was passed to run_session
+        assert captured_interrupt_event is interrupt_event

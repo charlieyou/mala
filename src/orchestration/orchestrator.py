@@ -835,7 +835,11 @@ class MalaOrchestrator:
                 tracer.log_input(prompt)
                 # Stale session handling is done inside run_session - it will
                 # automatically retry without resume_session_id if SDK rejects it
-                output = await runner.run_session(session_input, tracer=tracer)
+                output = await runner.run_session(
+                    session_input,
+                    tracer=tracer,
+                    interrupt_event=self._interrupt_event,
+                )
                 self._state.agent_ids[issue_id] = output.agent_id
                 if output.success:
                     tracer.set_success(True)
