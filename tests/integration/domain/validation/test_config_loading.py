@@ -90,3 +90,30 @@ class TestCodeReviewParsing:
         assert code_review.cerberus.timeout == 600
         assert code_review.cerberus.spawn_args == ("--flag",)
         assert code_review.cerberus.env == (("MY_VAR", "value"),)
+
+    def test_run_end_code_review_parsed(self, tmp_path: Path) -> None:
+        """Integration test: run_end trigger parses code_review block."""
+        yaml_content = dedent("""\
+            preset: python-uv
+            validation_triggers:
+              run_end:
+                commands: []
+                failure_mode: continue
+                fire_on: both
+                code_review:
+                  enabled: true
+                  reviewer_type: agent_sdk
+                  baseline: since_run_start
+        """)
+        config_file = tmp_path / "mala.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_config(tmp_path)
+
+        assert config.validation_triggers is not None
+        assert config.validation_triggers.run_end is not None
+        code_review = config.validation_triggers.run_end.code_review
+        assert code_review is not None
+        assert code_review.enabled is True
+        assert code_review.reviewer_type == "agent_sdk"
+        assert code_review.baseline == "since_run_start"

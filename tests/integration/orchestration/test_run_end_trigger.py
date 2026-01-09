@@ -30,22 +30,19 @@ async def test_run_end_trigger_queued_on_success(
 ) -> None:
     """Integration: run_end trigger is queued when run completes with success.
 
-    When run_end trigger is configured with fire_on=success (default),
+    When run_end trigger is configured in mala.yaml with fire_on=success (default),
     and all issues succeed, the trigger should be queued.
-
-    Note: run_end trigger config is constructed programmatically (not parsed from YAML)
-    because run_end YAML parsing is not yet implemented (deferred to T003).
     """
-    from src.domain.validation.config import (
-        FailureMode,
-        RunEndTriggerConfig,
-        ValidationTriggersConfig,
-    )
     from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 
-    # Create minimal mala.yaml (run_end is not parseable yet, configured programmatically)
+    # Create mala.yaml with run_end trigger configured
     config_content = dedent("""\
         preset: python-uv
+
+        validation_triggers:
+          run_end:
+            failure_mode: continue
+            commands: []
     """)
     config_file = tmp_path / "mala.yaml"
     config_file.write_text(config_content)
@@ -64,21 +61,6 @@ async def test_run_end_trigger_queued_on_success(
         runs_dir=runs_dir,
         lock_releaser=lambda _: 0,
         disable_validations={"global-validate"},
-    )
-
-    # Construct run_end trigger config programmatically (YAML parsing deferred to T003)
-    # Use dataclasses.replace to preserve preset commands while adding run_end trigger
-    from dataclasses import replace
-
-    run_end_config = RunEndTriggerConfig(
-        failure_mode=FailureMode.CONTINUE,
-        commands=(),
-    )
-    triggers_config = ValidationTriggersConfig(run_end=run_end_config)
-    base_config = orchestrator._validation_config
-    assert base_config is not None, "Expected preset config to be loaded"
-    orchestrator._validation_config = replace(  # type: ignore[misc]
-        base_config, validation_triggers=triggers_config
     )
 
     # Track trigger queued events

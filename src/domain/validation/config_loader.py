@@ -38,6 +38,7 @@ if TYPE_CHECKING:
         BaseTriggerConfig,
         CerberusConfig,
         CodeReviewConfig,
+        RunEndTriggerConfig,
     )
 
 
@@ -856,26 +857,23 @@ def _parse_run_end_trigger(data: dict[str, Any]) -> RunEndTriggerConfig:
     max_retries = _parse_max_retries(data, trigger_name, failure_mode)
     commands = _parse_commands_list(data, trigger_name)
 
-    # Parse fire_on (optional, default=SUCCESS)
+    # Parse fire_on (optional, defaults to success)
     fire_on = FireOn.SUCCESS
     if "fire_on" in data:
-        fire_on_val = data["fire_on"]
-        if not isinstance(fire_on_val, str):
+        fire_on_str = data["fire_on"]
+        if not isinstance(fire_on_str, str):
             raise ConfigError(
                 f"fire_on must be a string for trigger {trigger_name}, "
-                f"got {type(fire_on_val).__name__}"
+                f"got {type(fire_on_str).__name__}"
             )
-        fire_on_map = {
-            "success": FireOn.SUCCESS,
-            "failure": FireOn.FAILURE,
-            "both": FireOn.BOTH,
-        }
-        if fire_on_val not in fire_on_map:
+        try:
+            fire_on = FireOn(fire_on_str)
+        except ValueError:
+            valid = ", ".join(f.value for f in FireOn)
             raise ConfigError(
-                f"Invalid fire_on '{fire_on_val}' for trigger {trigger_name}. "
-                f"Must be one of: success, failure, both"
-            )
-        fire_on = fire_on_map[fire_on_val]
+                f"Invalid fire_on '{fire_on_str}' for trigger {trigger_name}. "
+                f"Valid values: {valid}"
+            ) from None
 
     # Parse code_review (optional)
     code_review = None

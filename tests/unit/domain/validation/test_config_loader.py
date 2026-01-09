@@ -402,7 +402,6 @@ class TestCodeReviewBaselineValidation:
         assert result is not None
         assert result.baseline == "since_run_start"
         assert "baseline not specified for run_end trigger" in caplog.text
-
     def test_baseline_missing_for_session_end_no_warning(
         self, caplog: LogCaptureFixture
     ) -> None:
