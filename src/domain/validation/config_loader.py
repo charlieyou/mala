@@ -13,7 +13,7 @@ Key functions:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 
@@ -33,7 +33,11 @@ from src.domain.validation.config import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.domain.validation.config import CodeReviewConfig, RunEndTriggerConfig
+    from src.domain.validation.config import (
+        CerberusConfig,
+        CodeReviewConfig,
+        RunEndTriggerConfig,
+    )
 
 
 class ConfigMissingError(ConfigError):
@@ -354,19 +358,295 @@ def _parse_max_retries(
     return max_retries
 
 
-def _parse_code_review_config(data: dict[str, Any]) -> CodeReviewConfig | None:
+_CODE_REVIEW_FIELDS = frozenset(
+    {
+        "enabled",
+        "reviewer_type",
+        "failure_mode",
+        "max_retries",
+        "finding_threshold",
+        "baseline",
+        "cerberus",
+    }
+)
+
+_CERBERUS_FIELDS = frozenset({"timeout", "spawn_args", "wait_args", "env"})
+
+
+def _parse_cerberus_config(data: dict[str, Any]) -> CerberusConfig:
+    """Parse cerberus-specific configuration block.
+
+    Args:
+        data: The cerberus config dict.
+
+    Returns:
+        CerberusConfig instance.
+
+    Raises:
+        ConfigError: If data has invalid types or unknown fields.
+    """
+    # Import here to avoid circular import at module level
+    from src.domain.validation.config import CerberusConfig as CerberusConfigClass
+
+    # Validate unknown fields
+    unknown = set(data.keys()) - _CERBERUS_FIELDS
+    if unknown:
+        first = sorted(str(k) for k in unknown)[0]
+        raise ConfigError(f"Unknown field '{first}' in code_review.cerberus")
+
+    # Parse timeout (optional, defaults to 300)
+    timeout = 300
+    if "timeout" in data:
+        timeout_val = data["timeout"]
+        if isinstance(timeout_val, bool) or not isinstance(timeout_val, int):
+            raise ConfigError(
+                f"cerberus.timeout must be an integer, got {type(timeout_val).__name__}"
+            )
+        timeout = timeout_val
+
+    # Parse spawn_args (optional)
+    spawn_args: tuple[str, ...] = ()
+    if "spawn_args" in data:
+        spawn_args_val = data["spawn_args"]
+        if not isinstance(spawn_args_val, list):
+            raise ConfigError(
+                f"cerberus.spawn_args must be a list, got {type(spawn_args_val).__name__}"
+            )
+        for i, arg in enumerate(spawn_args_val):
+            if not isinstance(arg, str):
+                raise ConfigError(
+                    f"cerberus.spawn_args[{i}] must be a string, "
+                    f"got {type(arg).__name__}"
+                )
+        spawn_args = tuple(spawn_args_val)
+
+    # Parse wait_args (optional)
+    wait_args: tuple[str, ...] = ()
+    if "wait_args" in data:
+        wait_args_val = data["wait_args"]
+        if not isinstance(wait_args_val, list):
+            raise ConfigError(
+                f"cerberus.wait_args must be a list, got {type(wait_args_val).__name__}"
+            )
+        for i, arg in enumerate(wait_args_val):
+            if not isinstance(arg, str):
+                raise ConfigError(
+                    f"cerberus.wait_args[{i}] must be a string, "
+                    f"got {type(arg).__name__}"
+                )
+        wait_args = tuple(wait_args_val)
+
+    # Parse env (optional)
+    env: tuple[tuple[str, str], ...] = ()
+    if "env" in data:
+        env_val = data["env"]
+        if not isinstance(env_val, dict):
+            raise ConfigError(
+                f"cerberus.env must be an object, got {type(env_val).__name__}"
+            )
+        env_list: list[tuple[str, str]] = []
+        for key, value in env_val.items():
+            if not isinstance(key, str):
+                raise ConfigError(
+                    f"cerberus.env key must be a string, got {type(key).__name__}"
+                )
+            if not isinstance(value, str):
+                raise ConfigError(
+                    f"cerberus.env['{key}'] must be a string, "
+                    f"got {type(value).__name__}"
+                )
+            env_list.append((key, value))
+        env = tuple(sorted(env_list))
+
+    return CerberusConfigClass(
+        timeout=timeout,
+        spawn_args=spawn_args,
+        wait_args=wait_args,
+        env=env,
+    )
+
+
+def _parse_code_review_config(
+    data: dict[str, Any], trigger_name: str
+) -> CodeReviewConfig | None:
     """Parse code_review configuration block.
 
     Args:
         data: The code_review config dict from the trigger.
+        trigger_name: Name of the parent trigger (for validation warnings).
 
     Returns:
         CodeReviewConfig if data is provided, None otherwise.
 
     Raises:
-        NotImplementedError: Always - parsing not yet implemented.
+        ConfigError: If required fields missing, invalid, or unknown fields present.
     """
-    raise NotImplementedError("code_review parsing not yet implemented")
+    import logging
+
+    # Import here to avoid circular import at module level
+    from src.domain.validation.config import CodeReviewConfig as CodeReviewConfigClass
+
+    logger = logging.getLogger(__name__)
+
+    if data is None:
+        return None
+
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"code_review must be an object for trigger {trigger_name}, "
+            f"got {type(data).__name__}"
+        )
+
+    # Validate unknown fields - fail fast
+    unknown = set(data.keys()) - _CODE_REVIEW_FIELDS
+    if unknown:
+        first = sorted(str(k) for k in unknown)[0]
+        raise ConfigError(f"Unknown field '{first}' in code_review for {trigger_name}")
+
+    # Parse enabled (optional, defaults to False)
+    enabled = False
+    if "enabled" in data:
+        enabled_val = data["enabled"]
+        if not isinstance(enabled_val, bool):
+            raise ConfigError(
+                f"code_review.enabled must be a boolean for trigger {trigger_name}, "
+                f"got {type(enabled_val).__name__}"
+            )
+        enabled = enabled_val
+
+    # Parse reviewer_type (optional, defaults to "cerberus")
+    reviewer_type: Literal["cerberus", "agent_sdk"] = "cerberus"
+    if "reviewer_type" in data:
+        rt_val = data["reviewer_type"]
+        if not isinstance(rt_val, str):
+            raise ConfigError(
+                f"code_review.reviewer_type must be a string for trigger {trigger_name}, "
+                f"got {type(rt_val).__name__}"
+            )
+        if rt_val not in ("cerberus", "agent_sdk"):
+            # ERROR if enabled: true with invalid reviewer_type
+            if enabled:
+                raise ConfigError(
+                    f"code_review.reviewer_type must be 'cerberus' or 'agent_sdk' "
+                    f"for trigger {trigger_name}, got '{rt_val}'"
+                )
+            # Still error even if not enabled - invalid value is invalid
+            raise ConfigError(
+                f"code_review.reviewer_type must be 'cerberus' or 'agent_sdk' "
+                f"for trigger {trigger_name}, got '{rt_val}'"
+            )
+        reviewer_type = rt_val  # type: ignore[assignment]
+
+    # Parse failure_mode (optional, defaults to CONTINUE)
+    failure_mode = FailureMode.CONTINUE
+    if "failure_mode" in data:
+        fm_val = data["failure_mode"]
+        if not isinstance(fm_val, str):
+            raise ConfigError(
+                f"code_review.failure_mode must be a string for trigger {trigger_name}, "
+                f"got {type(fm_val).__name__}"
+            )
+        try:
+            failure_mode = FailureMode(fm_val)
+        except ValueError:
+            valid = ", ".join(m.value for m in FailureMode)
+            raise ConfigError(
+                f"Invalid code_review.failure_mode '{fm_val}' for trigger {trigger_name}. "
+                f"Valid values: {valid}"
+            ) from None
+
+    # Parse max_retries (optional, defaults to 3)
+    max_retries = 3
+    if "max_retries" in data:
+        mr_val = data["max_retries"]
+        if isinstance(mr_val, bool) or not isinstance(mr_val, int):
+            raise ConfigError(
+                f"code_review.max_retries must be an integer for trigger {trigger_name}, "
+                f"got {type(mr_val).__name__}"
+            )
+        # ERROR if max_retries < 0
+        if mr_val < 0:
+            raise ConfigError(
+                f"code_review.max_retries must be >= 0 for trigger {trigger_name}, "
+                f"got {mr_val}"
+            )
+        max_retries = mr_val
+
+    # Parse finding_threshold (optional, defaults to "none")
+    finding_threshold: Literal["P0", "P1", "P2", "P3", "none"] = "none"
+    valid_thresholds = ("P0", "P1", "P2", "P3", "none")
+    if "finding_threshold" in data:
+        ft_val = data["finding_threshold"]
+        if not isinstance(ft_val, str):
+            raise ConfigError(
+                f"code_review.finding_threshold must be a string for trigger {trigger_name}, "
+                f"got {type(ft_val).__name__}"
+            )
+        if ft_val not in valid_thresholds:
+            raise ConfigError(
+                f"Invalid code_review.finding_threshold '{ft_val}' for trigger {trigger_name}. "
+                f"Valid values: {', '.join(valid_thresholds)}"
+            )
+        finding_threshold = ft_val  # type: ignore[assignment]
+
+    # Parse baseline with trigger-specific validation
+    baseline: Literal["since_run_start", "since_last_review"] | None = None
+    valid_baselines = ("since_run_start", "since_last_review")
+    if "baseline" in data:
+        bl_val = data["baseline"]
+        if bl_val is not None:
+            if not isinstance(bl_val, str):
+                raise ConfigError(
+                    f"code_review.baseline must be a string for trigger {trigger_name}, "
+                    f"got {type(bl_val).__name__}"
+                )
+            if bl_val not in valid_baselines:
+                raise ConfigError(
+                    f"Invalid code_review.baseline '{bl_val}' for trigger {trigger_name}. "
+                    f"Valid values: {', '.join(valid_baselines)}"
+                )
+            # WARN if baseline set for session_end - ignore field
+            if trigger_name == "session_end":
+                logger.warning(
+                    "code_review.baseline is not applicable for session_end trigger; "
+                    "ignoring baseline='%s'",
+                    bl_val,
+                )
+                baseline = None
+            else:
+                baseline = bl_val  # type: ignore[assignment]
+
+    # WARN if baseline missing for epic_completion/run_end - default to since_run_start
+    if trigger_name in ("epic_completion", "run_end") and baseline is None:
+        if "baseline" not in data:
+            logger.warning(
+                "code_review.baseline not specified for %s trigger; "
+                "defaulting to 'since_run_start'",
+                trigger_name,
+            )
+            baseline = "since_run_start"
+
+    # Parse cerberus (optional)
+    cerberus = None
+    if "cerberus" in data:
+        cerberus_val = data["cerberus"]
+        if cerberus_val is not None:
+            if not isinstance(cerberus_val, dict):
+                raise ConfigError(
+                    f"code_review.cerberus must be an object for trigger {trigger_name}, "
+                    f"got {type(cerberus_val).__name__}"
+                )
+            cerberus = _parse_cerberus_config(cerberus_val)
+
+    return CodeReviewConfigClass(
+        enabled=enabled,
+        reviewer_type=reviewer_type,
+        failure_mode=failure_mode,
+        max_retries=max_retries,
+        finding_threshold=finding_threshold,
+        baseline=baseline,
+        cerberus=cerberus,
+    )
 
 
 _EPIC_COMPLETION_FIELDS = frozenset(
@@ -441,7 +721,7 @@ def _parse_epic_completion_trigger(
     if "code_review" in data:
         code_review_data = data["code_review"]
         if code_review_data is not None:
-            code_review = _parse_code_review_config(code_review_data)
+            code_review = _parse_code_review_config(code_review_data, trigger_name)
 
     return EpicCompletionTriggerConfig(
         failure_mode=failure_mode,
@@ -487,7 +767,7 @@ def _parse_session_end_trigger(data: dict[str, Any]) -> SessionEndTriggerConfig:
     if "code_review" in data:
         code_review_data = data["code_review"]
         if code_review_data is not None:
-            code_review = _parse_code_review_config(code_review_data)
+            code_review = _parse_code_review_config(code_review_data, trigger_name)
 
     return SessionEndTriggerConfig(
         failure_mode=failure_mode,
@@ -599,7 +879,7 @@ def _parse_run_end_trigger(data: dict[str, Any]) -> RunEndTriggerConfig:
     if "code_review" in data:
         code_review_data = data["code_review"]
         if code_review_data is not None:
-            code_review = _parse_code_review_config(code_review_data)
+            code_review = _parse_code_review_config(code_review_data, trigger_name)
 
     return RunEndTriggerConfigClass(
         failure_mode=failure_mode,

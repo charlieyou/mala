@@ -9,25 +9,21 @@ from __future__ import annotations
 from textwrap import dedent
 from typing import TYPE_CHECKING
 
-import pytest
-
 if TYPE_CHECKING:
     from pathlib import Path
 
+from src.domain.validation.config import FailureMode
 from src.domain.validation.config_loader import load_config
 
 
 class TestCodeReviewParsing:
     """Tests for code_review block parsing in triggers."""
 
-    def test_session_end_code_review_raises_not_implemented(
-        self, tmp_path: Path
-    ) -> None:
-        """Integration test: config_loader.load() with code_review raises NotImplementedError.
+    def test_session_end_code_review_parsed(self, tmp_path: Path) -> None:
+        """Integration test: config_loader.load() parses code_review block.
 
-        This test verifies the wiring is correct - it should fail with
-        NotImplementedError (parsing not implemented), NOT with ImportError
-        or other wiring issues.
+        This test verifies the end-to-end config loading path works, from
+        YAML file to populated CodeReviewConfig dataclass.
         """
         yaml_content = dedent("""\
             preset: python-uv
@@ -42,7 +38,82 @@ class TestCodeReviewParsing:
         config_file = tmp_path / "mala.yaml"
         config_file.write_text(yaml_content)
 
-        with pytest.raises(
-            NotImplementedError, match="code_review parsing not yet implemented"
-        ):
-            load_config(tmp_path)
+        config = load_config(tmp_path)
+
+        assert config.validation_triggers is not None
+        assert config.validation_triggers.session_end is not None
+        code_review = config.validation_triggers.session_end.code_review
+        assert code_review is not None
+        assert code_review.enabled is True
+        assert code_review.reviewer_type == "cerberus"
+
+    def test_epic_completion_code_review_with_cerberus(self, tmp_path: Path) -> None:
+        """Integration test: epic_completion trigger parses code_review with cerberus."""
+        yaml_content = dedent("""\
+            preset: python-uv
+            validation_triggers:
+              epic_completion:
+                commands: []
+                failure_mode: continue
+                epic_depth: all
+                fire_on: success
+                code_review:
+                  enabled: true
+                  reviewer_type: cerberus
+                  failure_mode: remediate
+                  max_retries: 5
+                  finding_threshold: P1
+                  baseline: since_last_review
+                  cerberus:
+                    timeout: 600
+                    spawn_args:
+                      - "--flag"
+                    env:
+                      MY_VAR: value
+        """)
+        config_file = tmp_path / "mala.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_config(tmp_path)
+
+        assert config.validation_triggers is not None
+        assert config.validation_triggers.epic_completion is not None
+        code_review = config.validation_triggers.epic_completion.code_review
+        assert code_review is not None
+        assert code_review.enabled is True
+        assert code_review.reviewer_type == "cerberus"
+        assert code_review.failure_mode == FailureMode.REMEDIATE
+        assert code_review.max_retries == 5
+        assert code_review.finding_threshold == "P1"
+        assert code_review.baseline == "since_last_review"
+        assert code_review.cerberus is not None
+        assert code_review.cerberus.timeout == 600
+        assert code_review.cerberus.spawn_args == ("--flag",)
+        assert code_review.cerberus.env == (("MY_VAR", "value"),)
+
+    def test_run_end_code_review_parsed(self, tmp_path: Path) -> None:
+        """Integration test: run_end trigger parses code_review block."""
+        yaml_content = dedent("""\
+            preset: python-uv
+            validation_triggers:
+              run_end:
+                commands: []
+                failure_mode: continue
+                fire_on: both
+                code_review:
+                  enabled: true
+                  reviewer_type: agent_sdk
+                  baseline: since_run_start
+        """)
+        config_file = tmp_path / "mala.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_config(tmp_path)
+
+        assert config.validation_triggers is not None
+        assert config.validation_triggers.run_end is not None
+        code_review = config.validation_triggers.run_end.code_review
+        assert code_review is not None
+        assert code_review.enabled is True
+        assert code_review.reviewer_type == "agent_sdk"
+        assert code_review.baseline == "since_run_start"
