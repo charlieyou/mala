@@ -194,6 +194,9 @@ async def get_diff_stat(
             if " => " in filename:
                 # Format: "{prefix/}{old => new}{/suffix}" or "old => new"
                 filename = _parse_rename_path(filename)
+            # Git quotes paths containing spaces or special characters
+            if filename.startswith('"') and filename.endswith('"'):
+                filename = filename[1:-1]
             files_changed.append(filename)
             # Binary files show "-" for added/removed
             if added != "-":
@@ -230,6 +233,9 @@ def _parse_rename_path(path: str) -> str:
             if " => " in inner:
                 new_part = inner.split(" => ")[1]
                 result.append(new_part)
+            else:
+                # Brace segment without rename arrow - preserve it
+                result.append(inner)
             i = end + 1
         else:
             result.append(path[i])

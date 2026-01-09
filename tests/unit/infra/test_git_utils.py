@@ -575,6 +575,51 @@ class TestGetDiffStat:
 
         assert result.files_changed == ["new.py", "dir/new.py"]
 
+    @pytest.mark.asyncio
+    async def test_handles_quoted_paths(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Should strip quotes from paths with spaces or special chars."""
+        numstat_output = '5\t3\t"path with spaces.py"\n2\t1\tnormal.py\n'
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff", "--numstat"],
+                    returncode=0,
+                    stdout=numstat_output,
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.get_diff_stat(Path("/repo"), "abc123")
+
+        assert result.files_changed == ["path with spaces.py", "normal.py"]
+
+    @pytest.mark.asyncio
+    async def test_handles_renames_with_non_arrow_braces(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should preserve brace segments without arrow when parsing renames."""
+        # Git output: src/{v1}/{old.py => new.py} - the {v1} should be preserved
+        numstat_output = "5\t3\tsrc/{v1}/{old.py => new.py}\n"
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff", "--numstat"],
+                    returncode=0,
+                    stdout=numstat_output,
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.get_diff_stat(Path("/repo"), "abc123")
+
+        assert result.files_changed == ["src/v1/new.py"]
+
 
 class TestGetDiffContent:
     """Tests for get_diff_content() function."""
