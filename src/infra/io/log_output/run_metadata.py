@@ -225,6 +225,10 @@ class RunMetadata:
         self.issues: dict[str, IssueRun] = {}
         # Global validation results (from mala-e0i)
         self.run_validation: ValidationResult | None = None
+        # Baseline tracking for cumulative reviews
+        self.run_start_commit: str | None = None
+        self.last_cumulative_review_commits: dict[str, str] = {}
+        # Key format: "run_end" or "epic_completion:<epic_id>"
         # Configure debug logging for this run (always enabled)
         self.debug_log_path: Path | None = configure_debug_logging(
             repo_path, self.run_id, runs_dir=runs_dir
@@ -312,6 +316,8 @@ class RunMetadata:
             },
             "run_validation": self._serialize_validation_result(self.run_validation),
             "debug_log_path": str(self.debug_log_path) if self.debug_log_path else None,
+            "run_start_commit": self.run_start_commit,
+            "last_cumulative_review_commits": self.last_cumulative_review_commits,
         }
 
     @staticmethod
@@ -459,6 +465,12 @@ class RunMetadata:
         # Restore debug_log_path (don't reconfigure logging on load)
         debug_log_path = data.get("debug_log_path")
         metadata.debug_log_path = Path(debug_log_path) if debug_log_path else None
+
+        # Load cumulative review baseline fields (with backward-compat defaults)
+        metadata.run_start_commit = data.get("run_start_commit")
+        metadata.last_cumulative_review_commits = data.get(
+            "last_cumulative_review_commits", {}
+        )
 
         return metadata
 

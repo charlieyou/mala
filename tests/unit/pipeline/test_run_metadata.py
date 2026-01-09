@@ -154,6 +154,8 @@ class TestRunMetadata:
         assert metadata.version == "1.0.0"
         assert metadata.issues == {}
         assert metadata.run_validation is None
+        assert metadata.run_start_commit is None
+        assert metadata.last_cumulative_review_commits == {}
 
     def test_record_issue(self, metadata: RunMetadata) -> None:
         issue = IssueRun(
@@ -267,6 +269,8 @@ class TestRunMetadataSerialization:
         assert data["config"]["max_agents"] == 4
         assert data["issues"] == {}
         assert data["run_validation"] is None
+        assert data["run_start_commit"] is None
+        assert data["last_cumulative_review_commits"] == {}
 
     def test_to_dict_with_issues(self, metadata_with_issues: RunMetadata) -> None:
         data = metadata_with_issues._to_dict()
@@ -544,6 +548,81 @@ class TestRunMetadataSerialization:
             assert loaded is not None
             assert loaded.outcome == outcome
             assert loaded.rationale == f"Test {outcome.value}"
+
+    def test_cumulative_review_fields_serialization(self) -> None:
+        """Test run_start_commit and last_cumulative_review_commits round-trip."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runs_dir = Path(tmpdir) / "-tmp-test-repo"
+            config = RunConfig(
+                max_agents=1,
+                timeout_minutes=10,
+                max_issues=None,
+                epic_id=None,
+                only_ids=None,
+            )
+            metadata = RunMetadata(
+                repo_path=Path("/tmp/test-repo"),
+                config=config,
+                version="1.0.0",
+                runs_dir=runs_dir,
+            )
+
+            # Set cumulative review fields
+            metadata.run_start_commit = "abc123def456"
+            metadata.last_cumulative_review_commits = {
+                "run_end": "def789abc012",
+                "epic_completion:epic-1": "fed321cba654",
+            }
+
+            # Verify _to_dict serializes correctly
+            data = metadata._to_dict()
+            assert data["run_start_commit"] == "abc123def456"
+            assert data["last_cumulative_review_commits"] == {
+                "run_end": "def789abc012",
+                "epic_completion:epic-1": "fed321cba654",
+            }
+
+            # Save and load
+            path = metadata.save()
+            loaded = RunMetadata.load(path)
+
+            # Verify loaded values match
+            assert loaded.run_start_commit == "abc123def456"
+            assert loaded.last_cumulative_review_commits == {
+                "run_end": "def789abc012",
+                "epic_completion:epic-1": "fed321cba654",
+            }
+
+    def test_cumulative_review_fields_backward_compat(self) -> None:
+        """Test loading old metadata files without cumulative review fields."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create JSON without cumulative review fields (old format)
+            old_data = {
+                "run_id": "old-run-id",
+                "started_at": "2025-01-01T00:00:00+00:00",
+                "completed_at": "2025-01-01T01:00:00+00:00",
+                "version": "0.9.0",
+                "repo_path": "/tmp/repo",
+                "config": {
+                    "max_agents": 2,
+                    "timeout_minutes": 30,
+                    "max_issues": None,
+                    "epic_id": None,
+                    "only_ids": None,
+                },
+                "issues": {},
+                # No run_start_commit or last_cumulative_review_commits
+            }
+
+            path = Path(tmpdir) / "old_format.json"
+            with open(path, "w") as f:
+                json.dump(old_data, f)
+
+            # Load should succeed with defaults
+            loaded = RunMetadata.load(path)
+
+            assert loaded.run_start_commit is None
+            assert loaded.last_cumulative_review_commits == {}
 
 
 class TestRunningInstance:
