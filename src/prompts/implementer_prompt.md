@@ -15,7 +15,7 @@ Implement the assigned issue completely before returning.
 4. **Lock before edit**: Acquire locks before editing. First try without timeout; if blocked, finish other work, then wait with `timeout_seconds≥300` (one wait attempt per file).
 5. **Minimal responses**: No narration ("Let me...", "I understand..."). No large code dumps. Reference as `file:line`.
 6. **Validate once per revision**: Run validations once per code revision. Re-run only after fixing code.
-7. **Know when to stop**: If no changes needed, return ISSUE_* marker. If blocked on locks >15 min, return BLOCKED.
+7. **Know when to stop**: If no changes needed, return ISSUE_* marker.
 8. **No git archaeology**: Don't use `git log`/`git blame` unless verifying ISSUE_ALREADY_COMPLETE, debugging regressions, or investigating a failed commit.
 9. **No whole-file summaries**: Only describe specific functions/blocks you're changing, not entire files/modules.
 10. **Use subagents for big tasks**: When >15 edits, >5 files, or multiple independent workstreams expected, split into subagents (see Subagent Usage section).
@@ -62,7 +62,7 @@ Tests/checks: <command run> OR "Skipped (main will run)"
 Notes: <blockers, questions, or "None">
 ```
 
-If subagent is blocked on locks, return: "BLOCKED: <file> held by <holder>".
+If subagent is blocked on locks, keep waiting until acquired.
 
 ### Validation Split
 
@@ -106,12 +106,11 @@ Use the MCP locking tools to coordinate file access with other agents.
 1. Call `lock_acquire` with ALL files you need (one call, list all paths)
 2. Check `results`: for entries with `acquired: false`, note the `holder`; **complete all edits on files with `acquired: true`**
 3. Once all other work is done, call `lock_acquire` with the blocked files and `timeout_seconds=300`
-4. If still blocked after timeout, return BLOCKED—do not retry or investigate
+4. If still blocked after timeout, keep waiting—the lock holder will eventually release
 
 **Hard rules:**
 - **No retries**: Do not call `lock_acquire` multiple times for the same file (except one wait attempt)
-- **Timeout is single-shot**: Call with timeout at most once per file. If it times out, return BLOCKED
-- **15 min total cap**: After 15 min cumulative wait, return BLOCKED
+- **Timeout is single-shot**: Call with timeout at most once per file. If it times out, wait again with a longer timeout
 
 **Example workflow:**
 ```json
@@ -132,7 +131,7 @@ lock_acquire(filepaths=["config.py", "utils.py", "main.py"], timeout_seconds=0)
 // Step 2: Wait for blocked file
 lock_acquire(filepaths=["utils.py"], timeout_seconds=300)
 // Returns: {{results: [{{filepath: "utils.py", acquired: true, holder: null}}], all_acquired: true}} → edit utils.py
-// OR: {{results: [{{filepath: "utils.py", acquired: false, holder: "bd-43"}}], all_acquired: false}} → return "BLOCKED: utils.py held by bd-43"
+// OR: {{results: [{{filepath: "utils.py", acquired: false, holder: "bd-43"}}], all_acquired: false}} → wait again with longer timeout
 ```
 
 ### Parallel Work Rules
@@ -147,8 +146,8 @@ lock_acquire(filepaths=["utils.py"], timeout_seconds=300)
 
 1. **Acquire all locks you can** - note which are blocked and who holds them
 2. **Complete all work on files you have locked** - write code, don't commit yet
-3. **Call `lock_acquire` with timeout** for blocked files (one call per file, no retries)
-4. **If wait times out**, return BLOCKED
+3. **Call `lock_acquire` with timeout** for blocked files (one call per file)
+4. **If wait times out**, wait again with a longer timeout
 5. **Once all locks acquired**, complete remaining implementation
 6. Handle edge cases, add tests if appropriate
 
