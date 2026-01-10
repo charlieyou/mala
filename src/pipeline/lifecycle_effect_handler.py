@@ -37,6 +37,7 @@ if TYPE_CHECKING:
         TransitionResult,
     )
     from src.domain.validation.config import PromptValidationCommands
+    from src.pipeline.session_end_result import SessionEndResult
 
     from .agent_session_runner import (
         AgentSessionConfig,
@@ -397,6 +398,71 @@ class LifecycleEffectHandler:
 
         # RUN_REVIEW or other effects - pass through
         return None, False, result
+
+    def process_session_end_check(
+        self,
+        input: AgentSessionInput,
+        lifecycle_ctx: LifecycleContext,
+    ) -> None:
+        """Emit events before session_end check.
+
+        Called before running the session_end check to emit gate_passed and
+        session_end_started events. Gate passed is emitted on first session_end
+        attempt since session_end only runs after the gate passes.
+
+        Args:
+            input: Session input with issue_id.
+            lifecycle_ctx: Lifecycle context with retry state.
+        """
+        # Emit gate_passed on first session_end attempt (gate just passed)
+        if lifecycle_ctx.retry_state.session_end_attempt == 1:
+            _emit_gate_passed_events(self.event_sink, input.issue_id, review_attempt=1)
+        if self.event_sink is not None:
+            self.event_sink.on_session_end_started(input.issue_id)
+
+    def process_session_end_effect(
+        self,
+        input: AgentSessionInput,
+        session_end_result: SessionEndResult,
+        lifecycle: ImplementerLifecycle,
+        lifecycle_ctx: LifecycleContext,
+        new_offset: int,
+    ) -> tuple[str | None, bool, TransitionResult]:
+        """Handle RUN_SESSION_END effect - process session_end result and emit events.
+
+        Args:
+            input: Session input with issue_id.
+            session_end_result: Result from session_end callback.
+            lifecycle: Lifecycle state machine.
+            lifecycle_ctx: Lifecycle context.
+            new_offset: New log offset after session_end check.
+
+        Returns:
+            Tuple of (pending_query for retry or None, should_break, transition_result).
+        """
+        # Process result through lifecycle state machine
+        # can_remediate=False for now (T011 will add proper remediation support)
+        result = lifecycle.on_session_end_result(
+            lifecycle_ctx, session_end_result, new_offset, can_remediate=False
+        )
+
+        # Emit session_end completed/skipped events
+        if self.event_sink is not None:
+            if session_end_result.status == "skipped":
+                self.event_sink.on_session_end_skipped(
+                    input.issue_id, session_end_result.reason or "unknown"
+                )
+            else:
+                self.event_sink.on_session_end_completed(
+                    input.issue_id, session_end_result.status
+                )
+
+        # Session_end never blocks - always proceed to review or success
+        should_break = result.effect in (
+            Effect.COMPLETE_SUCCESS,
+            Effect.COMPLETE_FAILURE,
+        )
+        return None, should_break, result
 
     def process_review_check(
         self,

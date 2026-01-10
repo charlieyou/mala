@@ -52,6 +52,7 @@ from src.pipeline.lifecycle_effect_handler import (
     LifecycleEffectHandler,
     _count_blocking_issues,
 )
+from src.pipeline.session_end_result import SessionEndRetryState
 from src.pipeline.message_stream_processor import (
     ContextPressureError,
     IdleTimeoutError,
@@ -83,10 +84,7 @@ if TYPE_CHECKING:
         AgentTextCallback,
         ToolUseCallback,
     )
-    from src.pipeline.session_end_result import (
-        SessionEndResult,
-        SessionEndRetryState,
-    )
+    from src.pipeline.session_end_result import SessionEndResult
 
 
 # Module-level logger for idle retry messages
@@ -637,6 +635,61 @@ class AgentSessionRunner:
                     continue
                 else:
                     result = gate_trans
+
+            # Handle RUN_SESSION_END
+            if result.effect == Effect.RUN_SESSION_END:
+                # Emit session_end started event BEFORE the check
+                self._effect_handler.process_session_end_check(input, lifecycle_ctx)
+
+                # If callback not set, skip session_end with "not_configured" reason
+                if self.callbacks.on_session_end_check is None:
+                    from src.pipeline.session_end_result import SessionEndResult
+
+                    session_end_result = SessionEndResult(
+                        status="skipped", reason="not_configured"
+                    )
+                else:
+                    assert state.log_path is not None
+                    # Build SessionEndRetryState from lifecycle context
+                    session_end_retry_state = SessionEndRetryState(
+                        attempt=lifecycle_ctx.retry_state.session_end_attempt,
+                        max_retries=lifecycle.config.max_session_end_retries,
+                        log_offset=lifecycle_ctx.retry_state.log_offset,
+                        previous_commit_hash=lifecycle_ctx.retry_state.previous_commit_hash,
+                    )
+                    session_end_result = await self.callbacks.on_session_end_check(
+                        input.issue_id,
+                        state.log_path,
+                        session_end_retry_state,
+                    )
+
+                # Get new log offset
+                new_offset = (
+                    self.callbacks.get_log_offset(
+                        state.log_path,
+                        lifecycle_ctx.retry_state.log_offset,
+                    )
+                    if self.callbacks.get_log_offset
+                    else 0
+                )
+
+                _, should_break, session_end_trans = (
+                    self._effect_handler.process_session_end_effect(
+                        input,
+                        session_end_result,
+                        lifecycle,
+                        lifecycle_ctx,
+                        new_offset,
+                    )
+                )
+
+                if should_break:
+                    if lifecycle.is_terminal:
+                        state.final_result = lifecycle_ctx.final_result
+                        break
+                    result = session_end_trans
+                else:
+                    result = session_end_trans
 
             # Handle RUN_REVIEW
             if result.effect == Effect.RUN_REVIEW:

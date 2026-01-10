@@ -974,6 +974,15 @@ class FakeEventSink:
     def on_review_skipped_no_progress(self, agent_id: str) -> None:
         self._record("on_review_skipped_no_progress", agent_id)
 
+    def on_session_end_started(self, issue_id: str) -> None:
+        self._record("on_session_end_started", issue_id)
+
+    def on_session_end_completed(self, issue_id: str, result: str) -> None:
+        self._record("on_session_end_completed", issue_id, result)
+
+    def on_session_end_skipped(self, issue_id: str, reason: str) -> None:
+        self._record("on_session_end_skipped", issue_id, reason)
+
     def on_warning(self, message: str, agent_id: str | None = None) -> None:
         self._record("on_warning", message, agent_id=agent_id)
 
