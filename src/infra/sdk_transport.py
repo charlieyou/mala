@@ -135,6 +135,27 @@ def ensure_sigint_isolated_cli_transport() -> None:
 
         async def close(self) -> None:
             try:
+                # Kill entire process group before closing, not just the leader.
+                # Without this, child processes (e.g., pytest spawned by Bash tool)
+                # become orphans and run forever when the Claude CLI exits.
+                if self._mala_sigint_pgid is not None and hasattr(os, "killpg"):
+                    import signal
+
+                    from src.infra.tools.command_runner import (
+                        DEFAULT_KILL_GRACE_SECONDS,
+                    )
+
+                    try:
+                        os.killpg(self._mala_sigint_pgid, signal.SIGTERM)
+                    except (ProcessLookupError, PermissionError):
+                        pass
+                    else:
+                        # Grace period, then force kill if still running
+                        await anyio.sleep(DEFAULT_KILL_GRACE_SECONDS)
+                        try:
+                            os.killpg(self._mala_sigint_pgid, signal.SIGKILL)
+                        except (ProcessLookupError, PermissionError):
+                            pass
                 await super().close()
             finally:
                 self._clear_sigint_pgid()
