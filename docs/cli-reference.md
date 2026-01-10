@@ -169,6 +169,34 @@ mala run /path/to/repo          # Normal output (default)
 mala run -v /path/to/repo       # Verbose mode - full tool args
 ```
 
+## Deprecated Flags
+
+These flags are deprecated and will be removed in a future version. Use the recommended alternatives.
+
+### `--reviewer-type`
+
+**Status**: Deprecated
+
+**Migration**: Use `validation_triggers.<trigger>.code_review.reviewer_type` in `mala.yaml` instead.
+
+**Before:**
+```bash
+mala run --reviewer-type cerberus /path/to/repo
+```
+
+**After:**
+```yaml
+# mala.yaml
+validation_triggers:
+  session_end:
+    failure_mode: continue
+    code_review:
+      enabled: true
+      reviewer_type: cerberus  # or "agent_sdk"
+```
+
+The per-trigger configuration provides more flexibility, allowing different reviewer types for different triggers (e.g., `agent_sdk` for per-issue review, `cerberus` for cumulative run-end review).
+
 ## Terminal Output
 
 Agent output uses color-coded prefixes to distinguish concurrent agents:
