@@ -575,11 +575,7 @@ class ImplementerLifecycle:
             can_remediate: If True and retries remain, trigger remediation loop.
                 Set by handler based on trigger config failure_mode=remediate.
         """
-        valid_states = (
-            LifecycleState.RUNNING_SESSION_END,
-            LifecycleState.SESSION_END_REMEDIATING,
-        )
-        if self._state not in valid_states:
+        if self._state != LifecycleState.RUNNING_SESSION_END:
             raise ValueError(f"Unexpected state for session_end_result: {self._state}")
 
         ctx.last_session_end_result = session_end_result

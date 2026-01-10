@@ -279,11 +279,12 @@ class TestSessionEndRemediationTransitions:
         assert lifecycle.state == LifecycleState.RUNNING_SESSION_END
         assert result.effect == Effect.RUN_SESSION_END
 
-    def test_session_end_result_from_remediating_state(self) -> None:
-        """Session_end result can be received from SESSION_END_REMEDIATING state."""
+    def test_session_end_result_after_remediation_complete(self) -> None:
+        """Session_end result after remediation complete → RUNNING_REVIEW."""
         lifecycle, ctx = self._setup_for_remediation()
-        # After remediation, re-run session_end
+        # After remediation, transition back to RUNNING_SESSION_END
         lifecycle.on_session_end_remediation_complete(ctx)
+        assert lifecycle.state == LifecycleState.RUNNING_SESSION_END
 
         # Now simulate a passing result from the re-run
         session_end_result = SessionEndResult(status="pass")
@@ -344,6 +345,33 @@ class TestSessionEndInvalidTransitions:
 
         with pytest.raises(ValueError, match="Unexpected state"):
             lifecycle.on_session_end_result(ctx, session_end_result, new_log_offset=0)
+
+    def test_session_end_result_from_remediating_raises(self) -> None:
+        """session_end_result from SESSION_END_REMEDIATING state raises error.
+
+        Must call on_session_end_remediation_complete first to transition back
+        to RUNNING_SESSION_END before reporting session_end result.
+        """
+        config = LifecycleConfig(session_end_enabled=True, max_session_end_retries=3)
+        lifecycle = ImplementerLifecycle(config)
+        lifecycle.start()
+        ctx = LifecycleContext()
+        lifecycle.on_messages_complete(ctx, has_session_id=True)
+        lifecycle.on_log_ready(ctx)
+        gate_result = GateResult(passed=True, commit_hash="abc123")
+        lifecycle.on_gate_result(ctx, gate_result, new_log_offset=100)
+        # Fail session_end with can_remediate=True to enter remediation state
+        session_end_result = SessionEndResult(status="fail")
+        lifecycle.on_session_end_result(
+            ctx, session_end_result, new_log_offset=200, can_remediate=True
+        )
+        # Now in SESSION_END_REMEDIATING
+        assert lifecycle.state == LifecycleState.SESSION_END_REMEDIATING
+
+        # Attempting to report session_end result without completing remediation
+        new_result = SessionEndResult(status="pass")
+        with pytest.raises(ValueError, match="Unexpected state"):
+            lifecycle.on_session_end_result(ctx, new_result, new_log_offset=300)
 
     def test_session_end_remediation_complete_from_running_session_end_raises(
         self,
