@@ -39,6 +39,7 @@ from .types import (
     DEFAULT_AGENT_TIMEOUT_MINUTES,
     DEFAULT_CONTEXT_LIMIT,
     DEFAULT_CONTEXT_RESTART_THRESHOLD,
+    DEFAULT_MAX_IDLE_RETRIES,
     OrchestratorConfig,
     OrchestratorDependencies,
     _DerivedConfig,
@@ -215,17 +216,43 @@ def _derive_config(
     else:
         context_limit = DEFAULT_CONTEXT_LIMIT
 
+    # Compute max_idle_retries - only from mala.yaml (no CLI option)
+    yaml_max_idle_retries: int | None = (
+        getattr(validation_config, "max_idle_retries", None)
+        if validation_config is not None
+        else None
+    )
+    max_idle_retries = (
+        yaml_max_idle_retries
+        if yaml_max_idle_retries is not None
+        else DEFAULT_MAX_IDLE_RETRIES
+    )
+
+    # Compute idle_timeout_seconds - only from mala.yaml (no CLI option)
+    # None means derive from agent timeout at runtime; 0 means disabled
+    yaml_idle_timeout_seconds: float | None = (
+        getattr(validation_config, "idle_timeout_seconds", None)
+        if validation_config is not None
+        else None
+    )
+    idle_timeout_seconds = yaml_idle_timeout_seconds  # None = derive at runtime
+
     logger.debug(
-        "Derived config: timeout=%ds context_restart_threshold=%.2f context_limit=%d",
+        "Derived config: timeout=%ds context_restart_threshold=%.2f context_limit=%d "
+        "max_idle_retries=%d idle_timeout_seconds=%s",
         timeout_seconds,
         context_restart_threshold,
         context_limit,
+        max_idle_retries,
+        idle_timeout_seconds,
     )
     return _DerivedConfig(
         timeout_seconds=timeout_seconds,
         disabled_validations=disabled_validations,
         context_restart_threshold=context_restart_threshold,
         context_limit=context_limit,
+        max_idle_retries=max_idle_retries,
+        idle_timeout_seconds=idle_timeout_seconds,
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
         max_epic_verification_retries=max_epic_verification_retries,

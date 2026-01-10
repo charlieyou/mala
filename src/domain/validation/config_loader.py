@@ -75,6 +75,8 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "timeout_minutes",
         "context_restart_threshold",
         "context_limit",
+        "max_idle_retries",
+        "idle_timeout_seconds",
     }
 )
 

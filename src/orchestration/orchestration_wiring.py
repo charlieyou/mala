@@ -330,6 +330,8 @@ def build_session_config(
         prompt_validation_commands=pipeline.prompt_validation_commands,
         context_restart_threshold=pipeline.context_restart_threshold,
         context_limit=pipeline.context_limit,
+        max_idle_retries=pipeline.max_idle_retries,
+        idle_timeout_seconds=pipeline.idle_timeout_seconds,
         deadlock_monitor=pipeline.deadlock_monitor,
         mcp_server_factory=mcp_server_factory,
         strict_resume=strict_resume,

@@ -68,6 +68,9 @@ timeout_minutes: int             # Optional. Agent timeout in minutes (default: 
 context_restart_threshold: float # Optional. Ratio (0.0-1.0) to restart agent on context pressure (default: 0.70)
 context_limit: int               # Optional. Maximum context tokens (default: 200000)
 
+max_idle_retries: int            # Optional. Maximum idle timeout retries (default: 2)
+idle_timeout_seconds: float      # Optional. Idle timeout in seconds (default: derived from timeout_minutes)
+
 validation_triggers:             # Optional. See validation-triggers.md
   epic_completion: object        # Run validation when epics complete
   session_end: object            # Run validation at session end
@@ -93,6 +96,8 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `timeout_minutes` | integer | No | Agent timeout in minutes (default: 60). Can be overridden by CLI `--timeout` |
 | `context_restart_threshold` | float | No | Ratio (0.0-1.0) at which to restart agent on context pressure (default: 0.70) |
 | `context_limit` | integer | No | Maximum context tokens (default: 200000) |
+| `max_idle_retries` | integer | No | Maximum idle timeout retries before aborting (default: 2). Set to 0 to disable retries. |
+| `idle_timeout_seconds` | float | No | Seconds to wait for SDK activity before triggering idle recovery (default: derived from `timeout_minutes`). Set to 0 to disable idle timeout. |
 | `validation_triggers` | object | No | Trigger configuration. See [validation-triggers.md](validation-triggers.md) |
 
 *Required when `coverage` section is present.

@@ -302,6 +302,8 @@ class MalaOrchestrator:
         self.epic_override_ids = orch_config.epic_override_ids
         self.context_restart_threshold = derived.context_restart_threshold
         self.context_limit = derived.context_limit
+        self.max_idle_retries = derived.max_idle_retries
+        self.idle_timeout_seconds = derived.idle_timeout_seconds
         self.review_disabled_reason = derived.review_disabled_reason
         self._init_runtime_state()
         self.log_provider = log_provider
@@ -430,6 +432,8 @@ class MalaOrchestrator:
             else None,
             context_restart_threshold=self.context_restart_threshold,
             context_limit=self.context_limit,
+            max_idle_retries=self.max_idle_retries,
+            idle_timeout_seconds=self.idle_timeout_seconds,
             prompts=self._prompts,
             prompt_validation_commands=self._prompt_validation_commands,
             validation_config=self._validation_config,

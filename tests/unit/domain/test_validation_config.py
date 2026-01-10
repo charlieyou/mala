@@ -759,6 +759,115 @@ class TestContextLimit:
             ValidationConfig.from_dict({"context_limit": -10000})
 
 
+class TestMaxIdleRetries:
+    """Tests for max_idle_retries parsing in ValidationConfig."""
+
+    def test_max_idle_retries_default(self) -> None:
+        """Default max_idle_retries is None."""
+        config = ValidationConfig.from_dict({})
+        assert config.max_idle_retries is None
+        assert "max_idle_retries" not in config._fields_set
+
+    def test_max_idle_retries_valid_integer(self) -> None:
+        """Valid integer is accepted."""
+        config = ValidationConfig.from_dict({"max_idle_retries": 3})
+        assert config.max_idle_retries == 3
+        assert "max_idle_retries" in config._fields_set
+
+    def test_max_idle_retries_zero_valid(self) -> None:
+        """Zero is valid (disables retries)."""
+        config = ValidationConfig.from_dict({"max_idle_retries": 0})
+        assert config.max_idle_retries == 0
+        assert "max_idle_retries" in config._fields_set
+
+    def test_max_idle_retries_explicit_null(self) -> None:
+        """max_idle_retries: null is tracked in _fields_set but value is None."""
+        config = ValidationConfig.from_dict({"max_idle_retries": None})
+        assert config.max_idle_retries is None
+        assert "max_idle_retries" in config._fields_set
+
+    def test_max_idle_retries_invalid_type_string(self) -> None:
+        """String max_idle_retries raises ConfigError."""
+        with pytest.raises(ConfigError, match="max_idle_retries must be an integer"):
+            ValidationConfig.from_dict({"max_idle_retries": "2"})
+
+    def test_max_idle_retries_invalid_type_float(self) -> None:
+        """Float max_idle_retries raises ConfigError."""
+        with pytest.raises(ConfigError, match="max_idle_retries must be an integer"):
+            ValidationConfig.from_dict({"max_idle_retries": 2.5})
+
+    def test_max_idle_retries_invalid_type_bool_true(self) -> None:
+        """Boolean True is rejected (bool is subclass of int)."""
+        with pytest.raises(ConfigError, match="max_idle_retries must be an integer"):
+            ValidationConfig.from_dict({"max_idle_retries": True})
+
+    def test_max_idle_retries_invalid_type_bool_false(self) -> None:
+        """Boolean False is rejected (bool is subclass of int)."""
+        with pytest.raises(ConfigError, match="max_idle_retries must be an integer"):
+            ValidationConfig.from_dict({"max_idle_retries": False})
+
+    def test_max_idle_retries_negative_rejected(self) -> None:
+        """Negative max_idle_retries raises ConfigError."""
+        with pytest.raises(ConfigError, match="max_idle_retries must be non-negative"):
+            ValidationConfig.from_dict({"max_idle_retries": -1})
+
+
+class TestIdleTimeoutSeconds:
+    """Tests for idle_timeout_seconds parsing in ValidationConfig."""
+
+    def test_idle_timeout_seconds_default(self) -> None:
+        """Default idle_timeout_seconds is None."""
+        config = ValidationConfig.from_dict({})
+        assert config.idle_timeout_seconds is None
+        assert "idle_timeout_seconds" not in config._fields_set
+
+    def test_idle_timeout_seconds_valid_float(self) -> None:
+        """Valid float is accepted."""
+        config = ValidationConfig.from_dict({"idle_timeout_seconds": 300.5})
+        assert config.idle_timeout_seconds == 300.5
+        assert "idle_timeout_seconds" in config._fields_set
+
+    def test_idle_timeout_seconds_valid_int(self) -> None:
+        """Valid int is accepted and converted to float."""
+        config = ValidationConfig.from_dict({"idle_timeout_seconds": 300})
+        assert config.idle_timeout_seconds == 300.0
+        assert "idle_timeout_seconds" in config._fields_set
+
+    def test_idle_timeout_seconds_zero_valid(self) -> None:
+        """Zero is valid (disables idle timeout)."""
+        config = ValidationConfig.from_dict({"idle_timeout_seconds": 0})
+        assert config.idle_timeout_seconds == 0.0
+        assert "idle_timeout_seconds" in config._fields_set
+
+    def test_idle_timeout_seconds_explicit_null(self) -> None:
+        """idle_timeout_seconds: null is tracked in _fields_set but value is None."""
+        config = ValidationConfig.from_dict({"idle_timeout_seconds": None})
+        assert config.idle_timeout_seconds is None
+        assert "idle_timeout_seconds" in config._fields_set
+
+    def test_idle_timeout_seconds_invalid_type_string(self) -> None:
+        """String idle_timeout_seconds raises ConfigError."""
+        with pytest.raises(ConfigError, match="idle_timeout_seconds must be a number"):
+            ValidationConfig.from_dict({"idle_timeout_seconds": "300"})
+
+    def test_idle_timeout_seconds_invalid_type_bool_true(self) -> None:
+        """Boolean True is rejected (bool is subclass of int)."""
+        with pytest.raises(ConfigError, match="idle_timeout_seconds must be a number"):
+            ValidationConfig.from_dict({"idle_timeout_seconds": True})
+
+    def test_idle_timeout_seconds_invalid_type_bool_false(self) -> None:
+        """Boolean False is rejected (bool is subclass of int)."""
+        with pytest.raises(ConfigError, match="idle_timeout_seconds must be a number"):
+            ValidationConfig.from_dict({"idle_timeout_seconds": False})
+
+    def test_idle_timeout_seconds_negative_rejected(self) -> None:
+        """Negative idle_timeout_seconds raises ConfigError."""
+        with pytest.raises(
+            ConfigError, match="idle_timeout_seconds must be non-negative"
+        ):
+            ValidationConfig.from_dict({"idle_timeout_seconds": -10.0})
+
+
 class TestClaudeSettingsSourcesIntegration:
     """Integration test for claude_settings_sources full config path.
 

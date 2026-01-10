@@ -776,6 +776,9 @@ class ValidationConfig:
         context_restart_threshold: Ratio (0.0-1.0) at which to restart agent on
             context pressure. None means use default (0.70).
         context_limit: Maximum context tokens. None means use default (200000).
+        max_idle_retries: Maximum number of idle timeout retries. None means use default (2).
+        idle_timeout_seconds: Idle timeout for SDK stream in seconds.
+            None means derive from agent timeout; 0 disables idle timeout.
         _fields_set: Set of field names that were explicitly provided in source.
             Used by the merger to distinguish "not set" from "explicitly set".
     """
@@ -791,6 +794,8 @@ class ValidationConfig:
     timeout_minutes: int | None = None
     context_restart_threshold: float | None = None
     context_limit: int | None = None
+    max_idle_retries: int | None = None
+    idle_timeout_seconds: float | None = None
     _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
@@ -984,6 +989,44 @@ class ValidationConfig:
                     raise ConfigError(f"context_limit must be positive, got {cl_value}")
                 context_limit = cl_value
 
+        # Parse max_idle_retries
+        max_idle_retries: int | None = None
+        if "max_idle_retries" in data:
+            fields_set.add("max_idle_retries")
+            mir_value = data["max_idle_retries"]
+            if mir_value is not None:
+                # Reject booleans (bool is subclass of int in Python)
+                if isinstance(mir_value, bool) or not isinstance(mir_value, int):
+                    raise ConfigError(
+                        f"max_idle_retries must be an integer, "
+                        f"got {type(mir_value).__name__}"
+                    )
+                if mir_value < 0:
+                    raise ConfigError(
+                        f"max_idle_retries must be non-negative, got {mir_value}"
+                    )
+                max_idle_retries = mir_value
+
+        # Parse idle_timeout_seconds
+        idle_timeout_seconds: float | None = None
+        if "idle_timeout_seconds" in data:
+            fields_set.add("idle_timeout_seconds")
+            its_value = data["idle_timeout_seconds"]
+            if its_value is not None:
+                # Accept int or float, but reject bool
+                if isinstance(its_value, bool) or not isinstance(
+                    its_value, (int, float)
+                ):
+                    raise ConfigError(
+                        f"idle_timeout_seconds must be a number, "
+                        f"got {type(its_value).__name__}"
+                    )
+                if its_value < 0:
+                    raise ConfigError(
+                        f"idle_timeout_seconds must be non-negative, got {its_value}"
+                    )
+                idle_timeout_seconds = float(its_value)
+
         return cls(
             preset=preset,
             commands=commands,
@@ -996,6 +1039,8 @@ class ValidationConfig:
             timeout_minutes=timeout_minutes,
             context_restart_threshold=context_restart_threshold,
             context_limit=context_limit,
+            max_idle_retries=max_idle_retries,
+            idle_timeout_seconds=idle_timeout_seconds,
             _fields_set=frozenset(fields_set),
         )
 

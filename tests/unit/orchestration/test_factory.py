@@ -499,3 +499,96 @@ class TestDeriveConfig:
         )
 
         assert derived.context_limit == DEFAULT_CONTEXT_LIMIT
+
+    def test_max_idle_retries_from_validation_config(self) -> None:
+        """max_idle_retries is read from validation_config."""
+        from src.domain.validation.config import ValidationConfig
+
+        validation_config = ValidationConfig(max_idle_retries=5)
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.max_idle_retries == 5
+
+    def test_max_idle_retries_default_when_no_config(self) -> None:
+        """max_idle_retries uses default when validation_config doesn't set it."""
+        from src.orchestration.types import DEFAULT_MAX_IDLE_RETRIES
+
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=None,
+            validation_config_missing=True,
+        )
+
+        assert derived.max_idle_retries == DEFAULT_MAX_IDLE_RETRIES
+
+    def test_max_idle_retries_default_when_null_in_config(self) -> None:
+        """max_idle_retries uses default when validation_config has it as None."""
+        from src.domain.validation.config import ValidationConfig
+        from src.orchestration.types import DEFAULT_MAX_IDLE_RETRIES
+
+        validation_config = ValidationConfig(max_idle_retries=None)
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.max_idle_retries == DEFAULT_MAX_IDLE_RETRIES
+
+    def test_idle_timeout_seconds_from_validation_config(self) -> None:
+        """idle_timeout_seconds is read from validation_config."""
+        from src.domain.validation.config import ValidationConfig
+
+        validation_config = ValidationConfig(idle_timeout_seconds=600.0)
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.idle_timeout_seconds == 600.0
+
+    def test_idle_timeout_seconds_none_when_not_set(self) -> None:
+        """idle_timeout_seconds is None when not set in validation_config."""
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=None,
+            validation_config_missing=True,
+        )
+
+        assert derived.idle_timeout_seconds is None
+
+    def test_idle_timeout_seconds_zero_disables(self) -> None:
+        """idle_timeout_seconds=0 is passed through (disables idle timeout)."""
+        from src.domain.validation.config import ValidationConfig
+
+        validation_config = ValidationConfig(idle_timeout_seconds=0.0)
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.idle_timeout_seconds == 0.0

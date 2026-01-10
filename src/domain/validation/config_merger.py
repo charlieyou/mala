@@ -215,6 +215,12 @@ def merge_configs(
     # context_limit: User value always takes precedence (presets don't define this)
     merged_context_limit = user.context_limit
 
+    # max_idle_retries: User value always takes precedence (presets don't define this)
+    merged_max_idle_retries = user.max_idle_retries
+
+    # idle_timeout_seconds: User value always takes precedence (presets don't define this)
+    merged_idle_timeout_seconds = user.idle_timeout_seconds
+
     return ValidationConfig(
         preset=user.preset,  # Keep user's preset reference
         commands=merged_commands,
@@ -227,6 +233,8 @@ def merge_configs(
         timeout_minutes=merged_timeout_minutes,
         context_restart_threshold=merged_context_restart_threshold,
         context_limit=merged_context_limit,
+        max_idle_retries=merged_max_idle_retries,
+        idle_timeout_seconds=merged_idle_timeout_seconds,
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 
