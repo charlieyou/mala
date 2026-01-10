@@ -2,6 +2,7 @@
 
 Tests for:
 - _check_review_availability: Review availability checking by reviewer_type
+- _derive_config: Derived configuration extraction
 """
 
 from pathlib import Path
@@ -10,7 +11,8 @@ from unittest.mock import patch
 import pytest
 
 from src.infra.io.config import MalaConfig
-from src.orchestration.factory import _check_review_availability
+from src.orchestration.factory import _check_review_availability, _derive_config
+from src.orchestration.types import OrchestratorConfig
 
 
 class TestCheckReviewAvailability:
@@ -125,3 +127,95 @@ class TestCheckReviewAvailability:
             )
         assert result is not None
         assert "review-gate" in result
+
+
+class TestDeriveConfig:
+    """Tests for _derive_config function."""
+
+    def test_max_gate_retries_from_session_end_config(self) -> None:
+        """max_gate_retries is extracted from session_end.max_retries."""
+        from src.domain.validation.config import (
+            FailureMode,
+            SessionEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        validation_config = ValidationConfig(
+            validation_triggers=ValidationTriggersConfig(
+                session_end=SessionEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                    max_retries=7,
+                ),
+            ),
+        )
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.max_gate_retries == 7
+
+    def test_max_gate_retries_none_when_no_session_end(self) -> None:
+        """max_gate_retries is None when no session_end trigger is configured."""
+        from src.domain.validation.config import ValidationConfig
+
+        validation_config = ValidationConfig()
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.max_gate_retries is None
+
+    def test_max_gate_retries_none_when_no_validation_config(self) -> None:
+        """max_gate_retries is None when validation_config is None."""
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=None,
+            validation_config_missing=True,
+        )
+
+        assert derived.max_gate_retries is None
+
+    def test_max_gate_retries_none_when_session_end_max_retries_unset(self) -> None:
+        """max_gate_retries is None when session_end.max_retries is not set."""
+        from src.domain.validation.config import (
+            FailureMode,
+            SessionEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        # max_retries defaults to None in SessionEndTriggerConfig
+        validation_config = ValidationConfig(
+            validation_triggers=ValidationTriggersConfig(
+                session_end=SessionEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                    # max_retries not set
+                ),
+            ),
+        )
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.max_gate_retries is None

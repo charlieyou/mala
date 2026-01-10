@@ -146,6 +146,15 @@ def _derive_config(
     if code_review is not None:
         max_review_retries = getattr(code_review, "max_retries", None)
 
+    # Extract max_gate_retries from session_end trigger config
+    max_gate_retries: int | None = None
+    if validation_config is not None:
+        triggers = getattr(validation_config, "validation_triggers", None)
+        if triggers is not None:
+            session_end = getattr(triggers, "session_end", None)
+            if session_end is not None:
+                max_gate_retries = getattr(session_end, "max_retries", None)
+
     logger.debug(
         "Derived config: timeout=%ds",
         timeout_seconds,
@@ -153,6 +162,7 @@ def _derive_config(
     return _DerivedConfig(
         timeout_seconds=timeout_seconds,
         disabled_validations=disabled_validations,
+        max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
         validation_config=validation_config,
         validation_config_missing=validation_config_missing,

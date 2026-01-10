@@ -274,7 +274,13 @@ class MalaOrchestrator:
         self.max_issues = orch_config.max_issues
         self.epic_id = orch_config.epic_id
         self.only_ids = orch_config.only_ids
-        self.max_gate_retries = orch_config.max_gate_retries
+        # Use derived.max_gate_retries from mala.yaml session_end config if set,
+        # otherwise fall back to orch_config (CLI/default)
+        self.max_gate_retries = (
+            derived.max_gate_retries
+            if derived.max_gate_retries is not None
+            else orch_config.max_gate_retries
+        )
         # Use derived.max_review_retries from mala.yaml code_review config if set,
         # otherwise fall back to orch_config (CLI/default)
         self.max_review_retries = (
