@@ -661,8 +661,8 @@ class TestRunReviewExecution:
         assert len(reviewer.run_review_calls) == 1
         review_input = reviewer.run_review_calls[0]
         assert hasattr(review_input, "diff_content")
-        assert review_input.diff_content == expected_diff
-        assert review_input.claude_session_id == "cumulative-run_end-run-123"
+        assert review_input.diff_content == expected_diff  # type: ignore[union-attr]
+        assert review_input.claude_session_id == "cumulative-run_end-run-123"  # type: ignore[union-attr]
 
     @pytest.mark.asyncio
     async def test_execution_error_returns_failed_no_baseline_update(
@@ -877,7 +877,7 @@ class TestRunReviewFindings:
         assert "review_finding" in tags
         assert "auto_generated" in tags
         # Verify fingerprint tag is present
-        assert any(t.startswith("fp:") for t in tags)
+        assert any(str(t).startswith("fp:") for t in tags)
 
     @pytest.mark.asyncio
     async def test_beads_issue_creation_failure_is_logged_not_fatal(
