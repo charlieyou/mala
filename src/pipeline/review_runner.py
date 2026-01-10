@@ -152,18 +152,16 @@ def _format_session_end_evidence(session_end_result: SessionEndResult) -> str:
         parts.append("")
         parts.append("### Command Results")
         for i, cmd in enumerate(session_end_result.commands, 1):
-            status = "PASS" if cmd.returncode == 0 else "FAIL"
-            parts.append(f"- **Command {i}**: `{cmd.command}` [{status}]")
-            if cmd.returncode != 0:
-                parts.append(f"  - Return code: {cmd.returncode}")
-                if cmd.stderr:
-                    # Truncate long stderr
-                    stderr = (
-                        cmd.stderr[:500] + "..."
-                        if len(cmd.stderr) > 500
-                        else cmd.stderr
-                    )
-                    parts.append(f"  - Stderr: {stderr}")
+            status = "PASS" if cmd.passed else "FAIL"
+            parts.append(f"- **Command {i}**: `{cmd.ref}` [{status}]")
+            if not cmd.passed and cmd.error_message:
+                # Truncate long error messages
+                error_msg = (
+                    cmd.error_message[:500] + "..."
+                    if len(cmd.error_message) > 500
+                    else cmd.error_message
+                )
+                parts.append(f"  - Error: {error_msg}")
 
     # Format code review result if present
     if (

@@ -6,10 +6,39 @@ These dataclasses hold session_end execution state and results per spec R5.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from datetime import datetime
+
+
+@dataclass
+class CommandOutcome:
+    """Spec-compliant command execution outcome.
+
+    Per spec R5, commands in SessionEndResult use this summarized schema:
+    {ref, passed, duration_seconds, error_message}
+
+    Attributes:
+        ref: Command reference name from config (e.g., "test", "lint").
+        passed: Whether the command succeeded (returncode == 0).
+        duration_seconds: How long the command took.
+        error_message: Error output when failed (stderr or timeout message), None if passed.
+    """
+
+    ref: str
+    passed: bool
+    duration_seconds: float
+    error_message: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        """Convert to a JSON-serializable dict."""
+        return {
+            "ref": self.ref,
+            "passed": self.passed,
+            "duration_seconds": self.duration_seconds,
+            "error_message": self.error_message,
+        }
 
 
 @dataclass
@@ -82,7 +111,7 @@ class SessionEndResult:
     status: Literal["pass", "fail", "timeout", "interrupted", "skipped"]
     started_at: datetime | None = None
     finished_at: datetime | None = None
-    commands: list[Any] = field(default_factory=list)
+    commands: list[CommandOutcome] = field(default_factory=list)
     code_review_result: CodeReviewResult | None = None
     reason: str | None = None
 
@@ -90,23 +119,14 @@ class SessionEndResult:
         """Convert to a JSON-serializable dict.
 
         Converts datetime fields to ISO format strings and nested objects
-        to their dict representations.
+        to their dict representations. Commands use spec R5 schema:
+        {ref, passed, duration_seconds, error_message}.
         """
         return {
             "status": self.status,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
-            "commands": [
-                {
-                    "command": cmd.command,
-                    "returncode": cmd.returncode,
-                    "stdout": cmd.stdout,
-                    "stderr": cmd.stderr,
-                    "duration_seconds": cmd.duration_seconds,
-                    "timed_out": cmd.timed_out,
-                }
-                for cmd in self.commands
-            ],
+            "commands": [cmd.to_dict() for cmd in self.commands],
             "code_review_result": (
                 self.code_review_result.to_dict() if self.code_review_result else None
             ),

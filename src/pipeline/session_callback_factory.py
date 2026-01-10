@@ -21,7 +21,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 
 from src.pipeline.agent_session_runner import SessionCallbacks
-from src.core.session_end_result import CodeReviewResult, SessionEndResult
+from src.core.session_end_result import (
+    CodeReviewResult,
+    CommandOutcome,
+    SessionEndResult,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -357,7 +361,7 @@ class SessionCallbackFactory:
 
         started_at = datetime.now(UTC)
         interrupt_event = self._get_interrupt_event()
-        command_results: list[CommandResultProtocol] = []
+        command_outcomes: list[CommandOutcome] = []
 
         try:
             async with asyncio.timeout(self._session_end_timeout):
@@ -376,7 +380,7 @@ class SessionCallbackFactory:
                             status="interrupted",
                             started_at=started_at,
                             finished_at=datetime.now(UTC),
-                            commands=list(command_results),
+                            commands=list(command_outcomes),
                             reason="SIGINT received",
                         )
 
@@ -413,7 +417,8 @@ class SessionCallbackFactory:
                             if interrupt_event and interrupt_event.is_set():
                                 # SIGINT: complete the command, return with result
                                 result = await cmd_task
-                                command_results.append(result)
+                                outcome = self._to_command_outcome(cmd_ref.ref, result)
+                                command_outcomes.append(outcome)
                                 logger.info(
                                     "session_end interrupted during command %s for %s",
                                     cmd_ref.ref,
@@ -423,14 +428,15 @@ class SessionCallbackFactory:
                                     status="interrupted",
                                     started_at=started_at,
                                     finished_at=datetime.now(UTC),
-                                    commands=list(command_results),
+                                    commands=list(command_outcomes),
                                     reason="SIGINT received",
                                 )
                             # Not SIGINT (likely timeout): cancel the inner task and re-raise
                             # to let timeout handler return with empty commands
                             cmd_task.cancel()
                             raise
-                        command_results.append(result)
+                        outcome = self._to_command_outcome(cmd_ref.ref, result)
+                        command_outcomes.append(outcome)
 
                         # Check for interrupt after command completes
                         if interrupt_event and interrupt_event.is_set():
@@ -443,7 +449,7 @@ class SessionCallbackFactory:
                                 status="interrupted",
                                 started_at=started_at,
                                 finished_at=datetime.now(UTC),
-                                commands=list(command_results),
+                                commands=list(command_outcomes),
                                 reason="SIGINT received",
                             )
 
@@ -472,7 +478,7 @@ class SessionCallbackFactory:
                             status="fail",
                             started_at=started_at,
                             finished_at=datetime.now(UTC),
-                            commands=list(command_results),
+                            commands=list(command_outcomes),
                             reason="command_failed",
                         )
                     elif failure_mode == FailureMode.REMEDIATE:
@@ -481,7 +487,7 @@ class SessionCallbackFactory:
                             issue_id=issue_id,
                             session_end_config=session_end_config,
                             validation_config=validation_config,
-                            command_results=command_results,
+                            command_outcomes=command_outcomes,
                             started_at=started_at,
                             interrupt_event=interrupt_event,
                             retry_state=retry_state,
@@ -530,7 +536,7 @@ class SessionCallbackFactory:
                     status=status,
                     started_at=started_at,
                     finished_at=datetime.now(UTC),
-                    commands=list(command_results),
+                    commands=list(command_outcomes),
                     code_review_result=code_review_result,
                     reason=reason,
                 )
@@ -557,9 +563,42 @@ class SessionCallbackFactory:
                 status="interrupted",
                 started_at=started_at,
                 finished_at=datetime.now(UTC),
-                commands=list(command_results),
+                commands=list(command_outcomes),
                 reason="cancelled",
             )
+
+    def _to_command_outcome(
+        self, ref: str, result: CommandResultProtocol
+    ) -> CommandOutcome:
+        """Convert a CommandResult to a spec-compliant CommandOutcome.
+
+        Per spec R5, command outcomes use the schema:
+        {ref, passed, duration_seconds, error_message}
+
+        Args:
+            ref: The command reference name (e.g., "test", "lint").
+            result: The raw command execution result.
+
+        Returns:
+            CommandOutcome with spec-compliant fields.
+        """
+        # error_message is stderr if command failed, None if passed
+        error_message: str | None = None
+        if not result.ok:
+            # Include stderr, or a timeout message if applicable
+            if result.timed_out:
+                error_message = "Command timed out"
+            elif result.stderr:
+                error_message = result.stderr
+            else:
+                error_message = f"Exit code: {result.returncode}"
+
+        return CommandOutcome(
+            ref=ref,
+            passed=result.ok,
+            duration_seconds=result.duration_seconds,
+            error_message=error_message,
+        )
 
     def _resolve_command(
         self,
@@ -643,7 +682,7 @@ class SessionCallbackFactory:
         issue_id: str,
         session_end_config: SessionEndTriggerConfig,
         validation_config: ValidationConfig,
-        command_results: list[CommandResultProtocol],
+        command_outcomes: list[CommandOutcome],
         started_at: datetime,
         interrupt_event: asyncio.Event | None,
         retry_state: SessionEndRetryState,
@@ -660,7 +699,7 @@ class SessionCallbackFactory:
             issue_id: The issue ID for context.
             session_end_config: The session_end trigger config.
             validation_config: The full validation config for command resolution.
-            command_results: Command results from initial attempt (will be updated).
+            command_outcomes: Command outcomes from initial attempt (will be updated).
             started_at: Timestamp when session_end started.
             interrupt_event: Event to check for interruption.
             retry_state: Retry state for tracking attempt number.
@@ -689,8 +728,8 @@ class SessionCallbackFactory:
             # Fall back to continue mode - return None to indicate no remediation
             return None
 
-        # Build failure output from last command result
-        failure_output = self._build_failure_output(command_results)
+        # Build failure output from last command outcome
+        failure_output = self._build_failure_output(command_outcomes)
 
         # Remediation loop: run fixer and retry validation
         for retry_num in range(1, max_retries + 1):
@@ -704,7 +743,7 @@ class SessionCallbackFactory:
                     status="interrupted",
                     started_at=started_at,
                     finished_at=datetime.now(UTC),
-                    commands=list(command_results),
+                    commands=list(command_outcomes),
                     reason="SIGINT received",
                 )
 
@@ -735,7 +774,7 @@ class SessionCallbackFactory:
                     status="interrupted",
                     started_at=started_at,
                     finished_at=datetime.now(UTC),
-                    commands=list(command_results),
+                    commands=list(command_outcomes),
                     reason="fixer_interrupted",
                 )
 
@@ -749,7 +788,7 @@ class SessionCallbackFactory:
                     status="interrupted",
                     started_at=started_at,
                     finished_at=datetime.now(UTC),
-                    commands=list(command_results),
+                    commands=list(command_outcomes),
                     reason="SIGINT received",
                 )
 
@@ -764,12 +803,12 @@ class SessionCallbackFactory:
                     status="fail",
                     started_at=started_at,
                     finished_at=datetime.now(UTC),
-                    commands=list(command_results),
+                    commands=list(command_outcomes),
                     reason="command_runner_not_configured",
                 )
 
             retry_passed = True
-            retry_results: list[CommandResultProtocol] = []
+            retry_outcomes: list[CommandOutcome] = []
             for cmd_ref in session_end_config.commands:
                 # Check for interrupt before each command
                 if interrupt_event and interrupt_event.is_set():
@@ -782,7 +821,7 @@ class SessionCallbackFactory:
                         status="interrupted",
                         started_at=started_at,
                         finished_at=datetime.now(UTC),
-                        commands=list(command_results) + retry_results,
+                        commands=list(command_outcomes) + retry_outcomes,
                         reason="SIGINT received",
                     )
 
@@ -801,7 +840,7 @@ class SessionCallbackFactory:
                         status="fail",
                         started_at=started_at,
                         finished_at=datetime.now(UTC),
-                        commands=list(command_results),
+                        commands=list(command_outcomes),
                         reason="command_ref_not_found",
                     )
 
@@ -821,7 +860,8 @@ class SessionCallbackFactory:
                     # Check if SIGINT: complete command. Otherwise re-raise.
                     if interrupt_event and interrupt_event.is_set():
                         result = await cmd_task
-                        retry_results.append(result)
+                        outcome = self._to_command_outcome(cmd_ref.ref, result)
+                        retry_outcomes.append(outcome)
                         logger.info(
                             "session_end retry interrupted during command %s for %s",
                             cmd_ref.ref,
@@ -831,13 +871,14 @@ class SessionCallbackFactory:
                             status="interrupted",
                             started_at=started_at,
                             finished_at=datetime.now(UTC),
-                            commands=list(command_results) + retry_results,
+                            commands=list(command_outcomes) + retry_outcomes,
                             reason="SIGINT received",
                         )
                     # Not SIGINT: cancel and re-raise
                     cmd_task.cancel()
                     raise
-                retry_results.append(result)
+                outcome = self._to_command_outcome(cmd_ref.ref, result)
+                retry_outcomes.append(outcome)
 
                 # Check for interrupt after command
                 if interrupt_event and interrupt_event.is_set():
@@ -850,18 +891,18 @@ class SessionCallbackFactory:
                         status="interrupted",
                         started_at=started_at,
                         finished_at=datetime.now(UTC),
-                        commands=list(command_results) + retry_results,
+                        commands=list(command_outcomes) + retry_outcomes,
                         reason="SIGINT received",
                     )
 
                 if not result.ok:
                     retry_passed = False
                     # Update failure output for next fixer attempt
-                    failure_output = self._build_failure_output(retry_results)
+                    failure_output = self._build_failure_output(retry_outcomes)
                     break
 
-            # Update command_results with retry results
-            command_results.extend(retry_results)
+            # Update command_outcomes with retry outcomes
+            command_outcomes.extend(retry_outcomes)
 
             if retry_passed:
                 logger.info(
@@ -873,7 +914,7 @@ class SessionCallbackFactory:
                     status="pass",
                     started_at=started_at,
                     finished_at=datetime.now(UTC),
-                    commands=list(command_results),
+                    commands=list(command_outcomes),
                 )
 
         # Exhausted all retries
@@ -886,48 +927,34 @@ class SessionCallbackFactory:
             status="fail",
             started_at=started_at,
             finished_at=datetime.now(UTC),
-            commands=list(command_results),
+            commands=list(command_outcomes),
             reason="max_retries_exhausted",
         )
 
-    def _build_failure_output(
-        self, command_results: list[CommandResultProtocol]
-    ) -> str:
-        """Build failure output string for fixer from command results.
+    def _build_failure_output(self, command_outcomes: list[CommandOutcome]) -> str:
+        """Build failure output string for fixer from command outcomes.
 
         Args:
-            command_results: List of command results, last one is the failed command.
+            command_outcomes: List of command outcomes, last one is the failed command.
 
         Returns:
             Human-readable description of what failed.
         """
-        if not command_results:
+        if not command_outcomes:
             return "session_end validation failed (no command results)"
 
-        last_result = command_results[-1]
-        parts = [f"Command failed: {last_result.command}"]
+        last_outcome = command_outcomes[-1]
+        parts = [f"Command failed: {last_outcome.ref}"]
 
-        if hasattr(last_result, "returncode") and last_result.returncode is not None:
-            parts.append(f"Exit code: {last_result.returncode}")
-
-        # Add stderr if available
-        stderr = getattr(last_result, "stderr", "") or ""
-        if stderr:
+        # Add error message if available (contains stderr for failed commands)
+        if last_outcome.error_message:
+            error_msg = last_outcome.error_message
             # Truncate long output
-            if len(stderr) > 1000:
-                stderr = stderr[-1000:]
-                parts.append(f"stderr (truncated):\n{stderr}")
+            if len(error_msg) > 1000:
+                error_msg = error_msg[-1000:]
+                parts.append(f"Error (truncated):\n{error_msg}")
             else:
-                parts.append(f"stderr:\n{stderr}")
-
-        # Add stdout if stderr is empty
-        stdout = getattr(last_result, "stdout", "") or ""
-        if not stderr and stdout:
-            if len(stdout) > 1000:
-                stdout = stdout[-1000:]
-                parts.append(f"stdout (truncated):\n{stdout}")
-            else:
-                parts.append(f"stdout:\n{stdout}")
+                parts.append(f"Error:\n{error_msg}")
 
         return "\n".join(parts)
 

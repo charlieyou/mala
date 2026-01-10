@@ -2,9 +2,9 @@
 
 from datetime import UTC, datetime
 
-from src.infra.tools.command_runner import CommandResult
 from src.core.session_end_result import (
     CodeReviewResult,
+    CommandOutcome,
     SessionEndResult,
     SessionEndRetryState,
 )
@@ -85,24 +85,23 @@ class TestSessionEndResult:
         assert result.status == "skipped"
         assert result.reason == "not_configured"
 
-    def test_with_command_results(self) -> None:
-        """SessionEndResult with command execution results."""
+    def test_with_command_outcomes(self) -> None:
+        """SessionEndResult with command execution outcomes."""
         now = datetime.now(tz=UTC)
-        cmd_result = CommandResult(
-            command=["pytest"],
-            returncode=0,
-            stdout="All tests passed",
-            stderr="",
+        cmd_outcome = CommandOutcome(
+            ref="test",
+            passed=True,
             duration_seconds=5.2,
         )
         result = SessionEndResult(
             status="pass",
             started_at=now,
             finished_at=now,
-            commands=[cmd_result],
+            commands=[cmd_outcome],
         )
         assert len(result.commands) == 1
-        assert result.commands[0].ok
+        assert result.commands[0].passed
+        assert result.commands[0].ref == "test"
 
     def test_with_code_review_result(self) -> None:
         """SessionEndResult with code review result."""
@@ -173,6 +172,46 @@ class TestSessionEndRetryState:
         assert state.attempt == 2
         state.attempt = 3
         assert state.attempt == 3
+
+
+class TestCommandOutcome:
+    """Tests for CommandOutcome dataclass."""
+
+    def test_passed_command(self) -> None:
+        """Command that passed has no error_message."""
+        outcome = CommandOutcome(ref="test", passed=True, duration_seconds=5.2)
+        assert outcome.ref == "test"
+        assert outcome.passed is True
+        assert outcome.duration_seconds == 5.2
+        assert outcome.error_message is None
+
+    def test_failed_command_with_error(self) -> None:
+        """Command that failed has error_message."""
+        outcome = CommandOutcome(
+            ref="lint",
+            passed=False,
+            duration_seconds=1.0,
+            error_message="Linting errors found",
+        )
+        assert outcome.ref == "lint"
+        assert outcome.passed is False
+        assert outcome.error_message == "Linting errors found"
+
+    def test_to_dict(self) -> None:
+        """CommandOutcome serializes to dict correctly."""
+        outcome = CommandOutcome(
+            ref="test",
+            passed=False,
+            duration_seconds=2.5,
+            error_message="Test failed",
+        )
+        data = outcome.to_dict()
+        assert data == {
+            "ref": "test",
+            "passed": False,
+            "duration_seconds": 2.5,
+            "error_message": "Test failed",
+        }
 
 
 class TestCodeReviewResult:
@@ -253,25 +292,25 @@ class TestSerialization:
         import json
 
         now = datetime.now(tz=UTC)
-        cmd_result = CommandResult(
-            command=["pytest"],
-            returncode=0,
-            stdout="OK",
-            stderr="",
+        cmd_outcome = CommandOutcome(
+            ref="test",
+            passed=True,
             duration_seconds=1.5,
         )
         result = SessionEndResult(
             status="pass",
             started_at=now,
             finished_at=now,
-            commands=[cmd_result],
+            commands=[cmd_outcome],
         )
         data = result.to_dict()
         json_str = json.dumps(data)
         parsed = json.loads(json_str)
         assert len(parsed["commands"]) == 1
-        assert parsed["commands"][0]["command"] == ["pytest"]
-        assert parsed["commands"][0]["returncode"] == 0
+        assert parsed["commands"][0]["ref"] == "test"
+        assert parsed["commands"][0]["passed"] is True
+        assert parsed["commands"][0]["duration_seconds"] == 1.5
+        assert parsed["commands"][0]["error_message"] is None
 
     def test_session_end_result_with_code_review_json_serializable(self) -> None:
         """SessionEndResult with code_review_result serializes to JSON cleanly."""

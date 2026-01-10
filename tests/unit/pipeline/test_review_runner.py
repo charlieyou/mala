@@ -957,20 +957,9 @@ class TestSessionEndEvidence:
         tmp_path: Path,
     ) -> None:
         """Session end evidence should include command results when present."""
-        from src.core.session_end_result import SessionEndResult
+        from src.core.session_end_result import CommandOutcome, SessionEndResult
 
         captured_text: str | None = None
-
-        @dataclass
-        class FakeCommandResult:
-            """Fake command result for testing."""
-
-            command: str
-            returncode: int
-            stdout: str
-            stderr: str
-            duration_seconds: float
-            timed_out: bool
 
         @dataclass
         class CapturingReviewer:
@@ -996,26 +985,21 @@ class TestSessionEndEvidence:
 
         runner = ReviewRunner(code_reviewer=cast("CodeReviewer", CapturingReviewer()))
 
-        cmd_pass = FakeCommandResult(
-            command="uv run pytest",
-            returncode=0,
-            stdout="ok",
-            stderr="",
+        cmd_pass = CommandOutcome(
+            ref="test",
+            passed=True,
             duration_seconds=1.5,
-            timed_out=False,
         )
-        cmd_fail = FakeCommandResult(
-            command="uvx ruff check .",
-            returncode=1,
-            stdout="",
-            stderr="error: lint failed",
+        cmd_fail = CommandOutcome(
+            ref="lint",
+            passed=False,
             duration_seconds=0.5,
-            timed_out=False,
+            error_message="error: lint failed",
         )
         session_end = SessionEndResult(
             status="fail",
             reason="gate_failed",
-            commands=[cmd_pass, cmd_fail],  # type: ignore[arg-type]
+            commands=[cmd_pass, cmd_fail],
         )
         review_input = ReviewInput(
             issue_id="test-123",
@@ -1029,8 +1013,8 @@ class TestSessionEndEvidence:
 
         assert captured_text is not None
         assert "### Command Results" in captured_text
-        assert "`uv run pytest`" in captured_text
+        assert "`test`" in captured_text
         assert "[PASS]" in captured_text
-        assert "`uvx ruff check .`" in captured_text
+        assert "`lint`" in captured_text
         assert "[FAIL]" in captured_text
         assert "error: lint failed" in captured_text
