@@ -64,9 +64,10 @@ coverage:                # Optional. Omit to disable coverage
   file: string           # Required. Path to coverage report
   threshold: number      # Required. Minimum coverage percentage (0-100)
 
-reviewer_type: string             # Optional. "agent_sdk" (default) or "cerberus"
-agent_sdk_review_timeout: number  # Optional. Timeout in seconds (default: 600)
-agent_sdk_reviewer_model: string  # Optional. "sonnet" (default), "opus", or "haiku"
+# DEPRECATED: Root-level review config - use validation_triggers.<trigger>.code_review instead
+# reviewer_type: string           # "agent_sdk" (default) or "cerberus"
+# agent_sdk_review_timeout: number
+# agent_sdk_reviewer_model: string
 
 claude_settings_sources: list     # Optional. SDK settings sources (default: [local, project])
 
@@ -93,9 +94,9 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `coverage.format` | string | Yes* | Format: `xml` |
 | `coverage.file` | string | Yes* | Path to coverage report |
 | `coverage.threshold` | number | Yes* | Minimum coverage % |
-| `reviewer_type` | string | No | Reviewer: `agent_sdk` (default) or `cerberus` |
-| `agent_sdk_review_timeout` | integer | No | Timeout in seconds (default: 600) |
-| `agent_sdk_reviewer_model` | string | No | Model: `sonnet` (default), `opus`, or `haiku` |
+| `reviewer_type` | string | No | **DEPRECATED**: Use `validation_triggers.<trigger>.code_review.reviewer_type` |
+| `agent_sdk_review_timeout` | integer | No | **DEPRECATED**: Use `validation_triggers.<trigger>.code_review.cerberus.timeout` for Cerberus |
+| `agent_sdk_reviewer_model` | string | No | **DEPRECATED**: Configure via trigger-level `code_review` |
 | `claude_settings_sources` | list | No | SDK settings sources: `local`, `project`, `user` (default: `[local, project]`) |
 | `validation_triggers` | object | No | Trigger configuration. See [validation-triggers.md](validation-triggers.md) |
 
@@ -437,53 +438,37 @@ This file is typically gitignored for interactive Claude Code use, but committin
 
 ## Code Review Configuration
 
-Configure the code reviewer used during validation. By default, mala uses the Agent SDK reviewer. Cerberus is available as an optional alternative (requires the Cerberus plugin to be installed).
+Code review is configured per validation trigger using the `code_review` block. See [validation-triggers.md](validation-triggers.md#code-review) for full documentation.
 
 ```yaml
-# Use Agent SDK reviewer (default)
-reviewer_type: agent_sdk
-agent_sdk_review_timeout: 600    # Timeout in seconds (default: 600)
-agent_sdk_reviewer_model: sonnet # Model: sonnet (default), opus, or haiku
-
-# Or use Cerberus reviewer (requires plugin installation)
-reviewer_type: cerberus
+validation_triggers:
+  session_end:
+    failure_mode: continue
+    commands:
+      - ref: lint
+      - ref: test
+    code_review:
+      enabled: true
+      reviewer_type: cerberus    # "cerberus" (default) or "agent_sdk"
+      finding_threshold: P1
 ```
 
-### Reviewer Options
+### Reviewer Types
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `reviewer_type` | string | `agent_sdk` | Reviewer implementation: `agent_sdk` or `cerberus` |
-| `agent_sdk_review_timeout` | integer | `600` | Timeout in seconds for Agent SDK reviews (must be positive) |
-| `agent_sdk_reviewer_model` | string | `sonnet` | Model for Agent SDK reviewer: `sonnet`, `opus`, or `haiku` |
+| Type | Description |
+|------|-------------|
+| `cerberus` (default) | Uses the Cerberus CLI plugin for review. Requires plugin installation. |
+| `agent_sdk` | Uses Claude agents for interactive code review. |
 
-### When to Use Each Reviewer
+### Deprecated Root-Level Config
 
-- **Agent SDK** (default): Uses Claude agents for interactive code review. Preferred for most projects.
-- **Cerberus**: Uses the Cerberus CLI plugin for review. Requires separate plugin installation. Use when you need Cerberus-specific features or have existing Cerberus workflows.
+The following root-level fields are **deprecated** and will be removed in a future version:
 
-### Examples
-
-Use default Agent SDK with longer timeout:
-
-```yaml
-preset: python-uv
-agent_sdk_review_timeout: 900
-```
-
-Use Opus model for more thorough reviews:
-
-```yaml
-preset: python-uv
-agent_sdk_reviewer_model: opus
-```
-
-Switch to Cerberus reviewer:
-
-```yaml
-preset: python-uv
-reviewer_type: cerberus
-```
+| Deprecated Field | Migration |
+|-----------------|-----------|
+| `reviewer_type` | Use `validation_triggers.<trigger>.code_review.reviewer_type` |
+| `agent_sdk_review_timeout` | Use `validation_triggers.<trigger>.code_review.cerberus.timeout` for Cerberus |
+| `agent_sdk_reviewer_model` | N/A - configure via trigger-level `code_review` |
 
 ## Limitations
 

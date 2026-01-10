@@ -56,11 +56,13 @@ mala run --scope ids:T-123,T-456,T-789 --order input /path/to/repo
 | `--max-epic-verification-retries` | 3 | Maximum retries for epic verification loop |
 | `--disable` | - | Validations to skip (see [Disable Flags](#disable-validation-flags)) |
 
-### Review Backend
+### Review Backend (Cerberus)
+
+These flags apply when using `reviewer_type: cerberus` in `validation_triggers.<trigger>.code_review`:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--review-timeout` | 1200 | Timeout in seconds for review operations |
+| `--review-timeout` | 1200 | Timeout in seconds for Cerberus review operations |
 | `--review-spawn-args` | - | Extra args appended to `review-gate spawn-code-review` |
 | `--review-wait-args` | - | Extra args appended to `review-gate wait` |
 | `--review-env` | - | Extra env for review-gate (JSON object or comma KEY=VALUE list) |
@@ -92,7 +94,7 @@ Repeat the flag or pass comma-separated lists (e.g., `--disable coverage --disab
 | `integration-tests` | Exclude integration tests from pytest |
 | `coverage` | Disable coverage checking |
 | `e2e` | Disable E2E fixture repo test |
-| `review` | Disable external review (Cerberus review-gate) |
+| `review` | Disable code review (configured via `validation_triggers.<trigger>.code_review`) |
 | `followup-on-run-validate-fail` | Don't mark issues with `needs-followup` on global validation failure |
 
 ## Global Configuration
@@ -128,7 +130,9 @@ Precedence: CLI flags override global config, which overrides program defaults.
 | `LLM_BASE_URL` | - | Base URL for LLM API (for proxy/routing) |
 | `MALA_MAX_EPIC_VERIFICATION_RETRIES` | `3` | Number of retries after first verification attempt fails |
 
-### Review-Gate (Cerberus) Overrides
+### Cerberus Review Overrides
+
+When using `reviewer_type: cerberus` in `validation_triggers.<trigger>.code_review`:
 
 | Variable | Description |
 |----------|-------------|

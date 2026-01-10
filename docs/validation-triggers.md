@@ -405,6 +405,28 @@ code_review:
 
 ## Migration Guide
 
+### From Root-Level `reviewer_type`
+
+The root-level `reviewer_type`, `agent_sdk_review_timeout`, and `agent_sdk_reviewer_model` fields are deprecated. Move review configuration into `validation_triggers.<trigger>.code_review`:
+
+**Before:**
+```yaml
+preset: python-uv
+reviewer_type: cerberus
+```
+
+**After:**
+```yaml
+preset: python-uv
+validation_triggers:
+  session_end:
+    failure_mode: remediate
+    code_review:
+      enabled: true
+      reviewer_type: cerberus
+      finding_threshold: P1
+```
+
 ### From `validate_every`
 
 The `validate_every` field is deprecated. Replace with `periodic` trigger:

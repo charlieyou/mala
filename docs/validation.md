@@ -42,26 +42,38 @@ When a Claude CLI subprocess hangs (no output for an extended period), the orche
 
 This prevents hung agents from blocking issue processing indefinitely.
 
-## External Review (Cerberus Review-Gate)
+## Code Review
 
-External review via Cerberus is enabled by default. After the deterministic gate passes:
+Code review runs after the deterministic gate passes. Configure it in `validation_triggers.<trigger>.code_review` (see [validation-triggers.md](validation-triggers.md#code-review)):
 
-1. **Review spawns**: Cerberus `review-gate` spawns external reviewers (Codex, Gemini, Claude) to review the issue commits
-2. **Scope verification**: Reviewers check the commit list against the issue description and acceptance criteria to catch incomplete implementations
-3. **Consensus**: All available reviewers must unanimously pass for the review to pass
+```yaml
+validation_triggers:
+  session_end:
+    failure_mode: continue
+    code_review:
+      enabled: true
+      reviewer_type: cerberus  # or "agent_sdk"
+      finding_threshold: P1
+```
+
+### Review Flow
+
+1. **Review spawns**: The configured reviewer (`cerberus` or `agent_sdk`) reviews issue commits
+2. **Scope verification**: Reviewers check commits against issue description and acceptance criteria
+3. **Consensus**: All available reviewers must unanimously pass
 4. **Review failure handling**: If any reviewer finds errors, orchestrator resumes the SAME session with:
    - List of issues (file, line, priority, message) from all reviewers
    - Instructions to fix errors and re-run validations
    - Commit list for the issue (includes all work across retry attempts)
-5. **Re-gating**: After fixes, runs both deterministic gate AND external review again
+5. **Re-gating**: After fixes, runs both deterministic gate AND code review again
 
-Review retries are capped at `max_review_retries` (default: 3). Use `--disable review` to disable. Review-gate args can be configured with `--review-spawn-args`, `--review-wait-args`, and `--review-env`.
+Review retries are capped at `max_retries` in the `code_review` block (default: 3). Use `--disable review` to disable all code review globally.
 
-**Skipped for no-work resolutions**: Issues resolved with `ISSUE_NO_CHANGE`, `ISSUE_OBSOLETE`, or `ISSUE_ALREADY_COMPLETE` skip external review entirely since there's no new code to review.
+**Skipped for no-work resolutions**: Issues resolved with `ISSUE_NO_CHANGE`, `ISSUE_OBSOLETE`, or `ISSUE_ALREADY_COMPLETE` skip code review entirely since there's no new code to review.
 
 ### Low-Priority Review Findings (P2/P3)
 
-When Cerberus review passes but includes P2/P3 priority findings, the orchestrator automatically creates tracking issues:
+When code review passes but includes P2/P3 priority findings, the orchestrator automatically creates tracking issues:
 
 1. **Collection**: P2/P3 findings are collected from the review result (P0/P1 block the review)
 2. **Issue creation**: After the issue is successfully closed, beads issues are created for each finding
