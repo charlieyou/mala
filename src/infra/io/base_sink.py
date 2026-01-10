@@ -416,6 +416,19 @@ class BaseEventSink:
     ) -> None:
         pass
 
+    # -------------------------------------------------------------------------
+    # Session end lifecycle
+    # -------------------------------------------------------------------------
+
+    def on_session_end_started(self, issue_id: str) -> None:
+        pass
+
+    def on_session_end_completed(self, issue_id: str, result: str) -> None:
+        pass
+
+    def on_session_end_skipped(self, issue_id: str, reason: str) -> None:
+        pass
+
 
 class NullEventSink(BaseEventSink):
     """No-op event sink for testing.

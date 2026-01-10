@@ -753,6 +753,31 @@ class ConsoleEventSink(BaseEventSink):
             agent_id="trigger",
         )
 
+    # -------------------------------------------------------------------------
+    # Session end lifecycle
+    # -------------------------------------------------------------------------
+
+    def on_session_end_started(self, issue_id: str) -> None:
+        log(
+            "→",
+            f"[trigger] session_end started: issue_id={issue_id}",
+            agent_id="trigger",
+        )
+
+    def on_session_end_completed(self, issue_id: str, result: str) -> None:
+        log(
+            "✓",
+            f"[trigger] session_end completed: issue_id={issue_id}, result={result}",
+            agent_id="trigger",
+        )
+
+    def on_session_end_skipped(self, issue_id: str, reason: str) -> None:
+        log(
+            "○",
+            f"[trigger] session_end skipped: issue_id={issue_id}, reason={reason}",
+            agent_id="trigger",
+        )
+
 
 # Protocol assertion to verify implementation compliance
 assert isinstance(ConsoleEventSink(), MalaEventSink)

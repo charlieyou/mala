@@ -165,6 +165,11 @@ class TestBaseEventSink:
         assert sink.on_watch_idle(30.0, None) is None
         assert sink.on_watch_idle(60.0, 5) is None
 
+        # Session end lifecycle
+        assert sink.on_session_end_started("issue-1") is None
+        assert sink.on_session_end_completed("issue-1", "pass") is None
+        assert sink.on_session_end_skipped("issue-1", "gate_failed") is None
+
 
 class TestNullEventSink:
     """Tests for NullEventSink implementation."""
@@ -286,6 +291,11 @@ class TestNullEventSink:
         # Watch mode events
         assert sink.on_watch_idle(30.0, None) is None
         assert sink.on_watch_idle(60.0, 5) is None
+
+        # Session end lifecycle
+        assert sink.on_session_end_started("issue-1") is None
+        assert sink.on_session_end_completed("issue-1", "pass") is None
+        assert sink.on_session_end_skipped("issue-1", "gate_failed") is None
 
     def test_can_be_called_multiple_times(self) -> None:
         """NullEventSink methods can be called repeatedly."""
@@ -523,6 +533,13 @@ class TestConsoleEventSink:
         sink.on_watch_idle(45.5, 0)
         sink.on_watch_idle(60.0, 5)
 
+        # Session end lifecycle
+        sink.on_session_end_started("issue-1")
+        sink.on_session_end_completed("issue-1", "pass")
+        sink.on_session_end_completed("issue-2", "fail")
+        sink.on_session_end_skipped("issue-3", "gate_failed")
+        sink.on_session_end_skipped("issue-4", "not_configured")
+
     def test_on_abort_requested_includes_abort_in_message(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -616,3 +633,42 @@ class TestConsoleEventSink:
 
         # Should execute without error - verbose message won't show without verbose mode
         sink.on_run_started(config)
+
+    def test_on_session_end_started_log_format(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """on_session_end_started logs correct format."""
+        sink = ConsoleEventSink()
+
+        sink.on_session_end_started("issue-123")
+
+        captured = capsys.readouterr()
+        assert "[trigger] session_end started: issue_id=issue-123" in captured.out
+
+    def test_on_session_end_completed_log_format(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """on_session_end_completed logs correct format with result."""
+        sink = ConsoleEventSink()
+
+        sink.on_session_end_completed("issue-456", "pass")
+
+        captured = capsys.readouterr()
+        assert (
+            "[trigger] session_end completed: issue_id=issue-456, result=pass"
+            in captured.out
+        )
+
+    def test_on_session_end_skipped_log_format(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """on_session_end_skipped logs correct format with reason."""
+        sink = ConsoleEventSink()
+
+        sink.on_session_end_skipped("issue-789", "gate_failed")
+
+        captured = capsys.readouterr()
+        assert (
+            "[trigger] session_end skipped: issue_id=issue-789, reason=gate_failed"
+            in captured.out
+        )

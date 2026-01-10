@@ -599,3 +599,16 @@ class FakeEventSink:
             trigger_type=trigger_type,
             attempts=attempts,
         )
+
+    # -------------------------------------------------------------------------
+    # Session end lifecycle
+    # -------------------------------------------------------------------------
+
+    def on_session_end_started(self, issue_id: str) -> None:
+        self._record("session_end_started", issue_id=issue_id)
+
+    def on_session_end_completed(self, issue_id: str, result: str) -> None:
+        self._record("session_end_completed", issue_id=issue_id, result=result)
+
+    def on_session_end_skipped(self, issue_id: str, reason: str) -> None:
+        self._record("session_end_skipped", issue_id=issue_id, reason=reason)

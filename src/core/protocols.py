@@ -2314,3 +2314,33 @@ class MalaEventSink(Protocol):
             attempts: Total number of attempts made.
         """
         ...
+
+    # -------------------------------------------------------------------------
+    # Session end lifecycle
+    # -------------------------------------------------------------------------
+
+    def on_session_end_started(self, issue_id: str) -> None:
+        """Called when session_end processing starts for an issue.
+
+        Args:
+            issue_id: The issue ID for which session_end processing started.
+        """
+        ...
+
+    def on_session_end_completed(self, issue_id: str, result: str) -> None:
+        """Called when session_end processing completes for an issue.
+
+        Args:
+            issue_id: The issue ID for which session_end processing completed.
+            result: The result (pass, fail, timeout, interrupted).
+        """
+        ...
+
+    def on_session_end_skipped(self, issue_id: str, reason: str) -> None:
+        """Called when session_end processing is skipped for an issue.
+
+        Args:
+            issue_id: The issue ID for which session_end processing was skipped.
+            reason: The reason for skipping (gate_failed, not_configured).
+        """
+        ...
