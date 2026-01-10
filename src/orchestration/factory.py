@@ -131,14 +131,22 @@ def _derive_config(
     Returns:
         _DerivedConfig with computed values.
     """
-    # Compute timeout - match legacy behavior where 0 is treated as "use default"
-    # (truthiness check: `if timeout_minutes` treats 0 as falsy)
-    effective_timeout = (
-        config.timeout_minutes
-        if config.timeout_minutes
-        else DEFAULT_AGENT_TIMEOUT_MINUTES
+    # Compute timeout - precedence: CLI > mala.yaml > default
+    # Legacy behavior: 0 is treated as "use default" (truthiness check)
+    yaml_timeout: int | None = (
+        getattr(validation_config, "timeout_minutes", None)
+        if validation_config is not None
+        else None
     )
-    timeout_seconds = effective_timeout * 60
+    if config.timeout_minutes:
+        # CLI provided timeout_minutes (non-zero)
+        timeout_seconds = config.timeout_minutes * 60
+    elif yaml_timeout:
+        # mala.yaml has timeout_minutes
+        timeout_seconds = yaml_timeout * 60
+    else:
+        # Fall back to default
+        timeout_seconds = DEFAULT_AGENT_TIMEOUT_MINUTES * 60
 
     # Build disabled validations set
     disabled_validations = (

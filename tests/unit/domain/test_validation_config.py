@@ -582,6 +582,58 @@ class TestClaudeSettingsSources:
         assert "claude_settings_sources" not in config._fields_set
 
 
+class TestTimeoutMinutes:
+    """Tests for timeout_minutes field in ValidationConfig."""
+
+    def test_timeout_minutes_defaults_to_none(self) -> None:
+        """Default timeout_minutes is None (use default 60)."""
+        config = ValidationConfig.from_dict({})
+        assert config.timeout_minutes is None
+        assert "timeout_minutes" not in config._fields_set
+
+    def test_timeout_minutes_valid_integer(self) -> None:
+        """Valid integer is accepted."""
+        config = ValidationConfig.from_dict({"timeout_minutes": 30})
+        assert config.timeout_minutes == 30
+        assert "timeout_minutes" in config._fields_set
+
+    def test_timeout_minutes_explicit_null(self) -> None:
+        """timeout_minutes: null is tracked in _fields_set but value is None."""
+        config = ValidationConfig.from_dict({"timeout_minutes": None})
+        assert config.timeout_minutes is None
+        assert "timeout_minutes" in config._fields_set
+
+    def test_timeout_minutes_invalid_type_string(self) -> None:
+        """String timeout_minutes raises ConfigError."""
+        with pytest.raises(ConfigError, match="timeout_minutes must be an integer"):
+            ValidationConfig.from_dict({"timeout_minutes": "60"})
+
+    def test_timeout_minutes_invalid_type_float(self) -> None:
+        """Float timeout_minutes raises ConfigError."""
+        with pytest.raises(ConfigError, match="timeout_minutes must be an integer"):
+            ValidationConfig.from_dict({"timeout_minutes": 60.5})
+
+    def test_timeout_minutes_invalid_type_bool_true(self) -> None:
+        """Boolean True is rejected (bool is subclass of int)."""
+        with pytest.raises(ConfigError, match="timeout_minutes must be an integer"):
+            ValidationConfig.from_dict({"timeout_minutes": True})
+
+    def test_timeout_minutes_invalid_type_bool_false(self) -> None:
+        """Boolean False is rejected (bool is subclass of int)."""
+        with pytest.raises(ConfigError, match="timeout_minutes must be an integer"):
+            ValidationConfig.from_dict({"timeout_minutes": False})
+
+    def test_timeout_minutes_zero_rejected(self) -> None:
+        """Zero timeout_minutes raises ConfigError."""
+        with pytest.raises(ConfigError, match="timeout_minutes must be positive"):
+            ValidationConfig.from_dict({"timeout_minutes": 0})
+
+    def test_timeout_minutes_negative_rejected(self) -> None:
+        """Negative timeout_minutes raises ConfigError."""
+        with pytest.raises(ConfigError, match="timeout_minutes must be positive"):
+            ValidationConfig.from_dict({"timeout_minutes": -10})
+
+
 class TestClaudeSettingsSourcesIntegration:
     """Integration test for claude_settings_sources full config path.
 

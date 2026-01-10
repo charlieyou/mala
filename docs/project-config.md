@@ -63,6 +63,8 @@ coverage:                # Optional. Omit to disable coverage
 
 claude_settings_sources: list     # Optional. SDK settings sources (default: [local, project])
 
+timeout_minutes: int             # Optional. Agent timeout in minutes (default: 60)
+
 validation_triggers:             # Optional. See validation-triggers.md
   epic_completion: object        # Run validation when epics complete
   session_end: object            # Run validation at session end
@@ -85,6 +87,7 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `coverage.file` | string | Yes* | Path to coverage report |
 | `coverage.threshold` | number | Yes* | Minimum coverage % |
 | `claude_settings_sources` | list | No | SDK settings sources: `local`, `project`, `user` (default: `[local, project]`) |
+| `timeout_minutes` | integer | No | Agent timeout in minutes (default: 60). Can be overridden by CLI `--timeout` |
 | `validation_triggers` | object | No | Trigger configuration. See [validation-triggers.md](validation-triggers.md) |
 
 *Required when `coverage` section is present.

@@ -315,3 +315,69 @@ class TestDeriveConfig:
         )
 
         assert derived.max_epic_verification_retries is None
+
+    def test_timeout_from_validation_config(self) -> None:
+        """timeout_minutes is read from validation_config when CLI is not set."""
+        from src.domain.validation.config import ValidationConfig
+
+        validation_config = ValidationConfig(timeout_minutes=45)
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        # Should use mala.yaml timeout: 45 minutes = 2700 seconds
+        assert derived.timeout_seconds == 45 * 60
+
+    def test_cli_timeout_overrides_validation_config(self) -> None:
+        """CLI timeout_minutes overrides mala.yaml timeout_minutes."""
+        from src.domain.validation.config import ValidationConfig
+
+        validation_config = ValidationConfig(timeout_minutes=45)
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"), timeout_minutes=90)
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        # CLI should override: 90 minutes = 5400 seconds
+        assert derived.timeout_seconds == 90 * 60
+
+    def test_timeout_defaults_when_no_validation_config(self) -> None:
+        """timeout_seconds uses default when validation_config is None."""
+        from src.orchestration.types import DEFAULT_AGENT_TIMEOUT_MINUTES
+
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=None,
+            validation_config_missing=True,
+        )
+
+        assert derived.timeout_seconds == DEFAULT_AGENT_TIMEOUT_MINUTES * 60
+
+    def test_timeout_defaults_when_validation_config_has_none(self) -> None:
+        """timeout_seconds uses default when validation_config.timeout_minutes is None."""
+        from src.domain.validation.config import ValidationConfig
+        from src.orchestration.types import DEFAULT_AGENT_TIMEOUT_MINUTES
+
+        validation_config = ValidationConfig()  # timeout_minutes=None
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.timeout_seconds == DEFAULT_AGENT_TIMEOUT_MINUTES * 60

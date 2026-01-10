@@ -772,6 +772,7 @@ class ValidationConfig:
         validation_triggers: Configuration for validation triggers. None means no triggers.
         claude_settings_sources: Sources to load Claude settings from. Valid sources are
             'local', 'project', 'user'. None means use default. Empty tuple means no sources.
+        timeout_minutes: Timeout per agent in minutes. None means use default (60).
         _fields_set: Set of field names that were explicitly provided in source.
             Used by the merger to distinguish "not set" from "explicitly set".
     """
@@ -784,6 +785,7 @@ class ValidationConfig:
     setup_files: tuple[str, ...] = field(default_factory=tuple)
     validation_triggers: ValidationTriggersConfig | None = None
     claude_settings_sources: tuple[str, ...] | None = None
+    timeout_minutes: int | None = None
     _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
@@ -922,6 +924,24 @@ class ValidationConfig:
                     cast("dict[str, object]", triggers_data)
                 )
 
+        # Parse timeout_minutes
+        timeout_minutes: int | None = None
+        if "timeout_minutes" in data:
+            fields_set.add("timeout_minutes")
+            tm_value = data["timeout_minutes"]
+            if tm_value is not None:
+                # Reject booleans (bool is subclass of int in Python)
+                if isinstance(tm_value, bool) or not isinstance(tm_value, int):
+                    raise ConfigError(
+                        f"timeout_minutes must be an integer, "
+                        f"got {type(tm_value).__name__}"
+                    )
+                if tm_value <= 0:
+                    raise ConfigError(
+                        f"timeout_minutes must be positive, got {tm_value}"
+                    )
+                timeout_minutes = tm_value
+
         return cls(
             preset=preset,
             commands=commands,
@@ -931,6 +951,7 @@ class ValidationConfig:
             setup_files=setup_files,
             claude_settings_sources=claude_settings_sources,
             validation_triggers=validation_triggers,
+            timeout_minutes=timeout_minutes,
             _fields_set=frozenset(fields_set),
         )
 
