@@ -14,6 +14,7 @@ from src.domain.validation.config import ConfigError, FailureMode
 from src.domain.validation.config_loader import (
     _parse_cerberus_config,
     _parse_code_review_config,
+    _parse_periodic_trigger,
 )
 
 if TYPE_CHECKING:
@@ -513,3 +514,63 @@ class TestCodeReviewFullConfig:
         assert result.baseline == "since_run_start"
         assert result.cerberus is not None
         assert result.cerberus.timeout == 300
+
+
+class TestParsePeriodicTrigger:
+    """Tests for _parse_periodic_trigger function."""
+
+    def test_minimal_config(self) -> None:
+        """Minimal periodic config with required fields."""
+        result = _parse_periodic_trigger(
+            {
+                "interval": 60,
+                "failure_mode": "abort",
+            }
+        )
+        assert result.interval == 60
+        assert result.failure_mode == FailureMode.ABORT
+        assert result.commands == ()
+        assert result.max_retries is None
+        assert result.code_review is None
+
+    def test_with_code_review(self) -> None:
+        """Periodic trigger parses code_review configuration."""
+        result = _parse_periodic_trigger(
+            {
+                "interval": 300,
+                "failure_mode": "continue",
+                "code_review": {
+                    "enabled": True,
+                    "reviewer_type": "cerberus",
+                },
+            }
+        )
+        assert result.interval == 300
+        assert result.failure_mode == FailureMode.CONTINUE
+        assert result.code_review is not None
+        assert result.code_review.enabled is True
+        assert result.code_review.reviewer_type == "cerberus"
+
+    def test_code_review_null_ignored(self) -> None:
+        """code_review: null is treated as no code review."""
+        result = _parse_periodic_trigger(
+            {
+                "interval": 120,
+                "failure_mode": "abort",
+                "code_review": None,
+            }
+        )
+        assert result.code_review is None
+
+    def test_unknown_field_rejected(self) -> None:
+        """Unknown field raises ConfigError."""
+        with pytest.raises(
+            ConfigError, match=r"Unknown field 'bogus' in trigger periodic"
+        ):
+            _parse_periodic_trigger(
+                {
+                    "interval": 60,
+                    "failure_mode": "abort",
+                    "bogus": True,
+                }
+            )
