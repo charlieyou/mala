@@ -37,6 +37,8 @@ from typing import TYPE_CHECKING, cast
 # Import shared types from types module (breaks circular import)
 from .types import (
     DEFAULT_AGENT_TIMEOUT_MINUTES,
+    DEFAULT_CONTEXT_LIMIT,
+    DEFAULT_CONTEXT_RESTART_THRESHOLD,
     OrchestratorConfig,
     OrchestratorDependencies,
     _DerivedConfig,
@@ -185,13 +187,45 @@ def _derive_config(
                     epic_completion, "max_epic_verification_retries", None
                 )
 
+    # Compute context thresholds - precedence: CLI > mala.yaml > default
+    # CLI values come from OrchestratorConfig; yaml values from ValidationConfig
+    yaml_context_restart_threshold: float | None = (
+        getattr(validation_config, "context_restart_threshold", None)
+        if validation_config is not None
+        else None
+    )
+    yaml_context_limit: int | None = (
+        getattr(validation_config, "context_limit", None)
+        if validation_config is not None
+        else None
+    )
+
+    # Use CLI value if non-default, else yaml, else default
+    if config.context_restart_threshold != DEFAULT_CONTEXT_RESTART_THRESHOLD:
+        context_restart_threshold = config.context_restart_threshold
+    elif yaml_context_restart_threshold is not None:
+        context_restart_threshold = yaml_context_restart_threshold
+    else:
+        context_restart_threshold = DEFAULT_CONTEXT_RESTART_THRESHOLD
+
+    if config.context_limit != DEFAULT_CONTEXT_LIMIT:
+        context_limit = config.context_limit
+    elif yaml_context_limit is not None:
+        context_limit = yaml_context_limit
+    else:
+        context_limit = DEFAULT_CONTEXT_LIMIT
+
     logger.debug(
-        "Derived config: timeout=%ds",
+        "Derived config: timeout=%ds context_restart_threshold=%.2f context_limit=%d",
         timeout_seconds,
+        context_restart_threshold,
+        context_limit,
     )
     return _DerivedConfig(
         timeout_seconds=timeout_seconds,
         disabled_validations=disabled_validations,
+        context_restart_threshold=context_restart_threshold,
+        context_limit=context_limit,
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
         max_epic_verification_retries=max_epic_verification_retries,

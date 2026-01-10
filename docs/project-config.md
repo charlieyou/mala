@@ -65,6 +65,9 @@ claude_settings_sources: list     # Optional. SDK settings sources (default: [lo
 
 timeout_minutes: int             # Optional. Agent timeout in minutes (default: 60)
 
+context_restart_threshold: float # Optional. Ratio (0.0-1.0) to restart agent on context pressure (default: 0.70)
+context_limit: int               # Optional. Maximum context tokens (default: 200000)
+
 validation_triggers:             # Optional. See validation-triggers.md
   epic_completion: object        # Run validation when epics complete
   session_end: object            # Run validation at session end
@@ -88,6 +91,8 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `coverage.threshold` | number | Yes* | Minimum coverage % |
 | `claude_settings_sources` | list | No | SDK settings sources: `local`, `project`, `user` (default: `[local, project]`) |
 | `timeout_minutes` | integer | No | Agent timeout in minutes (default: 60). Can be overridden by CLI `--timeout` |
+| `context_restart_threshold` | float | No | Ratio (0.0-1.0) at which to restart agent on context pressure (default: 0.70) |
+| `context_limit` | integer | No | Maximum context tokens (default: 200000) |
 | `validation_triggers` | object | No | Trigger configuration. See [validation-triggers.md](validation-triggers.md) |
 
 *Required when `coverage` section is present.

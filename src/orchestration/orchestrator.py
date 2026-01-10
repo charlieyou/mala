@@ -300,8 +300,8 @@ class MalaOrchestrator:
         self.order_preference = orch_config.order_preference
         self.cli_args = orch_config.cli_args
         self.epic_override_ids = orch_config.epic_override_ids
-        self.context_restart_threshold = orch_config.context_restart_threshold
-        self.context_limit = orch_config.context_limit
+        self.context_restart_threshold = derived.context_restart_threshold
+        self.context_limit = derived.context_limit
         self.review_disabled_reason = derived.review_disabled_reason
         self._init_runtime_state()
         self.log_provider = log_provider

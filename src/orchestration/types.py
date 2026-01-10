@@ -45,6 +45,10 @@ if TYPE_CHECKING:
 # Default timeout for agent execution (protects against hung MCP server subprocesses)
 DEFAULT_AGENT_TIMEOUT_MINUTES = 60
 
+# Default context exhaustion thresholds
+DEFAULT_CONTEXT_RESTART_THRESHOLD = 0.70
+DEFAULT_CONTEXT_LIMIT = 200_000
+
 
 @dataclass
 class OrchestratorConfig:
@@ -89,8 +93,8 @@ class OrchestratorConfig:
     epic_override_ids: set[str] = field(default_factory=set)
     orphans_only: bool = False
     # Context exhaustion handling thresholds
-    context_restart_threshold: float = 0.70
-    context_limit: int = 200_000
+    context_restart_threshold: float = DEFAULT_CONTEXT_RESTART_THRESHOLD
+    context_limit: int = DEFAULT_CONTEXT_LIMIT
     # Session resume strict mode: fail issue if no prior session found
     strict_resume: bool = False
 
@@ -135,6 +139,8 @@ class _DerivedConfig:
 
     timeout_seconds: int
     disabled_validations: set[str]
+    context_restart_threshold: float
+    context_limit: int
     max_gate_retries: int | None = None
     max_review_retries: int | None = None
     max_epic_verification_retries: int | None = None

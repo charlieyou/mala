@@ -401,3 +401,101 @@ class TestDeriveConfig:
 
         # CLI 0 should bypass yaml and use default (legacy behavior)
         assert derived.timeout_seconds == DEFAULT_AGENT_TIMEOUT_MINUTES * 60
+
+    def test_context_restart_threshold_from_validation_config(self) -> None:
+        """context_restart_threshold is read from validation_config when CLI is default."""
+        from src.domain.validation.config import ValidationConfig
+
+        validation_config = ValidationConfig(context_restart_threshold=0.85)
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.context_restart_threshold == 0.85
+
+    def test_cli_context_restart_threshold_overrides_validation_config(self) -> None:
+        """CLI context_restart_threshold overrides mala.yaml value."""
+        from src.domain.validation.config import ValidationConfig
+
+        validation_config = ValidationConfig(context_restart_threshold=0.85)
+        orch_config = OrchestratorConfig(
+            repo_path=Path("/tmp"), context_restart_threshold=0.95
+        )
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        # CLI value should take precedence
+        assert derived.context_restart_threshold == 0.95
+
+    def test_context_restart_threshold_default_when_no_config(self) -> None:
+        """context_restart_threshold uses default when neither CLI nor yaml set."""
+        from src.orchestration.types import DEFAULT_CONTEXT_RESTART_THRESHOLD
+
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=None,
+            validation_config_missing=True,
+        )
+
+        assert derived.context_restart_threshold == DEFAULT_CONTEXT_RESTART_THRESHOLD
+
+    def test_context_limit_from_validation_config(self) -> None:
+        """context_limit is read from validation_config when CLI is default."""
+        from src.domain.validation.config import ValidationConfig
+
+        validation_config = ValidationConfig(context_limit=150_000)
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.context_limit == 150_000
+
+    def test_cli_context_limit_overrides_validation_config(self) -> None:
+        """CLI context_limit overrides mala.yaml value."""
+        from src.domain.validation.config import ValidationConfig
+
+        validation_config = ValidationConfig(context_limit=150_000)
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"), context_limit=180_000)
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        # CLI value should take precedence
+        assert derived.context_limit == 180_000
+
+    def test_context_limit_default_when_no_config(self) -> None:
+        """context_limit uses default when neither CLI nor yaml set."""
+        from src.orchestration.types import DEFAULT_CONTEXT_LIMIT
+
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=None,
+            validation_config_missing=True,
+        )
+
+        assert derived.context_limit == DEFAULT_CONTEXT_LIMIT
