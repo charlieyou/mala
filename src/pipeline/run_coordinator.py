@@ -814,9 +814,14 @@ class RunCoordinator:
                                     "remediate",
                                 )
                         else:
-                            # Remediation succeeded - clear any prior failure from
-                            # execution error remediation so validation passes
-                            last_failure = None
+                            # Remediation succeeded - clear code_review failure only.
+                            # Command failures from this trigger (if failure_mode=CONTINUE)
+                            # must be preserved - only clear code_review-related failures.
+                            if last_failure is not None and last_failure[0] in (
+                                "code_review",
+                                "code_review_findings",
+                            ):
+                                last_failure = None
 
             # Emit validation_passed (only if no failure occurred)
             if last_failure is None:

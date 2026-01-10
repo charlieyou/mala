@@ -1896,3 +1896,126 @@ class TestR12CodeReviewGating:
         # Remediation succeeded, validation should pass, code_review should have run
         assert result.status == "passed"
         mock_review_runner.run_review.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_command_continue_failure_preserved_after_code_review_remediation(
+        self,
+        tmp_path: Path,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """Command failure with CONTINUE is preserved even if code_review remediation succeeds.
+
+        Scenario: command fails with failure_mode=CONTINUE, code_review has findings
+        exceeding threshold with failure_mode=REMEDIATE, and fixer succeeds. The
+        command failure must still cause the run to return "failed".
+        """
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            CommandConfig,
+            CommandsConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerCommandRef,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.infra.tools.command_runner import CommandResult
+        from src.pipeline.cumulative_review_runner import (
+            CumulativeReviewResult,
+            ReviewFinding,
+        )
+
+        mock_gate_checker = MagicMock()
+        mock_review_runner = MagicMock()
+        mock_run_metadata = MagicMock()
+        mock_event_sink = MagicMock()
+
+        # Command fails
+        failing_runner = FakeCommandRunner()
+        failing_runner.responses[("lint_cmd",)] = CommandResult(
+            command="lint_cmd", returncode=1, stdout="", stderr="Lint failed"
+        )
+
+        # failure_mode=CONTINUE for commands, failure_mode=REMEDIATE for code_review
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            finding_threshold="P1",
+            failure_mode=FailureMode.REMEDIATE,
+            max_retries=1,
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,  # Command failure recorded
+            commands=(TriggerCommandRef(ref="lint"),),
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        commands_config = CommandsConfig(lint=CommandConfig(command="lint_cmd"))
+        validation_config = ValidationConfig(
+            commands=commands_config,
+            global_validation_commands=commands_config,
+            validation_triggers=triggers_config,
+        )
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix: {failure_output}",
+            validation_config=validation_config,
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=failing_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=mock_run_metadata,
+            event_sink=mock_event_sink,
+        )
+
+        # Code review returns P0 finding (exceeds P1 threshold), then passes after fix
+        call_count = {"review": 0}
+
+        async def mock_run_review(**kwargs: object) -> CumulativeReviewResult:
+            call_count["review"] += 1
+            if call_count["review"] == 1:
+                return CumulativeReviewResult(
+                    status="success",
+                    findings=(
+                        ReviewFinding(
+                            file="test.py",
+                            line_start=1,
+                            line_end=5,
+                            priority=0,  # P0 exceeds P1 threshold
+                            title="Critical issue",
+                            body="Details",
+                            reviewer="test",
+                        ),
+                    ),
+                    new_baseline_commit="abc123",
+                )
+            return CumulativeReviewResult(
+                status="success", findings=(), new_baseline_commit="def456"
+            )
+
+        mock_review_runner.run_review = mock_run_review
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+
+        # Mock fixer to succeed
+        with patch.object(
+            coordinator,
+            "_run_fixer_agent",
+            new=AsyncMock(return_value=FixerResult(success=True, interrupted=False)),
+        ):
+            result = await coordinator.run_trigger_validation(dry_run=False)
+
+        # Even though code_review remediation succeeded, command failure persists
+        assert result.status == "failed"
+        assert "lint" in (result.details or "").lower()
