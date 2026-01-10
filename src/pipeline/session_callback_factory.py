@@ -361,12 +361,12 @@ class SessionCallbackFactory:
                             cmd_ref.ref,
                             issue_id,
                         )
-                        # Per spec R10: return interrupted with empty commands
+                        # Return with completed commands from previous iterations
                         return SessionEndResult(
                             status="interrupted",
                             started_at=started_at,
                             finished_at=datetime.now(UTC),
-                            commands=[],
+                            commands=list(command_results),
                             reason="SIGINT received",
                         )
 
@@ -460,12 +460,13 @@ class SessionCallbackFactory:
             )
         except asyncio.CancelledError:
             # Handle cancellation (e.g., from SIGINT)
+            # Return completed commands from before cancellation
             logger.info("session_end cancelled for %s", issue_id)
             return SessionEndResult(
                 status="interrupted",
                 started_at=started_at,
                 finished_at=datetime.now(UTC),
-                commands=[],
+                commands=list(command_results),
                 reason="cancelled",
             )
 
@@ -504,7 +505,26 @@ class SessionCallbackFactory:
                     getattr(cmd_config, "timeout", None),
                 )
 
-        # Add custom commands from global_custom_commands
+        # Add custom commands from commands.custom_commands (repo-level)
+        if commands_config and commands_config.custom_commands:
+            for name, custom_config in commands_config.custom_commands.items():
+                if custom_config is not None:
+                    base_pool[name] = (
+                        custom_config.command,
+                        getattr(custom_config, "timeout", None),
+                    )
+
+        # Add custom commands from global_validation_commands.custom_commands
+        # (global overrides repo-level)
+        if global_config and global_config.custom_commands:
+            for name, custom_config in global_config.custom_commands.items():
+                if custom_config is not None:
+                    base_pool[name] = (
+                        custom_config.command,
+                        getattr(custom_config, "timeout", None),
+                    )
+
+        # Add custom commands from global_custom_commands (deprecated, but support)
         if validation_config.global_custom_commands:
             for name, custom_config in validation_config.global_custom_commands.items():
                 if custom_config is not None:
@@ -588,6 +608,7 @@ class SessionCallbackFactory:
                 repo_path=self._repo_path,
                 interrupt_event=review_interrupt,
                 issue_id=issue_id,
+                baseline_override=base_sha,  # Per R11: use base_sha..HEAD range
             )
 
             # Convert findings to dict format for SessionEndResult
@@ -603,7 +624,8 @@ class SessionCallbackFactory:
                 for f in result.findings
             ]
 
-            passed = result.status == "success" and len(findings) == 0
+            # Treat skipped as passed (e.g., empty diff)
+            passed = result.status in ("success", "skipped") and len(findings) == 0
             return CodeReviewResult(ran=True, passed=passed, findings=findings)
 
         except Exception as e:

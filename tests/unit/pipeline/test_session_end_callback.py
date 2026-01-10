@@ -110,6 +110,7 @@ class FakeCumulativeReviewRunner:
         self.should_raise = should_raise
         self.call_count = 0
         self.last_issue_id: str | None = None
+        self.last_baseline_override: str | None = None
 
     async def run_review(
         self,
@@ -121,9 +122,11 @@ class FakeCumulativeReviewRunner:
         *,
         issue_id: str | None = None,
         epic_id: str | None = None,
+        baseline_override: str | None = None,
     ) -> FakeCumulativeReviewResult:
         self.call_count += 1
         self.last_issue_id = issue_id
+        self.last_baseline_override = baseline_override
         if self.should_raise:
             raise self.should_raise
         return self.result
@@ -413,8 +416,8 @@ class TestTimeoutBehavior:
 class TestInterruptBehavior:
     """Tests for session_end SIGINT behavior (spec R10)."""
 
-    async def test_interrupt_returns_empty_commands(self) -> None:
-        """On SIGINT, returns status=interrupted with empty commands."""
+    async def test_interrupt_before_first_command_returns_empty(self) -> None:
+        """On SIGINT before first command, returns empty commands list."""
         interrupt_event = asyncio.Event()
         interrupt_event.set()  # Already interrupted
 
@@ -437,6 +440,52 @@ class TestInterruptBehavior:
         assert result.status == "interrupted"
         assert result.reason == "SIGINT received"
         assert result.commands == []
+
+    async def test_interrupt_after_some_commands_returns_completed(self) -> None:
+        """On SIGINT after some commands, returns completed commands."""
+        interrupt_event = asyncio.Event()
+        runner = FakeCommandRunner()
+        runner.responses["ruff check ."] = FakeCommandResult(
+            command="ruff check .", returncode=0
+        )
+
+        # Custom runner that sets interrupt after first command
+        original_run = runner.run_async
+
+        async def run_then_interrupt(
+            cmd: str | list[str],
+            timeout: int | None = None,
+            shell: bool = False,
+            cwd: Path | None = None,
+        ) -> FakeCommandResult:
+            result = await original_run(cmd, timeout, shell, cwd)
+            interrupt_event.set()  # Set interrupt after command completes
+            return result
+
+        runner.run_async = run_then_interrupt  # type: ignore[method-assign]
+
+        config = _make_validation_config(
+            commands=(
+                TriggerCommandRef(ref="lint"),
+                TriggerCommandRef(ref="test"),
+            ),
+            base_commands={"lint": "ruff check .", "test": "uv run pytest"},
+        )
+        factory = _create_factory(
+            validation_config=config,
+            command_runner=runner,
+            interrupt_event=interrupt_event,
+        )
+        callbacks = factory.build("test-issue")
+
+        assert callbacks.on_session_end_check is not None
+        result = await callbacks.on_session_end_check(
+            "test-issue", Path("/test/log.txt"), SessionEndRetryState()
+        )
+
+        assert result.status == "interrupted"
+        # Should have the first command that completed
+        assert len(result.commands) == 1
 
 
 class TestFailureModeAbort:

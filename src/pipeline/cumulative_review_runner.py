@@ -158,6 +158,7 @@ class CumulativeReviewRunner:
         *,
         issue_id: str | None = None,
         epic_id: str | None = None,
+        baseline_override: str | None = None,
     ) -> CumulativeReviewResult:
         """Run cumulative code review for accumulated changes.
 
@@ -169,6 +170,9 @@ class CumulativeReviewRunner:
             interrupt_event: Event to check for SIGINT interruption.
             issue_id: Optional issue ID for context.
             epic_id: Optional epic ID (required for epic_completion triggers).
+            baseline_override: Optional explicit baseline commit SHA. If provided,
+                skips automatic baseline detection and uses this value directly.
+                Used by session_end to pass base_sha from IssueResult per R11.
 
         Returns:
             CumulativeReviewResult with status, findings, and new baseline.
@@ -176,10 +180,14 @@ class CumulativeReviewRunner:
         from src.core.models import ReviewInput
         from src.domain.validation.config import TriggerType as TT
 
-        # 1. Determine baseline
-        baseline_result = await self._get_baseline_commit(
-            trigger_type, config, run_metadata, issue_id=issue_id, epic_id=epic_id
-        )
+        # 1. Determine baseline (use override if provided)
+        if baseline_override is not None:
+            # Use explicit baseline from caller (e.g., base_sha from IssueResult)
+            baseline_result = BaselineResult(commit=baseline_override, skip_reason=None)
+        else:
+            baseline_result = await self._get_baseline_commit(
+                trigger_type, config, run_metadata, issue_id=issue_id, epic_id=epic_id
+            )
         if baseline_result.commit is None:
             self._logger.info(
                 "Skipping cumulative review: %s", baseline_result.skip_reason
