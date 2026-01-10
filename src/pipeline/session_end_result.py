@@ -25,6 +25,14 @@ class CodeReviewResult:
     passed: bool | None  # None if ran=False
     findings: list[dict[str, object]] = field(default_factory=list)
 
+    def to_dict(self) -> dict[str, object]:
+        """Convert to a JSON-serializable dict."""
+        return {
+            "ran": self.ran,
+            "passed": self.passed,
+            "findings": self.findings,
+        }
+
 
 @dataclass
 class SessionEndRetryState:
@@ -43,6 +51,15 @@ class SessionEndRetryState:
     max_retries: int = 0
     log_offset: int = 0
     previous_commit_hash: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        """Convert to a JSON-serializable dict."""
+        return {
+            "attempt": self.attempt,
+            "max_retries": self.max_retries,
+            "log_offset": self.log_offset,
+            "previous_commit_hash": self.previous_commit_hash,
+        }
 
 
 @dataclass
@@ -70,3 +87,30 @@ class SessionEndResult:
     commands: list[CommandResult] = field(default_factory=list)
     code_review_result: CodeReviewResult | None = None
     reason: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        """Convert to a JSON-serializable dict.
+
+        Converts datetime fields to ISO format strings and nested objects
+        to their dict representations.
+        """
+        return {
+            "status": self.status,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "commands": [
+                {
+                    "command": cmd.command,
+                    "returncode": cmd.returncode,
+                    "stdout": cmd.stdout,
+                    "stderr": cmd.stderr,
+                    "duration_seconds": cmd.duration_seconds,
+                    "timed_out": cmd.timed_out,
+                }
+                for cmd in self.commands
+            ],
+            "code_review_result": (
+                self.code_review_result.to_dict() if self.code_review_result else None
+            ),
+            "reason": self.reason,
+        }

@@ -206,44 +206,9 @@ class TestCodeReviewResult:
 class TestSerialization:
     """Tests for dataclass serialization (for persistence)."""
 
-    def test_session_end_result_to_dict(self) -> None:
-        """SessionEndResult can be converted to dict for JSON serialization."""
-        from dataclasses import asdict
-
-        now = datetime.now(tz=UTC)
-        result = SessionEndResult(
-            status="pass",
-            started_at=now,
-            finished_at=now,
-            reason=None,
-        )
-        data = asdict(result)
-        assert data["status"] == "pass"
-        assert data["started_at"] == now
-        assert data["commands"] == []
-
-    def test_retry_state_to_dict(self) -> None:
-        """SessionEndRetryState can be converted to dict for JSON serialization."""
-        from dataclasses import asdict
-
-        state = SessionEndRetryState(attempt=2, max_retries=3)
-        data = asdict(state)
-        assert data["attempt"] == 2
-        assert data["max_retries"] == 3
-
-    def test_code_review_result_to_dict(self) -> None:
-        """CodeReviewResult can be converted to dict for JSON serialization."""
-        from dataclasses import asdict
-
-        review = CodeReviewResult(ran=True, passed=True, findings=[])
-        data = asdict(review)
-        assert data["ran"] is True
-        assert data["passed"] is True
-
-    def test_session_end_result_json_serializable(self) -> None:
-        """SessionEndResult with datetime fields can be JSON-serialized via isoformat."""
+    def test_session_end_result_to_dict_json_serializable(self) -> None:
+        """SessionEndResult.to_dict() produces JSON-serializable output."""
         import json
-        from dataclasses import asdict
 
         now = datetime.now(tz=UTC)
         result = SessionEndResult(
@@ -252,33 +217,93 @@ class TestSerialization:
             finished_at=now,
             reason=None,
         )
-        data = asdict(result)
-        # Convert datetime to ISO format string for JSON serialization
-        data["started_at"] = (
-            data["started_at"].isoformat() if data["started_at"] else None
-        )
-        data["finished_at"] = (
-            data["finished_at"].isoformat() if data["finished_at"] else None
-        )
-        # This should not raise TypeError
+        data = result.to_dict()
+        # Must not raise TypeError
         json_str = json.dumps(data)
         parsed = json.loads(json_str)
         assert parsed["status"] == "pass"
         assert parsed["started_at"] == now.isoformat()
+        assert parsed["finished_at"] == now.isoformat()
+        assert parsed["commands"] == []
+
+    def test_retry_state_to_dict_json_serializable(self) -> None:
+        """SessionEndRetryState.to_dict() produces JSON-serializable output."""
+        import json
+
+        state = SessionEndRetryState(attempt=2, max_retries=3)
+        data = state.to_dict()
+        json_str = json.dumps(data)
+        parsed = json.loads(json_str)
+        assert parsed["attempt"] == 2
+        assert parsed["max_retries"] == 3
+
+    def test_code_review_result_to_dict_json_serializable(self) -> None:
+        """CodeReviewResult.to_dict() produces JSON-serializable output."""
+        import json
+
+        review = CodeReviewResult(ran=True, passed=True, findings=[])
+        data = review.to_dict()
+        json_str = json.dumps(data)
+        parsed = json.loads(json_str)
+        assert parsed["ran"] is True
+        assert parsed["passed"] is True
+
+    def test_session_end_result_with_commands_json_serializable(self) -> None:
+        """SessionEndResult with commands serializes to JSON cleanly."""
+        import json
+
+        now = datetime.now(tz=UTC)
+        cmd_result = CommandResult(
+            command=["pytest"],
+            returncode=0,
+            stdout="OK",
+            stderr="",
+            duration_seconds=1.5,
+        )
+        result = SessionEndResult(
+            status="pass",
+            started_at=now,
+            finished_at=now,
+            commands=[cmd_result],
+        )
+        data = result.to_dict()
+        json_str = json.dumps(data)
+        parsed = json.loads(json_str)
+        assert len(parsed["commands"]) == 1
+        assert parsed["commands"][0]["command"] == ["pytest"]
+        assert parsed["commands"][0]["returncode"] == 0
+
+    def test_session_end_result_with_code_review_json_serializable(self) -> None:
+        """SessionEndResult with code_review_result serializes to JSON cleanly."""
+        import json
+
+        now = datetime.now(tz=UTC)
+        review = CodeReviewResult(ran=True, passed=False, findings=[{"issue": "test"}])
+        result = SessionEndResult(
+            status="pass",
+            started_at=now,
+            finished_at=now,
+            code_review_result=review,
+        )
+        data = result.to_dict()
+        json_str = json.dumps(data)
+        parsed = json.loads(json_str)
+        assert parsed["code_review_result"]["ran"] is True
+        assert parsed["code_review_result"]["passed"] is False
+        assert parsed["code_review_result"]["findings"] == [{"issue": "test"}]
 
     def test_session_end_result_skipped_json_serializable(self) -> None:
         """Skipped SessionEndResult (null timestamps) serializes to JSON cleanly."""
         import json
-        from dataclasses import asdict
 
         result = SessionEndResult(
             status="skipped",
             reason="not_configured",
         )
-        data = asdict(result)
-        # No datetime conversion needed when timestamps are None
+        data = result.to_dict()
         json_str = json.dumps(data)
         parsed = json.loads(json_str)
         assert parsed["status"] == "skipped"
         assert parsed["started_at"] is None
         assert parsed["finished_at"] is None
+        assert parsed["reason"] == "not_configured"
