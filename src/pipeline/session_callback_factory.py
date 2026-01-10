@@ -582,14 +582,17 @@ class SessionCallbackFactory:
         Returns:
             CommandOutcome with spec-compliant fields.
         """
-        # error_message is stderr if command failed, None if passed
+        # error_message captures failure details, None if passed
         error_message: str | None = None
         if not result.ok:
-            # Include stderr, or a timeout message if applicable
+            # Include stderr, stdout (for tools like pytest), or timeout message
             if result.timed_out:
                 error_message = "Command timed out"
             elif result.stderr:
                 error_message = result.stderr
+            elif result.stdout:
+                # Many tools (pytest, etc.) output failure details to stdout
+                error_message = result.stdout
             else:
                 error_message = f"Exit code: {result.returncode}"
 

@@ -474,28 +474,7 @@ async def test_session_end_interrupt_scenario(
     the lifecycle correctly handles the interrupted result with preserved
     command results and continues to the review phase.
     """
-    from dataclasses import dataclass as dc
-
-    @dc
-    class FakeCommandResult:
-        """Fake command result matching CommandResultProtocol."""
-
-        command: list[str] | str
-        returncode: int
-        stdout: str
-        stderr: str
-        duration_seconds: float
-        timed_out: bool
-
-        @property
-        def ok(self) -> bool:
-            return self.returncode == 0
-
-        def stdout_tail(self, max_chars: int = 800, max_lines: int = 20) -> str:
-            return self.stdout[:max_chars]
-
-        def stderr_tail(self, max_chars: int = 800, max_lines: int = 20) -> str:
-            return self.stderr[:max_chars]
+    from src.core.session_end_result import CommandOutcome
 
     event_sink = FakeEventSink()
 
@@ -515,13 +494,10 @@ async def test_session_end_interrupt_scenario(
     ) -> SessionEndResult:
         # Simulate interrupt: return status="interrupted" with completed commands
         # Per spec R10: completed commands preserved on interrupt
-        completed_command = FakeCommandResult(
-            command=["ruff", "check", "."],
-            returncode=0,
-            stdout="All checks passed",
-            stderr="",
+        completed_command = CommandOutcome(
+            ref="lint",
+            passed=True,
             duration_seconds=1.5,
-            timed_out=False,
         )
         return SessionEndResult(
             status="interrupted",
