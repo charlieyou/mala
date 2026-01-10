@@ -257,6 +257,9 @@ def build_session_callback_factory(
     on_review_log_path: Callable[[str, str], None],
     interrupt_event_getter: Callable | None = None,
     get_base_sha: Callable[[str], str | None] | None = None,
+    cumulative_review_runner: CumulativeReviewRunner | None = None,
+    get_run_metadata: Callable | None = None,
+    on_abort: Callable[[str], None] | None = None,
 ) -> SessionCallbackFactory:
     """Build SessionCallbackFactory.
 
@@ -271,6 +274,9 @@ def build_session_callback_factory(
         on_review_log_path: Callback when review log path becomes known.
         interrupt_event_getter: Callable to get the interrupt event (late-bound).
         get_base_sha: Callable to get base_sha for an issue (late-bound for session_end).
+        cumulative_review_runner: Runner for session_end code review.
+        get_run_metadata: Callable to get run metadata (late-bound for session_end).
+        on_abort: Callback when session_end abort mode triggers run abort.
 
     Returns:
         Configured SessionCallbackFactory.
@@ -287,7 +293,12 @@ def build_session_callback_factory(
         get_per_session_spec=lambda: async_gate_runner.per_session_spec,
         is_verbose=is_verbose_enabled,
         get_interrupt_event=interrupt_event_getter,
+        get_validation_config=lambda: pipeline.validation_config,
+        command_runner=runtime.command_runner,
+        cumulative_review_runner=cumulative_review_runner,
+        get_run_metadata=get_run_metadata,
         get_base_sha=get_base_sha,
+        on_abort=on_abort,
     )
 
 

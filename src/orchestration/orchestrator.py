@@ -372,6 +372,9 @@ class MalaOrchestrator:
             on_review_log_path=self._on_review_log_path,
             interrupt_event_getter=lambda: self._interrupt_event,
             get_base_sha=lambda issue_id: self._state.issue_base_shas.get(issue_id),
+            cumulative_review_runner=self.run_coordinator.cumulative_review_runner,
+            get_run_metadata=lambda: self.run_coordinator.run_metadata,
+            on_abort=lambda reason: self._request_abort(reason),
         )
         self._session_config = build_session_config(
             pipeline,

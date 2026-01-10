@@ -382,15 +382,38 @@ class SessionCallbackFactory:
                         all_passed = False
                         break
 
-                    # Execute the command
+                    # Execute the command with shield to ensure completion
+                    # Per R10: "complete current command" on SIGINT
                     if self._command_runner is not None:
-                        result = await self._command_runner.run_async(
-                            resolved_cmd,
-                            timeout=resolved_timeout,
-                            shell=True,
-                            cwd=self._repo_path,
-                        )
+                        try:
+                            result = await asyncio.shield(
+                                self._command_runner.run_async(
+                                    resolved_cmd,
+                                    timeout=resolved_timeout,
+                                    shell=True,
+                                    cwd=self._repo_path,
+                                )
+                            )
+                        except asyncio.CancelledError:
+                            # Shield was broken but command may still be running
+                            # Re-raise to be caught by outer handler
+                            raise
                         command_results.append(result)
+
+                        # Check for interrupt after command completes
+                        if interrupt_event and interrupt_event.is_set():
+                            logger.info(
+                                "session_end interrupted after command %s for %s",
+                                cmd_ref.ref,
+                                issue_id,
+                            )
+                            return SessionEndResult(
+                                status="interrupted",
+                                started_at=started_at,
+                                finished_at=datetime.now(UTC),
+                                commands=list(command_results),
+                                reason="SIGINT received",
+                            )
 
                         if not result.ok:
                             all_passed = False
@@ -624,7 +647,9 @@ class SessionCallbackFactory:
                 for f in result.findings
             ]
 
-            # Treat skipped as passed (e.g., empty diff)
+            # passed=True means code passed review with no issues
+            # passed=False means review found issues (findings) that may need remediation
+            # "skipped" status (e.g., empty diff) is treated as passed since there's nothing to review
             passed = result.status in ("success", "skipped") and len(findings) == 0
             return CodeReviewResult(ran=True, passed=passed, findings=findings)
 
