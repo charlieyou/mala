@@ -45,6 +45,7 @@ if TYPE_CHECKING:
         SDKClientProtocol,
     )
     from src.domain.lifecycle import RetryState
+    from src.domain.session_end_result import SessionEndResult
     from src.pipeline.agent_session_runner import (
         SessionConfig,
         SessionExecutionState,
@@ -1344,6 +1345,7 @@ class TestAgentSessionRunnerEventSink:
             _retry_state: RetryState,
             author_context: str | None,
             previous_findings: Sequence[ReviewIssueProtocol] | None,
+            _session_end_result: SessionEndResult | None,
         ) -> ReviewResult:
             nonlocal captured_session_id, captured_previous_findings
             captured_session_id = session_id
@@ -1449,6 +1451,7 @@ class TestAgentSessionRunnerEventSink:
             _retry_state: RetryState,
             author_context: str | None,
             previous_findings: Sequence[ReviewIssueProtocol] | None,
+            _session_end_result: SessionEndResult | None,
         ) -> ReviewResult:
             nonlocal review_check_count
             review_check_count += 1

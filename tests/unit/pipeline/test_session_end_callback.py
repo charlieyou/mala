@@ -523,10 +523,11 @@ class TestInterruptBehavior:
         )
         callbacks = factory.build("test-issue")
         assert callbacks.on_session_end_check is not None
+        on_session_end = callbacks.on_session_end_check
 
         async def run_and_cancel() -> SessionEndResult:
             task = asyncio.create_task(
-                callbacks.on_session_end_check(
+                on_session_end(
                     "test-issue", Path("/test/log.txt"), SessionEndRetryState()
                 )
             )

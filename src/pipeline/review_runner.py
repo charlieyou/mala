@@ -37,6 +37,7 @@ if TYPE_CHECKING:
         ReviewResultProtocol,
         ValidationSpecProtocol,
     )
+    from src.domain.session_end_result import SessionEndResult
     from src.domain.validation.spec import ValidationSpec
 
 
@@ -118,6 +119,68 @@ class NoProgressInput:
     previous_commit_hash: str | None
     current_commit_hash: str | None
     spec: ValidationSpec | None = None
+
+
+def _format_session_end_evidence(session_end_result: SessionEndResult) -> str:
+    """Format SessionEndResult as evidence for reviewer context.
+
+    Creates a human-readable summary of session_end trigger results.
+    Per spec R5, this is informational - review does NOT auto-fail
+    based on session_end status.
+
+    Args:
+        session_end_result: The session_end outcome to format.
+
+    Returns:
+        Formatted markdown string for the context file.
+    """
+    parts = [
+        "## Session End Validation Results (Informational)",
+        "",
+        "The following validation checks ran after the implementation completed.",
+        "**Note**: These results are for your information only. Review should NOT",
+        "auto-fail based on session_end status - consider these as additional context.",
+        "",
+        f"**Status**: {session_end_result.status}",
+    ]
+
+    if session_end_result.reason:
+        parts.append(f"**Reason**: {session_end_result.reason}")
+
+    # Format command results if present
+    if session_end_result.commands:
+        parts.append("")
+        parts.append("### Command Results")
+        for i, cmd in enumerate(session_end_result.commands, 1):
+            status = "PASS" if cmd.returncode == 0 else "FAIL"
+            parts.append(f"- **Command {i}**: `{cmd.command}` [{status}]")
+            if cmd.returncode != 0:
+                parts.append(f"  - Return code: {cmd.returncode}")
+                if cmd.stderr:
+                    # Truncate long stderr
+                    stderr = (
+                        cmd.stderr[:500] + "..."
+                        if len(cmd.stderr) > 500
+                        else cmd.stderr
+                    )
+                    parts.append(f"  - Stderr: {stderr}")
+
+    # Format code review result if present
+    if (
+        session_end_result.code_review_result
+        and session_end_result.code_review_result.ran
+    ):
+        cr = session_end_result.code_review_result
+        parts.append("")
+        parts.append("### Code Review Check")
+        passed_str = (
+            "PASSED" if cr.passed else "FAILED" if cr.passed is False else "N/A"
+        )
+        parts.append(f"- **Result**: {passed_str}")
+        if cr.findings:
+            parts.append(f"- **Findings**: {len(cr.findings)} issue(s)")
+
+    return "\n".join(parts)
 
 
 @dataclass
@@ -236,6 +299,9 @@ class ReviewRunner:
                 "verify these claims before re-flagging the same issues.\n\n"
                 f"{input.author_context}"
             )
+        # Include session_end evidence when available (per spec R5: informational only)
+        if input.session_end_result and input.session_end_result.status != "skipped":
+            context_parts.append(_format_session_end_evidence(input.session_end_result))
         context_text = "\n\n".join(context_parts).strip()
         # Log warning if author_context was provided but didn't make it to context
         # This shouldn't happen in practice but helps debug if wiring is broken
