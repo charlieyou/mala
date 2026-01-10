@@ -38,7 +38,6 @@ if TYPE_CHECKING:
         BaseTriggerConfig,
         CerberusConfig,
         CodeReviewConfig,
-        RunEndTriggerConfig,
     )
 
 

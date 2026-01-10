@@ -185,7 +185,7 @@ commands:
         assert config.commands.format is not None
         assert (
             config.commands.format.command
-            == "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format ."
+            == "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format --check ."
         )
         assert config.commands.typecheck is not None
         assert config.commands.typecheck.command == "uvx ty check"
