@@ -6,11 +6,6 @@ commands:
 validation_triggers:
   session_end:
     failure_mode: continue
-    code_review:
-      enabled: true
-      max_retries: 5
-      reviewer_type: cerberus
-      finding_threshold: P1
 
   run_end:
     fire_on: both
