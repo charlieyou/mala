@@ -384,13 +384,27 @@ class SessionCallbackFactory:
 
                     # Execute the command
                     # Per R10: "complete current command" on SIGINT (but not on timeout)
+                    # Shield protects from cancellation while allowing timeout to still work
                     if self._command_runner is not None:
-                        result = await self._command_runner.run_async(
-                            resolved_cmd,
-                            timeout=resolved_timeout,
-                            shell=True,
-                            cwd=self._repo_path,
+                        cmd_task = asyncio.create_task(
+                            self._command_runner.run_async(
+                                resolved_cmd,
+                                timeout=resolved_timeout,
+                                shell=True,
+                                cwd=self._repo_path,
+                            )
                         )
+                        try:
+                            result = await asyncio.shield(cmd_task)
+                        except asyncio.CancelledError:
+                            # Shield prevents cmd_task from being cancelled, but the
+                            # await still raises CancelledError. Wait for command to
+                            # complete per R10: "complete current command".
+                            result = await cmd_task
+                            command_results.append(result)
+                            # Re-raise to let outer handlers (timeout, CancelledError)
+                            # determine appropriate status based on context
+                            raise
                         command_results.append(result)
 
                         # Check for interrupt after command completes

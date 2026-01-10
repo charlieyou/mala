@@ -487,6 +487,64 @@ class TestInterruptBehavior:
         # Should have the first command that completed
         assert len(result.commands) == 1
 
+    async def test_command_completes_even_when_cancelled_mid_execution(self) -> None:
+        """Command execution is shielded and completes even if cancelled during await.
+
+        Per R10: "complete current command" on SIGINT means shield protects execution.
+        The command result is captured before CancelledError propagates to outer handler.
+        """
+        command_started = asyncio.Event()
+        command_completed = asyncio.Event()
+
+        class SlowCommandRunner:
+            """Runner that takes time to complete, allowing cancellation during execution."""
+
+            async def run_async(
+                self,
+                cmd: str | list[str],
+                timeout: int | None = None,
+                shell: bool = False,
+                cwd: Path | None = None,
+            ) -> FakeCommandResult:
+                command_started.set()
+                # Simulate command taking time to complete
+                await asyncio.sleep(0.1)
+                command_completed.set()
+                return FakeCommandResult(command=str(cmd), returncode=0)
+
+        runner = SlowCommandRunner()
+        config = _make_validation_config(
+            commands=(TriggerCommandRef(ref="lint"),),
+            base_commands={"lint": "ruff check ."},
+        )
+        factory = _create_factory(
+            validation_config=config,
+            command_runner=runner,  # type: ignore[arg-type]
+        )
+        callbacks = factory.build("test-issue")
+        assert callbacks.on_session_end_check is not None
+
+        async def run_and_cancel() -> SessionEndResult:
+            task = asyncio.create_task(
+                callbacks.on_session_end_check(
+                    "test-issue", Path("/test/log.txt"), SessionEndRetryState()
+                )
+            )
+            # Wait for command to start, then cancel
+            await command_started.wait()
+            task.cancel()
+            # The task will complete with "interrupted" status since the outer
+            # CancelledError handler catches the re-raised exception
+            return await task
+
+        result = await run_and_cancel()
+
+        # Command should have completed despite cancellation attempt
+        assert command_completed.is_set(), "Command did not complete (shield failed)"
+        # Result should show command completed and status is interrupted
+        assert len(result.commands) == 1
+        assert result.status == "interrupted"
+
 
 class TestFailureModeAbort:
     """Tests for failure_mode=abort behavior."""
