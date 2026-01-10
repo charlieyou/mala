@@ -362,6 +362,8 @@ class SessionCallbacks:
             Args: (agent_id, text) -> None
         on_session_end_check: Async callback to run session_end validation.
             Args: (issue_id, log_path, retry_state) -> SessionEndResult
+        get_abort_event: Callback to get abort event for run abort detection.
+            Args: () -> asyncio.Event | None
     """
 
     on_gate_check: GateCheckCallback | None = None
@@ -373,6 +375,7 @@ class SessionCallbacks:
     on_tool_use: ToolUseCallback | None = None
     on_agent_text: AgentTextCallback | None = None
     on_session_end_check: SessionEndCheckCallback | None = None
+    get_abort_event: Callable[[], asyncio.Event | None] | None = None
 
 
 @dataclass
@@ -551,6 +554,19 @@ class AgentSessionRunner:
         result: TransitionResult | None = None
 
         while not lifecycle.is_terminal:
+            # Check for run abort before each major stage
+            abort_event = (
+                self.callbacks.get_abort_event()
+                if self.callbacks.get_abort_event
+                else None
+            )
+            if abort_event is not None and abort_event.is_set():
+                logger.info(
+                    "Session %s: aborting due to run abort signal", input.issue_id
+                )
+                lifecycle_ctx.final_result = "Session interrupted: run_aborted"
+                break
+
             # === QUERY + MESSAGE ITERATION ===
             if pending_query is not None:
                 iter_result = await self._retry_policy.execute_iteration(

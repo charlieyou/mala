@@ -375,6 +375,7 @@ class MalaOrchestrator:
             cumulative_review_runner=self.run_coordinator.cumulative_review_runner,
             get_run_metadata=lambda: self.run_coordinator.run_metadata,
             on_abort=lambda reason: self._request_abort(reason),
+            abort_event_getter=lambda: self.issue_coordinator.abort_event,
         )
         self._session_config = build_session_config(
             pipeline,

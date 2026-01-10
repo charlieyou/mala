@@ -154,9 +154,12 @@ class IssueExecutionCoordinator:
         self.failed_issues: set[str] = set()
         self.abort_run: bool = False
         self.abort_reason: str | None = None
+        self.abort_event: asyncio.Event = asyncio.Event()
 
     def request_abort(self, reason: str) -> None:
         """Signal that the current run should stop due to a fatal error.
+
+        Sets both abort_run flag and abort_event for sync and async checking.
 
         Args:
             reason: Description of why the run should abort.
@@ -165,6 +168,7 @@ class IssueExecutionCoordinator:
             return
         self.abort_run = True
         self.abort_reason = reason
+        self.abort_event.set()
         logger.warning("Abort requested: reason=%s", reason)
         self.event_sink.on_abort_requested(reason)
 

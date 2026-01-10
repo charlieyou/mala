@@ -127,6 +127,7 @@ class SessionCallbackFactory:
         get_base_sha: Callable[[str], str | None] | None = None,
         on_abort: Callable[[str], None] | None = None,
         session_end_timeout: float = 600.0,
+        get_abort_event: Callable[[], asyncio.Event | None] | None = None,
     ) -> None:
         """Initialize the factory with dependencies.
 
@@ -150,6 +151,7 @@ class SessionCallbackFactory:
             get_base_sha: Callable to get base_sha for an issue (late-bound).
             on_abort: Callback when session_end abort mode triggers run abort.
             session_end_timeout: Overall timeout for session_end in seconds.
+            get_abort_event: Callable to get the abort event (late-bound).
 
         Note:
             log_provider, event_sink, evidence_check, and get_interrupt_event are
@@ -176,6 +178,7 @@ class SessionCallbackFactory:
         self._get_base_sha = get_base_sha or (lambda _: None)
         self._on_abort = on_abort
         self._session_end_timeout = session_end_timeout
+        self._get_abort_event = get_abort_event or (lambda: None)
 
     def build(
         self,
@@ -315,6 +318,7 @@ class SessionCallbackFactory:
             on_tool_use=on_tool_use,
             on_agent_text=on_agent_text,
             on_session_end_check=on_session_end_check,
+            get_abort_event=self._get_abort_event,
         )
 
     async def _execute_session_end(

@@ -260,6 +260,7 @@ def build_session_callback_factory(
     cumulative_review_runner: CumulativeReviewRunner | None = None,
     get_run_metadata: Callable | None = None,
     on_abort: Callable[[str], None] | None = None,
+    abort_event_getter: Callable | None = None,
 ) -> SessionCallbackFactory:
     """Build SessionCallbackFactory.
 
@@ -277,6 +278,7 @@ def build_session_callback_factory(
         cumulative_review_runner: Runner for session_end code review.
         get_run_metadata: Callable to get run metadata (late-bound for session_end).
         on_abort: Callback when session_end abort mode triggers run abort.
+        abort_event_getter: Callable to get the abort event (late-bound for run abort).
 
     Returns:
         Configured SessionCallbackFactory.
@@ -299,6 +301,7 @@ def build_session_callback_factory(
         get_run_metadata=get_run_metadata,
         get_base_sha=get_base_sha,
         on_abort=on_abort,
+        get_abort_event=abort_event_getter,
     )
 
 
