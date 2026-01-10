@@ -2048,6 +2048,84 @@ validate_every: 10
         ):
             load_config(tmp_path)
 
+    def test_global_validation_commands_raises_error(
+        self, tmp_path: "pathlib.Path"
+    ) -> None:
+        """global_validation_commands field raises ConfigError with not-supported message."""
+        from src.domain.validation.config_loader import load_config
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """
+preset: python-uv
+global_validation_commands:
+  test: "pytest"
+"""
+        )
+
+        with pytest.raises(
+            ConfigError, match=r"global_validation_commands is not supported"
+        ):
+            load_config(tmp_path)
+
+    def test_global_validation_commands_error_includes_migration_url(
+        self, tmp_path: "pathlib.Path"
+    ) -> None:
+        """global_validation_commands error includes migration guide URL."""
+        from src.domain.validation.config_loader import load_config
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """
+preset: python-uv
+global_validation_commands:
+  test: "pytest"
+"""
+        )
+
+        with pytest.raises(
+            ConfigError, match=r"https://docs\.mala\.ai/migration/validation-triggers"
+        ):
+            load_config(tmp_path)
+
+    def test_top_level_custom_commands_raises_error(
+        self, tmp_path: "pathlib.Path"
+    ) -> None:
+        """Top-level custom_commands field raises ConfigError with not-supported message."""
+        from src.domain.validation.config_loader import load_config
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """
+preset: python-uv
+custom_commands:
+  my_custom: "my-tool --check"
+"""
+        )
+
+        with pytest.raises(
+            ConfigError, match=r"custom_commands.*top-level.*is not supported"
+        ):
+            load_config(tmp_path)
+
+    def test_top_level_custom_commands_error_suggests_commands_key(
+        self, tmp_path: "pathlib.Path"
+    ) -> None:
+        """Top-level custom_commands error suggests using 'commands' key."""
+        from src.domain.validation.config_loader import load_config
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """
+preset: python-uv
+custom_commands:
+  my_custom: "my-tool --check"
+"""
+        )
+
+        with pytest.raises(ConfigError, match=r"under the 'commands' key"):
+            load_config(tmp_path)
+
     def test_empty_validation_triggers_dict_without_global_commands_ok(
         self, tmp_path: "pathlib.Path"
     ) -> None:

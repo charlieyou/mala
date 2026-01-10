@@ -159,6 +159,32 @@ def _validate_schema(data: dict[str, Any]) -> None:
     Raises:
         ConfigError: If unknown fields are present.
     """
+    # Check for removed global_validation_commands with helpful migration message
+    if "global_validation_commands" in data:
+        raise ConfigError(
+            "global_validation_commands is not supported. "
+            "Migrate to validation_triggers with commands:\n\n"
+            "validation_triggers:\n"
+            "  run_end:\n"
+            "    failure_mode: continue\n"
+            "    commands:\n"
+            "      - ref: test\n"
+            "      - ref: lint\n\n"
+            "See migration guide at "
+            "https://docs.mala.ai/migration/validation-triggers"
+        )
+
+    # Check for removed custom_commands top-level field
+    if "custom_commands" in data:
+        raise ConfigError(
+            "custom_commands (top-level) is not supported. "
+            "Define custom commands under the 'commands' key:\n\n"
+            "commands:\n"
+            "  my_custom_cmd:\n"
+            "    command: 'my-tool --check'\n"
+            "    timeout: 120\n"
+        )
+
     # Check for removed validate_every field with helpful migration message
     if "validate_every" in data:
         raise ConfigError(
