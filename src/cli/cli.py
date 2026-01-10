@@ -903,6 +903,17 @@ def status(
     print()
 
 
+@app.command()
+def init(
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Preview without writing"),
+    ] = False,
+) -> None:
+    """Initialize mala.yaml configuration interactively."""
+    raise typer.Exit(1)  # Stub - to be implemented in T002
+
+
 def _display_instance(instance: object, indent: bool = False) -> None:
     """Display a single running instance.
 

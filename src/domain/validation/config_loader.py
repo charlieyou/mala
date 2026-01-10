@@ -1180,3 +1180,19 @@ def _validate_trigger_command_refs(config: ValidationConfig) -> None:
                     f"trigger {trigger_type.value} references unknown command "
                     f"'{cmd_ref.ref}'. Available: {available}"
                 )
+
+
+def validate_generated_config(data: dict[str, Any]) -> None:
+    """Validate a dictionary against the config schema and semantic rules.
+
+    This is a convenience wrapper for validating programmatically-generated
+    config data (e.g., from `mala init`).
+
+    Args:
+        data: Dictionary containing mala.yaml configuration.
+
+    Raises:
+        ConfigError: If schema validation or semantic validation fails.
+    """
+    config = ValidationConfig.from_dict(data)  # raises ConfigError
+    _validate_config(config)  # raises ConfigError

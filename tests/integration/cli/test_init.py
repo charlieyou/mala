@@ -1,0 +1,134 @@
+"""Integration tests for mala init command.
+
+These tests exercise the end-to-end CLI path via CliRunner, verifying that:
+1. The init command is registered correctly
+2. --help works and shows --dry-run option
+3. Interactive flows produce valid YAML output
+
+Most tests will fail initially until T002 implements the full command.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import pytest
+import yaml
+from typer.testing import CliRunner
+
+from src.cli.cli import app
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+pytestmark = pytest.mark.integration
+
+runner = CliRunner()
+
+
+class TestInitHelp:
+    """Tests for init --help (should pass immediately)."""
+
+    def test_help_shows_dry_run_option(self) -> None:
+        """Verify 'mala init --help' shows --dry-run option."""
+        result = runner.invoke(app, ["init", "--help"])
+        assert result.exit_code == 0
+        assert "--dry-run" in result.output
+
+
+class TestInitDryRun:
+    """Tests for init --dry-run mode."""
+
+    def test_dry_run_preset(self) -> None:
+        """Input '1' (preset), --dry-run outputs valid YAML to stdout."""
+        result = runner.invoke(app, ["init", "--dry-run"], input="1\n")
+        assert result.exit_code == 0
+        config = yaml.safe_load(result.output)
+        assert config == {"preset": "python-uv"}
+
+    def test_dry_run_no_backup(self, tmp_path: Path) -> None:
+        """Existing file + --dry-run leaves file unchanged."""
+        mala_yaml = tmp_path / "mala.yaml"
+        original_content = "preset: existing\n"
+        mala_yaml.write_text(original_content)
+
+        result = runner.invoke(
+            app, ["init", "--dry-run"], input="1\n", env={"PWD": str(tmp_path)}
+        )
+        # Command outputs to stdout, doesn't touch file
+        assert result.exit_code == 0
+        assert mala_yaml.read_text() == original_content
+
+
+class TestInitCustomFlow:
+    """Tests for init custom commands flow."""
+
+    def test_custom_flow(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Input '5' (custom), provide commands, verify mala.yaml content."""
+        monkeypatch.chdir(tmp_path)
+
+        # Input: 5 = custom, then provide lint and test commands, empty for rest
+        input_text = "5\nruff check .\npytest\n\n\n\n"
+        result = runner.invoke(app, ["init"], input=input_text)
+
+        assert result.exit_code == 0
+        mala_yaml = tmp_path / "mala.yaml"
+        assert mala_yaml.exists()
+        config = yaml.safe_load(mala_yaml.read_text())
+        assert config.get("commands", {}).get("lint") == "ruff check ."
+        assert config.get("commands", {}).get("test") == "pytest"
+
+
+class TestInitBackup:
+    """Tests for backup creation when mala.yaml exists."""
+
+    def test_backup_created(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Existing mala.yaml creates .bak with old content."""
+        monkeypatch.chdir(tmp_path)
+        mala_yaml = tmp_path / "mala.yaml"
+        old_content = "preset: old\n"
+        mala_yaml.write_text(old_content)
+
+        result = runner.invoke(app, ["init"], input="1\n")
+
+        assert result.exit_code == 0
+        backup = tmp_path / "mala.yaml.bak"
+        assert backup.exists()
+        assert backup.read_text() == old_content
+
+
+class TestInitValidation:
+    """Tests for validation failure scenarios."""
+
+    def test_validation_fail_empty_commands(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Input '5' (custom), skip all commands -> exit 1, error in stderr."""
+        monkeypatch.chdir(tmp_path)
+
+        # Input: 5 = custom, then skip all commands (just newlines)
+        input_text = "5\n\n\n\n\n\n"
+        result = runner.invoke(app, ["init"], input=input_text)
+
+        assert result.exit_code == 1
+        assert "error" in result.stderr.lower() or "command" in result.stderr.lower()
+
+
+class TestInitInputValidation:
+    """Tests for input validation and retry loops."""
+
+    def test_invalid_input_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Invalid inputs ('0', '6', 'abc') are rejected, then '1' succeeds."""
+        monkeypatch.chdir(tmp_path)
+
+        # Input: invalid choices, then valid choice
+        input_text = "0\n6\nabc\n1\n"
+        result = runner.invoke(app, ["init", "--dry-run"], input=input_text)
+
+        assert result.exit_code == 0
+        config = yaml.safe_load(result.output)
+        assert config == {"preset": "python-uv"}

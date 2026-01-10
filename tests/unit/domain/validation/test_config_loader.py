@@ -16,6 +16,7 @@ from src.domain.validation.config_loader import (
     _parse_code_review_config,
     _parse_periodic_trigger,
     _validate_schema,
+    validate_generated_config,
 )
 
 if TYPE_CHECKING:
@@ -664,3 +665,20 @@ class TestParsePeriodicTrigger:
                     "bogus": True,
                 }
             )
+
+
+class TestValidateGeneratedConfig:
+    """Tests for validate_generated_config."""
+
+    def test_valid_preset_dict(self) -> None:
+        """Valid preset dict passes without error."""
+        validate_generated_config({"preset": "python-uv"})
+
+    def test_valid_custom_dict(self) -> None:
+        """Valid custom dict with commands passes without error."""
+        validate_generated_config({"commands": {"test": "pytest"}})
+
+    def test_empty_commands_dict_raises(self) -> None:
+        """Empty commands dict with no preset raises ConfigError."""
+        with pytest.raises(ConfigError, match=r"At least one command must be defined"):
+            validate_generated_config({"commands": {}})
