@@ -72,6 +72,9 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "setup_files",
         "validation_triggers",
         "claude_settings_sources",
+        "timeout_minutes",
+        "context_restart_threshold",
+        "context_limit",
     }
 )
 
