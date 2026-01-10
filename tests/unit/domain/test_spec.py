@@ -15,7 +15,6 @@ from src.domain.validation.config import (
     CommandConfig,
     CommandsConfig,
     CustomCommandConfig,
-    CustomOverrideMode,
 )
 from src.domain.validation.spec import (
     DEFAULT_COMMAND_TIMEOUT,
@@ -25,7 +24,6 @@ from src.domain.validation.spec import (
     ValidationCommand,
     ValidationScope,
     ValidationSpec,
-    _apply_custom_commands_override,
     _build_commands_from_config,
     build_validation_spec,
     classify_change,
@@ -280,30 +278,6 @@ class TestBuildValidationSpec:
         assert "setup" not in command_names
         assert "format" not in command_names
         assert "typecheck" not in command_names
-
-    def test_global_validation_commands_rejected(self, tmp_path: Path) -> None:
-        """global_validation_commands key is rejected at schema validation."""
-        import pytest
-
-        from src.domain.validation.config import ConfigError
-
-        config_dst = tmp_path / "mala.yaml"
-        config_dst.write_text(
-            "\n".join(
-                [
-                    "commands:",
-                    '  test: "pytest issue"',
-                    "global_validation_commands:",
-                    '  test: "pytest global"',
-                ]
-            )
-            + "\n"
-        )
-
-        with pytest.raises(
-            ConfigError, match=r"global_validation_commands is deprecated"
-        ):
-            build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
 
     def test_command_with_custom_timeout(self, tmp_path: Path) -> None:
         """Test that custom timeout values are applied."""
@@ -627,174 +601,6 @@ class TestBuildValidationSpecCustomCommands:
         assert docs.command == "mkdocs build --strict"
         assert docs.allow_fail is False
         assert docs.timeout == DEFAULT_COMMAND_TIMEOUT
-
-
-class TestApplyCommandOverridesCustomCommands:
-    """Test global custom_commands override with mode-based semantics."""
-
-    def test_global_replace_mode_fully_replaces_repo_customs(self) -> None:
-        """GLOBAL + REPLACE mode returns only global customs."""
-        repo_customs = {
-            "cmd_a": CustomCommandConfig(command="echo a"),
-            "cmd_b": CustomCommandConfig(command="echo b"),
-        }
-        global_validation_commands = CommandsConfig(
-            custom_commands={"cmd_a": CustomCommandConfig(command="echo new_a")},
-            custom_override_mode=CustomOverrideMode.REPLACE,
-        )
-
-        # PER_SESSION ignores global mode, returns repo customs
-        per_session_result = _apply_custom_commands_override(
-            repo_customs, global_validation_commands, ValidationScope.PER_SESSION
-        )
-        assert len(per_session_result) == 2
-        assert set(per_session_result.keys()) == {"cmd_a", "cmd_b"}
-
-        # GLOBAL with REPLACE returns only global customs
-        global_result = _apply_custom_commands_override(
-            repo_customs, global_validation_commands, ValidationScope.GLOBAL
-        )
-        assert len(global_result) == 1
-        assert "cmd_a" in global_result
-        assert global_result["cmd_a"].command == "echo new_a"
-
-    def test_global_clear_mode_returns_empty_dict(self) -> None:
-        """GLOBAL + CLEAR mode returns empty dict (no customs)."""
-        repo_customs = {
-            "cmd_a": CustomCommandConfig(command="echo a"),
-            "cmd_b": CustomCommandConfig(command="echo b"),
-        }
-        global_validation_commands = CommandsConfig(
-            custom_override_mode=CustomOverrideMode.CLEAR,
-        )
-
-        # PER_SESSION ignores global mode, returns repo customs
-        per_session_result = _apply_custom_commands_override(
-            repo_customs, global_validation_commands, ValidationScope.PER_SESSION
-        )
-        assert len(per_session_result) == 2
-
-        # GLOBAL with CLEAR returns empty dict
-        global_result = _apply_custom_commands_override(
-            repo_customs, global_validation_commands, ValidationScope.GLOBAL
-        )
-        assert len(global_result) == 0
-
-    def test_global_inherit_mode_returns_repo_customs(self) -> None:
-        """GLOBAL + INHERIT mode returns repo-level customs unchanged."""
-        repo_customs = {
-            "cmd_a": CustomCommandConfig(command="echo a"),
-            "cmd_b": CustomCommandConfig(command="echo b"),
-        }
-        global_validation_commands = CommandsConfig(
-            custom_override_mode=CustomOverrideMode.INHERIT,
-        )
-
-        # Both scopes return repo customs with INHERIT
-        per_session_result = _apply_custom_commands_override(
-            repo_customs, global_validation_commands, ValidationScope.PER_SESSION
-        )
-        global_result = _apply_custom_commands_override(
-            repo_customs, global_validation_commands, ValidationScope.GLOBAL
-        )
-
-        assert len(per_session_result) == 2
-        assert len(global_result) == 2
-        assert set(per_session_result.keys()) == {"cmd_a", "cmd_b"}
-        assert set(global_result.keys()) == {"cmd_a", "cmd_b"}
-
-    def test_no_global_validation_commands_uses_repo_customs(self) -> None:
-        """When global_validation_commands is None, use repo-level customs."""
-        repo_customs = {
-            "cmd_a": CustomCommandConfig(command="echo a"),
-            "cmd_b": CustomCommandConfig(command="echo b"),
-        }
-
-        # Both scopes return repo customs when global_validation_commands is None
-        per_session_result = _apply_custom_commands_override(
-            repo_customs, None, ValidationScope.PER_SESSION
-        )
-        global_result = _apply_custom_commands_override(
-            repo_customs, None, ValidationScope.GLOBAL
-        )
-
-        assert len(per_session_result) == 2
-        assert len(global_result) == 2
-
-
-class TestApplyCustomCommandsOverride:
-    """Tests for _apply_custom_commands_override with mode-based API."""
-
-    def test_additive_mode_merges_customs(self) -> None:
-        """GLOBAL + ADDITIVE mode merges global into repo-level."""
-        repo_customs = {"cmd_a": CustomCommandConfig(command="echo a")}
-        global_validation_commands = CommandsConfig(
-            custom_commands={"cmd_b": CustomCommandConfig(command="echo b")},
-            custom_override_mode=CustomOverrideMode.ADDITIVE,
-        )
-
-        # ADDITIVE merges: repo + run
-        result = _apply_custom_commands_override(
-            repo_customs=repo_customs,
-            global_validation_commands=global_validation_commands,
-            scope=ValidationScope.GLOBAL,
-        )
-
-        assert len(result) == 2
-        assert "cmd_a" in result
-        assert "cmd_b" in result
-        assert result["cmd_a"].command == "echo a"
-        assert result["cmd_b"].command == "echo b"
-
-    def test_additive_mode_global_overrides_same_key(self) -> None:
-        """ADDITIVE mode: global value overrides repo-level for same key."""
-        repo_customs = {"cmd_a": CustomCommandConfig(command="echo old")}
-        global_validation_commands = CommandsConfig(
-            custom_commands={"cmd_a": CustomCommandConfig(command="echo new")},
-            custom_override_mode=CustomOverrideMode.ADDITIVE,
-        )
-
-        result = _apply_custom_commands_override(
-            repo_customs=repo_customs,
-            global_validation_commands=global_validation_commands,
-            scope=ValidationScope.GLOBAL,
-        )
-
-        assert len(result) == 1
-        assert result["cmd_a"].command == "echo new"
-
-    def test_per_session_scope_ignores_all_global_modes(self) -> None:
-        """PER_SESSION scope always uses repo customs regardless of mode."""
-        repo_customs = {"cmd_a": CustomCommandConfig(command="echo a")}
-
-        # Test all modes - PER_SESSION should always return repo_customs
-        for mode in CustomOverrideMode:
-            global_validation_commands = CommandsConfig(
-                custom_commands={"cmd_b": CustomCommandConfig(command="echo b")},
-                custom_override_mode=mode,
-            )
-            result = _apply_custom_commands_override(
-                repo_customs=repo_customs,
-                global_validation_commands=global_validation_commands,
-                scope=ValidationScope.PER_SESSION,
-            )
-            assert result == repo_customs, f"PER_SESSION should ignore {mode}"
-
-    def test_replace_mode_replaces_with_empty_customs(self) -> None:
-        """REPLACE mode with empty custom_commands returns empty dict."""
-        repo_customs = {"cmd_a": CustomCommandConfig(command="echo a")}
-        global_validation_commands = CommandsConfig(
-            custom_commands={},  # Empty
-            custom_override_mode=CustomOverrideMode.REPLACE,
-        )
-
-        result = _apply_custom_commands_override(
-            repo_customs=repo_customs,
-            global_validation_commands=global_validation_commands,
-            scope=ValidationScope.GLOBAL,
-        )
-
-        assert result == {}
 
 
 class TestCustomCommandsYamlOrderPreservation:

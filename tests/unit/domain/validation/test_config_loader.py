@@ -10,106 +10,16 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+if TYPE_CHECKING:
+    from pytest import LogCaptureFixture
+
 from src.domain.validation.config import ConfigError, FailureMode
 from src.domain.validation.config_loader import (
     _parse_cerberus_config,
     _parse_code_review_config,
     _parse_periodic_trigger,
-    _validate_schema,
     validate_generated_config,
 )
-
-if TYPE_CHECKING:
-    from _pytest.logging import LogCaptureFixture
-
-
-class TestValidateSchemaGlobalValidationCommands:
-    """Tests for _validate_schema rejection of global_validation_commands."""
-
-    def test_global_validation_commands_rejected(self) -> None:
-        """Config with global_validation_commands raises ConfigError."""
-        data = {
-            "preset": "python-uv",
-            "global_validation_commands": {
-                "test": "uv run pytest",
-            },
-        }
-        with pytest.raises(
-            ConfigError, match=r"global_validation_commands is deprecated"
-        ):
-            _validate_schema(data)
-
-    def test_error_message_contains_validation_triggers(self) -> None:
-        """Error message contains 'validation_triggers'."""
-        data = {"global_validation_commands": {"lint": "ruff check ."}}
-        with pytest.raises(ConfigError) as exc_info:
-            _validate_schema(data)
-        assert "validation_triggers" in str(exc_info.value)
-
-    def test_error_message_contains_run_end(self) -> None:
-        """Error message contains 'run_end'."""
-        data = {"global_validation_commands": {"lint": "ruff check ."}}
-        with pytest.raises(ConfigError) as exc_info:
-            _validate_schema(data)
-        assert "run_end" in str(exc_info.value)
-
-    def test_error_message_contains_commands(self) -> None:
-        """Error message contains 'commands'."""
-        data = {"global_validation_commands": {"lint": "ruff check ."}}
-        with pytest.raises(ConfigError) as exc_info:
-            _validate_schema(data)
-        assert "commands" in str(exc_info.value)
-
-    def test_error_message_contains_yaml_example(self) -> None:
-        """Error message contains example YAML structure."""
-        data = {"global_validation_commands": {"test": "pytest"}}
-        with pytest.raises(ConfigError) as exc_info:
-            _validate_schema(data)
-        error_msg = str(exc_info.value)
-        # Check YAML structure is present
-        assert "failure_mode: continue" in error_msg
-        assert "- ref: test" in error_msg
-        assert "- ref: lint" in error_msg
-
-    def test_empty_global_validation_commands_also_rejected(self) -> None:
-        """Even empty global_validation_commands is rejected."""
-        data = {"preset": "python-uv", "global_validation_commands": {}}
-        with pytest.raises(
-            ConfigError, match=r"global_validation_commands is deprecated"
-        ):
-            _validate_schema(data)
-
-    def test_global_validation_commands_with_run_end_also_rejected(self) -> None:
-        """global_validation_commands is rejected even if run_end is configured."""
-        data = {
-            "global_validation_commands": {"test": "pytest"},
-            "validation_triggers": {
-                "run_end": {
-                    "failure_mode": "continue",
-                    "commands": [{"ref": "test"}],
-                }
-            },
-        }
-        with pytest.raises(
-            ConfigError, match=r"global_validation_commands is deprecated"
-        ):
-            _validate_schema(data)
-
-    def test_global_validation_commands_error_is_logged(
-        self, caplog: LogCaptureFixture
-    ) -> None:
-        """global_validation_commands rejection is logged before raising."""
-        import logging
-
-        data = {"global_validation_commands": {"test": "pytest"}}
-        with caplog.at_level(logging.ERROR):
-            with pytest.raises(ConfigError):
-                _validate_schema(data)
-        assert any(
-            "[config]" in record.message
-            and "global_validation_commands is deprecated" in record.message
-            for record in caplog.records
-        )
 
 
 class TestParseCerberusConfig:
