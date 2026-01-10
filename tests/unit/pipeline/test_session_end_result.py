@@ -239,3 +239,46 @@ class TestSerialization:
         data = asdict(review)
         assert data["ran"] is True
         assert data["passed"] is True
+
+    def test_session_end_result_json_serializable(self) -> None:
+        """SessionEndResult with datetime fields can be JSON-serialized via isoformat."""
+        import json
+        from dataclasses import asdict
+
+        now = datetime.now(tz=UTC)
+        result = SessionEndResult(
+            status="pass",
+            started_at=now,
+            finished_at=now,
+            reason=None,
+        )
+        data = asdict(result)
+        # Convert datetime to ISO format string for JSON serialization
+        data["started_at"] = (
+            data["started_at"].isoformat() if data["started_at"] else None
+        )
+        data["finished_at"] = (
+            data["finished_at"].isoformat() if data["finished_at"] else None
+        )
+        # This should not raise TypeError
+        json_str = json.dumps(data)
+        parsed = json.loads(json_str)
+        assert parsed["status"] == "pass"
+        assert parsed["started_at"] == now.isoformat()
+
+    def test_session_end_result_skipped_json_serializable(self) -> None:
+        """Skipped SessionEndResult (null timestamps) serializes to JSON cleanly."""
+        import json
+        from dataclasses import asdict
+
+        result = SessionEndResult(
+            status="skipped",
+            reason="not_configured",
+        )
+        data = asdict(result)
+        # No datetime conversion needed when timestamps are None
+        json_str = json.dumps(data)
+        parsed = json.loads(json_str)
+        assert parsed["status"] == "skipped"
+        assert parsed["started_at"] is None
+        assert parsed["finished_at"] is None
