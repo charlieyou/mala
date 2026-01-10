@@ -1314,6 +1314,10 @@ class MalaOrchestrator:
         self._exit_code = 0
         self._reset_sigint_state()
 
+        # Clear any stale trigger queue from previous runs to prevent
+        # queued triggers (e.g., run_end) from leaking into this run
+        self.run_coordinator.clear_trigger_queue("run_start_cleanup")
+
         # Build validation triggers summary from the merged config
         validation_triggers = (
             self._validation_config.validation_triggers
