@@ -26,6 +26,36 @@ pytestmark = pytest.mark.integration
 runner = CliRunner()
 
 
+def _extract_yaml_from_output(output: str) -> str:
+    """Extract YAML content from CLI output by filtering prompt lines.
+
+    The CLI mixes stderr prompts into stdout. This filters out known prompt
+    patterns while preserving YAML content (including indented lines).
+    """
+    import re
+
+    lines = output.strip().split("\n")
+    yaml_lines = []
+    for line in lines:
+        # Skip menu header
+        if line.startswith("Select configuration"):
+            continue
+        # Skip menu items (e.g., "  1) go")
+        if re.match(r"^\s+\d+\)\s+", line):
+            continue
+        # Skip choice prompt (e.g., "Enter choice []: 1")
+        if line.startswith("Enter choice"):
+            continue
+        # Skip command prompts (e.g., "Command for 'setup' (Enter to skip): ")
+        if line.startswith("Command for"):
+            continue
+        # Skip invalid choice messages
+        if line.startswith("Invalid"):
+            continue
+        yaml_lines.append(line)
+    return "\n".join(yaml_lines)
+
+
 class TestInitHelp:
     """Tests for init --help (should pass immediately)."""
 
@@ -43,11 +73,7 @@ class TestInitDryRun:
         """Input '1' (preset), --dry-run outputs valid YAML to stdout."""
         result = runner.invoke(app, ["init", "--dry-run"], input="1\n")
         assert result.exit_code == 0
-        # Extract YAML from output (after prompt echo line)
-        lines = result.output.strip().split("\n")
-        yaml_output = "\n".join(
-            line for line in lines if not line.startswith(("Select", "Enter", " "))
-        )
+        yaml_output = _extract_yaml_from_output(result.output)
         config = yaml.safe_load(yaml_output)
         # Presets are sorted alphabetically: ['go', 'node-npm', 'python-uv', 'rust']
         assert config == {"preset": "go"}
@@ -65,6 +91,16 @@ class TestInitDryRun:
         # Command outputs to stdout, doesn't touch file
         assert result.exit_code == 0
         assert mala_yaml.read_text() == original_content
+
+    def test_dry_run_custom(self) -> None:
+        """Input '5' (custom), --dry-run outputs valid YAML with indented commands."""
+        # 5 = custom, provide setup and build, skip remaining 5 commands
+        input_text = "5\nuv sync\nuv run build\n\n\n\n\n\n"
+        result = runner.invoke(app, ["init", "--dry-run"], input=input_text)
+        assert result.exit_code == 0
+        yaml_output = _extract_yaml_from_output(result.output)
+        config = yaml.safe_load(yaml_output)
+        assert config == {"commands": {"setup": "uv sync", "build": "uv run build"}}
 
 
 class TestInitCustomFlow:
@@ -141,13 +177,7 @@ class TestInitInputValidation:
         result = runner.invoke(app, ["init", "--dry-run"], input=input_text)
 
         assert result.exit_code == 0
-        # Extract YAML from output (after prompt lines)
-        lines = result.output.strip().split("\n")
-        yaml_output = "\n".join(
-            line
-            for line in lines
-            if not line.startswith(("Select", "Enter", "Invalid", " "))
-        )
+        yaml_output = _extract_yaml_from_output(result.output)
         config = yaml.safe_load(yaml_output)
         # Presets are sorted alphabetically: ['go', 'node-npm', 'python-uv', 'rust']
         assert config == {"preset": "go"}
