@@ -155,6 +155,17 @@ def _derive_config(
             if session_end is not None:
                 max_gate_retries = getattr(session_end, "max_retries", None)
 
+    # Extract max_epic_verification_retries from epic_completion trigger config
+    max_epic_verification_retries: int | None = None
+    if validation_config is not None:
+        triggers = getattr(validation_config, "validation_triggers", None)
+        if triggers is not None:
+            epic_completion = getattr(triggers, "epic_completion", None)
+            if epic_completion is not None:
+                max_epic_verification_retries = getattr(
+                    epic_completion, "max_epic_verification_retries", None
+                )
+
     logger.debug(
         "Derived config: timeout=%ds",
         timeout_seconds,
@@ -164,6 +175,7 @@ def _derive_config(
         disabled_validations=disabled_validations,
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
+        max_epic_verification_retries=max_epic_verification_retries,
         validation_config=validation_config,
         validation_config_missing=validation_config_missing,
     )

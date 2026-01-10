@@ -137,6 +137,7 @@ class _DerivedConfig:
     disabled_validations: set[str]
     max_gate_retries: int | None = None
     max_review_retries: int | None = None
+    max_epic_verification_retries: int | None = None
     review_disabled_reason: str | None = None
     validation_config: ValidationConfig | None = None
     validation_config_missing: bool = False

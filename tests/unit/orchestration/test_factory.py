@@ -219,3 +219,99 @@ class TestDeriveConfig:
         )
 
         assert derived.max_gate_retries is None
+
+    def test_max_epic_verification_retries_from_epic_completion_config(self) -> None:
+        """max_epic_verification_retries is extracted from epic_completion config."""
+        from src.domain.validation.config import (
+            EpicCompletionTriggerConfig,
+            EpicDepth,
+            FailureMode,
+            FireOn,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        validation_config = ValidationConfig(
+            validation_triggers=ValidationTriggersConfig(
+                epic_completion=EpicCompletionTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                    epic_depth=EpicDepth.ALL,
+                    fire_on=FireOn.SUCCESS,
+                    max_epic_verification_retries=5,
+                ),
+            ),
+        )
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.max_epic_verification_retries == 5
+
+    def test_max_epic_verification_retries_none_when_no_epic_completion(self) -> None:
+        """max_epic_verification_retries is None when no epic_completion trigger."""
+        from src.domain.validation.config import ValidationConfig
+
+        validation_config = ValidationConfig()
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.max_epic_verification_retries is None
+
+    def test_max_epic_verification_retries_none_when_no_validation_config(self) -> None:
+        """max_epic_verification_retries is None when validation_config is None."""
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=None,
+            validation_config_missing=True,
+        )
+
+        assert derived.max_epic_verification_retries is None
+
+    def test_max_epic_verification_retries_none_when_field_unset(self) -> None:
+        """max_epic_verification_retries is None when field not set in config."""
+        from src.domain.validation.config import (
+            EpicCompletionTriggerConfig,
+            EpicDepth,
+            FailureMode,
+            FireOn,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        # max_epic_verification_retries defaults to None
+        validation_config = ValidationConfig(
+            validation_triggers=ValidationTriggersConfig(
+                epic_completion=EpicCompletionTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                    epic_depth=EpicDepth.ALL,
+                    fire_on=FireOn.SUCCESS,
+                    # max_epic_verification_retries not set
+                ),
+            ),
+        )
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.max_epic_verification_retries is None

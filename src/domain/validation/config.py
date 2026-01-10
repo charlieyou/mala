@@ -301,10 +301,14 @@ class EpicCompletionTriggerConfig(BaseTriggerConfig):
     Attributes:
         epic_depth: Which epics trigger validation (top-level only or all).
         fire_on: When to fire based on completion status.
+        max_epic_verification_retries: Maximum retries for epic verification loop.
+            This controls how many times the orchestrator will retry epic verification
+            after the first attempt fails. None means use the default (from env var or 3).
     """
 
     epic_depth: EpicDepth
     fire_on: FireOn
+    max_epic_verification_retries: int | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

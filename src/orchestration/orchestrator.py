@@ -268,6 +268,7 @@ class MalaOrchestrator:
         self._runs_dir = runs_dir
         self._lock_releaser = lock_releaser
         self._mala_config = mala_config
+        self._derived = derived
         self.repo_path = orch_config.repo_path.resolve()
         self.max_agents = orch_config.max_agents
         self.timeout_seconds = derived.timeout_seconds
@@ -499,8 +500,15 @@ class MalaOrchestrator:
             EpicVerificationConfig,
         )
 
+        # Prefer derived.max_epic_verification_retries from mala.yaml epic_completion config,
+        # otherwise fall back to MalaConfig (env var or default of 3)
+        max_epic_verification_retries = (
+            self._derived.max_epic_verification_retries
+            if self._derived.max_epic_verification_retries is not None
+            else self._mala_config.max_epic_verification_retries
+        )
         config = EpicVerificationConfig(
-            max_retries=self._mala_config.max_epic_verification_retries,
+            max_retries=max_epic_verification_retries,
         )
         callbacks = build_epic_callbacks(
             EpicCallbackRefs(

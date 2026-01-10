@@ -703,7 +703,15 @@ def _parse_code_review_config(
 
 
 _EPIC_COMPLETION_FIELDS = frozenset(
-    {"failure_mode", "max_retries", "commands", "epic_depth", "fire_on", "code_review"}
+    {
+        "failure_mode",
+        "max_retries",
+        "commands",
+        "epic_depth",
+        "fire_on",
+        "code_review",
+        "max_epic_verification_retries",
+    }
 )
 
 
@@ -776,6 +784,23 @@ def _parse_epic_completion_trigger(
         if code_review_data is not None:
             code_review = _parse_code_review_config(code_review_data, trigger_name)
 
+    # Parse max_epic_verification_retries (optional)
+    max_epic_verification_retries: int | None = None
+    if "max_epic_verification_retries" in data:
+        val = data["max_epic_verification_retries"]
+        if val is not None:
+            if not isinstance(val, int) or isinstance(val, bool):
+                raise ConfigError(
+                    f"max_epic_verification_retries must be an integer for trigger "
+                    f"{trigger_name}, got {type(val).__name__}"
+                )
+            if val < 0:
+                raise ConfigError(
+                    f"max_epic_verification_retries must be non-negative for trigger "
+                    f"{trigger_name}, got {val}"
+                )
+            max_epic_verification_retries = val
+
     return EpicCompletionTriggerConfig(
         failure_mode=failure_mode,
         commands=commands,
@@ -783,6 +808,7 @@ def _parse_epic_completion_trigger(
         epic_depth=epic_depth,
         fire_on=fire_on,
         code_review=code_review,
+        max_epic_verification_retries=max_epic_verification_retries,
     )
 
 

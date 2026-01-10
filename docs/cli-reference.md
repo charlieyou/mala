@@ -91,7 +91,7 @@ Precedence: CLI flags override global config, which overrides program defaults.
 |----------|---------|-------------|
 | `LLM_API_KEY` | - | API key for LLM calls (falls back to `ANTHROPIC_API_KEY`) |
 | `LLM_BASE_URL` | - | Base URL for LLM API (for proxy/routing) |
-| `MALA_MAX_EPIC_VERIFICATION_RETRIES` | `3` | Number of retries after first verification attempt fails |
+| `MALA_MAX_EPIC_VERIFICATION_RETRIES` | `3` | Number of retries after first verification attempt fails. **Deprecated**: prefer `validation_triggers.epic_completion.max_epic_verification_retries` in mala.yaml. |
 
 ### Cerberus Review Overrides
 
