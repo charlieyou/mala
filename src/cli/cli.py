@@ -978,6 +978,9 @@ def init(
     # TODO: T003 will implement file operations here
     if dry_run:
         typer.echo(dump_config_yaml(config_data))
+    else:
+        # File operations not yet implemented
+        raise typer.Exit(1)
 
 
 def _display_instance(instance: object, indent: bool = False) -> None:
