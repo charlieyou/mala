@@ -78,6 +78,32 @@ def test_agent_session_output_has_last_review_issues_field() -> None:
     ]
 
 
+def test_agent_session_output_has_session_end_result_field() -> None:
+    """AgentSessionOutput should have session_end_result field with None default."""
+    from datetime import UTC, datetime
+    from src.core.session_end_result import SessionEndResult
+
+    output = AgentSessionOutput(
+        success=True,
+        summary="Done",
+    )
+    assert output.session_end_result is None
+
+    now = datetime.now(tz=UTC)
+    session_end = SessionEndResult(
+        status="pass",
+        started_at=now,
+        finished_at=now,
+    )
+    output_with_session_end = AgentSessionOutput(
+        success=True,
+        summary="Done",
+        session_end_result=session_end,
+    )
+    assert output_with_session_end.session_end_result is not None
+    assert output_with_session_end.session_end_result.status == "pass"
+
+
 def test_session_info_has_last_review_issues_field(tmp_path: Path) -> None:
     """SessionInfo should have last_review_issues field with None default."""
     info = SessionInfo(

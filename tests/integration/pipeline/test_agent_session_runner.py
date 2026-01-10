@@ -2875,6 +2875,112 @@ class TestBuildSessionOutput:
         assert len(output.low_priority_review_issues) == 1
         assert output.low_priority_review_issues[0].title == "Minor style issue"
 
+    @pytest.mark.unit
+    def test_build_session_output_with_session_end_result(
+        self,
+        runner: AgentSessionRunner,
+        tmp_path: Path,
+    ) -> None:
+        """_build_session_output should include session_end_result from lifecycle context."""
+        from datetime import UTC, datetime
+
+        from src.pipeline.agent_session_runner import (
+            SessionConfig,
+            SessionExecutionState,
+        )
+        from src.infra.hooks import LintCache
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+        )
+        from src.core.session_end_result import SessionEndResult, CommandOutcome
+
+        session_cfg = SessionConfig(
+            agent_id="test-session-end-abc",
+            options={},
+            lint_cache=LintCache(repo_path=tmp_path),
+            log_file_wait_timeout=60.0,
+            log_file_poll_interval=0.5,
+            idle_timeout_seconds=None,
+        )
+
+        now = datetime.now(tz=UTC)
+        session_end = SessionEndResult(
+            status="pass",
+            started_at=now,
+            finished_at=now,
+            commands=[
+                CommandOutcome(ref="test", passed=True, duration_seconds=5.0),
+                CommandOutcome(ref="lint", passed=True, duration_seconds=2.0),
+            ],
+        )
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig())
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.success = True
+        lifecycle_ctx.last_session_end_result = session_end
+
+        state = SessionExecutionState(
+            lifecycle=lifecycle,
+            lifecycle_ctx=lifecycle_ctx,
+            session_id="session-end-test",
+            final_result="All validations passed",
+        )
+
+        output = runner._build_session_output(session_cfg, state, duration=30.0)
+
+        assert output.success is True
+        assert output.session_end_result is not None
+        assert output.session_end_result.status == "pass"
+        assert len(output.session_end_result.commands) == 2
+        assert output.session_end_result.commands[0].ref == "test"
+        assert output.session_end_result.commands[1].ref == "lint"
+
+    @pytest.mark.unit
+    def test_build_session_output_session_end_result_defaults_to_none(
+        self,
+        runner: AgentSessionRunner,
+        tmp_path: Path,
+    ) -> None:
+        """_build_session_output should have session_end_result=None when not set."""
+        from src.pipeline.agent_session_runner import (
+            SessionConfig,
+            SessionExecutionState,
+        )
+        from src.infra.hooks import LintCache
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+        )
+
+        session_cfg = SessionConfig(
+            agent_id="test-no-session-end",
+            options={},
+            lint_cache=LintCache(repo_path=tmp_path),
+            log_file_wait_timeout=60.0,
+            log_file_poll_interval=0.5,
+            idle_timeout_seconds=None,
+        )
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig())
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.success = True
+        # Don't set last_session_end_result - should default to None
+
+        state = SessionExecutionState(
+            lifecycle=lifecycle,
+            lifecycle_ctx=lifecycle_ctx,
+            session_id="session-no-end",
+            final_result="Done",
+        )
+
+        output = runner._build_session_output(session_cfg, state, duration=10.0)
+
+        assert output.success is True
+        assert output.session_end_result is None
+
 
 class TestEmitReviewResultEvents:
     """Unit tests for _emit_review_result_events helper.

@@ -316,6 +316,7 @@ class AgentSessionOutput:
         low_priority_review_issues: P2/P3 review issues to track as beads issues.
         interrupted: Whether the session was interrupted by SIGINT.
         baseline_timestamp: Baseline timestamp used for commit freshness checks.
+        session_end_result: Session end validation result (if available).
     """
 
     success: bool
@@ -332,6 +333,7 @@ class AgentSessionOutput:
     interrupted: bool = False
     baseline_timestamp: int | None = None
     last_review_issues: list[dict[str, Any]] | None = None
+    session_end_result: SessionEndResult | None = None
 
 
 @dataclass
@@ -913,6 +915,7 @@ class AgentSessionRunner:
             interrupted=interrupted,
             baseline_timestamp=state.lifecycle_ctx.retry_state.baseline_timestamp,
             last_review_issues=last_review_issues,
+            session_end_result=state.lifecycle_ctx.last_session_end_result,
         )
 
     async def _handle_log_waiting(

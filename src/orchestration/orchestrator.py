@@ -931,6 +931,7 @@ class MalaOrchestrator:
             baseline_timestamp=output.baseline_timestamp,
             last_review_issues=output.last_review_issues,
             base_sha=self._state.issue_base_shas.get(issue_id),
+            session_end_result=output.session_end_result,
         )
 
     async def spawn_agent(
