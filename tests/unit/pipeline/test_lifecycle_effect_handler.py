@@ -275,7 +275,9 @@ class TestProcessGateEffect:
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
-        lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=False))
+        lifecycle = ImplementerLifecycle(
+            LifecycleConfig(review_enabled=False, session_end_enabled=False)
+        )
         lifecycle.start()
         lifecycle._state = LifecycleState.RUNNING_GATE
         lifecycle_ctx = LifecycleContext()

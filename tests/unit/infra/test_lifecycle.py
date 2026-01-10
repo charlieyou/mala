@@ -116,8 +116,11 @@ class TestGateResult:
     """Tests for on_gate_result transition."""
 
     def _setup_for_gate(self) -> tuple[ImplementerLifecycle, LifecycleContext]:
-        """Helper to set up lifecycle ready for gate result."""
-        lifecycle = ImplementerLifecycle(LifecycleConfig())
+        """Helper to set up lifecycle ready for gate result.
+
+        Note: Uses session_end_enabled=False to test gate→review flow directly.
+        """
+        lifecycle = ImplementerLifecycle(LifecycleConfig(session_end_enabled=False))
         lifecycle.start()
         ctx = LifecycleContext()
         lifecycle.on_messages_complete(ctx, has_session_id=True)
@@ -125,7 +128,10 @@ class TestGateResult:
         return lifecycle, ctx
 
     def test_gate_passed_with_review_enabled_runs_review(self) -> None:
-        """Gate passed with review enabled transitions to RUNNING_REVIEW."""
+        """Gate passed with review enabled transitions to RUNNING_REVIEW.
+
+        Note: Uses session_end_enabled=False to test gate→review flow directly.
+        """
         lifecycle, ctx = self._setup_for_gate()
         gate_result = GateResult(passed=True, commit_hash="abc123")
 
@@ -137,7 +143,7 @@ class TestGateResult:
 
     def test_gate_passed_without_commit_hash_succeeds(self) -> None:
         """Gate passed without commit hash completes successfully."""
-        config = LifecycleConfig(review_enabled=True)
+        config = LifecycleConfig(review_enabled=True, session_end_enabled=False)
         lifecycle = ImplementerLifecycle(config)
         lifecycle.start()
         ctx = LifecycleContext()
@@ -153,7 +159,7 @@ class TestGateResult:
 
     def test_gate_passed_with_review_disabled_succeeds(self) -> None:
         """Gate passed with review disabled completes successfully."""
-        config = LifecycleConfig(review_enabled=False)
+        config = LifecycleConfig(review_enabled=False, session_end_enabled=False)
         lifecycle = ImplementerLifecycle(config)
         lifecycle.start()
         ctx = LifecycleContext()
@@ -169,7 +175,7 @@ class TestGateResult:
 
     def test_gate_failed_with_retries_remaining_retries(self) -> None:
         """Gate failed with retries remaining sends retry prompt."""
-        config = LifecycleConfig(max_gate_retries=3)
+        config = LifecycleConfig(max_gate_retries=3, session_end_enabled=False)
         lifecycle = ImplementerLifecycle(config)
         lifecycle.start()
         ctx = LifecycleContext()
@@ -191,7 +197,7 @@ class TestGateResult:
 
     def test_gate_failed_no_retries_left_fails(self) -> None:
         """Gate failed with no retries left transitions to FAILED."""
-        config = LifecycleConfig(max_gate_retries=2)
+        config = LifecycleConfig(max_gate_retries=2, session_end_enabled=False)
         lifecycle = ImplementerLifecycle(config)
         lifecycle.start()
         ctx = LifecycleContext()
@@ -212,7 +218,7 @@ class TestGateResult:
 
     def test_gate_failed_no_progress_fails_immediately(self) -> None:
         """Gate failed with no_progress=True fails without retry."""
-        config = LifecycleConfig(max_gate_retries=3)
+        config = LifecycleConfig(max_gate_retries=3, session_end_enabled=False)
         lifecycle = ImplementerLifecycle(config)
         lifecycle.start()
         ctx = LifecycleContext()
@@ -279,8 +285,11 @@ class TestReviewResult:
     """Tests for on_review_result transition."""
 
     def _setup_for_review(self) -> tuple[ImplementerLifecycle, LifecycleContext]:
-        """Helper to set up lifecycle ready for review result."""
-        lifecycle = ImplementerLifecycle(LifecycleConfig())
+        """Helper to set up lifecycle ready for review result.
+
+        Note: Uses session_end_enabled=False to test gate→review flow directly.
+        """
+        lifecycle = ImplementerLifecycle(LifecycleConfig(session_end_enabled=False))
         lifecycle.start()
         ctx = LifecycleContext()
         lifecycle.on_messages_complete(ctx, has_session_id=True)
@@ -302,7 +311,7 @@ class TestReviewResult:
 
     def test_review_failed_with_retries_remaining_retries(self) -> None:
         """Review failed with retries remaining sends retry prompt."""
-        config = LifecycleConfig(max_review_retries=2)
+        config = LifecycleConfig(max_review_retries=2, session_end_enabled=False)
         lifecycle = ImplementerLifecycle(config)
         lifecycle.start()
         ctx = LifecycleContext()
@@ -336,7 +345,7 @@ class TestReviewResult:
 
     def test_review_failed_no_retries_left_fails(self) -> None:
         """Review failed with no retries left transitions to FAILED."""
-        config = LifecycleConfig(max_review_retries=1)
+        config = LifecycleConfig(max_review_retries=1, session_end_enabled=False)
         lifecycle = ImplementerLifecycle(config)
         lifecycle.start()
         ctx = LifecycleContext()
@@ -369,7 +378,7 @@ class TestReviewResult:
 
     def test_review_parse_error_triggers_rerun_when_retries_remain(self) -> None:
         """Parse error triggers RUN_REVIEW (not SEND_REVIEW_RETRY) when retries remain."""
-        config = LifecycleConfig(max_review_retries=2)
+        config = LifecycleConfig(max_review_retries=2, session_end_enabled=False)
         lifecycle = ImplementerLifecycle(config)
         lifecycle.start()
         ctx = LifecycleContext()
@@ -394,7 +403,7 @@ class TestReviewResult:
 
     def test_review_parse_error_fails_when_no_retries_left(self) -> None:
         """Parse error fails when no retries remain."""
-        config = LifecycleConfig(max_review_retries=1)
+        config = LifecycleConfig(max_review_retries=1, session_end_enabled=False)
         lifecycle = ImplementerLifecycle(config)
         lifecycle.start()
         ctx = LifecycleContext()
@@ -438,7 +447,7 @@ class TestReviewResult:
         the last review attempt (same commit, no new validation evidence),
         fail fast instead of burning more retries.
         """
-        config = LifecycleConfig(max_review_retries=3)  # Plenty of retries left
+        config = LifecycleConfig(max_review_retries=3, session_end_enabled=False)
         lifecycle = ImplementerLifecycle(config)
         lifecycle.start()
         ctx = LifecycleContext()
@@ -531,7 +540,9 @@ class TestTimeoutAndError:
 
     def test_timeout_from_terminal_state_is_noop(self) -> None:
         """Timeout from terminal state doesn't change state."""
-        lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=False))
+        lifecycle = ImplementerLifecycle(
+            LifecycleConfig(review_enabled=False, session_end_enabled=False)
+        )
         lifecycle.start()
         ctx = LifecycleContext()
         lifecycle.on_messages_complete(ctx, has_session_id=True)
@@ -553,7 +564,9 @@ class TestTerminalStates:
 
     def test_success_is_terminal(self) -> None:
         """SUCCESS state is terminal."""
-        lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=False))
+        lifecycle = ImplementerLifecycle(
+            LifecycleConfig(review_enabled=False, session_end_enabled=False)
+        )
         lifecycle.start()
         ctx = LifecycleContext()
         lifecycle.on_messages_complete(ctx, has_session_id=True)
@@ -580,7 +593,7 @@ class TestFullLifecycleScenarios:
 
     def test_happy_path_gate_only(self) -> None:
         """Full lifecycle: agent completes, gate passes, no review."""
-        config = LifecycleConfig(review_enabled=False)
+        config = LifecycleConfig(review_enabled=False, session_end_enabled=False)
         lifecycle = ImplementerLifecycle(config)
         ctx = LifecycleContext()
 
@@ -606,7 +619,7 @@ class TestFullLifecycleScenarios:
 
     def test_happy_path_with_review(self) -> None:
         """Full lifecycle: agent completes, gate passes, review passes."""
-        lifecycle = ImplementerLifecycle(LifecycleConfig())
+        lifecycle = ImplementerLifecycle(LifecycleConfig(session_end_enabled=False))
         ctx = LifecycleContext()
 
         lifecycle.start()
@@ -626,7 +639,9 @@ class TestFullLifecycleScenarios:
 
     def test_gate_retry_then_success(self) -> None:
         """Gate fails once, retry succeeds."""
-        config = LifecycleConfig(max_gate_retries=3, review_enabled=False)
+        config = LifecycleConfig(
+            max_gate_retries=3, review_enabled=False, session_end_enabled=False
+        )
         lifecycle = ImplementerLifecycle(config)
         ctx = LifecycleContext()
 
@@ -655,7 +670,7 @@ class TestFullLifecycleScenarios:
 
     def test_review_retry_then_success(self) -> None:
         """Review fails once, retry succeeds."""
-        config = LifecycleConfig(max_review_retries=2)
+        config = LifecycleConfig(max_review_retries=2, session_end_enabled=False)
         lifecycle = ImplementerLifecycle(config)
         ctx = LifecycleContext()
 
@@ -708,7 +723,7 @@ class TestFullLifecycleScenarios:
         4. Gate passes - review_attempt should still be 2 (not reset to 1)
         5. Review fails again - should hit max_review_retries and fail
         """
-        config = LifecycleConfig(max_review_retries=2)
+        config = LifecycleConfig(max_review_retries=2, session_end_enabled=False)
         lifecycle = ImplementerLifecycle(config)
         ctx = LifecycleContext()
 

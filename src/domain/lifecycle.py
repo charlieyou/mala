@@ -29,6 +29,8 @@ from .validation.spec import ResolutionOutcome
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from src.pipeline.session_end_result import SessionEndResult
+
     from .validation.spec import IssueResolution
 
 # Resolution outcomes that skip review (no new code to review)
@@ -171,6 +173,10 @@ class LifecycleState(Enum):
     AWAITING_LOG = auto()
     # Running quality gate check
     RUNNING_GATE = auto()
+    # Running session_end trigger (after gate passed, before review)
+    RUNNING_SESSION_END = auto()
+    # Remediating session_end issues (agent fixing problems)
+    SESSION_END_REMEDIATING = auto()
     # Running external review (after gate passed)
     RUNNING_REVIEW = auto()
     # Terminal: success
@@ -192,10 +198,14 @@ class Effect(Enum):
     WAIT_FOR_LOG = auto()
     # Run quality gate check
     RUN_GATE = auto()
+    # Run session_end trigger
+    RUN_SESSION_END = auto()
     # Run external review
     RUN_REVIEW = auto()
     # Send gate retry follow-up prompt to SDK
     SEND_GATE_RETRY = auto()
+    # Send session_end retry follow-up prompt to SDK
+    SEND_SESSION_END_RETRY = auto()
     # Send review retry follow-up prompt to SDK
     SEND_REVIEW_RETRY = auto()
     # Complete with success
@@ -209,19 +219,22 @@ class LifecycleConfig:
     """Configuration for lifecycle behavior."""
 
     max_gate_retries: int = 3
+    max_session_end_retries: int = 3
     max_review_retries: int = 3
+    session_end_enabled: bool = True
     review_enabled: bool = True
 
 
 @dataclass
 class RetryState:
-    """Tracks retry attempts for gate and review.
+    """Tracks retry attempts for gate, session_end, and review.
 
     This is mutable state that the lifecycle updates during transitions.
     The orchestrator can read it to format follow-up prompts.
     """
 
     gate_attempt: int = 1
+    session_end_attempt: int = 0
     review_attempt: int = 0
     log_offset: int = 0
     previous_commit_hash: str | None = None
@@ -288,6 +301,8 @@ class LifecycleContext:
     success: bool = False
     # Last gate result for building failure messages
     last_gate_result: GateOutcome | None = None
+    # Last session_end result for review evidence
+    last_session_end_result: SessionEndResult | None = None
     # Last review result for building follow-up prompts
     last_review_result: ReviewOutcome | None = None
     # Resolution for issue (no-op, obsolete, etc.)
@@ -435,37 +450,30 @@ class ImplementerLifecycle:
         )
 
         if gate_result.passed:
-            # Gate passed - should we run review?
-            # Skip review for resolutions with no new code to review
+            # Gate passed - should we run session_end?
+            # Skip session_end for resolutions with no new code
             # (no_change, obsolete, already_complete, docs_only)
-            resolution_skips_review = (
+            resolution_skips_session_end = (
                 gate_result.resolution is not None
                 and gate_result.resolution.outcome in _SKIP_REVIEW_OUTCOMES
             )
             if (
-                self.config.review_enabled
+                self.config.session_end_enabled
                 and gate_result.commit_hash
-                and not resolution_skips_review
+                and not resolution_skips_session_end
             ):
-                # Only initialize review_attempt if not already started
-                # (preserves count across gate re-runs after review retry)
-                if ctx.retry_state.review_attempt == 0:
-                    ctx.retry_state.review_attempt = 1
-                self._state = LifecycleState.RUNNING_REVIEW
+                # Initialize session_end_attempt if not already started
+                if ctx.retry_state.session_end_attempt == 0:
+                    ctx.retry_state.session_end_attempt = 1
+                self._state = LifecycleState.RUNNING_SESSION_END
                 return TransitionResult(
                     state=self._state,
-                    effect=Effect.RUN_REVIEW,
-                    message=f"Gate passed, running review (attempt {ctx.retry_state.review_attempt}/{self.config.max_review_retries})",
+                    effect=Effect.RUN_SESSION_END,
+                    message=f"Gate passed, running session_end (attempt {ctx.retry_state.session_end_attempt}/{self.config.max_session_end_retries})",
                 )
             else:
-                # No review needed - success!
-                ctx.success = True
-                self._state = LifecycleState.SUCCESS
-                return TransitionResult(
-                    state=self._state,
-                    effect=Effect.COMPLETE_SUCCESS,
-                    message="Gate passed, no review required",
-                )
+                # No session_end needed - proceed to review or success
+                return self._proceed_to_review_or_success(ctx, gate_result)
 
         # Gate failed - can we retry?
         can_retry = (
@@ -505,6 +513,178 @@ class ImplementerLifecycle:
             state=self._state,
             effect=Effect.COMPLETE_FAILURE,
             message="Gate failed, no retries left",
+        )
+
+    def _proceed_to_review_or_success(
+        self, ctx: LifecycleContext, gate_result: GateOutcome
+    ) -> TransitionResult:
+        """Proceed to review or complete with success.
+
+        Helper method called when gate passed and session_end is skipped/passed.
+        """
+        # Skip review for resolutions with no new code to review
+        resolution_skips_review = (
+            gate_result.resolution is not None
+            and gate_result.resolution.outcome in _SKIP_REVIEW_OUTCOMES
+        )
+        if (
+            self.config.review_enabled
+            and gate_result.commit_hash
+            and not resolution_skips_review
+        ):
+            # Only initialize review_attempt if not already started
+            # (preserves count across gate re-runs after review retry)
+            if ctx.retry_state.review_attempt == 0:
+                ctx.retry_state.review_attempt = 1
+            self._state = LifecycleState.RUNNING_REVIEW
+            return TransitionResult(
+                state=self._state,
+                effect=Effect.RUN_REVIEW,
+                message=f"Running review (attempt {ctx.retry_state.review_attempt}/{self.config.max_review_retries})",
+            )
+        else:
+            # No review needed - success!
+            ctx.success = True
+            self._state = LifecycleState.SUCCESS
+            return TransitionResult(
+                state=self._state,
+                effect=Effect.COMPLETE_SUCCESS,
+                message="No review required",
+            )
+
+    def on_session_end_result(
+        self,
+        ctx: LifecycleContext,
+        session_end_result: SessionEndResult,
+        new_log_offset: int,
+        no_progress: bool = False,
+        can_remediate: bool = False,
+    ) -> TransitionResult:
+        """Handle session_end trigger result.
+
+        Decides whether to:
+        - Proceed to review (if session_end passed or no blocking issues)
+        - Retry via agent prompt (if failed but can_remediate=True and retries remain)
+        - Complete with success (if review disabled)
+
+        Args:
+            ctx: Lifecycle context with retry state.
+            session_end_result: The session_end outcome to process.
+            new_log_offset: Updated log offset for next attempt.
+            no_progress: If True, the agent made no progress since last attempt.
+            can_remediate: If True and retries remain, trigger remediation loop.
+                Set by handler based on trigger config failure_mode=remediate.
+        """
+        valid_states = (
+            LifecycleState.RUNNING_SESSION_END,
+            LifecycleState.SESSION_END_REMEDIATING,
+        )
+        if self._state not in valid_states:
+            raise ValueError(f"Unexpected state for session_end_result: {self._state}")
+
+        ctx.last_session_end_result = session_end_result
+
+        logger.info(
+            "Session_end result: status=%s attempt=%d state=%s",
+            session_end_result.status,
+            ctx.retry_state.session_end_attempt,
+            self._state.name,
+        )
+
+        # Session_end passed - proceed to review or success
+        if session_end_result.status == "pass":
+            # Use gate_result from context to determine review behavior
+            gate_result = ctx.last_gate_result
+            if gate_result is None:
+                # Shouldn't happen, but handle gracefully
+                ctx.success = True
+                self._state = LifecycleState.SUCCESS
+                return TransitionResult(
+                    state=self._state,
+                    effect=Effect.COMPLETE_SUCCESS,
+                    message="Session_end passed, no gate result",
+                )
+            return self._proceed_to_review_or_success(ctx, gate_result)
+
+        # Session_end skipped - proceed directly to review
+        if session_end_result.status == "skipped":
+            gate_result = ctx.last_gate_result
+            if gate_result is None:
+                ctx.success = True
+                self._state = LifecycleState.SUCCESS
+                return TransitionResult(
+                    state=self._state,
+                    effect=Effect.COMPLETE_SUCCESS,
+                    message="Session_end skipped, no gate result",
+                )
+            return self._proceed_to_review_or_success(ctx, gate_result)
+
+        # Session_end interrupted - proceed to review with interrupted status
+        if session_end_result.status == "interrupted":
+            gate_result = ctx.last_gate_result
+            if gate_result is None:
+                ctx.success = True
+                self._state = LifecycleState.SUCCESS
+                return TransitionResult(
+                    state=self._state,
+                    effect=Effect.COMPLETE_SUCCESS,
+                    message="Session_end interrupted, no gate result",
+                )
+            return self._proceed_to_review_or_success(ctx, gate_result)
+
+        # Session_end failed or timed out - check if we can retry
+        can_retry = (
+            ctx.retry_state.session_end_attempt < self.config.max_session_end_retries
+            and not no_progress
+            and can_remediate
+        )
+
+        if can_retry:
+            # Transition to remediation state
+            ctx.retry_state.session_end_attempt += 1
+            ctx.retry_state.log_offset = new_log_offset
+            self._state = LifecycleState.SESSION_END_REMEDIATING
+            logger.debug(
+                "Session_end retry triggered: attempt=%d/%d",
+                ctx.retry_state.session_end_attempt,
+                self.config.max_session_end_retries,
+            )
+            return TransitionResult(
+                state=self._state,
+                effect=Effect.SEND_SESSION_END_RETRY,
+                message=f"Session_end retry {ctx.retry_state.session_end_attempt}/{self.config.max_session_end_retries}",
+            )
+
+        # No retries or can't remediate - proceed to review anyway
+        # Per spec, session_end failures don't block review - they're informational
+        gate_result = ctx.last_gate_result
+        if gate_result is None:
+            ctx.success = True
+            self._state = LifecycleState.SUCCESS
+            return TransitionResult(
+                state=self._state,
+                effect=Effect.COMPLETE_SUCCESS,
+                message="Session_end failed, no gate result",
+            )
+        return self._proceed_to_review_or_success(ctx, gate_result)
+
+    def on_session_end_remediation_complete(
+        self, ctx: LifecycleContext
+    ) -> TransitionResult:
+        """Handle completion of session_end remediation (agent finished fixing).
+
+        Transitions back to RUNNING_SESSION_END to re-run the trigger.
+        """
+        if self._state != LifecycleState.SESSION_END_REMEDIATING:
+            raise ValueError(
+                f"Unexpected state for session_end_remediation_complete: {self._state}"
+            )
+
+        self._state = LifecycleState.RUNNING_SESSION_END
+        return TransitionResult(
+            state=self._state,
+            effect=Effect.RUN_SESSION_END,
+            message=f"Session_end remediation complete, re-running (attempt {ctx.retry_state.session_end_attempt}/{self.config.max_session_end_retries})",
         )
 
     def on_review_result(
