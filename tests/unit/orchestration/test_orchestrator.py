@@ -3709,10 +3709,10 @@ class TestCaptureRunStartCommit:
         assert orchestrator._state.run_start_commit == "abc123"
 
     @pytest.mark.asyncio
-    async def test_skips_capture_when_run_end_not_configured(
+    async def test_skips_capture_when_no_trigger_needs_it(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """Skips capture when run_end trigger is not configured."""
+        """Skips capture when neither run_end nor epic_completion code_review is configured."""
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
             max_agents=1,
@@ -3772,6 +3772,95 @@ class TestCaptureRunStartCommit:
 
         # Original value preserved
         assert orchestrator._state.run_start_commit == "existing123"
+
+    @pytest.mark.asyncio
+    async def test_captures_head_when_epic_completion_code_review_enabled(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Captures HEAD commit when epic_completion has code_review enabled."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            EpicCompletionTriggerConfig,
+            EpicDepth,
+            FailureMode,
+            FireOn,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        # Create orchestrator with epic_completion + code_review (no run_end)
+        code_review = CodeReviewConfig(enabled=True, baseline="since_run_start")
+        triggers = ValidationTriggersConfig(
+            epic_completion=EpicCompletionTriggerConfig(
+                failure_mode=FailureMode.CONTINUE,
+                commands=(),
+                epic_depth=EpicDepth.TOP_LEVEL,
+                fire_on=FireOn.SUCCESS,
+                code_review=code_review,
+            )
+        )
+        validation_config = ValidationConfig(validation_triggers=triggers)
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+        orchestrator._validation_config = validation_config
+
+        with patch(
+            "src.orchestration.orchestrator.get_git_commit_async",
+            return_value="epic123",
+        ):
+            await orchestrator._capture_run_start_commit()
+
+        assert orchestrator._state.run_start_commit == "epic123"
+
+    @pytest.mark.asyncio
+    async def test_skips_capture_when_epic_completion_code_review_disabled(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Skips capture when epic_completion exists but code_review is disabled."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            EpicCompletionTriggerConfig,
+            EpicDepth,
+            FailureMode,
+            FireOn,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        # epic_completion with code_review.enabled=False
+        code_review = CodeReviewConfig(enabled=False)
+        triggers = ValidationTriggersConfig(
+            epic_completion=EpicCompletionTriggerConfig(
+                failure_mode=FailureMode.CONTINUE,
+                commands=(),
+                epic_depth=EpicDepth.TOP_LEVEL,
+                fire_on=FireOn.SUCCESS,
+                code_review=code_review,
+            )
+        )
+        validation_config = ValidationConfig(validation_triggers=triggers)
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+        orchestrator._validation_config = validation_config
+
+        with patch(
+            "src.orchestration.orchestrator.get_git_commit_async",
+            return_value="abc123",
+        ) as mock_get:
+            await orchestrator._capture_run_start_commit()
+            mock_get.assert_not_called()
+
+        assert orchestrator._state.run_start_commit is None
 
 
 class TestFireRunEndTrigger:

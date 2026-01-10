@@ -1123,16 +1123,25 @@ class MalaOrchestrator:
         Stores the commit in self._state.run_start_commit, which is later
         transferred to run_metadata after it's created.
 
-        Only captures when run_end trigger is configured, since that's when
-        run_start_commit capture is needed.
+        Captures when run_start_commit is needed for cumulative review:
+        - run_end trigger is configured, OR
+        - epic_completion trigger has code_review enabled
         """
-        # Check if run_end trigger is configured
         triggers = (
             self._validation_config.validation_triggers
             if self._validation_config
             else None
         )
-        if triggers is None or triggers.run_end is None:
+        if triggers is None:
+            return
+
+        # Check if capture is needed: run_end OR epic_completion with code_review
+        needs_capture = triggers.run_end is not None or (
+            triggers.epic_completion is not None
+            and triggers.epic_completion.code_review is not None
+            and triggers.epic_completion.code_review.enabled
+        )
+        if not needs_capture:
             return
 
         # Already captured (should not happen in normal flow, but guard for safety)
