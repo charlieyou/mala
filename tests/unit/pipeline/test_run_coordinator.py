@@ -968,6 +968,79 @@ class TestCodeReviewRemediateFailureMode:
             "run_end", 1
         )
 
+
+class TestRunEndRunMetadata:
+    """Tests for run_end validation recording."""
+
+    @pytest.mark.asyncio
+    async def test_run_end_records_validation_metadata(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """run_end should record run_validation with coverage percent."""
+        from src.domain.validation.config import (
+            CommandConfig,
+            CommandsConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerCommandRef,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+            YamlCoverageConfig,
+        )
+
+        coverage_xml = tmp_path / "coverage.xml"
+        coverage_xml.write_text('<coverage line-rate="0.75"></coverage>')
+
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(TriggerCommandRef(ref="test"),),
+            fire_on=FireOn.SUCCESS,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        commands_config = CommandsConfig(test=CommandConfig(command="echo ok"))
+        validation_config = ValidationConfig(
+            commands=commands_config,
+            validation_triggers=triggers_config,
+            coverage=YamlCoverageConfig(format="xml", file="coverage.xml", threshold=0.0),
+        )
+
+        mock_gate_checker = MagicMock()
+        mock_run_metadata = MagicMock()
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix: {failure_output}",
+            validation_config=validation_config,
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            run_metadata=mock_run_metadata,
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        result = await coordinator.run_trigger_validation(dry_run=False)
+
+        assert result.status == "passed"
+        mock_run_metadata.record_run_validation.assert_called_once()
+        meta = mock_run_metadata.record_run_validation.call_args[0][0]
+        assert meta.passed is True
+        assert meta.commands_run == ["test"]
+        assert meta.commands_failed == []
+        assert meta.coverage_percent == pytest.approx(75.0)
+
     @pytest.mark.asyncio
     async def test_remediate_exhausted_continues_with_failure(
         self,
@@ -1674,7 +1747,6 @@ class TestR12CodeReviewGating:
         commands_config = CommandsConfig(lint=CommandConfig(command="lint_cmd"))
         validation_config = ValidationConfig(
             commands=commands_config,
-            global_validation_commands=commands_config,
             validation_triggers=triggers_config,
         )
 
@@ -1751,7 +1823,6 @@ class TestR12CodeReviewGating:
         commands_config = CommandsConfig(lint=CommandConfig(command="lint_cmd"))
         validation_config = ValidationConfig(
             commands=commands_config,
-            global_validation_commands=commands_config,
             validation_triggers=triggers_config,
         )
 
@@ -1854,7 +1925,6 @@ class TestR12CodeReviewGating:
         commands_config = CommandsConfig(lint=CommandConfig(command="lint_cmd"))
         validation_config = ValidationConfig(
             commands=commands_config,
-            global_validation_commands=commands_config,
             validation_triggers=triggers_config,
         )
 
@@ -1957,7 +2027,6 @@ class TestR12CodeReviewGating:
         commands_config = CommandsConfig(lint=CommandConfig(command="lint_cmd"))
         validation_config = ValidationConfig(
             commands=commands_config,
-            global_validation_commands=commands_config,
             validation_triggers=triggers_config,
         )
 

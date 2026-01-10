@@ -632,6 +632,8 @@ class RunCoordinator:
                     status="aborted", details="Validation interrupted by SIGINT"
                 )
 
+            self._record_run_validation(trigger_type, results)
+
             # Check for failures
             failed_result: TriggerCommandResult | None = None
             for result in results:
@@ -841,6 +843,49 @@ class RunCoordinator:
 
         return TriggerValidationResult(status="passed")
 
+    def _record_run_validation(
+        self,
+        trigger_type: TriggerType,
+        results: list[TriggerCommandResult],
+    ) -> None:
+        """Record run_end validation results into run metadata."""
+        from src.infra.io.log_output.run_metadata import (
+            ValidationResult as MetaValidationResult,
+        )
+
+        if self.run_metadata is None:
+            return
+        from src.domain.validation.config import TriggerType as TriggerTypeEnum
+
+        if trigger_type != TriggerTypeEnum.RUN_END:
+            return
+        if not results:
+            return
+
+        coverage_percent: float | None = None
+        validation_config = self.config.validation_config
+        if validation_config is not None and validation_config.coverage is not None:
+            from pathlib import Path
+
+            from src.domain.validation.coverage import parse_coverage_xml
+
+            report_path = Path(validation_config.coverage.file)
+            if not report_path.is_absolute():
+                report_path = self.config.repo_path / report_path
+            coverage_result = parse_coverage_xml(report_path)
+            if coverage_result.percent is not None:
+                coverage_percent = coverage_result.percent
+
+        meta_result = MetaValidationResult(
+            passed=all(result.passed for result in results),
+            commands_run=[result.ref for result in results],
+            commands_failed=[result.ref for result in results if not result.passed],
+            artifacts=None,
+            coverage_percent=coverage_percent,
+            e2e_passed=None,
+        )
+        self.run_metadata.record_run_validation(meta_result)
+
     async def _run_trigger_remediation(
         self,
         trigger_type: TriggerType,
@@ -985,16 +1030,7 @@ class RunCoordinator:
         """Build the base command pool from validation config.
 
         The base pool maps command names to (command_string, timeout) tuples.
-        Per the validation triggers spec, the base pool comes from
-        global_validation_commands (with commands as fallback for built-ins).
-
-        For built-in commands (test, lint, format, typecheck, e2e, setup):
-        - Use global_validation_commands override if explicitly set
-        - Otherwise fall back to commands section
-
-        For custom commands:
-        - Start with commands.custom_commands as base
-        - Overlay global_validation_commands.custom_commands (overrides base)
+        Per the validation triggers spec, the base pool comes from commands.
 
         Args:
             validation_config: The validation configuration (should be merged
@@ -1005,20 +1041,8 @@ class RunCoordinator:
         """
         pool: dict[str, tuple[str, int | None]] = {}
         base_cmds = validation_config.commands
-        global_cmds = validation_config.global_validation_commands
 
-        # Helper to get effective command (global override or base fallback)
-        # Global overrides base only when non-None. If global is None,
-        # fall back to base commands (null doesn't delete from pool).
-        def get_effective_cmd(field_name: str) -> CommandConfig | None:
-            global_cmd = getattr(global_cmds, field_name, None)
-            # Use global if it has a value (explicit override with command)
-            if global_cmd is not None:
-                return global_cmd
-            # Fall back to base commands
-            return getattr(base_cmds, field_name, None)
-
-        # Add built-in commands (global overrides base)
+        # Add built-in commands
         for cmd_name in (
             "test",
             "lint",
@@ -1028,14 +1052,12 @@ class RunCoordinator:
             "setup",
             "build",
         ):
-            cmd = get_effective_cmd(cmd_name)
+            cmd = getattr(base_cmds, cmd_name, None)
             if cmd is not None:
                 pool[cmd_name] = (cmd.command, cmd.timeout)
 
-        # Add custom commands: base commands as fallback, global overrides
+        # Add custom commands
         for name, custom_cmd in base_cmds.custom_commands.items():
-            pool[name] = (custom_cmd.command, custom_cmd.timeout)
-        for name, custom_cmd in global_cmds.custom_commands.items():
             pool[name] = (custom_cmd.command, custom_cmd.timeout)
 
         return pool
