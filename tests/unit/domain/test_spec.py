@@ -1001,8 +1001,27 @@ validation_triggers:
         spec = build_validation_spec(tmp_path)
         assert spec is not None
 
+    def test_custom_command_ref_in_trigger_validated(self, tmp_path: Path) -> None:
+        """Trigger can reference inline custom commands from commands section."""
+        yaml_content = """\
+preset: python-uv
+commands:
+  test: uv run pytest
+  custom_check: my-custom-command
+validation_triggers:
+  session_end:
+    failure_mode: continue
+    commands:
+      - ref: custom_check
+"""
+        (tmp_path / "mala.yaml").write_text(yaml_content)
+
+        # Should not raise - custom_check is defined in commands
+        spec = build_validation_spec(tmp_path)
+        assert spec is not None
+
     def test_invalid_ref_error_lists_available_commands(self, tmp_path: Path) -> None:
-        """Error message includes list of available commands."""
+        """Error message includes list of available commands including customs."""
         import pytest
 
         from src.domain.validation.config import ConfigError
@@ -1012,6 +1031,7 @@ preset: python-uv
 commands:
   test: uv run pytest
   lint: uvx ruff check .
+  my_custom: echo custom
 validation_triggers:
   epic_completion:
     failure_mode: abort
@@ -1026,6 +1046,7 @@ validation_triggers:
             build_validation_spec(tmp_path)
 
         error_msg = str(exc_info.value)
-        # Should list available built-in commands from base pool
+        # Should list available commands from base pool (built-ins and customs)
         assert "lint" in error_msg
         assert "test" in error_msg
+        assert "my_custom" in error_msg

@@ -13,6 +13,7 @@ Key functions:
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
@@ -169,7 +170,8 @@ def _validate_schema(data: dict[str, Any]) -> None:
     """
     # Check for deprecated global_validation_commands key (R4 per spec)
     if "global_validation_commands" in data:
-        raise ConfigError(
+        logger = logging.getLogger(__name__)
+        error_msg = (
             "global_validation_commands is deprecated. "
             "Migrate to validation_triggers.run_end:\n\n"
             "validation_triggers:\n"
@@ -181,6 +183,8 @@ def _validate_schema(data: dict[str, Any]) -> None:
             "See migration guide at "
             "https://docs.mala.ai/migration/validation-triggers"
         )
+        logger.error("[config] %s", error_msg)
+        raise ConfigError(error_msg)
 
     # Check for deprecated validate_every field with helpful migration message
     if "validate_every" in data:
@@ -1150,8 +1154,10 @@ def _validate_trigger_command_refs(config: ValidationConfig) -> None:
             if base_cmd is not None:
                 base_pool.add(cmd_name)
 
-    # Add custom commands from global_validation_commands
+    # Add custom commands from global_validation_commands (legacy) and commands section
     for name in global_cmds.custom_commands:
+        base_pool.add(name)
+    for name in base_cmds.custom_commands:
         base_pool.add(name)
 
     # Validate each configured trigger's command refs

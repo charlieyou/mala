@@ -94,6 +94,22 @@ class TestValidateSchemaGlobalValidationCommands:
         ):
             _validate_schema(data)
 
+    def test_global_validation_commands_error_is_logged(
+        self, caplog: LogCaptureFixture
+    ) -> None:
+        """global_validation_commands rejection is logged before raising."""
+        import logging
+
+        data = {"global_validation_commands": {"test": "pytest"}}
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(ConfigError):
+                _validate_schema(data)
+        assert any(
+            "[config]" in record.message
+            and "global_validation_commands is deprecated" in record.message
+            for record in caplog.records
+        )
+
 
 class TestParseCerberusConfig:
     """Tests for _parse_cerberus_config function."""
