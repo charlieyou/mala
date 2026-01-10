@@ -1728,6 +1728,53 @@ class TestExtractSessionFromRun:
         assert result is not None
         assert result.last_review_issues is None
 
+    def test_filters_non_dict_items_in_last_review_issues(self, tmp_path: Path) -> None:
+        """Test that non-dict items in last_review_issues list are filtered out."""
+        data = {
+            "run_id": "run-mixed",
+            "started_at": "2024-01-01T10:00:00Z",
+            "issues": {
+                "issue-mixed": {
+                    "session_id": "session-mixed",
+                    "last_review_issues": [
+                        {"file": "valid.py", "title": "Valid issue"},  # Valid
+                        None,  # Invalid - should be filtered
+                        "string item",  # Invalid - should be filtered
+                        {"file": "another.py", "title": "Also valid"},  # Valid
+                        123,  # Invalid - should be filtered
+                    ],
+                }
+            },
+        }
+        path = tmp_path / "mixed_run.json"
+
+        result = extract_session_from_run(data, path, "issue-mixed")
+
+        assert result is not None
+        assert result.last_review_issues == [
+            {"file": "valid.py", "title": "Valid issue"},
+            {"file": "another.py", "title": "Also valid"},
+        ]
+
+    def test_returns_none_when_all_items_invalid(self, tmp_path: Path) -> None:
+        """Test that list with only invalid items returns None."""
+        data = {
+            "run_id": "run-all-invalid",
+            "started_at": "2024-01-01T10:00:00Z",
+            "issues": {
+                "issue-all-invalid": {
+                    "session_id": "session-all-invalid",
+                    "last_review_issues": [None, "string", 123, []],  # All invalid
+                }
+            },
+        }
+        path = tmp_path / "all_invalid_run.json"
+
+        result = extract_session_from_run(data, path, "issue-all-invalid")
+
+        assert result is not None
+        assert result.last_review_issues is None
+
     def test_handles_null_last_review_issues(self, tmp_path: Path) -> None:
         """Test that null last_review_issues is handled correctly."""
         data = {

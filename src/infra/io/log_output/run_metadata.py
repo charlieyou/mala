@@ -961,10 +961,14 @@ def extract_session_from_run(
     session_id = raw_session_id if isinstance(raw_session_id, str) else None
 
     # Extract last_review_issues (list of dicts or None)
+    # Filter out non-dict items to guard against corrupted metadata
     raw_review_issues = issue_data.get("last_review_issues")
-    last_review_issues = (
-        raw_review_issues if isinstance(raw_review_issues, list) else None
-    )
+    if isinstance(raw_review_issues, list):
+        last_review_issues = [
+            item for item in raw_review_issues if isinstance(item, dict)
+        ] or None  # Return None if all items were filtered out
+    else:
+        last_review_issues = None
 
     return SessionInfo(
         run_id=data.get("run_id") or "",
