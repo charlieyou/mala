@@ -60,6 +60,7 @@ def _build_trigger_summary(
         epic_completion=make_summary(triggers_config.epic_completion),
         session_end=make_summary(triggers_config.session_end),
         periodic=make_summary(triggers_config.periodic),
+        run_end=make_summary(triggers_config.run_end),
     )
 
 

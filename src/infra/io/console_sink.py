@@ -188,6 +188,7 @@ class ConsoleEventSink(BaseEventSink):
         epic = getattr(triggers, "epic_completion", None)
         session = getattr(triggers, "session_end", None)
         periodic = getattr(triggers, "periodic", None)
+        run_end = getattr(triggers, "run_end", None)
 
         def log_trigger_detail(name: str, trigger: object) -> None:
             """Log a single trigger's detailed configuration."""
@@ -209,6 +210,9 @@ class ConsoleEventSink(BaseEventSink):
 
         if periodic and getattr(periodic, "enabled", False):
             log_trigger_detail("periodic", periodic)
+
+        if run_end and getattr(run_end, "enabled", False):
+            log_trigger_detail("run_end", run_end)
 
     def on_run_completed(
         self,

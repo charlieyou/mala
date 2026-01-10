@@ -1466,17 +1466,24 @@ class ValidationTriggersSummary:
         epic_completion: Summary for epic completion trigger.
         session_end: Summary for session end trigger.
         periodic: Summary for periodic trigger.
+        run_end: Summary for run end trigger.
     """
 
     epic_completion: TriggerSummary | None = None
     session_end: TriggerSummary | None = None
     periodic: TriggerSummary | None = None
+    run_end: TriggerSummary | None = None
 
     def has_any_enabled(self) -> bool:
         """Return True if any trigger is enabled."""
         return any(
             t is not None and t.enabled
-            for t in [self.epic_completion, self.session_end, self.periodic]
+            for t in [
+                self.epic_completion,
+                self.session_end,
+                self.periodic,
+                self.run_end,
+            ]
         )
 
 
