@@ -639,201 +639,192 @@ class RunCoordinator:
                     failed_result = result
                     break
 
-            if failed_result is None:
-                # All commands passed - run code_review if configured
-                review_result = await self._run_trigger_code_review(
-                    trigger_type, trigger_config, context, interrupt_event
-                )
+            if failed_result is not None:
+                # Handle failure based on failure_mode BEFORE code_review
+                failure_mode = trigger_config.failure_mode
 
-                # Handle code review result
-                code_review_config = trigger_config.code_review
-                if review_result is not None and code_review_config is not None:
-                    review_failure_mode = code_review_config.failure_mode
-                    threshold = code_review_config.finding_threshold
-
-                    # Case 1: Execution error (status == "failed")
-                    if review_result.status == "failed":
-                        if review_failure_mode == FailureMode.ABORT:
-                            if self.event_sink is not None:
-                                self.event_sink.on_trigger_validation_failed(
-                                    trigger_type.value, "code_review", "abort"
-                                )
-                            self.clear_trigger_queue("code_review_failed")
-                            return TriggerValidationResult(
-                                status="aborted",
-                                details=f"Code review failed in trigger {trigger_type.value}",
-                            )
-                        elif review_failure_mode == FailureMode.CONTINUE:
-                            last_failure = ("code_review", trigger_type.value)
-                            if self.event_sink is not None:
-                                self.event_sink.on_trigger_validation_failed(
-                                    trigger_type.value, "code_review", "continue"
-                                )
-                        elif review_failure_mode == FailureMode.REMEDIATE:
-                            # Retry code review execution up to max_retries
-                            max_retries = code_review_config.max_retries
-                            retry_success = False
-                            for attempt in range(1, max_retries + 1):
-                                if interrupt_event.is_set():
-                                    self.clear_trigger_queue("sigint")
-                                    return TriggerValidationResult(
-                                        status="aborted",
-                                        details="Validation interrupted by SIGINT",
-                                    )
-                                if self.event_sink is not None:
-                                    self.event_sink.on_trigger_remediation_started(
-                                        trigger_type.value, attempt, max_retries
-                                    )
-                                review_result = await self._run_trigger_code_review(
-                                    trigger_type,
-                                    trigger_config,
-                                    context,
-                                    interrupt_event,
-                                )
-                                if (
-                                    review_result is not None
-                                    and review_result.status != "failed"
-                                ):
-                                    retry_success = True
-                                    if self.event_sink is not None:
-                                        self.event_sink.on_trigger_remediation_succeeded(
-                                            trigger_type.value, attempt
-                                        )
-                                    break
-                            if not retry_success:
-                                # Retries exhausted - continue (don't abort on execution error)
-                                if self.event_sink is not None:
-                                    self.event_sink.on_trigger_remediation_exhausted(
-                                        trigger_type.value, max_retries
-                                    )
-                                last_failure = ("code_review", trigger_type.value)
-                                if self.event_sink is not None:
-                                    self.event_sink.on_trigger_validation_failed(
-                                        trigger_type.value, "code_review", "remediate"
-                                    )
-
-                    # Case 2: Review completed - check finding_threshold
-                    if (
-                        review_result is not None
-                        and review_result.status == "success"
-                        and self._findings_exceed_threshold(
-                            review_result.findings, threshold
+                if failure_mode == FailureMode.CONTINUE:
+                    # Record failure and proceed to code_review
+                    last_failure = (failed_result.ref, trigger_type.value)
+                    if self.event_sink is not None:
+                        self.event_sink.on_trigger_validation_failed(
+                            trigger_type.value, failed_result.ref, "continue"
                         )
-                    ):
-                        # Findings exceed threshold - handle based on failure_mode
-                        if review_failure_mode == FailureMode.ABORT:
-                            # Abort immediately without remediation
-                            if self.event_sink is not None:
-                                self.event_sink.on_trigger_validation_failed(
-                                    trigger_type.value, "code_review_findings", "abort"
-                                )
-                            self.clear_trigger_queue("code_review_findings_exceeded")
-                            return TriggerValidationResult(
-                                status="aborted",
-                                details=(
-                                    f"Code review findings exceed threshold ({threshold}) "
-                                    f"in trigger {trigger_type.value}"
-                                ),
-                            )
-                        elif review_failure_mode == FailureMode.CONTINUE:
-                            # Record failure and continue without remediation
-                            last_failure = ("code_review_findings", trigger_type.value)
-                            if self.event_sink is not None:
-                                self.event_sink.on_trigger_validation_failed(
-                                    trigger_type.value,
-                                    "code_review_findings",
-                                    "continue",
-                                )
-                        elif review_failure_mode == FailureMode.REMEDIATE:
-                            # Attempt remediation via fixer agent
-                            remediation_result = (
-                                await self._run_code_review_remediation(
-                                    trigger_type,
-                                    trigger_config,
-                                    context,
-                                    interrupt_event,
-                                    review_result.findings,
-                                )
-                            )
 
+                elif failure_mode == FailureMode.REMEDIATE:
+                    # Attempt remediation with fixer agent
+                    remediation_result = await self._run_trigger_remediation(
+                        trigger_type,
+                        trigger_config,
+                        resolved_commands,
+                        failed_result,
+                        dry_run,
+                        interrupt_event,
+                    )
+                    if remediation_result is not None:
+                        # Remediation exhausted/aborted - skip code_review
+                        return remediation_result
+                    # Remediation succeeded - proceed to code_review
+
+                else:  # ABORT (default)
+                    # Skip code_review and abort immediately
+                    if self.event_sink is not None:
+                        self.event_sink.on_trigger_validation_failed(
+                            trigger_type.value, failed_result.ref, "abort"
+                        )
+                    self.clear_trigger_queue("run_aborted")
+                    return TriggerValidationResult(
+                        status="aborted",
+                        details=f"Command '{failed_result.ref}' failed in trigger {trigger_type.value}",
+                    )
+
+            # Run code_review if configured (regardless of command outcome,
+            # unless ABORT which returned above)
+            review_result = await self._run_trigger_code_review(
+                trigger_type, trigger_config, context, interrupt_event
+            )
+
+            # Handle code review result
+            code_review_config = trigger_config.code_review
+            if review_result is not None and code_review_config is not None:
+                review_failure_mode = code_review_config.failure_mode
+                threshold = code_review_config.finding_threshold
+
+                # Case 1: Execution error (status == "failed")
+                if review_result.status == "failed":
+                    if review_failure_mode == FailureMode.ABORT:
+                        if self.event_sink is not None:
+                            self.event_sink.on_trigger_validation_failed(
+                                trigger_type.value, "code_review", "abort"
+                            )
+                        self.clear_trigger_queue("code_review_failed")
+                        return TriggerValidationResult(
+                            status="aborted",
+                            details=f"Code review failed in trigger {trigger_type.value}",
+                        )
+                    elif review_failure_mode == FailureMode.CONTINUE:
+                        last_failure = ("code_review", trigger_type.value)
+                        if self.event_sink is not None:
+                            self.event_sink.on_trigger_validation_failed(
+                                trigger_type.value, "code_review", "continue"
+                            )
+                    elif review_failure_mode == FailureMode.REMEDIATE:
+                        # Retry code review execution up to max_retries
+                        max_retries = code_review_config.max_retries
+                        retry_success = False
+                        for attempt in range(1, max_retries + 1):
                             if interrupt_event.is_set():
                                 self.clear_trigger_queue("sigint")
                                 return TriggerValidationResult(
                                     status="aborted",
                                     details="Validation interrupted by SIGINT",
                                 )
-
-                            if remediation_result is None:
-                                # Remediation failed/exhausted - record failure and continue
-                                # (consistent with execution error remediation behavior)
-                                last_failure = (
-                                    "code_review_findings",
-                                    trigger_type.value,
+                            if self.event_sink is not None:
+                                self.event_sink.on_trigger_remediation_started(
+                                    trigger_type.value, attempt, max_retries
                                 )
+                            review_result = await self._run_trigger_code_review(
+                                trigger_type,
+                                trigger_config,
+                                context,
+                                interrupt_event,
+                            )
+                            if (
+                                review_result is not None
+                                and review_result.status != "failed"
+                            ):
+                                retry_success = True
                                 if self.event_sink is not None:
-                                    self.event_sink.on_trigger_validation_failed(
-                                        trigger_type.value,
-                                        "code_review_findings",
-                                        "remediate",
+                                    self.event_sink.on_trigger_remediation_succeeded(
+                                        trigger_type.value, attempt
                                     )
-                            else:
-                                # Remediation succeeded - clear any prior failure from
-                                # execution error remediation so validation passes
-                                last_failure = None
+                                break
+                        if not retry_success:
+                            # Retries exhausted - continue (don't abort on execution error)
+                            if self.event_sink is not None:
+                                self.event_sink.on_trigger_remediation_exhausted(
+                                    trigger_type.value, max_retries
+                                )
+                            last_failure = ("code_review", trigger_type.value)
+                            if self.event_sink is not None:
+                                self.event_sink.on_trigger_validation_failed(
+                                    trigger_type.value, "code_review", "remediate"
+                                )
 
-                # Emit validation_passed (only if no failure occurred)
-                if last_failure is None:
-                    trigger_duration = time.monotonic() - trigger_start_time
-                    if self.event_sink is not None:
-                        self.event_sink.on_trigger_validation_passed(
-                            trigger_type.value, trigger_duration
-                        )
-                continue
-
-            # Handle failure based on failure_mode
-            failure_mode = trigger_config.failure_mode
-
-            if failure_mode == FailureMode.CONTINUE:
-                # Record failure and continue to next trigger
-                last_failure = (failed_result.ref, trigger_type.value)
-                # Emit validation_failed event
-                if self.event_sink is not None:
-                    self.event_sink.on_trigger_validation_failed(
-                        trigger_type.value, failed_result.ref, "continue"
+                # Case 2: Review completed - check finding_threshold
+                if (
+                    review_result is not None
+                    and review_result.status == "success"
+                    and self._findings_exceed_threshold(
+                        review_result.findings, threshold
                     )
-                continue
+                ):
+                    # Findings exceed threshold - handle based on failure_mode
+                    if review_failure_mode == FailureMode.ABORT:
+                        # Abort immediately without remediation
+                        if self.event_sink is not None:
+                            self.event_sink.on_trigger_validation_failed(
+                                trigger_type.value, "code_review_findings", "abort"
+                            )
+                        self.clear_trigger_queue("code_review_findings_exceeded")
+                        return TriggerValidationResult(
+                            status="aborted",
+                            details=(
+                                f"Code review findings exceed threshold ({threshold}) "
+                                f"in trigger {trigger_type.value}"
+                            ),
+                        )
+                    elif review_failure_mode == FailureMode.CONTINUE:
+                        # Record failure and continue without remediation
+                        last_failure = ("code_review_findings", trigger_type.value)
+                        if self.event_sink is not None:
+                            self.event_sink.on_trigger_validation_failed(
+                                trigger_type.value,
+                                "code_review_findings",
+                                "continue",
+                            )
+                    elif review_failure_mode == FailureMode.REMEDIATE:
+                        # Attempt remediation via fixer agent
+                        remediation_result = await self._run_code_review_remediation(
+                            trigger_type,
+                            trigger_config,
+                            context,
+                            interrupt_event,
+                            review_result.findings,
+                        )
 
-            elif failure_mode == FailureMode.REMEDIATE:
-                # Attempt remediation with fixer agent
-                remediation_result = await self._run_trigger_remediation(
-                    trigger_type,
-                    trigger_config,
-                    resolved_commands,
-                    failed_result,
-                    dry_run,
-                    interrupt_event,
-                )
-                if remediation_result is not None:
-                    # Remediation exhausted/aborted - already emitted in _run_trigger_remediation
-                    return remediation_result
-                # Remediation succeeded - emit validation_passed
+                        if interrupt_event.is_set():
+                            self.clear_trigger_queue("sigint")
+                            return TriggerValidationResult(
+                                status="aborted",
+                                details="Validation interrupted by SIGINT",
+                            )
+
+                        if remediation_result is None:
+                            # Remediation failed/exhausted - record failure and continue
+                            # (consistent with execution error remediation behavior)
+                            last_failure = (
+                                "code_review_findings",
+                                trigger_type.value,
+                            )
+                            if self.event_sink is not None:
+                                self.event_sink.on_trigger_validation_failed(
+                                    trigger_type.value,
+                                    "code_review_findings",
+                                    "remediate",
+                                )
+                        else:
+                            # Remediation succeeded - clear any prior failure from
+                            # execution error remediation so validation passes
+                            last_failure = None
+
+            # Emit validation_passed (only if no failure occurred)
+            if last_failure is None:
                 trigger_duration = time.monotonic() - trigger_start_time
                 if self.event_sink is not None:
                     self.event_sink.on_trigger_validation_passed(
                         trigger_type.value, trigger_duration
                     )
-
-            else:  # ABORT (default)
-                # Emit validation_failed event
-                if self.event_sink is not None:
-                    self.event_sink.on_trigger_validation_failed(
-                        trigger_type.value, failed_result.ref, "abort"
-                    )
-                self.clear_trigger_queue("run_aborted")
-                return TriggerValidationResult(
-                    status="aborted",
-                    details=f"Command '{failed_result.ref}' failed in trigger {trigger_type.value}",
-                )
 
         # All triggers processed - return failed if any CONTINUE failures occurred
         if last_failure is not None:

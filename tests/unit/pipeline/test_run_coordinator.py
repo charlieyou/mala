@@ -1620,3 +1620,279 @@ class TestFindingThresholdEnforcement:
         )
         # Must NOT emit validation_passed after emitting validation_failed
         mock_event_sink.on_trigger_validation_passed.assert_not_called()
+
+
+class TestR12CodeReviewGating:
+    """Tests for R12: run_end failure_mode gating for code review.
+
+    Requirement: When run_end commands fail, whether run-end code review runs
+    MUST follow failure_mode: abort skips review; continue and remediate proceed.
+    """
+
+    @pytest.mark.asyncio
+    async def test_command_failure_abort_skips_code_review(
+        self,
+        tmp_path: Path,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """failure_mode=abort skips code_review when command fails."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            CommandConfig,
+            CommandsConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerCommandRef,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.infra.tools.command_runner import CommandResult
+
+        mock_gate_checker = MagicMock()
+        mock_review_runner = MagicMock()
+        mock_run_metadata = MagicMock()
+        mock_event_sink = MagicMock()
+
+        # Configure a command that will fail
+        failing_runner = FakeCommandRunner()
+        failing_runner.responses[("lint_cmd",)] = CommandResult(
+            command="lint_cmd", returncode=1, stdout="", stderr="Lint failed"
+        )
+
+        code_review_config = CodeReviewConfig(enabled=True, finding_threshold="P1")
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,  # ABORT should skip code_review
+            commands=(TriggerCommandRef(ref="lint"),),
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        commands_config = CommandsConfig(lint=CommandConfig(command="lint_cmd"))
+        validation_config = ValidationConfig(
+            commands=commands_config,
+            global_validation_commands=commands_config,
+            validation_triggers=triggers_config,
+        )
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix: {failure_output}",
+            validation_config=validation_config,
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=failing_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=mock_run_metadata,
+            event_sink=mock_event_sink,
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        result = await coordinator.run_trigger_validation(dry_run=False)
+
+        # Should abort
+        assert result.status == "aborted"
+        assert "lint" in (result.details or "").lower()
+        # Code review should NOT have been called
+        mock_review_runner.run_review.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_command_failure_continue_runs_code_review(
+        self,
+        tmp_path: Path,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """failure_mode=continue runs code_review even when command fails."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            CommandConfig,
+            CommandsConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerCommandRef,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.infra.tools.command_runner import CommandResult
+        from src.pipeline.cumulative_review_runner import CumulativeReviewResult
+
+        mock_gate_checker = MagicMock()
+        mock_review_runner = MagicMock()
+        mock_run_metadata = MagicMock()
+        mock_event_sink = MagicMock()
+
+        # Configure a command that will fail
+        failing_runner = FakeCommandRunner()
+        failing_runner.responses[("lint_cmd",)] = CommandResult(
+            command="lint_cmd", returncode=1, stdout="", stderr="Lint failed"
+        )
+
+        code_review_config = CodeReviewConfig(enabled=True, finding_threshold="P1")
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,  # CONTINUE should run code_review
+            commands=(TriggerCommandRef(ref="lint"),),
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        commands_config = CommandsConfig(lint=CommandConfig(command="lint_cmd"))
+        validation_config = ValidationConfig(
+            commands=commands_config,
+            global_validation_commands=commands_config,
+            validation_triggers=triggers_config,
+        )
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix: {failure_output}",
+            validation_config=validation_config,
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=failing_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=mock_run_metadata,
+            event_sink=mock_event_sink,
+        )
+
+        # Mock code_review to pass
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="success", findings=(), new_baseline_commit="abc123"
+            )
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        result = await coordinator.run_trigger_validation(dry_run=False)
+
+        # Should fail (due to command failure) but code_review should have run
+        assert result.status == "failed"
+        assert "lint" in (result.details or "").lower()
+        # Code review SHOULD have been called
+        mock_review_runner.run_review.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_command_failure_remediate_success_runs_code_review(
+        self,
+        tmp_path: Path,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """failure_mode=remediate runs code_review after successful remediation."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            CommandConfig,
+            CommandsConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerCommandRef,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.infra.tools.command_runner import CommandResult
+        from src.pipeline.cumulative_review_runner import CumulativeReviewResult
+
+        mock_gate_checker = MagicMock()
+        mock_review_runner = MagicMock()
+        mock_run_metadata = MagicMock()
+        mock_event_sink = MagicMock()
+
+        # Use a MagicMock for command runner to control call sequence
+        smart_runner = MagicMock()
+        call_count = {"lint_cmd": 0}
+
+        async def mock_run_async(
+            cmd: str | list[str], **kwargs: object
+        ) -> CommandResult:
+            cmd_str = cmd if isinstance(cmd, str) else " ".join(cmd)
+            if "lint_cmd" in cmd_str:
+                call_count["lint_cmd"] += 1
+                if call_count["lint_cmd"] == 1:
+                    return CommandResult(
+                        command=cmd_str,
+                        returncode=1,
+                        stdout="",
+                        stderr="Lint failed",
+                    )
+                return CommandResult(
+                    command=cmd_str, returncode=0, stdout="Lint passed", stderr=""
+                )
+            return CommandResult(command=cmd_str, returncode=0, stdout="", stderr="")
+
+        smart_runner.run_async = mock_run_async
+
+        code_review_config = CodeReviewConfig(enabled=True, finding_threshold="P1")
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.REMEDIATE,
+            max_retries=1,  # Allow one fixer attempt
+            commands=(TriggerCommandRef(ref="lint"),),
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        commands_config = CommandsConfig(lint=CommandConfig(command="lint_cmd"))
+        validation_config = ValidationConfig(
+            commands=commands_config,
+            global_validation_commands=commands_config,
+            validation_triggers=triggers_config,
+        )
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix: {failure_output}",
+            validation_config=validation_config,
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=smart_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=mock_run_metadata,
+            event_sink=mock_event_sink,
+        )
+
+        # Mock code_review to pass
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="success", findings=(), new_baseline_commit="abc123"
+            )
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+
+        # Mock fixer to succeed
+        with patch.object(
+            coordinator,
+            "_run_fixer_agent",
+            new=AsyncMock(return_value=FixerResult(success=True, interrupted=False)),
+        ):
+            result = await coordinator.run_trigger_validation(dry_run=False)
+
+        # Remediation succeeded, validation should pass, code_review should have run
+        assert result.status == "passed"
+        mock_review_runner.run_review.assert_called_once()
