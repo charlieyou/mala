@@ -382,40 +382,41 @@ def _disable_fixture_e2e_config(repo_path: Path) -> None:
 
     lines = config_path.read_text().splitlines()
     output: list[str] = []
-    in_global = False
+    in_commands = False
     e2e_set = False
     indent = 0
 
     for line in lines:
         stripped = line.strip()
-        if stripped.startswith("global_validation_commands:") and not line.startswith(
-            " "
-        ):
-            in_global = True
+        if stripped.startswith("commands:") and not line.startswith(" "):
+            in_commands = True
             indent = len(line) - len(line.lstrip())
             output.append(line)
             continue
 
-        if in_global:
+        if in_commands:
             if stripped and (len(line) - len(line.lstrip())) <= indent:
                 if not e2e_set:
                     output.append(" " * (indent + 2) + "e2e: null")
                     e2e_set = True
-                in_global = False
+                in_commands = False
             elif stripped.startswith("e2e:"):
+                output.append(" " * (len(line) - len(line.lstrip())) + "e2e: null")
                 e2e_set = True
+                continue
 
         output.append(line)
 
-    if in_global and not e2e_set:
+    if in_commands and not e2e_set:
         output.append(" " * (indent + 2) + "e2e: null")
         e2e_set = True
 
     if not any(
-        line.strip().startswith("global_validation_commands:") for line in lines
+        line.strip().startswith("commands:") and not line.startswith(" ")
+        for line in lines
     ):
         output.append("")
-        output.append("global_validation_commands:")
+        output.append("commands:")
         output.append("  e2e: null")
 
     config_path.write_text("\n".join(output) + "\n")
