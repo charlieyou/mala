@@ -1,11 +1,15 @@
 preset: python-uv
 
+commands:
+  import-linter: "uvx --from import-linter lint-imports"
+
 validation_triggers:
   session_end:
     failure_mode: remediate
     max_retries: 3
     code_review:
       enabled: true
+      max_retries: 5
       reviewer_type: cerberus
       finding_threshold: P1
 
@@ -20,7 +24,7 @@ validation_triggers:
       - ref: import-linter
         command: "uvx --from import-linter lint-imports"
       - ref: test
-        command: "uv run pytest -m 'unit or integration' --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
+        command: "uv run pytest -m 'unit or integration' --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default} -n auto"
         timeout: 300
       - ref: e2e
         command: "uv run pytest -m 'e2e'"
