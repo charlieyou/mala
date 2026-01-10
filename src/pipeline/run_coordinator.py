@@ -29,7 +29,7 @@ from src.infra.agent_runtime import AgentRuntimeBuilder
 from src.infra.tools.command_runner import CommandRunner
 from src.infra.tools.locking import cleanup_agent_locks
 from src.domain.validation.e2e import E2EStatus
-from src.domain.validation.config import CommandConfig, ConfigError
+from src.domain.validation.config import ConfigError
 from src.domain.validation.spec import extract_lint_tools_from_spec
 
 if TYPE_CHECKING:
@@ -48,7 +48,6 @@ if TYPE_CHECKING:
     from src.domain.validation.result import ValidationResult
     from src.domain.validation.config import (
         BaseTriggerConfig,
-        CommandConfig,
         TriggerType,
         ValidationConfig,
         ValidationTriggersConfig,

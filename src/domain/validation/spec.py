@@ -25,13 +25,12 @@ from src.core.models import (
     ResolutionOutcome as ResolutionOutcome,
     ValidationArtifacts as ValidationArtifacts,
 )
-from src.domain.validation.config import CommandsConfig, CustomOverrideMode
 
 if TYPE_CHECKING:
+    from src.domain.validation.config import CommandsConfig
     from re import Pattern
 
     from src.domain.validation.config import (
-        CommandConfig,
         CustomCommandConfig,
         ValidationConfig,
         YamlCoverageConfig,
@@ -387,7 +386,6 @@ def build_validation_spec(
     from src.domain.validation.config import ConfigError
     from src.domain.validation.config_loader import (
         ConfigMissingError,
-        _validate_migration,
         _validate_trigger_command_refs,
         load_config,
     )
@@ -431,9 +429,6 @@ def build_validation_spec(
     else:
         merged_config = user_config
 
-    # Validate migration on effective merged config (catches deprecated patterns)
-    _validate_migration(merged_config)
-
     # Validate trigger command refs exist in effective base pool (fail fast at startup)
     _validate_trigger_command_refs(merged_config)
 
@@ -444,36 +439,13 @@ def build_validation_spec(
             "Specify a preset or define commands directly."
         )
 
-    # Resolve commands for scope (global may override base commands)
+    # Resolve commands for scope
     commands_config = merged_config.commands
-    if scope == ValidationScope.GLOBAL:
-        commands_config = _apply_command_overrides(
-            merged_config.commands, merged_config.global_validation_commands
-        )
-
-    # Resolve custom_commands for scope (mode-based override semantics)
-    custom_commands = _apply_custom_commands_override(
-        merged_config.commands.custom_commands,
-        merged_config.global_validation_commands,
-        scope,
-    )
+    custom_commands = merged_config.commands.custom_commands
 
     # Coverage requires a test command in the effective commands_config
-    # This check must happen after _apply_command_overrides to catch cases where
-    # global_validation_commands.test is explicitly null (disabling the base test command)
-    # However, we only raise an error if there's no global_validation_commands.test set either -
-    # if global_validation_commands.test is set, coverage will be generated at global
     if merged_config.coverage is not None and commands_config.test is None:
-        # Check if global_validation_commands.test provides a test command for coverage
-        global_test_set = (
-            merged_config.global_validation_commands._fields_set
-            and "test" in merged_config.global_validation_commands._fields_set
-            and merged_config.global_validation_commands.test is not None
-        )
-        if not global_test_set:
-            raise ConfigError(
-                "Coverage requires a test command to generate coverage data."
-            )
+        raise ConfigError("Coverage requires a test command to generate coverage data.")
 
     # Build commands list from config
     commands: list[ValidationCommand] = []
@@ -482,26 +454,10 @@ def build_validation_spec(
         commands = _build_commands_from_config(commands_config, custom_commands)
 
     # Determine if coverage is enabled
-    # Coverage is disabled for PER_SESSION scope when global_validation_commands.test provides
-    # a different test command (e.g., with --cov flags). In this pattern, only the
-    # global test command generates coverage.xml, so per-session validation should
-    # not check coverage.
-    # Note: If global_validation_commands.test is explicitly null, we don't disable coverage
-    # for PER_SESSION - the intent is to skip tests at global, not to move coverage
-    # to global.
-    global_has_different_test_command = (
-        merged_config.global_validation_commands._fields_set
-        and "test" in merged_config.global_validation_commands._fields_set
-        and merged_config.global_validation_commands.test is not None
-    )
-    coverage_only_at_global = (
-        global_has_different_test_command and scope == ValidationScope.PER_SESSION
-    )
     coverage_enabled = (
         merged_config.coverage is not None
         and "coverage" not in disable
         and not skip_tests
-        and not coverage_only_at_global
     )
 
     # Build coverage config
@@ -517,7 +473,6 @@ def build_validation_spec(
     )
 
     # Configure E2E
-    # Use commands_config which has global_validation_commands overrides applied
     e2e_enabled = (
         scope == ValidationScope.GLOBAL
         and "e2e" not in disable
@@ -540,83 +495,6 @@ def build_validation_spec(
         setup_files=list(merged_config.setup_files),
         yaml_coverage_config=merged_config.coverage if coverage_enabled else None,
     )
-
-
-def _apply_command_overrides(
-    base: CommandsConfig, overrides: CommandsConfig
-) -> CommandsConfig:
-    """Apply global command overrides on top of base commands."""
-
-    def is_explicit(field_name: str, value: CommandConfig | None) -> bool:
-        if overrides._fields_set:
-            return field_name in overrides._fields_set
-        return value is not None
-
-    def pick(
-        field_name: str,
-        base_cmd: CommandConfig | None,
-        override_cmd: CommandConfig | None,
-    ) -> CommandConfig | None:
-        return override_cmd if is_explicit(field_name, override_cmd) else base_cmd
-
-    return CommandsConfig(
-        setup=pick("setup", base.setup, overrides.setup),
-        build=pick("build", base.build, overrides.build),
-        test=pick("test", base.test, overrides.test),
-        lint=pick("lint", base.lint, overrides.lint),
-        format=pick("format", base.format, overrides.format),
-        typecheck=pick("typecheck", base.typecheck, overrides.typecheck),
-        e2e=pick("e2e", base.e2e, overrides.e2e),
-        _fields_set=overrides._fields_set,
-    )
-
-
-def _apply_custom_commands_override(
-    repo_customs: dict[str, CustomCommandConfig],
-    global_validation_commands: CommandsConfig | None,
-    scope: ValidationScope,
-) -> dict[str, CustomCommandConfig]:
-    """Apply global custom_commands override based on CustomOverrideMode.
-
-    Args:
-        repo_customs: Repo-level custom_commands dict (from commands.custom_commands).
-        global_validation_commands: Global CommandsConfig (contains custom_override_mode
-            and custom_commands). May be None if not configured.
-        scope: The validation scope.
-
-    Returns:
-        The effective custom_commands dict for this scope.
-
-    Mode behavior (only applies to GLOBAL scope):
-    - INHERIT: Use repo-level customs unchanged (default, no global customs)
-    - CLEAR: Return empty dict (disable all customs)
-    - REPLACE: Return only global customs (full replace)
-    - ADDITIVE: Merge global into repo-level ({**repo, **run})
-    """
-    # For PER_SESSION scope, always use repo-level custom_commands
-    if scope == ValidationScope.PER_SESSION:
-        return repo_customs
-
-    # For GLOBAL scope, apply mode-based logic
-    if global_validation_commands is None:
-        # No global commands configured - use repo-level
-        return repo_customs
-
-    mode = global_validation_commands.custom_override_mode
-    run_customs = global_validation_commands.custom_commands
-
-    if mode == CustomOverrideMode.INHERIT:
-        return repo_customs
-    elif mode == CustomOverrideMode.CLEAR:
-        return {}
-    elif mode == CustomOverrideMode.REPLACE:
-        return run_customs
-    elif mode == CustomOverrideMode.ADDITIVE:
-        # Merge: repo order preserved, global updates/appends
-        return {**repo_customs, **run_customs}
-    else:
-        # Should never happen with enum, but be defensive
-        return repo_customs
 
 
 def _build_commands_from_config(
