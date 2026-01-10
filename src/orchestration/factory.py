@@ -140,6 +140,12 @@ def _derive_config(
         set(config.disable_validations) if config.disable_validations else set()
     )
 
+    # Extract max_review_retries from first enabled code_review config
+    max_review_retries: int | None = None
+    code_review = _get_first_enabled_code_review(validation_config)
+    if code_review is not None:
+        max_review_retries = getattr(code_review, "max_retries", None)
+
     logger.debug(
         "Derived config: timeout=%ds",
         timeout_seconds,
@@ -147,6 +153,7 @@ def _derive_config(
     return _DerivedConfig(
         timeout_seconds=timeout_seconds,
         disabled_validations=disabled_validations,
+        max_review_retries=max_review_retries,
         validation_config=validation_config,
         validation_config_missing=validation_config_missing,
     )

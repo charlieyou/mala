@@ -275,7 +275,13 @@ class MalaOrchestrator:
         self.epic_id = orch_config.epic_id
         self.only_ids = orch_config.only_ids
         self.max_gate_retries = orch_config.max_gate_retries
-        self.max_review_retries = orch_config.max_review_retries
+        # Use derived.max_review_retries from mala.yaml code_review config if set,
+        # otherwise fall back to orch_config (CLI/default)
+        self.max_review_retries = (
+            derived.max_review_retries
+            if derived.max_review_retries is not None
+            else orch_config.max_review_retries
+        )
         self.disable_validations = orch_config.disable_validations
         self._disabled_validations = derived.disabled_validations
         self._validation_config = derived.validation_config

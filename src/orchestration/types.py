@@ -135,6 +135,7 @@ class _DerivedConfig:
 
     timeout_seconds: int
     disabled_validations: set[str]
+    max_review_retries: int | None = None
     review_disabled_reason: str | None = None
     validation_config: ValidationConfig | None = None
     validation_config_missing: bool = False
