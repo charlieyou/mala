@@ -354,9 +354,12 @@ class TestOrchestratorInitialization:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Repo path should be resolved to absolute."""
-        relative = Path(".")
-        orch = make_orchestrator(repo_path=relative)
+        # Use tmp_path subdirectory to avoid loading mala.yaml from cwd
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        orch = make_orchestrator(repo_path=subdir)
         assert orch.repo_path.is_absolute()
+        assert orch.repo_path == subdir
 
     def test_focus_default_true(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
