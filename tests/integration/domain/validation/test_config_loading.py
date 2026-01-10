@@ -117,3 +117,100 @@ class TestCodeReviewParsing:
         assert code_review.enabled is True
         assert code_review.reviewer_type == "agent_sdk"
         assert code_review.baseline == "since_run_start"
+
+    def test_run_end_code_review_finding_threshold_parsed(self, tmp_path: Path) -> None:
+        """Integration test: run_end code_review parses finding_threshold."""
+        yaml_content = dedent("""\
+            preset: python-uv
+            validation_triggers:
+              run_end:
+                commands: []
+                failure_mode: continue
+                fire_on: success
+                code_review:
+                  enabled: true
+                  reviewer_type: cerberus
+                  finding_threshold: P1
+                  baseline: since_run_start
+        """)
+        config_file = tmp_path / "mala.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_config(tmp_path)
+
+        assert config.validation_triggers is not None
+        assert config.validation_triggers.run_end is not None
+        code_review = config.validation_triggers.run_end.code_review
+        assert code_review is not None
+        assert code_review.finding_threshold == "P1"
+
+    def test_run_end_code_review_remediate_parsed(self, tmp_path: Path) -> None:
+        """Integration test: run_end code_review parses failure_mode remediate."""
+        yaml_content = dedent("""\
+            preset: python-uv
+            validation_triggers:
+              run_end:
+                commands: []
+                failure_mode: continue
+                fire_on: both
+                code_review:
+                  enabled: true
+                  reviewer_type: cerberus
+                  failure_mode: remediate
+                  max_retries: 3
+                  baseline: since_run_start
+        """)
+        config_file = tmp_path / "mala.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_config(tmp_path)
+
+        assert config.validation_triggers is not None
+        assert config.validation_triggers.run_end is not None
+        code_review = config.validation_triggers.run_end.code_review
+        assert code_review is not None
+        assert code_review.failure_mode == FailureMode.REMEDIATE
+        assert code_review.max_retries == 3
+
+    def test_run_end_full_code_review_config(self, tmp_path: Path) -> None:
+        """Integration test: run_end parses complete code_review configuration."""
+        yaml_content = dedent("""\
+            preset: python-uv
+            validation_triggers:
+              run_end:
+                commands: []
+                failure_mode: continue
+                fire_on: success
+                code_review:
+                  enabled: true
+                  reviewer_type: cerberus
+                  failure_mode: remediate
+                  max_retries: 5
+                  finding_threshold: P2
+                  baseline: since_run_start
+                  cerberus:
+                    timeout: 300
+                    spawn_args:
+                      - "--verbose"
+                    env:
+                      DEBUG: "1"
+        """)
+        config_file = tmp_path / "mala.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_config(tmp_path)
+
+        assert config.validation_triggers is not None
+        assert config.validation_triggers.run_end is not None
+        code_review = config.validation_triggers.run_end.code_review
+        assert code_review is not None
+        assert code_review.enabled is True
+        assert code_review.reviewer_type == "cerberus"
+        assert code_review.failure_mode == FailureMode.REMEDIATE
+        assert code_review.max_retries == 5
+        assert code_review.finding_threshold == "P2"
+        assert code_review.baseline == "since_run_start"
+        assert code_review.cerberus is not None
+        assert code_review.cerberus.timeout == 300
+        assert code_review.cerberus.spawn_args == ("--verbose",)
+        assert code_review.cerberus.env == (("DEBUG", "1"),)
