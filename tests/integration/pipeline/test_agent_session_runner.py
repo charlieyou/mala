@@ -45,7 +45,7 @@ if TYPE_CHECKING:
         SDKClientProtocol,
     )
     from src.domain.lifecycle import RetryState
-    from src.domain.session_end_result import SessionEndResult
+    from src.core.session_end_result import SessionEndResult
     from src.pipeline.agent_session_runner import (
         SessionConfig,
         SessionExecutionState,

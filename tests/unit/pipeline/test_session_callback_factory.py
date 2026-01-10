@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from src.pipeline.session_callback_factory import SessionCallbackFactory
-from src.domain.session_end_result import SessionEndResult, SessionEndRetryState
+from src.core.session_end_result import SessionEndResult, SessionEndRetryState
 
 
 def _create_minimal_factory() -> SessionCallbackFactory:

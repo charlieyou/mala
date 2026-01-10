@@ -24,7 +24,7 @@ from src.pipeline.agent_session_runner import (
     SessionCallbacks,
     SessionPrompts,
 )
-from src.domain.session_end_result import SessionEndResult
+from src.core.session_end_result import SessionEndResult
 from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 
 if TYPE_CHECKING:
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
     from src.core.protocols import McpServerFactory
     from src.domain.lifecycle import RetryState
-    from src.domain.session_end_result import SessionEndRetryState
+    from src.core.session_end_result import SessionEndRetryState
 
 
 def make_noop_mcp_factory() -> McpServerFactory:

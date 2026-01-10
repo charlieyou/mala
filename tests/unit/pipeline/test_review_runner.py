@@ -807,7 +807,7 @@ class TestSessionEndEvidence:
         tmp_path: Path,
     ) -> None:
         """Session end result should appear in context file when present."""
-        from src.domain.session_end_result import SessionEndResult
+        from src.core.session_end_result import SessionEndResult
 
         captured_text: str | None = None
 
@@ -857,7 +857,7 @@ class TestSessionEndEvidence:
         tmp_path: Path,
     ) -> None:
         """Review should NOT auto-fail when session_end.status=fail (per spec R5)."""
-        from src.domain.session_end_result import SessionEndResult
+        from src.core.session_end_result import SessionEndResult
 
         fake_reviewer = FakeCodeReviewer(
             result=FakeReviewResult(passed=True, issues=[])
@@ -884,7 +884,7 @@ class TestSessionEndEvidence:
         tmp_path: Path,
     ) -> None:
         """Session end with status=skipped should not appear in context."""
-        from src.domain.session_end_result import SessionEndResult
+        from src.core.session_end_result import SessionEndResult
 
         captured_text: str | None = None
 
@@ -957,7 +957,7 @@ class TestSessionEndEvidence:
         tmp_path: Path,
     ) -> None:
         """Session end evidence should include command results when present."""
-        from src.domain.session_end_result import SessionEndResult
+        from src.core.session_end_result import SessionEndResult
 
         captured_text: str | None = None
 

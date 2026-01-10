@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from src.pipeline.issue_result import IssueResult
-from src.domain.session_end_result import SessionEndResult
+from src.core.session_end_result import SessionEndResult
 
 
 class TestIssueResult:

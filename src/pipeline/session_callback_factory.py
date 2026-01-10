@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 
 from src.pipeline.agent_session_runner import SessionCallbacks
-from src.domain.session_end_result import CodeReviewResult, SessionEndResult
+from src.core.session_end_result import CodeReviewResult, SessionEndResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from src.core.protocols import CommandRunnerPort
     from src.pipeline.fixer_interface import FixerInterface
     from src.pipeline.review_runner import ReviewRunner
-    from src.domain.session_end_result import SessionEndRetryState
+    from src.core.session_end_result import SessionEndRetryState
 
 logger = logging.getLogger(__name__)
 

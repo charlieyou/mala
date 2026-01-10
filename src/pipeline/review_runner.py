@@ -37,7 +37,7 @@ if TYPE_CHECKING:
         ReviewResultProtocol,
         ValidationSpecProtocol,
     )
-    from src.domain.session_end_result import SessionEndResult
+    from src.core.session_end_result import SessionEndResult
     from src.domain.validation.spec import ValidationSpec
 
 

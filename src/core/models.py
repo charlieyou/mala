@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from src.domain.session_end_result import SessionEndResult
+    from src.core.session_end_result import SessionEndResult
 
 
 class OrderPreference(Enum):

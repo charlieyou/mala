@@ -52,7 +52,7 @@ from src.pipeline.lifecycle_effect_handler import (
     LifecycleEffectHandler,
     _count_blocking_issues,
 )
-from src.domain.session_end_result import SessionEndRetryState
+from src.core.session_end_result import SessionEndRetryState
 from src.pipeline.message_stream_processor import (
     ContextPressureError,
     IdleTimeoutError,
@@ -84,7 +84,7 @@ if TYPE_CHECKING:
         AgentTextCallback,
         ToolUseCallback,
     )
-    from src.domain.session_end_result import SessionEndResult
+    from src.core.session_end_result import SessionEndResult
 
 
 # Module-level logger for idle retry messages
@@ -670,7 +670,7 @@ class AgentSessionRunner:
 
                 # If callback not set, skip session_end with "not_configured" reason
                 if self.callbacks.on_session_end_check is None:
-                    from src.domain.session_end_result import SessionEndResult
+                    from src.core.session_end_result import SessionEndResult
 
                     session_end_result = SessionEndResult(
                         status="skipped", reason="not_configured"

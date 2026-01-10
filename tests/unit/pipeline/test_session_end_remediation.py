@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.domain.session_end_result import SessionEndRetryState
+from src.core.session_end_result import SessionEndRetryState
 
 from src.domain.validation.config import (
     CodeReviewConfig,

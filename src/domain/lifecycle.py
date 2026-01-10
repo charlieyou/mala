@@ -29,7 +29,7 @@ from .validation.spec import ResolutionOutcome
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from src.domain.session_end_result import SessionEndResult
+    from src.core.session_end_result import SessionEndResult
 
     from .validation.spec import IssueResolution
 

@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 
 from src.infra.tools.command_runner import CommandResult
-from src.domain.session_end_result import (
+from src.core.session_end_result import (
     CodeReviewResult,
     SessionEndResult,
     SessionEndRetryState,

@@ -6,12 +6,10 @@ These dataclasses hold session_end execution state and results per spec R5.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from datetime import datetime
-
-    from src.core.protocols import CommandResultProtocol
 
 
 @dataclass
@@ -84,7 +82,7 @@ class SessionEndResult:
     status: Literal["pass", "fail", "timeout", "interrupted", "skipped"]
     started_at: datetime | None = None
     finished_at: datetime | None = None
-    commands: list[CommandResultProtocol] = field(default_factory=list)
+    commands: list[Any] = field(default_factory=list)
     code_review_result: CodeReviewResult | None = None
     reason: str | None = None
 

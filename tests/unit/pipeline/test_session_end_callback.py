@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
-from src.domain.session_end_result import (
+from src.core.session_end_result import (
     SessionEndResult,
     SessionEndRetryState,
 )

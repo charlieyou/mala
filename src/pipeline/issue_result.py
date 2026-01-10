@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
     from src.core.models import IssueResolution
     from src.core.protocols import ReviewIssueProtocol
-    from src.domain.session_end_result import SessionEndResult
+    from src.core.session_end_result import SessionEndResult
 
 
 @dataclass
