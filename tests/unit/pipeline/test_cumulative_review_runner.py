@@ -33,6 +33,7 @@ class FakeCodeReviewConfig:
 class FakeRunMetadata:
     """Fake RunMetadata for testing baseline determination."""
 
+    run_id: str = "run-123"
     run_start_commit: str | None = None
     last_cumulative_review_commits: dict[str, str] = field(default_factory=dict)
 
@@ -150,7 +151,14 @@ class FakeBeadsClient:
     """Fake IssueProvider for testing."""
 
     create_issue_calls: list[dict[str, object]] = field(default_factory=list)
+    find_issue_by_tag_calls: list[str] = field(default_factory=list)
+    existing_tags: dict[str, str] = field(default_factory=dict)
     should_raise: Exception | None = None
+
+    async def find_issue_by_tag_async(self, tag: str) -> str | None:
+        """Find an issue by tag. Returns existing_tags[tag] if present."""
+        self.find_issue_by_tag_calls.append(tag)
+        return self.existing_tags.get(tag)
 
     async def create_issue_async(
         self,
@@ -166,6 +174,7 @@ class FakeBeadsClient:
                 "description": description,
                 "priority": priority,
                 "tags": tags or [],
+                "parent_id": parent_id,
             }
         )
         if self.should_raise:
@@ -653,6 +662,7 @@ class TestRunReviewExecution:
         review_input = reviewer.run_review_calls[0]
         assert hasattr(review_input, "diff_content")
         assert review_input.diff_content == expected_diff
+        assert review_input.claude_session_id == "cumulative-run_end-run-123"
 
     @pytest.mark.asyncio
     async def test_execution_error_returns_failed_no_baseline_update(
@@ -861,7 +871,13 @@ class TestRunReviewFindings:
         assert beads.create_issue_calls[0]["priority"] == "P1"
         tags = beads.create_issue_calls[0]["tags"]
         assert isinstance(tags, list)
-        assert "run_end" in tags
+        # Verify new tag format
+        assert "trigger:run_end" in tags
+        assert "cumulative-review" in tags
+        assert "review_finding" in tags
+        assert "auto_generated" in tags
+        # Verify fingerprint tag is present
+        assert any(t.startswith("fp:") for t in tags)
 
     @pytest.mark.asyncio
     async def test_beads_issue_creation_failure_is_logged_not_fatal(
@@ -954,3 +970,235 @@ class TestLargeDiffThreshold:
 
         # Over threshold (5001) should warn
         assert "Large diff" in caplog.text
+
+
+class TestFindingDedup:
+    """Tests for fingerprint-based finding deduplication."""
+
+    @pytest.mark.asyncio
+    async def test_duplicate_finding_skipped(self, tmp_path: Path) -> None:
+        """Finding with existing fingerprint tag is not created again."""
+        git_utils = FakeGitUtils(head_commit="abc1234")
+        review_result = FakeReviewResult(
+            passed=False,
+            issues=[
+                FakeReviewIssue(
+                    file="src/main.py",
+                    line_start=10,
+                    line_end=15,
+                    priority=1,
+                    title="Security issue",
+                    body="Found SQL injection",
+                ),
+            ],
+        )
+        review_runner = FakeReviewRunner(output=FakeReviewOutput(result=review_result))
+        # Pre-populate existing tag to simulate existing issue
+        from src.pipeline.cumulative_review_runner import (
+            ReviewFinding,
+            _get_finding_fingerprint,
+        )
+
+        finding = ReviewFinding(
+            file="src/main.py",
+            line_start=10,
+            line_end=15,
+            priority=1,
+            title="Security issue",
+            body="Found SQL injection",
+            reviewer="cumulative_review",
+        )
+        fingerprint = _get_finding_fingerprint(finding)
+        beads_client = FakeBeadsClient(
+            existing_tags={f"fp:{fingerprint}": "existing-issue-123"}
+        )
+
+        runner, _, _, beads = make_runner(
+            git_utils=git_utils,
+            review_runner=review_runner,
+            beads_client=beads_client,
+        )
+        metadata = FakeRunMetadata(run_start_commit="baseline-sha")
+
+        await runner.run_review(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+            repo_path=tmp_path,
+            interrupt_event=asyncio.Event(),
+        )
+
+        # Should have called find_issue_by_tag to check for dupe
+        assert len(beads.find_issue_by_tag_calls) == 1
+        assert beads.find_issue_by_tag_calls[0].startswith("fp:")
+        # Should NOT have created issue (it was a duplicate)
+        assert len(beads.create_issue_calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_unique_finding_created(self, tmp_path: Path) -> None:
+        """Finding with no existing fingerprint tag is created."""
+        git_utils = FakeGitUtils(head_commit="abc1234")
+        review_result = FakeReviewResult(
+            passed=False,
+            issues=[
+                FakeReviewIssue(
+                    file="src/main.py",
+                    line_start=10,
+                    line_end=15,
+                    priority=1,
+                    title="Security issue",
+                    body="Found SQL injection",
+                ),
+            ],
+        )
+        review_runner = FakeReviewRunner(output=FakeReviewOutput(result=review_result))
+        beads_client = FakeBeadsClient(existing_tags={})  # No existing issues
+
+        runner, _, _, beads = make_runner(
+            git_utils=git_utils,
+            review_runner=review_runner,
+            beads_client=beads_client,
+        )
+        metadata = FakeRunMetadata(run_start_commit="baseline-sha")
+
+        await runner.run_review(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+            repo_path=tmp_path,
+            interrupt_event=asyncio.Event(),
+        )
+
+        # Should have checked for dupe
+        assert len(beads.find_issue_by_tag_calls) == 1
+        # Should have created issue (not a duplicate)
+        assert len(beads.create_issue_calls) == 1
+
+
+class TestFindingMetadata:
+    """Tests for rich metadata in finding descriptions."""
+
+    @pytest.mark.asyncio
+    async def test_description_includes_baseline_and_trigger(
+        self, tmp_path: Path
+    ) -> None:
+        """Description includes baseline commit range and trigger type."""
+        git_utils = FakeGitUtils(head_commit="abc1234")
+        review_result = FakeReviewResult(
+            passed=False,
+            issues=[
+                FakeReviewIssue(
+                    file="src/main.py",
+                    line_start=10,
+                    line_end=15,
+                    priority=1,
+                    title="Security issue",
+                    body="Found SQL injection",
+                ),
+            ],
+        )
+        review_runner = FakeReviewRunner(output=FakeReviewOutput(result=review_result))
+        runner, _, _, beads = make_runner(
+            git_utils=git_utils, review_runner=review_runner
+        )
+        metadata = FakeRunMetadata(run_start_commit="baseline-sha")
+
+        await runner.run_review(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+            repo_path=tmp_path,
+            interrupt_event=asyncio.Event(),
+        )
+
+        assert len(beads.create_issue_calls) == 1
+        desc = beads.create_issue_calls[0]["description"]
+        assert isinstance(desc, str)
+        assert "**Trigger:** run_end" in desc
+        assert "**Baseline:** baseline-sha..abc1234" in desc
+        assert "**Location:** src/main.py:10-15" in desc
+        assert "**Priority:** P1" in desc
+
+    @pytest.mark.asyncio
+    async def test_epic_completion_includes_epic_metadata(self, tmp_path: Path) -> None:
+        """Epic completion findings include epic ID in metadata and tags."""
+        git_utils = FakeGitUtils(head_commit="abc1234")
+        review_result = FakeReviewResult(
+            passed=False,
+            issues=[
+                FakeReviewIssue(
+                    file="src/main.py",
+                    line_start=10,
+                    line_end=10,
+                    priority=2,
+                    title="Code smell",
+                    body="Consider refactoring",
+                ),
+            ],
+        )
+        review_runner = FakeReviewRunner(output=FakeReviewOutput(result=review_result))
+        runner, _, _, beads = make_runner(
+            git_utils=git_utils, review_runner=review_runner
+        )
+        metadata = FakeRunMetadata(run_start_commit="baseline-sha")
+
+        await runner.run_review(
+            trigger_type=TriggerType.EPIC_COMPLETION,
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+            repo_path=tmp_path,
+            interrupt_event=asyncio.Event(),
+            epic_id="epic-001",
+        )
+
+        assert len(beads.create_issue_calls) == 1
+        desc = beads.create_issue_calls[0]["description"]
+        tags = beads.create_issue_calls[0]["tags"]
+        parent_id = beads.create_issue_calls[0]["parent_id"]
+
+        assert isinstance(desc, str)
+        assert "**Epic:** epic-001" in desc
+        assert "**Trigger:** epic_completion" in desc
+        assert isinstance(tags, list)
+        assert "epic:epic-001" in tags
+        assert "trigger:epic_completion" in tags
+        # Parent should be set to epic
+        assert parent_id == "epic-001"
+
+    @pytest.mark.asyncio
+    async def test_single_line_location_format(self, tmp_path: Path) -> None:
+        """Single line findings show simple line number format."""
+        git_utils = FakeGitUtils(head_commit="abc1234")
+        review_result = FakeReviewResult(
+            passed=False,
+            issues=[
+                FakeReviewIssue(
+                    file="src/main.py",
+                    line_start=42,
+                    line_end=42,  # Same as start = single line
+                    priority=3,
+                    title="Minor issue",
+                    body="Just a warning",
+                ),
+            ],
+        )
+        review_runner = FakeReviewRunner(output=FakeReviewOutput(result=review_result))
+        runner, _, _, beads = make_runner(
+            git_utils=git_utils, review_runner=review_runner
+        )
+        metadata = FakeRunMetadata(run_start_commit="baseline-sha")
+
+        await runner.run_review(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+            repo_path=tmp_path,
+            interrupt_event=asyncio.Event(),
+        )
+
+        assert len(beads.create_issue_calls) == 1
+        desc = beads.create_issue_calls[0]["description"]
+        assert isinstance(desc, str)
+        # Single line should be "file:line" not "file:line-line"
+        assert "**Location:** src/main.py:42" in desc
+        assert "42-42" not in desc

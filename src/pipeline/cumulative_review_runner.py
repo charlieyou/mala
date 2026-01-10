@@ -17,6 +17,7 @@ Design principles:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
@@ -57,6 +58,16 @@ class ReviewFinding:
     title: str
     body: str
     reviewer: str
+
+
+def _get_finding_fingerprint(finding: ReviewFinding) -> str:
+    """Generate a unique fingerprint for a finding.
+
+    Uses file path, line range, and title to create a stable hash.
+    Returns a hex hash to ensure safe tag matching.
+    """
+    content = f"{finding.file}:{finding.line_start}:{finding.line_end}:{finding.title}"
+    return hashlib.sha256(content.encode()).hexdigest()[:16]
 
 
 @dataclass(frozen=True)
@@ -210,12 +221,18 @@ class CumulativeReviewRunner:
         diff_content = await self._git_utils.get_diff_content(baseline, head_commit)
 
         # 7. Execute review via ReviewRunner with diff content
+        review_session_id = None
+        run_id = getattr(run_metadata, "run_id", None)
+        if isinstance(run_id, str) and run_id:
+            review_session_id = f"cumulative-{trigger_type.value}-{run_id}"
+
         review_input = ReviewInput(
             issue_id=issue_id or f"cumulative-{trigger_type.value}",
             repo_path=repo_path,
             commit_shas=[baseline, head_commit],
             issue_description=f"Cumulative review for {trigger_type.value}",
             diff_content=diff_content,
+            claude_session_id=review_session_id,
         )
 
         try:
@@ -255,14 +272,72 @@ class CumulativeReviewRunner:
                 )
             )
 
-        # 9. Create beads issues for findings
+        # 9. Create beads issues for findings with dedup and metadata
         for finding in findings:
+            fingerprint = _get_finding_fingerprint(finding)
+            fingerprint_tag = f"fp:{fingerprint}"
+
             try:
+                # Dedup: Check if finding already exists
+                existing_id = await self._beads_client.find_issue_by_tag_async(
+                    fingerprint_tag
+                )
+                if existing_id:
+                    self._logger.debug(
+                        "Skipping duplicate finding: %s (exists as %s)",
+                        finding.title,
+                        existing_id,
+                    )
+                    continue
+
+                # Build location string for description
+                if finding.line_start == finding.line_end or finding.line_end == 0:
+                    location = (
+                        f"{finding.file}:{finding.line_start}" if finding.file else ""
+                    )
+                else:
+                    location = (
+                        f"{finding.file}:{finding.line_start}-{finding.line_end}"
+                        if finding.file
+                        else ""
+                    )
+
+                # Build rich description with metadata
+                desc_parts = [
+                    "## Review Finding",
+                    "",
+                    f"**Priority:** P{finding.priority}",
+                    f"**Trigger:** {trigger_type.value}",
+                    f"**Baseline:** {baseline}..{head_commit}",
+                ]
+                if epic_id:
+                    desc_parts.append(f"**Epic:** {epic_id}")
+                if location:
+                    desc_parts.append(f"**Location:** {location}")
+                if issue_id:
+                    desc_parts.append(f"**Source Issue:** {issue_id}")
+                desc_parts.extend(
+                    ["", "---", "", finding.body if finding.body else finding.title]
+                )
+                description = "\n".join(desc_parts)
+
+                # Build tags with dedup fingerprint and metadata
+                tags = [
+                    "auto_generated",
+                    "review_finding",
+                    "cumulative-review",
+                    f"trigger:{trigger_type.value}",
+                    fingerprint_tag,
+                ]
+                if epic_id:
+                    tags.append(f"epic:{epic_id}")
+
                 await self._beads_client.create_issue_async(
                     title=finding.title,
-                    description=finding.body,
+                    description=description,
                     priority=f"P{finding.priority}",
-                    tags=["code-review", trigger_type.value],
+                    tags=tags,
+                    parent_id=epic_id,
                 )
             except Exception as e:
                 self._logger.warning("Failed to create beads issue: %s", e)
