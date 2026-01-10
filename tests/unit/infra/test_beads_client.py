@@ -1791,3 +1791,589 @@ class TestGetBlockedCountAsync:
             "-t",
             "task",
         ]
+
+
+class TestClaimAsync:
+    """Test claim_async method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_success(self, tmp_path: Path) -> None:
+        """Should return True when claim succeeds."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(returncode=0)),
+            )
+            result = await beads.claim_async("issue-1")
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_failure(self, tmp_path: Path) -> None:
+        """Should return False when claim fails."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(returncode=1)),
+            )
+            result = await beads.claim_async("issue-1")
+
+        assert result is False
+
+
+class TestResetAsync:
+    """Test reset_async method."""
+
+    @pytest.mark.asyncio
+    async def test_resets_issue_to_ready(self, tmp_path: Path) -> None:
+        """Should call bd update with ready status."""
+        beads = BeadsClient(tmp_path)
+        captured_cmds: list[list[str]] = []
+
+        async def capturing_run(cmd: list[str]) -> CommandResult:
+            captured_cmds.append(cmd)
+            return make_command_result()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", capturing_run)
+            await beads.reset_async("issue-1")
+
+        assert captured_cmds[0][0:4] == ["bd", "update", "issue-1", "--status"]
+        assert "ready" in captured_cmds[0]
+
+    @pytest.mark.asyncio
+    async def test_includes_error_and_log_path_in_notes(self, tmp_path: Path) -> None:
+        """Should include error and log path in notes."""
+        beads = BeadsClient(tmp_path)
+        captured_cmds: list[list[str]] = []
+        log_path = tmp_path / "agent.log"
+
+        async def capturing_run(cmd: list[str]) -> CommandResult:
+            captured_cmds.append(cmd)
+            return make_command_result()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", capturing_run)
+            await beads.reset_async("issue-1", log_path=log_path, error="Test error")
+
+        cmd = captured_cmds[0]
+        assert "--notes" in cmd
+        notes_idx = cmd.index("--notes")
+        notes = cmd[notes_idx + 1]
+        assert "Failed: Test error" in notes
+        assert str(log_path) in notes
+
+
+class TestGetIssueStatusAsync:
+    """Test get_issue_status_async method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_status_from_dict(self, tmp_path: Path) -> None:
+        """Should return status when bd show returns dict."""
+        beads = BeadsClient(tmp_path)
+        issue_json = json.dumps({"id": "issue-1", "status": "in_progress"})
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=issue_json)),
+            )
+            result = await beads.get_issue_status_async("issue-1")
+
+        assert result == "in_progress"
+
+    @pytest.mark.asyncio
+    async def test_returns_status_from_list(self, tmp_path: Path) -> None:
+        """Should return status when bd show returns list."""
+        beads = BeadsClient(tmp_path)
+        issue_json = json.dumps([{"id": "issue-1", "status": "open"}])
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=issue_json)),
+            )
+            result = await beads.get_issue_status_async("issue-1")
+
+        assert result == "open"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_failure(self, tmp_path: Path) -> None:
+        """Should return None when bd show fails."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(returncode=1)),
+            )
+            result = await beads.get_issue_status_async("issue-1")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_invalid_json(self, tmp_path: Path) -> None:
+        """Should return None when bd returns invalid JSON."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout="not json")),
+            )
+            result = await beads.get_issue_status_async("issue-1")
+
+        assert result is None
+
+
+class TestGetIssueDescriptionAsync:
+    """Test get_issue_description_async method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_description_with_title(self, tmp_path: Path) -> None:
+        """Should return description including title."""
+        beads = BeadsClient(tmp_path)
+        issue_json = json.dumps(
+            {"id": "issue-1", "title": "Fix bug", "description": "Details here"}
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=issue_json)),
+            )
+            result = await beads.get_issue_description_async("issue-1")
+
+        assert result is not None
+        assert "Title: Fix bug" in result
+        assert "Details here" in result
+
+    @pytest.mark.asyncio
+    async def test_includes_acceptance_criteria(self, tmp_path: Path) -> None:
+        """Should include acceptance criteria in description."""
+        beads = BeadsClient(tmp_path)
+        issue_json = json.dumps(
+            {
+                "id": "issue-1",
+                "title": "Task",
+                "acceptance": "- Tests pass\n- Code reviewed",
+            }
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=issue_json)),
+            )
+            result = await beads.get_issue_description_async("issue-1")
+
+        assert result is not None
+        assert "Acceptance Criteria:" in result
+        assert "Tests pass" in result
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_fields(self, tmp_path: Path) -> None:
+        """Should return None when issue has no description fields."""
+        beads = BeadsClient(tmp_path)
+        issue_json = json.dumps({"id": "issue-1"})
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=issue_json)),
+            )
+            result = await beads.get_issue_description_async("issue-1")
+
+        assert result is None
+
+
+class TestCloseAsync:
+    """Test close_async method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_success(self, tmp_path: Path) -> None:
+        """Should return True when close succeeds."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(returncode=0)),
+            )
+            result = await beads.close_async("issue-1")
+
+        assert result is True
+
+
+class TestReopenIssueAsync:
+    """Test reopen_issue_async method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_success(self, tmp_path: Path) -> None:
+        """Should return True when reopen succeeds."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(returncode=0)),
+            )
+            result = await beads.reopen_issue_async("issue-1")
+
+        assert result is True
+
+
+class TestAddDependencyAsync:
+    """Test add_dependency_async method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_success(self, tmp_path: Path) -> None:
+        """Should return True when adding dependency succeeds."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(returncode=0)),
+            )
+            result = await beads.add_dependency_async("issue-1", "blocker-1")
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_failure(self, tmp_path: Path) -> None:
+        """Should return False when adding dependency fails."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(returncode=1)),
+            )
+            result = await beads.add_dependency_async("issue-1", "blocker-1")
+
+        assert result is False
+
+
+class TestCreateIssueAsync:
+    """Test create_issue_async method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_issue_id_from_stdout(self, tmp_path: Path) -> None:
+        """Should return issue ID parsed from stdout."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(
+                    return_value=make_command_result(stdout="Created issue: abc-123")
+                ),
+            )
+            result = await beads.create_issue_async(
+                title="Test", description="Desc", priority="P2"
+            )
+
+        assert result == "abc-123"
+
+    @pytest.mark.asyncio
+    async def test_returns_issue_id_from_json(self, tmp_path: Path) -> None:
+        """Should return issue ID from JSON response."""
+        beads = BeadsClient(tmp_path)
+        response = json.dumps({"id": "xyz-456"})
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=response)),
+            )
+            result = await beads.create_issue_async(
+                title="Test", description="Desc", priority="P2"
+            )
+
+        assert result == "xyz-456"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_failure(self, tmp_path: Path) -> None:
+        """Should return None when create fails."""
+        beads = BeadsClient(tmp_path)
+        warnings: list[str] = []
+        beads._log_warning = lambda msg: warnings.append(msg)  # type: ignore[method-assign]
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(
+                    return_value=make_command_result(returncode=1, stderr="error")
+                ),
+            )
+            result = await beads.create_issue_async(
+                title="Test", description="Desc", priority="P2"
+            )
+
+        assert result is None
+        assert len(warnings) == 1
+
+    @pytest.mark.asyncio
+    async def test_includes_parent_and_tags(self, tmp_path: Path) -> None:
+        """Should include parent and tags in command."""
+        beads = BeadsClient(tmp_path)
+        captured_cmds: list[list[str]] = []
+
+        async def capturing_run(cmd: list[str]) -> CommandResult:
+            captured_cmds.append(cmd)
+            return make_command_result(stdout="Created issue: new-1")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", capturing_run)
+            await beads.create_issue_async(
+                title="Test",
+                description="Desc",
+                priority="P1",
+                parent_id="epic-1",
+                tags=["bug", "urgent"],
+            )
+
+        cmd = captured_cmds[0]
+        assert "--parent" in cmd
+        assert "epic-1" in cmd
+        assert "--labels" in cmd
+        assert "bug,urgent" in cmd
+
+
+class TestFindIssueByTagAsync:
+    """Test find_issue_by_tag_async method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_first_matching_issue(self, tmp_path: Path) -> None:
+        """Should return first issue ID from list."""
+        beads = BeadsClient(tmp_path)
+        issues = json.dumps([{"id": "issue-1"}, {"id": "issue-2"}])
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=issues)),
+            )
+            result = await beads.find_issue_by_tag_async("my-tag")
+
+        assert result == "issue-1"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_matches(self, tmp_path: Path) -> None:
+        """Should return None when no issues match."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout="[]")),
+            )
+            result = await beads.find_issue_by_tag_async("nonexistent")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_failure(self, tmp_path: Path) -> None:
+        """Should return None when bd list fails."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(returncode=1)),
+            )
+            result = await beads.find_issue_by_tag_async("my-tag")
+
+        assert result is None
+
+
+class TestUpdateIssueDescriptionAsync:
+    """Test update_issue_description_async method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_success(self, tmp_path: Path) -> None:
+        """Should return True when update succeeds."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(returncode=0)),
+            )
+            result = await beads.update_issue_description_async(
+                "issue-1", "New description"
+            )
+
+        assert result is True
+
+
+class TestUpdateIssueAsync:
+    """Test update_issue_async method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_no_changes(self, tmp_path: Path) -> None:
+        """Should return True when no changes requested."""
+        beads = BeadsClient(tmp_path)
+
+        result = await beads.update_issue_async("issue-1")
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_updates_title_and_priority(self, tmp_path: Path) -> None:
+        """Should update title and priority."""
+        beads = BeadsClient(tmp_path)
+        captured_cmds: list[list[str]] = []
+
+        async def capturing_run(cmd: list[str]) -> CommandResult:
+            captured_cmds.append(cmd)
+            return make_command_result()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", capturing_run)
+            await beads.update_issue_async("issue-1", title="New Title", priority="P1")
+
+        cmd = captured_cmds[0]
+        assert "--title" in cmd
+        assert "New Title" in cmd
+        assert "--priority" in cmd
+        assert "P1" in cmd
+
+
+class TestRunSubprocessAsyncTimeout:
+    """Test _run_subprocess_async timeout handling."""
+
+    @pytest.mark.asyncio
+    async def test_logs_warning_on_timeout(self, tmp_path: Path) -> None:
+        """Should log warning when command times out."""
+        from unittest.mock import MagicMock
+
+        from src.infra.tools.command_runner import CommandRunner
+
+        warnings: list[str] = []
+        beads = BeadsClient(tmp_path, log_warning=warnings.append)
+
+        # Create a mock runner that returns a timed out result
+        mock_runner = MagicMock(spec=CommandRunner)
+        mock_runner.run_async = AsyncMock(
+            return_value=CommandResult(
+                command=["bd", "test"],
+                returncode=1,
+                stdout="",
+                stderr="",
+                timed_out=True,
+                duration_seconds=30.0,
+            )
+        )
+        beads._runner = mock_runner
+
+        result = await beads._run_subprocess_async(["bd", "test"], timeout=30.0)
+
+        assert result.timed_out is True
+        assert len(warnings) == 1
+        assert "timed out" in warnings[0]
+
+
+class TestGetEpicChildrenAsync:
+    """Test get_epic_children_async method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_child_ids(self, tmp_path: Path) -> None:
+        """Should return child IDs from tree response."""
+        beads = BeadsClient(tmp_path)
+        tree = json.dumps(
+            [
+                {"id": "epic-1", "depth": 0},
+                {"id": "task-1", "depth": 1},
+                {"id": "task-2", "depth": 1},
+            ]
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=tree)),
+            )
+            result = await beads.get_epic_children_async("epic-1")
+
+        assert result == {"task-1", "task-2"}
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_set_on_failure(self, tmp_path: Path) -> None:
+        """Should return empty set when bd dep tree fails."""
+        beads = BeadsClient(tmp_path)
+        warnings: list[str] = []
+        beads._log_warning = lambda msg: warnings.append(msg)  # type: ignore[method-assign]
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(returncode=1)),
+            )
+            result = await beads.get_epic_children_async("epic-1")
+
+        assert result == set()
+        assert len(warnings) == 1
+
+
+class TestFetchWipIssuesAsync:
+    """Test fetch_wip_issues_async method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_issues_on_success(self, tmp_path: Path) -> None:
+        """Should return WIP issues list."""
+        beads = BeadsClient(tmp_path)
+        issues = json.dumps([{"id": "wip-1"}, {"id": "wip-2"}])
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=issues)),
+            )
+            result = await beads.fetch_wip_issues_async()
+
+        assert len(result) == 2
+        assert result[0]["id"] == "wip-1"
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_list_on_failure(self, tmp_path: Path) -> None:
+        """Should return empty list when bd list fails."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(returncode=1)),
+            )
+            result = await beads.fetch_wip_issues_async()
+
+        assert result == []
