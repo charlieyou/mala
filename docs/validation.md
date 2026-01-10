@@ -44,7 +44,31 @@ This prevents hung agents from blocking issue processing indefinitely.
 
 ## Code Review
 
-Code review runs after the deterministic gate passes. Configure it in `validation_triggers.<trigger>.code_review` (see [validation-triggers.md](validation-triggers.md#code-review)):
+Code review runs after the deterministic gate passes. Configure it in `validation_triggers.<trigger>.code_review`. For complete configuration details, see [validation-triggers.md](validation-triggers.md#code-review).
+
+### Code Review Configuration
+
+The `code_review` block configures automated code review for each trigger:
+
+| Field | Required | Values | Default | Description |
+|-------|----------|--------|---------|-------------|
+| `enabled` | No | Boolean | `false` | Whether to run code review |
+| `reviewer_type` | No | `cerberus`, `agent_sdk` | `cerberus` | Which reviewer to use |
+| `failure_mode` | No | `abort`, `continue`, `remediate` | `continue` | How to handle review failures |
+| `max_retries` | No | Integer | `3` | Retry attempts for remediation |
+| `finding_threshold` | No | `P0`, `P1`, `P2`, `P3`, `none` | `none` | Minimum severity to report |
+| `baseline` | Required for cumulative | `since_run_start`, `since_last_review` | - | What code to include |
+| `cerberus` | No | Object | - | Cerberus-specific settings |
+
+### Trigger Types and Code Review
+
+| Trigger | When | Baseline | Use Case |
+|---------|------|----------|----------|
+| `session_end` | After each agent session | Not applicable (per-issue) | Review individual issue commits |
+| `epic_completion` | When epic completes | Required | Cumulative review of epic work |
+| `run_end` | After all issues complete | Required | Final cumulative review |
+
+**Example configuration:**
 
 ```yaml
 validation_triggers:
@@ -52,8 +76,16 @@ validation_triggers:
     failure_mode: continue
     code_review:
       enabled: true
-      reviewer_type: cerberus  # or "agent_sdk"
+      reviewer_type: cerberus
       finding_threshold: P1
+
+  run_end:
+    fire_on: success
+    failure_mode: continue
+    code_review:
+      enabled: true
+      baseline: since_last_review
+      finding_threshold: P0
 ```
 
 ### Review Flow
@@ -84,6 +116,30 @@ When code review passes but includes P2/P3 priority findings, the orchestrator a
    - Link to the source issue
 
 This ensures low-priority review findings are tracked and not forgotten, without blocking the current issue from completing.
+
+### Migration from Legacy Config
+
+Root-level `reviewer_type`, `agent_sdk_review_timeout`, and `agent_sdk_reviewer_model` fields are deprecated. Move review configuration into `validation_triggers.<trigger>.code_review`:
+
+**Before:**
+```yaml
+preset: python-uv
+reviewer_type: cerberus
+```
+
+**After:**
+```yaml
+preset: python-uv
+validation_triggers:
+  session_end:
+    failure_mode: remediate
+    code_review:
+      enabled: true
+      reviewer_type: cerberus
+      finding_threshold: P1
+```
+
+For complete migration instructions, see [validation-triggers.md](validation-triggers.md#migration-guide).
 
 ## Global Validation
 
