@@ -1154,8 +1154,7 @@ class MalaOrchestrator:
     async def _fire_run_end_trigger(self, success_count: int, total_count: int) -> None:
         """Queue run_end trigger validation if configured.
 
-        Called after all issues are processed (after session_end trigger,
-        before global validation).
+        Called after all issues are processed.
 
         Args:
             success_count: Number of successfully completed issues.
@@ -1209,49 +1208,6 @@ class MalaOrchestrator:
         # If trigger validation aborted, set orchestrator abort_run flag.
         if result.status == "aborted":
             self.issue_coordinator.request_abort(reason="Run end trigger aborted")
-
-    async def _fire_session_end_trigger(self) -> None:
-        """Queue session_end trigger validation if configured.
-
-        Called at the end of a session (before final validation).
-        Checks skip conditions and queues the trigger if appropriate.
-
-        Skip conditions:
-        - abort_run=True: Abort takes precedence over session end trigger
-        - success_count==0: Nothing to validate if no issues succeeded
-        """
-        # Skip if abort already requested
-        if self.abort_run:
-            return
-
-        # Skip if no successful issues
-        success_count = sum(1 for r in self._state.completed if r.success)
-        if success_count == 0:
-            return
-
-        # Check if session_end trigger is configured
-        triggers = (
-            self._validation_config.validation_triggers
-            if self._validation_config
-            else None
-        )
-        if triggers is None or triggers.session_end is None:
-            return
-
-        # Queue SESSION_END trigger
-        self.run_coordinator.queue_trigger_validation(
-            TriggerType.SESSION_END,
-            {"success_count": success_count},
-        )
-
-        # Blocking wait for trigger validation
-        result = await self.run_coordinator.run_trigger_validation()
-
-        # If trigger validation aborted, set orchestrator abort_run flag.
-        # Note: self.abort_run is a read-only property that delegates to
-        # issue_coordinator.abort_run, so request_abort() sets the flag.
-        if result.status == "aborted":
-            self.issue_coordinator.request_abort(reason="Session end trigger aborted")
 
     def _handle_sigint(
         self,
@@ -1469,9 +1425,6 @@ class MalaOrchestrator:
 
             # Finalization happens after lock cleanup but before debug log cleanup
             success_count = sum(1 for r in self._state.completed if r.success)
-
-            # T009: Hook for session_end trigger
-            await self._fire_session_end_trigger()
 
             # T010: Hook for run_end trigger (run-level validation now handled here)
             await self._fire_run_end_trigger(success_count, len(self._state.completed))
