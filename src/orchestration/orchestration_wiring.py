@@ -256,6 +256,7 @@ def build_session_callback_factory(
     on_session_log_path: Callable[[str, Path], None],
     on_review_log_path: Callable[[str, str], None],
     interrupt_event_getter: Callable | None = None,
+    get_base_sha: Callable[[str], str | None] | None = None,
 ) -> SessionCallbackFactory:
     """Build SessionCallbackFactory.
 
@@ -269,6 +270,7 @@ def build_session_callback_factory(
         on_session_log_path: Callback when session log path becomes known.
         on_review_log_path: Callback when review log path becomes known.
         interrupt_event_getter: Callable to get the interrupt event (late-bound).
+        get_base_sha: Callable to get base_sha for an issue (late-bound for session_end).
 
     Returns:
         Configured SessionCallbackFactory.
@@ -285,6 +287,7 @@ def build_session_callback_factory(
         get_per_session_spec=lambda: async_gate_runner.per_session_spec,
         is_verbose=is_verbose_enabled,
         get_interrupt_event=interrupt_event_getter,
+        get_base_sha=get_base_sha,
     )
 
 

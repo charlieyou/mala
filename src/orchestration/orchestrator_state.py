@@ -29,6 +29,7 @@ class OrchestratorState:
         deadlock_cleaned_agents: Tracks agent IDs cleaned during deadlock resolution.
         deadlock_victim_issues: Tracks issue IDs killed due to deadlock resolution.
         run_start_commit: HEAD commit captured at run start for baseline tracking.
+        issue_base_shas: Maps issue_id to base_sha (HEAD at issue session start).
     """
 
     agent_ids: dict[str, str] = field(default_factory=dict)
@@ -37,3 +38,4 @@ class OrchestratorState:
     deadlock_cleaned_agents: set[str] = field(default_factory=set)
     deadlock_victim_issues: set[str] = field(default_factory=set)
     run_start_commit: str | None = None
+    issue_base_shas: dict[str, str] = field(default_factory=dict)

@@ -371,6 +371,7 @@ class MalaOrchestrator:
             on_session_log_path=self._on_session_log_path,
             on_review_log_path=self._on_review_log_path,
             interrupt_event_getter=lambda: self._interrupt_event,
+            get_base_sha=lambda issue_id: self._state.issue_base_shas.get(issue_id),
         )
         self._session_config = build_session_config(
             pipeline,
@@ -857,6 +858,13 @@ class MalaOrchestrator:
             baseline_timestamp=baseline_timestamp,
         )
 
+        # T013: Capture base_sha at session start (before agent writes)
+        # Only capture once per issue - immutable across retries
+        if issue_id not in self._state.issue_base_shas:
+            base_sha = await get_git_commit_async(self.repo_path)
+            if base_sha:
+                self._state.issue_base_shas[issue_id] = base_sha
+
         runner = AgentSessionRunner(
             config=self._session_config,
             sdk_client_factory=self._sdk_client_factory,
@@ -918,6 +926,7 @@ class MalaOrchestrator:
             review_log_path=output.review_log_path,
             baseline_timestamp=output.baseline_timestamp,
             last_review_issues=output.last_review_issues,
+            base_sha=self._state.issue_base_shas.get(issue_id),
         )
 
     async def spawn_agent(

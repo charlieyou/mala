@@ -4171,3 +4171,277 @@ class TestFireRunEndTrigger:
         await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
 
         orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()
+
+
+class TestBaseShaCapture:
+    """Tests for base_sha capture at issue session start (T013)."""
+
+    @pytest.fixture(autouse=True)
+    def short_log_timeout(self) -> Generator[None, None, None]:
+        """Patch log file wait timeout to avoid 60s waits in tests."""
+        from src.pipeline.agent_session_runner import AgentSessionConfig
+
+        original_init = AgentSessionConfig.__init__
+
+        def patched_init(
+            self: AgentSessionConfig, *args: object, **kwargs: object
+        ) -> None:
+            if "log_file_wait_timeout" not in kwargs:
+                kwargs["log_file_wait_timeout"] = 0.5
+            original_init(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(AgentSessionConfig, "__init__", patched_init):
+            yield
+
+    @pytest.mark.asyncio
+    async def test_base_sha_captured_in_issue_result(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """IssueResult.base_sha is populated after issue session starts."""
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=5,
+        )
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
+            yield ResultMessage(
+                subtype="result",
+                session_id="test-session-123",
+                result="Agent completed",
+                duration_ms=1000,
+                duration_api_ms=800,
+                is_error=False,
+                num_turns=1,
+                total_cost_usd=0.01,
+                usage=None,
+            )
+
+        mock_client.receive_response = mock_receive_response
+
+        with (
+            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value="abc123def456",
+            ),
+        ):
+            result = await orchestrator.run_implementer("test-issue")
+
+        # base_sha should be captured from get_git_commit_async
+        assert result.base_sha == "abc123def456"
+
+    @pytest.mark.asyncio
+    async def test_base_sha_matches_head_at_session_start(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """base_sha matches the HEAD commit at session start time."""
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=5,
+        )
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
+            yield ResultMessage(
+                subtype="result",
+                session_id="test-session-123",
+                result="Agent completed",
+                duration_ms=1000,
+                duration_api_ms=800,
+                is_error=False,
+                num_turns=1,
+                total_cost_usd=0.01,
+                usage=None,
+            )
+
+        mock_client.receive_response = mock_receive_response
+
+        captured_commit = "session_start_sha_789"
+
+        with (
+            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value=captured_commit,
+            ),
+        ):
+            result = await orchestrator.run_implementer("test-issue")
+
+        assert result.base_sha == captured_commit
+
+    @pytest.mark.asyncio
+    async def test_base_sha_immutable_across_retries(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """base_sha does not change when issue is retried (gate retry)."""
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=5,
+        )
+
+        # Simulate different HEAD commits on each call
+        call_count = 0
+        commit_values = ["first_sha_111", "second_sha_222"]
+
+        async def changing_commit(*args: object, **kwargs: object) -> str:
+            nonlocal call_count
+            result = commit_values[min(call_count, len(commit_values) - 1)]
+            call_count += 1
+            return result
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
+            yield ResultMessage(
+                subtype="result",
+                session_id="test-session-123",
+                result="Agent completed",
+                duration_ms=1000,
+                duration_api_ms=800,
+                is_error=False,
+                num_turns=1,
+                total_cost_usd=0.01,
+                usage=None,
+            )
+
+        mock_client.receive_response = mock_receive_response
+
+        with (
+            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                side_effect=changing_commit,
+            ),
+        ):
+            # First run captures base_sha
+            result1 = await orchestrator.run_implementer("test-issue")
+
+            # Second run (simulating retry) should use same base_sha
+            result2 = await orchestrator.run_implementer("test-issue")
+
+        # Both should have the first captured value
+        assert result1.base_sha == "first_sha_111"
+        assert result2.base_sha == "first_sha_111"  # Immutable - same as first
+
+    @pytest.mark.asyncio
+    async def test_base_sha_available_via_get_base_sha_callback(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """base_sha is accessible via session_callback_factory's get_base_sha."""
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=5,
+        )
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
+            yield ResultMessage(
+                subtype="result",
+                session_id="test-session-123",
+                result="Agent completed",
+                duration_ms=1000,
+                duration_api_ms=800,
+                is_error=False,
+                num_turns=1,
+                total_cost_usd=0.01,
+                usage=None,
+            )
+
+        mock_client.receive_response = mock_receive_response
+
+        captured_sha = "callback_accessible_sha"
+
+        with (
+            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value=captured_sha,
+            ),
+        ):
+            await orchestrator.run_implementer("test-issue")
+
+        # The get_base_sha callback should return the captured value
+        assert orchestrator._state.issue_base_shas.get("test-issue") == captured_sha
+
+    @pytest.mark.asyncio
+    async def test_base_sha_none_when_git_fails(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """base_sha is None when git commit retrieval fails."""
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=5,
+        )
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
+            yield ResultMessage(
+                subtype="result",
+                session_id="test-session-123",
+                result="Agent completed",
+                duration_ms=1000,
+                duration_api_ms=800,
+                is_error=False,
+                num_turns=1,
+                total_cost_usd=0.01,
+                usage=None,
+            )
+
+        mock_client.receive_response = mock_receive_response
+
+        with (
+            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value="",  # Empty string simulates git failure
+            ),
+        ):
+            result = await orchestrator.run_implementer("test-issue")
+
+        # base_sha should be None when git commit retrieval returns empty
+        assert result.base_sha is None
