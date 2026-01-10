@@ -570,10 +570,25 @@ class EpicVerifier:
         if self.max_diff_size_kb is not None and scoped.commit_range:
             diff_size_kb = await self._get_diff_size_kb(scoped.commit_range)
             if diff_size_kb is not None and diff_size_kb > self.max_diff_size_kb:
+                criterion = (
+                    f"Diff size must not exceed {self.max_diff_size_kb} KB "
+                    "for automated verification"
+                )
                 return (
                     EpicVerdict(
                         passed=False,
-                        unmet_criteria=[],
+                        unmet_criteria=[
+                            UnmetCriterion(
+                                criterion=criterion,
+                                evidence=(
+                                    f"Diff size ({diff_size_kb} KB) exceeds limit "
+                                    f"({self.max_diff_size_kb} KB). "
+                                    "Requires human review."
+                                ),
+                                priority=1,  # P1 blocking
+                                criterion_hash=_compute_criterion_hash(criterion),
+                            )
+                        ],
                         confidence=0.0,
                         reasoning=(
                             f"Diff size ({diff_size_kb} KB) exceeds limit "

@@ -1434,6 +1434,12 @@ class TestMaxDiffSizeKb:
         assert verdict.confidence == 0.0
         assert "exceeds limit" in verdict.reasoning
         assert "Requires human review" in verdict.reasoning
+        # Should have a synthetic unmet criterion for remediation issue creation
+        assert len(verdict.unmet_criteria) == 1
+        unmet = verdict.unmet_criteria[0]
+        assert "Diff size must not exceed 10 KB" in unmet.criterion
+        assert "exceeds limit" in unmet.evidence
+        assert unmet.priority == 1  # P1 blocking
 
     @pytest.mark.asyncio
     async def test_proceeds_when_diff_within_limit(
