@@ -3886,14 +3886,18 @@ class TestFireRunEndTrigger:
         )
 
     @pytest.mark.asyncio
-    async def test_skips_trigger_on_failure_when_fire_on_success(
+    async def test_fires_trigger_on_mixed_when_fire_on_success(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """Skips trigger when fire_on=SUCCESS but some issues failed."""
+        """Fires trigger when fire_on=SUCCESS and some issues succeeded (mixed).
+
+        Per spec R7: fire_on=success fires if success_count > 0.
+        """
         from src.domain.validation.config import (
             FailureMode,
             FireOn,
             RunEndTriggerConfig,
+            TriggerType,
             ValidationConfig,
             ValidationTriggersConfig,
         )
@@ -3916,11 +3920,17 @@ class TestFireRunEndTrigger:
         orchestrator._validation_config = validation_config
 
         orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
+        orchestrator.run_coordinator.run_trigger_validation = AsyncMock(  # type: ignore[method-assign]
+            return_value=MagicMock(status="passed")
+        )
 
-        # Some failure: 2 success out of 3 total
+        # Mixed: 2 success out of 3 total - fires per spec R7 (success_count > 0)
         await orchestrator._fire_run_end_trigger(success_count=2, total_count=3)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()
+        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once_with(
+            TriggerType.RUN_END,
+            {"success_count": 2, "total_count": 3},
+        )
 
     @pytest.mark.asyncio
     async def test_queues_trigger_on_failure_when_fire_on_failure(

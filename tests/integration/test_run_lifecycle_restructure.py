@@ -1118,30 +1118,23 @@ class TestFireOnTruthTable:
         )
 
     # Row 3: N success, M failures (mixed outcomes)
-    #
-    # Note: The spec R7 text says "fire_on=success fires if success_count > 0",
-    # and the truth table shows mixed outcomes should fire with fire_on=success.
-    # However, the current implementation uses "all_success" (success_count == total_count).
-    # The tests below match the current implementation behavior.
-    # TODO: Consider aligning implementation with spec if the spec is authoritative.
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_mixed_outcomes_fire_on_success_skips(
+    async def test_mixed_outcomes_fire_on_success_fires(
         self,
         tmp_path: Path,
         make_validation_config: Callable,
         make_orchestrator: Callable,
     ) -> None:
-        """fire_on=success with mixed outcomes → run_end skipped.
+        """fire_on=success with mixed outcomes → run_end fires.
 
-        Implementation behavior: fire_on=success requires ALL issues to succeed.
-        Note: Spec R7 truth table suggests this should fire, but implementation
-        uses all_success check (success_count == total_count).
+        Truth table row: success_count=N(>0), failure_count=M(>0), fire_on=success → fire
+        Per spec R7: fire_on=success fires if success_count > 0
         """
         from unittest.mock import AsyncMock, MagicMock
 
-        from src.domain.validation.config import FireOn
+        from src.domain.validation.config import FireOn, TriggerType
 
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
@@ -1151,13 +1144,18 @@ class TestFireOnTruthTable:
         orchestrator._validation_config = make_validation_config(FireOn.SUCCESS)
 
         orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
-        orchestrator.run_coordinator.run_trigger_validation = AsyncMock()  # type: ignore[method-assign]
+        orchestrator.run_coordinator.run_trigger_validation = AsyncMock(  # type: ignore[method-assign]
+            return_value=MagicMock(status="passed")
+        )
 
         # 2 success, 1 failure (mixed)
         await orchestrator._fire_run_end_trigger(success_count=2, total_count=3)
 
-        # Current implementation: skip when not all success
-        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()
+        # Per spec R7: fire_on=success fires when success_count > 0
+        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once_with(
+            TriggerType.RUN_END,
+            {"success_count": 2, "total_count": 3},
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -1276,10 +1274,14 @@ class TestRunAbortScenarios:
         )
         validation_config = ValidationConfig(validation_triggers=triggers)
 
+        # Create mock event sink to verify skip event is emitted
+        mock_event_sink = MagicMock()
+
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
             max_agents=1,
             timeout_minutes=1,
+            event_sink=mock_event_sink,
         )
         orchestrator._validation_config = validation_config
 
@@ -1298,6 +1300,11 @@ class TestRunAbortScenarios:
 
         # run_end should NOT be queued
         orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()
+
+        # Verify event sink received skip event with reason=run_aborted
+        mock_event_sink.on_trigger_validation_skipped.assert_called_once_with(
+            "run_end", "run_aborted"
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.integration

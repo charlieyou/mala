@@ -1175,6 +1175,7 @@ class MalaOrchestrator:
         """
         # Skip if abort already requested
         if self.abort_run:
+            self.event_sink.on_trigger_validation_skipped("run_end", "run_aborted")
             return
 
         # Skip if no issues were processed
@@ -1192,12 +1193,15 @@ class MalaOrchestrator:
 
         trigger_config = triggers.run_end
 
-        # Check fire_on filter
-        all_success = success_count == total_count
+        # Check fire_on filter per spec R7:
+        # - fire_on=success fires if success_count > 0
+        # - fire_on=failure fires if failure_count > 0
+        # - fire_on=both always fires
+        any_success = success_count > 0
         any_failure = success_count < total_count
 
         should_fire = (
-            (trigger_config.fire_on == FireOn.SUCCESS and all_success)
+            (trigger_config.fire_on == FireOn.SUCCESS and any_success)
             or (trigger_config.fire_on == FireOn.FAILURE and any_failure)
             or (trigger_config.fire_on == FireOn.BOTH)
         )
@@ -1207,6 +1211,7 @@ class MalaOrchestrator:
                 f"Skipping run_end trigger (fire_on={trigger_config.fire_on.value}, "
                 f"success={success_count}/{total_count})"
             )
+            self.event_sink.on_trigger_validation_skipped("run_end", "fire_on_not_met")
             return
 
         # Queue RUN_END trigger validation
