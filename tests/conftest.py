@@ -50,6 +50,20 @@ def pytest_configure(config: pytest.Config) -> None:
     os.environ["CLAUDE_CONFIG_DIR"] = "/tmp/mala-test-claude"
 
 
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Clean up test artifacts after test session completes.
+
+    This runs even when tests are interrupted (Ctrl+C), ensuring lock files
+    don't accumulate between test runs.
+    """
+    import shutil
+    from pathlib import Path
+
+    lock_dir = Path("/tmp/mala-test-locks")
+    if lock_dir.exists():
+        shutil.rmtree(lock_dir, ignore_errors=True)
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
