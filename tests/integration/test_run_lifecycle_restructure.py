@@ -467,7 +467,7 @@ async def test_session_end_interrupt_scenario(
 
     Per spec R10:
     - On SIGINT, complete current command and return status="interrupted"
-    - Completed commands preserved in result
+    - Partial command results discarded (commands list is empty)
     - Issue proceeds to review with SessionEndResult containing interrupted status
 
     This test verifies that when SIGINT is received during session_end,
