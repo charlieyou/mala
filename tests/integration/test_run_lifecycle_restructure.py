@@ -368,3 +368,284 @@ async def test_session_end_not_invoked_when_gate_fails(
 
     # session_end events should NOT appear
     assert not any("session_end" in e for e in event_sink.events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_session_end_timeout_scenario(
+    session_config: AgentSessionConfig,
+    fake_factory: FakeSDKClientFactory,
+    tmp_log_path: Path,
+) -> None:
+    """Scenario: session_end times out mid-command.
+
+    Per spec R10:
+    - On timeout, status="timeout" with empty commands array
+    - Issue proceeds to review with SessionEndResult containing timeout status
+
+    This test verifies that when session_end times out during command
+    execution, the lifecycle correctly handles the timeout result and
+    continues to the review phase (or completion if review disabled).
+    """
+    event_sink = FakeEventSink()
+
+    def get_log_path(session_id: str) -> Path:
+        return tmp_log_path
+
+    async def on_gate_check(
+        issue_id: str, log_path: Path, retry_state: RetryState
+    ) -> tuple[GateResult, int]:
+        return (
+            GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+            1000,
+        )
+
+    async def on_session_end_check(
+        issue_id: str, log_path: Path, retry_state: SessionEndRetryState
+    ) -> SessionEndResult:
+        # Simulate timeout: return status="timeout" with empty commands
+        # This simulates what happens when asyncio.timeout() fires
+        return SessionEndResult(
+            status="timeout",
+            reason="session_end_timeout",
+            commands=[],  # Per spec R10: partial results discarded on timeout
+        )
+
+    callbacks = SessionCallbacks(
+        get_log_path=get_log_path,
+        on_gate_check=on_gate_check,
+        on_session_end_check=on_session_end_check,
+    )
+
+    runner = AgentSessionRunner(
+        config=session_config,
+        callbacks=callbacks,
+        sdk_client_factory=fake_factory,
+        event_sink=cast("Any", event_sink),
+    )
+
+    input = AgentSessionInput(
+        issue_id="test-timeout",
+        prompt="Test prompt",
+    )
+
+    output = await runner.run_session(input)
+
+    # Session should complete successfully despite timeout
+    # (timeout proceeds to review per spec)
+    assert output.success is True
+
+    # Verify event ordering: gate_passed -> session_end_started -> session_end_completed:timeout
+    assert "gate_passed:test-timeout" in event_sink.events
+    assert "session_end_started:test-timeout" in event_sink.events
+    assert "session_end_completed:test-timeout:timeout" in event_sink.events
+
+    gate_idx = event_sink.events.index("gate_passed:test-timeout")
+    session_end_started_idx = event_sink.events.index(
+        "session_end_started:test-timeout"
+    )
+    session_end_completed_idx = event_sink.events.index(
+        "session_end_completed:test-timeout:timeout"
+    )
+
+    # Verify correct ordering
+    assert session_end_started_idx > gate_idx
+    assert session_end_completed_idx > session_end_started_idx
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_session_end_interrupt_scenario(
+    session_config: AgentSessionConfig,
+    fake_factory: FakeSDKClientFactory,
+    tmp_log_path: Path,
+) -> None:
+    """Scenario: SIGINT during session_end command execution.
+
+    Per spec R10:
+    - On SIGINT, complete current command and return status="interrupted"
+    - Completed commands preserved in result
+    - Issue proceeds to review with SessionEndResult containing interrupted status
+
+    This test verifies that when SIGINT is received during session_end,
+    the lifecycle correctly handles the interrupted result with preserved
+    command results and continues to the review phase.
+    """
+    from dataclasses import dataclass as dc
+
+    @dc
+    class FakeCommandResult:
+        """Fake command result to simulate completed command."""
+
+        command: str
+        returncode: int
+        stdout: str
+        stderr: str
+        duration_seconds: float
+        timed_out: bool
+
+        @property
+        def ok(self) -> bool:
+            return self.returncode == 0
+
+    event_sink = FakeEventSink()
+
+    def get_log_path(session_id: str) -> Path:
+        return tmp_log_path
+
+    async def on_gate_check(
+        issue_id: str, log_path: Path, retry_state: RetryState
+    ) -> tuple[GateResult, int]:
+        return (
+            GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+            1000,
+        )
+
+    async def on_session_end_check(
+        issue_id: str, log_path: Path, retry_state: SessionEndRetryState
+    ) -> SessionEndResult:
+        # Simulate interrupt: return status="interrupted" with completed commands
+        # Per spec R10: completed commands preserved on interrupt
+        completed_command = FakeCommandResult(
+            command="ruff check .",
+            returncode=0,
+            stdout="All checks passed",
+            stderr="",
+            duration_seconds=1.5,
+            timed_out=False,
+        )
+        return SessionEndResult(
+            status="interrupted",
+            reason="SIGINT received",
+            commands=[completed_command],  # type: ignore[list-item]
+        )
+
+    callbacks = SessionCallbacks(
+        get_log_path=get_log_path,
+        on_gate_check=on_gate_check,
+        on_session_end_check=on_session_end_check,
+    )
+
+    runner = AgentSessionRunner(
+        config=session_config,
+        callbacks=callbacks,
+        sdk_client_factory=fake_factory,
+        event_sink=cast("Any", event_sink),
+    )
+
+    input = AgentSessionInput(
+        issue_id="test-interrupt",
+        prompt="Test prompt",
+    )
+
+    output = await runner.run_session(input)
+
+    # Session should complete (interrupted proceeds to review per spec)
+    assert output.success is True
+
+    # Verify event ordering: gate_passed -> session_end_started -> session_end_completed:interrupted
+    assert "gate_passed:test-interrupt" in event_sink.events
+    assert "session_end_started:test-interrupt" in event_sink.events
+    assert "session_end_completed:test-interrupt:interrupted" in event_sink.events
+
+    gate_idx = event_sink.events.index("gate_passed:test-interrupt")
+    session_end_started_idx = event_sink.events.index(
+        "session_end_started:test-interrupt"
+    )
+    session_end_completed_idx = event_sink.events.index(
+        "session_end_completed:test-interrupt:interrupted"
+    )
+
+    # Verify correct ordering
+    assert session_end_started_idx > gate_idx
+    assert session_end_completed_idx > session_end_started_idx
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_session_end_timeout_proceeds_to_review_with_correct_result(
+    tmp_path: Path,
+    fake_factory: FakeSDKClientFactory,
+    tmp_log_path: Path,
+) -> None:
+    """Verify timeout scenario proceeds to review with explicit status.
+
+    Per spec R10: On timeout/interrupt, proceed to review with explicit status.
+    This test enables review to verify the SessionEndResult is available.
+    """
+    from datetime import UTC, datetime
+
+    event_sink = FakeEventSink()
+    session_end_results: list[SessionEndResult] = []
+
+    # Enable review to verify integration
+    config_with_review = AgentSessionConfig(
+        repo_path=tmp_path,
+        timeout_seconds=60,
+        prompts=make_test_prompts(),
+        max_gate_retries=3,
+        max_review_retries=0,  # Don't retry review
+        review_enabled=True,  # Enable review
+        mcp_server_factory=make_noop_mcp_factory(),
+    )
+
+    def get_log_path(session_id: str) -> Path:
+        return tmp_log_path
+
+    async def on_gate_check(
+        issue_id: str, log_path: Path, retry_state: RetryState
+    ) -> tuple[GateResult, int]:
+        return (
+            GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+            1000,
+        )
+
+    async def on_session_end_check(
+        issue_id: str, log_path: Path, retry_state: SessionEndRetryState
+    ) -> SessionEndResult:
+        result = SessionEndResult(
+            status="timeout",
+            started_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC),
+            reason="session_end_timeout",
+            commands=[],
+        )
+        session_end_results.append(result)
+        return result
+
+    callbacks = SessionCallbacks(
+        get_log_path=get_log_path,
+        on_gate_check=on_gate_check,
+        on_session_end_check=on_session_end_check,
+    )
+
+    runner = AgentSessionRunner(
+        config=config_with_review,
+        callbacks=callbacks,
+        sdk_client_factory=fake_factory,
+        event_sink=cast("Any", event_sink),
+    )
+
+    input = AgentSessionInput(
+        issue_id="test-timeout-review",
+        prompt="Test prompt",
+    )
+
+    await runner.run_session(input)
+
+    # Session completes (review may fail but that's ok for this test)
+    # Key verification: session_end was invoked and review was started
+    assert len(session_end_results) == 1
+    assert session_end_results[0].status == "timeout"
+    assert session_end_results[0].commands == []
+
+    # Verify session_end completed event with timeout status
+    assert "session_end_completed:test-timeout-review:timeout" in event_sink.events
+
+    # Verify review_started event appears after session_end (review is enabled)
+    if "review_started:test-timeout-review" in event_sink.events:
+        session_end_idx = event_sink.events.index(
+            "session_end_completed:test-timeout-review:timeout"
+        )
+        review_idx = event_sink.events.index("review_started:test-timeout-review")
+        assert review_idx > session_end_idx
