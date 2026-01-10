@@ -4179,23 +4179,6 @@ class TestFireRunEndTrigger:
 class TestBaseShaCapture:
     """Tests for base_sha capture at issue session start (T013)."""
 
-    @pytest.fixture(autouse=True)
-    def short_log_timeout(self) -> Generator[None, None, None]:
-        """Patch log file wait timeout to avoid 60s waits in tests."""
-        from src.pipeline.agent_session_runner import AgentSessionConfig
-
-        original_init = AgentSessionConfig.__init__
-
-        def patched_init(
-            self: AgentSessionConfig, *args: object, **kwargs: object
-        ) -> None:
-            if "log_file_wait_timeout" not in kwargs:
-                kwargs["log_file_wait_timeout"] = 0.5
-            original_init(self, *args, **kwargs)  # type: ignore[arg-type]
-
-        with patch.object(AgentSessionConfig, "__init__", patched_init):
-            yield
-
     @pytest.mark.asyncio
     async def test_base_sha_captured_in_issue_result(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
@@ -4206,6 +4189,8 @@ class TestBaseShaCapture:
             max_agents=1,
             timeout_minutes=5,
         )
+        # Patch config after creation to avoid 60s log wait timeout
+        object.__setattr__(orchestrator._session_config, "log_file_wait_timeout", 0.5)
 
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -4253,6 +4238,7 @@ class TestBaseShaCapture:
             max_agents=1,
             timeout_minutes=5,
         )
+        object.__setattr__(orchestrator._session_config, "log_file_wait_timeout", 0.5)
 
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -4301,6 +4287,7 @@ class TestBaseShaCapture:
             max_agents=1,
             timeout_minutes=5,
         )
+        object.__setattr__(orchestrator._session_config, "log_file_wait_timeout", 0.5)
 
         # Simulate different HEAD commits on each call
         call_count = 0
@@ -4363,6 +4350,7 @@ class TestBaseShaCapture:
             max_agents=1,
             timeout_minutes=5,
         )
+        object.__setattr__(orchestrator._session_config, "log_file_wait_timeout", 0.5)
 
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -4412,6 +4400,7 @@ class TestBaseShaCapture:
             max_agents=1,
             timeout_minutes=5,
         )
+        object.__setattr__(orchestrator._session_config, "log_file_wait_timeout", 0.5)
 
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
