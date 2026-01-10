@@ -129,6 +129,7 @@ ReviewCheckCallback = Callable[
         "RetryState",
         str | None,
         Sequence["ReviewIssueProtocol"] | None,
+        "SessionEndResult | None",
     ],
     Coroutine[Any, Any, "ReviewOutcome"],
 ]
@@ -240,7 +241,9 @@ class AgentSessionConfig:
         prompt_validation_commands: Validation commands for prompt templates.
             If None, uses default Python/uv commands.
         context_restart_threshold: Ratio (0.0-1.0) at which to raise
-            ContextPressureError. Default 0.90 (90% of context_limit).
+            ContextPressureError. Default 0.70 (70% of context_limit).
+            Set lower than actual limit because API reports cached token
+            counts which underestimate true prompt size by ~20-25%.
         context_limit: Maximum context tokens. Default 200K for Claude.
         strict_resume: When True and session resumption fails (stale session),
             fail the session instead of retrying with a fresh session.
@@ -260,7 +263,7 @@ class AgentSessionConfig:
     idle_retry_backoff: tuple[float, ...] = (0.0, 5.0, 15.0)
     lint_tools: frozenset[str] | None = None
     prompt_validation_commands: PromptValidationCommands | None = None
-    context_restart_threshold: float = 0.90
+    context_restart_threshold: float = 0.70
     context_limit: int = 200_000
     deadlock_monitor: DeadlockMonitor | None = None
     mcp_server_factory: McpServerFactory | None = None
@@ -746,6 +749,7 @@ class AgentSessionRunner:
                     lifecycle_ctx.retry_state,
                     author_context,
                     previous_findings,
+                    lifecycle_ctx.last_session_end_result,
                 )
                 review_duration = time.time() - review_start
                 issue_count = len(review_result.issues) if review_result.issues else 0

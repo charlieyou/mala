@@ -186,7 +186,7 @@ class StreamProcessorConfig:
     """
 
     context_limit: int = 200_000
-    context_restart_threshold: float = 0.90
+    context_restart_threshold: float = 0.70
 
 
 @dataclass
