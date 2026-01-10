@@ -615,6 +615,10 @@ class AgentSessionRunner:
 
             # Handle RUN_GATE
             if result.effect == Effect.RUN_GATE:
+                # Check abort before starting gate
+                if abort_event is not None and abort_event.is_set():
+                    lifecycle_ctx.final_result = "Session interrupted: run_aborted"
+                    break
                 # Emit validation started BEFORE the gate check
                 self._effect_handler.process_gate_check(input, lifecycle, lifecycle_ctx)
 
@@ -657,6 +661,10 @@ class AgentSessionRunner:
 
             # Handle RUN_SESSION_END
             if result.effect == Effect.RUN_SESSION_END:
+                # Check abort before starting session_end
+                if abort_event is not None and abort_event.is_set():
+                    lifecycle_ctx.final_result = "Session interrupted: run_aborted"
+                    break
                 # Emit session_end started event BEFORE the check
                 self._effect_handler.process_session_end_check(input, lifecycle_ctx)
 
@@ -714,6 +722,10 @@ class AgentSessionRunner:
 
             # Handle RUN_REVIEW
             if result.effect == Effect.RUN_REVIEW:
+                # Check abort before starting review
+                if abort_event is not None and abort_event.is_set():
+                    lifecycle_ctx.final_result = "Session interrupted: run_aborted"
+                    break
                 assert state.log_path is not None
                 cerberus_log_path: str | None = None
 

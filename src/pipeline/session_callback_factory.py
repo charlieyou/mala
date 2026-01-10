@@ -460,6 +460,10 @@ class SessionCallbackFactory:
                             "session_end failed with abort mode for %s",
                             issue_id,
                         )
+                        # Set abort_event directly for immediate propagation
+                        abort_event = self._get_abort_event()
+                        if abort_event is not None:
+                            abort_event.set()
                         if self._on_abort:
                             self._on_abort(
                                 f"session_end validation failed for {issue_id}"
