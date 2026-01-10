@@ -68,6 +68,7 @@ if TYPE_CHECKING:
     from src.pipeline.cumulative_review_runner import (
         CumulativeReviewResult,
         CumulativeReviewRunner,
+        ReviewFinding,
     )
 
 
@@ -831,31 +832,112 @@ class RunCoordinator:
                     trigger_type, trigger_config, context, interrupt_event
                 )
 
-                # Handle code review failure based on code_review.failure_mode
+                # Handle code review result
                 code_review_config = trigger_config.code_review
-                if (
-                    review_result is not None
-                    and code_review_config is not None
-                    and review_result.status == "failed"
-                ):
+                if review_result is not None and code_review_config is not None:
                     review_failure_mode = code_review_config.failure_mode
-                    if review_failure_mode == FailureMode.ABORT:
-                        if self.event_sink is not None:
-                            self.event_sink.on_trigger_validation_failed(
-                                trigger_type.value, "code_review", "abort"
+                    threshold = code_review_config.finding_threshold
+
+                    # Case 1: Execution error (status == "failed")
+                    if review_result.status == "failed":
+                        if review_failure_mode == FailureMode.ABORT:
+                            if self.event_sink is not None:
+                                self.event_sink.on_trigger_validation_failed(
+                                    trigger_type.value, "code_review", "abort"
+                                )
+                            self.clear_trigger_queue("code_review_failed")
+                            return TriggerValidationResult(
+                                status="aborted",
+                                details=f"Code review failed in trigger {trigger_type.value}",
                             )
-                        self.clear_trigger_queue("code_review_failed")
-                        return TriggerValidationResult(
-                            status="aborted",
-                            details=f"Code review failed in trigger {trigger_type.value}",
+                        elif review_failure_mode == FailureMode.CONTINUE:
+                            last_failure = ("code_review", trigger_type.value)
+                            if self.event_sink is not None:
+                                self.event_sink.on_trigger_validation_failed(
+                                    trigger_type.value, "code_review", "continue"
+                                )
+                        elif review_failure_mode == FailureMode.REMEDIATE:
+                            # Retry code review execution up to max_retries
+                            max_retries = code_review_config.max_retries
+                            retry_success = False
+                            for attempt in range(1, max_retries + 1):
+                                if interrupt_event.is_set():
+                                    self.clear_trigger_queue("sigint")
+                                    return TriggerValidationResult(
+                                        status="aborted",
+                                        details="Validation interrupted by SIGINT",
+                                    )
+                                if self.event_sink is not None:
+                                    self.event_sink.on_trigger_remediation_started(
+                                        trigger_type.value, attempt, max_retries
+                                    )
+                                review_result = await self._run_trigger_code_review(
+                                    trigger_type,
+                                    trigger_config,
+                                    context,
+                                    interrupt_event,
+                                )
+                                if (
+                                    review_result is not None
+                                    and review_result.status != "failed"
+                                ):
+                                    retry_success = True
+                                    if self.event_sink is not None:
+                                        self.event_sink.on_trigger_remediation_succeeded(
+                                            trigger_type.value, attempt
+                                        )
+                                    break
+                            if not retry_success:
+                                # Retries exhausted - continue (don't abort on execution error)
+                                if self.event_sink is not None:
+                                    self.event_sink.on_trigger_remediation_exhausted(
+                                        trigger_type.value, max_retries
+                                    )
+                                last_failure = ("code_review", trigger_type.value)
+                                if self.event_sink is not None:
+                                    self.event_sink.on_trigger_validation_failed(
+                                        trigger_type.value, "code_review", "remediate"
+                                    )
+
+                    # Case 2: Review completed - check finding_threshold
+                    if (
+                        review_result is not None
+                        and review_result.status == "success"
+                        and self._findings_exceed_threshold(
+                            review_result.findings, threshold
                         )
-                    elif review_failure_mode == FailureMode.CONTINUE:
-                        last_failure = ("code_review", trigger_type.value)
-                        if self.event_sink is not None:
-                            self.event_sink.on_trigger_validation_failed(
-                                trigger_type.value, "code_review", "continue"
+                    ):
+                        # Findings exceed threshold - attempt remediation
+                        remediation_result = await self._run_code_review_remediation(
+                            trigger_type,
+                            trigger_config,
+                            context,
+                            interrupt_event,
+                            review_result.findings,
+                        )
+
+                        if interrupt_event.is_set():
+                            self.clear_trigger_queue("sigint")
+                            return TriggerValidationResult(
+                                status="aborted",
+                                details="Validation interrupted by SIGINT",
                             )
-                    # REMEDIATE is not supported for code_review - fall through to passed
+
+                        if remediation_result is None:
+                            # Remediation failed/exhausted - abort
+                            if self.event_sink is not None:
+                                self.event_sink.on_trigger_validation_failed(
+                                    trigger_type.value, "code_review_findings", "abort"
+                                )
+                            self.clear_trigger_queue("code_review_findings_exceeded")
+                            return TriggerValidationResult(
+                                status="aborted",
+                                details=(
+                                    f"Code review findings exceed threshold ({threshold}) "
+                                    f"in trigger {trigger_type.value}"
+                                ),
+                            )
+                        # Remediation succeeded - continue with passing validation
 
                 # Emit validation_passed
                 trigger_duration = time.monotonic() - trigger_start_time
@@ -1459,3 +1541,174 @@ class RunCoordinator:
                     trigger_type.value, reason
                 )
         self._trigger_queue.clear()
+
+    def _findings_exceed_threshold(
+        self,
+        findings: tuple[ReviewFinding, ...],
+        threshold: str,
+    ) -> bool:
+        """Check if any findings exceed the severity threshold.
+
+        Args:
+            findings: Tuple of review findings to check.
+            threshold: Threshold string ("P0", "P1", "P2", "P3", or "none").
+                "none" means never fail on findings.
+                "P1" means fail if any P0 or P1 findings exist.
+
+        Returns:
+            True if findings exceed threshold, False otherwise.
+        """
+        if threshold == "none":
+            return False
+
+        # Convert threshold to numeric: "P0" -> 0, "P1" -> 1, etc.
+        threshold_priority = int(threshold[1])
+
+        # Check if any finding has priority <= threshold
+        # (P0 is priority 0, P1 is priority 1, etc.)
+        for finding in findings:
+            if finding.priority <= threshold_priority:
+                return True
+
+        return False
+
+    async def _run_code_review_remediation(
+        self,
+        trigger_type: TriggerType,
+        trigger_config: BaseTriggerConfig,
+        context: dict[str, Any],
+        interrupt_event: asyncio.Event,
+        initial_findings: tuple[ReviewFinding, ...],
+    ) -> CumulativeReviewResult | None:
+        """Run remediation loop for code review findings that exceed threshold.
+
+        Spawns fixer agent to address findings and re-runs review up to max_retries.
+
+        Args:
+            trigger_type: The trigger type for context.
+            trigger_config: The trigger's configuration.
+            context: Trigger context with issue_id, epic_id, etc.
+            interrupt_event: Event set when SIGINT received.
+            initial_findings: The findings that exceeded threshold.
+
+        Returns:
+            CumulativeReviewResult if remediation succeeded (findings resolved or
+            dropped below threshold), None if remediation failed/exhausted.
+        """
+        code_review_config = trigger_config.code_review
+        if code_review_config is None:
+            return None
+
+        max_retries = code_review_config.max_retries
+        threshold = code_review_config.finding_threshold
+
+        # max_retries=0 means no fixer spawned, immediate failure
+        if max_retries == 0:
+            return None
+
+        # Build failure output for fixer from findings
+        failure_output = self._build_findings_failure_output(
+            initial_findings, threshold
+        )
+
+        for attempt in range(1, max_retries + 1):
+            # Check for SIGINT before fixer attempt
+            if interrupt_event.is_set():
+                return None
+
+            # Emit remediation_started event
+            if self.event_sink is not None:
+                self.event_sink.on_trigger_remediation_started(
+                    trigger_type.value, attempt, max_retries
+                )
+
+            # Build validation commands summary for fixer
+            findings_summary = "\n".join(
+                f"   - {f.file}:{f.line_start}: P{f.priority} - {f.title}"
+                for f in initial_findings
+            )
+
+            # Spawn fixer agent to address findings
+            fixer_result = await self._run_fixer_agent(
+                failure_output=failure_output,
+                attempt=attempt,
+                interrupt_event=interrupt_event,
+                failed_command="code_review",
+                validation_commands=f"Review findings:\n{findings_summary}",
+            )
+
+            # Check for SIGINT after fixer
+            if fixer_result.interrupted or interrupt_event.is_set():
+                return None
+
+            # Re-run code review
+            review_result = await self._run_trigger_code_review(
+                trigger_type, trigger_config, context, interrupt_event
+            )
+
+            if review_result is None:
+                # Review couldn't run (not configured, etc.)
+                return None
+
+            if review_result.status == "failed":
+                # Execution error during re-review - update failure output
+                failure_output = (
+                    f"Code review execution failed: {review_result.skip_reason}"
+                )
+                continue
+
+            # Check if findings now below threshold
+            if not self._findings_exceed_threshold(review_result.findings, threshold):
+                # Remediation succeeded
+                if self.event_sink is not None:
+                    self.event_sink.on_trigger_remediation_succeeded(
+                        trigger_type.value, attempt
+                    )
+                return review_result
+
+            # Update failure output for next attempt
+            failure_output = self._build_findings_failure_output(
+                review_result.findings, threshold
+            )
+            initial_findings = review_result.findings
+
+        # Remediation exhausted
+        if self.event_sink is not None:
+            self.event_sink.on_trigger_remediation_exhausted(
+                trigger_type.value, max_retries
+            )
+
+        return None
+
+    def _build_findings_failure_output(
+        self,
+        findings: tuple[ReviewFinding, ...],
+        threshold: str,
+    ) -> str:
+        """Build failure output string for fixer agent from review findings.
+
+        Args:
+            findings: The review findings to format.
+            threshold: The threshold that was exceeded.
+
+        Returns:
+            Human-readable failure output for fixer prompt.
+        """
+        lines: list[str] = [
+            f"Code review found findings that exceed threshold ({threshold}):",
+            "",
+        ]
+
+        for finding in findings:
+            # Only include findings at or above threshold
+            threshold_priority = int(threshold[1]) if threshold != "none" else 999
+            if finding.priority <= threshold_priority:
+                lines.append(f"## P{finding.priority}: {finding.title}")
+                lines.append(
+                    f"File: {finding.file}:{finding.line_start}-{finding.line_end}"
+                )
+                lines.append(f"{finding.body}")
+                lines.append("")
+
+        lines.append("Please fix these issues so the code review passes.")
+        return "\n".join(lines)

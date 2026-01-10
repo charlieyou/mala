@@ -721,3 +721,595 @@ class TestRunTriggerCodeReview:
 
         assert result is None
         mock_review_runner.run_review.assert_not_called()
+
+
+class TestFindingsExceedThreshold:
+    """Tests for _findings_exceed_threshold method."""
+
+    @pytest.fixture
+    def coordinator(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> RunCoordinator:
+        """Create a minimal RunCoordinator for testing."""
+        mock_gate_checker = MagicMock()
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix: {failure_output}",
+        )
+        return RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+        )
+
+    def test_threshold_none_never_exceeds(self, coordinator: RunCoordinator) -> None:
+        """Threshold 'none' never considers findings as exceeding."""
+        from src.pipeline.cumulative_review_runner import ReviewFinding
+
+        findings = (
+            ReviewFinding(
+                file="test.py",
+                line_start=1,
+                line_end=5,
+                priority=0,  # P0
+                title="Critical issue",
+                body="Details",
+                reviewer="test",
+            ),
+        )
+        assert coordinator._findings_exceed_threshold(findings, "none") is False
+
+    def test_threshold_p0_exceeds_with_p0_finding(
+        self, coordinator: RunCoordinator
+    ) -> None:
+        """Threshold 'P0' exceeds when P0 finding exists."""
+        from src.pipeline.cumulative_review_runner import ReviewFinding
+
+        findings = (
+            ReviewFinding(
+                file="test.py",
+                line_start=1,
+                line_end=5,
+                priority=0,  # P0
+                title="Critical issue",
+                body="Details",
+                reviewer="test",
+            ),
+        )
+        assert coordinator._findings_exceed_threshold(findings, "P0") is True
+
+    def test_threshold_p0_not_exceeded_with_p1_finding(
+        self, coordinator: RunCoordinator
+    ) -> None:
+        """Threshold 'P0' not exceeded when only P1+ findings exist."""
+        from src.pipeline.cumulative_review_runner import ReviewFinding
+
+        findings = (
+            ReviewFinding(
+                file="test.py",
+                line_start=1,
+                line_end=5,
+                priority=1,  # P1
+                title="High issue",
+                body="Details",
+                reviewer="test",
+            ),
+        )
+        assert coordinator._findings_exceed_threshold(findings, "P0") is False
+
+    def test_threshold_p1_exceeds_with_p0_or_p1(
+        self, coordinator: RunCoordinator
+    ) -> None:
+        """Threshold 'P1' exceeds when P0 or P1 findings exist."""
+        from src.pipeline.cumulative_review_runner import ReviewFinding
+
+        # P0 finding
+        findings_p0 = (
+            ReviewFinding(
+                file="test.py",
+                line_start=1,
+                line_end=5,
+                priority=0,
+                title="Critical",
+                body="Details",
+                reviewer="test",
+            ),
+        )
+        assert coordinator._findings_exceed_threshold(findings_p0, "P1") is True
+
+        # P1 finding
+        findings_p1 = (
+            ReviewFinding(
+                file="test.py",
+                line_start=1,
+                line_end=5,
+                priority=1,
+                title="High",
+                body="Details",
+                reviewer="test",
+            ),
+        )
+        assert coordinator._findings_exceed_threshold(findings_p1, "P1") is True
+
+    def test_threshold_p1_not_exceeded_with_p2_p3(
+        self, coordinator: RunCoordinator
+    ) -> None:
+        """Threshold 'P1' not exceeded when only P2/P3 findings exist."""
+        from src.pipeline.cumulative_review_runner import ReviewFinding
+
+        findings = (
+            ReviewFinding(
+                file="test.py",
+                line_start=1,
+                line_end=5,
+                priority=2,  # P2
+                title="Medium issue",
+                body="Details",
+                reviewer="test",
+            ),
+            ReviewFinding(
+                file="test2.py",
+                line_start=10,
+                line_end=15,
+                priority=3,  # P3
+                title="Low issue",
+                body="Details",
+                reviewer="test",
+            ),
+        )
+        assert coordinator._findings_exceed_threshold(findings, "P1") is False
+
+    def test_empty_findings_never_exceeds(self, coordinator: RunCoordinator) -> None:
+        """Empty findings tuple never exceeds any threshold."""
+        assert coordinator._findings_exceed_threshold((), "P0") is False
+        assert coordinator._findings_exceed_threshold((), "P1") is False
+        assert coordinator._findings_exceed_threshold((), "P3") is False
+
+
+class TestCodeReviewRemediateFailureMode:
+    """Tests for failure_mode: remediate handling in code review."""
+
+    @pytest.mark.asyncio
+    async def test_remediate_retries_on_execution_error(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """failure_mode: remediate retries review on execution error."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import CumulativeReviewResult
+
+        mock_gate_checker = MagicMock()
+        mock_review_runner = MagicMock()
+        mock_run_metadata = MagicMock()
+        mock_event_sink = MagicMock()
+
+        # Configure code_review with failure_mode=REMEDIATE
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            failure_mode=FailureMode.REMEDIATE,
+            max_retries=2,
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),  # No commands, just code_review
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
+            validation_config=validation_config,
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=mock_run_metadata,
+            event_sink=mock_event_sink,
+        )
+
+        # First call fails, second succeeds
+        mock_review_runner.run_review = AsyncMock(
+            side_effect=[
+                CumulativeReviewResult(
+                    status="failed",
+                    findings=(),
+                    new_baseline_commit=None,
+                    skip_reason="execution_error: timeout",
+                ),
+                CumulativeReviewResult(
+                    status="success",
+                    findings=(),
+                    new_baseline_commit="abc123",
+                ),
+            ]
+        )
+
+        # Queue the trigger
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+
+        result = await coordinator.run_trigger_validation(dry_run=False)
+
+        assert result.status == "passed"
+        assert mock_review_runner.run_review.call_count == 2
+        mock_event_sink.on_trigger_remediation_started.assert_called_once_with(
+            "run_end", 1, 2
+        )
+        mock_event_sink.on_trigger_remediation_succeeded.assert_called_once_with(
+            "run_end", 1
+        )
+
+    @pytest.mark.asyncio
+    async def test_remediate_exhausted_continues_with_failure(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """failure_mode: remediate exhausted continues and records failure."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import CumulativeReviewResult
+
+        mock_gate_checker = MagicMock()
+        mock_review_runner = MagicMock()
+        mock_run_metadata = MagicMock()
+        mock_event_sink = MagicMock()
+
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            failure_mode=FailureMode.REMEDIATE,
+            max_retries=2,
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
+            validation_config=validation_config,
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=mock_run_metadata,
+            event_sink=mock_event_sink,
+        )
+
+        # All retries fail
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="failed",
+                findings=(),
+                new_baseline_commit=None,
+                skip_reason="execution_error: timeout",
+            )
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+
+        result = await coordinator.run_trigger_validation(dry_run=False)
+
+        # Should be "failed" not "aborted" per plan behavior matrix
+        assert result.status == "failed"
+        # Initial call + 2 retries = 3 total
+        assert mock_review_runner.run_review.call_count == 3
+        mock_event_sink.on_trigger_remediation_exhausted.assert_called_once_with(
+            "run_end", 2
+        )
+
+
+class TestFindingThresholdEnforcement:
+    """Tests for finding_threshold enforcement in code review."""
+
+    @pytest.mark.asyncio
+    async def test_findings_below_threshold_pass(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """Findings below threshold allow validation to pass."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import (
+            CumulativeReviewResult,
+            ReviewFinding,
+        )
+
+        mock_gate_checker = MagicMock()
+        mock_review_runner = MagicMock()
+        mock_run_metadata = MagicMock()
+        mock_event_sink = MagicMock()
+
+        # P1 threshold, but only P2 findings
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            finding_threshold="P1",
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
+            validation_config=validation_config,
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=mock_run_metadata,
+            event_sink=mock_event_sink,
+        )
+
+        # Review completes with P2 findings (below P1 threshold)
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="success",
+                findings=(
+                    ReviewFinding(
+                        file="test.py",
+                        line_start=1,
+                        line_end=5,
+                        priority=2,  # P2 - below threshold
+                        title="Medium issue",
+                        body="Details",
+                        reviewer="test",
+                    ),
+                ),
+                new_baseline_commit="abc123",
+            )
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+
+        result = await coordinator.run_trigger_validation(dry_run=False)
+
+        assert result.status == "passed"
+        mock_event_sink.on_trigger_validation_passed.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_findings_exceed_threshold_aborts_without_retries(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """Findings exceeding threshold abort when max_retries=0."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import (
+            CumulativeReviewResult,
+            ReviewFinding,
+        )
+
+        mock_gate_checker = MagicMock()
+        mock_review_runner = MagicMock()
+        mock_run_metadata = MagicMock()
+        mock_event_sink = MagicMock()
+
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            finding_threshold="P1",
+            max_retries=0,  # No remediation attempts
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
+            validation_config=validation_config,
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=mock_run_metadata,
+            event_sink=mock_event_sink,
+        )
+
+        # P0 finding exceeds P1 threshold
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="success",
+                findings=(
+                    ReviewFinding(
+                        file="test.py",
+                        line_start=1,
+                        line_end=5,
+                        priority=0,  # P0 - exceeds threshold
+                        title="Critical issue",
+                        body="Details",
+                        reviewer="test",
+                    ),
+                ),
+                new_baseline_commit="abc123",
+            )
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+
+        result = await coordinator.run_trigger_validation(dry_run=False)
+
+        assert result.status == "aborted"
+        assert "findings exceed threshold" in result.details.lower()
+        mock_event_sink.on_trigger_validation_failed.assert_called_with(
+            "run_end", "code_review_findings", "abort"
+        )
+
+    @pytest.mark.asyncio
+    async def test_threshold_none_never_fails_on_findings(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """finding_threshold='none' never fails on findings."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import (
+            CumulativeReviewResult,
+            ReviewFinding,
+        )
+
+        mock_gate_checker = MagicMock()
+        mock_review_runner = MagicMock()
+        mock_run_metadata = MagicMock()
+        mock_event_sink = MagicMock()
+
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            finding_threshold="none",  # Never fail on findings
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
+            validation_config=validation_config,
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=mock_run_metadata,
+            event_sink=mock_event_sink,
+        )
+
+        # Even P0 findings should pass
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="success",
+                findings=(
+                    ReviewFinding(
+                        file="test.py",
+                        line_start=1,
+                        line_end=5,
+                        priority=0,  # P0 - critical
+                        title="Critical issue",
+                        body="Details",
+                        reviewer="test",
+                    ),
+                ),
+                new_baseline_commit="abc123",
+            )
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+
+        result = await coordinator.run_trigger_validation(dry_run=False)
+
+        assert result.status == "passed"
