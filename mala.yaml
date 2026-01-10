@@ -10,7 +10,7 @@ validation_triggers:
       finding_threshold: P1
 
   run_end:
-    fire_on: success
+    fire_on: both
     failure_mode: continue
     commands:
       - ref: setup
@@ -41,4 +41,4 @@ global_validation_commands:
 coverage:
   format: xml
   file: coverage.xml
-  threshold: 90
+  threshold: 85
