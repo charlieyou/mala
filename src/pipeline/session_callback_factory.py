@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.pipeline.cumulative_review_runner import CumulativeReviewRunner
     from src.core.protocols import CommandRunnerPort
+    from src.pipeline.fixer_interface import FixerInterface
     from src.pipeline.review_runner import ReviewRunner
     from src.domain.session_end_result import SessionEndRetryState
 
@@ -120,6 +121,7 @@ class SessionCallbackFactory:
         get_interrupt_event: Callable[[], asyncio.Event | None] | None = None,
         get_validation_config: Callable[[], ValidationConfig | None] | None = None,
         command_runner: CommandRunnerPort | None = None,
+        fixer_interface: FixerInterface | None = None,
         cumulative_review_runner: CumulativeReviewRunner | None = None,
         get_run_metadata: Callable[[], RunMetadata | None] | None = None,
         get_base_sha: Callable[[str], str | None] | None = None,
@@ -142,6 +144,7 @@ class SessionCallbackFactory:
             get_interrupt_event: Callable to get the interrupt event (late-bound).
             get_validation_config: Callable to get validation config (late-bound).
             command_runner: Command runner for executing session_end commands.
+            fixer_interface: Interface for running fixer agents during remediation.
             cumulative_review_runner: Runner for session_end code review.
             get_run_metadata: Callable to get run metadata (late-bound).
             get_base_sha: Callable to get base_sha for an issue (late-bound).
@@ -167,6 +170,7 @@ class SessionCallbackFactory:
         self._get_interrupt_event = get_interrupt_event or (lambda: None)
         self._get_validation_config = get_validation_config or (lambda: None)
         self._command_runner = command_runner
+        self._fixer_interface = fixer_interface
         self._cumulative_review_runner = cumulative_review_runner
         self._get_run_metadata = get_run_metadata or (lambda: None)
         self._get_base_sha = get_base_sha or (lambda _: None)
@@ -427,10 +431,9 @@ class SessionCallbackFactory:
                             # Fail-fast: stop on first failure
                             break
 
-                # Handle failure modes (abort, continue)
-                # Note: remediate mode is handled in T012
+                # Handle failure modes (abort, continue, remediate)
+                failure_mode = session_end_config.failure_mode
                 if not all_passed:
-                    failure_mode = session_end_config.failure_mode
                     if failure_mode == FailureMode.ABORT:
                         logger.info(
                             "session_end failed with abort mode for %s",
@@ -447,6 +450,38 @@ class SessionCallbackFactory:
                             commands=list(command_results),
                             reason="command_failed",
                         )
+                    elif failure_mode == FailureMode.REMEDIATE:
+                        # Remediation loop: run fixer and retry validation
+                        remediation_result = await self._run_remediation_loop(
+                            issue_id=issue_id,
+                            session_end_config=session_end_config,
+                            validation_config=validation_config,
+                            command_results=command_results,
+                            started_at=started_at,
+                            interrupt_event=interrupt_event,
+                        )
+                        if remediation_result is not None:
+                            # Remediation completed (success, exhausted, or interrupted)
+                            # Now run code_review once after final outcome
+                            code_review_result = (
+                                await self._run_session_end_code_review(
+                                    issue_id=issue_id,
+                                    session_end_config=session_end_config,
+                                    commands_passed=(
+                                        remediation_result.status == "pass"
+                                    ),
+                                    interrupt_event=interrupt_event,
+                                )
+                            )
+                            # Update result with code_review
+                            return SessionEndResult(
+                                status=remediation_result.status,
+                                started_at=remediation_result.started_at,
+                                finished_at=datetime.now(UTC),
+                                commands=remediation_result.commands,
+                                code_review_result=code_review_result,
+                                reason=remediation_result.reason,
+                            )
                     # continue mode: proceed to code_review regardless
                     logger.info(
                         "session_end commands failed but continuing for %s",
@@ -576,6 +611,248 @@ class SessionCallbackFactory:
         )
 
         return effective_cmd, effective_timeout
+
+    async def _run_remediation_loop(
+        self,
+        issue_id: str,
+        session_end_config: SessionEndTriggerConfig,
+        validation_config: ValidationConfig,
+        command_results: list[CommandResultProtocol],
+        started_at: datetime,
+        interrupt_event: asyncio.Event | None,
+    ) -> SessionEndResult | None:
+        """Run remediation loop for session_end when failure_mode=remediate.
+
+        Per spec R9:
+        - Fixer runs before each retry (not before initial attempt)
+        - Total validation attempts = 1 + max_retries
+        - On exhausted retries: status="fail", reason="max_retries_exhausted"
+        - On successful retry: status="pass"
+
+        Args:
+            issue_id: The issue ID for context.
+            session_end_config: The session_end trigger config.
+            validation_config: The full validation config for command resolution.
+            command_results: Command results from initial attempt (will be updated).
+            started_at: Timestamp when session_end started.
+            interrupt_event: Event to check for interruption.
+
+        Returns:
+            SessionEndResult if remediation completed/exhausted/interrupted,
+            None if fixer_interface not available (falls back to continue mode).
+        """
+        max_retries = session_end_config.max_retries or 0
+
+        # max_retries=0 means no fixer runs, immediate fail
+        if max_retries == 0:
+            logger.info(
+                "session_end failed for %s with max_retries=0, no remediation",
+                issue_id,
+            )
+            return SessionEndResult(
+                status="fail",
+                started_at=started_at,
+                finished_at=datetime.now(UTC),
+                commands=list(command_results),
+                reason="max_retries_exhausted",
+            )
+
+        # Check if fixer_interface is available
+        if self._fixer_interface is None:
+            logger.warning(
+                "session_end remediate mode for %s but no fixer_interface configured",
+                issue_id,
+            )
+            # Fall back to continue mode - return None to indicate no remediation
+            return None
+
+        # Build failure output from last command result
+        failure_output = self._build_failure_output(command_results)
+
+        # Remediation loop: run fixer and retry validation
+        for retry_num in range(1, max_retries + 1):
+            # Check for interrupt before fixer
+            if interrupt_event and interrupt_event.is_set():
+                logger.info(
+                    "session_end remediation interrupted before fixer for %s",
+                    issue_id,
+                )
+                return SessionEndResult(
+                    status="interrupted",
+                    started_at=started_at,
+                    finished_at=datetime.now(UTC),
+                    commands=list(command_results),
+                    reason="SIGINT received",
+                )
+
+            logger.info(
+                "session_end remediation attempt %d/%d for %s",
+                retry_num,
+                max_retries,
+                issue_id,
+            )
+
+            # Run fixer
+            fixer_result = await self._fixer_interface.run_fixer(
+                failure_output=failure_output,
+                issue_id=issue_id,
+            )
+
+            # Check if fixer was interrupted
+            if fixer_result.interrupted:
+                logger.info(
+                    "session_end fixer interrupted for %s",
+                    issue_id,
+                )
+                return SessionEndResult(
+                    status="interrupted",
+                    started_at=started_at,
+                    finished_at=datetime.now(UTC),
+                    commands=list(command_results),
+                    reason="fixer_interrupted",
+                )
+
+            # Check for interrupt after fixer
+            if interrupt_event and interrupt_event.is_set():
+                logger.info(
+                    "session_end remediation interrupted after fixer for %s",
+                    issue_id,
+                )
+                return SessionEndResult(
+                    status="interrupted",
+                    started_at=started_at,
+                    finished_at=datetime.now(UTC),
+                    commands=list(command_results),
+                    reason="SIGINT received",
+                )
+
+            # Re-run validation commands
+            retry_passed = True
+            retry_results: list[CommandResultProtocol] = []
+            for cmd_ref in session_end_config.commands:
+                # Check for interrupt before each command
+                if interrupt_event and interrupt_event.is_set():
+                    logger.info(
+                        "session_end retry interrupted before command %s for %s",
+                        cmd_ref.ref,
+                        issue_id,
+                    )
+                    return SessionEndResult(
+                        status="interrupted",
+                        started_at=started_at,
+                        finished_at=datetime.now(UTC),
+                        commands=list(command_results) + retry_results,
+                        reason="SIGINT received",
+                    )
+
+                # Resolve and execute command
+                resolved_cmd, resolved_timeout = self._resolve_command(
+                    cmd_ref, validation_config
+                )
+                if resolved_cmd is None:
+                    retry_passed = False
+                    break
+
+                if self._command_runner is not None:
+                    result = await self._command_runner.run_async(
+                        resolved_cmd,
+                        timeout=resolved_timeout,
+                        shell=True,
+                        cwd=self._repo_path,
+                    )
+                    retry_results.append(result)
+
+                    # Check for interrupt after command
+                    if interrupt_event and interrupt_event.is_set():
+                        logger.info(
+                            "session_end retry interrupted after command %s for %s",
+                            cmd_ref.ref,
+                            issue_id,
+                        )
+                        return SessionEndResult(
+                            status="interrupted",
+                            started_at=started_at,
+                            finished_at=datetime.now(UTC),
+                            commands=list(command_results) + retry_results,
+                            reason="SIGINT received",
+                        )
+
+                    if not result.ok:
+                        retry_passed = False
+                        # Update failure output for next fixer attempt
+                        failure_output = self._build_failure_output(retry_results)
+                        break
+
+            # Update command_results with retry results
+            command_results.extend(retry_results)
+
+            if retry_passed:
+                logger.info(
+                    "session_end remediation succeeded on attempt %d for %s",
+                    retry_num,
+                    issue_id,
+                )
+                return SessionEndResult(
+                    status="pass",
+                    started_at=started_at,
+                    finished_at=datetime.now(UTC),
+                    commands=list(command_results),
+                )
+
+        # Exhausted all retries
+        logger.info(
+            "session_end remediation exhausted after %d retries for %s",
+            max_retries,
+            issue_id,
+        )
+        return SessionEndResult(
+            status="fail",
+            started_at=started_at,
+            finished_at=datetime.now(UTC),
+            commands=list(command_results),
+            reason="max_retries_exhausted",
+        )
+
+    def _build_failure_output(
+        self, command_results: list[CommandResultProtocol]
+    ) -> str:
+        """Build failure output string for fixer from command results.
+
+        Args:
+            command_results: List of command results, last one is the failed command.
+
+        Returns:
+            Human-readable description of what failed.
+        """
+        if not command_results:
+            return "session_end validation failed (no command results)"
+
+        last_result = command_results[-1]
+        parts = [f"Command failed: {last_result.command}"]
+
+        if hasattr(last_result, "returncode") and last_result.returncode is not None:
+            parts.append(f"Exit code: {last_result.returncode}")
+
+        # Add stderr if available
+        stderr = getattr(last_result, "stderr", "") or ""
+        if stderr:
+            # Truncate long output
+            if len(stderr) > 1000:
+                stderr = stderr[-1000:]
+                parts.append(f"stderr (truncated):\n{stderr}")
+            else:
+                parts.append(f"stderr:\n{stderr}")
+
+        # Add stdout if stderr is empty
+        stdout = getattr(last_result, "stdout", "") or ""
+        if not stderr and stdout:
+            if len(stdout) > 1000:
+                stdout = stdout[-1000:]
+                parts.append(f"stdout (truncated):\n{stdout}")
+            else:
+                parts.append(f"stdout:\n{stdout}")
+
+        return "\n".join(parts)
 
     async def _run_session_end_code_review(
         self,
