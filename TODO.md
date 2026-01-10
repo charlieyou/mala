@@ -1,17 +1,9 @@
 # Roadmap to v1
 
-Bugs
-* Ruff is making fixes in global val that are not being committed
 * failure mode and retry max not needed when commands are null
+* 01:26:28 [trigger] ◦ [session_end] queued: success_count=7
 
-New Features
-* Add code review to global validations
-
-Config
 * Interactive config setup
-* Separate mala agent logs from system claude code with CLAUDE_CONFIG_DIR env var
-* cerberus args should be passed in via mala.yaml
-* config reviewer/gate/etc retries in mala.yaml
 
 * Publish to PyPi
 
@@ -19,6 +11,7 @@ Config
 
 Bugs
 * Locks are not cleaned up after interrupted tests
+* exit path for agents that aree blocked
 
 New Features
 * Use cerberus for epic verification
@@ -42,8 +35,12 @@ Tech Debt
 Config: Make it actually make sense / be consistent
 * top level validation block that has commands and triggers under it?
 * add config for evidence check, separate validation from code review?
+* Separate mala agent logs from system claude code with CLAUDE_CONFIG_DIR env var
 
 # Ideas
 * Inter-agent communication
 * Separate prompt/loop for bug fixes? red-green TDD
 * Explore subagent - instruct use in the implementer prompt
+* Stricter TDD
+
+* rebuild in gleam?
