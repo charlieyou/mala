@@ -402,13 +402,28 @@ class SessionCallbackFactory:
                         try:
                             result = await asyncio.shield(cmd_task)
                         except asyncio.CancelledError:
-                            # Shield prevents cmd_task from being cancelled, but the
-                            # await still raises CancelledError. Wait for command to
-                            # complete per R10: "complete current command".
-                            result = await cmd_task
-                            command_results.append(result)
-                            # Re-raise to let outer handlers (timeout, CancelledError)
-                            # determine appropriate status based on context
+                            # Shield prevents cmd_task from being cancelled.
+                            # Check if this is SIGINT (interrupt_event set) or timeout.
+                            # Per R10: complete command on SIGINT, but not on timeout.
+                            if interrupt_event and interrupt_event.is_set():
+                                # SIGINT: complete the command, return with result
+                                result = await cmd_task
+                                command_results.append(result)
+                                logger.info(
+                                    "session_end interrupted during command %s for %s",
+                                    cmd_ref.ref,
+                                    issue_id,
+                                )
+                                return SessionEndResult(
+                                    status="interrupted",
+                                    started_at=started_at,
+                                    finished_at=datetime.now(UTC),
+                                    commands=list(command_results),
+                                    reason="SIGINT received",
+                                )
+                            # Not SIGINT (likely timeout): cancel the inner task and re-raise
+                            # to let timeout handler return with empty commands
+                            cmd_task.cancel()
                             raise
                         command_results.append(result)
 
@@ -757,12 +772,37 @@ class SessionCallbackFactory:
                     break
 
                 if self._command_runner is not None:
-                    result = await self._command_runner.run_async(
-                        resolved_cmd,
-                        timeout=resolved_timeout,
-                        shell=True,
-                        cwd=self._repo_path,
+                    # Shield command execution to complete current command on SIGINT
+                    cmd_task = asyncio.create_task(
+                        self._command_runner.run_async(
+                            resolved_cmd,
+                            timeout=resolved_timeout,
+                            shell=True,
+                            cwd=self._repo_path,
+                        )
                     )
+                    try:
+                        result = await asyncio.shield(cmd_task)
+                    except asyncio.CancelledError:
+                        # Check if SIGINT: complete command. Otherwise re-raise.
+                        if interrupt_event and interrupt_event.is_set():
+                            result = await cmd_task
+                            retry_results.append(result)
+                            logger.info(
+                                "session_end retry interrupted during command %s for %s",
+                                cmd_ref.ref,
+                                issue_id,
+                            )
+                            return SessionEndResult(
+                                status="interrupted",
+                                started_at=started_at,
+                                finished_at=datetime.now(UTC),
+                                commands=list(command_results) + retry_results,
+                                reason="SIGINT received",
+                            )
+                        # Not SIGINT: cancel and re-raise
+                        cmd_task.cancel()
+                        raise
                     retry_results.append(result)
 
                     # Check for interrupt after command

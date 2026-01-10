@@ -487,12 +487,13 @@ class TestInterruptBehavior:
         # Should have the first command that completed
         assert len(result.commands) == 1
 
-    async def test_command_completes_even_when_cancelled_mid_execution(self) -> None:
-        """Command execution is shielded and completes even if cancelled during await.
+    async def test_command_completes_on_sigint_during_execution(self) -> None:
+        """Command execution completes on SIGINT even if cancelled mid-execution.
 
         Per R10: "complete current command" on SIGINT means shield protects execution.
-        The command result is captured before CancelledError propagates to outer handler.
+        The key is that interrupt_event is set, signaling SIGINT (not timeout).
         """
+        interrupt_event = asyncio.Event()
         command_started = asyncio.Event()
         command_completed = asyncio.Event()
 
@@ -520,31 +521,32 @@ class TestInterruptBehavior:
         factory = _create_factory(
             validation_config=config,
             command_runner=runner,  # type: ignore[arg-type]
+            interrupt_event=interrupt_event,
         )
         callbacks = factory.build("test-issue")
         assert callbacks.on_session_end_check is not None
         on_session_end = callbacks.on_session_end_check
 
-        async def run_and_cancel() -> SessionEndResult:
+        async def run_and_sigint() -> SessionEndResult:
             task = asyncio.create_task(
                 on_session_end(
                     "test-issue", Path("/test/log.txt"), SessionEndRetryState()
                 )
             )
-            # Wait for command to start, then cancel
+            # Wait for command to start, then simulate SIGINT
             await command_started.wait()
-            task.cancel()
-            # The task will complete with "interrupted" status since the outer
-            # CancelledError handler catches the re-raised exception
+            interrupt_event.set()  # Signal SIGINT
+            task.cancel()  # Cancel simulates the task being interrupted
             return await task
 
-        result = await run_and_cancel()
+        result = await run_and_sigint()
 
-        # Command should have completed despite cancellation attempt
+        # Command should have completed despite cancellation (SIGINT path)
         assert command_completed.is_set(), "Command did not complete (shield failed)"
-        # Result should show command completed and status is interrupted
+        # Result should show command completed and status is interrupted with SIGINT reason
         assert len(result.commands) == 1
         assert result.status == "interrupted"
+        assert result.reason == "SIGINT received"
 
 
 class TestFailureModeAbort:
