@@ -3,8 +3,6 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 from src.pipeline.session_callback_factory import SessionCallbackFactory
 from src.pipeline.session_end_result import SessionEndResult, SessionEndRetryState
 
@@ -35,7 +33,6 @@ class TestSessionEndCheckCallback:
 
         assert callbacks.on_session_end_check is not None
 
-    @pytest.mark.anyio
     async def test_stub_returns_skipped_result(self) -> None:
         """Stub on_session_end_check returns SessionEndResult with status=skipped."""
         factory = _create_minimal_factory()
@@ -52,7 +49,6 @@ class TestSessionEndCheckCallback:
         assert result.status == "skipped"
         assert result.reason == "not_implemented"
 
-    @pytest.mark.anyio
     async def test_callback_accepts_correct_signature(self) -> None:
         """Callback accepts (issue_id, log_path, retry_state) parameters."""
         factory = _create_minimal_factory()
