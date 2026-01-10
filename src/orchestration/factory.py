@@ -132,15 +132,21 @@ def _derive_config(
         _DerivedConfig with computed values.
     """
     # Compute timeout - precedence: CLI > mala.yaml > default
-    # Legacy behavior: 0 is treated as "use default" (truthiness check)
+    # Legacy behavior: CLI 0 is treated as "use default" (skips mala.yaml)
+    # - CLI positive value -> use CLI value
+    # - CLI 0 or None -> check mala.yaml, else default
+    # - CLI 0 specifically bypasses mala.yaml (for backward compat)
     yaml_timeout: int | None = (
         getattr(validation_config, "timeout_minutes", None)
         if validation_config is not None
         else None
     )
     if config.timeout_minutes:
-        # CLI provided timeout_minutes (non-zero)
+        # CLI provided positive timeout_minutes
         timeout_seconds = config.timeout_minutes * 60
+    elif config.timeout_minutes == 0:
+        # CLI explicitly passed 0 -> use default (legacy behavior)
+        timeout_seconds = DEFAULT_AGENT_TIMEOUT_MINUTES * 60
     elif yaml_timeout:
         # mala.yaml has timeout_minutes
         timeout_seconds = yaml_timeout * 60

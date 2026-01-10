@@ -381,3 +381,23 @@ class TestDeriveConfig:
         )
 
         assert derived.timeout_seconds == DEFAULT_AGENT_TIMEOUT_MINUTES * 60
+
+    def test_cli_timeout_zero_bypasses_yaml_timeout(self) -> None:
+        """CLI timeout=0 explicitly uses default, bypassing mala.yaml timeout."""
+        from src.domain.validation.config import ValidationConfig
+        from src.orchestration.types import DEFAULT_AGENT_TIMEOUT_MINUTES
+
+        # mala.yaml has timeout_minutes=45
+        validation_config = ValidationConfig(timeout_minutes=45)
+        # CLI passes 0 explicitly
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"), timeout_minutes=0)
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        # CLI 0 should bypass yaml and use default (legacy behavior)
+        assert derived.timeout_seconds == DEFAULT_AGENT_TIMEOUT_MINUTES * 60

@@ -1099,3 +1099,34 @@ class TestValidationTriggersNotInheritedFromPreset:
 
         # User's explicit None should be preserved
         assert result.validation_triggers is None
+
+
+class TestTimeoutMinutesPreservedInMerge:
+    """Tests that timeout_minutes is preserved during preset merge."""
+
+    def test_user_timeout_minutes_preserved_in_merge(self) -> None:
+        """User's timeout_minutes is preserved when merging with preset."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(test=CommandConfig(command="pytest")),
+        )
+        user = ValidationConfig(
+            timeout_minutes=30,
+            _fields_set=frozenset({"timeout_minutes"}),
+        )
+
+        result = merge_configs(preset, user)
+
+        assert result.timeout_minutes == 30
+
+    def test_timeout_minutes_none_when_user_does_not_set(self) -> None:
+        """timeout_minutes is None when user does not set it."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(test=CommandConfig(command="pytest")),
+        )
+        user = ValidationConfig(
+            _fields_set=frozenset(),
+        )
+
+        result = merge_configs(preset, user)
+
+        assert result.timeout_minutes is None

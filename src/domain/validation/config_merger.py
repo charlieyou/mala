@@ -206,6 +206,9 @@ def merge_configs(
     # claude_settings_sources: User value always takes precedence (presets don't define this)
     merged_claude_settings_sources = user.claude_settings_sources
 
+    # timeout_minutes: User value always takes precedence (presets don't define this)
+    merged_timeout_minutes = user.timeout_minutes
+
     return ValidationConfig(
         preset=user.preset,  # Keep user's preset reference
         commands=merged_commands,
@@ -215,6 +218,7 @@ def merge_configs(
         setup_files=merged_setup_files,
         validation_triggers=merged_triggers,
         claude_settings_sources=merged_claude_settings_sources,
+        timeout_minutes=merged_timeout_minutes,
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 
