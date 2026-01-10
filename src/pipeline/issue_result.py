@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
     from src.core.models import IssueResolution
     from src.core.protocols import ReviewIssueProtocol
+    from src.pipeline.session_end_result import SessionEndResult
 
 
 @dataclass
@@ -37,3 +38,5 @@ class IssueResult:
     is_epic: bool = (
         False  # True if this is an epic issue (for periodic trigger filtering)
     )
+    base_sha: str | None = None  # Git SHA at issue session start (before agent writes)
+    session_end_result: SessionEndResult | None = None  # Session end validation result
