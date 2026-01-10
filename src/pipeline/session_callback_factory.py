@@ -375,12 +375,12 @@ class SessionCallbackFactory:
                             cmd_ref.ref,
                             issue_id,
                         )
-                        # Return with completed commands from previous iterations
+                        # Per spec R10: discard partial results on interrupt
                         return SessionEndResult(
                             status="interrupted",
                             started_at=started_at,
                             finished_at=datetime.now(UTC),
-                            commands=list(command_outcomes),
+                            commands=[],
                             reason="SIGINT received",
                         )
 
@@ -415,20 +415,21 @@ class SessionCallbackFactory:
                             # Check if this is SIGINT (interrupt_event set) or timeout.
                             # Per R10: complete command on SIGINT, but not on timeout.
                             if interrupt_event and interrupt_event.is_set():
-                                # SIGINT: complete the command, return with result
+                                # SIGINT: complete the command, then discard partial results per R10
                                 result = await cmd_task
-                                outcome = self._to_command_outcome(cmd_ref.ref, result)
-                                command_outcomes.append(outcome)
+                                # Log outcome but don't include in result
+                                _ = self._to_command_outcome(cmd_ref.ref, result)
                                 logger.info(
                                     "session_end interrupted during command %s for %s",
                                     cmd_ref.ref,
                                     issue_id,
                                 )
+                                # Per spec R10: discard partial results on interrupt
                                 return SessionEndResult(
                                     status="interrupted",
                                     started_at=started_at,
                                     finished_at=datetime.now(UTC),
-                                    commands=list(command_outcomes),
+                                    commands=[],
                                     reason="SIGINT received",
                                 )
                             # Not SIGINT (likely timeout): cancel the inner task and re-raise
@@ -445,11 +446,12 @@ class SessionCallbackFactory:
                                 cmd_ref.ref,
                                 issue_id,
                             )
+                            # Per spec R10: discard partial results on interrupt
                             return SessionEndResult(
                                 status="interrupted",
                                 started_at=started_at,
                                 finished_at=datetime.now(UTC),
-                                commands=list(command_outcomes),
+                                commands=[],
                                 reason="SIGINT received",
                             )
 
@@ -559,11 +561,12 @@ class SessionCallbackFactory:
             # Handle cancellation outside command execution (e.g., during code_review)
             # Command-level cancellation is handled inline with task awaiting
             logger.info("session_end cancelled for %s", issue_id)
+            # Per spec R10: discard partial results on interrupt/cancellation
             return SessionEndResult(
                 status="interrupted",
                 started_at=started_at,
                 finished_at=datetime.now(UTC),
-                commands=list(command_outcomes),
+                commands=[],
                 reason="cancelled",
             )
 
@@ -742,11 +745,12 @@ class SessionCallbackFactory:
                     "session_end remediation interrupted before fixer for %s",
                     issue_id,
                 )
+                # Per spec R10: discard partial results on interrupt
                 return SessionEndResult(
                     status="interrupted",
                     started_at=started_at,
                     finished_at=datetime.now(UTC),
-                    commands=list(command_outcomes),
+                    commands=[],
                     reason="SIGINT received",
                 )
 
@@ -773,11 +777,12 @@ class SessionCallbackFactory:
                     "session_end fixer interrupted for %s",
                     issue_id,
                 )
+                # Per spec R10: discard partial results on interrupt
                 return SessionEndResult(
                     status="interrupted",
                     started_at=started_at,
                     finished_at=datetime.now(UTC),
-                    commands=list(command_outcomes),
+                    commands=[],
                     reason="fixer_interrupted",
                 )
 
@@ -787,11 +792,12 @@ class SessionCallbackFactory:
                     "session_end remediation interrupted after fixer for %s",
                     issue_id,
                 )
+                # Per spec R10: discard partial results on interrupt
                 return SessionEndResult(
                     status="interrupted",
                     started_at=started_at,
                     finished_at=datetime.now(UTC),
-                    commands=list(command_outcomes),
+                    commands=[],
                     reason="SIGINT received",
                 )
 
@@ -820,11 +826,12 @@ class SessionCallbackFactory:
                         cmd_ref.ref,
                         issue_id,
                     )
+                    # Per spec R10: discard partial results on interrupt
                     return SessionEndResult(
                         status="interrupted",
                         started_at=started_at,
                         finished_at=datetime.now(UTC),
-                        commands=list(command_outcomes) + retry_outcomes,
+                        commands=[],
                         reason="SIGINT received",
                     )
 
@@ -863,18 +870,19 @@ class SessionCallbackFactory:
                     # Check if SIGINT: complete command. Otherwise re-raise.
                     if interrupt_event and interrupt_event.is_set():
                         result = await cmd_task
-                        outcome = self._to_command_outcome(cmd_ref.ref, result)
-                        retry_outcomes.append(outcome)
+                        # Log outcome but don't include in result per spec R10
+                        _ = self._to_command_outcome(cmd_ref.ref, result)
                         logger.info(
                             "session_end retry interrupted during command %s for %s",
                             cmd_ref.ref,
                             issue_id,
                         )
+                        # Per spec R10: discard partial results on interrupt
                         return SessionEndResult(
                             status="interrupted",
                             started_at=started_at,
                             finished_at=datetime.now(UTC),
-                            commands=list(command_outcomes) + retry_outcomes,
+                            commands=[],
                             reason="SIGINT received",
                         )
                     # Not SIGINT: cancel and re-raise
@@ -890,11 +898,12 @@ class SessionCallbackFactory:
                         cmd_ref.ref,
                         issue_id,
                     )
+                    # Per spec R10: discard partial results on interrupt
                     return SessionEndResult(
                         status="interrupted",
                         started_at=started_at,
                         finished_at=datetime.now(UTC),
-                        commands=list(command_outcomes) + retry_outcomes,
+                        commands=[],
                         reason="SIGINT received",
                     )
 

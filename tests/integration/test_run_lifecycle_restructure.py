@@ -471,11 +471,9 @@ async def test_session_end_interrupt_scenario(
     - Issue proceeds to review with SessionEndResult containing interrupted status
 
     This test verifies that when SIGINT is received during session_end,
-    the lifecycle correctly handles the interrupted result with preserved
-    command results and continues to the review phase.
+    the lifecycle correctly handles the interrupted result with empty
+    command results (per spec R10) and continues to the review phase.
     """
-    from src.core.session_end_result import CommandOutcome
-
     event_sink = FakeEventSink()
 
     def get_log_path(session_id: str) -> Path:
@@ -492,17 +490,11 @@ async def test_session_end_interrupt_scenario(
     async def on_session_end_check(
         issue_id: str, log_path: Path, retry_state: SessionEndRetryState
     ) -> SessionEndResult:
-        # Simulate interrupt: return status="interrupted" with completed commands
-        # Per spec R10: completed commands preserved on interrupt
-        completed_command = CommandOutcome(
-            ref="lint",
-            passed=True,
-            duration_seconds=1.5,
-        )
+        # Simulate interrupt: per spec R10 partial results are discarded
         return SessionEndResult(
             status="interrupted",
             reason="SIGINT received",
-            commands=[completed_command],
+            commands=[],
         )
 
     callbacks = SessionCallbacks(

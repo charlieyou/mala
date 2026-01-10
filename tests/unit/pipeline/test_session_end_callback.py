@@ -441,8 +441,8 @@ class TestInterruptBehavior:
         assert result.reason == "SIGINT received"
         assert result.commands == []
 
-    async def test_interrupt_after_some_commands_returns_completed(self) -> None:
-        """On SIGINT after some commands, returns completed commands."""
+    async def test_interrupt_after_some_commands_returns_empty(self) -> None:
+        """On SIGINT after some commands, returns empty commands (per spec R10)."""
         interrupt_event = asyncio.Event()
         runner = FakeCommandRunner()
         runner.responses["ruff check ."] = FakeCommandResult(
@@ -484,14 +484,15 @@ class TestInterruptBehavior:
         )
 
         assert result.status == "interrupted"
-        # Should have the first command that completed
-        assert len(result.commands) == 1
+        # Per spec R10: partial results discarded on interrupt
+        assert result.commands == []
 
     async def test_command_completes_on_sigint_during_execution(self) -> None:
         """Command execution completes on SIGINT even if cancelled mid-execution.
 
         Per R10: "complete current command" on SIGINT means shield protects execution.
         The key is that interrupt_event is set, signaling SIGINT (not timeout).
+        However, per R10 the partial results are discarded for consistency.
         """
         interrupt_event = asyncio.Event()
         command_started = asyncio.Event()
@@ -543,8 +544,8 @@ class TestInterruptBehavior:
 
         # Command should have completed despite cancellation (SIGINT path)
         assert command_completed.is_set(), "Command did not complete (shield failed)"
-        # Result should show command completed and status is interrupted with SIGINT reason
-        assert len(result.commands) == 1
+        # Per spec R10: partial results discarded on interrupt
+        assert result.commands == []
         assert result.status == "interrupted"
         assert result.reason == "SIGINT received"
 
