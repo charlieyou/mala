@@ -83,6 +83,10 @@ if TYPE_CHECKING:
         AgentTextCallback,
         ToolUseCallback,
     )
+    from src.pipeline.session_end_result import (
+        SessionEndResult,
+        SessionEndRetryState,
+    )
 
 
 # Module-level logger for idle retry messages
@@ -135,6 +139,10 @@ ReviewNoProgressCallback = Callable[
     bool,
 ]
 LogOffsetCallback = Callable[[Path, int], int]
+SessionEndCheckCallback = Callable[
+    [str, Path, "SessionEndRetryState"],
+    Coroutine[Any, Any, "SessionEndResult"],
+]
 
 
 @dataclass
@@ -351,6 +359,8 @@ class SessionCallbacks:
             Args: (agent_id, tool_name, arguments) -> None
         on_agent_text: Callback for SDK text output events.
             Args: (agent_id, text) -> None
+        on_session_end_check: Async callback to run session_end validation.
+            Args: (issue_id, log_path, retry_state) -> SessionEndResult
     """
 
     on_gate_check: GateCheckCallback | None = None
@@ -361,6 +371,7 @@ class SessionCallbacks:
     on_abort: Callable[[str], None] | None = None
     on_tool_use: ToolUseCallback | None = None
     on_agent_text: AgentTextCallback | None = None
+    on_session_end_check: SessionEndCheckCallback | None = None
 
 
 @dataclass

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from src.pipeline.agent_session_runner import SessionCallbacks
+from src.pipeline.session_end_result import SessionEndResult
 
 if TYPE_CHECKING:
     import asyncio
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
     )
     from src.domain.validation.spec import ValidationSpec
     from src.pipeline.review_runner import ReviewRunner
+    from src.pipeline.session_end_result import SessionEndRetryState
 
 
 @dataclass
@@ -238,6 +240,16 @@ class SessionCallbackFactory:
         def on_agent_text(agent_id: str, text: str) -> None:
             self._get_event_sink().on_agent_text(agent_id, text)
 
+        async def on_session_end_check(
+            issue_id: str, log_path: Path, retry_state: SessionEndRetryState
+        ) -> SessionEndResult:
+            """Stub session_end callback returning skipped.
+
+            This stub will be replaced with full implementation in Phase 3
+            when FixerInterface is injected into the factory.
+            """
+            return SessionEndResult(status="skipped", reason="not_implemented")
+
         return SessionCallbacks(
             on_gate_check=on_gate_check,
             on_review_check=on_review_check,
@@ -247,6 +259,7 @@ class SessionCallbackFactory:
             on_abort=on_abort,
             on_tool_use=on_tool_use,
             on_agent_text=on_agent_text,
+            on_session_end_check=on_session_end_check,
         )
 
 
