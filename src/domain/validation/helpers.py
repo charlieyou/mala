@@ -162,11 +162,13 @@ dev = [
     (repo_path / "mala.yaml").write_text(
         """preset: python-uv
 
-# Required when global_validation_commands is defined (empty = explicit opt-out)
-validation_triggers: {}
-
-global_validation_commands:
-  test: "uv run pytest --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
+# Explicit run_end trigger with validation commands
+validation_triggers:
+  run_end:
+    failure_mode: continue
+    commands:
+      - ref: test
+        command: "uv run pytest --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
 
 coverage:
   format: xml

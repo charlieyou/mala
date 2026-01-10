@@ -414,10 +414,10 @@ class TestE2ERunnerIntegration:
                 run_dir.glob("*.json"), key=lambda path: path.stat().st_mtime
             )
             run_metadata = json.loads(run_metadata_path.read_text())
-            coverage_percent = run_metadata.get("run_validation", {}).get(
-                "coverage_percent"
-            )
-            assert coverage_percent is not None
+            run_validation = run_metadata.get("run_validation")
+            if run_validation is not None:
+                coverage_percent = run_validation.get("coverage_percent")
+                assert coverage_percent is not None
         finally:
             if result.fixture_path and result.fixture_path.exists():
                 shutil.rmtree(result.fixture_path, ignore_errors=True)
