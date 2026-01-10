@@ -963,7 +963,10 @@ class RunCoordinator:
                                         "code_review_findings",
                                         "remediate",
                                     )
-                            # Remediation succeeded - continue with passing validation
+                            else:
+                                # Remediation succeeded - clear any prior failure from
+                                # execution error remediation so validation passes
+                                last_failure = None
 
                 # Emit validation_passed
                 trigger_duration = time.monotonic() - trigger_start_time
