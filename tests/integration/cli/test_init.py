@@ -48,15 +48,16 @@ class TestInitDryRun:
         assert config == {"preset": "python-uv"}
 
     @pytest.mark.xfail(reason="Stub returns exit 1 until T002 implements full command")
-    def test_dry_run_no_backup(self, tmp_path: Path) -> None:
+    def test_dry_run_no_backup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Existing file + --dry-run leaves file unchanged."""
+        monkeypatch.chdir(tmp_path)
         mala_yaml = tmp_path / "mala.yaml"
         original_content = "preset: existing\n"
         mala_yaml.write_text(original_content)
 
-        result = runner.invoke(
-            app, ["init", "--dry-run"], input="1\n", env={"PWD": str(tmp_path)}
-        )
+        result = runner.invoke(app, ["init", "--dry-run"], input="1\n")
         # Command outputs to stdout, doesn't touch file
         assert result.exit_code == 0
         assert mala_yaml.read_text() == original_content
