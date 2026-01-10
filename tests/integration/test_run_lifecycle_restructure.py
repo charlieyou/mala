@@ -145,8 +145,10 @@ class FakeEventSink:
         self.events.append(f"session_end_skipped:{issue_id}:{reason}")
 
     def on_review_started(
-        self, issue_id: str, attempt: int, max_attempts: int, **kwargs: object
+        self, agent_id: str, attempt: int, max_attempts: int, **kwargs: object
     ) -> None:
+        # agent_id is passed as first positional, issue_id as keyword
+        issue_id = kwargs.get("issue_id", agent_id)
         self.events.append(f"review_started:{issue_id}")
 
     # Stub out other event methods that may be called
@@ -377,15 +379,16 @@ async def test_session_end_timeout_scenario(
     fake_factory: FakeSDKClientFactory,
     tmp_log_path: Path,
 ) -> None:
-    """Scenario: session_end times out mid-command.
+    """Scenario: lifecycle handles session_end timeout result correctly.
 
     Per spec R10:
     - On timeout, status="timeout" with empty commands array
     - Issue proceeds to review with SessionEndResult containing timeout status
 
-    This test verifies that when session_end times out during command
-    execution, the lifecycle correctly handles the timeout result and
-    continues to the review phase (or completion if review disabled).
+    This integration test verifies that the AgentSessionRunner lifecycle loop
+    correctly handles a timeout result from session_end and emits the expected
+    events in the correct order. The actual asyncio.timeout() behavior is
+    tested in unit tests (test_session_end_callback.py::TestTimeoutBehavior).
     """
     event_sink = FakeEventSink()
 
@@ -475,9 +478,9 @@ async def test_session_end_interrupt_scenario(
 
     @dc
     class FakeCommandResult:
-        """Fake command result to simulate completed command."""
+        """Fake command result matching CommandResultProtocol."""
 
-        command: str
+        command: list[str] | str
         returncode: int
         stdout: str
         stderr: str
@@ -487,6 +490,12 @@ async def test_session_end_interrupt_scenario(
         @property
         def ok(self) -> bool:
             return self.returncode == 0
+
+        def stdout_tail(self, max_chars: int = 800, max_lines: int = 20) -> str:
+            return self.stdout[:max_chars]
+
+        def stderr_tail(self, max_chars: int = 800, max_lines: int = 20) -> str:
+            return self.stderr[:max_chars]
 
     event_sink = FakeEventSink()
 
@@ -507,7 +516,7 @@ async def test_session_end_interrupt_scenario(
         # Simulate interrupt: return status="interrupted" with completed commands
         # Per spec R10: completed commands preserved on interrupt
         completed_command = FakeCommandResult(
-            command="ruff check .",
+            command=["ruff", "check", "."],
             returncode=0,
             stdout="All checks passed",
             stderr="",
@@ -517,7 +526,7 @@ async def test_session_end_interrupt_scenario(
         return SessionEndResult(
             status="interrupted",
             reason="SIGINT received",
-            commands=[completed_command],  # type: ignore[list-item]
+            commands=[completed_command],
         )
 
     callbacks = SessionCallbacks(
@@ -571,12 +580,35 @@ async def test_session_end_timeout_proceeds_to_review_with_correct_result(
     """Verify timeout scenario proceeds to review with explicit status.
 
     Per spec R10: On timeout/interrupt, proceed to review with explicit status.
-    This test enables review to verify the SessionEndResult is available.
+    This test enables review to verify the SessionEndResult is available and
+    the lifecycle correctly transitions from session_end to review.
     """
+    from dataclasses import dataclass as dc
     from datetime import UTC, datetime
+    from typing import TYPE_CHECKING
+
+    if TYPE_CHECKING:
+        from collections.abc import Sequence
+
+        from src.core.protocols import ReviewIssueProtocol
+
+    @dc
+    class FakeReviewOutcome:
+        """Fake review outcome for testing."""
+
+        passed: bool = True
+        parse_error: str | None = None
+        fatal_error: bool = False
+        issues: list[object] = None  # type: ignore[assignment]
+        interrupted: bool = False
+
+        def __post_init__(self) -> None:
+            if self.issues is None:
+                self.issues = []
 
     event_sink = FakeEventSink()
     session_end_results: list[SessionEndResult] = []
+    review_check_called = False
 
     # Enable review to verify integration
     config_with_review = AgentSessionConfig(
@@ -613,10 +645,24 @@ async def test_session_end_timeout_proceeds_to_review_with_correct_result(
         session_end_results.append(result)
         return result
 
+    async def on_review_check(
+        issue_id: str,
+        issue_description: str | None,
+        session_id: str | None,
+        retry_state: RetryState,
+        author_context: str | None,
+        review_issues: Sequence[ReviewIssueProtocol] | None,
+        session_end_result: SessionEndResult | None,
+    ) -> FakeReviewOutcome:
+        nonlocal review_check_called
+        review_check_called = True
+        return FakeReviewOutcome(passed=True)
+
     callbacks = SessionCallbacks(
         get_log_path=get_log_path,
         on_gate_check=on_gate_check,
         on_session_end_check=on_session_end_check,
+        on_review_check=on_review_check,  # type: ignore[arg-type]
     )
 
     runner = AgentSessionRunner(
@@ -633,7 +679,6 @@ async def test_session_end_timeout_proceeds_to_review_with_correct_result(
 
     await runner.run_session(input)
 
-    # Session completes (review may fail but that's ok for this test)
     # Key verification: session_end was invoked and review was started
     assert len(session_end_results) == 1
     assert session_end_results[0].status == "timeout"
@@ -642,10 +687,13 @@ async def test_session_end_timeout_proceeds_to_review_with_correct_result(
     # Verify session_end completed event with timeout status
     assert "session_end_completed:test-timeout-review:timeout" in event_sink.events
 
-    # Verify review_started event appears after session_end (review is enabled)
-    if "review_started:test-timeout-review" in event_sink.events:
-        session_end_idx = event_sink.events.index(
-            "session_end_completed:test-timeout-review:timeout"
-        )
-        review_idx = event_sink.events.index("review_started:test-timeout-review")
-        assert review_idx > session_end_idx
+    # Verify review was invoked after session_end
+    assert review_check_called, "on_review_check was not called"
+    assert "review_started:test-timeout-review" in event_sink.events
+
+    # Verify event ordering: session_end_completed comes before review_started
+    session_end_idx = event_sink.events.index(
+        "session_end_completed:test-timeout-review:timeout"
+    )
+    review_idx = event_sink.events.index("review_started:test-timeout-review")
+    assert review_idx > session_end_idx
