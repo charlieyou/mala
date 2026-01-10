@@ -29,31 +29,23 @@ runner = CliRunner()
 def _extract_yaml_from_output(output: str) -> str:
     """Extract YAML content from CLI output by filtering prompt lines.
 
-    The CLI mixes stderr prompts into stdout. This filters out known prompt
-    patterns while preserving YAML content (including indented lines).
+    CliRunner mixes stderr into stdout by default. This filters out CLI prompt
+    patterns using precise regexes that won't match YAML values.
     """
     import re
 
+    # Precise patterns that match exact CLI prompts, not YAML content
+    prompt_patterns = [
+        r"^Select configuration:$",  # Menu header
+        r"^\s+\d+\)\s+\S+$",  # Menu items: "  1) go"
+        r"^Enter choice \[.*\]: ",  # Choice prompt with brackets
+        r"^Command for '\w+' \(Enter to skip\): ",  # Command prompts
+        r"^Invalid choice, please enter \d+-\d+:$",  # Validation error
+    ]
+    combined = re.compile("|".join(prompt_patterns))
+
     lines = output.strip().split("\n")
-    yaml_lines = []
-    for line in lines:
-        # Skip menu header
-        if line.startswith("Select configuration"):
-            continue
-        # Skip menu items (e.g., "  1) go")
-        if re.match(r"^\s+\d+\)\s+", line):
-            continue
-        # Skip choice prompt (e.g., "Enter choice []: 1")
-        if line.startswith("Enter choice"):
-            continue
-        # Skip command prompts (e.g., "Command for 'setup' (Enter to skip): ")
-        if line.startswith("Command for"):
-            continue
-        # Skip invalid choice messages
-        if line.startswith("Invalid"):
-            continue
-        yaml_lines.append(line)
-    return "\n".join(yaml_lines)
+    return "\n".join(line for line in lines if not combined.match(line))
 
 
 class TestInitHelp:
