@@ -1407,3 +1407,210 @@ class TestFindingThresholdEnforcement:
         mock_event_sink.on_trigger_validation_failed.assert_called_with(
             "run_end", "code_review_findings", "continue"
         )
+
+    @pytest.mark.asyncio
+    async def test_findings_remediation_succeeds_on_fixed_findings(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """failure_mode=REMEDIATE with fixer fixing findings passes validation."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import (
+            CumulativeReviewResult,
+            ReviewFinding,
+        )
+        from src.pipeline.run_coordinator import FixerResult
+
+        mock_gate_checker = MagicMock()
+        mock_review_runner = MagicMock()
+        mock_run_metadata = MagicMock()
+        mock_event_sink = MagicMock()
+
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            finding_threshold="P1",
+            failure_mode=FailureMode.REMEDIATE,
+            max_retries=2,
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
+            validation_config=validation_config,
+        )
+
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=mock_run_metadata,
+            event_sink=mock_event_sink,
+        )
+
+        # First review: P0 finding exceeds threshold
+        # Second review (after fixer): No findings
+        mock_review_runner.run_review = AsyncMock(
+            side_effect=[
+                CumulativeReviewResult(
+                    status="success",
+                    findings=(
+                        ReviewFinding(
+                            file="test.py",
+                            line_start=1,
+                            line_end=5,
+                            priority=0,
+                            title="Critical issue",
+                            body="Details",
+                            reviewer="test",
+                        ),
+                    ),
+                    new_baseline_commit="abc123",
+                ),
+                CumulativeReviewResult(
+                    status="success",
+                    findings=(),  # Fixer resolved the finding
+                    new_baseline_commit="def456",
+                ),
+            ]
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+
+        # Mock _run_fixer_agent to avoid MCP setup
+        with patch.object(
+            coordinator,
+            "_run_fixer_agent",
+            new=AsyncMock(return_value=FixerResult(success=True, interrupted=False)),
+        ):
+            result = await coordinator.run_trigger_validation(dry_run=False)
+
+        assert result.status == "passed"
+        assert mock_review_runner.run_review.call_count == 2
+        mock_event_sink.on_trigger_remediation_succeeded.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_findings_remediation_exhausted_records_failure(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """failure_mode=REMEDIATE with fixer failing records failure and continues."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import (
+            CumulativeReviewResult,
+            ReviewFinding,
+        )
+        from src.pipeline.run_coordinator import FixerResult
+
+        mock_gate_checker = MagicMock()
+        mock_review_runner = MagicMock()
+        mock_run_metadata = MagicMock()
+        mock_event_sink = MagicMock()
+
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            finding_threshold="P1",
+            failure_mode=FailureMode.REMEDIATE,
+            max_retries=1,
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
+            validation_config=validation_config,
+        )
+
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=mock_run_metadata,
+            event_sink=mock_event_sink,
+        )
+
+        # All reviews return P0 finding - fixer cannot fix it
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="success",
+                findings=(
+                    ReviewFinding(
+                        file="test.py",
+                        line_start=1,
+                        line_end=5,
+                        priority=0,
+                        title="Critical issue",
+                        body="Details",
+                        reviewer="test",
+                    ),
+                ),
+                new_baseline_commit="abc123",
+            )
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+
+        # Mock _run_fixer_agent to avoid MCP setup
+        with patch.object(
+            coordinator,
+            "_run_fixer_agent",
+            new=AsyncMock(return_value=FixerResult(success=True, interrupted=False)),
+        ):
+            result = await coordinator.run_trigger_validation(dry_run=False)
+
+        # Should be "failed" not "aborted" - consistent with execution error remediation
+        assert result.status == "failed"
+        assert result.details is not None
+        assert "code_review_findings" in result.details
+        mock_event_sink.on_trigger_remediation_exhausted.assert_called()
+        mock_event_sink.on_trigger_validation_failed.assert_called_with(
+            "run_end", "code_review_findings", "remediate"
+        )

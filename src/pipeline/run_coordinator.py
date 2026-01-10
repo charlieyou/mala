@@ -951,23 +951,18 @@ class RunCoordinator:
                                 )
 
                             if remediation_result is None:
-                                # Remediation failed/exhausted - abort
+                                # Remediation failed/exhausted - record failure and continue
+                                # (consistent with execution error remediation behavior)
+                                last_failure = (
+                                    "code_review_findings",
+                                    trigger_type.value,
+                                )
                                 if self.event_sink is not None:
                                     self.event_sink.on_trigger_validation_failed(
                                         trigger_type.value,
                                         "code_review_findings",
-                                        "abort",
+                                        "remediate",
                                     )
-                                self.clear_trigger_queue(
-                                    "code_review_findings_exceeded"
-                                )
-                                return TriggerValidationResult(
-                                    status="aborted",
-                                    details=(
-                                        f"Code review findings exceed threshold "
-                                        f"({threshold}) in trigger {trigger_type.value}"
-                                    ),
-                                )
                             # Remediation succeeded - continue with passing validation
 
                 # Emit validation_passed
