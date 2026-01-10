@@ -4,7 +4,7 @@ These tests verify the full watch mode flow including:
 - SIGINT handling during idle and active states
 - Issues picked up after poll interval
 - --max-issues interaction with watch mode
-- --validate-every triggers at correct intervals
+- periodic validation triggers at correct intervals
 
 Unlike unit tests, these use real asyncio timing (with short intervals)
 and verify the complete coordinator flow.
@@ -334,11 +334,11 @@ class TestMaxIssuesWithWatch:
 
 @pytest.mark.integration
 class TestValidationTriggers:
-    """Integration tests for --validate-every behavior."""
+    """Integration tests for periodic validation behavior."""
 
     @pytest.mark.asyncio
     async def test_validation_runs_at_threshold(self) -> None:
-        """--validate-every triggers validation at correct intervals.
+        """Periodic validation triggers at correct intervals.
 
         Validation callback should be called when completed_count reaches
         the validate_every threshold.
@@ -677,7 +677,7 @@ asyncio.run(main())
 class TestPeriodicValidationWithoutWatch:
     """Integration tests for periodic validation without watch mode.
 
-    These tests verify that --validate-every works independently of --watch.
+    These tests verify that periodic validation works independently of watch.
     They are expected to FAIL until T003 removes the watch_enabled guards.
     """
 

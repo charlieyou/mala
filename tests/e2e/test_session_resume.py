@@ -19,6 +19,7 @@ See GitHub issue #5012 for SDK bug details.
 """
 
 import uuid
+from typing import Any
 
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
@@ -43,6 +44,51 @@ def require_claude_cli_auth() -> None:
 def clean_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Clean environment for tests - use CLI auth."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+
+async def _collect_session_id(client: ClaudeSDKClient) -> str | None:
+    session_id: str | None = None
+    response: object = client.receive_response()
+    try:
+        async for message in response:
+            if hasattr(message, "session_id"):
+                session_id = getattr(message, "session_id")
+    finally:
+        aclose: Any = getattr(response, "aclose", None)
+        if aclose is not None:
+            await aclose()
+        await _close_query_streams(client)
+    return session_id
+
+
+async def _collect_response_text(client: ClaudeSDKClient) -> str:
+    parts: list[str] = []
+    response: object = client.receive_response()
+    try:
+        async for message in response:
+            if hasattr(message, "content"):
+                for block in getattr(message, "content", []):
+                    if hasattr(block, "text"):
+                        parts.append(getattr(block, "text", ""))
+    finally:
+        aclose: Any = getattr(response, "aclose", None)
+        if aclose is not None:
+            await aclose()
+        await _close_query_streams(client)
+    return "".join(parts)
+
+
+async def _close_query_streams(client: ClaudeSDKClient) -> None:
+    query = getattr(client, "_query", None)
+    if query is None:
+        return
+    for name in ("_message_receive", "_message_send"):
+        stream = getattr(query, name, None)
+        if stream is None:
+            continue
+        aclose: Any = getattr(stream, "aclose", None)
+        if aclose is not None:
+            await aclose()
 
 
 class TestSessionResume:
@@ -82,9 +128,7 @@ class TestSessionResume:
                 f"Remember this secret exactly: {secret}. "
                 "Say only 'Acknowledged' - nothing else."
             )
-            async for message in client.receive_response():
-                if hasattr(message, "session_id"):
-                    session_id = getattr(message, "session_id")
+            session_id = await _collect_session_id(client)
 
         assert session_id is not None, "Expected session_id from first query"
 
@@ -104,11 +148,7 @@ class TestSessionResume:
                 "What was the secret I just told you? "
                 "Reply with ONLY the secret value, nothing else."
             )
-            async for message in client.receive_response():
-                if hasattr(message, "content"):
-                    for block in getattr(message, "content", []):
-                        if hasattr(block, "text"):
-                            response_text += getattr(block, "text", "")
+            response_text = await _collect_response_text(client)
 
         # If resume worked, Claude should know the secret
         assert secret in response_text, (
@@ -148,9 +188,7 @@ class TestSessionResume:
                 f"Remember this secret exactly: {secret}. "
                 "Say only 'Acknowledged' - nothing else."
             )
-            async for message in client.receive_response():
-                if hasattr(message, "session_id"):
-                    session_id = getattr(message, "session_id")
+            session_id = await _collect_session_id(client)
 
         assert session_id is not None, "Expected session_id from first query"
 
@@ -172,11 +210,7 @@ class TestSessionResume:
                 "Reply with ONLY the secret value, nothing else.",
                 session_id=session_id,  # <-- Bug: this doesn't resume context
             )
-            async for message in client.receive_response():
-                if hasattr(message, "content"):
-                    for block in getattr(message, "content", []):
-                        if hasattr(block, "text"):
-                            response_text += getattr(block, "text", "")
+            response_text = await _collect_response_text(client)
 
         # Without resume, Claude should NOT know the secret
         # (This test passes if the bug exists - Claude can't recall)

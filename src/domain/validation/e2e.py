@@ -261,6 +261,7 @@ class E2ERunner:
         """
         # Write fixture files using shared helper
         write_fixture_repo(repo_path, repo_root=repo_root)
+        _disable_fixture_e2e_config(repo_path)
 
         # Initialize git and beads using shared helper
         return init_fixture_repo(repo_path, self._command_runner)
@@ -293,6 +294,7 @@ class E2ERunner:
         # fail with "Review gate already active" unless we use a distinct session ID.
         child_env = dict(env)
         child_env["CLAUDE_SESSION_ID"] = f"e2e-{uuid.uuid4()}"
+        child_env["MALA_CERBERUS_SPAWN_ARGS"] = f"--mode={self.config.cerberus_mode}"
 
         # Convert timeout from seconds to minutes for CLI (which expects minutes)
         timeout_minutes = max(1, int(self.config.timeout_seconds // 60))
@@ -317,10 +319,6 @@ class E2ERunner:
             str(self.config.max_issues),
             "--timeout",
             str(timeout_minutes),
-            "--disable",
-            "e2e",
-            # Use fast mode for Cerberus to speed up E2E tests
-            f"--review-spawn-args=--mode={self.config.cerberus_mode}",
         ]
 
         runner = self._command_runner
@@ -374,6 +372,53 @@ def check_e2e_prereqs(
     runner = E2ERunner(env_config, command_runner)
     result = runner.check_prereqs(env)
     return result.failure_reason()
+
+
+def _disable_fixture_e2e_config(repo_path: Path) -> None:
+    """Disable E2E in the fixture config to avoid recursive runs."""
+    config_path = repo_path / "mala.yaml"
+    if not config_path.exists():
+        return
+
+    lines = config_path.read_text().splitlines()
+    output: list[str] = []
+    in_global = False
+    e2e_set = False
+    indent = 0
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("global_validation_commands:") and not line.startswith(
+            " "
+        ):
+            in_global = True
+            indent = len(line) - len(line.lstrip())
+            output.append(line)
+            continue
+
+        if in_global:
+            if stripped and (len(line) - len(line.lstrip())) <= indent:
+                if not e2e_set:
+                    output.append(" " * (indent + 2) + "e2e: null")
+                    e2e_set = True
+                in_global = False
+            elif stripped.startswith("e2e:"):
+                e2e_set = True
+
+        output.append(line)
+
+    if in_global and not e2e_set:
+        output.append(" " * (indent + 2) + "e2e: null")
+        e2e_set = True
+
+    if not any(
+        line.strip().startswith("global_validation_commands:") for line in lines
+    ):
+        output.append("")
+        output.append("global_validation_commands:")
+        output.append("  e2e: null")
+
+    config_path.write_text("\n".join(output) + "\n")
 
 
 def _select_python_invoker(repo_root: Path) -> list[str]:

@@ -14,7 +14,7 @@ Usage:
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -22,7 +22,7 @@ from ..orchestration.cli_support import USER_CONFIG_DIR, get_runs_dir, load_user
 
 if TYPE_CHECKING:
     from src.core.models import OrderPreference
-    from src.infra.io.config import MalaConfig, ResolvedConfig
+    from src.infra.io.config import MalaConfig
 
 # Bootstrap state: tracks whether bootstrap() has been called
 _bootstrapped = False
@@ -38,7 +38,6 @@ _LAZY_NAMES = frozenset(
         "MalaOrchestrator",
         "OrderPreference",
         "OrchestratorConfig",
-        "PeriodicValidationConfig",
         "WatchConfig",
         "create_issue_provider",
         "create_orchestrator",
@@ -192,28 +191,6 @@ def _print_task_line(
     )
 
 
-# Valid values for --disable flag
-# Each value controls a specific validation phase:
-#   post-validate: Skip all validation commands (pytest, ruff, ty) after agent commits
-#   global-validate: Skip global validation at end of batch (reserved for future use)
-#   integration-tests: Exclude @pytest.mark.integration tests from pytest runs
-#   coverage: Disable code coverage enforcement (threshold check)
-#   e2e: Disable end-to-end fixture repo tests (global only)
-#   review: Disable automated LLM code review after quality gate passes
-#   followup-on-run-validate-fail: Disable auto-retry on run validation failures (reserved)
-VALID_DISABLE_VALUES = frozenset(
-    {
-        "post-validate",
-        "global-validate",
-        "integration-tests",
-        "coverage",
-        "e2e",
-        "review",
-        "followup-on-run-validate-fail",
-    }
-)
-
-
 @dataclass(frozen=True)
 class ScopeConfig:
     """Parsed scope configuration from --scope option.
@@ -325,133 +302,48 @@ def parse_scope(scope: str) -> ScopeConfig:
     raise typer.Exit(1)
 
 
-@dataclass(frozen=True)
-class ValidatedRunArgs:
-    """Validated and parsed CLI arguments for the run command."""
-
-    only_ids: list[str] | None
-    disable_set: set[str] | None
-    epic_override_ids: set[str]
-
-
-@dataclass(frozen=True)
-class ConfigOverrideResult:
-    """Result of applying CLI overrides to config.
-
-    On success: resolved and updated_config are set, error is None.
-    On failure: error is set, resolved and updated_config are None.
-    """
-
-    resolved: ResolvedConfig | None = None
-    updated_config: MalaConfig | None = None
-    error: str | None = None
-
-    @property
-    def is_error(self) -> bool:
-        """Return True if this result represents an error."""
-        return self.error is not None
-
-
 def _build_cli_args_metadata(
     *,
-    disable: list[str] | None,
     resume: bool,
     max_issues: int | None,
-    max_gate_retries: int,
-    max_review_retries: int,
-    epic_override: list[str] | None,
-    resolved: ResolvedConfig,
     watch: bool,
-    validate_every: int | None,
 ) -> dict[str, object]:
     """Build the cli_args metadata dictionary for logging and OrchestratorConfig.
 
     Args:
-        disable: List of validation names to disable from CLI.
         resume: Whether WIP prioritization is enabled (--resume flag).
         max_issues: Maximum issues to process.
-        max_gate_retries: Maximum gate retry attempts.
-        max_review_retries: Maximum review retry attempts.
-        epic_override: List of epic IDs to override from CLI.
-        resolved: Resolved config with effective values.
         watch: Whether watch mode is enabled.
-        validate_every: Run validation after every N issues.
 
     Returns:
         Dictionary of CLI arguments for logging/metadata.
     """
-    normalized_disable = sorted(set(_normalize_repeatable_option(disable)))
-    normalized_epic = sorted(set(_normalize_repeatable_option(epic_override)))
     return {
-        "disable_validations": normalized_disable if normalized_disable else None,
         "wip": resume,
         "max_issues": max_issues,
-        "max_gate_retries": max_gate_retries,
-        "max_review_retries": max_review_retries,
-        "review_timeout": resolved.review_timeout,
-        "review_spawn_args": list(resolved.cerberus_spawn_args),
-        "review_wait_args": list(resolved.cerberus_wait_args),
-        "review_env": dict(resolved.cerberus_env),
-        "epic_override": normalized_epic if normalized_epic else None,
-        "max_epic_verification_retries": resolved.max_epic_verification_retries,
         "watch": watch,
-        "validate_every": validate_every,
     }
 
 
-def _apply_config_overrides(
-    config: MalaConfig,
-    review_timeout: int | None,
-    cerberus_spawn_args: str | None,
-    cerberus_wait_args: str | None,
-    cerberus_env: str | None,
-    max_epic_verification_retries: int | None,
-    disable_review: bool,
-    claude_settings_sources: str | None,
-) -> ConfigOverrideResult:
-    """Apply CLI overrides to MalaConfig, returning error on parse failures.
+def _apply_claude_settings_sources_override(
+    config: MalaConfig, claude_settings_sources: str | None
+) -> MalaConfig:
+    """Apply --claude-settings-sources override to MalaConfig."""
+    if claude_settings_sources is None:
+        return config
 
-    Args:
-        config: Base MalaConfig from environment.
-        review_timeout: Optional review timeout override.
-        cerberus_spawn_args: Raw string of extra args for spawn.
-        cerberus_wait_args: Raw string of extra args for wait.
-        cerberus_env: Raw string of extra env vars (key=value pairs).
-        max_epic_verification_retries: Optional max retries override.
-        disable_review: Whether review is disabled.
-        claude_settings_sources: Raw comma-separated list of settings sources.
+    from src.infra.io.config import parse_claude_settings_sources
 
-    Returns:
-        ConfigOverrideResult with resolved config and updated MalaConfig on success,
-        or with error message on failure.
-    """
-    from src.infra.io.config import CLIOverrides, build_resolved_config
+    parsed = parse_claude_settings_sources(claude_settings_sources, source="CLI")
+    if parsed is None:
+        return config
 
-    cli_overrides = CLIOverrides(
-        cerberus_spawn_args=cerberus_spawn_args,
-        cerberus_wait_args=cerberus_wait_args,
-        cerberus_env=cerberus_env,
-        review_timeout=review_timeout,
-        max_epic_verification_retries=max_epic_verification_retries,
-        disable_review=disable_review,
-        claude_settings_sources=claude_settings_sources,
-    )
-
-    try:
-        resolved = build_resolved_config(config, cli_overrides)
-    except ValueError as exc:
-        return ConfigOverrideResult(error=str(exc))
-
-    updated_config = replace(
-        config,
-        review_timeout=resolved.review_timeout,
-        cerberus_spawn_args=resolved.cerberus_spawn_args,
-        cerberus_wait_args=resolved.cerberus_wait_args,
-        cerberus_env=resolved.cerberus_env,
-        max_epic_verification_retries=resolved.max_epic_verification_retries,
-    )
-
-    return ConfigOverrideResult(resolved=resolved, updated_config=updated_config)
+    init_kwargs = {
+        field.name: getattr(config, field.name)
+        for field in fields(config)
+        if field.init and field.name != "claude_settings_sources_init"
+    }
+    return _lazy("MalaConfig")(**init_kwargs, claude_settings_sources_init=parsed)
 
 
 def _handle_dry_run(
@@ -493,80 +385,6 @@ def _handle_dry_run(
 
     asyncio.run(_dry_run())
     raise typer.Exit(0)
-
-
-def _normalize_repeatable_option(values: list[str] | None) -> list[str]:
-    """Normalize a repeatable option that may contain comma-separated values.
-
-    Supports both:
-    - Repeated: --disable coverage --disable review
-    - Comma-separated: --disable "coverage,review"
-    - Mixed: --disable coverage --disable "review,e2e"
-
-    Returns:
-        Flattened list of stripped, non-empty values.
-    """
-    if not values:
-        return []
-    result: list[str] = []
-    for val in values:
-        # Split by comma for backward compat
-        for part in val.split(","):
-            stripped = part.strip()
-            if stripped:
-                result.append(stripped)
-    return result
-
-
-def _validate_run_args(
-    disable: list[str] | None,
-    epic_override: list[str] | None,
-    repo_path: Path,
-) -> ValidatedRunArgs:
-    """Validate and parse CLI arguments, raising typer.Exit(1) on errors.
-
-    Args:
-        disable: List of validation names to disable (repeatable, comma-separated supported)
-        epic_override: List of epic IDs to override (repeatable, comma-separated supported)
-        repo_path: Path to the repository (must exist)
-
-    Returns:
-        ValidatedRunArgs with parsed values
-
-    Raises:
-        typer.Exit: If any validation fails
-    """
-    # Parse --disable flag into a set (supports both repeatable and comma-separated)
-    disable_set: set[str] | None = None
-    normalized_disable = _normalize_repeatable_option(disable)
-    if normalized_disable:
-        disable_set = set(normalized_disable)
-        unknown = disable_set - VALID_DISABLE_VALUES
-        if unknown:
-            log(
-                "✗",
-                f"Unknown --disable value(s): {', '.join(sorted(unknown))}. "
-                f"Valid values: {', '.join(sorted(VALID_DISABLE_VALUES))}",
-                Colors.RED,
-            )
-            raise typer.Exit(1)
-
-    # Parse --epic-override flag into a set of epic IDs (supports both repeatable and comma-separated)
-    epic_override_ids: set[str] = set()
-    normalized_epic_override = _normalize_repeatable_option(epic_override)
-    if normalized_epic_override:
-        epic_override_ids = set(normalized_epic_override)
-
-    # Validate repo_path exists
-    if not repo_path.exists():
-        log("✗", f"Repository not found: {repo_path}", Colors.RED)
-        raise typer.Exit(1)
-
-    return ValidatedRunArgs(
-        only_ids=None,
-        disable_set=disable_set,
-        epic_override_ids=epic_override_ids,
-    )
 
 
 app = typer.Typer(
@@ -620,37 +438,6 @@ def run(
             rich_help_panel="Scope & Ordering",
         ),
     ] = None,
-    max_gate_retries: Annotated[
-        int,
-        typer.Option(
-            "--max-gate-retries",
-            help="Maximum quality gate retry attempts per issue (default: 3)",
-            rich_help_panel="Quality Gates",
-        ),
-    ] = 3,
-    max_review_retries: Annotated[
-        int,
-        typer.Option(
-            "--max-review-retries",
-            help="Maximum codex review retry attempts per issue (default: 3)",
-            rich_help_panel="Quality Gates",
-        ),
-    ] = 3,
-    disable: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--disable",
-            help=(
-                "Validations to skip (repeatable). Options: "
-                "post-validate (skip pytest/ruff/ty after commits), "
-                "integration-tests (exclude @pytest.mark.integration tests), "
-                "coverage (disable coverage threshold check), "
-                "e2e (skip end-to-end fixture tests), "
-                "review (skip LLM code review)"
-            ),
-            rich_help_panel="Quality Gates",
-        ),
-    ] = None,
     resume: Annotated[
         bool,
         typer.Option(
@@ -694,54 +481,6 @@ def run(
             rich_help_panel="Debugging",
         ),
     ] = False,
-    review_timeout: Annotated[
-        int | None,
-        typer.Option(
-            "--review-timeout",
-            help="Timeout in seconds for review operations (default: 1200)",
-            rich_help_panel="Review Backend",
-        ),
-    ] = None,
-    review_spawn_args: Annotated[
-        str | None,
-        typer.Option(
-            "--review-spawn-args",
-            help="Extra args for `review-gate spawn-code-review` (shlex-style string)",
-            rich_help_panel="Review Backend",
-        ),
-    ] = None,
-    review_wait_args: Annotated[
-        str | None,
-        typer.Option(
-            "--review-wait-args",
-            help="Extra args for `review-gate wait` (shlex-style string)",
-            rich_help_panel="Review Backend",
-        ),
-    ] = None,
-    review_env: Annotated[
-        str | None,
-        typer.Option(
-            "--review-env",
-            help="Extra env for review-gate (JSON object or comma KEY=VALUE list)",
-            rich_help_panel="Review Backend",
-        ),
-    ] = None,
-    epic_override: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--epic-override",
-            help="Epic IDs to close without verification (repeatable)",
-            rich_help_panel="Epic Verification",
-        ),
-    ] = None,
-    max_epic_verification_retries: Annotated[
-        int | None,
-        typer.Option(
-            "--max-epic-verification-retries",
-            help="Maximum retries for epic verification loop (default: 3)",
-            rich_help_panel="Epic Verification",
-        ),
-    ] = None,
     watch: Annotated[
         bool,
         typer.Option(
@@ -749,14 +488,6 @@ def run(
             help="Keep running and poll for new issues instead of exiting when idle",
         ),
     ] = False,
-    validate_every: Annotated[
-        int | None,
-        typer.Option(
-            "--validate-every",
-            min=1,
-            help="Run validation after every N issues complete (default: 10 in watch mode)",
-        ),
-    ] = None,
     claude_settings_sources: Annotated[
         str | None,
         typer.Option(
@@ -826,14 +557,10 @@ def run(
         _lazy("OrderPreference").EPIC_PRIORITY,
     )
 
-    # Validate and parse CLI arguments
-    validated = _validate_run_args(
-        disable=disable,
-        epic_override=epic_override,
-        repo_path=repo_path,
-    )
-    disable_set = validated.disable_set
-    epic_override_ids = validated.epic_override_ids
+    # Validate repo_path exists
+    if not repo_path.exists():
+        log("✗", f"Repository not found: {repo_path}", Colors.RED)
+        raise typer.Exit(1)
 
     # Ensure user config directory exists
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -850,49 +577,20 @@ def run(
     # Build and configure MalaConfig from environment
     config = _lazy("MalaConfig").from_env(validate=False)
 
-    # Apply CLI overrides to config
-    override_result = _apply_config_overrides(
-        config=config,
-        review_timeout=review_timeout,
-        cerberus_spawn_args=review_spawn_args,
-        cerberus_wait_args=review_wait_args,
-        cerberus_env=review_env,
-        max_epic_verification_retries=max_epic_verification_retries,
-        disable_review="review" in (disable_set or set()),
-        claude_settings_sources=claude_settings_sources,
-    )
-    if override_result.is_error:
-        assert override_result.error is not None  # for type narrowing
-        log("✗", override_result.error, Colors.RED)
+    # Apply claude settings sources override
+    try:
+        config = _apply_claude_settings_sources_override(
+            config, claude_settings_sources
+        )
+    except ValueError as exc:
+        log("✗", str(exc), Colors.RED)
         raise typer.Exit(1)
-
-    # After error check, resolved and updated_config are guaranteed non-None
-    assert override_result.resolved is not None
-    assert override_result.updated_config is not None
-
-    # Derive effective validate_every: explicit > watch default (10) > disabled (None)
-    effective_validate_every: int | None
-    if validate_every is not None:
-        # User explicitly specified --validate-every N
-        effective_validate_every = validate_every
-    elif watch:
-        # Watch mode enabled, use default 10
-        effective_validate_every = 10
-    else:
-        # No watch, no explicit --validate-every → disabled
-        effective_validate_every = None
 
     # Build cli_args metadata for logging
     cli_args = _build_cli_args_metadata(
-        disable=disable,
         resume=resume,
         max_issues=max_issues,
-        max_gate_retries=max_gate_retries,
-        max_review_retries=max_review_retries,
-        epic_override=epic_override,
-        resolved=override_result.resolved,
         watch=watch,
-        validate_every=effective_validate_every,
     )
 
     # Build OrchestratorConfig and run
@@ -903,33 +601,22 @@ def run(
         max_issues=max_issues,
         epic_id=epic_id,
         only_ids=only_ids,
-        max_gate_retries=max_gate_retries,
-        max_review_retries=max_review_retries,
-        disable_validations=disable_set,
         include_wip=resume,
         strict_resume=strict,
         focus=focus,
         order_preference=order_preference,
         cli_args=cli_args,
-        epic_override_ids=epic_override_ids,
         orphans_only=orphans_only,
     )
 
     orchestrator = _lazy("create_orchestrator")(
         orch_config,
-        mala_config=override_result.updated_config,
+        mala_config=config,
     )
 
-    # Build WatchConfig and PeriodicValidationConfig, then run orchestrator
+    # Build WatchConfig, then run orchestrator
     watch_config = _lazy("WatchConfig")(enabled=watch)
-    validation_config = (
-        _lazy("PeriodicValidationConfig")(validate_every=effective_validate_every)
-        if effective_validate_every is not None
-        else None
-    )
-    success_count, total = asyncio.run(
-        orchestrator.run(watch_config=watch_config, validation_config=validation_config)
-    )
+    success_count, total = asyncio.run(orchestrator.run(watch_config=watch_config))
 
     # Determine exit code:
     # - Use orchestrator.exit_code for interrupt (130), validation failure (1), abort (3)
@@ -1012,23 +699,13 @@ def epic_verify(
 
     config = _lazy("MalaConfig").from_env(validate=False)
 
-    # Apply CLI overrides to config
-    override_result = _apply_config_overrides(
-        config=config,
-        review_timeout=None,
-        cerberus_spawn_args=None,
-        cerberus_wait_args=None,
-        cerberus_env=None,
-        max_epic_verification_retries=None,
-        disable_review=False,
-        claude_settings_sources=claude_settings_sources,
-    )
-    if override_result.is_error:
-        assert override_result.error is not None
-        log("✗", override_result.error, Colors.RED)
+    try:
+        config = _apply_claude_settings_sources_override(
+            config, claude_settings_sources
+        )
+    except ValueError as exc:
+        log("✗", str(exc), Colors.RED)
         raise typer.Exit(1)
-    assert override_result.updated_config is not None
-    config = override_result.updated_config
 
     orch_config = _lazy("OrchestratorConfig")(repo_path=repo_path)
     orchestrator = _lazy("create_orchestrator")(orch_config, mala_config=config)
@@ -1312,10 +989,6 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         from ..orchestration.types import OrchestratorConfig
 
         _lazy_modules[name] = OrchestratorConfig
-    elif name == "PeriodicValidationConfig":
-        from ..core.models import PeriodicValidationConfig
-
-        _lazy_modules[name] = PeriodicValidationConfig
     elif name == "WatchConfig":
         from ..core.models import WatchConfig
 

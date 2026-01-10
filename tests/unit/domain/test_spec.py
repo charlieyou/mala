@@ -391,7 +391,7 @@ class TestBuildValidationSpec:
         assert lint_cmd.timeout == DEFAULT_COMMAND_TIMEOUT
 
     def test_disable_post_validate(self, tmp_path: Path) -> None:
-        """--disable post-validate removes all commands."""
+        """disable_validations post-validate removes all commands."""
         config_src = Path("tests/fixtures/mala-configs/go-project.yaml")
         config_dst = tmp_path / "mala.yaml"
         shutil.copy(config_src, config_dst)
@@ -404,7 +404,7 @@ class TestBuildValidationSpec:
         assert spec.commands == []
 
     def test_disable_coverage(self, tmp_path: Path) -> None:
-        """--disable coverage disables coverage."""
+        """disable_validations coverage disables coverage."""
         config_src = Path("tests/fixtures/mala-configs/node-project.yaml")
         config_dst = tmp_path / "mala.yaml"
         shutil.copy(config_src, config_dst)
@@ -417,7 +417,7 @@ class TestBuildValidationSpec:
         assert spec.coverage.enabled is False
 
     def test_disable_e2e(self, tmp_path: Path) -> None:
-        """--disable e2e disables E2E."""
+        """disable_validations e2e disables E2E."""
         config_src = Path("tests/fixtures/mala-configs/go-project.yaml")
         config_dst = tmp_path / "mala.yaml"
         shutil.copy(config_src, config_dst)

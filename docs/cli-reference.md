@@ -47,32 +47,11 @@ mala run --order issue-priority /path/to/repo
 mala run --scope ids:T-123,T-456,T-789 --order input /path/to/repo
 ```
 
-### Quality Gates
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--max-gate-retries` | 3 | Maximum quality gate retry attempts per issue |
-| `--max-review-retries` | 3 | Maximum external review retry attempts per issue |
-| `--max-epic-verification-retries` | 3 | Maximum retries for epic verification loop |
-| `--disable` | - | Validations to skip (see [Disable Flags](#disable-validation-flags)) |
-
-### Review Backend (Cerberus)
-
-These flags apply when using `reviewer_type: cerberus` in `validation_triggers.<trigger>.code_review`:
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--review-timeout` | 1200 | Timeout in seconds for Cerberus review operations |
-| `--review-spawn-args` | - | Extra args appended to `review-gate spawn-code-review` |
-| `--review-wait-args` | - | Extra args appended to `review-gate wait` |
-| `--review-env` | - | Extra env for review-gate (JSON object or comma KEY=VALUE list) |
-
 ### Watch Mode
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--watch` | false | Keep running and poll for new issues instead of exiting when idle |
-| `--validate-every` | 10 | Run validation after every N issues (watch mode only) |
 
 ### Debugging
 
@@ -80,22 +59,6 @@ These flags apply when using `reviewer_type: cerberus` in `validation_triggers.<
 |------|---------|-------------|
 | `--dry-run`, `-d` | false | Preview task order without processing |
 | `--verbose`, `-v` | false | Enable verbose output; shows full tool arguments |
-| `--epic-override` | - | Repeatable epic IDs to close without verification (human bypass) |
-
-### Disable Validation Flags
-
-Use `--disable` with one or more values.
-Repeat the flag or pass comma-separated lists (e.g., `--disable coverage --disable review` or `--disable coverage,review`):
-
-| Value | Description |
-|-------|-------------|
-| `post-validate` | Skip all per-session validation (tests, lint, typecheck) |
-| `global-validate` | Skip global validation |
-| `integration-tests` | Exclude integration tests from pytest |
-| `coverage` | Disable coverage checking |
-| `e2e` | Disable E2E fixture repo test |
-| `review` | Disable code review (configured via `validation_triggers.<trigger>.code_review`) |
-| `followup-on-run-validate-fail` | Don't mark issues with `needs-followup` on global validation failure |
 
 ## Global Configuration
 

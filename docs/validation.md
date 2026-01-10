@@ -99,7 +99,7 @@ validation_triggers:
    - Commit list for the issue (includes all work across retry attempts)
 5. **Re-gating**: After fixes, runs both deterministic gate AND code review again
 
-Review retries are capped at `max_retries` in the `code_review` block (default: 3). Use `--disable review` to disable all code review globally.
+Review retries are capped at `max_retries` in the `code_review` block (default: 3). Disable code review by setting `validation_triggers.<trigger>.code_review.enabled: false` or by passing `disable_validations={"review"}` when building a validation spec programmatically.
 
 **Skipped for no-work resolutions**: Issues resolved with `ISSUE_NO_CHANGE`, `ISSUE_OBSOLETE`, or `ISSUE_ALREADY_COMPLETE` skip code review entirely since there's no new code to review.
 
@@ -163,15 +163,15 @@ Global validations can override the base `commands` via `global_validation_comma
 
 | Flag | Default | Effect |
 |------|---------|--------|
-| `integration-tests` | included | Pytest tests marked `@pytest.mark.integration` are skipped when this flag is in the disable list |
+| `integration-tests` | included | Pytest tests marked `@pytest.mark.integration` are skipped when this value is in the disable list |
 | `e2e` | enabled (global only) | E2E fixture test runs only during global validation |
 
-### Disable Flags
+### Disable Values (Programmatic)
 
-- `--disable global-validate`: Skip global validation entirely
-- `--disable integration-tests`: Exclude integration-marked pytest tests
-- `--disable e2e`: Disable E2E fixture test (only affects global)
-- `--disable followup-on-run-validate-fail`: Don't mark issues on global validation failure
+- `global-validate`: Skip global validation entirely
+- `integration-tests`: Exclude integration-marked pytest tests
+- `e2e`: Disable E2E fixture test (only affects global)
+- `followup-on-run-validate-fail`: Don't mark issues on global validation failure
 
 ## Repo Type Detection
 
