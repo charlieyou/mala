@@ -1373,3 +1373,150 @@ class TestVerifyWithSDK:
         assert verdict.passed is False
         assert verdict.confidence == 0.0
         assert "Failed to parse" in verdict.reasoning
+
+
+# ============================================================================
+# Test max_diff_size_kb limit
+# ============================================================================
+
+
+class TestMaxDiffSizeKb:
+    """Tests for max_diff_size_kb configuration."""
+
+    @pytest.mark.asyncio
+    async def test_skips_verification_when_diff_exceeds_limit(
+        self,
+        tmp_path: Path,
+        mock_beads: MagicMock,
+        mock_model: MagicMock,
+    ) -> None:
+        """Should skip verification and return requires human review when diff too large."""
+        mock_runner = MagicMock()
+
+        # Create verifier with max_diff_size_kb limit
+        verifier = EpicVerifier(
+            beads=mock_beads,
+            model=mock_model,
+            repo_path=tmp_path,
+            command_runner=mock_runner,
+            max_diff_size_kb=10,  # 10 KB limit
+        )
+
+        # Stub scope analyzer to return commit range
+        mock_scope_analyzer = MagicMock()
+        mock_scope_analyzer.compute_scoped_commits = AsyncMock(
+            return_value=ScopedCommits(
+                commit_shas=["abc123"],
+                commit_range="abc123^..def456",
+                commit_summary="- abc123 summary",
+            )
+        )
+        verifier.scope_analyzer = mock_scope_analyzer
+
+        # Mock git diff --numstat to return large diff (1000 lines = ~80KB)
+        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
+            if "diff" in cmd and "--numstat" in cmd:
+                # 1000 added + 500 removed = 1500 lines * 80 bytes = 120KB
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout="1000\t500\tfile.py",
+                )
+            return CommandResult(command=cmd, returncode=0, stdout="")
+
+        mock_runner.run_async = mock_run_async
+
+        verdict = await verifier.verify_epic("epic-1")
+
+        # Verification should be skipped
+        mock_model.verify.assert_not_called()
+        assert verdict.passed is False
+        assert verdict.confidence == 0.0
+        assert "exceeds limit" in verdict.reasoning
+        assert "Requires human review" in verdict.reasoning
+
+    @pytest.mark.asyncio
+    async def test_proceeds_when_diff_within_limit(
+        self,
+        tmp_path: Path,
+        mock_beads: MagicMock,
+        mock_model: MagicMock,
+    ) -> None:
+        """Should proceed with verification when diff is within limit."""
+        mock_runner = MagicMock()
+
+        verifier = EpicVerifier(
+            beads=mock_beads,
+            model=mock_model,
+            repo_path=tmp_path,
+            command_runner=mock_runner,
+            max_diff_size_kb=100,  # 100 KB limit
+        )
+
+        mock_scope_analyzer = MagicMock()
+        mock_scope_analyzer.compute_scoped_commits = AsyncMock(
+            return_value=ScopedCommits(
+                commit_shas=["abc123"],
+                commit_range="abc123^..def456",
+                commit_summary="- abc123 summary",
+            )
+        )
+        verifier.scope_analyzer = mock_scope_analyzer
+
+        # Mock small diff (10 lines = ~0.8KB)
+        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
+            if "diff" in cmd and "--numstat" in cmd:
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout="5\t5\tfile.py",
+                )
+            return CommandResult(command=cmd, returncode=0, stdout="")
+
+        mock_runner.run_async = mock_run_async
+
+        verdict = await verifier.verify_epic("epic-1")
+
+        # Verification should proceed
+        mock_model.verify.assert_called_once()
+        assert verdict.passed is True
+
+    @pytest.mark.asyncio
+    async def test_no_limit_when_max_diff_size_kb_none(
+        self,
+        tmp_path: Path,
+        mock_beads: MagicMock,
+        mock_model: MagicMock,
+    ) -> None:
+        """Should not check diff size when max_diff_size_kb is None."""
+        mock_runner = MagicMock()
+
+        verifier = EpicVerifier(
+            beads=mock_beads,
+            model=mock_model,
+            repo_path=tmp_path,
+            command_runner=mock_runner,
+            max_diff_size_kb=None,  # No limit
+        )
+
+        mock_scope_analyzer = MagicMock()
+        mock_scope_analyzer.compute_scoped_commits = AsyncMock(
+            return_value=ScopedCommits(
+                commit_shas=["abc123"],
+                commit_range="abc123^..def456",
+                commit_summary="- abc123 summary",
+            )
+        )
+        verifier.scope_analyzer = mock_scope_analyzer
+
+        # Mock large diff - should not matter when limit is None
+        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
+            # Don't expect diff --numstat to be called when max_diff_size_kb is None
+            return CommandResult(command=cmd, returncode=0, stdout="")
+
+        mock_runner.run_async = mock_run_async
+
+        await verifier.verify_epic("epic-1")
+
+        # Verification should proceed regardless of diff size
+        mock_model.verify.assert_called_once()

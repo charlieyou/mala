@@ -237,6 +237,14 @@ def _derive_config(
     )
     idle_timeout_seconds = yaml_idle_timeout_seconds  # None = derive at runtime
 
+    # Compute max_diff_size_kb - only from mala.yaml (no CLI option)
+    # None means no limit on diff size for epic verification
+    max_diff_size_kb: int | None = (
+        getattr(validation_config, "max_diff_size_kb", None)
+        if validation_config is not None
+        else None
+    )
+
     logger.debug(
         "Derived config: timeout=%ds context_restart_threshold=%.2f context_limit=%d "
         "max_idle_retries=%d idle_timeout_seconds=%s",
@@ -256,6 +264,7 @@ def _derive_config(
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
         max_epic_verification_retries=max_epic_verification_retries,
+        max_diff_size_kb=max_diff_size_kb,
         validation_config=validation_config,
         validation_config_missing=validation_config_missing,
     )
@@ -604,6 +613,7 @@ def _build_dependencies(
                 command_runner=command_runner,
                 event_sink=event_sink,
                 lock_manager=LockManager(),
+                max_diff_size_kb=derived.max_diff_size_kb,
             ),
         )
 

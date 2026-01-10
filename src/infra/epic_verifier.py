@@ -374,6 +374,7 @@ class EpicVerifier:
         lock_manager: LockManagerPort | None = None,
         event_sink: MalaEventSink | None = None,
         scope_analyzer: EpicScopeAnalyzer | None = None,
+        max_diff_size_kb: int | None = None,
     ):
         """Initialize EpicVerifier.
 
@@ -387,6 +388,8 @@ class EpicVerifier:
             event_sink: Optional event sink for emitting verification lifecycle events.
             scope_analyzer: Optional EpicScopeAnalyzer for computing scoped commits.
                 If not provided, a default instance is created.
+            max_diff_size_kb: Maximum diff size in KB. If set and diff exceeds limit,
+                verification is skipped and returns a verdict requiring human review.
         """
         self.beads = beads
         self.model = model
@@ -398,6 +401,55 @@ class EpicVerifier:
         self.scope_analyzer = scope_analyzer or EpicScopeAnalyzer(
             repo_path, self._runner
         )
+        self.max_diff_size_kb = max_diff_size_kb
+
+    async def _get_diff_size_kb(self, commit_range: str) -> int | None:
+        """Get approximate diff size in KB for a commit range.
+
+        Uses git diff --stat to estimate the size based on line changes.
+        Approximates 80 bytes per line for size estimation.
+
+        Args:
+            commit_range: Git commit range (e.g., "abc123^..def456").
+
+        Returns:
+            Estimated diff size in KB, or None if unable to compute.
+        """
+        # Parse commit range to get from/to commits
+        # Format: "abc123^..def456" -> from="abc123^", to="def456"
+        if ".." not in commit_range:
+            return None
+
+        parts = commit_range.split("..", 1)
+        if len(parts) != 2:
+            return None
+
+        from_commit, to_commit = parts[0], parts[1]
+        if not from_commit or not to_commit:
+            return None
+
+        result = await self._runner.run_async(
+            ["git", "diff", "--numstat", from_commit, to_commit]
+        )
+        if not result.ok:
+            return None
+
+        total_lines = 0
+        for line in result.stdout.strip().split("\n"):
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                added, removed = parts[0], parts[1]
+                # Skip binary files (marked with "-")
+                if added != "-" and removed != "-":
+                    try:
+                        total_lines += int(added) + int(removed)
+                    except ValueError:
+                        pass
+
+        # Approximate 80 bytes per line, convert to KB
+        return (total_lines * 80) // 1024
 
     async def verify_and_close_eligible(
         self,
@@ -509,6 +561,23 @@ class EpicVerifier:
                 ),
                 None,
             )
+
+        # Check diff size limit if configured
+        if self.max_diff_size_kb is not None and scoped.commit_range:
+            diff_size_kb = await self._get_diff_size_kb(scoped.commit_range)
+            if diff_size_kb is not None and diff_size_kb > self.max_diff_size_kb:
+                return (
+                    EpicVerdict(
+                        passed=False,
+                        unmet_criteria=[],
+                        confidence=0.0,
+                        reasoning=(
+                            f"Diff size ({diff_size_kb} KB) exceeds limit "
+                            f"({self.max_diff_size_kb} KB). Requires human review."
+                        ),
+                    ),
+                    None,
+                )
 
         # Extract and load spec content if referenced
         spec_paths = extract_spec_paths(epic_description)
