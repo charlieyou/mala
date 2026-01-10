@@ -405,17 +405,17 @@ code_review:
 
 ## Migration Guide
 
-### From Root-Level `reviewer_type`
+### From Root-Level `reviewer_type` (Removed)
 
-The root-level `reviewer_type`, `agent_sdk_review_timeout`, and `agent_sdk_reviewer_model` fields are deprecated. Move review configuration into `validation_triggers.<trigger>.code_review`:
+The root-level `reviewer_type`, `agent_sdk_review_timeout`, and `agent_sdk_reviewer_model` fields have been removed. Review configuration is now done via `validation_triggers.<trigger>.code_review`:
 
-**Before:**
+**Old (no longer supported):**
 ```yaml
 preset: python-uv
-reviewer_type: cerberus
+reviewer_type: cerberus  # Error: Unknown field
 ```
 
-**After:**
+**New:**
 ```yaml
 preset: python-uv
 validation_triggers:

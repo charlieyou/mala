@@ -93,9 +93,15 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
         self, tmp_path: Path
     ) -> None:
         """Verify factory creates DefaultReviewer with reviewer_type=cerberus."""
-        # Create mala.yaml with cerberus reviewer_type to test full config path
+        # Create mala.yaml with cerberus reviewer_type in validation triggers
         (tmp_path / "mala.yaml").write_text(
-            "preset: python-uv\nreviewer_type: cerberus\n"
+            "preset: python-uv\n"
+            "validation_triggers:\n"
+            "  session_end:\n"
+            "    failure_mode: continue\n"
+            "    code_review:\n"
+            "      enabled: true\n"
+            "      reviewer_type: cerberus\n"
         )
 
         # Load reviewer config via factory path (validates mala.yaml parsing)
@@ -137,19 +143,20 @@ class TestFactoryCreatesAgentSDKReviewerWhenConfigured:
         self, tmp_path: Path
     ) -> None:
         """Verify factory creates AgentSDKReviewer with reviewer_type=agent_sdk."""
-        # Create mala.yaml with agent_sdk config to test full config path
+        # Create mala.yaml with agent_sdk config in validation triggers
         (tmp_path / "mala.yaml").write_text(
             "preset: python-uv\n"
-            "reviewer_type: agent_sdk\n"
-            "agent_sdk_review_timeout: 900\n"
-            "agent_sdk_reviewer_model: opus\n"
+            "validation_triggers:\n"
+            "  session_end:\n"
+            "    failure_mode: continue\n"
+            "    code_review:\n"
+            "      enabled: true\n"
+            "      reviewer_type: agent_sdk\n"
         )
 
         # Load reviewer config via factory path (validates mala.yaml parsing)
         reviewer_config = _get_reviewer_config(tmp_path)
         assert reviewer_config.reviewer_type == "agent_sdk"
-        assert reviewer_config.agent_sdk_review_timeout == 900
-        assert reviewer_config.agent_sdk_reviewer_model == "opus"
 
         # Create minimal MalaConfig mock
         mala_config = MagicMock()
@@ -182,10 +189,10 @@ class TestFactoryCreatesAgentSDKReviewerWhenConfigured:
 
             # Verify correct type was created
             assert isinstance(reviewer, AgentSDKReviewer)
-            # Verify settings were passed through
+            # Verify settings were passed through (uses defaults)
             assert reviewer.repo_path == tmp_path
-            assert reviewer.default_timeout == 900
-            assert reviewer.model == "opus"
+            assert reviewer.default_timeout == 600  # Default timeout
+            assert reviewer.model == "sonnet"  # Default model
 
 
 class TestReviewRunnerIntegration:

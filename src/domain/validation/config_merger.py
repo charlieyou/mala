@@ -239,41 +239,6 @@ def merge_configs(
         else None
     )
 
-    # Reviewer fields: user overrides if explicitly set, otherwise inherit from preset
-    reviewer_type_explicitly_set = _is_field_explicitly_set(
-        "reviewer_type",
-        user._fields_set,
-        user.reviewer_type,
-        user.reviewer_type == "agent_sdk",  # Default
-    )
-    merged_reviewer_type = (
-        user.reviewer_type if reviewer_type_explicitly_set else preset.reviewer_type
-    )
-
-    timeout_explicitly_set = _is_field_explicitly_set(
-        "agent_sdk_review_timeout",
-        user._fields_set,
-        user.agent_sdk_review_timeout,
-        user.agent_sdk_review_timeout == 600,  # Default
-    )
-    merged_timeout = (
-        user.agent_sdk_review_timeout
-        if timeout_explicitly_set
-        else preset.agent_sdk_review_timeout
-    )
-
-    model_explicitly_set = _is_field_explicitly_set(
-        "agent_sdk_reviewer_model",
-        user._fields_set,
-        user.agent_sdk_reviewer_model,
-        user.agent_sdk_reviewer_model == "sonnet",  # Default
-    )
-    merged_model = (
-        user.agent_sdk_reviewer_model
-        if model_explicitly_set
-        else preset.agent_sdk_reviewer_model
-    )
-
     # validation_triggers: NOT inherited from preset per spec (triggers must be project-defined)
     # User value is used directly - if not set, remains None
     merged_triggers = user.validation_triggers
@@ -291,9 +256,6 @@ def merge_configs(
         setup_files=merged_setup_files,
         custom_commands=merged_custom_commands,
         global_custom_commands=merged_global_custom_commands,
-        reviewer_type=merged_reviewer_type,
-        agent_sdk_review_timeout=merged_timeout,
-        agent_sdk_reviewer_model=merged_model,
         validation_triggers=merged_triggers,
         claude_settings_sources=merged_claude_settings_sources,
         _fields_set=user._fields_set,  # Preserve user's fields_set

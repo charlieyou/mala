@@ -193,77 +193,28 @@ def _has_new_code_review_config(validation_config: object | None) -> bool:
     return _get_new_code_review_reviewer_type(validation_config) is not None
 
 
-def _check_legacy_review_config(validation_config: object | None) -> None:
-    """Emit deprecation warning for legacy top-level reviewer_type config.
-
-    Warns when:
-    - Top-level reviewer_type is explicitly set in mala.yaml
-    - No new code_review config exists in any validation trigger
-
-    Args:
-        validation_config: A ValidationConfig instance, or None.
-    """
-    if validation_config is None:
-        return
-
-    # Check if reviewer_type is in _fields_set (explicitly set by user)
-    fields_set = getattr(validation_config, "_fields_set", frozenset())
-    if "reviewer_type" not in fields_set:
-        return
-
-    # No warning if new code_review config is present
-    if _has_new_code_review_config(validation_config):
-        return
-
-    # Legacy config used without new code_review
-    logger.warning(
-        "DEPRECATION: Top-level 'reviewer_type' is deprecated for per-issue reviews. "
-        "Add 'validation_triggers.session_end.code_review.enabled: true' to preserve "
-        "current behavior. Legacy implicit reviews will be removed in the next major version."
-    )
-
-
 def _extract_reviewer_config(
     validation_config: object,
-    *,
-    cli_reviewer_type: str | None = None,
 ) -> _ReviewerConfig:
     """Extract reviewer configuration from a ValidationConfig.
 
-    Applies precedence:
-    1. New code_review config in triggers (uses trigger's code_review.reviewer_type)
-    2. CLI --reviewer-type (deprecated, used as fallback)
-    3. Top-level reviewer_type in config (legacy)
+    Gets reviewer_type from the first enabled code_review config in
+    validation triggers. Defaults to 'agent_sdk' if no code_review
+    config is enabled.
 
     Args:
         validation_config: A ValidationConfig instance.
-        cli_reviewer_type: Deprecated CLI --reviewer-type override.
 
     Returns:
         _ReviewerConfig with reviewer settings.
     """
-    # Check for new code_review config first - it takes precedence
-    new_config_reviewer_type = _get_new_code_review_reviewer_type(validation_config)
-    if new_config_reviewer_type is not None:
-        # New config takes precedence - use trigger's code_review.reviewer_type
-        effective_reviewer_type = new_config_reviewer_type
-    elif cli_reviewer_type is not None:
-        # CLI override (deprecated) takes precedence over legacy config
-        effective_reviewer_type = cli_reviewer_type
-    else:
-        # Fall back to top-level config's reviewer_type (legacy or default)
-        effective_reviewer_type = getattr(
-            validation_config, "reviewer_type", "agent_sdk"
-        )
+    # Get reviewer_type from first enabled code_review in triggers
+    reviewer_type = _get_new_code_review_reviewer_type(validation_config)
+    if reviewer_type is None:
+        reviewer_type = "agent_sdk"  # Default when no code_review config exists
 
     return _ReviewerConfig(
-        reviewer_type=effective_reviewer_type,
-        agent_sdk_review_timeout=getattr(
-            validation_config, "agent_sdk_review_timeout", 600
-        ),
-        agent_sdk_reviewer_model=getattr(
-            validation_config, "agent_sdk_reviewer_model", "sonnet"
-        ),
+        reviewer_type=reviewer_type,
     )
 
 
@@ -562,7 +513,6 @@ def create_orchestrator(
     *,
     mala_config: MalaConfig | None = None,
     deps: OrchestratorDependencies | None = None,
-    cli_reviewer_type: str | None = None,
 ) -> MalaOrchestrator:
     """Create a MalaOrchestrator with the given configuration.
 
@@ -573,11 +523,8 @@ def create_orchestrator(
     3. Builds dependencies (using provided or creating defaults)
     4. Constructs and returns the orchestrator
 
-    Config precedence for reviewer_type:
-    1. validation_triggers.*.code_review (if present) - new config
-    2. cli_reviewer_type (if set) - CLI with deprecation warning
-    3. Top-level reviewer_type in mala.yaml - legacy config
-    4. Default: agent_sdk
+    reviewer_type is determined from validation_triggers.*.code_review config.
+    If no code_review config is enabled, defaults to 'agent_sdk'.
 
     Args:
         config: OrchestratorConfig with all scalar configuration.
@@ -585,8 +532,6 @@ def create_orchestrator(
             If None, loads from environment.
         deps: Optional OrchestratorDependencies for custom implementations.
             If None, creates default implementations.
-        cli_reviewer_type: Deprecated CLI --reviewer-type override.
-            Used as fallback when no new code_review config exists.
 
     Returns:
         Configured MalaOrchestrator ready for run().
@@ -628,17 +573,10 @@ def create_orchestrator(
         else:
             validation_config = user_config
         yaml_claude_settings_sources = validation_config.claude_settings_sources
-        reviewer_config = _extract_reviewer_config(
-            validation_config, cli_reviewer_type=cli_reviewer_type
-        )
-        # Emit deprecation warning for legacy config if applicable
-        _check_legacy_review_config(validation_config)
+        reviewer_config = _extract_reviewer_config(validation_config)
     except ConfigMissingError:
-        # mala.yaml not present - use CLI override or defaults
+        # mala.yaml not present - use defaults
         validation_config_missing = True
-        if cli_reviewer_type is not None:
-            reviewer_config = _ReviewerConfig(reviewer_type=cli_reviewer_type)
-        # else: reviewer_config keeps its default from line 618
     except ConfigError:
         # Invalid config (syntax error, schema violation, etc.) - fail fast
         raise

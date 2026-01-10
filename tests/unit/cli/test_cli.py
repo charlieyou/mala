@@ -124,7 +124,6 @@ def _make_dummy_create_orchestrator() -> Callable[[object], DummyOrchestrator]:
         *,
         mala_config: object = None,
         deps: object = None,
-        cli_reviewer_type: str | None = None,
     ) -> DummyOrchestrator:
         DummyOrchestrator.last_orch_config = config
         DummyOrchestrator.last_mala_config = mala_config
@@ -143,7 +142,6 @@ def _make_dummy_create_orchestrator_with_verifier(
         *,
         mala_config: object = None,
         deps: object = None,
-        cli_reviewer_type: str | None = None,
     ) -> DummyOrchestratorWithVerifier:
         return DummyOrchestratorWithVerifier(verifier)
 

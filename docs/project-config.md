@@ -64,11 +64,6 @@ coverage:                # Optional. Omit to disable coverage
   file: string           # Required. Path to coverage report
   threshold: number      # Required. Minimum coverage percentage (0-100)
 
-# DEPRECATED: Root-level review config - use validation_triggers.<trigger>.code_review instead
-# reviewer_type: string           # "agent_sdk" (default) or "cerberus"
-# agent_sdk_review_timeout: number
-# agent_sdk_reviewer_model: string
-
 claude_settings_sources: list     # Optional. SDK settings sources (default: [local, project])
 
 validation_triggers:             # Optional. See validation-triggers.md
@@ -94,9 +89,6 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `coverage.format` | string | Yes* | Format: `xml` |
 | `coverage.file` | string | Yes* | Path to coverage report |
 | `coverage.threshold` | number | Yes* | Minimum coverage % |
-| `reviewer_type` | string | No | **DEPRECATED**: Use `validation_triggers.<trigger>.code_review.reviewer_type` |
-| `agent_sdk_review_timeout` | integer | No | **DEPRECATED**: Use `validation_triggers.<trigger>.code_review.cerberus.timeout` for Cerberus |
-| `agent_sdk_reviewer_model` | string | No | **DEPRECATED**: Configure via trigger-level `code_review` |
 | `claude_settings_sources` | list | No | SDK settings sources: `local`, `project`, `user` (default: `[local, project]`) |
 | `validation_triggers` | object | No | Trigger configuration. See [validation-triggers.md](validation-triggers.md) |
 
@@ -459,16 +451,6 @@ validation_triggers:
 |------|-------------|
 | `cerberus` (default) | Uses the Cerberus CLI plugin for review. Requires plugin installation. |
 | `agent_sdk` | Uses Claude agents for interactive code review. |
-
-### Deprecated Root-Level Config
-
-The following root-level fields are **deprecated** and will be removed in a future version:
-
-| Deprecated Field | Migration |
-|-----------------|-----------|
-| `reviewer_type` | Use `validation_triggers.<trigger>.code_review.reviewer_type` |
-| `agent_sdk_review_timeout` | Use `validation_triggers.<trigger>.code_review.cerberus.timeout` for Cerberus |
-| `agent_sdk_reviewer_model` | N/A - configure via trigger-level `code_review` |
 
 ## Limitations
 

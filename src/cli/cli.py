@@ -14,7 +14,6 @@ Usage:
 from __future__ import annotations
 
 import sys
-import warnings
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -356,42 +355,6 @@ class ConfigOverrideResult:
 def _warn_stderr(msg: str) -> None:
     """Emit a warning message to stderr with yellow color and warning icon."""
     print(f"{Colors.YELLOW}⚠ {msg}{Colors.RESET}", file=sys.stderr)
-
-
-def _emit_deprecation_warning(old_flag: str, new_flag: str) -> None:
-    """Emit a deprecation warning to stderr for a deprecated CLI flag.
-
-    Args:
-        old_flag: The deprecated flag name (e.g., '--wip').
-        new_flag: The recommended replacement flag (e.g., '--resume').
-    """
-    msg = f"Deprecation warning: '{old_flag}' is deprecated, use '{new_flag}' instead"
-    _warn_stderr(msg)
-
-
-def _emit_deprecation_warnings() -> None:
-    """Emit deprecation warnings for old CLI flags.
-
-    Note: All deprecated flags have been removed. This function is kept
-    as a placeholder for future deprecations.
-    """
-    pass
-
-
-def _check_cli_reviewer_type_deprecation(reviewer_type: str | None) -> None:
-    """Check for deprecated --reviewer-type CLI flag and emit warning.
-
-    Args:
-        reviewer_type: Value of --reviewer-type CLI argument, or None if not provided.
-    """
-    if reviewer_type is not None:
-        # Use UserWarning (not DeprecationWarning) so it's visible by default
-        warnings.warn(
-            "DEPRECATION: --reviewer-type is deprecated. "
-            "Use validation_triggers.session_end.code_review.reviewer_type in config.",
-            UserWarning,
-            stacklevel=2,
-        )
 
 
 def _build_cli_args_metadata(
@@ -768,15 +731,6 @@ def run(
             rich_help_panel="Review Backend",
         ),
     ] = None,
-    reviewer_type: Annotated[
-        str | None,
-        typer.Option(
-            "--reviewer-type",
-            help="[DEPRECATED] Reviewer type ('cerberus' or 'agent_sdk'). Use config instead.",
-            rich_help_panel="Review Backend",
-            hidden=True,
-        ),
-    ] = None,
     epic_override: Annotated[
         list[str] | None,
         typer.Option(
@@ -823,12 +777,6 @@ def run(
     """Run parallel issue processing."""
     # Apply verbose setting
     set_verbose(verbose)
-
-    # Emit deprecation warnings for old flags (placeholder for future deprecations)
-    _emit_deprecation_warnings()
-
-    # Check for deprecated --reviewer-type CLI flag
-    _check_cli_reviewer_type_deprecation(reviewer_type)
 
     # Validate max_issues (Typer min= doesn't work well with Optional[int])
     if max_issues is not None and max_issues < 1:
@@ -975,7 +923,6 @@ def run(
     orchestrator = _lazy("create_orchestrator")(
         orch_config,
         mala_config=override_result.updated_config,
-        cli_reviewer_type=reviewer_type,
     )
 
     # Build WatchConfig and PeriodicValidationConfig, then run orchestrator
