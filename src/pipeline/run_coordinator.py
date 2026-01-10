@@ -907,24 +907,9 @@ class RunCoordinator:
                             review_result.findings, threshold
                         )
                     ):
-                        # Findings exceed threshold - attempt remediation
-                        remediation_result = await self._run_code_review_remediation(
-                            trigger_type,
-                            trigger_config,
-                            context,
-                            interrupt_event,
-                            review_result.findings,
-                        )
-
-                        if interrupt_event.is_set():
-                            self.clear_trigger_queue("sigint")
-                            return TriggerValidationResult(
-                                status="aborted",
-                                details="Validation interrupted by SIGINT",
-                            )
-
-                        if remediation_result is None:
-                            # Remediation failed/exhausted - abort
+                        # Findings exceed threshold - handle based on failure_mode
+                        if review_failure_mode == FailureMode.ABORT:
+                            # Abort immediately without remediation
                             if self.event_sink is not None:
                                 self.event_sink.on_trigger_validation_failed(
                                     trigger_type.value, "code_review_findings", "abort"
@@ -937,7 +922,53 @@ class RunCoordinator:
                                     f"in trigger {trigger_type.value}"
                                 ),
                             )
-                        # Remediation succeeded - continue with passing validation
+                        elif review_failure_mode == FailureMode.CONTINUE:
+                            # Record failure and continue without remediation
+                            last_failure = ("code_review_findings", trigger_type.value)
+                            if self.event_sink is not None:
+                                self.event_sink.on_trigger_validation_failed(
+                                    trigger_type.value,
+                                    "code_review_findings",
+                                    "continue",
+                                )
+                        elif review_failure_mode == FailureMode.REMEDIATE:
+                            # Attempt remediation via fixer agent
+                            remediation_result = (
+                                await self._run_code_review_remediation(
+                                    trigger_type,
+                                    trigger_config,
+                                    context,
+                                    interrupt_event,
+                                    review_result.findings,
+                                )
+                            )
+
+                            if interrupt_event.is_set():
+                                self.clear_trigger_queue("sigint")
+                                return TriggerValidationResult(
+                                    status="aborted",
+                                    details="Validation interrupted by SIGINT",
+                                )
+
+                            if remediation_result is None:
+                                # Remediation failed/exhausted - abort
+                                if self.event_sink is not None:
+                                    self.event_sink.on_trigger_validation_failed(
+                                        trigger_type.value,
+                                        "code_review_findings",
+                                        "abort",
+                                    )
+                                self.clear_trigger_queue(
+                                    "code_review_findings_exceeded"
+                                )
+                                return TriggerValidationResult(
+                                    status="aborted",
+                                    details=(
+                                        f"Code review findings exceed threshold "
+                                        f"({threshold}) in trigger {trigger_type.value}"
+                                    ),
+                                )
+                            # Remediation succeeded - continue with passing validation
 
                 # Emit validation_passed
                 trigger_duration = time.monotonic() - trigger_start_time

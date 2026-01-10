@@ -1315,3 +1315,95 @@ class TestFindingThresholdEnforcement:
         result = await coordinator.run_trigger_validation(dry_run=False)
 
         assert result.status == "passed"
+
+    @pytest.mark.asyncio
+    async def test_findings_exceed_threshold_with_continue_records_failure(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """failure_mode=CONTINUE with findings exceeding threshold records failure."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import (
+            CumulativeReviewResult,
+            ReviewFinding,
+        )
+
+        mock_gate_checker = MagicMock()
+        mock_review_runner = MagicMock()
+        mock_run_metadata = MagicMock()
+        mock_event_sink = MagicMock()
+
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            finding_threshold="P1",
+            failure_mode=FailureMode.CONTINUE,  # Continue on findings exceeding threshold
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
+            validation_config=validation_config,
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=mock_run_metadata,
+            event_sink=mock_event_sink,
+        )
+
+        # P0 finding exceeds P1 threshold
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="success",
+                findings=(
+                    ReviewFinding(
+                        file="test.py",
+                        line_start=1,
+                        line_end=5,
+                        priority=0,  # P0 - exceeds threshold
+                        title="Critical issue",
+                        body="Details",
+                        reviewer="test",
+                    ),
+                ),
+                new_baseline_commit="abc123",
+            )
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+
+        result = await coordinator.run_trigger_validation(dry_run=False)
+
+        # Should be "failed" not "aborted" - recorded failure and continued
+        assert result.status == "failed"
+        assert result.details is not None
+        assert "code_review_findings" in result.details
+        mock_event_sink.on_trigger_validation_failed.assert_called_with(
+            "run_end", "code_review_findings", "continue"
+        )
