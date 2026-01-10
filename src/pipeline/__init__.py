@@ -42,8 +42,6 @@ from src.pipeline.issue_finalizer import (
     IssueFinalizer,
 )
 from src.pipeline.run_coordinator import (
-    GlobalValidationInput,
-    GlobalValidationOutput,
     RunCoordinator,
     RunCoordinatorConfig,
     SpecResultBuilder,
@@ -61,8 +59,6 @@ __all__ = [
     "EpicVerificationCoordinator",
     "GateRunner",
     "GateRunnerConfig",
-    "GlobalValidationInput",
-    "GlobalValidationOutput",
     "IssueExecutionCoordinator",
     "IssueFinalizeCallbacks",
     "IssueFinalizeConfig",

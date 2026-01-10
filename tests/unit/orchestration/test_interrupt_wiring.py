@@ -15,13 +15,9 @@ import pytest
 
 from src.infra.io.log_output.run_metadata import RunMetadata
 from src.orchestration.factory import OrchestratorConfig, OrchestratorDependencies
-from src.pipeline.issue_result import IssueResult
-from src.pipeline.run_coordinator import GlobalValidationOutput
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from src.pipeline.run_coordinator import GlobalValidationInput
 
 
 @pytest.fixture
@@ -124,77 +120,6 @@ class TestInterruptWiring:
 
         # Verify interrupt_event was passed
         assert captured_interrupt_event is interrupt_event
-
-    async def test_run_coordinator_receives_interrupt_event(
-        self, tmp_path: Path, tmp_runs_dir: Path
-    ) -> None:
-        """RunCoordinator.run_validation receives interrupt_event from orchestrator.
-
-        This verifies the _validation_callback closure in run() correctly
-        passes interrupt_event to run_coordinator.run_validation().
-        """
-        from src.core.models import PeriodicValidationConfig, WatchConfig
-        from src.orchestration.factory import create_orchestrator
-        from tests.fakes.event_sink import FakeEventSink
-        from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
-
-        # Use a provider with an issue so validation would run
-        provider = FakeIssueProvider(
-            issues={"test-issue": FakeIssue(id="test-issue", status="open")}
-        )
-        event_sink = FakeEventSink()
-
-        config = OrchestratorConfig(
-            repo_path=tmp_path,
-            max_agents=1,
-            max_issues=1,
-        )
-        deps = OrchestratorDependencies(
-            issue_provider=provider,
-            event_sink=event_sink,
-            runs_dir=tmp_runs_dir,
-        )
-        orchestrator = create_orchestrator(config, deps=deps)
-
-        # Capture the interrupt_event passed to run_validation
-        captured_interrupt_event: asyncio.Event | None = None
-
-        async def mock_run_validation(
-            validation_input: GlobalValidationInput,
-            *,
-            interrupt_event: asyncio.Event | None = None,
-        ) -> GlobalValidationOutput:
-            nonlocal captured_interrupt_event
-            captured_interrupt_event = interrupt_event
-            return GlobalValidationOutput(passed=True, interrupted=False)
-
-        orchestrator.run_coordinator.run_validation = mock_run_validation  # type: ignore[method-assign]
-
-        # Mock run_implementer to immediately return success
-        async def mock_implementer(
-            issue_id: str, *, flow: str = "implementer"
-        ) -> IssueResult:
-            return IssueResult(
-                issue_id=issue_id,
-                agent_id="mock",
-                success=True,
-                summary="Success",
-            )
-
-        orchestrator.run_implementer = mock_implementer  # type: ignore[method-assign]
-
-        # Run orchestrator (will trigger validation due to validate_every=1)
-        validation_config = PeriodicValidationConfig(validate_every=1)
-        watch_config = WatchConfig(enabled=False)
-
-        await orchestrator.run(
-            watch_config=watch_config,
-            validation_config=validation_config,
-        )
-
-        # Verify interrupt_event was passed to run_validation
-        assert captured_interrupt_event is not None
-        assert isinstance(captured_interrupt_event, asyncio.Event)
 
     async def test_issue_coordinator_receives_interrupt_event(
         self, tmp_path: Path, tmp_runs_dir: Path

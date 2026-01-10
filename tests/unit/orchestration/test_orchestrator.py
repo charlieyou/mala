@@ -48,32 +48,6 @@ def orchestrator(
     )
 
 
-@pytest.fixture(autouse=True)
-def skip_global_validation(
-    make_orchestrator: Callable[..., MalaOrchestrator],
-) -> Generator[None, None, None]:
-    """Skip global validation (global validation) in all tests.
-
-    Global validation spawns a real Claude agent which is too slow for
-    unit tests. Tests for global validation are in test_global_validation.py.
-
-    This fixture monkey-patches RunCoordinator.run_validation at the class level
-    to avoid using patch() context managers. The method is restored after each test.
-    """
-    from src.pipeline.run_coordinator import RunCoordinator, GlobalValidationOutput
-
-    original_run_validation = RunCoordinator.run_validation
-
-    async def mock_run_validation(
-        self: object, *args: object, **kwargs: object
-    ) -> GlobalValidationOutput:
-        return GlobalValidationOutput(passed=True)
-
-    RunCoordinator.run_validation = mock_run_validation  # type: ignore[method-assign]
-    yield
-    RunCoordinator.run_validation = original_run_validation  # type: ignore[method-assign]
-
-
 def make_subprocess_result(
     returncode: int = 0, stdout: str = "", stderr: str = ""
 ) -> subprocess.CompletedProcess:

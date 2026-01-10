@@ -3,7 +3,7 @@
 Extracted from MalaOrchestrator to separate global coordination from
 the main class. This module handles:
 - Main run loop (spawning agents, waiting for completion)
-- Global validation (global validation)
+- Trigger-based validation (run_end, session_end, etc.)
 - Fixer agent spawning for validation failures
 
 The RunCoordinator receives explicit inputs and returns explicit outputs,
@@ -30,14 +30,7 @@ from src.infra.tools.command_runner import CommandRunner
 from src.infra.tools.locking import cleanup_agent_locks
 from src.domain.validation.e2e import E2EStatus
 from src.domain.validation.config import CommandConfig, ConfigError
-from src.domain.validation.spec import (
-    ValidationContext,
-    ValidationScope,
-    build_validation_spec,
-)
 from src.domain.validation.spec import extract_lint_tools_from_spec
-from src.domain.validation.spec_executor import ValidationInterrupted
-from src.domain.validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -108,30 +101,6 @@ class RunCoordinatorConfig:
     mcp_server_factory: McpServerFactory | None = None
     validation_config: ValidationConfig | None = None
     validation_config_missing: bool = False
-
-
-@dataclass
-class GlobalValidationInput:
-    """Input for global validation.
-
-    Attributes:
-        run_metadata: Run metadata tracker.
-    """
-
-    run_metadata: RunMetadata
-
-
-@dataclass
-class GlobalValidationOutput:
-    """Output from global validation.
-
-    Attributes:
-        passed: Whether validation passed.
-        interrupted: Whether validation was interrupted by SIGINT.
-    """
-
-    passed: bool
-    interrupted: bool = False
 
 
 @dataclass(frozen=True)
@@ -290,162 +259,6 @@ class RunCoordinator:
     _trigger_queue: list[tuple[TriggerType, dict[str, Any]]] = field(
         default_factory=list, init=False
     )
-
-    async def run_validation(
-        self,
-        input: GlobalValidationInput,
-        *,
-        interrupt_event: asyncio.Event | None = None,
-    ) -> GlobalValidationOutput:
-        """Run global validation validation after all issues complete.
-
-        This runs validation with GLOBAL scope, which includes E2E tests.
-        On failure, spawns a fixer agent and retries up to max_gate_retries.
-
-        Args:
-            input: GlobalValidationInput with run metadata.
-
-        Returns:
-            GlobalValidationOutput indicating pass/fail.
-        """
-        from src.infra.git_utils import get_git_commit_async
-
-        # Short-circuit on interrupt before doing any work
-        if interrupt_event is not None and interrupt_event.is_set():
-            return GlobalValidationOutput(passed=False, interrupted=True)
-
-        # Check if global validation is disabled
-        if "global-validate" in (self.config.disable_validations or set()):
-            if self.event_sink is not None:
-                self.event_sink.on_global_validation_disabled()
-            return GlobalValidationOutput(passed=True)
-
-        # Get current HEAD commit
-        commit_hash = await get_git_commit_async(self.config.repo_path)
-        if not commit_hash:
-            if self.event_sink is not None:
-                self.event_sink.on_warning(
-                    "Could not get HEAD commit for global validation"
-                )
-            return GlobalValidationOutput(passed=True)
-
-        # Build global validation spec
-        spec = build_validation_spec(
-            self.config.repo_path,
-            scope=ValidationScope.GLOBAL,
-            disable_validations=self.config.disable_validations,
-            validation_config=self.config.validation_config,
-            config_missing=self.config.validation_config_missing,
-        )
-
-        # Build validation context
-        context = ValidationContext(
-            issue_id=None,
-            repo_path=self.config.repo_path,
-            commit_hash=commit_hash,
-            changed_files=[],
-            scope=ValidationScope.GLOBAL,
-        )
-
-        # Create validation runner
-        runner = SpecValidationRunner(
-            self.config.repo_path,
-            event_sink=self.event_sink,
-            command_runner=self.command_runner,
-            env_config=self.env_config,
-            lock_manager=self.lock_manager,
-        )
-
-        # Retry loop with fixer agent
-        for attempt in range(1, self.config.max_gate_retries + 1):
-            if self.event_sink is not None:
-                self.event_sink.on_gate_started(
-                    None, attempt, self.config.max_gate_retries
-                )
-
-            # Run validation
-            result = None
-            try:
-                result = await runner.run_spec(spec, context)
-            except ValidationInterrupted:
-                if self.event_sink is not None:
-                    self.event_sink.on_warning("Validation interrupted by SIGINT")
-                return GlobalValidationOutput(passed=False, interrupted=True)
-            except Exception as e:
-                if self.event_sink is not None:
-                    self.event_sink.on_warning(f"Validation runner error: {e}")
-
-            if interrupt_event is not None and interrupt_event.is_set():
-                return GlobalValidationOutput(passed=False, interrupted=True)
-
-            if result and result.passed:
-                if self.event_sink is not None:
-                    self.event_sink.on_gate_passed(None)
-                meta_result = SpecResultBuilder.build_meta_result(result, passed=True)
-                input.run_metadata.record_run_validation(meta_result)
-                return GlobalValidationOutput(passed=True)
-
-            # Validation failed - build failure output for fixer
-            failure_output = self._build_validation_failure_output(result)
-
-            # Record failure in metadata
-            if result:
-                meta_result = SpecResultBuilder.build_meta_result(result, passed=False)
-                input.run_metadata.record_run_validation(meta_result)
-
-            # Check for interrupt before spawning fixer
-            if interrupt_event is not None and interrupt_event.is_set():
-                return GlobalValidationOutput(passed=False, interrupted=True)
-
-            # Check if we have retries left
-            if attempt >= self.config.max_gate_retries:
-                if self.event_sink is not None:
-                    self.event_sink.on_gate_failed(
-                        None, attempt, self.config.max_gate_retries
-                    )
-                    failure_reasons = (
-                        result.failure_reasons
-                        if result and result.failure_reasons
-                        else []
-                    )
-                    self.event_sink.on_gate_result(
-                        None, passed=False, failure_reasons=failure_reasons
-                    )
-                return GlobalValidationOutput(passed=False)
-
-            # Spawn fixer agent
-            if self.event_sink is not None:
-                self.event_sink.on_fixer_started(attempt, self.config.max_gate_retries)
-
-            fixer_result = await self._run_fixer_agent(
-                failure_output=failure_output,
-                attempt=attempt,
-                spec=spec,
-                interrupt_event=interrupt_event,
-                failed_command=self._extract_failed_command(result),
-            )
-
-            # If interrupted during fixer run, exit early
-            if fixer_result.interrupted:
-                return GlobalValidationOutput(passed=False, interrupted=True)
-
-            if not fixer_result.success:
-                # Fixer failure is logged via on_fixer_failed in _run_fixer_agent
-                pass  # Continue to retry validation anyway
-
-            # Update commit hash for next validation attempt
-            new_commit = await get_git_commit_async(self.config.repo_path)
-            if new_commit and new_commit != commit_hash:
-                commit_hash = new_commit
-                context = ValidationContext(
-                    issue_id=None,
-                    repo_path=self.config.repo_path,
-                    commit_hash=commit_hash,
-                    changed_files=[],
-                    scope=ValidationScope.GLOBAL,
-                )
-
-        return GlobalValidationOutput(passed=False)
 
     def _build_validation_failure_output(self, result: ValidationResult | None) -> str:
         """Build failure output string for fixer agent prompt.

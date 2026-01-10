@@ -54,9 +54,6 @@ from src.pipeline.issue_finalizer import (
     IssueFinalizeInput,
 )
 from src.domain.validation.config import FireOn, TriggerType
-from src.pipeline.run_coordinator import (
-    GlobalValidationInput,
-)
 from src.orchestration.orchestration_wiring import (
     FinalizerCallbackRefs,
     EpicCallbackRefs,
@@ -1420,27 +1417,6 @@ class MalaOrchestrator:
         exit_code = 0
 
         try:
-            # Create validation callback only if validation is configured
-            validation_callback = None
-            if validation_config and validation_config.validate_every is not None:
-
-                async def _validation_callback() -> bool:
-                    success_count = sum(1 for r in self._state.completed if r.success)
-                    if success_count == 0 or self.abort_run:
-                        return True
-                    validation_input = GlobalValidationInput(run_metadata=run_metadata)
-                    validation_output = await self.run_coordinator.run_validation(
-                        validation_input, interrupt_event=interrupt_event
-                    )
-                    if validation_output.interrupted:
-                        return True
-                    # Update _validation_failed so SIGINT handler can snapshot it
-                    if not validation_output.passed:
-                        self._validation_failed = True
-                    return validation_output.passed
-
-                validation_callback = _validation_callback
-
             interrupted = False
             try:
                 # Create task and store it so Stage 3 can cancel it
@@ -1451,7 +1427,7 @@ class MalaOrchestrator:
                         validation_config=validation_config,
                         drain_event=drain_event,
                         interrupt_event=interrupt_event,
-                        validation_callback=validation_callback,
+                        validation_callback=None,
                     )
                 )
                 loop_result = await self._run_task
@@ -1491,45 +1467,16 @@ class MalaOrchestrator:
                 self._exit_code = final_exit_code
                 return await self._finalize_run(run_metadata, None)
 
-            # Global validation and finalization happen after lock cleanup
-            # but before debug log cleanup (so they're captured in the debug log)
+            # Finalization happens after lock cleanup but before debug log cleanup
             success_count = sum(1 for r in self._state.completed if r.success)
 
-            # T009: Hook for session_end trigger before global validation
+            # T009: Hook for session_end trigger
             await self._fire_session_end_trigger()
 
-            # T010: Hook for run_end trigger after all processing
+            # T010: Hook for run_end trigger (run-level validation now handled here)
             await self._fire_run_end_trigger(success_count, len(self._state.completed))
 
-            run_validation_passed: bool | None = None
-            validation_ran = False  # Track if validation was actually attempted
-            if success_count > 0 and not self.abort_run:
-                validation_ran = True
-                try:
-                    validation_input = GlobalValidationInput(run_metadata=run_metadata)
-                    validation_output = await self.run_coordinator.run_validation(
-                        validation_input, interrupt_event=interrupt_event
-                    )
-                    # Map interrupted validation to None (not False)
-                    # Acceptance criteria: validation_ran=True + run_validation_passed=None → exit 130
-                    if validation_output.interrupted:
-                        interrupt_event.set()
-                        run_validation_passed = None
-                    else:
-                        run_validation_passed = validation_output.passed
-                except asyncio.CancelledError:
-                    # SIGINT during validation - use snapshotted exit code
-                    if interrupt_event.is_set() or self._shutdown_requested:
-                        final_exit_code = (
-                            self._abort_exit_code if self._abort_mode_active else 130
-                        )
-                        self._exit_code = final_exit_code
-                        return await self._finalize_run(run_metadata, None)
-                    raise
-
-            # Check if SIGINT occurred during final validation phase
-            # Note: this should rarely be reached since interrupt is handled earlier,
-            # but keep as safety net. Use snapshotted exit code for Stage 2.
+            # Check if SIGINT occurred during triggers
             if interrupt_event.is_set():
                 final_exit_code = (
                     self._abort_exit_code if self._abort_mode_active else 130
@@ -1538,19 +1485,8 @@ class MalaOrchestrator:
                 return await self._finalize_run(run_metadata, None)
 
             # Store exit code for CLI access
-            # - validation_passed=False → exit 1 (failure)
-            # - validation_passed=None (interrupted) → exit 130
-            # - validation_passed=True or validation didn't run → use loop exit_code
-            if run_validation_passed is False:
-                self._exit_code = 1
-            elif run_validation_passed is None and validation_ran:
-                # Validation was attempted but interrupted
-                self._exit_code = 130
-            else:
-                self._exit_code = exit_code
-            return await self._finalize_run(
-                run_metadata, run_validation_passed, validation_ran=validation_ran
-            )
+            self._exit_code = exit_code
+            return await self._finalize_run(run_metadata, None, validation_ran=False)
         finally:
             # Restore original SIGINT handler
             signal.signal(signal.SIGINT, original_handler)
