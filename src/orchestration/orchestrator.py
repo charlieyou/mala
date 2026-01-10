@@ -1197,6 +1197,13 @@ class MalaOrchestrator:
             {"success_count": success_count, "total_count": total_count},
         )
 
+        # Blocking wait for trigger validation
+        result = await self.run_coordinator.run_trigger_validation()
+
+        # If trigger validation aborted, set orchestrator abort_run flag.
+        if result.status == "aborted":
+            self.issue_coordinator.request_abort(reason="Run end trigger aborted")
+
     async def _fire_session_end_trigger(self) -> None:
         """Queue session_end trigger validation if configured.
 
