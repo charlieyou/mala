@@ -89,11 +89,63 @@ class TestFactoryCreatesAgentSDKReviewerByDefault:
 class TestFactoryCreatesCerberusReviewerWhenConfigured:
     """Test that factory creates DefaultReviewer when reviewer_type=cerberus."""
 
-    def test_factory_creates_cerberus_reviewer_when_configured(
+    def test_factory_creates_cerberus_reviewer_with_yaml_config(
         self, tmp_path: Path
     ) -> None:
-        """Verify factory creates DefaultReviewer with reviewer_type=cerberus."""
-        # Create mala.yaml with cerberus reviewer_type in validation triggers
+        """Verify factory uses cerberus settings from mala.yaml code_review.cerberus."""
+        # Create mala.yaml with cerberus settings in code_review.cerberus
+        (tmp_path / "mala.yaml").write_text(
+            "preset: python-uv\n"
+            "validation_triggers:\n"
+            "  session_end:\n"
+            "    failure_mode: continue\n"
+            "    code_review:\n"
+            "      enabled: true\n"
+            "      reviewer_type: cerberus\n"
+            "      cerberus:\n"
+            "        spawn_args: ['--yaml-spawn']\n"
+            "        wait_args: ['--yaml-wait', '--timeout', '600']\n"
+            "        env:\n"
+            "          YAML_VAR: yaml_value\n"
+        )
+
+        # Load reviewer config via factory path (validates mala.yaml parsing)
+        reviewer_config = _get_reviewer_config(tmp_path)
+        assert reviewer_config.reviewer_type == "cerberus"
+        assert reviewer_config.cerberus_config is not None
+        assert reviewer_config.cerberus_config.spawn_args == ("--yaml-spawn",)
+
+        # Create MalaConfig mock with DIFFERENT values (should be ignored)
+        mala_config = MagicMock()
+        mala_config.cerberus_bin_path = Path("/usr/bin")
+        mala_config.cerberus_spawn_args = ("--env-spawn",)
+        mala_config.cerberus_wait_args = ("--env-wait",)
+        mala_config.cerberus_env = {"ENV_VAR": "env_value"}
+
+        event_sink = FakeEventSink()
+
+        # Create reviewer via factory path
+        reviewer = _create_code_reviewer(
+            repo_path=tmp_path,
+            mala_config=mala_config,
+            event_sink=event_sink,
+            reviewer_config=reviewer_config,
+        )
+
+        # Verify correct type was created
+        assert isinstance(reviewer, DefaultReviewer)
+        # Verify settings come from YAML config, not env vars
+        assert reviewer.repo_path == tmp_path
+        assert reviewer.bin_path == Path("/usr/bin")  # bin_path still from mala_config
+        assert reviewer.spawn_args == ("--yaml-spawn",)
+        assert reviewer.wait_args == ("--yaml-wait", "--timeout", "600")
+        assert reviewer.env == {"YAML_VAR": "yaml_value"}
+
+    def test_factory_creates_cerberus_reviewer_fallback_to_env_vars(
+        self, tmp_path: Path
+    ) -> None:
+        """Verify factory falls back to mala_config when no cerberus config in yaml."""
+        # Create mala.yaml WITHOUT cerberus section (backward compat)
         (tmp_path / "mala.yaml").write_text(
             "preset: python-uv\n"
             "validation_triggers:\n"
@@ -107,6 +159,7 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
         # Load reviewer config via factory path (validates mala.yaml parsing)
         reviewer_config = _get_reviewer_config(tmp_path)
         assert reviewer_config.reviewer_type == "cerberus"
+        assert reviewer_config.cerberus_config is None  # No cerberus section in yaml
 
         # Create minimal MalaConfig mock with cerberus settings
         # cerberus_bin_path is a directory containing review-gate binary
@@ -128,7 +181,7 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
 
         # Verify correct type was created
         assert isinstance(reviewer, DefaultReviewer)
-        # Verify settings were passed through
+        # Verify settings were passed through from env vars
         assert reviewer.repo_path == tmp_path
         assert reviewer.bin_path == Path("/usr/bin")
         assert reviewer.spawn_args == ("--spawn",)

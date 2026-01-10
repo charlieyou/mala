@@ -62,7 +62,7 @@ if TYPE_CHECKING:
         IssueProvider,
         LogProvider,
     )
-    from src.domain.validation.config import ValidationConfig
+    from src.domain.validation.config import CerberusConfig, ValidationConfig
     from src.infra.io.config import MalaConfig
     from src.core.protocols import EpicVerifierProtocol, MalaEventSink
     from src.infra.telemetry import TelemetryProvider
@@ -78,11 +78,16 @@ class _ReviewerConfig:
 
     Consolidates all reviewer-related settings to avoid loading
     ValidationConfig multiple times during orchestrator creation.
+
+    When reviewer_type='cerberus', the cerberus_config field contains
+    settings from code_review.cerberus in mala.yaml. Falls back to
+    MalaConfig.cerberus_* env vars for backward compatibility.
     """
 
     reviewer_type: str = "agent_sdk"
     agent_sdk_review_timeout: int = 600
     agent_sdk_reviewer_model: str = "sonnet"
+    cerberus_config: CerberusConfig | None = None
 
 
 def create_issue_provider(
@@ -229,6 +234,8 @@ def _extract_reviewer_config(
     triggers. Defaults to 'agent_sdk' with standard timeout/model if no
     code_review config is enabled.
 
+    When reviewer_type='cerberus', also extracts code_review.cerberus config.
+
     Args:
         validation_config: A ValidationConfig instance.
 
@@ -244,6 +251,7 @@ def _extract_reviewer_config(
         reviewer_type=getattr(code_review, "reviewer_type", "agent_sdk"),
         agent_sdk_review_timeout=getattr(code_review, "agent_sdk_timeout", 600),
         agent_sdk_reviewer_model=getattr(code_review, "agent_sdk_model", "sonnet"),
+        cerberus_config=getattr(code_review, "cerberus", None),
     )
 
 
@@ -356,6 +364,9 @@ def _create_code_reviewer(
     Defaults to AgentSDKReviewer when reviewer_type is 'agent_sdk' (default)
     or falls back to DefaultReviewer (Cerberus) when reviewer_type is 'cerberus'.
 
+    For Cerberus reviewer, prefers settings from code_review.cerberus in mala.yaml,
+    falling back to mala_config.cerberus_* env vars for backward compatibility.
+
     Args:
         repo_path: Path to the repository.
         mala_config: MalaConfig with Cerberus settings (for fallback).
@@ -372,14 +383,24 @@ def _create_code_reviewer(
 
     if reviewer_config.reviewer_type == "cerberus":
         logger.info("Using DefaultReviewer (Cerberus) for code review")
+        # Prefer code_review.cerberus settings from mala.yaml, fall back to env vars
+        cerb = reviewer_config.cerberus_config
+        if cerb is not None:
+            spawn_args = cerb.spawn_args
+            wait_args = cerb.wait_args
+            env = dict(cerb.env)
+        else:
+            spawn_args = mala_config.cerberus_spawn_args
+            wait_args = mala_config.cerberus_wait_args
+            env = dict(mala_config.cerberus_env)
         return cast(
             "CodeReviewer",
             DefaultReviewer(
                 repo_path=repo_path,
                 bin_path=mala_config.cerberus_bin_path,
-                spawn_args=mala_config.cerberus_spawn_args,
-                wait_args=mala_config.cerberus_wait_args,
-                env=dict(mala_config.cerberus_env),
+                spawn_args=spawn_args,
+                wait_args=wait_args,
+                env=env,
                 event_sink=event_sink,
             ),
         )
