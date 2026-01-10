@@ -40,7 +40,7 @@ class PresetRegistry:
 
     # Built-in command keys that presets are allowed to define
     _BUILTIN_COMMAND_KEYS: ClassVar[frozenset[str]] = frozenset(
-        {"setup", "format", "lint", "typecheck", "test", "e2e"}
+        {"setup", "build", "format", "lint", "typecheck", "test", "e2e"}
     )
 
     # Mapping of preset names to YAML filenames

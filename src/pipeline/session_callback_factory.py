@@ -582,7 +582,7 @@ class SessionCallbackFactory:
         commands_config = validation_config.commands
         global_config = validation_config.global_validation_commands
 
-        for name in ["test", "lint", "format", "typecheck", "e2e", "setup"]:
+        for name in ["test", "lint", "format", "typecheck", "e2e", "setup", "build"]:
             # Try global first, then fallback to base
             cmd_config = None
             if global_config:

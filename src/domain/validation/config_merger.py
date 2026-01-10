@@ -47,7 +47,7 @@ def _validate_no_partial_commands(commands: CommandsConfig) -> None:
     Raises:
         ConfigError: If any command has an empty command string.
     """
-    command_fields = ["setup", "test", "lint", "format", "typecheck", "e2e"]
+    command_fields = ["setup", "build", "test", "lint", "format", "typecheck", "e2e"]
     for field_name in command_fields:
         cmd = getattr(commands, field_name)
         if cmd is not None and not cmd.command:

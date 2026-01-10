@@ -1,6 +1,7 @@
 # Node.js project using npm
 commands:
   setup: "npm install"
+  build: "npm run build"
   test: "npm test"
   lint: "npx eslint ."
   format: "npx prettier --check ."

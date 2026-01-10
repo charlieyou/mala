@@ -683,6 +683,7 @@ class CommandsConfig:
     """
 
     setup: CommandConfig | None = None
+    build: CommandConfig | None = None
     test: CommandConfig | None = None
     lint: CommandConfig | None = None
     format: CommandConfig | None = None
@@ -714,7 +715,7 @@ class CommandsConfig:
         if data is None:
             return cls(_is_null_override=True)
 
-        valid_kinds = ("setup", "test", "lint", "format", "typecheck", "e2e")
+        valid_kinds = ("setup", "build", "test", "lint", "format", "typecheck", "e2e")
 
         # Check for +_clear_customs (error: reserved key cannot be prefixed)
         if "+_clear_customs" in data:
@@ -838,6 +839,7 @@ class CommandsConfig:
 
         return cls(
             setup=parse_command("setup"),
+            build=parse_command("build"),
             test=parse_command("test"),
             lint=parse_command("lint"),
             format=parse_command("format"),
@@ -1127,12 +1129,14 @@ class ValidationConfig:
         return any(
             [
                 self.commands.setup,
+                self.commands.build,
                 self.commands.test,
                 self.commands.lint,
                 self.commands.format,
                 self.commands.typecheck,
                 self.commands.e2e,
                 self.global_validation_commands.setup,
+                self.global_validation_commands.build,
                 self.global_validation_commands.test,
                 self.global_validation_commands.lint,
                 self.global_validation_commands.format,

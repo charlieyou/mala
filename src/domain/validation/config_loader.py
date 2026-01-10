@@ -1093,6 +1093,7 @@ def _validate_migration(config: ValidationConfig) -> None:
     has_global_commands = any(
         (
             gvc.setup,
+            gvc.build,
             gvc.test,
             gvc.lint,
             gvc.format,
@@ -1145,7 +1146,7 @@ def _validate_trigger_command_refs(config: ValidationConfig) -> None:
     global_cmds = config.global_validation_commands
 
     # Add built-in commands (global overrides base)
-    for cmd_name in ("test", "lint", "format", "typecheck", "e2e", "setup"):
+    for cmd_name in ("test", "lint", "format", "typecheck", "e2e", "setup", "build"):
         global_cmd = getattr(global_cmds, cmd_name, None)
         if global_cmd is not None:
             base_pool.add(cmd_name)

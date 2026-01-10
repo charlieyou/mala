@@ -1023,7 +1023,7 @@ class RunCoordinator:
             return getattr(base_cmds, field_name, None)
 
         # Add built-in commands (global overrides base)
-        for cmd_name in ("test", "lint", "format", "typecheck", "e2e", "setup"):
+        for cmd_name in ("test", "lint", "format", "typecheck", "e2e", "setup", "build"):
             cmd = get_effective_cmd(cmd_name)
             if cmd is not None:
                 pool[cmd_name] = (cmd.command, cmd.timeout)

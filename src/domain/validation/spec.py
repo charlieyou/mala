@@ -49,6 +49,7 @@ class CommandKind(Enum):
     """Kind of validation command."""
 
     SETUP = "setup"  # Environment setup (uv sync, etc.)
+    BUILD = "build"  # Build step (npm run build, etc.)
     LINT = "lint"
     FORMAT = "format"
     TYPECHECK = "typecheck"
@@ -560,6 +561,7 @@ def _apply_command_overrides(
 
     return CommandsConfig(
         setup=pick("setup", base.setup, overrides.setup),
+        build=pick("build", base.build, overrides.build),
         test=pick("test", base.test, overrides.test),
         lint=pick("lint", base.lint, overrides.lint),
         format=pick("format", base.format, overrides.format),
@@ -623,7 +625,7 @@ def _build_commands_from_config(
 ) -> list[ValidationCommand]:
     """Build ValidationCommand list from a CommandsConfig.
 
-    Pipeline order: setup → format → lint → typecheck → custom_a → custom_b → test → e2e
+    Pipeline order: setup → format → lint → typecheck → custom → test → build → e2e
 
     Args:
         config: The command configuration.
@@ -725,6 +727,21 @@ def _build_commands_from_config(
                 timeout=cmds.test.timeout or DEFAULT_COMMAND_TIMEOUT,
                 detection_pattern=re.compile(
                     _tool_name_to_pattern(extract_tool_name(cmds.test.command)),
+                    re.IGNORECASE,
+                ),
+            )
+        )
+
+    # Build command (after test, before e2e - build is expensive and e2e may need built output)
+    if cmds.build is not None:
+        commands.append(
+            ValidationCommand(
+                name="build",
+                command=cmds.build.command,
+                kind=CommandKind.BUILD,
+                timeout=cmds.build.timeout or DEFAULT_COMMAND_TIMEOUT,
+                detection_pattern=re.compile(
+                    _tool_name_to_pattern(extract_tool_name(cmds.build.command)),
                     re.IGNORECASE,
                 ),
             )
