@@ -919,7 +919,7 @@ def _prompt_menu_selection(presets: list[str]) -> int:
             typer.echo(f"  {i}) {preset}", err=True)
         typer.echo(f"  {max_choice}) custom", err=True)
 
-        choice = typer.prompt("Enter choice", default="")
+        choice = typer.prompt("Enter choice", default="", err=True)
         try:
             num = int(choice)
             if 1 <= num <= max_choice:
@@ -939,7 +939,10 @@ def _prompt_custom_commands() -> dict[str, str]:
     command_names = ["setup", "build", "test", "lint", "format", "typecheck", "e2e"]
     for name in command_names:
         value = typer.prompt(
-            f"Command for '{name}' (Enter to skip)", default="", show_default=False
+            f"Command for '{name}' (Enter to skip)",
+            default="",
+            show_default=False,
+            err=True,
         )
         value = value.strip()
         if value:

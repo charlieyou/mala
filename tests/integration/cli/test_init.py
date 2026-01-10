@@ -140,7 +140,6 @@ class TestInitBackup:
 class TestInitValidation:
     """Tests for validation failure scenarios."""
 
-    @pytest.mark.xfail(reason="T003 will implement exception handling")
     def test_validation_fail_empty_commands(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
