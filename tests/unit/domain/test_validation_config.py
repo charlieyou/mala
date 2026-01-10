@@ -868,6 +868,59 @@ class TestIdleTimeoutSeconds:
             ValidationConfig.from_dict({"idle_timeout_seconds": -10.0})
 
 
+class TestMaxDiffSizeKb:
+    """Tests for max_diff_size_kb parsing in ValidationConfig."""
+
+    def test_max_diff_size_kb_default(self) -> None:
+        """Default max_diff_size_kb is None."""
+        config = ValidationConfig.from_dict({})
+        assert config.max_diff_size_kb is None
+        assert "max_diff_size_kb" not in config._fields_set
+
+    def test_max_diff_size_kb_valid_integer(self) -> None:
+        """Valid integer is accepted."""
+        config = ValidationConfig.from_dict({"max_diff_size_kb": 500})
+        assert config.max_diff_size_kb == 500
+        assert "max_diff_size_kb" in config._fields_set
+
+    def test_max_diff_size_kb_zero_valid(self) -> None:
+        """Zero is valid (effectively disables)."""
+        config = ValidationConfig.from_dict({"max_diff_size_kb": 0})
+        assert config.max_diff_size_kb == 0
+        assert "max_diff_size_kb" in config._fields_set
+
+    def test_max_diff_size_kb_explicit_null(self) -> None:
+        """max_diff_size_kb: null is tracked in _fields_set but value is None."""
+        config = ValidationConfig.from_dict({"max_diff_size_kb": None})
+        assert config.max_diff_size_kb is None
+        assert "max_diff_size_kb" in config._fields_set
+
+    def test_max_diff_size_kb_invalid_type_string(self) -> None:
+        """String max_diff_size_kb raises ConfigError."""
+        with pytest.raises(ConfigError, match="max_diff_size_kb must be an integer"):
+            ValidationConfig.from_dict({"max_diff_size_kb": "500"})
+
+    def test_max_diff_size_kb_invalid_type_float(self) -> None:
+        """Float max_diff_size_kb raises ConfigError."""
+        with pytest.raises(ConfigError, match="max_diff_size_kb must be an integer"):
+            ValidationConfig.from_dict({"max_diff_size_kb": 500.5})
+
+    def test_max_diff_size_kb_invalid_type_bool_true(self) -> None:
+        """Boolean True is rejected (bool is subclass of int)."""
+        with pytest.raises(ConfigError, match="max_diff_size_kb must be an integer"):
+            ValidationConfig.from_dict({"max_diff_size_kb": True})
+
+    def test_max_diff_size_kb_invalid_type_bool_false(self) -> None:
+        """Boolean False is rejected (bool is subclass of int)."""
+        with pytest.raises(ConfigError, match="max_diff_size_kb must be an integer"):
+            ValidationConfig.from_dict({"max_diff_size_kb": False})
+
+    def test_max_diff_size_kb_negative_rejected(self) -> None:
+        """Negative max_diff_size_kb raises ConfigError."""
+        with pytest.raises(ConfigError, match="max_diff_size_kb must be non-negative"):
+            ValidationConfig.from_dict({"max_diff_size_kb": -100})
+
+
 class TestClaudeSettingsSourcesIntegration:
     """Integration test for claude_settings_sources full config path.
 

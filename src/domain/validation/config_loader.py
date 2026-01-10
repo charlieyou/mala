@@ -77,6 +77,7 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "context_limit",
         "max_idle_retries",
         "idle_timeout_seconds",
+        "max_diff_size_kb",
     }
 )
 

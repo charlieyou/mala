@@ -779,6 +779,8 @@ class ValidationConfig:
         max_idle_retries: Maximum number of idle timeout retries. None means use default (2).
         idle_timeout_seconds: Idle timeout for SDK stream in seconds.
             None means derive from agent timeout; 0 disables idle timeout.
+        max_diff_size_kb: Maximum diff size in KB for epic verification.
+            None means use default (no limit).
         _fields_set: Set of field names that were explicitly provided in source.
             Used by the merger to distinguish "not set" from "explicitly set".
     """
@@ -796,6 +798,7 @@ class ValidationConfig:
     context_limit: int | None = None
     max_idle_retries: int | None = None
     idle_timeout_seconds: float | None = None
+    max_diff_size_kb: int | None = None
     _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
@@ -1027,6 +1030,24 @@ class ValidationConfig:
                     )
                 idle_timeout_seconds = float(its_value)
 
+        # Parse max_diff_size_kb
+        max_diff_size_kb: int | None = None
+        if "max_diff_size_kb" in data:
+            fields_set.add("max_diff_size_kb")
+            mds_value = data["max_diff_size_kb"]
+            if mds_value is not None:
+                # Reject booleans (bool is subclass of int in Python)
+                if isinstance(mds_value, bool) or not isinstance(mds_value, int):
+                    raise ConfigError(
+                        f"max_diff_size_kb must be an integer, "
+                        f"got {type(mds_value).__name__}"
+                    )
+                if mds_value < 0:
+                    raise ConfigError(
+                        f"max_diff_size_kb must be non-negative, got {mds_value}"
+                    )
+                max_diff_size_kb = mds_value
+
         return cls(
             preset=preset,
             commands=commands,
@@ -1041,6 +1062,7 @@ class ValidationConfig:
             context_limit=context_limit,
             max_idle_retries=max_idle_retries,
             idle_timeout_seconds=idle_timeout_seconds,
+            max_diff_size_kb=max_diff_size_kb,
             _fields_set=frozenset(fields_set),
         )
 

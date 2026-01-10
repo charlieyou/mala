@@ -71,6 +71,8 @@ context_limit: int               # Optional. Maximum context tokens (default: 20
 max_idle_retries: int            # Optional. Maximum idle timeout retries (default: 2)
 idle_timeout_seconds: float      # Optional. Idle timeout in seconds (default: derived from timeout_minutes)
 
+max_diff_size_kb: int            # Optional. Maximum diff size in KB for epic verification
+
 validation_triggers:             # Optional. See validation-triggers.md
   epic_completion: object        # Run validation when epics complete
   session_end: object            # Run validation at session end
@@ -98,6 +100,7 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `context_limit` | integer | No | Maximum context tokens (default: 200000) |
 | `max_idle_retries` | integer | No | Maximum idle timeout retries before aborting (default: 2). Set to 0 to disable retries. |
 | `idle_timeout_seconds` | float | No | Seconds to wait for SDK activity before triggering idle recovery (default: derived from `timeout_minutes`). Set to 0 to disable idle timeout. |
+| `max_diff_size_kb` | integer | No | Maximum diff size in KB for epic verification. Diffs larger than this limit will skip verification. |
 | `validation_triggers` | object | No | Trigger configuration. See [validation-triggers.md](validation-triggers.md) |
 
 *Required when `coverage` section is present.
