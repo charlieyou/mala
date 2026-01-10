@@ -472,12 +472,16 @@ class LifecycleEffectHandler:
         """Emit gate passed events when first entering review.
 
         Called at the start of review processing to emit gate passed events
-        on the first review attempt.
+        on the first review attempt. Skips emission if session_end already ran
+        (session_end_attempt > 0) since gate_passed was already emitted there.
 
         Args:
             input: Session input with issue_id.
             lifecycle_ctx: Lifecycle context with retry state.
         """
+        # Skip if session_end already emitted gate_passed
+        if lifecycle_ctx.retry_state.session_end_attempt > 0:
+            return
         _emit_gate_passed_events(
             self.event_sink, input.issue_id, lifecycle_ctx.retry_state.review_attempt
         )

@@ -648,6 +648,8 @@ class AgentSessionRunner:
                     session_end_result = SessionEndResult(
                         status="skipped", reason="not_configured"
                     )
+                    # No log offset update when skipped without callback
+                    new_offset = lifecycle_ctx.retry_state.log_offset
                 else:
                     assert state.log_path is not None
                     # Build SessionEndRetryState from lifecycle context
@@ -663,15 +665,15 @@ class AgentSessionRunner:
                         session_end_retry_state,
                     )
 
-                # Get new log offset
-                new_offset = (
-                    self.callbacks.get_log_offset(
-                        state.log_path,
-                        lifecycle_ctx.retry_state.log_offset,
+                    # Get new log offset after callback execution
+                    new_offset = (
+                        self.callbacks.get_log_offset(
+                            state.log_path,
+                            lifecycle_ctx.retry_state.log_offset,
+                        )
+                        if self.callbacks.get_log_offset
+                        else 0
                     )
-                    if self.callbacks.get_log_offset
-                    else 0
-                )
 
                 _, should_break, session_end_trans = (
                     self._effect_handler.process_session_end_effect(
