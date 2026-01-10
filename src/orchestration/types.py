@@ -92,9 +92,9 @@ class OrchestratorConfig:
     cli_args: dict[str, object] | None = None
     epic_override_ids: set[str] = field(default_factory=set)
     orphans_only: bool = False
-    # Context exhaustion handling thresholds
-    context_restart_threshold: float = DEFAULT_CONTEXT_RESTART_THRESHOLD
-    context_limit: int = DEFAULT_CONTEXT_LIMIT
+    # Context exhaustion handling thresholds (None = use yaml or default)
+    context_restart_threshold: float | None = None
+    context_limit: int | None = None
     # Session resume strict mode: fail issue if no prior session found
     strict_resume: bool = False
 

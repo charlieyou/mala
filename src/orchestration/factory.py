@@ -200,15 +200,15 @@ def _derive_config(
         else None
     )
 
-    # Use CLI value if non-default, else yaml, else default
-    if config.context_restart_threshold != DEFAULT_CONTEXT_RESTART_THRESHOLD:
+    # Use CLI value if set, else yaml, else default
+    if config.context_restart_threshold is not None:
         context_restart_threshold = config.context_restart_threshold
     elif yaml_context_restart_threshold is not None:
         context_restart_threshold = yaml_context_restart_threshold
     else:
         context_restart_threshold = DEFAULT_CONTEXT_RESTART_THRESHOLD
 
-    if config.context_limit != DEFAULT_CONTEXT_LIMIT:
+    if config.context_limit is not None:
         context_limit = config.context_limit
     elif yaml_context_limit is not None:
         context_limit = yaml_context_limit

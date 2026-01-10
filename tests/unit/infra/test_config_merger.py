@@ -1130,3 +1130,61 @@ class TestTimeoutMinutesPreservedInMerge:
         result = merge_configs(preset, user)
 
         assert result.timeout_minutes is None
+
+
+class TestContextThresholdsPreservedInMerge:
+    """Tests that context_restart_threshold and context_limit are preserved during preset merge."""
+
+    def test_user_context_restart_threshold_preserved_in_merge(self) -> None:
+        """User's context_restart_threshold is preserved when merging with preset."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(test=CommandConfig(command="pytest")),
+        )
+        user = ValidationConfig(
+            context_restart_threshold=0.85,
+            _fields_set=frozenset({"context_restart_threshold"}),
+        )
+
+        result = merge_configs(preset, user)
+
+        assert result.context_restart_threshold == 0.85
+
+    def test_context_restart_threshold_none_when_user_does_not_set(self) -> None:
+        """context_restart_threshold is None when user does not set it."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(test=CommandConfig(command="pytest")),
+        )
+        user = ValidationConfig(
+            _fields_set=frozenset(),
+        )
+
+        result = merge_configs(preset, user)
+
+        assert result.context_restart_threshold is None
+
+    def test_user_context_limit_preserved_in_merge(self) -> None:
+        """User's context_limit is preserved when merging with preset."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(test=CommandConfig(command="pytest")),
+        )
+        user = ValidationConfig(
+            context_limit=150_000,
+            _fields_set=frozenset({"context_limit"}),
+        )
+
+        result = merge_configs(preset, user)
+
+        assert result.context_limit == 150_000
+
+    def test_context_limit_none_when_user_does_not_set(self) -> None:
+        """context_limit is None when user does not set it."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(test=CommandConfig(command="pytest")),
+        )
+        user = ValidationConfig(
+            _fields_set=frozenset(),
+        )
+
+        result = merge_configs(preset, user)
+
+        assert result.context_limit is None

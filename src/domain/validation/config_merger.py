@@ -209,6 +209,12 @@ def merge_configs(
     # timeout_minutes: User value always takes precedence (presets don't define this)
     merged_timeout_minutes = user.timeout_minutes
 
+    # context_restart_threshold: User value always takes precedence (presets don't define this)
+    merged_context_restart_threshold = user.context_restart_threshold
+
+    # context_limit: User value always takes precedence (presets don't define this)
+    merged_context_limit = user.context_limit
+
     return ValidationConfig(
         preset=user.preset,  # Keep user's preset reference
         commands=merged_commands,
@@ -219,6 +225,8 @@ def merge_configs(
         validation_triggers=merged_triggers,
         claude_settings_sources=merged_claude_settings_sources,
         timeout_minutes=merged_timeout_minutes,
+        context_restart_threshold=merged_context_restart_threshold,
+        context_limit=merged_context_limit,
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 
