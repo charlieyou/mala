@@ -745,6 +745,20 @@ class SessionCallbackFactory:
                 )
 
             # Re-run validation commands
+            # Require command_runner for retry - if missing, fail the remediation
+            if self._command_runner is None:
+                logger.error(
+                    "session_end remediation: command_runner missing during retry for %s",
+                    issue_id,
+                )
+                return SessionEndResult(
+                    status="fail",
+                    started_at=started_at,
+                    finished_at=datetime.now(UTC),
+                    commands=list(command_results),
+                    reason="command_runner_not_configured",
+                )
+
             retry_passed = True
             retry_results: list[CommandResultProtocol] = []
             for cmd_ref in session_end_config.commands:
@@ -768,47 +782,39 @@ class SessionCallbackFactory:
                     cmd_ref, validation_config
                 )
                 if resolved_cmd is None:
-                    retry_passed = False
-                    break
-
-                if self._command_runner is not None:
-                    # Shield command execution to complete current command on SIGINT
-                    cmd_task = asyncio.create_task(
-                        self._command_runner.run_async(
-                            resolved_cmd,
-                            timeout=resolved_timeout,
-                            shell=True,
-                            cwd=self._repo_path,
-                        )
+                    # Config error: command ref not found. Cannot be fixed by retrying.
+                    logger.error(
+                        "session_end remediation: command ref '%s' not found for %s",
+                        cmd_ref.ref,
+                        issue_id,
                     )
-                    try:
-                        result = await asyncio.shield(cmd_task)
-                    except asyncio.CancelledError:
-                        # Check if SIGINT: complete command. Otherwise re-raise.
-                        if interrupt_event and interrupt_event.is_set():
-                            result = await cmd_task
-                            retry_results.append(result)
-                            logger.info(
-                                "session_end retry interrupted during command %s for %s",
-                                cmd_ref.ref,
-                                issue_id,
-                            )
-                            return SessionEndResult(
-                                status="interrupted",
-                                started_at=started_at,
-                                finished_at=datetime.now(UTC),
-                                commands=list(command_results) + retry_results,
-                                reason="SIGINT received",
-                            )
-                        # Not SIGINT: cancel and re-raise
-                        cmd_task.cancel()
-                        raise
-                    retry_results.append(result)
+                    return SessionEndResult(
+                        status="fail",
+                        started_at=started_at,
+                        finished_at=datetime.now(UTC),
+                        commands=list(command_results),
+                        reason="command_ref_not_found",
+                    )
 
-                    # Check for interrupt after command
+                # Execute command (command_runner guaranteed non-None from check above)
+                # Shield command execution to complete current command on SIGINT
+                cmd_task = asyncio.create_task(
+                    self._command_runner.run_async(
+                        resolved_cmd,
+                        timeout=resolved_timeout,
+                        shell=True,
+                        cwd=self._repo_path,
+                    )
+                )
+                try:
+                    result = await asyncio.shield(cmd_task)
+                except asyncio.CancelledError:
+                    # Check if SIGINT: complete command. Otherwise re-raise.
                     if interrupt_event and interrupt_event.is_set():
+                        result = await cmd_task
+                        retry_results.append(result)
                         logger.info(
-                            "session_end retry interrupted after command %s for %s",
+                            "session_end retry interrupted during command %s for %s",
                             cmd_ref.ref,
                             issue_id,
                         )
@@ -819,12 +825,31 @@ class SessionCallbackFactory:
                             commands=list(command_results) + retry_results,
                             reason="SIGINT received",
                         )
+                    # Not SIGINT: cancel and re-raise
+                    cmd_task.cancel()
+                    raise
+                retry_results.append(result)
 
-                    if not result.ok:
-                        retry_passed = False
-                        # Update failure output for next fixer attempt
-                        failure_output = self._build_failure_output(retry_results)
-                        break
+                # Check for interrupt after command
+                if interrupt_event and interrupt_event.is_set():
+                    logger.info(
+                        "session_end retry interrupted after command %s for %s",
+                        cmd_ref.ref,
+                        issue_id,
+                    )
+                    return SessionEndResult(
+                        status="interrupted",
+                        started_at=started_at,
+                        finished_at=datetime.now(UTC),
+                        commands=list(command_results) + retry_results,
+                        reason="SIGINT received",
+                    )
+
+                if not result.ok:
+                    retry_passed = False
+                    # Update failure output for next fixer attempt
+                    failure_output = self._build_failure_output(retry_results)
+                    break
 
             # Update command_results with retry results
             command_results.extend(retry_results)
