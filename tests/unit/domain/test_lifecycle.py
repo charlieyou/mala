@@ -19,7 +19,7 @@ from src.domain.lifecycle import (
     LifecycleState,
 )
 from src.domain.evidence_check import GateResult
-from src.pipeline.session_end_result import SessionEndResult
+from src.domain.session_end_result import SessionEndResult
 
 
 class TestSessionEndTransitions:

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from src.infra.tools.command_runner import CommandResult
+    from src.core.protocols import CommandResultProtocol
 
 
 @dataclass
@@ -84,7 +84,7 @@ class SessionEndResult:
     status: Literal["pass", "fail", "timeout", "interrupted", "skipped"]
     started_at: datetime | None = None
     finished_at: datetime | None = None
-    commands: list[CommandResult] = field(default_factory=list)
+    commands: list[CommandResultProtocol] = field(default_factory=list)
     code_review_result: CodeReviewResult | None = None
     reason: str | None = None
 

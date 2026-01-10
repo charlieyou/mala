@@ -1197,6 +1197,7 @@ class CommandResultProtocol(Protocol):
     for structural typing without import-time dependencies.
     """
 
+    command: list[str] | str
     ok: bool
     returncode: int
     stdout: str

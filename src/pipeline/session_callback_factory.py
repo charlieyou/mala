@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from src.pipeline.agent_session_runner import SessionCallbacks
-from src.pipeline.session_end_result import SessionEndResult
+from src.domain.session_end_result import SessionEndResult
 
 if TYPE_CHECKING:
     import asyncio
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     )
     from src.domain.validation.spec import ValidationSpec
     from src.pipeline.review_runner import ReviewRunner
-    from src.pipeline.session_end_result import SessionEndRetryState
+    from src.domain.session_end_result import SessionEndRetryState
 
 
 @dataclass

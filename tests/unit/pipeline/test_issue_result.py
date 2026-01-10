@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from src.pipeline.issue_result import IssueResult
-from src.pipeline.session_end_result import SessionEndResult
+from src.domain.session_end_result import SessionEndResult
 
 
 class TestIssueResult:
@@ -123,6 +123,7 @@ class TestIssueResultSerialization:
             session_end_result=session_end,
         )
         # SessionEndResult has to_dict, so we can serialize it
+        assert result.session_end_result is not None
         session_end_dict = result.session_end_result.to_dict()
         json_str = json.dumps(session_end_dict)
         parsed = json.loads(json_str)

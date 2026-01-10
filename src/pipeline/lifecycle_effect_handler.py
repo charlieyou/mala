@@ -37,7 +37,7 @@ if TYPE_CHECKING:
         TransitionResult,
     )
     from src.domain.validation.config import PromptValidationCommands
-    from src.pipeline.session_end_result import SessionEndResult
+    from src.domain.session_end_result import SessionEndResult
 
     from .agent_session_runner import (
         AgentSessionConfig,
