@@ -5,8 +5,7 @@ commands:
 
 validation_triggers:
   session_end:
-    failure_mode: remediate
-    max_retries: 3
+    failure_mode: continue
     code_review:
       enabled: true
       max_retries: 5
@@ -15,20 +14,19 @@ validation_triggers:
 
   run_end:
     fire_on: both
-    failure_mode: continue
+    failure_mode: remediate 
+    max_retries: 3
     commands:
       - ref: setup
       - ref: format
       - ref: lint
       - ref: typecheck
       - ref: import-linter
-        command: "uvx --from import-linter lint-imports"
       - ref: test
         command: "uv run pytest -m 'unit or integration' --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default} -n auto"
         timeout: 300
       - ref: e2e
         command: "uv run pytest -m 'e2e'"
-
     code_review:
       enabled: true
       reviewer_type: cerberus
