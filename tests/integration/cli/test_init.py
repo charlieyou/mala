@@ -39,15 +39,19 @@ class TestInitHelp:
 class TestInitDryRun:
     """Tests for init --dry-run mode."""
 
-    @pytest.mark.xfail(reason="Stub returns exit 1 until T002 implements full command")
     def test_dry_run_preset(self) -> None:
         """Input '1' (preset), --dry-run outputs valid YAML to stdout."""
         result = runner.invoke(app, ["init", "--dry-run"], input="1\n")
         assert result.exit_code == 0
-        config = yaml.safe_load(result.output)
-        assert config == {"preset": "python-uv"}
+        # Extract YAML from output (after prompt echo line)
+        lines = result.output.strip().split("\n")
+        yaml_output = "\n".join(
+            line for line in lines if not line.startswith(("Select", "Enter", " "))
+        )
+        config = yaml.safe_load(yaml_output)
+        # Presets are sorted alphabetically: ['go', 'node-npm', 'python-uv', 'rust']
+        assert config == {"preset": "go"}
 
-    @pytest.mark.xfail(reason="Stub returns exit 1 until T002 implements full command")
     def test_dry_run_no_backup(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -66,27 +70,28 @@ class TestInitDryRun:
 class TestInitCustomFlow:
     """Tests for init custom commands flow."""
 
-    @pytest.mark.xfail(reason="Stub returns exit 1 until T002 implements full command")
+    @pytest.mark.xfail(reason="T003 will implement file operations")
     def test_custom_flow(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Input '5' (custom), provide commands, verify mala.yaml content."""
         monkeypatch.chdir(tmp_path)
 
-        # Input: 5 = custom, then provide lint and test commands, empty for rest
-        input_text = "5\nruff check .\npytest\n\n\n\n"
+        # Input: 5 = custom, then provide setup and build commands, skip remaining 5
+        # Command order: setup, build, test, lint, format, typecheck, e2e
+        input_text = "5\nuv sync\nuv run build\n\n\n\n\n\n"
         result = runner.invoke(app, ["init"], input=input_text)
 
         assert result.exit_code == 0
         mala_yaml = tmp_path / "mala.yaml"
         assert mala_yaml.exists()
         config = yaml.safe_load(mala_yaml.read_text())
-        assert config.get("commands", {}).get("lint") == "ruff check ."
-        assert config.get("commands", {}).get("test") == "pytest"
+        assert config.get("commands", {}).get("setup") == "uv sync"
+        assert config.get("commands", {}).get("build") == "uv run build"
 
 
 class TestInitBackup:
     """Tests for backup creation when mala.yaml exists."""
 
-    @pytest.mark.xfail(reason="Stub returns exit 1 until T002 implements full command")
+    @pytest.mark.xfail(reason="T003 will implement file operations")
     def test_backup_created(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -107,15 +112,15 @@ class TestInitBackup:
 class TestInitValidation:
     """Tests for validation failure scenarios."""
 
-    @pytest.mark.xfail(reason="Stub returns exit 1 until T002 implements full command")
+    @pytest.mark.xfail(reason="T003 will implement exception handling")
     def test_validation_fail_empty_commands(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Input '5' (custom), skip all commands -> exit 1, error in stderr."""
         monkeypatch.chdir(tmp_path)
 
-        # Input: 5 = custom, then skip all commands (just newlines)
-        input_text = "5\n\n\n\n\n\n"
+        # Input: 5 = custom, then skip all 7 commands (just newlines)
+        input_text = "5\n\n\n\n\n\n\n\n"
         result = runner.invoke(app, ["init"], input=input_text)
 
         assert result.exit_code == 1
@@ -125,7 +130,6 @@ class TestInitValidation:
 class TestInitInputValidation:
     """Tests for input validation and retry loops."""
 
-    @pytest.mark.xfail(reason="Stub returns exit 1 until T002 implements full command")
     def test_invalid_input_loop(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -137,5 +141,13 @@ class TestInitInputValidation:
         result = runner.invoke(app, ["init", "--dry-run"], input=input_text)
 
         assert result.exit_code == 0
-        config = yaml.safe_load(result.output)
-        assert config == {"preset": "python-uv"}
+        # Extract YAML from output (after prompt lines)
+        lines = result.output.strip().split("\n")
+        yaml_output = "\n".join(
+            line
+            for line in lines
+            if not line.startswith(("Select", "Enter", "Invalid", " "))
+        )
+        config = yaml.safe_load(yaml_output)
+        # Presets are sorted alphabetically: ['go', 'node-npm', 'python-uv', 'rust']
+        assert config == {"preset": "go"}

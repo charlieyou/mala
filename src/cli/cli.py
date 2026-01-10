@@ -903,6 +903,50 @@ def status(
     print()
 
 
+def _prompt_menu_selection(presets: list[str]) -> int:
+    """Prompt user to select a preset or custom configuration.
+
+    Args:
+        presets: List of available preset names.
+
+    Returns:
+        Selected option number (1 to len(presets)+1).
+    """
+    max_choice = len(presets) + 1
+    while True:
+        typer.echo("Select configuration:", err=True)
+        for i, preset in enumerate(presets, 1):
+            typer.echo(f"  {i}) {preset}", err=True)
+        typer.echo(f"  {max_choice}) custom", err=True)
+
+        choice = typer.prompt("Enter choice", default="")
+        try:
+            num = int(choice)
+            if 1 <= num <= max_choice:
+                return num
+        except ValueError:
+            pass
+        typer.echo(f"Invalid choice, please enter 1-{max_choice}:", err=True)
+
+
+def _prompt_custom_commands() -> dict[str, str]:
+    """Prompt user for custom validation commands.
+
+    Returns:
+        Dictionary of command name to command string (empty values omitted).
+    """
+    commands: dict[str, str] = {}
+    command_names = ["setup", "build", "test", "lint", "format", "typecheck", "e2e"]
+    for name in command_names:
+        value = typer.prompt(
+            f"Command for '{name}' (Enter to skip)", default="", show_default=False
+        )
+        value = value.strip()
+        if value:
+            commands[name] = value
+    return commands
+
+
 @app.command()
 def init(
     dry_run: Annotated[
@@ -911,7 +955,29 @@ def init(
     ] = False,
 ) -> None:
     """Initialize mala.yaml configuration interactively."""
-    raise typer.Exit(1)  # Stub - to be implemented in T002
+    from ..orchestration.cli_support import (
+        dump_config_yaml,
+        get_init_presets,
+        validate_init_config,
+    )
+
+    presets = get_init_presets()
+    selection = _prompt_menu_selection(presets)
+
+    if selection <= len(presets):
+        # Preset flow
+        config_data: dict[str, object] = {"preset": presets[selection - 1]}
+    else:
+        # Custom flow
+        commands = _prompt_custom_commands()
+        config_data = {"commands": commands}
+
+    # Validate the generated config (raises ConfigError on failure)
+    validate_init_config(config_data)  # type: ignore[arg-type]
+
+    # TODO: T003 will implement file operations here
+    if dry_run:
+        typer.echo(dump_config_yaml(config_data))
 
 
 def _display_instance(instance: object, indent: bool = False) -> None:

@@ -13,7 +13,6 @@ Key functions:
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
@@ -63,8 +62,6 @@ class ConfigMissingError(ConfigError):
 
 
 # Fields allowed at the top level of mala.yaml
-# Note: global_validation_commands is NOT in this list because it's rejected
-# earlier in _validate_schema with a specific migration error message
 _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
     {
         "preset",
@@ -73,8 +70,6 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "code_patterns",
         "config_files",
         "setup_files",
-        "custom_commands",
-        "global_custom_commands",
         "validation_triggers",
         "claude_settings_sources",
     }
@@ -118,10 +113,6 @@ def load_config(repo_path: Path) -> ValidationConfig:
     _validate_schema(data)
     config = _build_config(data)
     _validate_config(config)
-    # Note: _validate_migration is NOT called here because it must run on the
-    # effective merged config (after preset merge). Call sites that merge configs
-    # (build_validation_spec, build_prompt_validation_commands) call it after merge.
-
     return config
 
 
@@ -168,28 +159,10 @@ def _validate_schema(data: dict[str, Any]) -> None:
     Raises:
         ConfigError: If unknown fields are present or deprecated fields are used.
     """
-    # Check for deprecated global_validation_commands key (R4 per spec)
-    if "global_validation_commands" in data:
-        logger = logging.getLogger(__name__)
-        error_msg = (
-            "global_validation_commands is deprecated. "
-            "Migrate to validation_triggers.run_end:\n\n"
-            "validation_triggers:\n"
-            "  run_end:\n"
-            "    failure_mode: continue\n"
-            "    commands:\n"
-            "      - ref: test\n"
-            "      - ref: lint\n\n"
-            "See migration guide at "
-            "https://docs.mala.ai/migration/validation-triggers"
-        )
-        logger.error("[config] %s", error_msg)
-        raise ConfigError(error_msg)
-
-    # Check for deprecated validate_every field with helpful migration message
+    # Check for removed validate_every field with helpful migration message
     if "validate_every" in data:
         raise ConfigError(
-            "validate_every is deprecated. Use validation_triggers.periodic with "
+            "validate_every is not supported. Use validation_triggers.periodic with "
             "interval field. See migration guide at "
             "https://docs.mala.ai/migration/validation-triggers"
         )
@@ -1074,55 +1047,10 @@ def _validate_config(config: ValidationConfig) -> None:
         )
 
 
-def _validate_migration(config: ValidationConfig) -> None:
-    """Validate that deprecated config patterns are not used.
-
-    This function fails fast on deprecated config patterns that require
-    migration. It runs on the effective merged config (after preset merge).
-
-    Args:
-        config: Built ValidationConfig instance.
-
-    Raises:
-        ConfigError: If deprecated config patterns are detected.
-    """
-    # Check if global_validation_commands has any commands defined.
-    # Note: Top-level custom_commands is rejected in ValidationConfig.from_dict,
-    # so we only need to check global_validation_commands here.
-    gvc = config.global_validation_commands
-    has_global_commands = any(
-        (
-            gvc.setup,
-            gvc.build,
-            gvc.test,
-            gvc.lint,
-            gvc.format,
-            gvc.typecheck,
-            gvc.e2e,
-            gvc.custom_commands,
-        )
-    )
-
-    # If global_validation_commands is non-empty but validation_triggers is not set,
-    # require explicit validation_triggers configuration
-    if has_global_commands and config.validation_triggers is None:
-        raise ConfigError(
-            "validation_triggers required when global_validation_commands is defined. "
-            "See migration guide at https://docs.mala.ai/migration/validation-triggers\n\n"
-            "Example:\n"
-            "validation_triggers:\n"
-            "  session_end:\n"
-            "    failure_mode: remediate\n"
-            "    max_retries: 3\n"
-            "    commands:\n"
-            "      - ref: test"
-        )
-
-
 def _validate_trigger_command_refs(config: ValidationConfig) -> None:
     """Validate that all trigger command refs exist in the effective base pool.
 
-    The base pool is constructed from the merged config (commands + global_validation_commands),
+    The base pool is constructed from the merged config commands,
     following the same logic as run_coordinator._build_base_pool. This validation ensures
     invalid refs are caught at startup rather than at runtime when triggers fire.
 
@@ -1139,25 +1067,18 @@ def _validate_trigger_command_refs(config: ValidationConfig) -> None:
         return  # No triggers configured
 
     # Build base pool following run_coordinator._build_base_pool logic:
-    # - Built-in commands: global_validation_commands overrides commands
-    # - Custom commands: from global_validation_commands only
+    # - Built-in commands: from commands
+    # - Custom commands: from commands.custom_commands
     base_pool: set[str] = set()
     base_cmds = config.commands
-    global_cmds = config.global_validation_commands
 
-    # Add built-in commands (global overrides base)
+    # Add built-in commands
     for cmd_name in ("test", "lint", "format", "typecheck", "e2e", "setup", "build"):
-        global_cmd = getattr(global_cmds, cmd_name, None)
-        if global_cmd is not None:
+        base_cmd = getattr(base_cmds, cmd_name, None)
+        if base_cmd is not None:
             base_pool.add(cmd_name)
-        else:
-            base_cmd = getattr(base_cmds, cmd_name, None)
-            if base_cmd is not None:
-                base_pool.add(cmd_name)
 
-    # Add custom commands from global_validation_commands (legacy) and commands section
-    for name in global_cmds.custom_commands:
-        base_pool.add(name)
+    # Add custom commands from commands section
     for name in base_cmds.custom_commands:
         base_pool.add(name)
 
@@ -1196,3 +1117,15 @@ def validate_generated_config(data: dict[str, Any]) -> None:
     """
     config = ValidationConfig.from_dict(data)  # raises ConfigError
     _validate_config(config)  # raises ConfigError
+
+
+def dump_config_yaml(data: dict[str, Any]) -> str:
+    """Dump config data to YAML string.
+
+    Args:
+        data: Dictionary containing mala.yaml configuration.
+
+    Returns:
+        YAML-formatted string.
+    """
+    return yaml.dump(data, default_flow_style=False, sort_keys=False)
