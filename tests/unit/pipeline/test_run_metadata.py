@@ -426,6 +426,77 @@ class TestRunMetadataSerialization:
             assert loaded.run_validation.passed is True
             assert loaded.run_validation.e2e_passed is True
 
+    def test_last_review_issues_roundtrip(self, config: RunConfig) -> None:
+        """Test that last_review_issues is preserved through save/load round-trip."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runs_dir = Path(tmpdir) / "-tmp-test-repo"
+            metadata = RunMetadata(
+                repo_path=Path("/tmp/test-repo"),
+                config=config,
+                version="1.0.0",
+                runs_dir=runs_dir,
+            )
+
+            # Create review issues to test round-trip
+            review_issues = [
+                {"file": "src/foo.py", "issue": "Missing test", "severity": "warning"},
+                {"file": "src/bar.py", "issue": "Type error", "severity": "error"},
+            ]
+
+            # Add issue with last_review_issues
+            issue = IssueRun(
+                issue_id="review-test-1",
+                agent_id="agent-review",
+                status="failed",
+                duration_seconds=60.0,
+                last_review_issues=review_issues,
+            )
+            metadata.record_issue(issue)
+
+            # Save and load
+            path = metadata.save()
+            loaded = RunMetadata.load(path)
+
+            # Verify last_review_issues is preserved
+            assert "review-test-1" in loaded.issues
+            loaded_issue = loaded.issues["review-test-1"]
+            assert loaded_issue.last_review_issues is not None
+            assert len(loaded_issue.last_review_issues) == 2
+            assert loaded_issue.last_review_issues[0]["file"] == "src/foo.py"
+            assert loaded_issue.last_review_issues[0]["issue"] == "Missing test"
+            assert loaded_issue.last_review_issues[1]["file"] == "src/bar.py"
+            assert loaded_issue.last_review_issues[1]["severity"] == "error"
+
+    def test_last_review_issues_none_roundtrip(self, config: RunConfig) -> None:
+        """Test that None last_review_issues is preserved through save/load."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runs_dir = Path(tmpdir) / "-tmp-test-repo"
+            metadata = RunMetadata(
+                repo_path=Path("/tmp/test-repo"),
+                config=config,
+                version="1.0.0",
+                runs_dir=runs_dir,
+            )
+
+            # Add issue without last_review_issues
+            issue = IssueRun(
+                issue_id="no-review-1",
+                agent_id="agent-no-review",
+                status="success",
+                duration_seconds=30.0,
+                last_review_issues=None,
+            )
+            metadata.record_issue(issue)
+
+            # Save and load
+            path = metadata.save()
+            loaded = RunMetadata.load(path)
+
+            # Verify None is preserved
+            assert "no-review-1" in loaded.issues
+            loaded_issue = loaded.issues["no-review-1"]
+            assert loaded_issue.last_review_issues is None
+
     def test_save_creates_repo_segmented_directory(self) -> None:
         """Test that save creates files in repo-segmented subdirectories."""
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -435,6 +435,12 @@ class RunMetadata:
             )
             resolution = cls._deserialize_issue_resolution(issue_data.get("resolution"))
 
+            # Deserialize last_review_issues (list of dicts or None)
+            raw_last_review = issue_data.get("last_review_issues")
+            last_review_issues = (
+                raw_last_review if isinstance(raw_last_review, list) else None
+            )
+
             issue = IssueRun(
                 issue_id=issue_data["issue_id"],
                 agent_id=issue_data["agent_id"],
@@ -454,6 +460,7 @@ class RunMetadata:
                     if isinstance(issue_data.get("baseline_timestamp"), int)
                     else None
                 ),
+                last_review_issues=last_review_issues,
             )
             metadata.issues[issue_id] = issue
 
