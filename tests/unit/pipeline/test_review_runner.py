@@ -796,3 +796,241 @@ class TestReviewRunnerInterruptHandling:
 
         assert output.interrupted is False
         assert output.result.passed is True
+
+
+class TestSessionEndEvidence:
+    """Tests for session_end_result evidence passing (per spec R5)."""
+
+    @pytest.mark.asyncio
+    async def test_session_end_result_included_in_context(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Session end result should appear in context file when present."""
+        from src.domain.session_end_result import SessionEndResult
+
+        captured_text: str | None = None
+
+        @dataclass
+        class CapturingReviewer:
+            """Reviewer that captures the context file contents."""
+
+            def overrides_disabled_setting(self) -> bool:
+                return True
+
+            async def __call__(
+                self,
+                context_file: Path | None = None,
+                timeout: int = 300,
+                claude_session_id: str | None = None,
+                author_context: str | None = None,
+                *,
+                commit_shas: Sequence[str],
+                interrupt_event: asyncio.Event | None = None,
+            ) -> FakeReviewResult:
+                nonlocal captured_text
+                assert context_file is not None
+                captured_text = context_file.read_text()
+                return FakeReviewResult(passed=True, issues=[])
+
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", CapturingReviewer()))
+
+        session_end = SessionEndResult(status="pass", reason="all checks passed")
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            issue_description="Fix the bug",
+            commit_shas=["commit1"],
+            session_end_result=session_end,
+        )
+
+        await runner.run_review(review_input)
+
+        assert captured_text is not None
+        assert "## Session End Validation Results (Informational)" in captured_text
+        assert "**Status**: pass" in captured_text
+        assert "**Reason**: all checks passed" in captured_text
+
+    @pytest.mark.asyncio
+    async def test_session_end_failed_does_not_auto_fail_review(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Review should NOT auto-fail when session_end.status=fail (per spec R5)."""
+        from src.domain.session_end_result import SessionEndResult
+
+        fake_reviewer = FakeCodeReviewer(
+            result=FakeReviewResult(passed=True, issues=[])
+        )
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
+
+        session_end = SessionEndResult(status="fail", reason="gate_failed")
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            issue_description="Fix the bug",
+            commit_shas=["commit1"],
+            session_end_result=session_end,
+        )
+
+        output = await runner.run_review(review_input)
+
+        # Review should pass - session_end failure doesn't auto-fail review
+        assert output.result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_session_end_skipped_not_included_in_context(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Session end with status=skipped should not appear in context."""
+        from src.domain.session_end_result import SessionEndResult
+
+        captured_text: str | None = None
+
+        @dataclass
+        class CapturingReviewer:
+            """Reviewer that captures the context file contents."""
+
+            def overrides_disabled_setting(self) -> bool:
+                return True
+
+            async def __call__(
+                self,
+                context_file: Path | None = None,
+                timeout: int = 300,
+                claude_session_id: str | None = None,
+                author_context: str | None = None,
+                *,
+                commit_shas: Sequence[str],
+                interrupt_event: asyncio.Event | None = None,
+            ) -> FakeReviewResult:
+                nonlocal captured_text
+                if context_file is not None:
+                    captured_text = context_file.read_text()
+                return FakeReviewResult(passed=True, issues=[])
+
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", CapturingReviewer()))
+
+        session_end = SessionEndResult(status="skipped", reason="not_configured")
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            issue_description="Fix the bug",
+            commit_shas=["commit1"],
+            session_end_result=session_end,
+        )
+
+        await runner.run_review(review_input)
+
+        # Context file should only contain issue_description, not session_end
+        assert captured_text is not None
+        assert "Fix the bug" in captured_text
+        assert "Session End Validation" not in captured_text
+
+    @pytest.mark.asyncio
+    async def test_session_end_none_proceeds_normally(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Review should proceed normally when session_end_result is None."""
+        fake_reviewer = FakeCodeReviewer(
+            result=FakeReviewResult(passed=True, issues=[])
+        )
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
+
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            issue_description="Fix the bug",
+            commit_shas=["commit1"],
+            session_end_result=None,  # Explicitly None
+        )
+
+        output = await runner.run_review(review_input)
+
+        assert output.result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_session_end_with_command_results(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Session end evidence should include command results when present."""
+        from src.domain.session_end_result import SessionEndResult
+
+        captured_text: str | None = None
+
+        @dataclass
+        class FakeCommandResult:
+            """Fake command result for testing."""
+
+            command: str
+            returncode: int
+            stdout: str
+            stderr: str
+            duration_seconds: float
+            timed_out: bool
+
+        @dataclass
+        class CapturingReviewer:
+            """Reviewer that captures the context file contents."""
+
+            def overrides_disabled_setting(self) -> bool:
+                return True
+
+            async def __call__(
+                self,
+                context_file: Path | None = None,
+                timeout: int = 300,
+                claude_session_id: str | None = None,
+                author_context: str | None = None,
+                *,
+                commit_shas: Sequence[str],
+                interrupt_event: asyncio.Event | None = None,
+            ) -> FakeReviewResult:
+                nonlocal captured_text
+                assert context_file is not None
+                captured_text = context_file.read_text()
+                return FakeReviewResult(passed=True, issues=[])
+
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", CapturingReviewer()))
+
+        cmd_pass = FakeCommandResult(
+            command="uv run pytest",
+            returncode=0,
+            stdout="ok",
+            stderr="",
+            duration_seconds=1.5,
+            timed_out=False,
+        )
+        cmd_fail = FakeCommandResult(
+            command="uvx ruff check .",
+            returncode=1,
+            stdout="",
+            stderr="error: lint failed",
+            duration_seconds=0.5,
+            timed_out=False,
+        )
+        session_end = SessionEndResult(
+            status="fail",
+            reason="gate_failed",
+            commands=[cmd_pass, cmd_fail],  # type: ignore[arg-type]
+        )
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            issue_description="Fix the bug",
+            commit_shas=["commit1"],
+            session_end_result=session_end,
+        )
+
+        await runner.run_review(review_input)
+
+        assert captured_text is not None
+        assert "### Command Results" in captured_text
+        assert "`uv run pytest`" in captured_text
+        assert "[PASS]" in captured_text
+        assert "`uvx ruff check .`" in captured_text
+        assert "[FAIL]" in captured_text
+        assert "error: lint failed" in captured_text

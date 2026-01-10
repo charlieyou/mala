@@ -28,6 +28,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    from src.domain.session_end_result import SessionEndResult
+
 
 class OrderPreference(Enum):
     """Issue ordering preference for orchestrator.
@@ -272,6 +274,9 @@ class ReviewInput:
             When provided, the reviewer should use this diff instead of computing
             it from commit_shas. This supports cumulative review workflows where
             the diff is explicitly generated from a baseline..HEAD range.
+        session_end_result: Optional SessionEndResult from session_end trigger.
+            Per spec R5, this is informational evidence for the reviewer.
+            Review does NOT auto-fail based on session_end status.
     """
 
     issue_id: str
@@ -282,3 +287,4 @@ class ReviewInput:
     author_context: str | None = None
     previous_findings: Sequence[Any] | None = None
     diff_content: str | None = None
+    session_end_result: SessionEndResult | None = None
