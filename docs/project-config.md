@@ -442,6 +442,7 @@ validation_triggers:
       enabled: true
       reviewer_type: cerberus    # "cerberus" (default) or "agent_sdk"
       finding_threshold: P1
+      track_review_issues: true  # Create beads issues for P2/P3 findings (default)
 ```
 
 ### Reviewer Types

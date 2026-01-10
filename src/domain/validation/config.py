@@ -255,6 +255,7 @@ class CodeReviewConfig:
         cerberus: Cerberus-specific settings if reviewer_type is "cerberus".
         agent_sdk_timeout: Timeout in seconds for Agent SDK reviews (default: 600).
         agent_sdk_model: Model for Agent SDK reviewer ('sonnet', 'opus', 'haiku').
+        track_review_issues: Whether to create beads issues for P2/P3 review findings.
     """
 
     enabled: bool = False
@@ -266,6 +267,7 @@ class CodeReviewConfig:
     cerberus: CerberusConfig | None = None
     agent_sdk_timeout: int = 600
     agent_sdk_model: Literal["sonnet", "opus", "haiku"] = "sonnet"
+    track_review_issues: bool = True
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -214,3 +214,50 @@ class TestCodeReviewParsing:
         assert code_review.cerberus.timeout == 300
         assert code_review.cerberus.spawn_args == ("--verbose",)
         assert code_review.cerberus.env == (("DEBUG", "1"),)
+
+    def test_code_review_track_review_issues_default(self, tmp_path: Path) -> None:
+        """Integration test: track_review_issues defaults to True."""
+        yaml_content = dedent("""\
+            preset: python-uv
+            validation_triggers:
+              session_end:
+                commands: []
+                failure_mode: continue
+                code_review:
+                  enabled: true
+        """)
+        config_file = tmp_path / "mala.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_config(tmp_path)
+
+        assert config.validation_triggers is not None
+        assert config.validation_triggers.session_end is not None
+        code_review = config.validation_triggers.session_end.code_review
+        assert code_review is not None
+        assert code_review.track_review_issues is True
+
+    def test_code_review_track_review_issues_explicit_false(
+        self, tmp_path: Path
+    ) -> None:
+        """Integration test: track_review_issues can be set to false."""
+        yaml_content = dedent("""\
+            preset: python-uv
+            validation_triggers:
+              session_end:
+                commands: []
+                failure_mode: continue
+                code_review:
+                  enabled: true
+                  track_review_issues: false
+        """)
+        config_file = tmp_path / "mala.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_config(tmp_path)
+
+        assert config.validation_triggers is not None
+        assert config.validation_triggers.session_end is not None
+        code_review = config.validation_triggers.session_end.code_review
+        assert code_review is not None
+        assert code_review.track_review_issues is False

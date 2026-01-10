@@ -318,6 +318,7 @@ Each trigger can optionally include a `code_review` block to run automated code 
 | `cerberus` | No | Object | - | Cerberus-specific settings |
 | `agent_sdk_timeout` | No | Integer | `600` | Timeout in seconds for Agent SDK reviews |
 | `agent_sdk_model` | No | `sonnet`, `opus`, `haiku` | `sonnet` | Model for Agent SDK reviewer |
+| `track_review_issues` | No | Boolean | `true` | Create beads issues for P2/P3 review findings |
 
 **baseline requirement:** The `baseline` field is required for `epic_completion` and `run_end` triggers because they review accumulated changes across multiple issues. It is not used for `session_end`, which reviews only the single issue's changes.
 
@@ -417,6 +418,27 @@ validation_triggers:
       reviewer_type: cerberus
       finding_threshold: P1
 ```
+
+### From `MALA_TRACK_REVIEW_ISSUES` Environment Variable
+
+The `MALA_TRACK_REVIEW_ISSUES` environment variable is deprecated. Use `track_review_issues` in the `code_review` block instead:
+
+**Before (deprecated):**
+```bash
+export MALA_TRACK_REVIEW_ISSUES=false
+mala run
+```
+
+**After:**
+```yaml
+validation_triggers:
+  session_end:
+    code_review:
+      enabled: true
+      track_review_issues: false
+```
+
+The env var remains supported for backwards compatibility but `code_review.track_review_issues` takes precedence when configured.
 
 ### From `validate_every`
 

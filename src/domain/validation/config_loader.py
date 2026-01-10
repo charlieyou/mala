@@ -396,6 +396,7 @@ _CODE_REVIEW_FIELDS = frozenset(
         "cerberus",
         "agent_sdk_timeout",
         "agent_sdk_model",
+        "track_review_issues",
     }
 )
 
@@ -695,6 +696,17 @@ def _parse_code_review_config(
             )
         agent_sdk_model = model_val  # type: ignore[assignment]
 
+    # Parse track_review_issues (optional, defaults to True)
+    track_review_issues = True
+    if "track_review_issues" in data:
+        tri_val = data["track_review_issues"]
+        if not isinstance(tri_val, bool):
+            raise ConfigError(
+                f"code_review.track_review_issues must be a boolean for trigger {trigger_name}, "
+                f"got {type(tri_val).__name__}"
+            )
+        track_review_issues = tri_val
+
     return CodeReviewConfigClass(
         enabled=enabled,
         reviewer_type=reviewer_type,
@@ -705,6 +717,7 @@ def _parse_code_review_config(
         cerberus=cerberus,
         agent_sdk_timeout=agent_sdk_timeout,
         agent_sdk_model=agent_sdk_model,
+        track_review_issues=track_review_issues,
     )
 
 

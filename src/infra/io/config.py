@@ -154,7 +154,8 @@ class MalaConfig:
         cerberus_env: Extra environment variables for review-gate.
             Defaults to empty (no extra env).
         track_review_issues: Whether to create beads issues for P2/P3 review findings.
-            Env: MALA_TRACK_REVIEW_ISSUES (default: True)
+            Env: MALA_TRACK_REVIEW_ISSUES (default: True). Deprecated: use
+            validation_triggers.<trigger>.code_review.track_review_issues in mala.yaml.
         llm_api_key: API key for LLM calls (epic verification).
             Env: LLM_API_KEY (falls back to ANTHROPIC_API_KEY if not set)
         llm_base_url: Base URL for LLM API requests.
@@ -263,7 +264,7 @@ class MalaConfig:
             - MALA_LOCK_DIR: Lock files directory (optional)
             - CLAUDE_CONFIG_DIR: Claude SDK config directory (optional)
             - MALA_REVIEW_TIMEOUT: Review timeout in seconds (optional)
-            - MALA_TRACK_REVIEW_ISSUES: Create beads issues for P2/P3 findings (optional)
+            - MALA_TRACK_REVIEW_ISSUES: Create beads issues for P2/P3 findings (deprecated)
             - MALA_CERBERUS_SPAWN_ARGS: Extra args for review-gate spawn (optional)
             - MALA_CERBERUS_WAIT_ARGS: Extra args for review-gate wait (optional)
             - MALA_CERBERUS_ENV: Extra env for review-gate (optional)
@@ -499,7 +500,7 @@ class ResolvedConfig:
         cerberus_spawn_args: Parsed extra args for review-gate spawn.
         cerberus_wait_args: Parsed extra args for review-gate wait.
         cerberus_env: Parsed extra environment variables for review-gate.
-        track_review_issues: Whether to create beads issues for P2/P3.
+        track_review_issues: Whether to create beads issues for P2/P3 (deprecated fallback).
         llm_api_key: API key for LLM calls.
         llm_base_url: Base URL for LLM API.
         max_epic_verification_retries: Maximum retries for epic verification loop.
