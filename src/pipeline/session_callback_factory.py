@@ -460,6 +460,7 @@ class SessionCallbackFactory:
                             command_results=command_results,
                             started_at=started_at,
                             interrupt_event=interrupt_event,
+                            retry_state=retry_state,
                         )
                         if remediation_result is not None:
                             # Remediation completed (success, exhausted, or interrupted)
@@ -621,6 +622,7 @@ class SessionCallbackFactory:
         command_results: list[CommandResultProtocol],
         started_at: datetime,
         interrupt_event: asyncio.Event | None,
+        retry_state: SessionEndRetryState,
     ) -> SessionEndResult | None:
         """Run remediation loop for session_end when failure_mode=remediate.
 
@@ -637,26 +639,22 @@ class SessionCallbackFactory:
             command_results: Command results from initial attempt (will be updated).
             started_at: Timestamp when session_end started.
             interrupt_event: Event to check for interruption.
+            retry_state: Retry state for tracking attempt number.
 
         Returns:
             SessionEndResult if remediation completed/exhausted/interrupted,
-            None if fixer_interface not available (falls back to continue mode).
+            None if max_retries=0 or fixer_interface not available (falls back).
         """
         max_retries = session_end_config.max_retries or 0
 
-        # max_retries=0 means no fixer runs, immediate fail
+        # max_retries=0 means no retries configured, fall back to continue mode
+        # The initial attempt already happened and failed with command_failed
         if max_retries == 0:
             logger.info(
                 "session_end failed for %s with max_retries=0, no remediation",
                 issue_id,
             )
-            return SessionEndResult(
-                status="fail",
-                started_at=started_at,
-                finished_at=datetime.now(UTC),
-                commands=list(command_results),
-                reason="max_retries_exhausted",
-            )
+            return None
 
         # Check if fixer_interface is available
         if self._fixer_interface is None:
@@ -698,6 +696,10 @@ class SessionCallbackFactory:
                 failure_output=failure_output,
                 issue_id=issue_id,
             )
+
+            # Update retry_state.attempt after fixer run (per acceptance criteria)
+            # attempt = 1 is initial, so after fixer we increment to 2, 3, etc.
+            retry_state.attempt = retry_num + 1
 
             # Check if fixer was interrupted
             if fixer_result.interrupted:

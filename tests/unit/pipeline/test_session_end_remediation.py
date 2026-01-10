@@ -602,7 +602,6 @@ class TestRetryStateTracking:
         )
         fixer = FakeFixerInterface()
 
-        # Track calls to verify issue_id passed to fixer
         config = _make_validation_config(
             commands=(TriggerCommandRef(ref="lint"),),
             failure_mode=FailureMode.REMEDIATE,
@@ -616,14 +615,26 @@ class TestRetryStateTracking:
         )
         callbacks = factory.build("test-issue")
 
+        # Create a retry_state to track attempt increments
+        retry_state = SessionEndRetryState()
+        assert retry_state.attempt == 1  # Initial attempt
+
         assert callbacks.on_session_end_check is not None
         result = await callbacks.on_session_end_check(
-            "test-issue", Path("/test/log.txt"), SessionEndRetryState()
+            "test-issue", Path("/test/log.txt"), retry_state
         )
 
         assert result.status == "fail"
+        assert result.reason == "max_retries_exhausted"
+        # With max_retries=2, fixer runs twice (after attempt 1 and 2)
+        # After each fixer run, attempt is incremented:
+        # - After fixer 1: attempt = 2
+        # - After fixer 2: attempt = 3
+        # Final attempt should be 3 (1 initial + 2 retries)
+        assert retry_state.attempt == 3
         # Fixer calls should have the correct issue_id
         assert all(call[1] == "test-issue" for call in fixer.calls)
+        assert len(fixer.calls) == 2
 
 
 class TestFixerInterruption:
@@ -668,8 +679,13 @@ class TestMaxRetriesZero:
     """Tests for max_retries=0 behavior."""
 
     @pytest.mark.asyncio
-    async def test_max_retries_zero_no_fixer_no_retry(self) -> None:
-        """With max_retries=0, no fixer runs and no retry occurs."""
+    async def test_max_retries_zero_falls_back_to_continue_mode(self) -> None:
+        """With max_retries=0, falls back to continue mode (command_failed).
+
+        Per spec R9: total validation attempts = 1 + max_retries.
+        With max_retries=0, there's exactly 1 attempt (initial) and no retries.
+        The initial attempt already failed with command_failed, so we report that.
+        """
         runner = FakeCommandRunner()
         runner.responses["ruff check ."] = FakeCommandResult(
             command="ruff check .", returncode=1
@@ -694,9 +710,10 @@ class TestMaxRetriesZero:
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
+        # Falls back to continue mode: command_failed, not max_retries_exhausted
         assert result.status == "fail"
-        assert result.reason == "max_retries_exhausted"
-        # No fixer calls
+        assert result.reason == "command_failed"
+        # No fixer calls (no retries configured)
         assert len(fixer.calls) == 0
         # Only initial validation
         assert len(runner.commands_run) == 1
