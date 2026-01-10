@@ -188,6 +188,78 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
         assert reviewer.wait_args == ("--wait",)
         assert reviewer.env == {"CERBERUS_MODE": "test"}
 
+    def test_factory_injects_cerberus_timeout_into_wait_args(
+        self, tmp_path: Path
+    ) -> None:
+        """Verify factory injects cerberus.timeout into wait_args when not specified."""
+        # Create mala.yaml with cerberus.timeout but no --timeout in wait_args
+        (tmp_path / "mala.yaml").write_text(
+            "preset: python-uv\n"
+            "validation_triggers:\n"
+            "  session_end:\n"
+            "    failure_mode: continue\n"
+            "    code_review:\n"
+            "      enabled: true\n"
+            "      reviewer_type: cerberus\n"
+            "      cerberus:\n"
+            "        timeout: 600\n"
+            "        wait_args: ['--other-flag']\n"
+        )
+
+        reviewer_config = _get_reviewer_config(tmp_path)
+        assert reviewer_config.cerberus_config is not None
+        assert reviewer_config.cerberus_config.timeout == 600
+
+        mala_config = MagicMock()
+        mala_config.cerberus_bin_path = Path("/usr/bin")
+
+        event_sink = FakeEventSink()
+
+        reviewer = _create_code_reviewer(
+            repo_path=tmp_path,
+            mala_config=mala_config,
+            event_sink=event_sink,
+            reviewer_config=reviewer_config,
+        )
+
+        assert isinstance(reviewer, DefaultReviewer)
+        # timeout should be injected at the front of wait_args
+        assert reviewer.wait_args == ("--timeout", "600", "--other-flag")
+
+    def test_factory_does_not_duplicate_timeout_in_wait_args(
+        self, tmp_path: Path
+    ) -> None:
+        """Verify factory does not inject timeout when already in wait_args."""
+        # Create mala.yaml with both cerberus.timeout and --timeout in wait_args
+        (tmp_path / "mala.yaml").write_text(
+            "preset: python-uv\n"
+            "validation_triggers:\n"
+            "  session_end:\n"
+            "    failure_mode: continue\n"
+            "    code_review:\n"
+            "      enabled: true\n"
+            "      reviewer_type: cerberus\n"
+            "      cerberus:\n"
+            "        timeout: 600\n"
+            "        wait_args: ['--timeout', '120']\n"
+        )
+
+        reviewer_config = _get_reviewer_config(tmp_path)
+        mala_config = MagicMock()
+        mala_config.cerberus_bin_path = Path("/usr/bin")
+        event_sink = FakeEventSink()
+
+        reviewer = _create_code_reviewer(
+            repo_path=tmp_path,
+            mala_config=mala_config,
+            event_sink=event_sink,
+            reviewer_config=reviewer_config,
+        )
+
+        assert isinstance(reviewer, DefaultReviewer)
+        # Should NOT duplicate --timeout; explicit wait_args value wins
+        assert reviewer.wait_args == ("--timeout", "120")
+
 
 class TestFactoryCreatesAgentSDKReviewerWhenConfigured:
     """Test that factory creates AgentSDKReviewer when reviewer_type=agent_sdk."""

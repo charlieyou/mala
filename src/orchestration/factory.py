@@ -378,6 +378,7 @@ def _create_code_reviewer(
     """
     from src.domain.prompts import load_prompts
     from src.infra.clients.agent_sdk_review import AgentSDKReviewer
+    from src.infra.clients.cerberus_gate_cli import CerberusGateCLI
     from src.infra.clients.cerberus_review import DefaultReviewer
     from src.infra.sdk_adapter import SDKClientFactory
 
@@ -388,6 +389,9 @@ def _create_code_reviewer(
         if cerb is not None:
             spawn_args = cerb.spawn_args
             wait_args = cerb.wait_args
+            # Inject cerberus.timeout into wait_args if not already specified
+            if CerberusGateCLI.extract_wait_timeout(wait_args) is None:
+                wait_args = ("--timeout", str(cerb.timeout), *wait_args)
             env = dict(cerb.env)
         else:
             spawn_args = mala_config.cerberus_spawn_args
