@@ -997,10 +997,13 @@ def init(
         if not dry_run:
             _write_with_backup(config_path, yaml_content)
 
-        # Success output to stdout
+        # Output YAML to stdout (both dry-run and normal)
         typer.echo(yaml_content)
-        typer.echo()
-        typer.echo("Run `mala run` to start")
+
+        # Success tip only when file was written
+        if not dry_run:
+            typer.echo()
+            typer.echo("Run `mala run` to start")
 
     except ConfigError as e:
         typer.echo(f"Error: {e}", err=True)
