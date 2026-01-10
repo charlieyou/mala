@@ -369,6 +369,8 @@ _CODE_REVIEW_FIELDS = frozenset(
         "finding_threshold",
         "baseline",
         "cerberus",
+        "agent_sdk_timeout",
+        "agent_sdk_model",
     }
 )
 
@@ -636,6 +638,38 @@ def _parse_code_review_config(
                 )
             cerberus = _parse_cerberus_config(cerberus_val)
 
+    # Parse agent_sdk_timeout (optional, defaults to 600)
+    agent_sdk_timeout = 600
+    if "agent_sdk_timeout" in data:
+        timeout_val = data["agent_sdk_timeout"]
+        if isinstance(timeout_val, bool) or not isinstance(timeout_val, int):
+            raise ConfigError(
+                f"code_review.agent_sdk_timeout must be an integer for trigger {trigger_name}, "
+                f"got {type(timeout_val).__name__}"
+            )
+        if timeout_val <= 0:
+            raise ConfigError(
+                f"code_review.agent_sdk_timeout must be positive for trigger {trigger_name}, "
+                f"got {timeout_val}"
+            )
+        agent_sdk_timeout = timeout_val
+
+    # Parse agent_sdk_model (optional, defaults to "sonnet")
+    agent_sdk_model: Literal["sonnet", "opus", "haiku"] = "sonnet"
+    if "agent_sdk_model" in data:
+        model_val = data["agent_sdk_model"]
+        if not isinstance(model_val, str):
+            raise ConfigError(
+                f"code_review.agent_sdk_model must be a string for trigger {trigger_name}, "
+                f"got {type(model_val).__name__}"
+            )
+        if model_val not in ("sonnet", "opus", "haiku"):
+            raise ConfigError(
+                f"code_review.agent_sdk_model must be 'sonnet', 'opus', or 'haiku' "
+                f"for trigger {trigger_name}, got '{model_val}'"
+            )
+        agent_sdk_model = model_val  # type: ignore[assignment]
+
     return CodeReviewConfigClass(
         enabled=enabled,
         reviewer_type=reviewer_type,
@@ -644,6 +678,8 @@ def _parse_code_review_config(
         finding_threshold=finding_threshold,
         baseline=baseline,
         cerberus=cerberus,
+        agent_sdk_timeout=agent_sdk_timeout,
+        agent_sdk_model=agent_sdk_model,
     )
 
 

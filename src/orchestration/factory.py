@@ -152,17 +152,16 @@ def _derive_config(
     )
 
 
-def _get_new_code_review_reviewer_type(
+def _get_first_enabled_code_review(
     validation_config: object | None,
-) -> str | None:
-    """Get reviewer_type from first enabled code_review in triggers.
+) -> object | None:
+    """Get first enabled code_review config from validation triggers.
 
     Args:
         validation_config: A ValidationConfig instance, or None.
 
     Returns:
-        The reviewer_type from the first enabled code_review config,
-        or None if no enabled code_review config exists.
+        The first CodeReviewConfig with enabled=True, or None if none exists.
     """
     if validation_config is None:
         return None
@@ -176,8 +175,7 @@ def _get_new_code_review_reviewer_type(
         if trigger is not None:
             code_review = getattr(trigger, "code_review", None)
             if code_review is not None and getattr(code_review, "enabled", False):
-                # Return the reviewer_type from this code_review config
-                return getattr(code_review, "reviewer_type", "cerberus")
+                return code_review
     return None
 
 
@@ -190,7 +188,7 @@ def _has_new_code_review_config(validation_config: object | None) -> bool:
     Returns:
         True if any trigger has code_review.enabled=True.
     """
-    return _get_new_code_review_reviewer_type(validation_config) is not None
+    return _get_first_enabled_code_review(validation_config) is not None
 
 
 def _extract_reviewer_config(
@@ -198,9 +196,9 @@ def _extract_reviewer_config(
 ) -> _ReviewerConfig:
     """Extract reviewer configuration from a ValidationConfig.
 
-    Gets reviewer_type from the first enabled code_review config in
-    validation triggers. Defaults to 'agent_sdk' if no code_review
-    config is enabled.
+    Gets settings from the first enabled code_review config in validation
+    triggers. Defaults to 'agent_sdk' with standard timeout/model if no
+    code_review config is enabled.
 
     Args:
         validation_config: A ValidationConfig instance.
@@ -208,13 +206,15 @@ def _extract_reviewer_config(
     Returns:
         _ReviewerConfig with reviewer settings.
     """
-    # Get reviewer_type from first enabled code_review in triggers
-    reviewer_type = _get_new_code_review_reviewer_type(validation_config)
-    if reviewer_type is None:
-        reviewer_type = "agent_sdk"  # Default when no code_review config exists
+    code_review = _get_first_enabled_code_review(validation_config)
+    if code_review is None:
+        # No enabled code_review config - use defaults
+        return _ReviewerConfig()
 
     return _ReviewerConfig(
-        reviewer_type=reviewer_type,
+        reviewer_type=getattr(code_review, "reviewer_type", "agent_sdk"),
+        agent_sdk_review_timeout=getattr(code_review, "agent_sdk_timeout", 600),
+        agent_sdk_reviewer_model=getattr(code_review, "agent_sdk_model", "sonnet"),
     )
 
 

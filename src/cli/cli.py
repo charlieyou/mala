@@ -352,11 +352,6 @@ class ConfigOverrideResult:
         return self.error is not None
 
 
-def _warn_stderr(msg: str) -> None:
-    """Emit a warning message to stderr with yellow color and warning icon."""
-    print(f"{Colors.YELLOW}⚠ {msg}{Colors.RESET}", file=sys.stderr)
-
-
 def _build_cli_args_metadata(
     *,
     disable: list[str] | None,

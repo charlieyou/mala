@@ -327,6 +327,8 @@ Each trigger can optionally include a `code_review` block to run automated code 
 | `finding_threshold` | No | `P0`, `P1`, `P2`, `P3`, `none` | `none` | Minimum severity to report |
 | `baseline` | Yes for `epic_completion`, `run_end` | `since_run_start`, `since_last_review` | - | What code to include |
 | `cerberus` | No | Object | - | Cerberus-specific settings |
+| `agent_sdk_timeout` | No | Integer | `600` | Timeout in seconds for Agent SDK reviews |
+| `agent_sdk_model` | No | `sonnet`, `opus`, `haiku` | `sonnet` | Model for Agent SDK reviewer |
 
 **baseline requirement:** The `baseline` field is required for `epic_completion` and `run_end` triggers because they review accumulated changes across multiple issues. It is not used for `session_end`, which reviews only the single issue's changes.
 

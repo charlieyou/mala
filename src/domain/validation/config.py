@@ -268,6 +268,8 @@ class CodeReviewConfig:
         finding_threshold: Minimum severity to report findings.
         baseline: What code to include in review.
         cerberus: Cerberus-specific settings if reviewer_type is "cerberus".
+        agent_sdk_timeout: Timeout in seconds for Agent SDK reviews (default: 600).
+        agent_sdk_model: Model for Agent SDK reviewer ('sonnet', 'opus', 'haiku').
     """
 
     enabled: bool = False
@@ -277,6 +279,8 @@ class CodeReviewConfig:
     finding_threshold: Literal["P0", "P1", "P2", "P3", "none"] = "none"
     baseline: Literal["since_run_start", "since_last_review"] | None = None
     cerberus: CerberusConfig | None = None
+    agent_sdk_timeout: int = 600
+    agent_sdk_model: Literal["sonnet", "opus", "haiku"] = "sonnet"
 
 
 @dataclass(frozen=True, kw_only=True)
