@@ -1991,12 +1991,12 @@ class TestValidationTriggersConfigParsing:
 
 
 class TestMigrationValidation:
-    """Tests for migration validation that catches deprecated config patterns."""
+    """Tests for migration validation that catches unsupported config patterns."""
 
     def test_validate_every_present_raises_error(
         self, tmp_path: "pathlib.Path"
     ) -> None:
-        """validate_every field raises ConfigError with deprecation message."""
+        """validate_every field raises ConfigError with not-supported message."""
         from src.domain.validation.config_loader import load_config
 
         mala_yaml = tmp_path / "mala.yaml"
