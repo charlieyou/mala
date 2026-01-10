@@ -1047,6 +1047,8 @@ class TestCodeReviewRemediateFailureMode:
         mock_event_sink.on_trigger_remediation_exhausted.assert_called_once_with(
             "run_end", 2
         )
+        # Must NOT emit validation_passed after emitting validation_failed
+        mock_event_sink.on_trigger_validation_passed.assert_not_called()
 
 
 class TestFindingThresholdEnforcement:
@@ -1407,6 +1409,8 @@ class TestFindingThresholdEnforcement:
         mock_event_sink.on_trigger_validation_failed.assert_called_with(
             "run_end", "code_review_findings", "continue"
         )
+        # Must NOT emit validation_passed after emitting validation_failed
+        mock_event_sink.on_trigger_validation_passed.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_findings_remediation_succeeds_on_fixed_findings(
@@ -1614,3 +1618,5 @@ class TestFindingThresholdEnforcement:
         mock_event_sink.on_trigger_validation_failed.assert_called_with(
             "run_end", "code_review_findings", "remediate"
         )
+        # Must NOT emit validation_passed after emitting validation_failed
+        mock_event_sink.on_trigger_validation_passed.assert_not_called()

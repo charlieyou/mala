@@ -968,12 +968,13 @@ class RunCoordinator:
                                 # execution error remediation so validation passes
                                 last_failure = None
 
-                # Emit validation_passed
-                trigger_duration = time.monotonic() - trigger_start_time
-                if self.event_sink is not None:
-                    self.event_sink.on_trigger_validation_passed(
-                        trigger_type.value, trigger_duration
-                    )
+                # Emit validation_passed (only if no failure occurred)
+                if last_failure is None:
+                    trigger_duration = time.monotonic() - trigger_start_time
+                    if self.event_sink is not None:
+                        self.event_sink.on_trigger_validation_passed(
+                            trigger_type.value, trigger_duration
+                        )
                 continue
 
             # Handle failure based on failure_mode
