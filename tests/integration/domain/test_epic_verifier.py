@@ -1520,3 +1520,55 @@ class TestMaxDiffSizeKb:
 
         # Verification should proceed regardless of diff size
         mock_model.verify.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_verification_for_single_commit_exceeding_limit(
+        self,
+        tmp_path: Path,
+        mock_beads: MagicMock,
+        mock_model: MagicMock,
+    ) -> None:
+        """Should skip verification for single commit (no ..) that exceeds limit."""
+        mock_runner = MagicMock()
+
+        verifier = EpicVerifier(
+            beads=mock_beads,
+            model=mock_model,
+            repo_path=tmp_path,
+            command_runner=mock_runner,
+            max_diff_size_kb=10,  # 10 KB limit
+        )
+
+        # Single commit range (no ..) - common case for single-issue epics
+        mock_scope_analyzer = MagicMock()
+        mock_scope_analyzer.compute_scoped_commits = AsyncMock(
+            return_value=ScopedCommits(
+                commit_shas=["abc123"],
+                commit_range="abc123",  # Single SHA, no ..
+                commit_summary="- abc123 summary",
+            )
+        )
+        verifier.scope_analyzer = mock_scope_analyzer
+
+        # Mock git diff to return large diff for abc123^..abc123
+        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
+            if "diff" in cmd and "--numstat" in cmd:
+                # Verify it's called with SHA^..SHA format
+                assert "abc123^" in cmd, f"Expected abc123^ in {cmd}"
+                assert "abc123" in cmd
+                # Return large diff
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout="1000\t500\tfile.py",
+                )
+            return CommandResult(command=cmd, returncode=0, stdout="")
+
+        mock_runner.run_async = mock_run_async
+
+        verdict = await verifier.verify_epic("epic-1")
+
+        # Verification should be skipped due to large diff
+        mock_model.verify.assert_not_called()
+        assert verdict.passed is False
+        assert "exceeds limit" in verdict.reasoning

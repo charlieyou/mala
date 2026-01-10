@@ -410,23 +410,27 @@ class EpicVerifier:
         Approximates 80 bytes per line for size estimation.
 
         Args:
-            commit_range: Git commit range (e.g., "abc123^..def456").
+            commit_range: Git commit range (e.g., "abc123^..def456") or single SHA.
 
         Returns:
             Estimated diff size in KB, or None if unable to compute.
         """
         # Parse commit range to get from/to commits
         # Format: "abc123^..def456" -> from="abc123^", to="def456"
-        if ".." not in commit_range:
-            return None
-
-        parts = commit_range.split("..", 1)
-        if len(parts) != 2:
-            return None
-
-        from_commit, to_commit = parts[0], parts[1]
-        if not from_commit or not to_commit:
-            return None
+        # Single commit: "abc123" -> from="abc123^", to="abc123"
+        if ".." in commit_range:
+            parts = commit_range.split("..", 1)
+            if len(parts) != 2:
+                return None
+            from_commit, to_commit = parts[0], parts[1]
+            if not from_commit or not to_commit:
+                return None
+        else:
+            # Single commit - diff against its parent
+            if not commit_range:
+                return None
+            from_commit = f"{commit_range}^"
+            to_commit = commit_range
 
         result = await self._runner.run_async(
             ["git", "diff", "--numstat", from_commit, to_commit]
