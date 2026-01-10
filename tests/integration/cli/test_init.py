@@ -41,6 +41,8 @@ def _extract_yaml_from_output(output: str) -> str:
         r"^Enter choice \[.*\]: ",  # Choice prompt with brackets
         r"^Command for '\w+' \(Enter to skip\): ",  # Command prompts
         r"^Invalid choice, please enter \d+-\d+:$",  # Validation error
+        r"^Run `mala run` to start$",  # Success tip
+        r"^$",  # Blank lines
     ]
     combined = re.compile("|".join(prompt_patterns))
 
@@ -98,7 +100,6 @@ class TestInitDryRun:
 class TestInitCustomFlow:
     """Tests for init custom commands flow."""
 
-    @pytest.mark.xfail(reason="T003 will implement file operations")
     def test_custom_flow(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Input '5' (custom), provide commands, verify mala.yaml content."""
         monkeypatch.chdir(tmp_path)
@@ -119,7 +120,6 @@ class TestInitCustomFlow:
 class TestInitBackup:
     """Tests for backup creation when mala.yaml exists."""
 
-    @pytest.mark.xfail(reason="T003 will implement file operations")
     def test_backup_created(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

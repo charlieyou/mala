@@ -34,6 +34,9 @@ from src.infra.io.log_output.console import (
     set_verbose,
 )
 
+# Config error for init command
+from src.domain.validation.config import ConfigError
+
 
 def get_init_presets() -> list[str]:
     """Get available preset names for mala init.
@@ -79,6 +82,7 @@ def dump_config_yaml(data: dict[str, Any]) -> str:
 __all__ = [
     "USER_CONFIG_DIR",
     "Colors",
+    "ConfigError",
     "dump_config_yaml",
     "get_init_presets",
     "get_lock_dir",

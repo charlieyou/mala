@@ -13,6 +13,7 @@ Usage:
 
 from __future__ import annotations
 
+import shutil
 import sys
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -84,9 +85,10 @@ import asyncio
 from datetime import datetime
 from typing import Annotated, Never
 
+import click.exceptions
 import typer
 
-from ..orchestration.cli_support import Colors, log, set_verbose
+from ..orchestration.cli_support import Colors, ConfigError, log, set_verbose
 from .logs import logs_app
 
 # SDK-dependent imports (MalaOrchestrator, get_lock_dir, run_metadata, etc.)
@@ -950,6 +952,14 @@ def _prompt_custom_commands() -> dict[str, str]:
     return commands
 
 
+def _write_with_backup(path: Path, content: str) -> None:
+    """Backup existing file and write new content."""
+    if path.exists():
+        backup_path = path.with_suffix(".yaml.bak")
+        shutil.copy(path, backup_path)
+    path.write_text(content)
+
+
 @app.command()
 def init(
     dry_run: Annotated[
@@ -958,31 +968,49 @@ def init(
     ] = False,
 ) -> None:
     """Initialize mala.yaml configuration interactively."""
-    from ..orchestration.cli_support import (
-        dump_config_yaml,
-        get_init_presets,
-        validate_init_config,
-    )
+    try:
+        from ..orchestration.cli_support import (
+            dump_config_yaml,
+            get_init_presets,
+            validate_init_config,
+        )
 
-    presets = get_init_presets()
-    selection = _prompt_menu_selection(presets)
+        presets = get_init_presets()
+        selection = _prompt_menu_selection(presets)
 
-    if selection <= len(presets):
-        # Preset flow
-        config_data: dict[str, object] = {"preset": presets[selection - 1]}
-    else:
-        # Custom flow
-        commands = _prompt_custom_commands()
-        config_data = {"commands": commands}
+        if selection <= len(presets):
+            # Preset flow
+            config_data: dict[str, object] = {"preset": presets[selection - 1]}
+        else:
+            # Custom flow
+            commands = _prompt_custom_commands()
+            config_data = {"commands": commands}
 
-    # Validate the generated config (raises ConfigError on failure)
-    validate_init_config(config_data)  # type: ignore[arg-type]
+        # Validate the generated config (raises ConfigError on failure)
+        validate_init_config(config_data)  # type: ignore[arg-type]
 
-    # TODO: T003 will implement file operations here
-    if dry_run:
-        typer.echo(dump_config_yaml(config_data))
-    else:
-        # File operations not yet implemented
+        # Generate YAML content
+        yaml_content = dump_config_yaml(config_data)
+
+        # File operations
+        config_path = Path("mala.yaml")
+        if not dry_run:
+            _write_with_backup(config_path, yaml_content)
+
+        # Success output to stdout
+        typer.echo(yaml_content)
+        typer.echo()
+        typer.echo("Run `mala run` to start")
+
+    except ConfigError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    except OSError as e:
+        typer.echo(f"Error writing file: {e}", err=True)
+        raise typer.Exit(1)
+    except KeyboardInterrupt:
+        raise typer.Exit(130)
+    except click.exceptions.Abort:
         raise typer.Exit(1)
 
 
