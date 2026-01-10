@@ -1171,6 +1171,7 @@ class TestFindingThresholdEnforcement:
         code_review_config = CodeReviewConfig(
             enabled=True,
             finding_threshold="P1",
+            failure_mode=FailureMode.ABORT,  # Abort on findings exceeding threshold
             max_retries=0,  # No remediation attempts
         )
         trigger_config = RunEndTriggerConfig(
@@ -1224,6 +1225,7 @@ class TestFindingThresholdEnforcement:
         result = await coordinator.run_trigger_validation(dry_run=False)
 
         assert result.status == "aborted"
+        assert result.details is not None
         assert "findings exceed threshold" in result.details.lower()
         mock_event_sink.on_trigger_validation_failed.assert_called_with(
             "run_end", "code_review_findings", "abort"

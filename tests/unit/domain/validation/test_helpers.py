@@ -214,9 +214,7 @@ class TestInitFixtureRepo:
 
         mock_runner = MagicMock()
 
-        def fake_run(
-            cmd: list[str], **kwargs: object
-        ) -> CommandResult:
+        def fake_run(cmd: list[str], **kwargs: object) -> CommandResult:
             commands_run.append(cmd)
             return CommandResult(command=cmd, returncode=0, stdout="", stderr="")
 

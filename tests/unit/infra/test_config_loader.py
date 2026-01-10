@@ -306,13 +306,18 @@ class TestValidateSchema:
         data = {
             "preset": "python-uv",
             "commands": {"test": "pytest"},
+            "global_validation_commands": {"lint": {"command": "ruff check ."}},
             "coverage": {"format": "xml", "file": "cov.xml", "threshold": 80},
             "code_patterns": ["*.py"],
             "config_files": ["pyproject.toml"],
             "setup_files": ["uv.lock"],
-            "reviewer_type": "agent_sdk",
-            "agent_sdk_review_timeout": 600,
-            "agent_sdk_reviewer_model": "sonnet",
+            "validation_triggers": {
+                "session_end": {
+                    "failure_mode": "continue",
+                    "commands": [{"ref": "test"}],
+                }
+            },
+            "claude_settings_sources": ["local", "project"],
         }
         # Should not raise
         _validate_schema(data)

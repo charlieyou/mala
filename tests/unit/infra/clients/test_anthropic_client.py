@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import builtins
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    import types
+    from collections.abc import Mapping, Sequence
 
 
 @pytest.mark.unit
@@ -99,7 +105,6 @@ class TestCreateAnthropicClient:
 
     def test_raises_runtime_error_when_anthropic_not_installed(self) -> None:
         """Raises RuntimeError when anthropic package is not installed."""
-        import builtins
         import sys
 
         # Remove cached module
@@ -112,10 +117,16 @@ class TestCreateAnthropicClient:
         # Patch the import inside the function to fail
         original_import = builtins.__import__
 
-        def mock_import(name: str, *args: object, **kwargs: object) -> object:
+        def mock_import(
+            name: str,
+            globals: Mapping[str, object] | None = None,
+            locals: Mapping[str, object] | None = None,
+            fromlist: Sequence[str] | None = (),
+            level: int = 0,
+        ) -> types.ModuleType:
             if name == "anthropic":
                 raise ImportError("No module named 'anthropic'")
-            return original_import(name, *args, **kwargs)
+            return original_import(name, globals, locals, fromlist, level)
 
         with patch.object(builtins, "__import__", mock_import):
             with pytest.raises(RuntimeError) as exc_info:
