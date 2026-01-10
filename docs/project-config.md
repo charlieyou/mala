@@ -43,9 +43,6 @@ commands:                   # Optional. Command definitions
   typecheck: string | object | null # Type checker (e.g., "uvx ty check", "tsc --noEmit")
   e2e: string | object | null       # End-to-end tests (e.g., "uv run pytest -m e2e")
 
-global_validation_commands:          # Optional. Overrides for global validation
-  test: string | object | null  # Global test command (e.g., with coverage)
-
 code_patterns:           # Optional. Glob patterns for code files
   - "*.py"
   - "src/**/*.ts"
@@ -79,8 +76,6 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `preset` | string | No | Preset name to extend |
 | `commands` | object | No | Map of command kind to shell command or object |
 | `commands.<kind>` | string, object, or null | No | Shell command or `{command, timeout}`. `null` explicitly disables |
-| `global_validation_commands` | object | No | Overrides for global validation commands |
-| `global_validation_commands.<kind>` | string, object, or null | No | Global command override. `null` disables |
 | `code_patterns` | list | No | Glob patterns for code files |
 | `config_files` | list | No | Tool config files that trigger re-lint |
 | `setup_files` | list | No | Lock files that trigger setup re-run |
@@ -290,18 +285,6 @@ preset: python-uv
 preset: python-uv
 coverage:
   command: "uv run pytest --cov --cov-report=xml"
-  format: xml
-  file: coverage.xml
-  threshold: 85
-```
-
-### Python Global Coverage Only
-
-```yaml
-preset: python-uv
-global_validation_commands:
-  test: "uv run pytest --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0"
-coverage:
   format: xml
   file: coverage.xml
   threshold: 85

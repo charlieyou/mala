@@ -157,7 +157,7 @@ def _validate_schema(data: dict[str, Any]) -> None:
         data: Parsed YAML dictionary.
 
     Raises:
-        ConfigError: If unknown fields are present or deprecated fields are used.
+        ConfigError: If unknown fields are present.
     """
     # Check for removed validate_every field with helpful migration message
     if "validate_every" in data:
@@ -1115,6 +1115,7 @@ def validate_generated_config(data: dict[str, Any]) -> None:
     Raises:
         ConfigError: If schema validation or semantic validation fails.
     """
+    _validate_schema(data)
     config = ValidationConfig.from_dict(data)  # raises ConfigError
     _validate_config(config)  # raises ConfigError
 

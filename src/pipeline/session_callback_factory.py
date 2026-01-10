@@ -620,21 +620,14 @@ class SessionCallbackFactory:
         Returns:
             Tuple of (resolved_command, resolved_timeout) or (None, None) if not found.
         """
-        # Build base pool from global_validation_commands with fallback to commands
+        # Build base pool from commands
         base_pool: dict[str, tuple[str, int | None]] = {}
 
-        # Standard commands from global_validation_commands (with fallback)
+        # Standard commands from commands
         commands_config = validation_config.commands
-        global_config = validation_config.global_validation_commands
 
         for name in ["test", "lint", "format", "typecheck", "e2e", "setup", "build"]:
-            # Try global first, then fallback to base
-            cmd_config = None
-            if global_config:
-                cmd_config = getattr(global_config, name, None)
-            if cmd_config is None and commands_config:
-                cmd_config = getattr(commands_config, name, None)
-
+            cmd_config = getattr(commands_config, name, None)
             if cmd_config is not None:
                 base_pool[name] = (
                     cmd_config.command,
@@ -644,25 +637,6 @@ class SessionCallbackFactory:
         # Add custom commands from commands.custom_commands (repo-level)
         if commands_config and commands_config.custom_commands:
             for name, custom_config in commands_config.custom_commands.items():
-                if custom_config is not None:
-                    base_pool[name] = (
-                        custom_config.command,
-                        getattr(custom_config, "timeout", None),
-                    )
-
-        # Add custom commands from global_validation_commands.custom_commands
-        # (global overrides repo-level)
-        if global_config and global_config.custom_commands:
-            for name, custom_config in global_config.custom_commands.items():
-                if custom_config is not None:
-                    base_pool[name] = (
-                        custom_config.command,
-                        getattr(custom_config, "timeout", None),
-                    )
-
-        # Add custom commands from global_custom_commands (deprecated, but support)
-        if validation_config.global_custom_commands:
-            for name, custom_config in validation_config.global_custom_commands.items():
                 if custom_config is not None:
                     base_pool[name] = (
                         custom_config.command,

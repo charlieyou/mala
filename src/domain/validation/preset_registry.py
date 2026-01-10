@@ -74,12 +74,9 @@ class PresetRegistry:
 
         data = self._load_preset_yaml(name)
 
-        # Validate that commands/global_validation_commands only contain built-in keys
+        # Validate that commands only contain built-in keys
         # (no inline custom commands allowed in presets)
         self._validate_preset_commands(data.get("commands"), "commands")
-        self._validate_preset_commands(
-            data.get("global_validation_commands"), "global_validation_commands"
-        )
 
         return _build_config(data)
 
@@ -128,8 +125,7 @@ class PresetRegistry:
         blocked for presets.
 
         Args:
-            commands_data: The 'commands' or 'global_validation_commands' section
-                from a preset YAML file.
+            commands_data: The 'commands' section from a preset YAML file.
             section_name: Name of the section being validated (for error messages).
 
         Raises:

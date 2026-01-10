@@ -14,29 +14,18 @@ The trigger system provides:
 
 Triggers are configured in `mala.yaml` using two sections:
 
-1. **Base command pool**: Merged from `commands` (preset or explicit) + `global_validation_commands`
+1. **Base command pool**: Built from `commands` (preset or explicit)
 2. **Trigger configuration** (`validation_triggers`): Specifies when and how to run them
 
 ### Base Pool Construction
 
 The base command pool determines which commands can be referenced in triggers:
 
-- **Built-in commands** (`test`, `lint`, `format`, `typecheck`, `e2e`, `setup`): Use `global_validation_commands` if set, otherwise fall back to `commands` (from preset or explicit config)
-- **Custom commands**: Merge `commands.custom_commands` + `global_validation_commands` custom commands (global wins on conflicts)
-
-This means presets provide built-in commands by default, and `global_validation_commands` can override them or add new ones.
+- **Built-in commands** (`test`, `lint`, `format`, `typecheck`, `e2e`, `setup`, `build`): Use `commands` (from preset or explicit config)
+- **Custom commands**: Use additional keys defined in `commands`
 
 ```yaml
 preset: python-uv  # Provides test, lint, typecheck, format in commands
-
-# Override preset commands or add custom ones to the pool
-global_validation_commands:
-  import-linter:
-    command: "uv run lint-imports"
-    timeout: 60
-  security-scan:
-    command: "uv run bandit -r src/"
-    timeout: 120
 
 # When to run which commands
 validation_triggers:
@@ -247,13 +236,13 @@ commands:
 
 ### Override Resolution
 
-When overriding, unspecified fields inherit from the base pool. The base pool is built from `commands` (preset) with `global_validation_commands` as overrides:
+When overriding, unspecified fields inherit from the base pool. The base pool is built from `commands` (preset or explicit):
 
 ```yaml
 preset: python-uv  # Provides commands.test = "uv run pytest"
 
 # Override the preset's test command
-global_validation_commands:
+commands:
   test:
     command: "uv run pytest --cov"
     timeout: 300
@@ -264,12 +253,12 @@ validation_triggers:
     failure_mode: continue
     commands:
       - ref: test
-        timeout: 600  # Overrides timeout, inherits command from global_validation_commands
+        timeout: 600  # Overrides timeout, inherits command from commands.test
 ```
 
 Result: `command="uv run pytest --cov"`, `timeout=600`
 
-If `global_validation_commands.test` were not defined, the trigger would use the preset's `commands.test` command.
+If `commands.test` were not defined, the trigger would use the preset's `commands.test` command.
 
 ### Running Same Command Multiple Times
 
@@ -431,7 +420,7 @@ validation_triggers:
 
 ### From `validate_every`
 
-The `validate_every` field is deprecated. Replace with `periodic` trigger:
+The `validate_every` field is not supported. Replace with `periodic` trigger:
 
 **Before:**
 ```yaml
@@ -447,35 +436,6 @@ validation_triggers:
     interval: 5
     failure_mode: continue
     commands:
-      - ref: lint
-      - ref: typecheck
-```
-
-### From `global_validation_commands` Without Triggers
-
-If you have `global_validation_commands` but no `validation_triggers`, mala now requires explicit trigger configuration:
-
-**Before:**
-```yaml
-preset: python-uv
-global_validation_commands:
-  test:
-    command: "uv run pytest --cov"
-```
-
-**After:**
-```yaml
-preset: python-uv
-global_validation_commands:
-  test:
-    command: "uv run pytest --cov"
-
-validation_triggers:
-  session_end:
-    failure_mode: remediate
-    max_retries: 3
-    commands:
-      - ref: test
       - ref: lint
       - ref: typecheck
 ```
@@ -548,7 +508,7 @@ Abort on any security issues:
 ```yaml
 preset: python-uv
 
-global_validation_commands:
+commands:
   security-scan:
     command: "uv run bandit -r src/"
     timeout: 120
@@ -578,8 +538,6 @@ Define and use only custom commands:
 commands:
   lint: "uvx ruff check ."
   test: "uv run pytest"
-
-global_validation_commands:
   import-linter:
     command: "uvx --from import-linter lint-imports"
     timeout: 60
@@ -600,21 +558,10 @@ validation_triggers:
 
 ## Troubleshooting
 
-### Error: `validation_triggers required`
+### Error: `validate_every is not supported`
 
 ```
-validation_triggers required when global_validation_commands is defined.
-See migration guide at https://docs.mala.ai/migration/validation-triggers
-```
-
-**Cause:** You have `global_validation_commands` defined but no `validation_triggers`.
-
-**Solution:** Add a `validation_triggers` block or use `validation_triggers: {}` to opt out.
-
-### Error: `validate_every is deprecated`
-
-```
-validate_every is deprecated. Use validation_triggers.periodic with interval field.
+validate_every is not supported. Use validation_triggers.periodic with interval field.
 See migration guide at https://docs.mala.ai/migration/validation-triggers
 ```
 
@@ -659,7 +606,7 @@ epic_completion trigger references unknown command 'typo_test'. Available: test,
 
 **Cause:** A command `ref` doesn't match any command in the base pool.
 
-**Solution:** Check the command name matches one in `commands` or `global_validation_commands`.
+**Solution:** Check the command name matches one in `commands`.
 
 ### Error: `epic_depth required` / `fire_on required`
 

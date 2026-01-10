@@ -75,18 +75,6 @@ class FireOn(Enum):
     BOTH = "both"  # Fire on both success and failure
 
 
-class CustomOverrideMode(Enum):
-    """Mode for run-level custom command overrides.
-
-    Determines how custom commands from run config combine with repo config.
-    """
-
-    INHERIT = "inherit"  # No run-level custom keys -> inherit repo-level
-    CLEAR = "clear"  # _clear_customs: true -> no customs
-    REPLACE = "replace"  # Unprefixed custom keys -> replace repo-level
-    ADDITIVE = "additive"  # +prefixed custom keys -> merge with repo-level
-
-
 class ConfigError(Exception):
     """Base exception for configuration errors.
 
@@ -684,21 +672,15 @@ class CommandsConfig:
     typecheck: CommandConfig | None = None
     e2e: CommandConfig | None = None
     custom_commands: dict[str, CustomCommandConfig] = field(default_factory=dict)
-    custom_override_mode: CustomOverrideMode = CustomOverrideMode.INHERIT
     _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     @classmethod
-    def from_dict(
-        cls, data: dict[str, object] | None, *, is_global: bool = False
-    ) -> CommandsConfig:
+    def from_dict(cls, data: dict[str, object] | None) -> CommandsConfig:
         """Create CommandsConfig from a YAML dict.
 
         Args:
             data: Dict with optional command fields. Each can be a string,
                 command object, or null.
-            is_global: Whether this is global (repo-level) config.
-                Affects _clear_customs handling.
-
         Returns:
             CommandsConfig instance.
 
@@ -707,16 +689,6 @@ class CommandsConfig:
         """
         if data is None:
             return cls()
-
-        # Handle _clear_customs reserved key
-        custom_override_mode = CustomOverrideMode.INHERIT
-        if "_clear_customs" in data:
-            clear_value = data["_clear_customs"]
-            if clear_value is not True:
-                raise ConfigError("_clear_customs must be true if present")
-            custom_override_mode = CustomOverrideMode.CLEAR
-            # Remove from data for further processing
-            data = {k: v for k, v in data.items() if k != "_clear_customs"}
 
         valid_kinds = ("setup", "build", "test", "lint", "format", "typecheck", "e2e")
 
@@ -766,10 +738,6 @@ class CommandsConfig:
             # After the above checks, value is str or dict (from YAML)
             return CommandConfig.from_value(cast("str | dict[str, object]", value))
 
-        # Determine override mode based on custom command presence
-        if custom_override_mode == CustomOverrideMode.INHERIT and custom_commands:
-            custom_override_mode = CustomOverrideMode.REPLACE
-
         return cls(
             setup=parse_command("setup"),
             build=parse_command("build"),
@@ -779,7 +747,6 @@ class CommandsConfig:
             typecheck=parse_command("typecheck"),
             e2e=parse_command("e2e"),
             custom_commands=custom_commands,
-            custom_override_mode=custom_override_mode,
             _fields_set=frozenset(fields_set),
         )
 

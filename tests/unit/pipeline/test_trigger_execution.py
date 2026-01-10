@@ -76,7 +76,6 @@ def make_coordinator(
 def make_validation_config(
     *,
     commands: dict[str, str | None] | None = None,
-    global_commands: dict[str, str | None] | None = None,
     triggers: ValidationTriggersConfig | None = None,
 ) -> ValidationConfig:
     """Create a ValidationConfig with specified commands and triggers.
@@ -84,9 +83,6 @@ def make_validation_config(
     Args:
         commands: Dict mapping base command names to command strings.
             Example: {"test": "pytest", "lint": "ruff check ."}
-        global_commands: Dict mapping command names to command strings for
-            global_validation_commands (the trigger base pool per spec).
-            If not specified, commands are also used as the global pool.
         triggers: ValidationTriggersConfig for validation_triggers field.
     """
     cmd_configs: dict[str, CommandConfig | None] = {}
@@ -104,27 +100,8 @@ def make_validation_config(
         typecheck=cmd_configs.get("typecheck"),
     )
 
-    # Build global_validation_commands (the trigger base pool per spec)
-    # If global_commands not specified, use commands as the global pool
-    global_cmd_configs: dict[str, CommandConfig | None] = {}
-    global_source = global_commands if global_commands is not None else commands
-    if global_source:
-        for name, cmd_str in global_source.items():
-            if cmd_str is not None:
-                global_cmd_configs[name] = CommandConfig(command=cmd_str)
-            else:
-                global_cmd_configs[name] = None
-
-    global_commands_config = CommandsConfig(
-        test=global_cmd_configs.get("test"),
-        lint=global_cmd_configs.get("lint"),
-        format=global_cmd_configs.get("format"),
-        typecheck=global_cmd_configs.get("typecheck"),
-    )
-
     return ValidationConfig(
         commands=commands_config,
-        global_validation_commands=global_commands_config,
         validation_triggers=triggers,
     )
 
@@ -155,33 +132,6 @@ class TestCommandResolution:
         # Run with dry_run to verify resolution without execution
         result = asyncio.run(coordinator.run_trigger_validation(dry_run=True))
 
-        assert result.status == "passed"
-
-    def test_null_global_command_falls_back_to_base(self, tmp_path: Path) -> None:
-        """Null in global_validation_commands falls back to base commands."""
-        # When global_validation_commands.test is None but commands.test exists,
-        # the base pool should include test from commands (fallback behavior)
-        commands_config = CommandsConfig(test=CommandConfig(command="base pytest"))
-        global_commands_config = CommandsConfig(test=None)  # Explicitly None
-        config = ValidationConfig(
-            commands=commands_config,
-            global_validation_commands=global_commands_config,
-            validation_triggers=ValidationTriggersConfig(
-                epic_completion=EpicCompletionTriggerConfig(
-                    failure_mode=FailureMode.CONTINUE,
-                    commands=(TriggerCommandRef(ref="test"),),
-                    epic_depth=EpicDepth.TOP_LEVEL,
-                    fire_on=FireOn.SUCCESS,
-                )
-            ),
-        )
-        coordinator = make_coordinator(tmp_path, validation_config=config)
-        coordinator.queue_trigger_validation(
-            TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
-        )
-
-        # Should resolve "test" from base commands, not fail
-        result = asyncio.run(coordinator.run_trigger_validation(dry_run=True))
         assert result.status == "passed"
 
     def test_command_override_replaces_base_command(self, tmp_path: Path) -> None:
@@ -285,16 +235,13 @@ class TestCommandResolution:
             command="ci_script", returncode=0, stdout="", stderr=""
         )
 
-        # Create config with custom command only in base commands section
-        # (not in global_validation_commands)
+        # Create config with custom command in commands section
         commands_config = CommandsConfig(
             custom_commands={"ci": CustomCommandConfig(command="ci_script")}
         )
-        global_commands_config = CommandsConfig()  # Empty - no custom commands
 
         config = ValidationConfig(
             commands=commands_config,
-            global_validation_commands=global_commands_config,
             validation_triggers=ValidationTriggersConfig(
                 epic_completion=EpicCompletionTriggerConfig(
                     failure_mode=FailureMode.CONTINUE,
@@ -317,48 +264,6 @@ class TestCommandResolution:
         assert len(runner.calls) == 1
         args, _ = runner.calls[0]
         assert args == ("ci_script",)
-
-    def test_global_custom_commands_override_base(self, tmp_path: Path) -> None:
-        """Custom commands in global_validation_commands override base commands."""
-        runner = FakeCommandRunner()
-        runner.responses[("global_ci_script",)] = CommandResult(
-            command="global_ci_script", returncode=0, stdout="", stderr=""
-        )
-
-        # Base has "ci" -> "base_ci_script", global has "ci" -> "global_ci_script"
-        commands_config = CommandsConfig(
-            custom_commands={"ci": CustomCommandConfig(command="base_ci_script")}
-        )
-        global_commands_config = CommandsConfig(
-            custom_commands={"ci": CustomCommandConfig(command="global_ci_script")}
-        )
-
-        config = ValidationConfig(
-            commands=commands_config,
-            global_validation_commands=global_commands_config,
-            validation_triggers=ValidationTriggersConfig(
-                epic_completion=EpicCompletionTriggerConfig(
-                    failure_mode=FailureMode.CONTINUE,
-                    commands=(TriggerCommandRef(ref="ci"),),
-                    epic_depth=EpicDepth.TOP_LEVEL,
-                    fire_on=FireOn.SUCCESS,
-                )
-            ),
-        )
-        coordinator = make_coordinator(
-            tmp_path, validation_config=config, command_runner=runner
-        )
-        coordinator.queue_trigger_validation(
-            TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
-        )
-
-        result = asyncio.run(coordinator.run_trigger_validation(dry_run=False))
-
-        assert result.status == "passed"
-        assert len(runner.calls) == 1
-        args, _ = runner.calls[0]
-        # Global should override base
-        assert args == ("global_ci_script",)
 
 
 class TestFailFast:

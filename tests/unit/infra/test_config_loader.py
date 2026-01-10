@@ -153,15 +153,17 @@ setup_files:
         expected = "At least one command must be defined. Specify a preset or define commands directly."
         assert str(exc_info.value) == expected
 
-    def test_global_validation_commands_rejected(self, tmp_path: Path) -> None:
-        """global_validation_commands raises ConfigError."""
+    def test_global_validation_commands_unknown_field(self, tmp_path: Path) -> None:
+        """global_validation_commands is rejected as unknown field."""
         config_file = tmp_path / "mala.yaml"
         config_file.write_text("global_validation_commands:\n  test: pytest\n")
 
         with pytest.raises(ConfigError) as exc_info:
             load_config(tmp_path)
 
-        assert "global_validation_commands is deprecated" in str(exc_info.value)
+        assert "Unknown field 'global_validation_commands' in mala.yaml" == str(
+            exc_info.value
+        )
 
     def test_empty_command_string_error(self, tmp_path: Path) -> None:
         """Empty command string raises ConfigError."""

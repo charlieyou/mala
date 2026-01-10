@@ -1008,7 +1008,9 @@ class TestRunEndRunMetadata:
         validation_config = ValidationConfig(
             commands=commands_config,
             validation_triggers=triggers_config,
-            coverage=YamlCoverageConfig(format="xml", file="coverage.xml", threshold=0.0),
+            coverage=YamlCoverageConfig(
+                format="xml", file="coverage.xml", threshold=0.0
+            ),
         )
 
         mock_gate_checker = MagicMock()

@@ -265,7 +265,6 @@ def _make_validation_config(
 
     return ValidationConfig(
         commands=commands_config,
-        global_validation_commands=commands_config,
         validation_triggers=ValidationTriggersConfig(session_end=session_end_config),
     )
 
