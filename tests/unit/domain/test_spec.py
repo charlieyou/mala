@@ -281,59 +281,8 @@ class TestBuildValidationSpec:
         assert "format" not in command_names
         assert "typecheck" not in command_names
 
-    def test_global_validation_commands_override_base(self, tmp_path: Path) -> None:
-        """Global commands should override base commands when provided."""
-        config_dst = tmp_path / "mala.yaml"
-        config_dst.write_text(
-            "\n".join(
-                [
-                    "commands:",
-                    '  test: "pytest issue"',
-                    "global_validation_commands:",
-                    '  test: "pytest global"',
-                    "validation_triggers: {}",  # Required with global_validation_commands
-                ]
-            )
-            + "\n"
-        )
-
-        issue_spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
-        run_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
-
-        issue_test = next(cmd for cmd in issue_spec.commands if cmd.name == "test")
-        run_test = next(cmd for cmd in run_spec.commands if cmd.name == "test")
-
-        assert issue_test.command == "pytest issue"
-        assert run_test.command == "pytest global"
-
-    def test_global_validation_commands_can_disable_base(self, tmp_path: Path) -> None:
-        """Global overrides can explicitly disable a base command."""
-        config_dst = tmp_path / "mala.yaml"
-        config_dst.write_text(
-            "\n".join(
-                [
-                    "commands:",
-                    '  test: "pytest issue"',
-                    "global_validation_commands:",
-                    "  test: null",
-                ]
-            )
-            + "\n"
-        )
-
-        issue_spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
-        run_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
-
-        assert any(cmd.name == "test" for cmd in issue_spec.commands)
-        assert not any(cmd.name == "test" for cmd in run_spec.commands)
-
-    def test_coverage_with_global_null_test_raises_error(self, tmp_path: Path) -> None:
-        """Coverage enabled + global test=null should raise ConfigError.
-
-        If commands.test is set but global_validation_commands.test is explicitly null,
-        and coverage is enabled, building a GLOBAL spec should fail because
-        coverage requires a test command to generate coverage data.
-        """
+    def test_global_validation_commands_rejected(self, tmp_path: Path) -> None:
+        """global_validation_commands key is rejected at schema validation."""
         import pytest
 
         from src.domain.validation.config import ConfigError
@@ -343,29 +292,18 @@ class TestBuildValidationSpec:
             "\n".join(
                 [
                     "commands:",
-                    '  test: "uv run pytest"',
+                    '  test: "pytest issue"',
                     "global_validation_commands:",
-                    "  test: null",
-                    "coverage:",
-                    "  format: xml",
-                    "  file: coverage.xml",
-                    "  threshold: 80",
+                    '  test: "pytest global"',
                 ]
             )
             + "\n"
         )
 
-        # PER_SESSION scope should work fine (test command is present)
-        issue_spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
-        assert issue_spec.coverage.enabled is True
-        assert any(cmd.name == "test" for cmd in issue_spec.commands)
-
-        # GLOBAL scope should fail because test is disabled but coverage is enabled
-        with pytest.raises(ConfigError) as exc_info:
-            build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
-
-        assert "coverage" in str(exc_info.value).lower()
-        assert "test" in str(exc_info.value).lower()
+        with pytest.raises(
+            ConfigError, match=r"global_validation_commands is deprecated"
+        ):
+            build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
 
     def test_command_with_custom_timeout(self, tmp_path: Path) -> None:
         """Test that custom timeout values are applied."""
@@ -454,65 +392,12 @@ commands:
 
         assert spec.e2e.enabled is True
 
-    def test_global_validation_commands_e2e_null_disables_e2e(
+    def test_coverage_enabled_for_both_scopes_without_overrides(
         self, tmp_path: Path
     ) -> None:
-        """global_validation_commands.e2e: null disables E2E even if base e2e is defined."""
-        # Create config with e2e command but global_validation_commands.e2e: null
-        config_content = """
-commands:
-  test: "pytest"
-  e2e: "pytest -m e2e"
-global_validation_commands:
-  e2e: null
-"""
-        (tmp_path / "mala.yaml").write_text(config_content)
+        """Coverage should be enabled for both scopes when same test command is used.
 
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
-
-        # E2E should be disabled because global_validation_commands.e2e: null overrides
-        assert spec.e2e.enabled is False
-
-    def test_global_test_disables_coverage_for_per_session(
-        self, tmp_path: Path
-    ) -> None:
-        """Coverage should be disabled for PER_SESSION when global_validation_commands.test is set.
-
-        When global_validation_commands.test provides a different test command (e.g., with
-        --cov flags), the base commands.test won't generate coverage.xml, so
-        per-session validation should not check coverage.
-        """
-        config_content = """
-commands:
-  test: "pytest"
-global_validation_commands:
-  test: "pytest --cov=src --cov-report=xml"
-validation_triggers: {}
-coverage:
-  format: xml
-  file: coverage.xml
-  threshold: 80
-"""
-        (tmp_path / "mala.yaml").write_text(config_content)
-
-        # PER_SESSION scope should have coverage DISABLED
-        # because global_validation_commands.test is set (meaning only global generates coverage)
-        per_session_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_SESSION
-        )
-        assert per_session_spec.coverage.enabled is False
-
-        # GLOBAL scope should have coverage ENABLED
-        global_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
-        assert global_spec.coverage.enabled is True
-
-    def test_no_global_test_enables_coverage_for_both_scopes(
-        self, tmp_path: Path
-    ) -> None:
-        """Coverage should be enabled for both scopes when global_validation_commands.test is not set.
-
-        When there's no global_validation_commands.test override, the same test command
-        is used for both scopes, so coverage should be enabled for both.
+        When the same test command is used for both scopes, coverage should be enabled for both.
         """
         config_content = """
 commands:
@@ -533,80 +418,13 @@ coverage:
         global_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
         assert global_spec.coverage.enabled is True
 
-    def test_global_test_null_preserves_coverage_for_per_session(
-        self, tmp_path: Path
-    ) -> None:
-        """Coverage should stay enabled for PER_SESSION when global_validation_commands.test is null.
-
-        When global_validation_commands.test is explicitly null (disabling test at global),
-        per-session should still run with coverage since it has a test command. The null
-        value indicates "skip test at global" - not "move coverage to global".
-        """
-        config_content = """
-commands:
-  test: "pytest --cov=src --cov-report=xml"
-global_validation_commands:
-  test: null
-coverage:
-  format: xml
-  file: coverage.xml
-  threshold: 80
-"""
-        (tmp_path / "mala.yaml").write_text(config_content)
-
-        # PER_SESSION scope should have coverage enabled (base test has --cov)
-        # global_validation_commands.test is null, which means "skip test at global",
-        # not "move coverage to global"
-        per_session_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_SESSION
-        )
-        assert per_session_spec.coverage.enabled is True
-
-    def test_global_only_test_with_coverage_no_base_test(self, tmp_path: Path) -> None:
-        """Coverage with global_validation_commands.test only (no base test) should work.
-
-        When a config has only global_validation_commands.test (no base commands.test)
-        plus coverage settings, building a PER_SESSION spec should not raise an error.
-        Coverage will be generated at global where the test command exists.
-        """
-        config_content = """
-commands:
-  lint: "uvx ruff check ."
-global_validation_commands:
-  test: "uv run pytest --cov=src --cov-report=xml"
-validation_triggers: {}
-coverage:
-  format: xml
-  file: coverage.xml
-  threshold: 80
-"""
-        (tmp_path / "mala.yaml").write_text(config_content)
-
-        # PER_SESSION scope should NOT raise ConfigError
-        # Coverage is disabled for PER_SESSION since there's no test command
-        # but the error should not fire because global_validation_commands.test exists
-        per_session_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_SESSION
-        )
-        # Coverage should be disabled for PER_SESSION (no test command to run)
-        assert per_session_spec.coverage.enabled is False
-        # No test command in per-session spec
-        assert not any(cmd.name == "test" for cmd in per_session_spec.commands)
-
-        # GLOBAL scope should have coverage enabled
-        global_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
-        assert global_spec.coverage.enabled is True
-        # Global should have test command
-        assert any(cmd.name == "test" for cmd in global_spec.commands)
-
     def test_no_test_command_anywhere_with_coverage_raises_error(
         self, tmp_path: Path
     ) -> None:
         """Coverage without any test command should raise ConfigError.
 
-        If there's no commands.test and no global_validation_commands.test, but coverage
-        is enabled, we should raise an error because there's no way to generate
-        coverage data.
+        If there's no commands.test, but coverage is enabled, we should raise an
+        error because there's no way to generate coverage data.
         """
         import pytest
 
@@ -701,60 +519,13 @@ class TestBuildValidationSpecWithPreset:
         assert "typecheck" in command_names
 
 
-class TestCoverageOnlyAtGlobal:
-    """Tests for coverage-only-at-global behavior based on global_validation_commands.test.
+class TestCoverageScopes:
+    """Tests for coverage behavior with scopes."""
 
-    When a user explicitly sets global_validation_commands.test (e.g., with --cov flags),
-    coverage should only be checked at global, not per-session. This prevents
-    per-session validation from failing due to missing coverage.xml that only
-    global generates.
-    """
-
-    def test_user_global_test_disables_per_session_coverage(
+    def test_coverage_enabled_for_both_scopes_with_same_test(
         self, tmp_path: Path
     ) -> None:
-        """User's global_validation_commands.test should disable coverage for per-session.
-
-        When the user explicitly sets global_validation_commands.test with coverage flags,
-        per-session scope should have coverage disabled since only global
-        generates coverage.xml.
-        """
-        config_content = """
-preset: python-uv
-global_validation_commands:
-  test: "pytest --cov=src --cov-report=xml"
-validation_triggers: {}
-coverage:
-  format: xml
-  file: coverage.xml
-  threshold: 80
-"""
-        (tmp_path / "mala.yaml").write_text(config_content)
-
-        per_session_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_SESSION
-        )
-        global_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
-
-        # Per-session should NOT check coverage (global generates it)
-        assert per_session_spec.coverage.enabled is False
-        # Global should check coverage
-        assert global_spec.coverage.enabled is True
-
-    def test_preset_global_test_does_not_disable_per_session_coverage(
-        self, tmp_path: Path
-    ) -> None:
-        """Preset's global_validation_commands.test should NOT disable per-session coverage.
-
-        When global_validation_commands.test comes from preset (not user), it shouldn't
-        affect coverage behavior. This is because the user didn't explicitly
-        opt into the coverage-only-at-global pattern.
-
-        Note: Currently python-uv doesn't have global_validation_commands, so we use
-        a custom mala.yaml to simulate this scenario.
-        """
-        # Write a preset-like config directly (simulating a preset with global_validation_commands)
-        # In real usage, this would come from a preset
+        """Coverage should be enabled for both scopes when same test command is used."""
         config_content = """
 commands:
   test: "pytest"
@@ -765,7 +536,6 @@ coverage:
 """
         (tmp_path / "mala.yaml").write_text(config_content)
 
-        # Without explicit global_validation_commands.test, coverage should be enabled for both
         per_session_spec = build_validation_spec(
             tmp_path, scope=ValidationScope.PER_SESSION
         )
@@ -774,35 +544,6 @@ coverage:
         # Both scopes should have coverage enabled
         assert per_session_spec.coverage.enabled is True
         assert global_spec.coverage.enabled is True
-
-    def test_global_test_null_preserves_per_session_coverage(
-        self, tmp_path: Path
-    ) -> None:
-        """global_validation_commands.test: null should NOT disable per-session coverage.
-
-        When user sets global_validation_commands.test to null (to skip tests at global),
-        this is different from setting a test command. The intent is to skip
-        testing at global, not to move coverage there.
-        """
-        config_content = """
-commands:
-  test: "pytest --cov=src --cov-report=xml"
-global_validation_commands:
-  test: null
-coverage:
-  format: xml
-  file: coverage.xml
-  threshold: 80
-"""
-        (tmp_path / "mala.yaml").write_text(config_content)
-
-        per_session_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_SESSION
-        )
-
-        # Per-session should still check coverage (global test is disabled, not moved)
-        assert per_session_spec.coverage.enabled is True
-        assert any(cmd.name == "test" for cmd in per_session_spec.commands)
 
 
 class TestBuildValidationSpecCustomCommands:
@@ -1126,67 +867,6 @@ commands:
         test_idx = cmd_names.index("test")
         assert typecheck_idx < security_idx < test_idx
 
-    def test_global_additive_customs_yaml_to_spec(self, tmp_path: Path) -> None:
-        """YAML with +prefixed customs in global_validation_commands → merged ValidationSpec.
-
-        Tests ADDITIVE mode: global customs are merged with repo-level customs.
-        """
-        yaml_content = """\
-preset: python-uv
-commands:
-  lint: uvx ruff check .
-  test: uv run pytest
-  security: bandit -r src/
-global_validation_commands:
-  +integration: uv run pytest -m integration
-validation_triggers: {}
-"""
-        (tmp_path / "mala.yaml").write_text(yaml_content)
-
-        # PER_SESSION scope: only repo-level customs
-        per_session_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_SESSION
-        )
-        per_session_names = [cmd.name for cmd in per_session_spec.commands]
-        assert "security" in per_session_names
-        assert "integration" not in per_session_names
-
-        # GLOBAL scope: merged customs (repo + global additive)
-        global_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
-        global_names = [cmd.name for cmd in global_spec.commands]
-        assert "security" in global_names
-        assert "integration" in global_names
-
-    def test_global_replace_customs_clears_repo_customs(self, tmp_path: Path) -> None:
-        """YAML with unprefixed custom in global_validation_commands → repo customs cleared.
-
-        Tests REPLACE mode with actual custom command at global.
-        """
-        yaml_content = """\
-preset: python-uv
-commands:
-  lint: uvx ruff check .
-  test: uv run pytest
-  security: bandit -r src/
-global_validation_commands:
-  integration: uv run pytest -m integration
-validation_triggers: {}
-"""
-        (tmp_path / "mala.yaml").write_text(yaml_content)
-
-        # PER_SESSION scope: only repo-level customs
-        per_session_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_SESSION
-        )
-        per_session_names = [cmd.name for cmd in per_session_spec.commands]
-        assert "security" in per_session_names
-
-        # GLOBAL scope: REPLACE mode - only global customs
-        global_spec = build_validation_spec(tmp_path, scope=ValidationScope.GLOBAL)
-        global_names = [cmd.name for cmd in global_spec.commands]
-        assert "security" not in global_names  # Repo custom cleared
-        assert "integration" in global_names  # Global custom present
-
 
 class TestConfigMissingSemanticsConsistency:
     """Tests for consistent config_missing behavior between spec and prompts.
@@ -1267,8 +947,6 @@ preset: python-uv
 commands:
   test: uv run pytest
   lint: uvx ruff check .
-global_validation_commands:
-  test: uv run pytest --cov
 validation_triggers:
   session_end:
     failure_mode: continue
@@ -1291,8 +969,6 @@ preset: python-uv
 commands:
   test: uv run pytest
   lint: uvx ruff check .
-global_validation_commands:
-  test: uv run pytest --cov
 validation_triggers:
   session_end:
     failure_mode: continue
@@ -1306,23 +982,22 @@ validation_triggers:
         spec = build_validation_spec(tmp_path)
         assert spec is not None
 
-    def test_custom_command_ref_in_trigger_validated(self, tmp_path: Path) -> None:
-        """Trigger can reference custom command from global_validation_commands."""
+    def test_built_in_command_ref_in_trigger_validated(self, tmp_path: Path) -> None:
+        """Trigger can reference built-in commands from commands section."""
         yaml_content = """\
 preset: python-uv
 commands:
   test: uv run pytest
-global_validation_commands:
-  custom_check: my-custom-command
+  lint: uvx ruff check .
 validation_triggers:
   session_end:
     failure_mode: continue
     commands:
-      - ref: custom_check
+      - ref: lint
 """
         (tmp_path / "mala.yaml").write_text(yaml_content)
 
-        # Should not raise - custom_check exists in global_validation_commands
+        # Should not raise - lint is a built-in command
         spec = build_validation_spec(tmp_path)
         assert spec is not None
 
@@ -1337,8 +1012,6 @@ preset: python-uv
 commands:
   test: uv run pytest
   lint: uvx ruff check .
-global_validation_commands:
-  custom: my-custom
 validation_triggers:
   epic_completion:
     failure_mode: abort
@@ -1353,7 +1026,6 @@ validation_triggers:
             build_validation_spec(tmp_path)
 
         error_msg = str(exc_info.value)
-        # Should list available commands from base pool
-        assert "custom" in error_msg
+        # Should list available built-in commands from base pool
         assert "lint" in error_msg
         assert "test" in error_msg

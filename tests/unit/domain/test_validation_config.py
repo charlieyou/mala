@@ -2717,11 +2717,11 @@ validate_every: 10
         ):
             load_config(tmp_path)
 
-    def test_global_validation_commands_without_triggers_raises_error(
+    def test_global_validation_commands_rejected_at_schema_level(
         self, tmp_path: "pathlib.Path"
     ) -> None:
-        """Non-empty global_validation_commands without validation_triggers raises error."""
-        from src.domain.validation.spec import build_validation_spec
+        """global_validation_commands key is rejected at schema validation."""
+        from src.domain.validation.config_loader import load_config
 
         mala_yaml = tmp_path / "mala.yaml"
         mala_yaml.write_text(
@@ -2733,15 +2733,15 @@ global_validation_commands:
         )
 
         with pytest.raises(
-            ConfigError, match=r"validation_triggers required when global_validation"
+            ConfigError, match=r"global_validation_commands is deprecated"
         ):
-            build_validation_spec(tmp_path)
+            load_config(tmp_path)
 
-    def test_global_validation_commands_error_contains_example_snippet(
+    def test_global_validation_commands_error_contains_run_end_example(
         self, tmp_path: "pathlib.Path"
     ) -> None:
-        """global_validation_commands error includes concrete example snippet."""
-        from src.domain.validation.spec import build_validation_spec
+        """global_validation_commands error includes run_end example snippet."""
+        from src.domain.validation.config_loader import load_config
 
         mala_yaml = tmp_path / "mala.yaml"
         mala_yaml.write_text(
@@ -2752,13 +2752,13 @@ global_validation_commands:
 """
         )
 
-        with pytest.raises(ConfigError, match=r"Example:") as exc_info:
-            build_validation_spec(tmp_path)
+        with pytest.raises(ConfigError) as exc_info:
+            load_config(tmp_path)
 
-        # Verify the example includes key elements
+        # Verify the example includes key elements for run_end migration
         error_msg = str(exc_info.value)
         assert "validation_triggers:" in error_msg
-        assert "session_end:" in error_msg
+        assert "run_end:" in error_msg
         assert "failure_mode:" in error_msg
         assert "commands:" in error_msg
         assert "ref:" in error_msg
@@ -2767,7 +2767,7 @@ global_validation_commands:
         self, tmp_path: "pathlib.Path"
     ) -> None:
         """global_validation_commands error includes migration guide URL."""
-        from src.domain.validation.spec import build_validation_spec
+        from src.domain.validation.config_loader import load_config
 
         mala_yaml = tmp_path / "mala.yaml"
         mala_yaml.write_text(
@@ -2781,13 +2781,13 @@ global_validation_commands:
         with pytest.raises(
             ConfigError, match=r"https://docs\.mala\.ai/migration/validation-triggers"
         ):
-            build_validation_spec(tmp_path)
+            load_config(tmp_path)
 
-    def test_empty_global_validation_commands_without_triggers_ok(
+    def test_empty_global_validation_commands_also_rejected(
         self, tmp_path: "pathlib.Path"
     ) -> None:
-        """Empty global_validation_commands without validation_triggers is valid."""
-        from src.domain.validation.spec import build_validation_spec
+        """Even empty global_validation_commands: {} is rejected."""
+        from src.domain.validation.config_loader import load_config
 
         mala_yaml = tmp_path / "mala.yaml"
         mala_yaml.write_text(
@@ -2797,15 +2797,17 @@ global_validation_commands: {}
 """
         )
 
-        # Should not raise - empty global_validation_commands is valid
-        spec = build_validation_spec(tmp_path)
-        assert spec is not None
+        # Now rejected at schema level
+        with pytest.raises(
+            ConfigError, match=r"global_validation_commands is deprecated"
+        ):
+            load_config(tmp_path)
 
-    def test_global_validation_commands_with_triggers_ok(
+    def test_global_validation_commands_with_triggers_also_rejected(
         self, tmp_path: "pathlib.Path"
     ) -> None:
-        """global_validation_commands WITH validation_triggers is valid."""
-        from src.domain.validation.spec import build_validation_spec
+        """global_validation_commands is rejected even if validation_triggers is set."""
+        from src.domain.validation.config_loader import load_config
 
         mala_yaml = tmp_path / "mala.yaml"
         mala_yaml.write_text(
@@ -2821,20 +2823,22 @@ validation_triggers:
 """
         )
 
-        # Should not raise
-        spec = build_validation_spec(tmp_path)
-        assert spec is not None
+        # Now rejected at schema level
+        with pytest.raises(
+            ConfigError, match=r"global_validation_commands is deprecated"
+        ):
+            load_config(tmp_path)
 
-    def test_empty_validation_triggers_dict_ok(self, tmp_path: "pathlib.Path") -> None:
-        """Empty validation_triggers {} is valid (explicit opt-out)."""
+    def test_empty_validation_triggers_dict_without_global_commands_ok(
+        self, tmp_path: "pathlib.Path"
+    ) -> None:
+        """Empty validation_triggers {} without global_validation_commands is valid."""
         from src.domain.validation.spec import build_validation_spec
 
         mala_yaml = tmp_path / "mala.yaml"
         mala_yaml.write_text(
             """
 preset: python-uv
-global_validation_commands:
-  test: "pytest -x"
 validation_triggers: {}
 """
         )
@@ -2842,67 +2846,3 @@ validation_triggers: {}
         # Should not raise - empty triggers is explicit opt-out
         spec = build_validation_spec(tmp_path)
         assert spec is not None
-
-    def test_global_custom_commands_without_triggers_raises_error(
-        self, tmp_path: "pathlib.Path"
-    ) -> None:
-        """Custom commands in global_validation_commands also require triggers."""
-        from src.domain.validation.spec import build_validation_spec
-
-        mala_yaml = tmp_path / "mala.yaml"
-        mala_yaml.write_text(
-            """
-preset: python-uv
-global_validation_commands:
-  my_check: "echo custom"
-"""
-        )
-
-        with pytest.raises(
-            ConfigError, match=r"validation_triggers required when global_validation"
-        ):
-            build_validation_spec(tmp_path)
-
-    def test_preset_global_commands_without_triggers_raises_error(
-        self, tmp_path: "pathlib.Path"
-    ) -> None:
-        """Preset-provided global_validation_commands without triggers raises error.
-
-        This tests that migration validation runs on the merged config, catching
-        cases where a preset contributes global_validation_commands but the user
-        config omits validation_triggers.
-        """
-        from src.domain.validation.config import CommandConfig, CommandsConfig
-        from src.domain.validation.config_loader import _validate_migration
-        from src.domain.validation.config_merger import merge_configs
-
-        # Create a preset config with global_validation_commands
-        preset_config = ValidationConfig(
-            preset=None,
-            commands=CommandsConfig(test=CommandConfig(command="pytest")),
-            global_validation_commands=CommandsConfig(
-                test=CommandConfig(command="pytest --strict")
-            ),
-        )
-
-        # Create a user config without validation_triggers
-        user_config = ValidationConfig(
-            preset="fake-preset",  # Would be set in real scenario
-            commands=CommandsConfig(),
-        )
-
-        # Merge configs (simulating what build_validation_spec does)
-        merged = merge_configs(preset_config, user_config)
-
-        # Migration validation should fail on merged config
-        with pytest.raises(
-            ConfigError, match=r"validation_triggers required when global_validation"
-        ):
-            _validate_migration(merged)
-
-        # Verify error includes example
-        try:
-            _validate_migration(merged)
-        except ConfigError as e:
-            error_msg = str(e)
-            assert "Example:" in error_msg

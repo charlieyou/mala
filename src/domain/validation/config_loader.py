@@ -62,11 +62,12 @@ class ConfigMissingError(ConfigError):
 
 
 # Fields allowed at the top level of mala.yaml
+# Note: global_validation_commands is NOT in this list because it's rejected
+# earlier in _validate_schema with a specific migration error message
 _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
     {
         "preset",
         "commands",
-        "global_validation_commands",
         "coverage",
         "code_patterns",
         "config_files",
@@ -166,6 +167,21 @@ def _validate_schema(data: dict[str, Any]) -> None:
     Raises:
         ConfigError: If unknown fields are present or deprecated fields are used.
     """
+    # Check for deprecated global_validation_commands key (R4 per spec)
+    if "global_validation_commands" in data:
+        raise ConfigError(
+            "global_validation_commands is deprecated. "
+            "Migrate to validation_triggers.run_end:\n\n"
+            "validation_triggers:\n"
+            "  run_end:\n"
+            "    failure_mode: continue\n"
+            "    commands:\n"
+            "      - ref: test\n"
+            "      - ref: lint\n\n"
+            "See migration guide at "
+            "https://docs.mala.ai/migration/validation-triggers"
+        )
+
     # Check for deprecated validate_every field with helpful migration message
     if "validate_every" in data:
         raise ConfigError(

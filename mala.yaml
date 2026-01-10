@@ -18,25 +18,18 @@ validation_triggers:
       - ref: lint
       - ref: typecheck
       - ref: import-linter
+        command: "uvx --from import-linter lint-imports"
       - ref: test
+        command: "uv run pytest -m 'unit or integration' --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
+        timeout: 300
       - ref: e2e
+        command: "uv run pytest -m 'e2e'"
 
     code_review:
       enabled: true
       reviewer_type: cerberus
       baseline: since_last_review
       finding_threshold: P0
-
-global_validation_commands:
-  test:
-    command: "uv run pytest -m 'unit or integration' --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
-    timeout: 300
-
-  e2e:
-    command: "uv run pytest -m 'e2e'"
-
-  import-linter:
-    command: "uvx --from import-linter lint-imports"
 
 coverage:
   format: xml
