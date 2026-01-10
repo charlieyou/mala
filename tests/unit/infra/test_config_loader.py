@@ -154,16 +154,14 @@ setup_files:
         assert str(exc_info.value) == expected
 
     def test_global_validation_commands_unknown_field(self, tmp_path: Path) -> None:
-        """global_validation_commands is rejected as unknown field."""
+        """global_validation_commands is rejected with migration message."""
         config_file = tmp_path / "mala.yaml"
         config_file.write_text("global_validation_commands:\n  test: pytest\n")
 
         with pytest.raises(ConfigError) as exc_info:
             load_config(tmp_path)
 
-        assert "Unknown field 'global_validation_commands' in mala.yaml" == str(
-            exc_info.value
-        )
+        assert "global_validation_commands is not supported" in str(exc_info.value)
 
     def test_empty_command_string_error(self, tmp_path: Path) -> None:
         """Empty command string raises ConfigError."""
