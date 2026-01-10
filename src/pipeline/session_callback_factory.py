@@ -14,18 +14,21 @@ Design principles:
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 
 from src.pipeline.agent_session_runner import SessionCallbacks
-from src.domain.session_end_result import SessionEndResult
+from src.domain.session_end_result import CodeReviewResult, SessionEndResult
 
 if TYPE_CHECKING:
-    import asyncio
     from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from src.core.protocols import (
+        CommandResultProtocol,
         LogProvider,
         MalaEventSink,
         ReviewIssueProtocol,
@@ -36,9 +39,19 @@ if TYPE_CHECKING:
         ReviewIssue,
         ReviewOutcome,
     )
+    from src.domain.validation.config import (
+        SessionEndTriggerConfig,
+        TriggerCommandRef,
+        ValidationConfig,
+    )
     from src.domain.validation.spec import ValidationSpec
+    from src.infra.io.log_output.run_metadata import RunMetadata
+    from src.pipeline.cumulative_review_runner import CumulativeReviewRunner
+    from src.core.protocols import CommandRunnerPort
     from src.pipeline.review_runner import ReviewRunner
     from src.domain.session_end_result import SessionEndRetryState
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -105,6 +118,13 @@ class SessionCallbackFactory:
         get_per_session_spec: GetPerSessionSpec,
         is_verbose: IsVerboseCheck,
         get_interrupt_event: Callable[[], asyncio.Event | None] | None = None,
+        get_validation_config: Callable[[], ValidationConfig | None] | None = None,
+        command_runner: CommandRunnerPort | None = None,
+        cumulative_review_runner: CumulativeReviewRunner | None = None,
+        get_run_metadata: Callable[[], RunMetadata | None] | None = None,
+        get_base_sha: Callable[[str], str | None] | None = None,
+        on_abort: Callable[[str], None] | None = None,
+        session_end_timeout: float = 600.0,
     ) -> None:
         """Initialize the factory with dependencies.
 
@@ -120,6 +140,13 @@ class SessionCallbackFactory:
             get_per_session_spec: Callable to get current per-session spec.
             is_verbose: Callable to check verbose mode.
             get_interrupt_event: Callable to get the interrupt event (late-bound).
+            get_validation_config: Callable to get validation config (late-bound).
+            command_runner: Command runner for executing session_end commands.
+            cumulative_review_runner: Runner for session_end code review.
+            get_run_metadata: Callable to get run metadata (late-bound).
+            get_base_sha: Callable to get base_sha for an issue (late-bound).
+            on_abort: Callback when session_end abort mode triggers run abort.
+            session_end_timeout: Overall timeout for session_end in seconds.
 
         Note:
             log_provider, event_sink, evidence_check, and get_interrupt_event are
@@ -138,6 +165,13 @@ class SessionCallbackFactory:
         self._get_per_session_spec = get_per_session_spec
         self._is_verbose = is_verbose
         self._get_interrupt_event = get_interrupt_event or (lambda: None)
+        self._get_validation_config = get_validation_config or (lambda: None)
+        self._command_runner = command_runner
+        self._cumulative_review_runner = cumulative_review_runner
+        self._get_run_metadata = get_run_metadata or (lambda: None)
+        self._get_base_sha = get_base_sha or (lambda _: None)
+        self._on_abort = on_abort
+        self._session_end_timeout = session_end_timeout
 
     def build(
         self,
@@ -243,12 +277,27 @@ class SessionCallbackFactory:
         async def on_session_end_check(
             issue_id: str, log_path: Path, retry_state: SessionEndRetryState
         ) -> SessionEndResult:
-            """Stub session_end callback returning skipped.
+            """Execute session_end trigger: commands, timeout, and code_review.
 
-            This stub will be replaced with full implementation in Phase 3
-            when FixerInterface is injected into the factory.
+            Implements per spec R9-R11:
+            - R9: Commands execute sequentially; failure_mode (abort, continue)
+            - R10: Overall asyncio.timeout wrapper; on timeout/interrupt return
+              appropriate SessionEndResult with empty commands
+            - R11: code_review uses base_sha..HEAD range
+
+            Args:
+                issue_id: The issue ID for context.
+                log_path: Path to session log (for logging).
+                retry_state: Retry state for remediation tracking.
+
+            Returns:
+                SessionEndResult with execution outcome.
             """
-            return SessionEndResult(status="skipped", reason="not_implemented")
+            return await self._execute_session_end(
+                issue_id=issue_id,
+                log_path=log_path,
+                retry_state=retry_state,
+            )
 
         return SessionCallbacks(
             on_gate_check=on_gate_check,
@@ -261,6 +310,305 @@ class SessionCallbackFactory:
             on_agent_text=on_agent_text,
             on_session_end_check=on_session_end_check,
         )
+
+    async def _execute_session_end(
+        self,
+        issue_id: str,
+        log_path: Path,
+        retry_state: SessionEndRetryState,
+    ) -> SessionEndResult:
+        """Execute session_end trigger with timeout wrapper.
+
+        Per spec R9-R11:
+        - Commands execute sequentially with individual timeouts
+        - Overall session_end wrapped in asyncio.timeout
+        - On timeout: return status="timeout" with empty commands
+        - On SIGINT: complete current command, return status="interrupted"
+        - code_review uses base_sha..HEAD range
+        - failure_mode=abort sets abort_event; continue proceeds regardless
+        """
+        from src.domain.validation.config import FailureMode
+
+        # Get session_end config
+        validation_config = self._get_validation_config()
+        if validation_config is None or validation_config.validation_triggers is None:
+            return SessionEndResult(status="skipped", reason="not_configured")
+
+        session_end_config = validation_config.validation_triggers.session_end
+        if session_end_config is None:
+            return SessionEndResult(status="skipped", reason="not_configured")
+
+        # Check if we have the necessary dependencies
+        if self._command_runner is None and session_end_config.commands:
+            logger.warning("session_end has commands but no command_runner configured")
+            return SessionEndResult(
+                status="skipped", reason="command_runner_not_configured"
+            )
+
+        started_at = datetime.now(UTC)
+        interrupt_event = self._get_interrupt_event()
+        command_results: list[CommandResultProtocol] = []
+
+        try:
+            async with asyncio.timeout(self._session_end_timeout):
+                # Execute commands sequentially
+                all_passed = True
+                for cmd_ref in session_end_config.commands:
+                    # Check for interrupt before each command
+                    if interrupt_event and interrupt_event.is_set():
+                        logger.info(
+                            "session_end interrupted before command %s for %s",
+                            cmd_ref.ref,
+                            issue_id,
+                        )
+                        # Per spec R10: return interrupted with empty commands
+                        return SessionEndResult(
+                            status="interrupted",
+                            started_at=started_at,
+                            finished_at=datetime.now(UTC),
+                            commands=[],
+                            reason="SIGINT received",
+                        )
+
+                    # Resolve command from base pool
+                    resolved_cmd, resolved_timeout = self._resolve_command(
+                        cmd_ref, validation_config
+                    )
+                    if resolved_cmd is None:
+                        logger.warning(
+                            "session_end command ref '%s' not found in base pool",
+                            cmd_ref.ref,
+                        )
+                        all_passed = False
+                        break
+
+                    # Execute the command
+                    if self._command_runner is not None:
+                        result = await self._command_runner.run_async(
+                            resolved_cmd,
+                            timeout=resolved_timeout,
+                            shell=True,
+                            cwd=self._repo_path,
+                        )
+                        command_results.append(result)
+
+                        if not result.ok:
+                            all_passed = False
+                            # Fail-fast: stop on first failure
+                            break
+
+                # Handle failure modes (abort, continue)
+                # Note: remediate mode is handled in T012
+                if not all_passed:
+                    failure_mode = session_end_config.failure_mode
+                    if failure_mode == FailureMode.ABORT:
+                        logger.info(
+                            "session_end failed with abort mode for %s",
+                            issue_id,
+                        )
+                        if self._on_abort:
+                            self._on_abort(
+                                f"session_end validation failed for {issue_id}"
+                            )
+                        return SessionEndResult(
+                            status="fail",
+                            started_at=started_at,
+                            finished_at=datetime.now(UTC),
+                            commands=list(command_results),
+                            reason="command_failed",
+                        )
+                    # continue mode: proceed to code_review regardless
+                    logger.info(
+                        "session_end commands failed but continuing for %s",
+                        issue_id,
+                    )
+
+                # Run code_review if configured
+                code_review_result = await self._run_session_end_code_review(
+                    issue_id=issue_id,
+                    session_end_config=session_end_config,
+                    commands_passed=all_passed,
+                    interrupt_event=interrupt_event,
+                )
+
+                # Determine final status
+                status = "pass" if all_passed else "fail"
+                reason = None if all_passed else "command_failed"
+
+                return SessionEndResult(
+                    status=status,
+                    started_at=started_at,
+                    finished_at=datetime.now(UTC),
+                    commands=list(command_results),
+                    code_review_result=code_review_result,
+                    reason=reason,
+                )
+
+        except TimeoutError:
+            # Per spec R10: on timeout, return with empty commands
+            logger.warning(
+                "session_end timed out after %.1fs for %s",
+                self._session_end_timeout,
+                issue_id,
+            )
+            return SessionEndResult(
+                status="timeout",
+                started_at=started_at,
+                finished_at=datetime.now(UTC),
+                commands=[],
+                reason="session_end_timeout",
+            )
+        except asyncio.CancelledError:
+            # Handle cancellation (e.g., from SIGINT)
+            logger.info("session_end cancelled for %s", issue_id)
+            return SessionEndResult(
+                status="interrupted",
+                started_at=started_at,
+                finished_at=datetime.now(UTC),
+                commands=[],
+                reason="cancelled",
+            )
+
+    def _resolve_command(
+        self,
+        cmd_ref: TriggerCommandRef,
+        validation_config: ValidationConfig,
+    ) -> tuple[str | None, int | None]:
+        """Resolve a command reference from the base pool.
+
+        Args:
+            cmd_ref: The command reference with optional overrides.
+            validation_config: The validation config containing base pool.
+
+        Returns:
+            Tuple of (resolved_command, resolved_timeout) or (None, None) if not found.
+        """
+        # Build base pool from global_validation_commands with fallback to commands
+        base_pool: dict[str, tuple[str, int | None]] = {}
+
+        # Standard commands from global_validation_commands (with fallback)
+        commands_config = validation_config.commands
+        global_config = validation_config.global_validation_commands
+
+        for name in ["test", "lint", "format", "typecheck", "e2e", "setup"]:
+            # Try global first, then fallback to base
+            cmd_config = None
+            if global_config:
+                cmd_config = getattr(global_config, name, None)
+            if cmd_config is None and commands_config:
+                cmd_config = getattr(commands_config, name, None)
+
+            if cmd_config is not None:
+                base_pool[name] = (
+                    cmd_config.command,
+                    getattr(cmd_config, "timeout", None),
+                )
+
+        # Add custom commands from global_custom_commands
+        if validation_config.global_custom_commands:
+            for name, custom_config in validation_config.global_custom_commands.items():
+                if custom_config is not None:
+                    base_pool[name] = (
+                        custom_config.command,
+                        getattr(custom_config, "timeout", None),
+                    )
+
+        # Look up the ref
+        if cmd_ref.ref not in base_pool:
+            return None, None
+
+        base_cmd, base_timeout = base_pool[cmd_ref.ref]
+
+        # Apply overrides
+        effective_cmd = cmd_ref.command if cmd_ref.command is not None else base_cmd
+        effective_timeout = (
+            cmd_ref.timeout if cmd_ref.timeout is not None else base_timeout
+        )
+
+        return effective_cmd, effective_timeout
+
+    async def _run_session_end_code_review(
+        self,
+        issue_id: str,
+        session_end_config: SessionEndTriggerConfig,
+        commands_passed: bool,
+        interrupt_event: asyncio.Event | None,
+    ) -> CodeReviewResult | None:
+        """Run code review for session_end if configured.
+
+        Per spec R11: Uses base_sha..HEAD range for the issue.
+
+        Args:
+            issue_id: The issue ID.
+            session_end_config: The session_end trigger config.
+            commands_passed: Whether all commands passed.
+            interrupt_event: Event to check for interruption.
+
+        Returns:
+            CodeReviewResult or None if code_review not configured/enabled.
+        """
+        from src.domain.validation.config import FailureMode, TriggerType
+
+        code_review_config = session_end_config.code_review
+        if code_review_config is None or not code_review_config.enabled:
+            return None
+
+        # Don't run code_review if abort mode and commands failed
+        if not commands_passed and session_end_config.failure_mode == FailureMode.ABORT:
+            return CodeReviewResult(ran=False, passed=None, findings=[])
+
+        if self._cumulative_review_runner is None:
+            logger.warning(
+                "session_end code_review enabled but no cumulative_review_runner"
+            )
+            return CodeReviewResult(ran=False, passed=None, findings=[])
+
+        run_metadata = self._get_run_metadata()
+        if run_metadata is None:
+            logger.warning("session_end code_review: no run_metadata available")
+            return CodeReviewResult(ran=False, passed=None, findings=[])
+
+        # Get base_sha for the issue (per spec R11)
+        base_sha = self._get_base_sha(issue_id)
+        if base_sha is None:
+            logger.warning(
+                "session_end code_review: no base_sha for issue %s",
+                issue_id,
+            )
+            return CodeReviewResult(ran=False, passed=None, findings=[])
+
+        # Create a wrapped event for the review runner
+        review_interrupt = interrupt_event or asyncio.Event()
+
+        try:
+            result = await self._cumulative_review_runner.run_review(
+                trigger_type=TriggerType.SESSION_END,
+                config=code_review_config,
+                run_metadata=run_metadata,
+                repo_path=self._repo_path,
+                interrupt_event=review_interrupt,
+                issue_id=issue_id,
+            )
+
+            # Convert findings to dict format for SessionEndResult
+            findings = [
+                {
+                    "file": f.file,
+                    "line_start": f.line_start,
+                    "line_end": f.line_end,
+                    "priority": f.priority,
+                    "title": f.title,
+                    "body": f.body,
+                }
+                for f in result.findings
+            ]
+
+            passed = result.status == "success" and len(findings) == 0
+            return CodeReviewResult(ran=True, passed=passed, findings=findings)
+
+        except Exception as e:
+            logger.error("session_end code_review failed: %s", e)
+            return CodeReviewResult(ran=False, passed=None, findings=[])
 
 
 # Protocol for getting per-session spec

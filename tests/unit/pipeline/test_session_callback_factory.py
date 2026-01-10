@@ -33,8 +33,8 @@ class TestSessionEndCheckCallback:
 
         assert callbacks.on_session_end_check is not None
 
-    async def test_stub_returns_skipped_result(self) -> None:
-        """Stub on_session_end_check returns SessionEndResult with status=skipped."""
+    async def test_returns_skipped_when_not_configured(self) -> None:
+        """on_session_end_check returns skipped when session_end not configured."""
         factory = _create_minimal_factory()
         callbacks = factory.build("test-issue")
 
@@ -47,7 +47,7 @@ class TestSessionEndCheckCallback:
 
         assert isinstance(result, SessionEndResult)
         assert result.status == "skipped"
-        assert result.reason == "not_implemented"
+        assert result.reason == "not_configured"
 
     async def test_callback_accepts_correct_signature(self) -> None:
         """Callback accepts (issue_id, log_path, retry_state) parameters."""
@@ -68,5 +68,6 @@ class TestSessionEndCheckCallback:
             retry_state,
         )
 
-        # Should still return skipped (stub implementation)
+        # Should return skipped when not configured
         assert result.status == "skipped"
+        assert result.reason == "not_configured"
