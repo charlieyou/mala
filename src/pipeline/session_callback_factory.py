@@ -382,22 +382,15 @@ class SessionCallbackFactory:
                         all_passed = False
                         break
 
-                    # Execute the command with shield to ensure completion
-                    # Per R10: "complete current command" on SIGINT
+                    # Execute the command
+                    # Per R10: "complete current command" on SIGINT (but not on timeout)
                     if self._command_runner is not None:
-                        try:
-                            result = await asyncio.shield(
-                                self._command_runner.run_async(
-                                    resolved_cmd,
-                                    timeout=resolved_timeout,
-                                    shell=True,
-                                    cwd=self._repo_path,
-                                )
-                            )
-                        except asyncio.CancelledError:
-                            # Shield was broken but command may still be running
-                            # Re-raise to be caught by outer handler
-                            raise
+                        result = await self._command_runner.run_async(
+                            resolved_cmd,
+                            timeout=resolved_timeout,
+                            shell=True,
+                            cwd=self._repo_path,
+                        )
                         command_results.append(result)
 
                         # Check for interrupt after command completes
@@ -482,8 +475,8 @@ class SessionCallbackFactory:
                 reason="session_end_timeout",
             )
         except asyncio.CancelledError:
-            # Handle cancellation (e.g., from SIGINT)
-            # Return completed commands from before cancellation
+            # Handle cancellation outside command execution (e.g., during code_review)
+            # Command-level cancellation is handled inline with task awaiting
             logger.info("session_end cancelled for %s", issue_id)
             return SessionEndResult(
                 status="interrupted",
