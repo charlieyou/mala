@@ -444,12 +444,21 @@ def _inject_cerberus_mode(repo_path: Path, cerberus_mode: str) -> None:
 
     # Always append the cerberus config block at the end
     # This is safe because E2E fixtures are freshly created without cerberus config
-    # and YAML allows multiple validation_triggers blocks (last wins for merging)
+    # Note: YAML replaces duplicate keys entirely (doesn't merge), so we must include
+    # all required fields like failure_mode in the injected block.
+    # We also re-include run_end from the original fixture config to preserve it,
+    # since appending a new validation_triggers block replaces the original entirely.
     content += f"""
 
-# E2E cerberus mode injection
+# E2E cerberus mode injection (must include run_end to preserve original fixture config)
 validation_triggers:
+  run_end:
+    failure_mode: continue
+    commands:
+      - ref: test
+        command: "uv run pytest --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${{AGENT_ID:-default}}"
   session_end:
+    failure_mode: continue
     code_review:
       cerberus:
         {spawn_args_line}

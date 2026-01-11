@@ -29,7 +29,7 @@ from src.infra.hooks import make_stop_hook
 from src.infra.tools.env import SCRIPTS_DIR
 from tests.e2e.claude_auth import is_claude_cli_available, has_valid_oauth_credentials
 
-pytestmark = [pytest.mark.e2e]
+pytestmark = [pytest.mark.e2e, pytest.mark.flaky_sdk]
 
 
 @pytest.fixture(autouse=True)
