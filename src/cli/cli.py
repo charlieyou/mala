@@ -1246,14 +1246,18 @@ def init(
                     trigger_commands
                 )
 
-        # Validate the generated config
-        while True:
+        # Validate the generated config (max 3 retry attempts)
+        max_retries = 3
+        for attempt in range(max_retries + 1):
             try:
                 validate_init_config(config_data)  # type: ignore[arg-type]
                 break
             except ConfigError as e:
                 if not is_tty:
                     raise
+                if attempt >= max_retries:
+                    typer.echo(f"Error: {e} (max retries exceeded)", err=True)
+                    raise typer.Exit(1)
                 # Interactive recovery
                 choice = questionary.select(
                     f"Validation error: {e}",
