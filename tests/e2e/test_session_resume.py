@@ -26,7 +26,8 @@ from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
 from tests.e2e.claude_auth import has_valid_oauth_credentials, is_claude_cli_available
 
-pytestmark = [pytest.mark.e2e]
+# Also marked as flaky_sdk since these tests depend on LLM correctly recalling info
+pytestmark = [pytest.mark.e2e, pytest.mark.flaky_sdk]
 
 
 @pytest.fixture(autouse=True)

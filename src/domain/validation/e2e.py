@@ -456,6 +456,7 @@ def _inject_cerberus_mode(repo_path: Path, cerberus_mode: str) -> None:
         content += f"""
 validation_triggers:
   session_end:
+    failure_mode: continue
     code_review:
       cerberus:
         {spawn_args_line}
@@ -465,6 +466,7 @@ validation_triggers:
             "validation_triggers:",
             f"""validation_triggers:
   session_end:
+    failure_mode: continue
     code_review:
       cerberus:
         {spawn_args_line}""",

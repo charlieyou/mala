@@ -31,7 +31,8 @@ from src.infra.tools.env import SCRIPTS_DIR
 from tests.e2e.claude_auth import is_claude_cli_available, has_valid_oauth_credentials
 
 # All SDK tests are end-to-end (require CLI auth and API calls)
-pytestmark = [pytest.mark.e2e]
+# Also marked as flaky_sdk since they depend on LLM correctly executing commands
+pytestmark = [pytest.mark.e2e, pytest.mark.flaky_sdk]
 
 
 @pytest.fixture(autouse=True)
