@@ -992,12 +992,18 @@ def _prompt_preset_selection(presets: list[str]) -> str | None:
 
     Returns:
         Selected preset name, or None if user chooses custom.
+
+    Raises:
+        KeyboardInterrupt: If user cancels the prompt (Esc/Ctrl-C).
     """
     choices = [*presets, "custom"]
     result = questionary.select(
         "Select a preset:",
         choices=choices,
     ).ask()
+    if result is None:
+        # User cancelled the prompt (Esc/Ctrl-C)
+        raise KeyboardInterrupt
     if result == "custom":
         return None
     return result

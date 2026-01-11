@@ -439,6 +439,16 @@ class TestInitNonInteractive:
         result = _prompt_preset_selection(["go", "python-uv", "rust"])
         assert result is None
 
+    def test_prompt_preset_selection_cancelled_raises_keyboard_interrupt(
+        self, mock_questionary: MagicMock
+    ) -> None:
+        """User cancelling (Esc/Ctrl-C) raises KeyboardInterrupt."""
+        from src.cli.cli import _prompt_preset_selection
+
+        mock_questionary.select_return = None  # Cancellation returns None from ask()
+        with pytest.raises(KeyboardInterrupt):
+            _prompt_preset_selection(["go", "python-uv", "rust"])
+
     def test_prompt_custom_commands_questionary_returns_commands(
         self, mock_questionary: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
