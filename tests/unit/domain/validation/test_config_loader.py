@@ -17,6 +17,7 @@ from src.domain.validation.config import ConfigError, FailureMode
 from src.domain.validation.config_loader import (
     _parse_cerberus_config,
     _parse_code_review_config,
+    _parse_evidence_check_config,
     _parse_periodic_trigger,
     validate_generated_config,
 )
@@ -118,6 +119,65 @@ class TestParseCerberusConfig:
         assert result.spawn_args == ("--flag",)
         assert result.wait_args == ("--wait-flag",)
         assert result.env == (("KEY", "value"),)
+
+
+class TestParseEvidenceCheckConfig:
+    """Tests for _parse_evidence_check_config function."""
+
+    def test_valid_required_list(self) -> None:
+        """Parse valid evidence_check.required: [test, lint] → tuple."""
+        result = _parse_evidence_check_config({"required": ["test", "lint"]})
+        assert result is not None
+        assert result.required == ("test", "lint")
+
+    def test_empty_object_returns_empty_required(self) -> None:
+        """Parse evidence_check: {} → EvidenceCheckConfig with empty required."""
+        result = _parse_evidence_check_config({})
+        assert result is not None
+        assert result.required == ()
+
+    def test_null_required_returns_empty_tuple(self) -> None:
+        """Parse evidence_check.required: null → empty tuple."""
+        result = _parse_evidence_check_config({"required": None})
+        assert result is not None
+        assert result.required == ()
+
+    def test_null_section_rejected(self) -> None:
+        """Reject evidence_check: null → None returned (no config)."""
+        result = _parse_evidence_check_config(None)
+        assert result is None
+
+    def test_string_section_rejected(self) -> None:
+        """Reject evidence_check: 'string' → ConfigError."""
+        with pytest.raises(ConfigError, match="evidence_check must be an object"):
+            _parse_evidence_check_config("string")  # type: ignore[arg-type]
+
+    def test_required_not_list_rejected(self) -> None:
+        """Reject evidence_check.required: 'not-a-list' → ConfigError."""
+        with pytest.raises(
+            ConfigError, match=r"evidence_check\.required must be a list"
+        ):
+            _parse_evidence_check_config({"required": "not-a-list"})
+
+    def test_required_non_string_item_rejected(self) -> None:
+        """Reject evidence_check.required: [test, 1] → ConfigError."""
+        with pytest.raises(
+            ConfigError, match=r"evidence_check\.required\[1\] must be a string"
+        ):
+            _parse_evidence_check_config({"required": ["test", 1]})
+
+    def test_unknown_field_rejected(self) -> None:
+        """Reject unknown field in evidence_check → ConfigError."""
+        with pytest.raises(
+            ConfigError, match=r"Unknown field 'unknown' in evidence_check"
+        ):
+            _parse_evidence_check_config({"required": ["test"], "unknown": "value"})
+
+    def test_empty_string_in_required_valid(self) -> None:
+        """Empty string in required list is valid (still a string)."""
+        result = _parse_evidence_check_config({"required": ["test", ""]})
+        assert result is not None
+        assert result.required == ("test", "")
 
 
 class TestParseCodeReviewConfig:

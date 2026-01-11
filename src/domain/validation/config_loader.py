@@ -723,8 +723,11 @@ def _parse_code_review_config(
     )
 
 
+_EVIDENCE_CHECK_FIELDS = frozenset({"required"})
+
+
 def _parse_evidence_check_config(
-    data: dict[str, Any],
+    data: dict[str, Any] | None,
 ) -> EvidenceCheckConfig | None:
     """Parse evidence_check configuration block.
 
@@ -734,14 +737,50 @@ def _parse_evidence_check_config(
     Returns:
         EvidenceCheckConfig if data is provided, None otherwise.
 
-    Note:
-        This is a stub that returns None. Actual parsing logic
-        will be implemented in T002.
+    Raises:
+        ConfigError: If data has invalid types or unknown fields.
     """
-    # Stub: return None to indicate no evidence filtering configured
-    # T002 will implement the actual parsing of the 'required' field
-    _ = data  # Unused in stub - will be used in T002
-    return None
+    # Import here to avoid circular import at module level
+    from src.domain.validation.config import (
+        EvidenceCheckConfig as EvidenceCheckConfigClass,
+    )
+
+    if data is None:
+        return None
+
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"evidence_check must be an object, got {type(data).__name__}"
+        )
+
+    # Validate unknown fields
+    unknown = set(data.keys()) - _EVIDENCE_CHECK_FIELDS
+    if unknown:
+        first = sorted(str(k) for k in unknown)[0]
+        raise ConfigError(f"Unknown field '{first}' in evidence_check")
+
+    # Parse required (optional, defaults to empty tuple)
+    required: tuple[str, ...] = ()
+    if "required" in data:
+        req_val = data["required"]
+        if req_val is None:
+            # null required → empty tuple
+            required = ()
+        elif not isinstance(req_val, list):
+            raise ConfigError(
+                f"evidence_check.required must be a list, got {type(req_val).__name__}"
+            )
+        else:
+            # Validate each element is a string
+            for i, item in enumerate(req_val):
+                if not isinstance(item, str):
+                    raise ConfigError(
+                        f"evidence_check.required[{i}] must be a string, "
+                        f"got {type(item).__name__}"
+                    )
+            required = tuple(req_val)
+
+    return EvidenceCheckConfigClass(required=required)
 
 
 _EPIC_COMPLETION_FIELDS = frozenset(
