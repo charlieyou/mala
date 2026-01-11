@@ -8,13 +8,14 @@ import os
 import subprocess
 import uuid
 from pathlib import Path
+import time
 
 import pytest
 
 from src.infra.clients.cerberus_review import DefaultReviewer
 from src.infra.tools.cerberus import find_cerberus_bin_path
 
-pytestmark = [pytest.mark.e2e, pytest.mark.flaky_sdk]
+pytestmark = [pytest.mark.e2e]
 
 
 def _find_review_gate_bin() -> Path | None:
@@ -38,6 +39,12 @@ def _setup_git_repo(repo_path: Path) -> str:
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "commit.gpgsign", "false"],
         cwd=repo_path,
         check=True,
         capture_output=True,
@@ -89,6 +96,12 @@ def _setup_git_repo_with_commits(repo_path: Path) -> list[str]:
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "commit.gpgsign", "false"],
         cwd=repo_path,
         check=True,
         capture_output=True,
@@ -161,6 +174,15 @@ def _review_artifact_path(repo_path: Path, session_id: str) -> Path:
     return base_dir / "projects" / project_hash / "cerberus" / session_id / "latest.md"
 
 
+def _wait_for_artifact(path: Path, timeout_s: float = 10.0) -> None:
+    """Wait briefly for the review artifact to be written to disk."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if path.exists():
+            return
+        time.sleep(0.2)
+
+
 @pytest.fixture
 def review_gate_bin() -> Path:
     """Get the real review-gate binary, skip if not available."""
@@ -175,7 +197,6 @@ def review_gate_bin() -> Path:
 
 
 @pytest.mark.asyncio
-@pytest.mark.flaky(reruns=2)
 async def test_review_gate_full_flow(tmp_path: Path, review_gate_bin: Path) -> None:
     """Full E2E test with real Cerberus review-gate in fast mode.
 
@@ -186,7 +207,6 @@ async def test_review_gate_full_flow(tmp_path: Path, review_gate_bin: Path) -> N
 
     Note: Transient parse errors from reviewers (network issues, model failures)
     are acceptable - the key is no fatal_error which indicates protocol problems.
-    Uses @flaky to retry on transient failures.
     """
     _setup_git_repo(tmp_path)
     session_id = f"test-{uuid.uuid4()}"
@@ -206,7 +226,7 @@ async def test_review_gate_full_flow(tmp_path: Path, review_gate_bin: Path) -> N
 
     result = await reviewer(
         claude_session_id=session_id,
-        timeout=120,
+        timeout=180,
         commit_shas=[head_sha],
     )
 
@@ -216,7 +236,6 @@ async def test_review_gate_full_flow(tmp_path: Path, review_gate_bin: Path) -> N
 
 
 @pytest.mark.asyncio
-@pytest.mark.flaky(reruns=2)
 async def test_review_gate_commits_scope(tmp_path: Path, review_gate_bin: Path) -> None:
     """Review should scope to explicit commits when commit list is provided."""
     commits = _setup_git_repo_with_commits(tmp_path)
@@ -230,13 +249,14 @@ async def test_review_gate_commits_scope(tmp_path: Path, review_gate_bin: Path) 
 
     result = await reviewer(
         claude_session_id=session_id,
-        timeout=120,
+        timeout=180,
         commit_shas=[commits[1]],
     )
 
     assert result.fatal_error is False, f"Fatal error: {result.parse_error}"
 
     artifact_path = _review_artifact_path(tmp_path, session_id)
+    _wait_for_artifact(artifact_path)
     assert artifact_path.exists()
     artifact = artifact_path.read_text()
     assert "<!-- diff-args: --commit" in artifact
@@ -262,6 +282,12 @@ async def test_review_gate_empty_commit_shortcircuit(
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "commit.gpgsign", "false"],
         cwd=tmp_path,
         check=True,
         capture_output=True,

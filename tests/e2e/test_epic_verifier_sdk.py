@@ -11,7 +11,7 @@ import pytest
 from src.infra.epic_verifier import ClaudeEpicVerificationModel
 from tests.e2e.claude_auth import is_claude_cli_available, has_valid_oauth_credentials
 
-pytestmark = [pytest.mark.e2e, pytest.mark.flaky_sdk]
+pytestmark = [pytest.mark.e2e]
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -45,6 +45,12 @@ async def test_epic_verifier_runs_via_sdk(tmp_path: Path) -> None:
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "commit.gpgsign", "false"],
         cwd=tmp_path,
         check=True,
         capture_output=True,

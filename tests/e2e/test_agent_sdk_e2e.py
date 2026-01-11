@@ -23,7 +23,7 @@ from src.infra.clients.review_output_parser import ReviewResult
 from src.infra.io.session_log_parser import SessionLogParser
 from src.infra.sdk_adapter import SDKClientFactory
 
-pytestmark = [pytest.mark.e2e, pytest.mark.flaky_sdk]
+pytestmark = [pytest.mark.e2e]
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -147,7 +147,7 @@ Only use FAIL if there's a serious bug. This is a simple function, so PASS is ex
         sdk_client_factory=sdk_factory,
         event_sink=None,
         model="haiku",  # Use haiku for speed and cost
-        default_timeout=120,  # 2 minutes should be plenty for minimal diff
+        default_timeout=180,  # Buffer for slow SDK sessions
     )
 
     # Run review on the last commit
@@ -160,7 +160,7 @@ Only use FAIL if there's a serious bug. This is a simple function, so PASS is ex
     ).stdout.strip()
     result = await reviewer(
         context_file=None,
-        timeout=120,
+        timeout=180,
         claude_session_id=None,
         commit_shas=[last_commit],
     )

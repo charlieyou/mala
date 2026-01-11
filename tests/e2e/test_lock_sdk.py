@@ -22,7 +22,6 @@ import pytest
 from claude_agent_sdk import (
     ClaudeSDKClient,
     ClaudeAgentOptions,
-    AssistantMessage,
 )
 from claude_agent_sdk.types import HookMatcher, McpSdkServerConfig  # noqa: TC002
 
@@ -30,9 +29,7 @@ from src.infra.hooks import make_stop_hook
 from src.infra.tools.env import SCRIPTS_DIR
 from tests.e2e.claude_auth import is_claude_cli_available, has_valid_oauth_credentials
 
-# All SDK tests are end-to-end (require CLI auth and API calls)
-# Also marked as flaky_sdk since they depend on LLM correctly executing commands
-pytestmark = [pytest.mark.e2e, pytest.mark.flaky_sdk]
+pytestmark = [pytest.mark.e2e]
 
 
 @pytest.fixture(autouse=True)
@@ -64,14 +61,25 @@ def lock_env(tmp_path: Path) -> dict[str, Path]:
     }
 
 
-@pytest.fixture
-def agent_options(tmp_path: Path) -> ClaudeAgentOptions:
-    """Base agent options for tests."""
+def _agent_options(
+    *,
+    cwd: Path,
+    max_turns: int = 3,
+    env: dict[str, str] | None = None,
+    hooks: dict[str, list[object]] | None = None,
+    mcp_servers: dict[str, McpSdkServerConfig] | None = None,
+) -> ClaudeAgentOptions:
+    """Create standardized agent options for SDK e2e tests."""
     return ClaudeAgentOptions(
-        cwd=str(tmp_path),
+        cwd=str(cwd),
         permission_mode="bypassPermissions",
         model="haiku",  # Use haiku for faster/cheaper tests
-        max_turns=3,  # Limit turns for test speed
+        max_turns=max_turns,
+        system_prompt={"type": "preset", "preset": "claude_code"},
+        setting_sources=["project", "user"],
+        env=env,
+        hooks=hooks,
+        mcp_servers=mcp_servers,
     )
 
 
@@ -161,11 +169,9 @@ class TestAgentAcquiresLocks:
     """Test that agents can acquire locks using the scripts."""
 
     @pytest.mark.asyncio
-    @pytest.mark.flaky(reruns=2)
     async def test_agent_runs_lock_try_script(
         self,
         lock_env: dict[str, Path],
-        agent_options: ClaudeAgentOptions,
         tmp_path: Path,
     ) -> None:
         """Agent can execute lock-try.sh and acquire a lock."""
@@ -173,21 +179,25 @@ class TestAgentAcquiresLocks:
         lock_dir = lock_env["lock_dir"]
         cwd = str(tmp_path)
 
+        env = {
+            "LOCK_DIR": str(lock_dir),
+            "AGENT_ID": agent_id,
+            "PATH": f"{lock_env['scripts_dir']}:{os.environ.get('PATH', '')}",
+        }
+        options = _agent_options(cwd=tmp_path, env=env)
+
         prompt = f"""You are testing the lock system. Run these commands exactly:
 
 ```bash
-export LOCK_DIR="{lock_dir}"
-export AGENT_ID="{agent_id}"
-export PATH="{lock_env["scripts_dir"]}:$PATH"
+set -euo pipefail
 mkdir -p "$LOCK_DIR"
 lock-try.sh test_file.py
-echo "Lock acquired with exit code: $?"
 ```
 
 After running the commands, respond with "DONE".
 """
 
-        async with ClaudeSDKClient(options=agent_options) as client:
+        async with ClaudeSDKClient(options=options) as client:
             await client.query(prompt)
             async for message in client.receive_response():
                 pass  # Consume all messages
@@ -197,23 +207,27 @@ After running the commands, respond with "DONE".
         assert get_lock_holder(lock_dir, "test_file.py", cwd) == agent_id
 
     @pytest.mark.asyncio
-    @pytest.mark.flaky(reruns=2)
     async def test_agent_checks_lock_ownership(
         self,
         lock_env: dict[str, Path],
-        agent_options: ClaudeAgentOptions,
         tmp_path: Path,
     ) -> None:
         """Agent can check if it holds a lock."""
         agent_id = "test-agent-check"
         lock_dir = lock_env["lock_dir"]
+        result_path = tmp_path / "lock_check_result.txt"
+
+        env = {
+            "LOCK_DIR": str(lock_dir),
+            "AGENT_ID": agent_id,
+            "PATH": f"{lock_env['scripts_dir']}:{os.environ.get('PATH', '')}",
+        }
+        options = _agent_options(cwd=tmp_path, env=env)
 
         prompt = f"""You are testing the lock system. Run these commands exactly:
 
 ```bash
-export LOCK_DIR="{lock_dir}"
-export AGENT_ID="{agent_id}"
-export PATH="{lock_env["scripts_dir"]}:$PATH"
+set -euo pipefail
 mkdir -p "$LOCK_DIR"
 
 # Acquire a lock
@@ -221,36 +235,31 @@ lock-try.sh myfile.py
 
 # Check if we hold it
 if lock-check.sh myfile.py; then
-    echo "LOCK_HELD=true"
+    echo "LOCK_HELD=true" > "{result_path}"
 else
-    echo "LOCK_HELD=false"
+    echo "LOCK_HELD=false" > "{result_path}"
 fi
 ```
 
-Respond with what LOCK_HELD equals.
+Respond with "DONE".
 """
 
-        result_text = ""
-        async with ClaudeSDKClient(options=agent_options) as client:
+        async with ClaudeSDKClient(options=options) as client:
             await client.query(prompt)
             async for message in client.receive_response():
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if hasattr(block, "text"):
-                            result_text += getattr(block, "text", "")
+                pass  # Consume all messages
 
-        assert "true" in result_text.lower() or "LOCK_HELD=true" in result_text
+        assert result_path.exists(), "Expected lock check result file to be created"
+        assert "true" in result_path.read_text().lower()
 
 
 class TestAgentReleasesLocks:
     """Test that agents properly release locks."""
 
     @pytest.mark.asyncio
-    @pytest.mark.flaky(reruns=2)
     async def test_agent_releases_single_lock(
         self,
         lock_env: dict[str, Path],
-        agent_options: ClaudeAgentOptions,
         tmp_path: Path,
     ) -> None:
         """Agent can release a specific lock."""
@@ -258,12 +267,17 @@ class TestAgentReleasesLocks:
         lock_dir = lock_env["lock_dir"]
         cwd = str(tmp_path)
 
+        env = {
+            "LOCK_DIR": str(lock_dir),
+            "AGENT_ID": agent_id,
+            "PATH": f"{lock_env['scripts_dir']}:{os.environ.get('PATH', '')}",
+        }
+        options = _agent_options(cwd=tmp_path, env=env)
+
         prompt = f"""You are testing the lock system. Run these commands exactly:
 
 ```bash
-export LOCK_DIR="{lock_dir}"
-export AGENT_ID="{agent_id}"
-export PATH="{lock_env["scripts_dir"]}:$PATH"
+set -euo pipefail
 mkdir -p "$LOCK_DIR"
 
 # Acquire then release
@@ -276,7 +290,7 @@ echo "Lock released"
 Respond with "DONE".
 """
 
-        async with ClaudeSDKClient(options=agent_options) as client:
+        async with ClaudeSDKClient(options=options) as client:
             await client.query(prompt)
             async for message in client.receive_response():
                 pass
@@ -285,20 +299,24 @@ Respond with "DONE".
         assert not lock_file_exists(lock_dir, "release_test.py", cwd)
 
     @pytest.mark.asyncio
-    @pytest.mark.flaky(reruns=2)
     async def test_agent_releases_all_locks(
-        self, lock_env: dict[str, Path], agent_options: ClaudeAgentOptions
+        self, lock_env: dict[str, Path], tmp_path: Path
     ) -> None:
         """Agent can release all its locks at once."""
         agent_id = "test-agent-release-all"
         lock_dir = lock_env["lock_dir"]
 
+        env = {
+            "LOCK_DIR": str(lock_dir),
+            "AGENT_ID": agent_id,
+            "PATH": f"{lock_env['scripts_dir']}:{os.environ.get('PATH', '')}",
+        }
+        options = _agent_options(cwd=tmp_path, env=env)
+
         prompt = f"""You are testing the lock system. Run these commands exactly:
 
 ```bash
-export LOCK_DIR="{lock_dir}"
-export AGENT_ID="{agent_id}"
-export PATH="{lock_env["scripts_dir"]}:$PATH"
+set -euo pipefail
 mkdir -p "$LOCK_DIR"
 
 # Acquire multiple locks
@@ -315,7 +333,7 @@ echo "Released all locks"
 Respond with "DONE".
 """
 
-        async with ClaudeSDKClient(options=agent_options) as client:
+        async with ClaudeSDKClient(options=options) as client:
             await client.query(prompt)
             async for message in client.receive_response():
                 pass
@@ -329,11 +347,9 @@ class TestAgentHandlesContention:
     """Test agent behavior when encountering locked files."""
 
     @pytest.mark.asyncio
-    @pytest.mark.flaky(reruns=2)
     async def test_agent_detects_blocked_file(
         self,
         lock_env: dict[str, Path],
-        agent_options: ClaudeAgentOptions,
         tmp_path: Path,
     ) -> None:
         """Agent correctly identifies when a file is locked by another."""
@@ -341,40 +357,44 @@ class TestAgentHandlesContention:
         our_agent = "our-agent"
         other_agent = "blocking-agent"
         cwd = str(tmp_path)
+        result_path = tmp_path / "blocked_result.txt"
 
         # Pre-create a lock from another agent using hash-based naming
         lock_dir.mkdir(exist_ok=True)
         lock_path = lock_file_path(lock_dir, "blocked_file.py", cwd)
         lock_path.write_text(other_agent)
 
+        env = {
+            "LOCK_DIR": str(lock_dir),
+            "AGENT_ID": our_agent,
+            "PATH": f"{lock_env['scripts_dir']}:{os.environ.get('PATH', '')}",
+        }
+        options = _agent_options(cwd=tmp_path, env=env)
+
         prompt = f"""You are testing the lock system. Run these commands exactly:
 
 ```bash
-export LOCK_DIR="{lock_dir}"
-export AGENT_ID="{our_agent}"
-export PATH="{lock_env["scripts_dir"]}:$PATH"
+set -euo pipefail
 
 # Try to acquire a lock that's already held
 if lock-try.sh blocked_file.py; then
-    echo "RESULT=acquired"
+    echo "RESULT=acquired" > "{result_path}"
 else
     holder=$(lock-holder.sh blocked_file.py)
-    echo "RESULT=blocked by $holder"
+    echo "RESULT=blocked by $holder" > "{result_path}"
 fi
 ```
 
 Report the RESULT.
 """
 
-        result_text = ""
-        async with ClaudeSDKClient(options=agent_options) as client:
+        async with ClaudeSDKClient(options=options) as client:
             await client.query(prompt)
             async for message in client.receive_response():
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if hasattr(block, "text"):
-                            result_text += getattr(block, "text", "")
+                pass  # Consume all messages
 
+        assert result_path.exists(), "Expected blocked-file result file to be created"
+        result_text = result_path.read_text()
         assert "blocked" in result_text.lower()
         assert other_agent in result_text
 
@@ -383,7 +403,6 @@ class TestStopHookWithSDK:
     """Test the Stop hook integration with real SDK."""
 
     @pytest.mark.asyncio
-    @pytest.mark.flaky(reruns=2)
     async def test_stop_hook_cleans_locks_on_agent_exit(
         self, lock_env: dict[str, Path], tmp_path: Path
     ) -> None:
@@ -392,11 +411,14 @@ class TestStopHookWithSDK:
         lock_dir = lock_env["lock_dir"]
 
         # Create options with the stop hook
-        options = ClaudeAgentOptions(
-            cwd=str(tmp_path),
-            permission_mode="bypassPermissions",
-            model="haiku",
-            max_turns=3,
+        env = {
+            "LOCK_DIR": str(lock_dir),
+            "AGENT_ID": agent_id,
+            "PATH": f"{lock_env['scripts_dir']}:{os.environ.get('PATH', '')}",
+        }
+        options = _agent_options(
+            cwd=tmp_path,
+            env=env,
             hooks={
                 "Stop": [HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])],  # type: ignore[arg-type]
             },
@@ -410,9 +432,7 @@ class TestStopHookWithSDK:
             prompt = f"""Run these commands to acquire locks:
 
 ```bash
-export LOCK_DIR="{lock_dir}"
-export AGENT_ID="{agent_id}"
-export PATH="{lock_env["scripts_dir"]}:$PATH"
+set -euo pipefail
 mkdir -p "$LOCK_DIR"
 lock-try.sh orphan1.py
 lock-try.sh orphan2.py
@@ -449,11 +469,9 @@ class TestMultiAgentWithSDK:
     """Test multiple agents interacting with locks via SDK."""
 
     @pytest.mark.asyncio
-    @pytest.mark.flaky(reruns=2)
     async def test_sequential_agents_handoff_lock(
         self,
         lock_env: dict[str, Path],
-        agent_options: ClaudeAgentOptions,
         tmp_path: Path,
     ) -> None:
         """First agent releases lock, second agent acquires it."""
@@ -461,14 +479,13 @@ class TestMultiAgentWithSDK:
         agent1_id = "agent-1"
         agent2_id = "agent-2"
         cwd = str(tmp_path)
+        result_path = tmp_path / "handoff_result.txt"
 
         # Agent 1 acquires and releases
         prompt1 = f"""Run these commands:
 
 ```bash
-export LOCK_DIR="{lock_dir}"
-export AGENT_ID="{agent1_id}"
-export PATH="{lock_env["scripts_dir"]}:$PATH"
+set -euo pipefail
 mkdir -p "$LOCK_DIR"
 lock-try.sh shared.py
 echo "Agent 1 acquired lock"
@@ -479,7 +496,13 @@ echo "Agent 1 released lock"
 Respond with "DONE".
 """
 
-        async with ClaudeSDKClient(options=agent_options) as client:
+        env1 = {
+            "LOCK_DIR": str(lock_dir),
+            "AGENT_ID": agent1_id,
+            "PATH": f"{lock_env['scripts_dir']}:{os.environ.get('PATH', '')}",
+        }
+        options1 = _agent_options(cwd=tmp_path, env=env1)
+        async with ClaudeSDKClient(options=options1) as client:
             await client.query(prompt1)
             async for _ in client.receive_response():
                 pass
@@ -488,30 +511,31 @@ Respond with "DONE".
         prompt2 = f"""Run these commands:
 
 ```bash
-export LOCK_DIR="{lock_dir}"
-export AGENT_ID="{agent2_id}"
-export PATH="{lock_env["scripts_dir"]}:$PATH"
+set -euo pipefail
 
 if lock-try.sh shared.py; then
-    echo "SUCCESS: Agent 2 acquired lock"
+    echo "RESULT=success" > "{result_path}"
 else
-    echo "FAILED: Could not acquire lock"
+    echo "RESULT=failure" > "{result_path}"
 fi
 ```
 
 Report the result.
 """
 
-        result_text = ""
-        async with ClaudeSDKClient(options=agent_options) as client:
+        env2 = {
+            "LOCK_DIR": str(lock_dir),
+            "AGENT_ID": agent2_id,
+            "PATH": f"{lock_env['scripts_dir']}:{os.environ.get('PATH', '')}",
+        }
+        options2 = _agent_options(cwd=tmp_path, env=env2)
+        async with ClaudeSDKClient(options=options2) as client:
             await client.query(prompt2)
             async for message in client.receive_response():
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if hasattr(block, "text"):
-                            result_text += getattr(block, "text", "")
+                pass  # Consume all messages
 
-        assert "SUCCESS" in result_text or "acquired" in result_text.lower()
+        assert result_path.exists(), "Expected handoff result file to be created"
+        assert "success" in result_path.read_text().lower()
         assert get_lock_holder(lock_dir, "shared.py", cwd) == agent2_id
 
 
@@ -519,7 +543,6 @@ class TestAgentWorkflowE2E:
     """End-to-end test of a realistic agent workflow."""
 
     @pytest.mark.asyncio
-    @pytest.mark.flaky(reruns=2)
     async def test_full_implementation_workflow(
         self, lock_env: dict[str, Path], tmp_path: Path
     ) -> None:
@@ -533,43 +556,45 @@ class TestAgentWorkflowE2E:
         test_file.write_text("# TODO: implement feature\n")
 
         # Initialize git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
         subprocess.run(
             ["git", "config", "user.email", "test@test.com"],
             cwd=tmp_path,
+            check=True,
             capture_output=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "Test"],
             cwd=tmp_path,
+            check=True,
             capture_output=True,
         )
-        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "config", "commit.gpgsign", "false"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "initial"],
             cwd=tmp_path,
+            check=True,
             capture_output=True,
         )
 
-        options = ClaudeAgentOptions(
-            cwd=cwd,
-            permission_mode="bypassPermissions",
-            model="haiku",
-            max_turns=8,
-            env={
-                "LOCK_DIR": str(lock_dir),
-                "AGENT_ID": agent_id,
-                "PATH": f"{lock_env['scripts_dir']}:{os.environ.get('PATH', '')}",
-            },
-        )
+        env = {
+            "LOCK_DIR": str(lock_dir),
+            "AGENT_ID": agent_id,
+            "PATH": f"{lock_env['scripts_dir']}:{os.environ.get('PATH', '')}",
+        }
+        options = _agent_options(cwd=tmp_path, max_turns=8, env=env)
 
         prompt = f"""You are implementing a feature. Follow this EXACT workflow:
 
 1. Set up lock environment:
 ```bash
-export LOCK_DIR="{lock_dir}"
-export AGENT_ID="{agent_id}"
-export PATH="{lock_env["scripts_dir"]}:$PATH"
+set -euo pipefail
 mkdir -p "$LOCK_DIR"
 ```
 
@@ -606,14 +631,10 @@ fi
 Report "WORKFLOW COMPLETE" when done.
 """
 
-        result_text = ""
         async with ClaudeSDKClient(options=options) as client:
             await client.query(prompt)
             async for message in client.receive_response():
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if hasattr(block, "text"):
-                            result_text += getattr(block, "text", "")
+                pass  # Consume all messages
 
         # Verify the workflow completed correctly
         # Lock should be released
@@ -645,7 +666,6 @@ class TestMCPLockingToolsSchemaValidation:
     """
 
     @pytest.mark.asyncio
-    @pytest.mark.flaky(reruns=2)
     async def test_mcp_locking_tools_schema_accepted(
         self,
         tmp_path: Path,
@@ -668,10 +688,8 @@ class TestMCPLockingToolsSchemaValidation:
         mcp_config: McpSdkServerConfig = result  # type: ignore[assignment]
 
         # Create agent options with MCP server
-        options = ClaudeAgentOptions(
-            cwd=str(tmp_path),
-            permission_mode="bypassPermissions",
-            model="haiku",
+        options = _agent_options(
+            cwd=tmp_path,
             max_turns=1,
             mcp_servers={"mala-locking": mcp_config},
         )
