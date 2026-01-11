@@ -4447,3 +4447,133 @@ class TestBaseShaCapture:
 
         # base_sha should be None when git commit retrieval returns empty
         assert result.base_sha is None
+
+
+class TestGetTrackReviewIssues:
+    """Tests for _get_track_review_issues method."""
+
+    def test_returns_false_when_code_review_disabled_but_track_false(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """track_review_issues=false should be respected even when code_review is disabled.
+
+        This tests the fix for mala-6xp5: users should be able to disable
+        track_review_issues without enabling code_review.
+        """
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            SessionEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        # Configure session_end with code_review disabled but track_review_issues=false
+        code_review = CodeReviewConfig(enabled=False, track_review_issues=False)
+        session_end = SessionEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE, commands=(), code_review=code_review
+        )
+        triggers = ValidationTriggersConfig(session_end=session_end)
+        validation_config = ValidationConfig(validation_triggers=triggers)
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+        orchestrator._validation_config = validation_config
+
+        # Should return False, not fall back to env var
+        result = orchestrator._get_track_review_issues()
+        assert result is False
+
+    def test_returns_true_when_code_review_disabled_and_track_true(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """track_review_issues=true should be respected when code_review is disabled."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            SessionEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        code_review = CodeReviewConfig(enabled=False, track_review_issues=True)
+        session_end = SessionEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE, commands=(), code_review=code_review
+        )
+        triggers = ValidationTriggersConfig(session_end=session_end)
+        validation_config = ValidationConfig(validation_triggers=triggers)
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+        orchestrator._validation_config = validation_config
+
+        result = orchestrator._get_track_review_issues()
+        assert result is True
+
+    def test_returns_config_value_when_code_review_enabled(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """track_review_issues should work normally when code_review is enabled."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            SessionEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        code_review = CodeReviewConfig(enabled=True, track_review_issues=False)
+        session_end = SessionEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE, commands=(), code_review=code_review
+        )
+        triggers = ValidationTriggersConfig(session_end=session_end)
+        validation_config = ValidationConfig(validation_triggers=triggers)
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+        orchestrator._validation_config = validation_config
+
+        result = orchestrator._get_track_review_issues()
+        assert result is False
+
+    def test_falls_back_to_env_when_no_code_review_config(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Falls back to env var when session_end has no code_review config."""
+        from src.domain.validation.config import (
+            FailureMode,
+            SessionEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        # session_end exists but code_review is None
+        session_end = SessionEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE, commands=()
+        )
+        triggers = ValidationTriggersConfig(session_end=session_end)
+        validation_config = ValidationConfig(validation_triggers=triggers)
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
+        orchestrator._validation_config = validation_config
+
+        # Should fall back to env var (default is True via MalaConfig)
+        result = orchestrator._get_track_review_issues()
+        assert result is True

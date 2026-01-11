@@ -460,7 +460,7 @@ class MalaOrchestrator:
 
         IssueFinalizer handles session_end tracking issues, so we check
         session_end.code_review specifically. Falls back to env var setting
-        if session_end has no enabled code_review config.
+        if session_end has no code_review config.
 
         Returns:
             True if review issues should be tracked, False otherwise.
@@ -471,9 +471,7 @@ class MalaOrchestrator:
                 session_end = getattr(triggers, "session_end", None)
                 if session_end is not None:
                     code_review = getattr(session_end, "code_review", None)
-                    if code_review is not None and getattr(
-                        code_review, "enabled", False
-                    ):
+                    if code_review is not None:
                         return getattr(code_review, "track_review_issues", True)
         # Fall back to env var setting
         return self._mala_config.track_review_issues
