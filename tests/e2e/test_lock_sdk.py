@@ -23,7 +23,7 @@ from claude_agent_sdk import (
     ClaudeSDKClient,
     ClaudeAgentOptions,
 )
-from claude_agent_sdk.types import HookMatcher, McpSdkServerConfig  # noqa: TC002
+from claude_agent_sdk.types import HookMatcher, McpSdkServerConfig
 
 from src.infra.hooks import make_stop_hook
 from src.infra.tools.env import SCRIPTS_DIR
@@ -66,21 +66,25 @@ def _agent_options(
     cwd: Path,
     max_turns: int = 3,
     env: dict[str, str] | None = None,
-    hooks: dict[str, list[object]] | None = None,
+    hooks: dict[str, list[HookMatcher]] | None = None,
     mcp_servers: dict[str, McpSdkServerConfig] | None = None,
 ) -> ClaudeAgentOptions:
     """Create standardized agent options for SDK e2e tests."""
-    return ClaudeAgentOptions(
-        cwd=str(cwd),
-        permission_mode="bypassPermissions",
-        model="haiku",  # Use haiku for faster/cheaper tests
-        max_turns=max_turns,
-        system_prompt={"type": "preset", "preset": "claude_code"},
-        setting_sources=["project", "user"],
-        env=env,
-        hooks=hooks,
-        mcp_servers=mcp_servers,
-    )
+    options_kwargs: dict[str, object] = {
+        "cwd": str(cwd),
+        "permission_mode": "bypassPermissions",
+        "model": "haiku",  # Use haiku for faster/cheaper tests
+        "max_turns": max_turns,
+        "system_prompt": {"type": "preset", "preset": "claude_code"},
+        "setting_sources": ["project", "user"],
+    }
+    if env is not None:
+        options_kwargs["env"] = env
+    if hooks is not None:
+        options_kwargs["hooks"] = hooks
+    if mcp_servers is not None:
+        options_kwargs["mcp_servers"] = mcp_servers
+    return ClaudeAgentOptions(**options_kwargs)  # type: ignore[arg-type]
 
 
 def _canonicalize_path(filepath: str, cwd: str) -> str:
@@ -186,7 +190,7 @@ class TestAgentAcquiresLocks:
         }
         options = _agent_options(cwd=tmp_path, env=env)
 
-        prompt = f"""You are testing the lock system. Run these commands exactly:
+        prompt = """You are testing the lock system. Run these commands exactly:
 
 ```bash
 set -euo pipefail
@@ -274,7 +278,7 @@ class TestAgentReleasesLocks:
         }
         options = _agent_options(cwd=tmp_path, env=env)
 
-        prompt = f"""You are testing the lock system. Run these commands exactly:
+        prompt = """You are testing the lock system. Run these commands exactly:
 
 ```bash
 set -euo pipefail
@@ -313,7 +317,7 @@ Respond with "DONE".
         }
         options = _agent_options(cwd=tmp_path, env=env)
 
-        prompt = f"""You are testing the lock system. Run these commands exactly:
+        prompt = """You are testing the lock system. Run these commands exactly:
 
 ```bash
 set -euo pipefail
@@ -429,7 +433,7 @@ class TestStopHookWithSDK:
         os.environ["MALA_LOCK_DIR"] = str(lock_dir)
 
         try:
-            prompt = f"""Run these commands to acquire locks:
+            prompt = """Run these commands to acquire locks:
 
 ```bash
 set -euo pipefail
@@ -482,7 +486,7 @@ class TestMultiAgentWithSDK:
         result_path = tmp_path / "handoff_result.txt"
 
         # Agent 1 acquires and releases
-        prompt1 = f"""Run these commands:
+        prompt1 = """Run these commands:
 
 ```bash
 set -euo pipefail
@@ -575,7 +579,9 @@ class TestAgentWorkflowE2E:
             check=True,
             capture_output=True,
         )
-        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
+        )
         subprocess.run(
             ["git", "commit", "-m", "initial"],
             cwd=tmp_path,
@@ -590,7 +596,7 @@ class TestAgentWorkflowE2E:
         }
         options = _agent_options(cwd=tmp_path, max_turns=8, env=env)
 
-        prompt = f"""You are implementing a feature. Follow this EXACT workflow:
+        prompt = """You are implementing a feature. Follow this EXACT workflow:
 
 1. Set up lock environment:
 ```bash
