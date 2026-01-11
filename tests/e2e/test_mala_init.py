@@ -10,6 +10,7 @@ deterministic behavior without depending on actual toolchains.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,14 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = pytest.mark.e2e
+
+
+def _skip_if_missing_cli() -> None:
+    """Skip test if mala or bd CLI is not available."""
+    if shutil.which("mala") is None:
+        pytest.skip("mala CLI not found in PATH")
+    if shutil.which("bd") is None:
+        pytest.skip("bd CLI not found in PATH")
 
 
 def _init_git_repo(repo_path: Path) -> None:
@@ -78,6 +87,7 @@ class TestInitGeneratesCorrectYamlStructure:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """mala init --yes --preset python-uv generates evidence_check and validation_triggers."""
+        _skip_if_missing_cli()
         monkeypatch.chdir(tmp_path)
         _init_git_repo(tmp_path)
         _create_stub_pyproject(tmp_path)
@@ -147,6 +157,7 @@ class TestInitGeneratesCorrectYamlStructure:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """mala init --skip-evidence --skip-triggers omits those sections."""
+        _skip_if_missing_cli()
         monkeypatch.chdir(tmp_path)
         _init_git_repo(tmp_path)
         _create_stub_pyproject(tmp_path)
@@ -191,27 +202,35 @@ class TestInitGeneratesCorrectYamlStructure:
 class TestInitWithRunVerification:
     """Tests verifying init + run produces expected behavior.
 
-    Note: These tests create a fixture with stub commands and an issue,
-    then verify that mala run executes validation commands and logs
-    the expected trigger messages.
+    These tests create a fixture with stub commands and an issue,
+    then verify the config is valid for mala run.
+
+    Note: Full behavioral verification (commands executed, run_end fired)
+    requires Claude SDK integration. That verification is covered by
+    TestE2ERunnerIntegration.test_run_real_fixture in test_e2e.py, which:
+    - Uses the E2ERunner with proper auth checks
+    - Spawns Claude agents to process issues
+    - Verifies run_validation in run metadata
+
+    These tests validate that init produces config compatible with that flow.
     """
 
     def test_init_with_stub_commands_produces_runnable_config(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Verify init config allows mala run with validation trigger firing.
+        """Verify init config allows mala run (via dry-run validation).
 
         This test:
         1. Creates a fixture repo with stub commands (echo ok)
         2. Runs mala init to generate config
         3. Overrides commands in mala.yaml to use stubs
         4. Creates a mock issue via bd
-        5. Runs mala run --dry-run to verify config is valid
+        5. Runs mala run --dry-run to verify config is valid and issue is picked up
 
-        Note: Full behavioral verification (commands executed, run_end fired)
-        requires Claude SDK integration which is covered by test_run_real_fixture
-        in test_e2e.py. This test validates the config structure is correct.
+        Full behavioral verification (commands executed, run_end triggered) is
+        covered by test_run_real_fixture in test_e2e.py which uses Claude SDK.
         """
+        _skip_if_missing_cli()
         monkeypatch.chdir(tmp_path)
         _init_git_repo(tmp_path)
         _create_stub_pyproject(tmp_path)
@@ -268,16 +287,19 @@ class TestInitWithRunVerification:
         )
         assert result.returncode == 0, f"bd create failed: {result.stderr}"
 
-        # Run mala run --dry-run to verify config is valid
+        # Run mala run --dry-run to verify config is valid and issue is picked up
+        # Note: cwd=tmp_path means mala run uses current dir (no positional arg needed)
         result = subprocess.run(
-            ["mala", "run", str(tmp_path), "--dry-run"],
+            ["mala", "run", "--dry-run"],
             cwd=tmp_path,
             capture_output=True,
             text=True,
         )
         assert result.returncode == 0, f"mala run --dry-run failed: {result.stderr}"
 
-        # Verify dry-run output shows the task
-        assert "task" in result.stdout.lower() or "issue" in result.stdout.lower(), (
-            f"Dry-run output doesn't show task info: {result.stdout}"
+        # Verify dry-run output shows the task was found
+        # dry-run lists tasks in format: "  1. [T-1] Test issue"
+        output = result.stdout + result.stderr
+        assert "Test issue" in output or "T-1" in output, (
+            f"Dry-run output doesn't show the created issue: {output}"
         )
