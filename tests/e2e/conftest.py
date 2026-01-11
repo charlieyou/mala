@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import pytest  # needed at runtime for pytest_configure
 
 if TYPE_CHECKING:
-    from _pytest.nodes import Item
+    from pytest import Item
 
 
 def pytest_configure(config: pytest.Config) -> None:
