@@ -435,6 +435,9 @@ def build_validation_spec(
     # Validate trigger command refs exist in effective base pool (fail fast at startup)
     _validate_trigger_command_refs(merged_config)
 
+    # Validate evidence_check refs exist in resolved command map (fail fast at startup)
+    _validate_evidence_check_refs(merged_config)
+
     # Ensure at least one command is defined after merge
     if not merged_config.has_any_command():
         raise ConfigError(
@@ -504,6 +507,53 @@ def build_validation_spec(
         yaml_coverage_config=merged_config.coverage if coverage_enabled else None,
         evidence_required=evidence_required,
     )
+
+
+def _validate_evidence_check_refs(config: ValidationConfig) -> None:
+    """Validate that evidence_check.required keys exist in the resolved command map.
+
+    The resolved command map includes both built-in commands (test, lint, format,
+    typecheck, e2e, setup, build) and custom commands from the merged config.
+
+    Args:
+        config: The effective merged ValidationConfig (after preset merge).
+
+    Raises:
+        ConfigError: If any required key references a command that doesn't exist.
+    """
+    from src.domain.validation.config import ConfigError
+
+    if config.evidence_check is None:
+        return  # No evidence_check configured
+
+    required_keys = config.evidence_check.required
+    if not required_keys:
+        return  # Empty required list is valid
+
+    # Build resolved command map (same logic as _validate_trigger_command_refs)
+    resolved_commands: set[str] = set()
+    base_cmds = config.commands
+
+    # Add built-in commands
+    for cmd_name in ("test", "lint", "format", "typecheck", "e2e", "setup", "build"):
+        base_cmd = getattr(base_cmds, cmd_name, None)
+        if base_cmd is not None:
+            resolved_commands.add(cmd_name)
+
+    # Add custom commands from commands section
+    for name in base_cmds.custom_commands:
+        resolved_commands.add(name)
+
+    # Validate each required key exists
+    for key in required_keys:
+        if key not in resolved_commands:
+            available = (
+                ", ".join(sorted(resolved_commands)) if resolved_commands else "(none)"
+            )
+            raise ConfigError(
+                f"evidence_check.required references unknown command "
+                f"'{key}'. Available: {available}"
+            )
 
 
 def _build_commands_from_config(

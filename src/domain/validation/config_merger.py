@@ -224,6 +224,9 @@ def merge_configs(
     # max_diff_size_kb: User value always takes precedence (presets don't define this)
     merged_max_diff_size_kb = user.max_diff_size_kb
 
+    # evidence_check: User value always takes precedence (presets don't define this)
+    merged_evidence_check = user.evidence_check
+
     return ValidationConfig(
         preset=user.preset,  # Keep user's preset reference
         commands=merged_commands,
@@ -239,6 +242,7 @@ def merge_configs(
         max_idle_retries=merged_max_idle_retries,
         idle_timeout_seconds=merged_idle_timeout_seconds,
         max_diff_size_kb=merged_max_diff_size_kb,
+        evidence_check=merged_evidence_check,
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 

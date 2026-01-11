@@ -856,3 +856,96 @@ validation_triggers:
         assert "lint" in error_msg
         assert "test" in error_msg
         assert "my_custom" in error_msg
+
+
+class TestEvidenceCheckValidation:
+    """Tests for evidence_check.required validation against resolved command map."""
+
+    def test_valid_key_from_preset_only(self, tmp_path: Path) -> None:
+        """evidence_check.required can reference preset-only commands (e.g., 'test')."""
+        # Uses python-uv preset which provides test command
+        yaml_content = """\
+preset: python-uv
+evidence_check:
+  required:
+    - test
+"""
+        (tmp_path / "mala.yaml").write_text(yaml_content)
+
+        spec = build_validation_spec(tmp_path)
+        assert spec.evidence_required == ("test",)
+
+    def test_valid_key_from_project_commands(self, tmp_path: Path) -> None:
+        """evidence_check.required can reference project-defined commands."""
+        yaml_content = """\
+commands:
+  lint: uvx ruff check .
+evidence_check:
+  required:
+    - lint
+"""
+        (tmp_path / "mala.yaml").write_text(yaml_content)
+
+        spec = build_validation_spec(tmp_path)
+        assert spec.evidence_required == ("lint",)
+
+    def test_invalid_key_produces_error_with_available_keys(
+        self, tmp_path: Path
+    ) -> None:
+        """Invalid evidence_check key produces error listing available commands."""
+        import pytest
+
+        from src.domain.validation.config import ConfigError
+
+        yaml_content = """\
+preset: python-uv
+commands:
+  test: uv run pytest
+  lint: uvx ruff check .
+evidence_check:
+  required:
+    - nonexistent
+"""
+        (tmp_path / "mala.yaml").write_text(yaml_content)
+
+        with pytest.raises(ConfigError) as exc_info:
+            build_validation_spec(tmp_path)
+
+        error_msg = str(exc_info.value)
+        assert (
+            "evidence_check.required references unknown command 'nonexistent'"
+            in error_msg
+        )
+        assert "lint" in error_msg
+        assert "test" in error_msg
+
+    def test_global_only_command_validates_pre_scope(self, tmp_path: Path) -> None:
+        """Commands that run only at global scope still validate in evidence_check."""
+        yaml_content = """\
+preset: python-uv
+commands:
+  test: uv run pytest
+  e2e: uv run pytest tests/e2e
+evidence_check:
+  required:
+    - e2e
+"""
+        (tmp_path / "mala.yaml").write_text(yaml_content)
+
+        spec = build_validation_spec(tmp_path)
+        assert spec.evidence_required == ("e2e",)
+
+    def test_project_override_of_preset_key(self, tmp_path: Path) -> None:
+        """Project can override preset command and still validate in evidence_check."""
+        yaml_content = """\
+preset: python-uv
+commands:
+  test: my-custom-test-runner
+evidence_check:
+  required:
+    - test
+"""
+        (tmp_path / "mala.yaml").write_text(yaml_content)
+
+        spec = build_validation_spec(tmp_path)
+        assert spec.evidence_required == ("test",)
