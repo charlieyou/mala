@@ -456,11 +456,22 @@ def _inject_cerberus_mode(repo_path: Path, cerberus_mode: str) -> None:
     session_end_indent = -1
     code_review_indent = -1
     cerberus_indent = -1
+    spawn_args_indent = -1  # Track block-style spawn_args
+    skipping_spawn_args_items = False
     modified = False
 
     for i, line in enumerate(lines):
         stripped = line.strip()
         current_indent = len(line) - len(line.lstrip()) if stripped else 999
+
+        # Skip block-style list items under spawn_args
+        if skipping_spawn_args_items:
+            if current_indent > spawn_args_indent and (
+                stripped.startswith("-") or not stripped
+            ):
+                continue  # Skip this list item
+            else:
+                skipping_spawn_args_items = False
 
         # Track context based on indentation
         if stripped.startswith("validation_triggers:") and current_indent == 0:
@@ -486,10 +497,19 @@ def _inject_cerberus_mode(repo_path: Path, cerberus_mode: str) -> None:
 
         # Replace spawn_args only when in the right context
         if in_cerberus and stripped.startswith("spawn_args:"):
-            new_line = re.sub(
-                r"spawn_args:\s*\[[^\]]*\]", f"spawn_args: {spawn_args_value}", line
-            )
-            output.append(new_line)
+            indent = len(line) - len(line.lstrip())
+            # Handle inline list: spawn_args: [...]
+            if "[" in line:
+                new_line = re.sub(
+                    r"spawn_args:\s*\[[^\]]*\]", f"spawn_args: {spawn_args_value}", line
+                )
+                output.append(new_line)
+            else:
+                # Block-style list: spawn_args:\n  - ... - replace with inline
+                output.append(" " * indent + f"spawn_args: {spawn_args_value}")
+                # Mark to skip subsequent list items
+                spawn_args_indent = indent
+                skipping_spawn_args_items = True
             modified = True
         else:
             output.append(line)
