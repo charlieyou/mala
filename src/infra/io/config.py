@@ -301,6 +301,7 @@ class MalaConfig:
             - MALA_CERBERUS_WAIT_ARGS: Use validation_triggers.<trigger>.code_review.cerberus.wait_args
             - MALA_CERBERUS_ENV: Use validation_triggers.<trigger>.code_review.cerberus.env
             - MALA_MAX_EPIC_VERIFICATION_RETRIES: Use validation_triggers.epic_completion.max_epic_verification_retries
+            - MALA_MAX_DIFF_SIZE_KB: Use max_diff_size_kb (root level)
 
         Args:
             validate: If True (default), run validation and raise ConfigurationError
