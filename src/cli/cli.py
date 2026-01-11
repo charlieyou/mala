@@ -976,6 +976,7 @@ def _prompt_custom_commands_questionary() -> dict[str, str] | None:
         result = questionary.text(f"Command for '{name}' (leave empty to skip):").ask()
         if result is None:
             return None  # User cancelled
+        result = result.strip()
         if result:
             commands[name] = result
     return commands
