@@ -173,8 +173,9 @@ class TestAgentAcquiresLocks:
     """Test that agents can acquire locks using the scripts."""
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(
-        reason="Shell scripts require uv run environment - LLM can't reliably invoke"
+    @pytest.mark.xfail(
+        reason="LLM may not reliably execute shell scripts verbatim",
+        strict=False,
     )
     async def test_agent_runs_lock_try_script(
         self,
@@ -354,8 +355,9 @@ class TestAgentHandlesContention:
     """Test agent behavior when encountering locked files."""
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(
-        reason="Shell scripts require uv run environment - LLM can't reliably invoke"
+    @pytest.mark.xfail(
+        reason="LLM may not reliably execute shell scripts verbatim",
+        strict=False,
     )
     async def test_agent_detects_blocked_file(
         self,
@@ -479,8 +481,9 @@ class TestMultiAgentWithSDK:
     """Test multiple agents interacting with locks via SDK."""
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(
-        reason="Shell scripts require uv run environment - LLM can't reliably invoke"
+    @pytest.mark.xfail(
+        reason="LLM may not reliably execute shell scripts verbatim",
+        strict=False,
     )
     async def test_sequential_agents_handoff_lock(
         self,
