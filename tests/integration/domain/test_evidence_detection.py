@@ -295,3 +295,106 @@ evidence_check:
             f"Expected evidence_required=('test',) but got {spec.evidence_required!r}. "
             "This failure is expected until T002 implements evidence_check parsing."
         )
+
+    def test_full_flow_with_filtering(self, tmp_path: Path) -> None:
+        """Full flow: config parsing → build_validation_spec → evidence check with filtering.
+
+        This test verifies integration test 22 from the plan:
+        - Config with evidence_check.required filters which commands are checked
+        - Commands not in required list don't cause failures even if not run
+        """
+        from src.domain.validation.config_loader import load_config
+        from src.domain.validation.spec import ValidationScope, build_validation_spec
+
+        from src.domain.evidence_check import (
+            check_evidence_against_spec,
+            ValidationEvidence,
+        )
+
+        # Create mala.yaml with multiple commands but only one required
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """\
+commands:
+  lint: "echo lint"
+  format: "echo format"
+  test: "echo test"
+
+evidence_check:
+  required:
+    - lint
+"""
+        )
+
+        # Load config and build spec
+        config = load_config(tmp_path)
+        spec = build_validation_spec(
+            tmp_path,
+            scope=ValidationScope.PER_SESSION,
+            validation_config=config,
+        )
+
+        # Verify only "lint" is required
+        assert spec.evidence_required == ("lint",)
+
+        # Create evidence where lint ran but test/format did not
+        # Since only lint is required, this should pass
+        from src.domain.validation.spec import CommandKind
+
+        evidence = ValidationEvidence(
+            commands_ran={CommandKind.LINT: True},
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        # Should pass because lint ran (format/test not required)
+        assert passed is True
+        assert missing == []
+        assert failed_strict == []
+
+    def test_preset_merge_with_project_evidence_check(self, tmp_path: Path) -> None:
+        """Preset + project merge: project evidence_check overrides/extends preset.
+
+        This test verifies integration test 23 from the plan:
+        - Project mala.yaml can specify preset (e.g., python-uv)
+        - Project evidence_check.required takes precedence
+        - The resolved commands from preset are available in spec
+        """
+        from src.domain.validation.config_loader import load_config
+        from src.domain.validation.spec import ValidationScope, build_validation_spec
+
+        # Create mala.yaml extending a preset with custom evidence_check
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """\
+preset: python-uv
+
+evidence_check:
+  required:
+    - lint
+    - format
+"""
+        )
+
+        # Load config - this exercises preset merging
+        config = load_config(tmp_path)
+
+        # Verify evidence_check was parsed from project config
+        assert config.evidence_check is not None
+        assert config.evidence_check.required == ("lint", "format")
+
+        # Build validation spec - exercises full wiring
+        spec = build_validation_spec(
+            tmp_path,
+            scope=ValidationScope.PER_SESSION,
+            validation_config=config,
+        )
+
+        # Verify evidence_required is set from project config
+        assert spec.evidence_required == ("lint", "format")
+
+        # Verify commands from preset are available
+        # python-uv preset includes lint, format, typecheck, test
+        command_names = [cmd.name for cmd in spec.commands]
+        assert "lint" in command_names
+        assert "format" in command_names
