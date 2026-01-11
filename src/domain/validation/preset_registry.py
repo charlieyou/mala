@@ -15,7 +15,11 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import yaml
 
-from src.domain.validation.config import ConfigError, PresetNotFoundError
+from src.domain.validation.config import (
+    BUILTIN_COMMAND_NAMES,
+    ConfigError,
+    PresetNotFoundError,
+)
 from src.domain.validation.config_loader import _build_config
 
 if TYPE_CHECKING:
@@ -39,9 +43,7 @@ class PresetRegistry:
     _PRESETS_PACKAGE: ClassVar[str] = "src.domain.validation.presets"
 
     # Built-in command keys that presets are allowed to define
-    _BUILTIN_COMMAND_KEYS: ClassVar[frozenset[str]] = frozenset(
-        {"setup", "build", "format", "lint", "typecheck", "test", "e2e"}
-    )
+    _BUILTIN_COMMAND_KEYS: ClassVar[frozenset[str]] = BUILTIN_COMMAND_NAMES
 
     # Mapping of preset names to YAML filenames
     _PRESET_FILES: ClassVar[dict[str, str]] = {

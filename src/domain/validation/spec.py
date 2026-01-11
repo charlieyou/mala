@@ -521,7 +521,7 @@ def _validate_evidence_check_refs(config: ValidationConfig) -> None:
     Raises:
         ConfigError: If any required key references a command that doesn't exist.
     """
-    from src.domain.validation.config import ConfigError
+    from src.domain.validation.config import BUILTIN_COMMAND_NAMES, ConfigError
 
     if config.evidence_check is None:
         return  # No evidence_check configured
@@ -535,7 +535,7 @@ def _validate_evidence_check_refs(config: ValidationConfig) -> None:
     base_cmds = config.commands
 
     # Add built-in commands
-    for cmd_name in ("test", "lint", "format", "typecheck", "e2e", "setup", "build"):
+    for cmd_name in BUILTIN_COMMAND_NAMES:
         base_cmd = getattr(base_cmds, cmd_name, None)
         if base_cmd is not None:
             resolved_commands.add(cmd_name)

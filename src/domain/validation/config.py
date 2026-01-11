@@ -30,6 +30,13 @@ from src.core.constants import VALID_CLAUDE_SETTINGS_SOURCES
 # followed by letters, digits, underscores, or hyphens
 CUSTOM_COMMAND_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 
+# Built-in command names supported by CommandsConfig.
+# Used for validation in multiple places (config parsing, preset validation,
+# evidence_check reference validation).
+BUILTIN_COMMAND_NAMES: frozenset[str] = frozenset(
+    {"setup", "build", "test", "lint", "format", "typecheck", "e2e"}
+)
+
 
 class TriggerType(Enum):
     """Type of validation trigger.
@@ -699,10 +706,8 @@ class CommandsConfig:
         if data is None:
             return cls()
 
-        valid_kinds = ("setup", "build", "test", "lint", "format", "typecheck", "e2e")
-
         # Identify custom command keys (preserving YAML order via data iteration)
-        reserved_keys = set(valid_kinds)
+        reserved_keys = BUILTIN_COMMAND_NAMES
         custom_keys_ordered: list[str] = []
         for k in data:
             if k in reserved_keys:
