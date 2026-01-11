@@ -64,6 +64,8 @@ Fires when an epic (story/milestone) completes verification.
 | `fire_on` | Yes | `success`, `failure`, `both` | When to fire based on verification result |
 | `failure_mode` | Yes | `abort`, `continue`, `remediate` | How to handle validation failures |
 | `max_retries` | When remediate | Integer | Retry attempts for remediation |
+| `max_epic_verification_retries` | No | Integer | Maximum retries for epic verification loop (default: 3) |
+| `epic_verify_lock_timeout_seconds` | No | Integer | Timeout in seconds for acquiring epic verification lock (default: 300) |
 | `commands` | No | List | Commands to run (empty = no validation) |
 
 **epic_depth values:**

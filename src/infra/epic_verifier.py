@@ -50,8 +50,8 @@ SPEC_PATH_PATTERNS = [
 ]
 
 
-# Lock timeout for epic verification (5 minutes)
-EPIC_VERIFY_LOCK_TIMEOUT_SECONDS = 300
+# Default lock timeout for epic verification (5 minutes)
+DEFAULT_EPIC_VERIFY_LOCK_TIMEOUT_SECONDS = 300
 
 
 @asynccontextmanager
@@ -59,8 +59,15 @@ async def epic_verify_lock(
     epic_id: str,
     repo_path: Path,
     lock_manager: LockManagerPort | None,
+    timeout_seconds: int | None = None,
 ) -> AsyncIterator[bool]:
     """Acquire per-epic verification lock with automatic cleanup.
+
+    Args:
+        epic_id: Epic identifier for lock key.
+        repo_path: Repository path for lock context.
+        lock_manager: Lock manager instance or None (no locking).
+        timeout_seconds: Lock acquisition timeout. None uses default (300s).
 
     Yields True if lock acquired (or locking unavailable), False if timed out.
     Caller decides how to handle False (skip, return empty result, etc.)
@@ -71,13 +78,18 @@ async def epic_verify_lock(
 
     lock_key = f"epic_verify:{epic_id}"
     lock_agent_id = f"epic_verifier_{os.getpid()}"
+    effective_timeout = (
+        timeout_seconds
+        if timeout_seconds is not None
+        else DEFAULT_EPIC_VERIFY_LOCK_TIMEOUT_SECONDS
+    )
 
     acquired = await asyncio.to_thread(
         lock_manager.wait_for_lock,
         lock_key,
         lock_agent_id,
         str(repo_path),
-        EPIC_VERIFY_LOCK_TIMEOUT_SECONDS,
+        effective_timeout,
     )
 
     try:
@@ -375,6 +387,7 @@ class EpicVerifier:
         event_sink: MalaEventSink | None = None,
         scope_analyzer: EpicScopeAnalyzer | None = None,
         max_diff_size_kb: int | None = None,
+        lock_timeout_seconds: int | None = None,
     ):
         """Initialize EpicVerifier.
 
@@ -390,6 +403,8 @@ class EpicVerifier:
                 If not provided, a default instance is created.
             max_diff_size_kb: Maximum diff size in KB. If set and diff exceeds limit,
                 verification is skipped and returns a verdict requiring human review.
+            lock_timeout_seconds: Timeout in seconds for acquiring epic verification
+                lock. None uses the default (300 seconds).
         """
         self.beads = beads
         self.model = model
@@ -402,6 +417,7 @@ class EpicVerifier:
             repo_path, self._runner
         )
         self.max_diff_size_kb = max_diff_size_kb
+        self.lock_timeout_seconds = lock_timeout_seconds
 
     async def _get_diff_size_kb(self, commit_range: str) -> int | None:
         """Get approximate diff size in KB for a commit range.
@@ -837,7 +853,7 @@ class EpicVerifier:
             )
 
         async with epic_verify_lock(
-            epic_id, self.repo_path, self.lock_manager
+            epic_id, self.repo_path, self.lock_manager, self.lock_timeout_seconds
         ) as acquired:
             if not acquired:
                 return EpicVerificationResult(

@@ -730,6 +730,7 @@ _EPIC_COMPLETION_FIELDS = frozenset(
         "fire_on",
         "code_review",
         "max_epic_verification_retries",
+        "epic_verify_lock_timeout_seconds",
     }
 )
 
@@ -820,6 +821,23 @@ def _parse_epic_completion_trigger(
                 )
             max_epic_verification_retries = val
 
+    # Parse epic_verify_lock_timeout_seconds (optional)
+    epic_verify_lock_timeout_seconds: int | None = None
+    if "epic_verify_lock_timeout_seconds" in data:
+        val = data["epic_verify_lock_timeout_seconds"]
+        if val is not None:
+            if not isinstance(val, int) or isinstance(val, bool):
+                raise ConfigError(
+                    f"epic_verify_lock_timeout_seconds must be an integer for trigger "
+                    f"{trigger_name}, got {type(val).__name__}"
+                )
+            if val < 0:
+                raise ConfigError(
+                    f"epic_verify_lock_timeout_seconds must be non-negative for trigger "
+                    f"{trigger_name}, got {val}"
+                )
+            epic_verify_lock_timeout_seconds = val
+
     return EpicCompletionTriggerConfig(
         failure_mode=failure_mode,
         commands=commands,
@@ -828,6 +846,7 @@ def _parse_epic_completion_trigger(
         fire_on=fire_on,
         code_review=code_review,
         max_epic_verification_retries=max_epic_verification_retries,
+        epic_verify_lock_timeout_seconds=epic_verify_lock_timeout_seconds,
     )
 
 

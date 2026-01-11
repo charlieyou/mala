@@ -316,6 +316,90 @@ class TestDeriveConfig:
 
         assert derived.max_epic_verification_retries is None
 
+    def test_epic_verify_lock_timeout_seconds_from_epic_completion_config(self) -> None:
+        """epic_verify_lock_timeout_seconds is extracted from epic_completion config."""
+        from src.domain.validation.config import (
+            EpicCompletionTriggerConfig,
+            EpicDepth,
+            FailureMode,
+            FireOn,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        validation_config = ValidationConfig(
+            validation_triggers=ValidationTriggersConfig(
+                epic_completion=EpicCompletionTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                    epic_depth=EpicDepth.ALL,
+                    fire_on=FireOn.SUCCESS,
+                    epic_verify_lock_timeout_seconds=120,
+                ),
+            ),
+        )
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.epic_verify_lock_timeout_seconds == 120
+
+    def test_epic_verify_lock_timeout_seconds_none_when_no_epic_completion(
+        self,
+    ) -> None:
+        """epic_verify_lock_timeout_seconds is None when no epic_completion trigger."""
+        from src.domain.validation.config import ValidationConfig
+
+        validation_config = ValidationConfig()
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.epic_verify_lock_timeout_seconds is None
+
+    def test_epic_verify_lock_timeout_seconds_none_when_field_unset(self) -> None:
+        """epic_verify_lock_timeout_seconds is None when field not set in config."""
+        from src.domain.validation.config import (
+            EpicCompletionTriggerConfig,
+            EpicDepth,
+            FailureMode,
+            FireOn,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        validation_config = ValidationConfig(
+            validation_triggers=ValidationTriggersConfig(
+                epic_completion=EpicCompletionTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                    epic_depth=EpicDepth.ALL,
+                    fire_on=FireOn.SUCCESS,
+                    # epic_verify_lock_timeout_seconds not set
+                ),
+            ),
+        )
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.epic_verify_lock_timeout_seconds is None
+
     def test_timeout_from_validation_config(self) -> None:
         """timeout_minutes is read from validation_config when CLI is not set."""
         from src.domain.validation.config import ValidationConfig

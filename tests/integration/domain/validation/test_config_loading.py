@@ -261,3 +261,50 @@ class TestCodeReviewParsing:
         code_review = config.validation_triggers.session_end.code_review
         assert code_review is not None
         assert code_review.track_review_issues is False
+
+
+class TestEpicCompletionTriggerFields:
+    """Tests for epic_completion trigger-specific fields."""
+
+    def test_epic_verify_lock_timeout_seconds_default(self, tmp_path: Path) -> None:
+        """epic_verify_lock_timeout_seconds defaults to None when not set."""
+        yaml_content = dedent("""\
+            preset: python-uv
+            validation_triggers:
+              epic_completion:
+                epic_depth: all
+                fire_on: success
+                failure_mode: continue
+                commands: []
+        """)
+        config_file = tmp_path / "mala.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_config(tmp_path)
+
+        assert config.validation_triggers is not None
+        epic_completion = config.validation_triggers.epic_completion
+        assert epic_completion is not None
+        assert epic_completion.epic_verify_lock_timeout_seconds is None
+
+    def test_epic_verify_lock_timeout_seconds_explicit(self, tmp_path: Path) -> None:
+        """epic_verify_lock_timeout_seconds can be set explicitly."""
+        yaml_content = dedent("""\
+            preset: python-uv
+            validation_triggers:
+              epic_completion:
+                epic_depth: all
+                fire_on: success
+                failure_mode: continue
+                commands: []
+                epic_verify_lock_timeout_seconds: 120
+        """)
+        config_file = tmp_path / "mala.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_config(tmp_path)
+
+        assert config.validation_triggers is not None
+        epic_completion = config.validation_triggers.epic_completion
+        assert epic_completion is not None
+        assert epic_completion.epic_verify_lock_timeout_seconds == 120

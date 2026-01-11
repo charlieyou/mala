@@ -177,8 +177,10 @@ def _derive_config(
             if session_end is not None:
                 max_gate_retries = getattr(session_end, "max_retries", None)
 
-    # Extract max_epic_verification_retries from epic_completion trigger config
+    # Extract max_epic_verification_retries and epic_verify_lock_timeout_seconds
+    # from epic_completion trigger config
     max_epic_verification_retries: int | None = None
+    epic_verify_lock_timeout_seconds: int | None = None
     if validation_config is not None:
         triggers = getattr(validation_config, "validation_triggers", None)
         if triggers is not None:
@@ -186,6 +188,9 @@ def _derive_config(
             if epic_completion is not None:
                 max_epic_verification_retries = getattr(
                     epic_completion, "max_epic_verification_retries", None
+                )
+                epic_verify_lock_timeout_seconds = getattr(
+                    epic_completion, "epic_verify_lock_timeout_seconds", None
                 )
 
     # Compute context thresholds - precedence: CLI > mala.yaml > default
@@ -265,6 +270,7 @@ def _derive_config(
         max_review_retries=max_review_retries,
         max_epic_verification_retries=max_epic_verification_retries,
         max_diff_size_kb=max_diff_size_kb,
+        epic_verify_lock_timeout_seconds=epic_verify_lock_timeout_seconds,
         validation_config=validation_config,
         validation_config_missing=validation_config_missing,
     )
@@ -614,6 +620,7 @@ def _build_dependencies(
                 event_sink=event_sink,
                 lock_manager=LockManager(),
                 max_diff_size_kb=derived.max_diff_size_kb,
+                lock_timeout_seconds=derived.epic_verify_lock_timeout_seconds,
             ),
         )
 

@@ -306,11 +306,14 @@ class EpicCompletionTriggerConfig(BaseTriggerConfig):
         max_epic_verification_retries: Maximum retries for epic verification loop.
             This controls how many times the orchestrator will retry epic verification
             after the first attempt fails. None means use the default (from env var or 3).
+        epic_verify_lock_timeout_seconds: Timeout in seconds for acquiring epic verification
+            lock. None means use the default (300 seconds).
     """
 
     epic_depth: EpicDepth
     fire_on: FireOn
     max_epic_verification_retries: int | None = None
+    epic_verify_lock_timeout_seconds: int | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
