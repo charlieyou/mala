@@ -230,3 +230,71 @@ class TestEvidenceDetectionCustomCommandsIntegration:
         assert evidence.custom_commands_ran["security_check"] is True
         assert evidence.custom_commands_failed.get("import_lint", False) is False
         assert evidence.custom_commands_failed["security_check"] is True
+
+
+class TestEvidenceCheckConfigIntegration:
+    """Integration test for evidence_check configuration (T001).
+
+    This test exercises the full config parse → preset merge → evidence check flow.
+    """
+
+    def test_evidence_check_config_parsing_end_to_end(self, tmp_path: Path) -> None:
+        """Evidence check config is parsed, merged, and surfaces in ValidationSpec.
+
+        This test creates a mala.yaml with:
+        1. evidence_check.required: [test]
+        2. Minimal commands config
+
+        Expected behavior (after T002-T004):
+        - ValidationSpec.evidence_required contains "test"
+        - Evidence filtering respects the required list
+
+        Current behavior (stub):
+        - evidence_check parsing returns None (test FAILS)
+
+        Note: This test MUST fail with "assertion error" on evidence_required,
+        NOT with import errors or syntax errors. The skeleton infrastructure
+        must be wired correctly for downstream tasks.
+        """
+        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.spec import ValidationScope, build_validation_spec
+
+        # Create minimal mala.yaml with evidence_check
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """\
+commands:
+  test: "echo test"
+
+evidence_check:
+  required:
+    - test
+"""
+        )
+
+        # Parse the config - should NOT raise (stubs are wired)
+        config = ValidationConfig.from_dict(
+            {
+                "commands": {"test": "echo test"},
+                "evidence_check": {"required": ["test"]},
+            }
+        )
+
+        # Verify evidence_check field exists on ValidationConfig
+        # This will be None because the stub returns None
+        assert hasattr(config, "evidence_check")
+
+        # Build validation spec from config file
+        spec = build_validation_spec(
+            tmp_path,
+            scope=ValidationScope.PER_SESSION,
+        )
+
+        # This assertion FAILS because:
+        # 1. _parse_evidence_check_config() returns None (stub)
+        # 2. build_validation_spec() doesn't yet propagate evidence_required from config
+        # T002 will implement parsing, T004 will implement the flow
+        assert spec.evidence_required == ("test",), (
+            f"Expected evidence_required=('test',) but got {spec.evidence_required!r}. "
+            "This failure is expected until T002 implements evidence_check parsing."
+        )

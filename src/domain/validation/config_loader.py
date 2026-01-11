@@ -38,6 +38,7 @@ if TYPE_CHECKING:
         BaseTriggerConfig,
         CerberusConfig,
         CodeReviewConfig,
+        EvidenceCheckConfig,
     )
 
 
@@ -78,6 +79,7 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "max_idle_retries",
         "idle_timeout_seconds",
         "max_diff_size_kb",
+        "evidence_check",
     }
 )
 
@@ -719,6 +721,27 @@ def _parse_code_review_config(
         agent_sdk_model=agent_sdk_model,
         track_review_issues=track_review_issues,
     )
+
+
+def _parse_evidence_check_config(
+    data: dict[str, Any],
+) -> EvidenceCheckConfig | None:
+    """Parse evidence_check configuration block.
+
+    Args:
+        data: The evidence_check config dict from mala.yaml.
+
+    Returns:
+        EvidenceCheckConfig if data is provided, None otherwise.
+
+    Note:
+        This is a stub that returns None. Actual parsing logic
+        will be implemented in T002.
+    """
+    # Stub: return None to indicate no evidence filtering configured
+    # T002 will implement the actual parsing of the 'required' field
+    _ = data  # Unused in stub - will be used in T002
+    return None
 
 
 _EPIC_COMPLETION_FIELDS = frozenset(

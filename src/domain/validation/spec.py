@@ -165,6 +165,8 @@ class ValidationSpec:
         setup_files: Lock/dependency files that invalidate setup cache.
         yaml_coverage_config: Optional YamlCoverageConfig from mala.yaml for
             baseline refresh (contains command and file path).
+        evidence_required: Tuple of evidence type names that must be present.
+            Empty tuple means no specific evidence is required.
     """
 
     commands: list[ValidationCommand]
@@ -177,6 +179,7 @@ class ValidationSpec:
     config_files: list[str] = field(default_factory=list)
     setup_files: list[str] = field(default_factory=list)
     yaml_coverage_config: YamlCoverageConfig | None = None
+    evidence_required: tuple[str, ...] = field(default_factory=tuple)
 
     def commands_by_kind(self, kind: CommandKind) -> list[ValidationCommand]:
         """Return commands matching the given kind."""

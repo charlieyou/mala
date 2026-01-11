@@ -760,6 +760,19 @@ class CommandsConfig:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class EvidenceCheckConfig:
+    """Configuration for evidence_check in mala.yaml.
+
+    Controls which evidence types are required for validation gating.
+
+    Attributes:
+        required: Tuple of evidence type names that must be present.
+    """
+
+    required: tuple[str, ...] = field(default_factory=tuple)
+
+
 @dataclass(frozen=True)
 class ValidationConfig:
     """Top-level configuration from mala.yaml.
@@ -786,6 +799,7 @@ class ValidationConfig:
             None means derive from agent timeout; 0 disables idle timeout.
         max_diff_size_kb: Maximum diff size in KB for epic verification.
             None means use default (no limit).
+        evidence_check: Evidence check configuration. None means no evidence filtering.
         _fields_set: Set of field names that were explicitly provided in source.
             Used by the merger to distinguish "not set" from "explicitly set".
     """
@@ -804,6 +818,7 @@ class ValidationConfig:
     max_idle_retries: int | None = None
     idle_timeout_seconds: float | None = None
     max_diff_size_kb: int | None = None
+    evidence_check: EvidenceCheckConfig | None = None
     _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
@@ -1053,6 +1068,26 @@ class ValidationConfig:
                     )
                 max_diff_size_kb = mds_value
 
+        # Parse evidence_check - use lazy import to avoid circular dependency
+        evidence_check: EvidenceCheckConfig | None = None
+        if "evidence_check" in data:
+            fields_set.add("evidence_check")
+            ec_data = data["evidence_check"]
+            if ec_data is not None:
+                if not isinstance(ec_data, dict):
+                    raise ConfigError(
+                        f"evidence_check must be an object, "
+                        f"got {type(ec_data).__name__}"
+                    )
+                # Lazy import to avoid circular dependency with config_loader
+                from src.domain.validation.config_loader import (
+                    _parse_evidence_check_config,
+                )
+
+                evidence_check = _parse_evidence_check_config(
+                    cast("dict[str, object]", ec_data)
+                )
+
         return cls(
             preset=preset,
             commands=commands,
@@ -1068,6 +1103,7 @@ class ValidationConfig:
             max_idle_retries=max_idle_retries,
             idle_timeout_seconds=idle_timeout_seconds,
             max_diff_size_kb=max_diff_size_kb,
+            evidence_check=evidence_check,
             _fields_set=frozenset(fields_set),
         )
 
