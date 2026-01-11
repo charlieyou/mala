@@ -19,6 +19,8 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import questionary  # noqa: F401 - will be used in T002 implementation
+
 from ..orchestration.cli_support import USER_CONFIG_DIR, get_runs_dir, load_user_env
 
 if TYPE_CHECKING:
@@ -958,6 +960,120 @@ def _write_with_backup(path: Path, content: str) -> None:
         backup_path = path.with_suffix(".yaml.bak")
         shutil.copy(path, backup_path)
     path.write_text(content)
+
+
+def _get_preset_command_names(preset_name: str) -> list[str]:
+    """Get command names defined in a preset.
+
+    Args:
+        preset_name: Name of the preset (e.g., 'python-uv', 'go')
+
+    Returns:
+        List of command names defined in the preset.
+    """
+    raise NotImplementedError("Not implemented")
+
+
+def _prompt_preset_selection(presets: list[str]) -> str | None:
+    """Prompt user to select a preset using questionary.
+
+    Args:
+        presets: List of available preset names.
+
+    Returns:
+        Selected preset name, or None if user chooses custom.
+    """
+    raise NotImplementedError("Not implemented")
+
+
+def _prompt_custom_commands_questionary() -> dict[str, str]:
+    """Prompt user for custom validation commands using questionary.
+
+    Returns:
+        Dictionary of command name to command string (empty values omitted).
+    """
+    raise NotImplementedError("Not implemented")
+
+
+def _compute_evidence_defaults(commands: list[str], is_preset: bool) -> list[str]:
+    """Compute default evidence check commands.
+
+    Args:
+        commands: List of command names available.
+        is_preset: True if using a preset, False for custom.
+
+    Returns:
+        List of command names that should be evidence checks by default.
+    """
+    raise NotImplementedError("Not implemented")
+
+
+def _compute_trigger_defaults(commands: list[str], is_preset: bool) -> list[str]:
+    """Compute default validation trigger commands.
+
+    Args:
+        commands: List of command names available.
+        is_preset: True if using a preset, False for custom.
+
+    Returns:
+        List of command names that should be triggers by default.
+    """
+    raise NotImplementedError("Not implemented")
+
+
+def _prompt_evidence_check(commands: list[str], is_preset: bool) -> list[str] | None:
+    """Prompt user to select evidence check commands.
+
+    Args:
+        commands: List of command names available.
+        is_preset: True if using a preset, False for custom.
+
+    Returns:
+        List of selected command names, or None to skip.
+    """
+    raise NotImplementedError("Not implemented")
+
+
+def _prompt_run_end_trigger(commands: list[str], is_preset: bool) -> list[str] | None:
+    """Prompt user to select run-end validation trigger commands.
+
+    Args:
+        commands: List of command names available.
+        is_preset: True if using a preset, False for custom.
+
+    Returns:
+        List of selected command names, or None to skip.
+    """
+    raise NotImplementedError("Not implemented")
+
+
+def _build_evidence_check_dict(required: list[str]) -> dict[str, list[str]]:
+    """Build evidence_check config dict from selected commands.
+
+    Args:
+        required: List of command names that are required evidence.
+
+    Returns:
+        Dict with 'required' key mapping to the command list.
+    """
+    raise NotImplementedError("Not implemented")
+
+
+def _build_validation_triggers_dict(commands: list[str]) -> dict[str, Any]:
+    """Build validation_triggers config dict from selected commands.
+
+    Args:
+        commands: List of command names for run-end triggers.
+
+    Returns:
+        Dict with trigger configuration.
+    """
+    raise NotImplementedError("Not implemented")
+
+
+def _print_trigger_reference_table() -> None:
+    """Print a reference table showing available trigger types."""
+    raise NotImplementedError("Not implemented")
 
 
 @app.command()

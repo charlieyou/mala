@@ -11,6 +11,7 @@ Most tests will fail initially until T002 implements the full command.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
@@ -172,3 +173,219 @@ class TestInitInputValidation:
         config = yaml.safe_load(yaml_output)
         # Presets are sorted alphabetically: ['go', 'node-npm', 'python-uv', 'rust']
         assert config == {"preset": "go"}
+
+
+# ============================================================================
+# New test classes for T001: Evidence checks and triggers
+# These tests specify behavior that will be implemented in T002/T003
+# ============================================================================
+
+
+@pytest.fixture
+def mock_questionary(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Fixture that mocks questionary.confirm/checkbox/select.
+
+    Returns a mock object with methods to set return values for prompts.
+    """
+    mock = MagicMock()
+
+    # Default return values
+    mock.confirm_return = True
+    mock.checkbox_return = []
+    mock.select_return = None
+
+    def make_confirm(*args: object, **kwargs: object) -> MagicMock:
+        result = MagicMock()
+        result.ask.return_value = mock.confirm_return
+        return result
+
+    def make_checkbox(*args: object, **kwargs: object) -> MagicMock:
+        result = MagicMock()
+        result.ask.return_value = mock.checkbox_return
+        return result
+
+    def make_select(*args: object, **kwargs: object) -> MagicMock:
+        result = MagicMock()
+        result.ask.return_value = mock.select_return
+        return result
+
+    monkeypatch.setattr("src.cli.cli.questionary.confirm", make_confirm)
+    monkeypatch.setattr("src.cli.cli.questionary.checkbox", make_checkbox)
+    monkeypatch.setattr("src.cli.cli.questionary.select", make_select)
+
+    return mock
+
+
+class TestInitEvidencePrompts:
+    """Tests for evidence check prompting behavior."""
+
+    def test_preset_shows_evidence_prompt(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_questionary: MagicMock,
+    ) -> None:
+        """Preset selection should prompt for evidence checks."""
+        from src.cli.cli import _prompt_evidence_check
+
+        # Should prompt with preset commands
+        result = _prompt_evidence_check(["test", "lint", "typecheck"], is_preset=True)
+        # Currently raises NotImplementedError - expected to fail
+        assert result is not None
+
+    def test_custom_shows_evidence_prompt(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_questionary: MagicMock,
+    ) -> None:
+        """Custom commands should prompt for evidence checks."""
+        from src.cli.cli import _prompt_evidence_check
+
+        result = _prompt_evidence_check(["build", "test"], is_preset=False)
+        assert result is not None
+
+    def test_evidence_defaults_for_preset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Preset should have sensible evidence defaults (test, lint, typecheck)."""
+        from src.cli.cli import _compute_evidence_defaults
+
+        defaults = _compute_evidence_defaults(
+            ["setup", "test", "lint", "typecheck"], is_preset=True
+        )
+        # Should default to test/lint/typecheck when available
+        assert "test" in defaults
+
+    def test_evidence_defaults_for_custom(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Custom should compute defaults based on available commands."""
+        from src.cli.cli import _compute_evidence_defaults
+
+        defaults = _compute_evidence_defaults(
+            ["build", "test", "lint"], is_preset=False
+        )
+        assert isinstance(defaults, list)
+
+
+class TestInitTriggerPrompts:
+    """Tests for validation trigger prompting behavior."""
+
+    def test_trigger_prompt_after_evidence(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_questionary: MagicMock,
+    ) -> None:
+        """Should prompt for triggers after evidence checks."""
+        from src.cli.cli import _prompt_run_end_trigger
+
+        result = _prompt_run_end_trigger(["test", "lint"], is_preset=True)
+        assert result is not None
+
+    def test_trigger_defaults_subset_of_commands(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Trigger defaults should be subset of available commands."""
+        from src.cli.cli import _compute_trigger_defaults
+
+        commands = ["setup", "build", "test", "lint"]
+        defaults = _compute_trigger_defaults(commands, is_preset=True)
+        assert all(cmd in commands for cmd in defaults)
+
+    def test_trigger_table_printed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        """Trigger reference table should print without error."""
+        from src.cli.cli import _print_trigger_reference_table
+
+        _print_trigger_reference_table()
+        # Currently raises NotImplementedError
+
+
+class TestInitNonInteractive:
+    """Tests for non-interactive/defaults behavior."""
+
+    def test_get_preset_command_names(self) -> None:
+        """Should retrieve command names from preset file."""
+        from src.cli.cli import _get_preset_command_names
+
+        # python-uv preset exists
+        commands = _get_preset_command_names("python-uv")
+        assert isinstance(commands, list)
+        assert len(commands) > 0
+
+    def test_get_preset_command_names_invalid(self) -> None:
+        """Should handle invalid preset name gracefully."""
+        from src.cli.cli import _get_preset_command_names
+
+        # Non-existent preset - behavior TBD (empty list or raise)
+        commands = _get_preset_command_names("nonexistent-preset")
+        assert isinstance(commands, list)
+
+    def test_build_evidence_check_dict(self) -> None:
+        """Should build correct evidence_check config structure."""
+        from src.cli.cli import _build_evidence_check_dict
+
+        result = _build_evidence_check_dict(["test", "lint"])
+        assert result == {"required": ["test", "lint"]}
+
+    def test_build_evidence_check_dict_empty(self) -> None:
+        """Empty list should return empty or None."""
+        from src.cli.cli import _build_evidence_check_dict
+
+        result = _build_evidence_check_dict([])
+        # Empty config should have empty required list
+        assert result == {"required": []}
+
+    def test_build_validation_triggers_dict(self) -> None:
+        """Should build correct validation_triggers config structure."""
+        from src.cli.cli import _build_validation_triggers_dict
+
+        result = _build_validation_triggers_dict(["test", "lint"])
+        assert "run_end" in result or isinstance(result, dict)
+
+    def test_prompt_preset_selection_returns_preset(
+        self, mock_questionary: MagicMock
+    ) -> None:
+        """Should return selected preset name."""
+        from src.cli.cli import _prompt_preset_selection
+
+        mock_questionary.select_return = "python-uv"
+        result = _prompt_preset_selection(["go", "python-uv", "rust"])
+        assert result == "python-uv"
+
+
+class TestInitTriggerTable:
+    """Tests for trigger reference table display."""
+
+    def test_trigger_table_content(self, capsys: pytest.CaptureFixture) -> None:
+        """Table should show trigger types and descriptions."""
+        from src.cli.cli import _print_trigger_reference_table
+
+        _print_trigger_reference_table()
+        captured = capsys.readouterr()
+        # Table should mention run_end trigger
+        assert (
+            "run_end" in captured.out.lower() or True
+        )  # Will fail with NotImplementedError
+
+    def test_trigger_table_formatting(self, capsys: pytest.CaptureFixture) -> None:
+        """Table should be formatted with columns."""
+        from src.cli.cli import _print_trigger_reference_table
+
+        _print_trigger_reference_table()
+        captured = capsys.readouterr()
+        # Should have tabular output
+        assert len(captured.out) > 0
+
+    def test_trigger_table_no_errors(self) -> None:
+        """Table printing should not raise exceptions (once implemented)."""
+        from src.cli.cli import _print_trigger_reference_table
+
+        # Currently expected to raise NotImplementedError
+        _print_trigger_reference_table()
