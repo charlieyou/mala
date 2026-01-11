@@ -8,15 +8,18 @@ Environment Variables:
     MALA_RUNS_DIR: Directory for run metadata files (default: ~/.config/mala/runs)
     MALA_LOCK_DIR: Directory for file locks (default: /tmp/mala-locks)
     CLAUDE_CONFIG_DIR: Claude SDK config directory (default: ~/.claude)
-    MALA_REVIEW_TIMEOUT: Timeout in seconds for review-gate wait
-    MALA_CERBERUS_SPAWN_ARGS: Extra args for `review-gate spawn-code-review`
-    MALA_CERBERUS_WAIT_ARGS: Extra args for `review-gate wait`
-    MALA_CERBERUS_ENV: Extra env for review-gate (JSON dict or comma KEY=VALUE list)
-    MALA_MAX_DIFF_SIZE_KB: Max diff size for epic verification (KB)
-    MALA_MAX_EPIC_VERIFICATION_RETRIES: Max retries for epic verification loop
     MALA_CLAUDE_SETTINGS_SOURCES: Comma-separated Claude settings sources
     LLM_API_KEY: API key for LLM calls (fallback to ANTHROPIC_API_KEY)
     LLM_BASE_URL: Base URL for LLM API
+
+Note: The following env vars are deprecated and will be removed in a future release.
+Configure these in mala.yaml instead:
+    - MALA_REVIEW_TIMEOUT → validation_triggers.<trigger>.code_review.cerberus.timeout
+    - MALA_CERBERUS_SPAWN_ARGS → validation_triggers.<trigger>.code_review.cerberus.spawn_args
+    - MALA_CERBERUS_WAIT_ARGS → validation_triggers.<trigger>.code_review.cerberus.wait_args
+    - MALA_CERBERUS_ENV → validation_triggers.<trigger>.code_review.cerberus.env
+    - MALA_MAX_EPIC_VERIFICATION_RETRIES → validation_triggers.epic_completion.max_epic_verification_retries
+    - MALA_MAX_DIFF_SIZE_KB → max_diff_size_kb (root level in mala.yaml)
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import warnings
 from dataclasses import InitVar, dataclass, field
 from pathlib import Path
 
@@ -263,16 +267,17 @@ class MalaConfig:
             - MALA_RUNS_DIR: Run metadata directory (optional)
             - MALA_LOCK_DIR: Lock files directory (optional)
             - CLAUDE_CONFIG_DIR: Claude SDK config directory (optional)
-            - MALA_REVIEW_TIMEOUT: Review timeout in seconds (optional)
             - MALA_TRACK_REVIEW_ISSUES: Create beads issues for P2/P3 findings (deprecated)
-            - MALA_CERBERUS_SPAWN_ARGS: Extra args for review-gate spawn (optional)
-            - MALA_CERBERUS_WAIT_ARGS: Extra args for review-gate wait (optional)
-            - MALA_CERBERUS_ENV: Extra env for review-gate (optional)
-            - MALA_MAX_DIFF_SIZE_KB: Max diff size for epic verification (optional)
-            - MALA_MAX_EPIC_VERIFICATION_RETRIES: Max epic verification retries (optional)
             - MALA_CLAUDE_SETTINGS_SOURCES: Comma-separated Claude settings sources (optional)
             - LLM_API_KEY: API key for LLM calls (optional)
             - LLM_BASE_URL: Base URL for LLM API (optional)
+
+        Deprecated environment variables (configure in mala.yaml instead):
+            - MALA_REVIEW_TIMEOUT: Use validation_triggers.<trigger>.code_review.cerberus.timeout
+            - MALA_CERBERUS_SPAWN_ARGS: Use validation_triggers.<trigger>.code_review.cerberus.spawn_args
+            - MALA_CERBERUS_WAIT_ARGS: Use validation_triggers.<trigger>.code_review.cerberus.wait_args
+            - MALA_CERBERUS_ENV: Use validation_triggers.<trigger>.code_review.cerberus.env
+            - MALA_MAX_EPIC_VERIFICATION_RETRIES: Use validation_triggers.epic_completion.max_epic_verification_retries
 
         Args:
             validate: If True (default), run validation and raise ConfigurationError
@@ -308,10 +313,19 @@ class MalaConfig:
             os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))
         )
 
+        parse_errors: list[str] = []
+
+        # Parse deprecated env vars with warnings
+        # These still work but users should migrate to mala.yaml
         review_timeout = None
         review_timeout_raw = os.environ.get("MALA_REVIEW_TIMEOUT")
-        parse_errors: list[str] = []
         if review_timeout_raw:
+            warnings.warn(
+                "MALA_REVIEW_TIMEOUT is deprecated. "
+                "Use validation_triggers.<trigger>.code_review.cerberus.timeout in mala.yaml",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             try:
                 review_timeout = int(review_timeout_raw)
             except ValueError:
@@ -320,28 +334,52 @@ class MalaConfig:
                 )
                 review_timeout = None
 
-        # Parse Cerberus override settings
+        # Parse Cerberus override settings (deprecated - use mala.yaml)
+        cerberus_spawn_args_raw = os.environ.get("MALA_CERBERUS_SPAWN_ARGS")
+        if cerberus_spawn_args_raw:
+            warnings.warn(
+                "MALA_CERBERUS_SPAWN_ARGS is deprecated. "
+                "Use validation_triggers.<trigger>.code_review.cerberus.spawn_args in mala.yaml",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         try:
             cerberus_spawn_args = parse_cerberus_args(
-                os.environ.get("MALA_CERBERUS_SPAWN_ARGS"),
+                cerberus_spawn_args_raw,
                 source="MALA_CERBERUS_SPAWN_ARGS",
             )
         except ValueError as exc:
             parse_errors.append(str(exc))
             cerberus_spawn_args = []
 
+        cerberus_wait_args_raw = os.environ.get("MALA_CERBERUS_WAIT_ARGS")
+        if cerberus_wait_args_raw:
+            warnings.warn(
+                "MALA_CERBERUS_WAIT_ARGS is deprecated. "
+                "Use validation_triggers.<trigger>.code_review.cerberus.wait_args in mala.yaml",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         try:
             cerberus_wait_args = parse_cerberus_args(
-                os.environ.get("MALA_CERBERUS_WAIT_ARGS"),
+                cerberus_wait_args_raw,
                 source="MALA_CERBERUS_WAIT_ARGS",
             )
         except ValueError as exc:
             parse_errors.append(str(exc))
             cerberus_wait_args = []
 
+        cerberus_env_raw = os.environ.get("MALA_CERBERUS_ENV")
+        if cerberus_env_raw:
+            warnings.warn(
+                "MALA_CERBERUS_ENV is deprecated. "
+                "Use validation_triggers.<trigger>.code_review.cerberus.env in mala.yaml",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         try:
             cerberus_env = parse_cerberus_env(
-                os.environ.get("MALA_CERBERUS_ENV"),
+                cerberus_env_raw,
                 source="MALA_CERBERUS_ENV",
             )
         except ValueError as exc:
@@ -364,10 +402,18 @@ class MalaConfig:
         )
         llm_base_url = os.environ.get("LLM_BASE_URL") or None
 
-        # Parse max_epic_verification_retries
-        max_epic_verification_retries = _safe_int(
-            os.environ.get("MALA_MAX_EPIC_VERIFICATION_RETRIES"), 3
+        # Parse max_epic_verification_retries (deprecated - use mala.yaml)
+        max_epic_verification_retries_raw = os.environ.get(
+            "MALA_MAX_EPIC_VERIFICATION_RETRIES"
         )
+        if max_epic_verification_retries_raw:
+            warnings.warn(
+                "MALA_MAX_EPIC_VERIFICATION_RETRIES is deprecated. "
+                "Use validation_triggers.epic_completion.max_epic_verification_retries in mala.yaml",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        max_epic_verification_retries = _safe_int(max_epic_verification_retries_raw, 3)
 
         # Parse claude_settings_sources
         try:

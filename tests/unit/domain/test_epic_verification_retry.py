@@ -501,10 +501,13 @@ class TestMalaConfigEpicVerificationRetries:
         )
         assert config.max_epic_verification_retries == 5
 
-    def test_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Should load from MALA_MAX_EPIC_VERIFICATION_RETRIES env var."""
+    def test_from_env_deprecated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Should load from MALA_MAX_EPIC_VERIFICATION_RETRIES env var with deprecation warning."""
         monkeypatch.setenv("MALA_MAX_EPIC_VERIFICATION_RETRIES", "7")
-        config = MalaConfig.from_env(validate=False)
+        with pytest.warns(
+            DeprecationWarning, match="MALA_MAX_EPIC_VERIFICATION_RETRIES is deprecated"
+        ):
+            config = MalaConfig.from_env(validate=False)
         assert config.max_epic_verification_retries == 7
 
     def test_from_env_invalid_uses_default(
@@ -512,5 +515,6 @@ class TestMalaConfigEpicVerificationRetries:
     ) -> None:
         """Should use default when env var is invalid."""
         monkeypatch.setenv("MALA_MAX_EPIC_VERIFICATION_RETRIES", "not-a-number")
-        config = MalaConfig.from_env(validate=False)
+        with pytest.warns(DeprecationWarning):
+            config = MalaConfig.from_env(validate=False)
         assert config.max_epic_verification_retries == 3

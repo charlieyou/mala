@@ -81,7 +81,6 @@ Precedence: CLI flags override global config, which overrides program defaults.
 |----------|---------|-------------|
 | `MALA_RUNS_DIR` | `~/.config/mala/runs` | Base directory for run metadata (per-repo subdirs) |
 | `MALA_LOCK_DIR` | `/tmp/mala-locks` | Directory for filesystem locks |
-| `MALA_REVIEW_TIMEOUT` | `1200` | Review-gate wait timeout in seconds |
 | `MALA_DISABLE_DEBUG_LOG` | - | Set to `1` to disable debug file logging (for performance or disk space) |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Claude SDK config directory (plugins, sessions) |
 
@@ -91,19 +90,22 @@ Precedence: CLI flags override global config, which overrides program defaults.
 |----------|---------|-------------|
 | `LLM_API_KEY` | - | API key for LLM calls (falls back to `ANTHROPIC_API_KEY`) |
 | `LLM_BASE_URL` | - | Base URL for LLM API (for proxy/routing) |
-| `MALA_MAX_EPIC_VERIFICATION_RETRIES` | `3` | Number of retries after first verification attempt fails. **Deprecated**: prefer `validation_triggers.epic_completion.max_epic_verification_retries` in mala.yaml. |
-
-### Cerberus Review Overrides
-
-When using `reviewer_type: cerberus` in `validation_triggers.<trigger>.code_review`:
-
-| Variable | Description |
-|----------|-------------|
-| `MALA_CERBERUS_SPAWN_ARGS` | Extra args for `review-gate spawn-code-review` |
-| `MALA_CERBERUS_WAIT_ARGS` | Extra args for `review-gate wait` |
-| `MALA_CERBERUS_ENV` | Extra env for review-gate (JSON object or comma KEY=VALUE list) |
 
 Note: The repo's `.env` file is for testing only and is not loaded by the program.
+
+### Deprecated Environment Variables
+
+The following environment variables are deprecated and will be removed in a future release.
+Configure these settings in `mala.yaml` instead:
+
+| Deprecated Variable | Replacement in mala.yaml |
+|---------------------|--------------------------|
+| `MALA_REVIEW_TIMEOUT` | `validation_triggers.<trigger>.code_review.cerberus.timeout` |
+| `MALA_CERBERUS_SPAWN_ARGS` | `validation_triggers.<trigger>.code_review.cerberus.spawn_args` |
+| `MALA_CERBERUS_WAIT_ARGS` | `validation_triggers.<trigger>.code_review.cerberus.wait_args` |
+| `MALA_CERBERUS_ENV` | `validation_triggers.<trigger>.code_review.cerberus.env` |
+| `MALA_MAX_EPIC_VERIFICATION_RETRIES` | `validation_triggers.epic_completion.max_epic_verification_retries` |
+| `MALA_MAX_DIFF_SIZE_KB` | `max_diff_size_kb` (root level) |
 
 ## Logs
 
