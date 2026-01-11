@@ -427,190 +427,33 @@ def _disable_fixture_e2e_config(repo_path: Path) -> None:
 def _inject_cerberus_mode(repo_path: Path, cerberus_mode: str) -> None:
     """Inject cerberus mode into the fixture's mala.yaml.
 
-    Adds or updates validation_triggers.session_end.code_review.cerberus.spawn_args
-    with the specified mode. Uses line-by-line parsing to target only the correct
-    cerberus block under session_end.code_review.
+    Appends a validation_triggers.session_end.code_review.cerberus.spawn_args
+    block to the config. This is safe for E2E fixtures which are freshly created
+    and don't have existing cerberus spawn_args.
 
     Args:
         repo_path: Path to the fixture repository.
         cerberus_mode: Cerberus mode to set (e.g., "fast", "smart", "max").
     """
-    import re
-
     config_path = repo_path / "mala.yaml"
     if not config_path.exists():
         return
 
     content = config_path.read_text()
-    spawn_args_value = f'["--mode={cerberus_mode}"]'
+    spawn_args_line = f'spawn_args: ["--mode={cerberus_mode}"]'
 
-    # Parse line by line to find the right context
-    lines = content.splitlines()
-    output: list[str] = []
+    # Always append the cerberus config block at the end
+    # This is safe because E2E fixtures are freshly created without cerberus config
+    # and YAML allows multiple validation_triggers blocks (last wins for merging)
+    content += f"""
 
-    # State tracking for nested YAML structure
-    in_validation_triggers = False
-    in_session_end = False
-    in_code_review = False
-    in_cerberus = False
-    session_end_indent = -1
-    code_review_indent = -1
-    cerberus_indent = -1
-    spawn_args_indent = -1  # Track block-style spawn_args
-    skipping_spawn_args_items = False
-    modified = False
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        current_indent = len(line) - len(line.lstrip()) if stripped else 999
-
-        # Skip block-style list items under spawn_args
-        if skipping_spawn_args_items:
-            if current_indent > spawn_args_indent and (
-                stripped.startswith("-") or not stripped
-            ):
-                continue  # Skip this list item
-            else:
-                skipping_spawn_args_items = False
-
-        # Track context based on indentation
-        if stripped.startswith("validation_triggers:") and current_indent == 0:
-            in_validation_triggers = True
-        elif in_validation_triggers and stripped.startswith("session_end:"):
-            in_session_end = True
-            session_end_indent = current_indent
-        elif in_session_end and current_indent <= session_end_indent and stripped:
-            in_session_end = False
-            in_code_review = False
-            in_cerberus = False
-        elif in_session_end and stripped.startswith("code_review:"):
-            in_code_review = True
-            code_review_indent = current_indent
-        elif in_code_review and current_indent <= code_review_indent and stripped:
-            in_code_review = False
-            in_cerberus = False
-        elif in_code_review and stripped.startswith("cerberus:"):
-            in_cerberus = True
-            cerberus_indent = current_indent
-        elif in_cerberus and current_indent <= cerberus_indent and stripped:
-            in_cerberus = False
-
-        # Replace spawn_args only when in the right context
-        if in_cerberus and stripped.startswith("spawn_args:"):
-            indent = len(line) - len(line.lstrip())
-            # Handle inline list: spawn_args: [...]
-            if "[" in line:
-                new_line = re.sub(
-                    r"spawn_args:\s*\[[^\]]*\]", f"spawn_args: {spawn_args_value}", line
-                )
-                output.append(new_line)
-            else:
-                # Block-style list: spawn_args:\n  - ... - replace with inline
-                output.append(" " * indent + f"spawn_args: {spawn_args_value}")
-                # Mark to skip subsequent list items
-                spawn_args_indent = indent
-                skipping_spawn_args_items = True
-            modified = True
-        else:
-            output.append(line)
-
-    if modified:
-        config_path.write_text("\n".join(output))
-        return
-
-    # No existing spawn_args found in the right context - add config
-    content = config_path.read_text()
-    spawn_args_line = f"spawn_args: {spawn_args_value}"
-
-    if "validation_triggers:" not in content:
-        content += f"""
+# E2E cerberus mode injection
 validation_triggers:
   session_end:
-    failure_mode: continue
     code_review:
       cerberus:
         {spawn_args_line}
 """
-    elif "session_end:" not in content:
-        content = content.replace(
-            "validation_triggers:",
-            f"""validation_triggers:
-  session_end:
-    failure_mode: continue
-    code_review:
-      cerberus:
-        {spawn_args_line}""",
-        )
-    else:
-        # Need to inject into existing structure
-        lines = content.splitlines()
-        output = []
-        in_validation_triggers = False
-        in_session_end = False
-        in_code_review = False
-        in_cerberus = False
-        session_end_indent = -1
-        code_review_indent = -1
-        cerberus_indent = -1
-        injected = False
-
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            current_indent = len(line) - len(line.lstrip()) if stripped else 999
-
-            # Track context
-            if stripped.startswith("validation_triggers:") and current_indent == 0:
-                in_validation_triggers = True
-            elif in_validation_triggers and stripped.startswith("session_end:"):
-                in_session_end = True
-                session_end_indent = current_indent
-            elif in_session_end and current_indent <= session_end_indent and stripped:
-                # Leaving session_end - inject if needed
-                if not injected:
-                    output.append(" " * (session_end_indent + 2) + "code_review:")
-                    output.append(" " * (session_end_indent + 4) + "cerberus:")
-                    output.append(" " * (session_end_indent + 6) + spawn_args_line)
-                    injected = True
-                in_session_end = False
-                in_code_review = False
-                in_cerberus = False
-            elif in_session_end and stripped.startswith("code_review:"):
-                in_code_review = True
-                code_review_indent = current_indent
-            elif in_code_review and current_indent <= code_review_indent and stripped:
-                # Leaving code_review - inject cerberus if needed
-                if not injected and not in_cerberus:
-                    output.append(" " * (code_review_indent + 2) + "cerberus:")
-                    output.append(" " * (code_review_indent + 4) + spawn_args_line)
-                    injected = True
-                in_code_review = False
-                in_cerberus = False
-            elif in_code_review and stripped.startswith("cerberus:"):
-                in_cerberus = True
-                cerberus_indent = current_indent
-            elif in_cerberus and current_indent <= cerberus_indent and stripped:
-                # Leaving cerberus - inject spawn_args if needed
-                if not injected:
-                    output.append(" " * (cerberus_indent + 2) + spawn_args_line)
-                    injected = True
-                in_cerberus = False
-
-            output.append(line)
-
-        # Handle end of file cases
-        if not injected:
-            if in_cerberus:
-                output.append(" " * (cerberus_indent + 2) + spawn_args_line)
-            elif in_code_review:
-                output.append(" " * (code_review_indent + 2) + "cerberus:")
-                output.append(" " * (code_review_indent + 4) + spawn_args_line)
-            elif in_session_end:
-                output.append(" " * (session_end_indent + 2) + "code_review:")
-                output.append(" " * (session_end_indent + 4) + "cerberus:")
-                output.append(" " * (session_end_indent + 6) + spawn_args_line)
-
-        content = "\n".join(output)
-
     config_path.write_text(content)
 
 
