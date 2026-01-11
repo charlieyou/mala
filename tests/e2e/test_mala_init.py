@@ -1,11 +1,13 @@
-"""E2E behavioral tests for mala init + run workflow.
+"""E2E tests for mala init config generation.
 
-These tests verify the complete flow:
-1. mala init generates valid config with evidence_check and validation_triggers
-2. mala run executes commands and fires run_end validation trigger
+These tests verify:
+1. mala init generates valid YAML with evidence_check and validation_triggers sections
+2. Generated config is structurally valid for mala run (via dry-run validation)
+3. Skip flags correctly omit sections
 
-Tests use fixture repos with stub commands that always exit 0 to ensure
-deterministic behavior without depending on actual toolchains.
+Note: Full behavioral verification (commands executed, run_end triggered) requires
+Claude SDK integration. That is covered by TestE2ERunnerIntegration.test_run_real_fixture
+in test_e2e.py, which spawns actual Claude agents and verifies run_validation metadata.
 """
 
 from __future__ import annotations
@@ -199,20 +201,15 @@ class TestInitGeneratesCorrectYamlStructure:
         assert "validation_triggers" not in config
 
 
-class TestInitWithRunVerification:
-    """Tests verifying init + run produces expected behavior.
+class TestInitConfigCompatibility:
+    """Tests verifying init config is compatible with mala run.
 
-    These tests create a fixture with stub commands and an issue,
-    then verify the config is valid for mala run.
+    These tests validate that init-generated config can be loaded by mala run
+    without errors (via --dry-run which validates config before processing).
 
-    Note: Full behavioral verification (commands executed, run_end fired)
-    requires Claude SDK integration. That verification is covered by
-    TestE2ERunnerIntegration.test_run_real_fixture in test_e2e.py, which:
-    - Uses the E2ERunner with proper auth checks
-    - Spawns Claude agents to process issues
-    - Verifies run_validation in run metadata
-
-    These tests validate that init produces config compatible with that flow.
+    Note: Actual command execution and run_end trigger firing requires Claude SDK.
+    That behavioral verification is in TestE2ERunnerIntegration.test_run_real_fixture
+    (test_e2e.py), which uses E2ERunner with auth checks and verifies run_validation.
     """
 
     def test_init_with_stub_commands_produces_runnable_config(
