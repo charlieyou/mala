@@ -415,7 +415,11 @@ class TestE2ERunnerIntegration:
             )
             run_metadata = json.loads(run_metadata_path.read_text())
             run_validation = run_metadata.get("run_validation")
-            assert run_validation is not None
+            # Strict assertion: run_validation must exist when run_end validation is configured.
+            # A conditional check would mask regressions where validation is silently skipped.
+            assert run_validation is not None, (
+                "run_validation missing from run metadata"
+            )
             coverage_percent = run_validation.get("coverage_percent")
             assert coverage_percent is not None
         finally:
