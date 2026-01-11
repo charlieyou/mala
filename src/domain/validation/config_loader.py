@@ -21,6 +21,7 @@ from src.domain.validation.config import (
     ConfigError,
     EpicCompletionTriggerConfig,
     EpicDepth,
+    EvidenceCheckConfig,
     FailureMode,
     FireOn,
     PeriodicTriggerConfig,
@@ -38,7 +39,6 @@ if TYPE_CHECKING:
         BaseTriggerConfig,
         CerberusConfig,
         CodeReviewConfig,
-        EvidenceCheckConfig,
     )
 
 
@@ -740,11 +740,6 @@ def _parse_evidence_check_config(
     Raises:
         ConfigError: If data has invalid types or unknown fields.
     """
-    # Import here to avoid circular import at module level
-    from src.domain.validation.config import (
-        EvidenceCheckConfig as EvidenceCheckConfigClass,
-    )
-
     if data is None:
         return None
 
@@ -780,7 +775,7 @@ def _parse_evidence_check_config(
                     )
             required = tuple(req_val)
 
-    return EvidenceCheckConfigClass(required=required)
+    return EvidenceCheckConfig(required=required)
 
 
 _EPIC_COMPLETION_FIELDS = frozenset(
