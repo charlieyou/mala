@@ -209,12 +209,13 @@ def check_evidence_against_spec(
 ) -> tuple[bool, list[str], list[str]]:
     """Check if evidence satisfies a ValidationSpec's requirements.
 
-    This is fully spec-driven: evidence requirements and display names are
-    derived from the spec's commands, not hardcoded. This allows adding new
-    validation commands without code changes.
+    This is fully spec-driven: evidence requirements are controlled by
+    spec.evidence_required. If evidence_required is empty, no evidence
+    checking is performed (gate passes immediately). Otherwise, only
+    commands whose names are in evidence_required are checked.
 
     This is scope-aware: a per-session spec won't require E2E evidence because
-    per-session specs don't include E2E commands.
+    per-session specs don't include E2E commands in evidence_required.
 
     For custom commands (CommandKind.CUSTOM), checks:
     - "not run" (no markers for spec'd command) → missing
@@ -231,6 +232,13 @@ def check_evidence_against_spec(
         - missing_commands lists commands that didn't run
         - failed_strict lists strict (allow_fail=False) custom commands that failed
     """
+    # Early return if no evidence required (BREAKING CHANGE: empty means pass)
+    if not spec.evidence_required:
+        return (True, [], [])
+
+    # Build set of required command names for O(1) lookup
+    required_keys = set(spec.evidence_required)
+
     missing: list[str] = []
     failed_strict: list[str] = []
 
@@ -242,20 +250,28 @@ def check_evidence_against_spec(
             kind_to_name[cmd.kind] = cmd.name
 
     # Check each required kind from the spec (non-CUSTOM kinds)
+    # Only check kinds whose display names are in evidence_required
     for kind in get_required_evidence_kinds(spec):
         if kind == CommandKind.CUSTOM:
             # Custom commands are checked individually by name below
             continue
+        name = kind_to_name.get(kind, kind.value)
+        if name not in required_keys:
+            # This command is not in evidence_required, skip it
+            continue
         ran = evidence.commands_ran.get(kind, False)
         if not ran:
-            name = kind_to_name.get(kind, kind.value)
             missing.append(name)
 
     # Check custom commands individually by name
+    # Only check commands whose names are in evidence_required
     for cmd in spec.commands:
         if cmd.kind != CommandKind.CUSTOM:
             continue
         name = cmd.name
+        if name not in required_keys:
+            # This command is not in evidence_required, skip it
+            continue
         ran = evidence.custom_commands_ran.get(name, False)
         if not ran:
             missing.append(name)

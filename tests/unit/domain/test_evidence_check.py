@@ -6,6 +6,7 @@ Tests for:
 """
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -1499,7 +1500,12 @@ class TestClearFailureMessages:
 
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        base_spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        # Set evidence_required to require test, lint, format, typecheck
+        spec = replace(
+            base_spec,
+            evidence_required=("test", "lint", "format", "typecheck"),
+        )
 
         # Create gate with fake command runner - commit found
         fake_runner = make_git_log_response_runner(
@@ -1586,14 +1592,14 @@ class TestGetRequiredEvidenceKinds:
 
 
 class TestCheckEvidenceAgainstSpec:
-    """Test check_evidence_against_spec for scope-aware validation."""
+    """Test check_evidence_against_spec for scope-aware validation.
 
-    def test_passes_when_all_required_evidence_present(
-        self,
-        tmp_path: Path,
-        log_provider: LogProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
+    Note: These tests construct ValidationSpec directly with evidence_required
+    to test the filtering behavior. The config merging (T002/T003) will ensure
+    evidence_required is populated from mala.yaml.
+    """
+
+    def test_passes_when_all_required_evidence_present(self) -> None:
         """Should pass when all required commands ran."""
         evidence = make_evidence(
             pytest_ran=True,
@@ -1601,9 +1607,33 @@ class TestCheckEvidenceAgainstSpec:
             ruff_format_ran=True,
             ty_check_ran=True,
         )
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        # Construct spec directly with evidence_required
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command="uv run pytest",
+                    kind=CommandKind.TEST,
+                ),
+                ValidationCommand(
+                    name="lint",
+                    command="uvx ruff check .",
+                    kind=CommandKind.LINT,
+                ),
+                ValidationCommand(
+                    name="format",
+                    command="uvx ruff format --check .",
+                    kind=CommandKind.FORMAT,
+                ),
+                ValidationCommand(
+                    name="typecheck",
+                    command="uvx ty check",
+                    kind=CommandKind.TYPECHECK,
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("test", "lint", "format", "typecheck"),
+        )
 
         passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
 
@@ -1611,12 +1641,7 @@ class TestCheckEvidenceAgainstSpec:
         assert len(missing) == 0
         assert len(failed_strict) == 0
 
-    def test_fails_when_missing_required_evidence(
-        self,
-        tmp_path: Path,
-        log_provider: LogProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
+    def test_fails_when_missing_required_evidence(self) -> None:
         """Should fail and list missing commands."""
         evidence = make_evidence(
             pytest_ran=False,  # Missing pytest
@@ -1624,9 +1649,33 @@ class TestCheckEvidenceAgainstSpec:
             ruff_format_ran=True,
             ty_check_ran=True,
         )
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        # Construct spec directly with evidence_required
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command="uv run pytest",
+                    kind=CommandKind.TEST,
+                ),
+                ValidationCommand(
+                    name="lint",
+                    command="uvx ruff check .",
+                    kind=CommandKind.LINT,
+                ),
+                ValidationCommand(
+                    name="format",
+                    command="uvx ruff format --check .",
+                    kind=CommandKind.FORMAT,
+                ),
+                ValidationCommand(
+                    name="typecheck",
+                    command="uvx ty check",
+                    kind=CommandKind.TYPECHECK,
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("test", "lint", "format", "typecheck"),
+        )
 
         passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
 
@@ -1634,13 +1683,11 @@ class TestCheckEvidenceAgainstSpec:
         assert "test" in missing
         assert len(failed_strict) == 0
 
-    def test_per_session_does_not_require_e2e(
-        self,
-        tmp_path: Path,
-        log_provider: LogProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Per-session scope should pass without E2E evidence."""
+    def test_per_session_does_not_require_e2e(self) -> None:
+        """Per-session scope should pass without E2E evidence.
+
+        When evidence_required doesn't include 'e2e', it won't be checked.
+        """
         evidence = make_evidence(
             pytest_ran=True,
             ruff_check_ran=True,
@@ -1648,9 +1695,33 @@ class TestCheckEvidenceAgainstSpec:
             ty_check_ran=True,
             # No E2E evidence - should still pass for per-session
         )
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        # Construct spec with per-session commands (no E2E)
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command="uv run pytest",
+                    kind=CommandKind.TEST,
+                ),
+                ValidationCommand(
+                    name="lint",
+                    command="uvx ruff check .",
+                    kind=CommandKind.LINT,
+                ),
+                ValidationCommand(
+                    name="format",
+                    command="uvx ruff format --check .",
+                    kind=CommandKind.FORMAT,
+                ),
+                ValidationCommand(
+                    name="typecheck",
+                    command="uvx ty check",
+                    kind=CommandKind.TYPECHECK,
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("test", "lint", "format", "typecheck"),  # No e2e
+        )
 
         passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
 
@@ -1659,37 +1730,320 @@ class TestCheckEvidenceAgainstSpec:
         assert "e2e" not in [m.lower() for m in missing]
         assert len(failed_strict) == 0
 
-    def test_respects_disabled_validations(
-        self,
-        tmp_path: Path,
-        log_provider: LogProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Should not require disabled validations."""
+    def test_respects_disabled_validations(self) -> None:
+        """Should not require evidence for commands not in spec.
+
+        When commands are disabled (not in spec.commands), they won't be
+        checked even if they're in evidence_required. The spec.commands
+        defines what commands exist, and evidence_required filters that.
+        """
         evidence = make_evidence(
             pytest_ran=False,  # Not run
-            ruff_check_ran=False,  # Not run (post-validate disables ruff/ty too)
+            ruff_check_ran=False,  # Not run
             ruff_format_ran=False,  # Not run
             ty_check_ran=False,  # Not run
         )
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        # Disable post-validate (which disables pytest/ruff/ty)
-        spec = build_validation_spec(
-            tmp_path,
+        # Spec with no commands but evidence_required set
+        # This simulates post-validate disabled scenario
+        spec = ValidationSpec(
+            commands=[],  # No commands (post-validate disabled)
             scope=ValidationScope.PER_SESSION,
-            disable_validations={"post-validate"},
+            evidence_required=("test", "lint", "format", "typecheck"),
         )
 
         passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
 
         assert passed is True
-        # test, lint, format, typecheck should not be required when post-validate is disabled
+        # test, lint, format, typecheck should not be required when not in commands
         assert "test" not in missing
         assert "lint" not in missing
         assert "format" not in missing
         assert "typecheck" not in missing
         assert len(failed_strict) == 0
+
+
+class TestEvidenceRequiredFiltering:
+    """Test check_evidence_against_spec filtering by spec.evidence_required.
+
+    Tests for the evidence_required field:
+    - Empty evidence_required means no evidence required (gate passes)
+    - Non-empty evidence_required checks only those command names
+    - Commands not in evidence_required are not reported as missing
+    """
+
+    def test_empty_evidence_required_returns_pass(self) -> None:
+        """Empty evidence_required means no evidence required, returns (True, [], []).
+
+        Test 14: spec.evidence_required=() → no evidence required, returns (True, [], [])
+        """
+        evidence = make_evidence(
+            pytest_ran=False,  # Not run
+            ruff_check_ran=False,  # Not run
+            ruff_format_ran=False,  # Not run
+            ty_check_ran=False,  # Not run
+        )
+        # Spec with commands but empty evidence_required
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command="uv run pytest",
+                    kind=CommandKind.TEST,
+                ),
+                ValidationCommand(
+                    name="lint",
+                    command="uvx ruff check .",
+                    kind=CommandKind.LINT,
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=(),  # Empty - no evidence required
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        assert passed is True
+        assert missing == []
+        assert failed_strict == []
+
+    def test_evidence_required_with_matching_evidence_passes(self) -> None:
+        """Test 15: spec.evidence_required=("test",) with test evidence → passes."""
+        evidence = make_evidence(
+            pytest_ran=True,  # Ran
+            ruff_check_ran=False,  # Not run but not required
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command="uv run pytest",
+                    kind=CommandKind.TEST,
+                ),
+                ValidationCommand(
+                    name="lint",
+                    command="uvx ruff check .",
+                    kind=CommandKind.LINT,
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("test",),  # Only test required
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        assert passed is True
+        assert missing == []
+        assert failed_strict == []
+
+    def test_evidence_required_checks_only_specified_commands(self) -> None:
+        """Test 16: spec.evidence_required=("test", "lint") → checks only those commands."""
+        evidence = make_evidence(
+            pytest_ran=True,  # Ran
+            ruff_check_ran=True,  # Ran
+            ruff_format_ran=False,  # Not run but not in evidence_required
+            ty_check_ran=False,  # Not run but not in evidence_required
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command="uv run pytest",
+                    kind=CommandKind.TEST,
+                ),
+                ValidationCommand(
+                    name="lint",
+                    command="uvx ruff check .",
+                    kind=CommandKind.LINT,
+                ),
+                ValidationCommand(
+                    name="format",
+                    command="uvx ruff format --check .",
+                    kind=CommandKind.FORMAT,
+                ),
+                ValidationCommand(
+                    name="typecheck",
+                    command="uvx ty check",
+                    kind=CommandKind.TYPECHECK,
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("test", "lint"),  # Only test and lint required
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        assert passed is True
+        assert missing == []
+        assert failed_strict == []
+
+    def test_commands_not_in_evidence_required_not_reported_missing(self) -> None:
+        """Test 17: Commands not in evidence_required are NOT reported as missing."""
+        evidence = make_evidence(
+            pytest_ran=True,  # Ran
+            ruff_check_ran=False,  # Not run
+            ruff_format_ran=False,  # Not run
+            ty_check_ran=False,  # Not run
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command="uv run pytest",
+                    kind=CommandKind.TEST,
+                ),
+                ValidationCommand(
+                    name="lint",
+                    command="uvx ruff check .",
+                    kind=CommandKind.LINT,
+                ),
+                ValidationCommand(
+                    name="format",
+                    command="uvx ruff format --check .",
+                    kind=CommandKind.FORMAT,
+                ),
+                ValidationCommand(
+                    name="typecheck",
+                    command="uvx ty check",
+                    kind=CommandKind.TYPECHECK,
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("test",),  # Only test required
+        )
+
+        passed, missing, _failed_strict = check_evidence_against_spec(evidence, spec)
+
+        assert passed is True
+        assert missing == []
+        # lint, format, typecheck not in missing even though they didn't run
+        assert "lint" not in missing
+        assert "format" not in missing
+        assert "typecheck" not in missing
+
+    def test_evidence_required_missing_command_fails(self) -> None:
+        """evidence_required with missing evidence fails and lists missing."""
+        evidence = make_evidence(
+            pytest_ran=False,  # Not run but required
+            ruff_check_ran=True,  # Ran
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command="uv run pytest",
+                    kind=CommandKind.TEST,
+                ),
+                ValidationCommand(
+                    name="lint",
+                    command="uvx ruff check .",
+                    kind=CommandKind.LINT,
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("test", "lint"),  # Both required
+        )
+
+        passed, missing, _failed_strict = check_evidence_against_spec(evidence, spec)
+
+        assert passed is False
+        assert "test" in missing
+        assert "lint" not in missing  # lint ran, not missing
+
+    def test_custom_command_allow_fail_not_run_fails(self) -> None:
+        """Test 19: allow_fail + not run → fails for missing evidence."""
+        evidence = ValidationEvidence(
+            commands_ran={},
+            failed_commands=[],
+            custom_commands_ran={},  # Command not run
+            custom_commands_failed={},
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="import_lint",
+                    command="uvx lint-imports",
+                    kind=CommandKind.CUSTOM,
+                    allow_fail=True,  # allow_fail is True
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("import_lint",),  # Required
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        assert passed is False  # Missing evidence = fail
+        assert "import_lint" in missing
+        assert failed_strict == []
+
+    def test_custom_command_allow_fail_ran_failed_passes(self) -> None:
+        """Test 20: allow_fail + ran + failed → passes, advisory failure."""
+        evidence = ValidationEvidence(
+            commands_ran={},
+            failed_commands=[],
+            custom_commands_ran={"import_lint": True},  # Ran
+            custom_commands_failed={"import_lint": True},  # Failed
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="import_lint",
+                    command="uvx lint-imports",
+                    kind=CommandKind.CUSTOM,
+                    allow_fail=True,  # allow_fail is True
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("import_lint",),
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        assert passed is True  # allow_fail=True means advisory failure
+        assert missing == []
+        assert failed_strict == []
+
+    def test_overlapping_patterns_custom_commands_checked_independently(self) -> None:
+        """Test 21: Multiple custom commands can all be checked independently.
+
+        Unlike kind-based commands where CommandKind.TEST uses one display name,
+        CUSTOM commands are checked individually by name. Multiple custom commands
+        can all be required and satisfied independently.
+        """
+        # Evidence with two custom commands ran
+        evidence = ValidationEvidence(
+            commands_ran={},
+            failed_commands=[],
+            custom_commands_ran={
+                "import_lint": True,
+                "doc_check": True,
+            },
+            custom_commands_failed={},
+        )
+        # Two CUSTOM commands, both in evidence_required
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="import_lint",
+                    command="uvx lint-imports",
+                    kind=CommandKind.CUSTOM,
+                ),
+                ValidationCommand(
+                    name="doc_check",
+                    command="python check_docs.py",
+                    kind=CommandKind.CUSTOM,
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("import_lint", "doc_check"),
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        # Both custom commands satisfied independently
+        assert passed is True
+        assert missing == []
+        assert failed_strict == []
 
 
 class TestCheckWithResolutionSpec:
@@ -2041,7 +2395,12 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        base_spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        # Set evidence_required to require test, lint, format, typecheck
+        spec = replace(
+            base_spec,
+            evidence_required=("test", "lint", "format", "typecheck"),
+        )
         offset = len(first_content.encode("utf-8"))
 
         result = gate.check_with_resolution(
@@ -4435,6 +4794,7 @@ class TestCustomCommandMarkerParsing:
         Args:
             commands: List of (name, command, allow_fail) tuples.
         """
+        command_names = tuple(name for name, _, _ in commands)
         return ValidationSpec(
             scope=ValidationScope.PER_SESSION,
             commands=[
@@ -4446,6 +4806,7 @@ class TestCustomCommandMarkerParsing:
                 )
                 for name, cmd, allow_fail in commands
             ],
+            evidence_required=command_names,  # Require all custom commands
         )
 
     def test_parse_custom_marker_pass(
