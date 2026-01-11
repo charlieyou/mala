@@ -449,7 +449,8 @@ def _inject_cerberus_mode(repo_path: Path, cerberus_mode: str) -> None:
     if "validation_triggers" not in config:
         config["validation_triggers"] = {}
     if "session_end" not in config["validation_triggers"]:
-        config["validation_triggers"]["session_end"] = {}
+        # Include required failure_mode when creating session_end
+        config["validation_triggers"]["session_end"] = {"failure_mode": "continue"}
     if "code_review" not in config["validation_triggers"]["session_end"]:
         config["validation_triggers"]["session_end"]["code_review"] = {}
     if "cerberus" not in config["validation_triggers"]["session_end"]["code_review"]:
