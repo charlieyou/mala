@@ -24,8 +24,9 @@ def pytest_configure(config: pytest.Config) -> None:
         shutil.copy2(real_credentials, test_claude_dir / ".credentials.json")
 
 
-def pytest_collection_modifyitems(items: list[Item]) -> None:
+def pytest_collection_modifyitems(config: pytest.Config, items: list[Item]) -> None:
     """Add reruns to flaky_sdk tests."""
+    del config  # unused, but required by pytest hook signature
     for item in items:
         if item.get_closest_marker("flaky_sdk"):
             item.add_marker(pytest.mark.flaky(reruns=2, reruns_delay=1))
