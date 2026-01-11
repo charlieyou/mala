@@ -1731,11 +1731,15 @@ class TestCheckEvidenceAgainstSpec:
         assert len(failed_strict) == 0
 
     def test_respects_disabled_validations(self) -> None:
-        """Should not require evidence for commands not in spec.
+        """Required keys not in spec.commands are reported as missing.
 
-        When commands are disabled (not in spec.commands), they won't be
-        checked even if they're in evidence_required. The spec.commands
-        defines what commands exist, and evidence_required filters that.
+        When evidence_required contains names that have no corresponding
+        command in spec.commands (due to spec construction bug or stale
+        config that bypassed validation), they are treated as missing
+        evidence. This provides defense-in-depth beyond config validation.
+
+        Note: In normal operation, config validation (_validate_evidence_check_refs)
+        catches this at load time. This test covers the runtime fail-safe.
         """
         evidence = make_evidence(
             pytest_ran=False,  # Not run
@@ -1744,21 +1748,21 @@ class TestCheckEvidenceAgainstSpec:
             ty_check_ran=False,  # Not run
         )
         # Spec with no commands but evidence_required set
-        # This simulates post-validate disabled scenario
+        # This is an inconsistent spec that should fail at runtime
         spec = ValidationSpec(
-            commands=[],  # No commands (post-validate disabled)
+            commands=[],  # No commands
             scope=ValidationScope.PER_SESSION,
             evidence_required=("test", "lint", "format", "typecheck"),
         )
 
         passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
 
-        assert passed is True
-        # test, lint, format, typecheck should not be required when not in commands
-        assert "test" not in missing
-        assert "lint" not in missing
-        assert "format" not in missing
-        assert "typecheck" not in missing
+        assert passed is False
+        # All required keys missing since no commands match
+        assert "test" in missing
+        assert "lint" in missing
+        assert "format" in missing
+        assert "typecheck" in missing
         assert len(failed_strict) == 0
 
 
@@ -2043,6 +2047,67 @@ class TestEvidenceRequiredFiltering:
         # Both custom commands satisfied independently
         assert passed is True
         assert missing == []
+        assert failed_strict == []
+
+    def test_evidence_required_key_not_in_commands_fails(self) -> None:
+        """evidence_required key not in spec.commands is treated as missing evidence.
+
+        If evidence_required contains a name that has no corresponding command
+        in spec.commands (due to spec construction bug or stale config), the
+        function should report it as missing rather than silently passing.
+        """
+        evidence = make_evidence(
+            pytest_ran=True,  # test command exists and ran
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command="uv run pytest",
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            # "lint" is required but there's no lint command in spec.commands
+            evidence_required=("test", "lint"),
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        # Should fail because "lint" is required but has no corresponding command
+        assert passed is False
+        assert "lint" in missing
+        assert failed_strict == []
+
+    def test_evidence_required_key_not_in_commands_custom(self) -> None:
+        """Custom command name in evidence_required but not in spec.commands fails.
+
+        Same scenario as above but for custom commands specifically.
+        """
+        evidence = ValidationEvidence(
+            commands_ran={},
+            failed_commands=[],
+            custom_commands_ran={"existing_check": True},
+            custom_commands_failed={},
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="existing_check",
+                    command="check_existing.py",
+                    kind=CommandKind.CUSTOM,
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            # "missing_check" is required but has no command definition
+            evidence_required=("existing_check", "missing_check"),
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        # Should fail because "missing_check" is required but has no command
+        assert passed is False
+        assert "missing_check" in missing
         assert failed_strict == []
 
 

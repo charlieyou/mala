@@ -243,8 +243,11 @@ def check_evidence_against_spec(
     failed_strict: list[str] = []
 
     # Build kind-to-name mapping from spec (spec-driven display names)
+    # Also track all command names present in spec.commands
     kind_to_name: dict[CommandKind, str] = {}
+    spec_command_names: set[str] = set()
     for cmd in spec.commands:
+        spec_command_names.add(cmd.name)
         # Use first command name for each kind as the display name
         if cmd.kind not in kind_to_name:
             kind_to_name[cmd.kind] = cmd.name
@@ -281,6 +284,12 @@ def check_evidence_against_spec(
                 # Strict failure - blocks gate
                 failed_strict.append(name)
             # Advisory failure (allow_fail=True) - doesn't block gate, just noted
+
+    # Check for required keys that have no corresponding command in spec.commands
+    # These are treated as missing evidence (config bug or stale config)
+    for key in required_keys:
+        if key not in spec_command_names:
+            missing.append(key)
 
     passed = len(missing) == 0 and len(failed_strict) == 0
     return passed, missing, failed_strict
