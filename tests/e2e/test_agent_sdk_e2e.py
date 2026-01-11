@@ -23,7 +23,7 @@ from src.infra.clients.review_output_parser import ReviewResult
 from src.infra.io.session_log_parser import SessionLogParser
 from src.infra.sdk_adapter import SDKClientFactory
 
-pytestmark = [pytest.mark.e2e]
+pytestmark = [pytest.mark.e2e, pytest.mark.flaky_sdk]
 
 if TYPE_CHECKING:
     from pathlib import Path

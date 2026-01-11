@@ -11,7 +11,7 @@ import pytest
 from src.infra.epic_verifier import ClaudeEpicVerificationModel
 from tests.e2e.claude_auth import is_claude_cli_available, has_valid_oauth_credentials
 
-pytestmark = [pytest.mark.e2e]
+pytestmark = [pytest.mark.e2e, pytest.mark.flaky_sdk]
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -14,7 +14,7 @@ import pytest
 from src.infra.clients.cerberus_review import DefaultReviewer
 from src.infra.tools.cerberus import find_cerberus_bin_path
 
-pytestmark = [pytest.mark.e2e]
+pytestmark = [pytest.mark.e2e, pytest.mark.flaky_sdk]
 
 
 def _find_review_gate_bin() -> Path | None:
