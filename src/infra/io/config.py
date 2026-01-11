@@ -132,6 +132,29 @@ class ConfigurationError(Exception):
         super().__init__(message)
 
 
+# Deprecated env vars and their replacements in mala.yaml
+_DEPRECATED_ENV_VARS = {
+    "MALA_REVIEW_TIMEOUT": "validation_triggers.<trigger>.code_review.cerberus.timeout",
+    "MALA_CERBERUS_SPAWN_ARGS": "validation_triggers.<trigger>.code_review.cerberus.spawn_args",
+    "MALA_CERBERUS_WAIT_ARGS": "validation_triggers.<trigger>.code_review.cerberus.wait_args",
+    "MALA_CERBERUS_ENV": "validation_triggers.<trigger>.code_review.cerberus.env",
+    "MALA_MAX_EPIC_VERIFICATION_RETRIES": "validation_triggers.epic_completion.max_epic_verification_retries",
+    "MALA_MAX_DIFF_SIZE_KB": "max_diff_size_kb (root level)",
+}
+
+
+def _warn_deprecated_env_vars() -> None:
+    """Emit warnings for deprecated env vars that are set but no longer read."""
+    for env_var, yaml_path in _DEPRECATED_ENV_VARS.items():
+        if os.environ.get(env_var):
+            warnings.warn(
+                f"{env_var} is deprecated and no longer read. "
+                f"Use {yaml_path} in mala.yaml instead.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+
+
 @dataclass(frozen=True)
 class MalaConfig:
     """Centralized configuration for mala orchestrator.
@@ -150,13 +173,13 @@ class MalaConfig:
         review_enabled: Whether automated code review is enabled.
             Defaults to True.
         review_timeout: Timeout in seconds for review operations.
-            Defaults to 300.
+            Defaults to 1200. Configure via mala.yaml code_review settings.
         cerberus_spawn_args: Extra args for `review-gate spawn-code-review`.
-            Defaults to empty (no extra args).
+            Defaults to empty. Configure via mala.yaml code_review.cerberus.spawn_args.
         cerberus_wait_args: Extra args for `review-gate wait`.
-            Defaults to empty (no extra args).
+            Defaults to empty. Configure via mala.yaml code_review.cerberus.wait_args.
         cerberus_env: Extra environment variables for review-gate.
-            Defaults to empty (no extra env).
+            Defaults to empty. Configure via mala.yaml code_review.cerberus.env.
         track_review_issues: Whether to create beads issues for P2/P3 review findings.
             Env: MALA_TRACK_REVIEW_ISSUES (default: True). Deprecated: use
             validation_triggers.<trigger>.code_review.track_review_issues in mala.yaml.
@@ -165,7 +188,7 @@ class MalaConfig:
         llm_base_url: Base URL for LLM API requests.
             Env: LLM_BASE_URL (for proxy/routing)
         max_epic_verification_retries: Maximum retries for epic verification loop.
-            Env: MALA_MAX_EPIC_VERIFICATION_RETRIES (default: 3)
+            Defaults to 3. Configure via mala.yaml epic_completion settings.
 
     Example:
         # Programmatic construction (no env vars needed):
@@ -315,76 +338,8 @@ class MalaConfig:
 
         parse_errors: list[str] = []
 
-        # Parse deprecated env vars with warnings
-        # These still work but users should migrate to mala.yaml
-        review_timeout = None
-        review_timeout_raw = os.environ.get("MALA_REVIEW_TIMEOUT")
-        if review_timeout_raw:
-            warnings.warn(
-                "MALA_REVIEW_TIMEOUT is deprecated. "
-                "Use validation_triggers.<trigger>.code_review.cerberus.timeout in mala.yaml",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            try:
-                review_timeout = int(review_timeout_raw)
-            except ValueError:
-                parse_errors.append(
-                    f"MALA_REVIEW_TIMEOUT: invalid integer '{review_timeout_raw}'"
-                )
-                review_timeout = None
-
-        # Parse Cerberus override settings (deprecated - use mala.yaml)
-        cerberus_spawn_args_raw = os.environ.get("MALA_CERBERUS_SPAWN_ARGS")
-        if cerberus_spawn_args_raw:
-            warnings.warn(
-                "MALA_CERBERUS_SPAWN_ARGS is deprecated. "
-                "Use validation_triggers.<trigger>.code_review.cerberus.spawn_args in mala.yaml",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        try:
-            cerberus_spawn_args = parse_cerberus_args(
-                cerberus_spawn_args_raw,
-                source="MALA_CERBERUS_SPAWN_ARGS",
-            )
-        except ValueError as exc:
-            parse_errors.append(str(exc))
-            cerberus_spawn_args = []
-
-        cerberus_wait_args_raw = os.environ.get("MALA_CERBERUS_WAIT_ARGS")
-        if cerberus_wait_args_raw:
-            warnings.warn(
-                "MALA_CERBERUS_WAIT_ARGS is deprecated. "
-                "Use validation_triggers.<trigger>.code_review.cerberus.wait_args in mala.yaml",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        try:
-            cerberus_wait_args = parse_cerberus_args(
-                cerberus_wait_args_raw,
-                source="MALA_CERBERUS_WAIT_ARGS",
-            )
-        except ValueError as exc:
-            parse_errors.append(str(exc))
-            cerberus_wait_args = []
-
-        cerberus_env_raw = os.environ.get("MALA_CERBERUS_ENV")
-        if cerberus_env_raw:
-            warnings.warn(
-                "MALA_CERBERUS_ENV is deprecated. "
-                "Use validation_triggers.<trigger>.code_review.cerberus.env in mala.yaml",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        try:
-            cerberus_env = parse_cerberus_env(
-                cerberus_env_raw,
-                source="MALA_CERBERUS_ENV",
-            )
-        except ValueError as exc:
-            parse_errors.append(str(exc))
-            cerberus_env = {}
+        # Emit warnings for deprecated env vars (no longer read - use mala.yaml)
+        _warn_deprecated_env_vars()
 
         # Auto-detect cerberus bin path from Claude plugins
         from src.infra.tools.cerberus import find_cerberus_bin_path
@@ -402,19 +357,6 @@ class MalaConfig:
         )
         llm_base_url = os.environ.get("LLM_BASE_URL") or None
 
-        # Parse max_epic_verification_retries (deprecated - use mala.yaml)
-        max_epic_verification_retries_raw = os.environ.get(
-            "MALA_MAX_EPIC_VERIFICATION_RETRIES"
-        )
-        if max_epic_verification_retries_raw:
-            warnings.warn(
-                "MALA_MAX_EPIC_VERIFICATION_RETRIES is deprecated. "
-                "Use validation_triggers.epic_completion.max_epic_verification_retries in mala.yaml",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        max_epic_verification_retries = _safe_int(max_epic_verification_retries_raw, 3)
-
         # Parse claude_settings_sources
         try:
             claude_settings_sources = parse_claude_settings_sources(
@@ -429,15 +371,15 @@ class MalaConfig:
             runs_dir=runs_dir,
             lock_dir=lock_dir,
             claude_config_dir=claude_config_dir,
-            review_timeout=review_timeout if review_timeout is not None else 1200,
+            review_timeout=1200,  # Default; use mala.yaml for custom values
             cerberus_bin_path=cerberus_bin_path,
-            cerberus_spawn_args=tuple(cerberus_spawn_args),
-            cerberus_wait_args=tuple(cerberus_wait_args),
-            cerberus_env=_normalize_cerberus_env(cerberus_env),
+            cerberus_spawn_args=(),  # Default; use mala.yaml for custom values
+            cerberus_wait_args=(),  # Default; use mala.yaml for custom values
+            cerberus_env=(),  # Default; use mala.yaml for custom values
             track_review_issues=track_review_issues,
             llm_api_key=llm_api_key,
             llm_base_url=llm_base_url,
-            max_epic_verification_retries=max_epic_verification_retries,
+            max_epic_verification_retries=3,  # Default; use mala.yaml for custom values
             # Precedence: env var > yaml > default
             claude_settings_sources_init=(
                 claude_settings_sources

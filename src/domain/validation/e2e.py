@@ -294,7 +294,9 @@ class E2ERunner:
         # fail with "Review gate already active" unless we use a distinct session ID.
         child_env = dict(env)
         child_env["CLAUDE_SESSION_ID"] = f"e2e-{uuid.uuid4()}"
-        child_env["MALA_CERBERUS_SPAWN_ARGS"] = f"--mode={self.config.cerberus_mode}"
+
+        # Inject cerberus mode into fixture's mala.yaml
+        _inject_cerberus_mode(fixture_path, self.config.cerberus_mode)
 
         # Convert timeout from seconds to minutes for CLI (which expects minutes)
         timeout_minutes = max(1, int(self.config.timeout_seconds // 60))
@@ -420,6 +422,74 @@ def _disable_fixture_e2e_config(repo_path: Path) -> None:
         output.append("  e2e: null")
 
     config_path.write_text("\n".join(output) + "\n")
+
+
+def _inject_cerberus_mode(repo_path: Path, cerberus_mode: str) -> None:
+    """Inject cerberus mode into the fixture's mala.yaml.
+
+    Adds or updates validation_triggers.session_end.code_review.cerberus.spawn_args
+    with the specified mode.
+
+    Args:
+        repo_path: Path to the fixture repository.
+        cerberus_mode: Cerberus mode to set (e.g., "fast", "smart", "max").
+    """
+    config_path = repo_path / "mala.yaml"
+    if not config_path.exists():
+        return
+
+    # Read existing config and append cerberus config
+    # Using simple yaml append since full parsing would require yaml library
+    content = config_path.read_text()
+
+    # Check if validation_triggers already exists
+    if "validation_triggers:" not in content:
+        content += f"""
+validation_triggers:
+  session_end:
+    code_review:
+      cerberus:
+        spawn_args: ["--mode={cerberus_mode}"]
+"""
+    elif "session_end:" not in content:
+        # Add session_end under validation_triggers
+        content = content.replace(
+            "validation_triggers:",
+            f"""validation_triggers:
+  session_end:
+    code_review:
+      cerberus:
+        spawn_args: ["--mode={cerberus_mode}"]""",
+        )
+    else:
+        # session_end exists, need to inject cerberus config
+        # This is a best-effort approach without full yaml parsing
+        lines = content.splitlines()
+        output: list[str] = []
+        injected = False
+
+        for i, line in enumerate(lines):
+            output.append(line)
+            if line.strip().startswith("session_end:") and not injected:
+                # Find the indentation level
+                indent = len(line) - len(line.lstrip())
+                # Insert code_review config after session_end
+                # Look ahead to see if code_review already exists
+                has_code_review = any(
+                    ln.strip().startswith("code_review:")
+                    for ln in lines[i + 1 : min(i + 10, len(lines))]
+                )
+                if not has_code_review:
+                    output.append(" " * (indent + 2) + "code_review:")
+                    output.append(" " * (indent + 4) + "cerberus:")
+                    output.append(
+                        " " * (indent + 6) + f'spawn_args: ["--mode={cerberus_mode}"]'
+                    )
+                    injected = True
+
+        content = "\n".join(output)
+
+    config_path.write_text(content)
 
 
 def _select_python_invoker(repo_root: Path) -> list[str]:

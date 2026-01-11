@@ -46,65 +46,62 @@ class TestMalaConfigFromEnv:
         config = MalaConfig.from_env(validate=False)
         assert config.claude_config_dir == Path("/custom/claude")
 
-    def test_from_env_reads_review_timeout_deprecated(
+    def test_from_env_ignores_review_timeout_deprecated(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """from_env() reads MALA_REVIEW_TIMEOUT with deprecation warning."""
+        """from_env() ignores MALA_REVIEW_TIMEOUT with deprecation warning."""
         monkeypatch.setenv("MALA_REVIEW_TIMEOUT", "450")
         with pytest.warns(
             DeprecationWarning, match="MALA_REVIEW_TIMEOUT is deprecated"
         ):
             config = MalaConfig.from_env(validate=False)
-        assert config.review_timeout == 450
+        # Env var is ignored; default is used
+        assert config.review_timeout == 1200
 
-    def test_from_env_rejects_invalid_review_timeout(
+    def test_from_env_ignores_cerberus_spawn_args_deprecated(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """from_env() rejects invalid MALA_REVIEW_TIMEOUT values."""
-        monkeypatch.setenv("MALA_REVIEW_TIMEOUT", "not-a-number")
-        with pytest.warns(DeprecationWarning):
-            with pytest.raises(ConfigurationError):
-                MalaConfig.from_env(validate=False)
-
-    def test_from_env_reads_cerberus_spawn_args_deprecated(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """from_env() reads MALA_CERBERUS_SPAWN_ARGS with deprecation warning."""
+        """from_env() ignores MALA_CERBERUS_SPAWN_ARGS with deprecation warning."""
         monkeypatch.setenv("MALA_CERBERUS_SPAWN_ARGS", "--foo bar --flag")
         with pytest.warns(
             DeprecationWarning, match="MALA_CERBERUS_SPAWN_ARGS is deprecated"
         ):
             config = MalaConfig.from_env(validate=False)
-        assert config.cerberus_spawn_args == ("--foo", "bar", "--flag")
+        # Env var is ignored; default is used
+        assert config.cerberus_spawn_args == ()
 
-    def test_from_env_reads_cerberus_wait_args_deprecated(
+    def test_from_env_ignores_cerberus_wait_args_deprecated(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """from_env() reads MALA_CERBERUS_WAIT_ARGS with deprecation warning."""
+        """from_env() ignores MALA_CERBERUS_WAIT_ARGS with deprecation warning."""
         monkeypatch.setenv("MALA_CERBERUS_WAIT_ARGS", "--baz qux")
         with pytest.warns(
             DeprecationWarning, match="MALA_CERBERUS_WAIT_ARGS is deprecated"
         ):
             config = MalaConfig.from_env(validate=False)
-        assert config.cerberus_wait_args == ("--baz", "qux")
+        # Env var is ignored; default is used
+        assert config.cerberus_wait_args == ()
 
-    def test_from_env_reads_cerberus_env_json_deprecated(
+    def test_from_env_ignores_cerberus_env_deprecated(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """from_env() reads MALA_CERBERUS_ENV as JSON with deprecation warning."""
+        """from_env() ignores MALA_CERBERUS_ENV with deprecation warning."""
         monkeypatch.setenv("MALA_CERBERUS_ENV", '{"FOO":"bar","NUM":1}')
         with pytest.warns(DeprecationWarning, match="MALA_CERBERUS_ENV is deprecated"):
             config = MalaConfig.from_env(validate=False)
-        assert dict(config.cerberus_env) == {"FOO": "bar", "NUM": "1"}
+        # Env var is ignored; default is used
+        assert config.cerberus_env == ()
 
-    def test_from_env_reads_cerberus_env_kv_deprecated(
+    def test_from_env_ignores_max_diff_size_kb_deprecated(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """from_env() reads MALA_CERBERUS_ENV as KEY=VALUE list with deprecation warning."""
-        monkeypatch.setenv("MALA_CERBERUS_ENV", "FOO=bar,BAZ=qux")
-        with pytest.warns(DeprecationWarning, match="MALA_CERBERUS_ENV is deprecated"):
-            config = MalaConfig.from_env(validate=False)
-        assert dict(config.cerberus_env) == {"FOO": "bar", "BAZ": "qux"}
+        """from_env() ignores MALA_MAX_DIFF_SIZE_KB with deprecation warning."""
+        monkeypatch.setenv("MALA_MAX_DIFF_SIZE_KB", "100")
+        with pytest.warns(
+            DeprecationWarning, match="MALA_MAX_DIFF_SIZE_KB is deprecated"
+        ):
+            # No field for this in MalaConfig; just verify warning is emitted
+            MalaConfig.from_env(validate=False)
 
     def test_from_env_detects_cerberus_bin_path_schema_v2(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -132,15 +129,6 @@ class TestMalaConfigFromEnv:
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
         config = MalaConfig.from_env(validate=False)
         assert config.cerberus_bin_path == bin_dir
-
-    def test_from_env_rejects_invalid_cerberus_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """from_env() rejects invalid MALA_CERBERUS_ENV values."""
-        monkeypatch.setenv("MALA_CERBERUS_ENV", "NOT_A_KV")
-        with pytest.warns(DeprecationWarning):
-            with pytest.raises(ConfigurationError):
-                MalaConfig.from_env(validate=False)
 
     def test_from_env_validates_by_default(
         self, monkeypatch: pytest.MonkeyPatch
