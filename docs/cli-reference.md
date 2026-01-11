@@ -10,11 +10,13 @@ The main command to run the mala orchestrator. See [CLI Options](#cli-options) b
 
 ### `mala init`
 
-Interactively generate a `mala.yaml` configuration file.
+Generate a `mala.yaml` configuration file (interactive by default).
 
 ```bash
 mala init              # Create mala.yaml interactively
 mala init --dry-run    # Preview config without writing
+mala init --preset python-uv --yes   # Non-interactive with defaults
+mala init --preset python-uv --skip-evidence --skip-triggers  # Non-interactive, minimal
 ```
 
 **Options:**
@@ -22,20 +24,61 @@ mala init --dry-run    # Preview config without writing
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | Preview the generated config without writing to disk |
+| `--yes`, `-y` | Accept defaults (requires `--preset`) |
+| `--preset`, `-p` | Preset to use in non-interactive or interactive mode |
+| `--skip-evidence` | Omit the `evidence_check` section |
+| `--skip-triggers` | Omit the `validation_triggers` section |
 
 **Workflow:**
 
 1. Select a preset (python-uv, node-npm, go, rust) or choose custom
-2. For custom: enter commands for setup, test, lint, format, typecheck
-3. Config is validated and written to `mala.yaml`
-4. If `mala.yaml` exists, a backup is created at `mala.yaml.bak`
+2. For custom: enter commands for built-in command names (setup, build, test, lint, format, typecheck, e2e)
+3. Optionally configure `evidence_check` and `validation_triggers` (checkboxes)
+4. Config is validated and written to `mala.yaml` (or printed for `--dry-run`)
+5. If `mala.yaml` exists, a backup is created at `mala.yaml.bak`
+6. YAML is printed to stdout (even in non-dry-run mode) and a trigger reference table is printed to stderr
+
+**Non-interactive mode:** requires either `--preset --yes` or `--preset --skip-evidence --skip-triggers`.
 
 ### `mala status`
 
-Show recent session logs and run status.
+Show running mala instances, locks, and recent run metadata.
 
 ```bash
 mala status
+mala status --all
+```
+
+### `mala clean`
+
+Clean up stale lock files.
+
+```bash
+mala clean
+mala clean --force   # Clean even if a mala instance is running
+```
+
+### `mala logs`
+
+Search and inspect run metadata.
+
+```bash
+mala logs list
+mala logs list --all --json
+mala logs sessions --issue ISSUE-123
+mala logs sessions --issue ISSUE-123 --all
+mala logs show <run_id_or_prefix>
+```
+
+### `mala epic-verify`
+
+Verify (and optionally close) a single epic without running issues.
+
+```bash
+mala epic-verify EPIC-123 /path/to/repo
+mala epic-verify EPIC-123 --no-close
+mala epic-verify EPIC-123 --force
+mala epic-verify EPIC-123 --human-override --close
 ```
 
 ## CLI Options
@@ -54,7 +97,8 @@ mala status
 |------|---------|-------------|
 | `--scope`, `-s` | `all` | Scope filter: `all`, `epic:<id>`, `ids:<id,...>`, `orphans` |
 | `--order` | `epic-priority` | Issue ordering mode (see [Order Modes](#order-modes)) |
-| `--resume`, `-r` | false | Include in_progress issues alongside open issues |
+| `--resume`, `-r` | false | Include in_progress issues and attempt to resume their Claude sessions |
+| `--strict` | false | Fail if `--resume` finds no prior session for an issue (requires `--resume`) |
 
 ### Order Modes
 
@@ -96,6 +140,12 @@ mala run --scope ids:T-123,T-456,T-789 --order input /path/to/repo
 | `--dry-run`, `-d` | false | Preview task order without processing |
 | `--verbose`, `-v` | false | Enable verbose output; shows full tool arguments |
 
+### Claude Settings
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--claude-settings-sources` | `local,project` | Comma-separated list of settings sources: `local`, `project`, `user` |
+
 ## Global Configuration
 
 mala uses a global config directory at `~/.config/mala/`:
@@ -119,6 +169,7 @@ Precedence: CLI flags override global config, which overrides program defaults.
 | `MALA_LOCK_DIR` | `/tmp/mala-locks` | Directory for filesystem locks |
 | `MALA_DISABLE_DEBUG_LOG` | - | Set to `1` to disable debug file logging (for performance or disk space) |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Claude SDK config directory (plugins, sessions) |
+| `MALA_CLAUDE_SETTINGS_SOURCES` | `local,project` | Comma-separated Claude settings sources |
 
 ### Epic Verification
 
@@ -154,7 +205,9 @@ Agent logs are written in JSONL format to `~/.config/mala/logs/`:
 
 Check log status with:
 ```bash
-mala status    # Shows recent logs and their timestamps
+mala status     # Shows running instances, locks, and recent runs
+mala logs list  # Lists recent runs with counts
+mala logs show <run_id>  # Shows a specific run in detail
 ```
 
 ### Output Verbosity
@@ -171,33 +224,10 @@ mala run /path/to/repo          # Normal output (default)
 mala run -v /path/to/repo       # Verbose mode - full tool args
 ```
 
-## Deprecated Flags
+## Removed Flags
 
-These flags are deprecated and will be removed in a future version. Use the recommended alternatives.
-
-### `--reviewer-type`
-
-**Status**: Deprecated
-
-**Migration**: Use `validation_triggers.<trigger>.code_review.reviewer_type` in `mala.yaml` instead.
-
-**Before:**
-```bash
-mala run --reviewer-type cerberus /path/to/repo
-```
-
-**After:**
-```yaml
-# mala.yaml
-validation_triggers:
-  session_end:
-    failure_mode: continue
-    code_review:
-      enabled: true
-      reviewer_type: cerberus  # or "agent_sdk"
-```
-
-The per-trigger configuration provides more flexibility, allowing different reviewer types for different triggers (e.g., `agent_sdk` for per-issue review, `cerberus` for cumulative run-end review).
+`--reviewer-type` is no longer supported. Configure reviewer type in
+`validation_triggers.<trigger>.code_review.reviewer_type` in `mala.yaml`.
 
 ## Terminal Output
 

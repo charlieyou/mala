@@ -6,15 +6,20 @@ The validation module (`src/domain/validation/`) provides structured validation 
 
 After an agent completes an issue, the orchestrator runs a quality gate that verifies:
 
-1. **Commit exists**: One or more git commits with `bd-<issue_id>` in the message, created during the current run (stale commits from previous runs are rejected via baseline timestamp)
-2. **Validation evidence**: The agent ran ALL required checks defined in `mala.yaml` (parsed from JSONL logs). For Python projects using `preset: python-uv`:
-   - `pytest` - tests
-   - `ruff check` - linting
-   - `ruff format` - formatting
-   - `ty check` - type checking
-3. **Commands succeeded**: All validation commands must exit with zero status (non-zero exits fail the gate)
+1. **Commit exists**: One or more git commits with `bd-<issue_id>` in the message, created during the current run (stale commits from previous runs are rejected via a baseline timestamp)
+2. **Evidence (optional)**: If `evidence_check.required` is configured, the gate requires evidence in JSONL session logs for those command names
+3. **Command success**: Required evidence must show successful command execution (failures fail the gate; custom commands with `allow_fail: true` do not fail the gate)
 
-All validation commands must run AND pass for the gate to pass. Partial validation (e.g., only tests) is rejected. The required commands are spec-driven via `ValidationSpec` built from `mala.yaml`. Multiple commits per issue are supported; reviews use the full commit list for the issue when available.
+Evidence requirements are **opt-in**. If `evidence_check` is omitted or `required: []`, the gate does **not** require validation evidence (it still requires a commit).
+Required evidence names must exist in the resolved command pool (built-in or custom); invalid names fail fast at startup.
+
+### Resolution Markers
+
+The gate handles special resolutions:
+
+- **`ISSUE_NO_CHANGE` / `ISSUE_OBSOLETE`**: Requires a rationale; commit and evidence checks are skipped
+- **`ISSUE_ALREADY_COMPLETE`**: Requires a rationale and a matching commit; baseline timestamp is ignored; evidence checks are skipped
+- **`ISSUE_DOCS_ONLY`**: Requires a rationale and a commit; evidence checks are skipped only if the commit does **not** touch files that trigger validation (based on `code_patterns`, `config_files`, `setup_files`) and does not modify `mala.yaml`
 
 ### Same-Session Re-entry
 
@@ -42,13 +47,34 @@ When a Claude CLI subprocess hangs (no output for an extended period), the orche
 
 This prevents hung agents from blocking issue processing indefinitely.
 
-## Code Review
+## Session-End Validation (Trigger)
 
-Code review runs after the deterministic gate passes. Configure it in `validation_triggers.<trigger>.code_review`. For complete configuration details, see [validation-triggers.md](validation-triggers.md#code-review).
+After the gate passes, mala can run a **session_end** trigger (if configured) to execute additional commands and/or code review for the completed issue. These commands run in the repository root via the orchestrator, not inside the agent session.
+
+- **failure_mode** controls what happens on failure (`abort`, `continue`, `remediate`)
+- **remediate** spawns a fixer agent and retries the session_end commands
+- Results are recorded and passed to the external review as **informational context**
+
+## External Review Gate (Per Issue)
+
+After session_end (or immediately after the gate if session_end is not configured), an external review gate runs for the issue:
+
+- Reviewer implementation is selected from the **first enabled** `validation_triggers.<trigger>.code_review` block:
+  - `reviewer_type: agent_sdk` (default if none configured)
+  - `reviewer_type: cerberus` (requires Cerberus review-gate)
+- If the configured reviewer is unavailable (e.g., Cerberus not installed), review is disabled for that run
+- P0/P1 findings fail the review; P2/P3 findings are tracked (see below)
+- Reviews are retried on parse errors or no-progress conditions, up to the configured retry limit
+
+## Trigger-Based Code Review
+
+Each trigger can optionally include a `code_review` block. These reviews run **after trigger commands** and use the same reviewer types as the external review gate. For full configuration details, see [validation-triggers.md](validation-triggers.md#code-review).
 
 ### Code Review Configuration
 
 The `code_review` block configures automated code review for each trigger:
+The first enabled block also determines the reviewer implementation and settings
+used by the per-issue external review gate.
 
 | Field | Required | Values | Default | Description |
 |-------|----------|--------|---------|-------------|
@@ -57,8 +83,10 @@ The `code_review` block configures automated code review for each trigger:
 | `failure_mode` | No | `abort`, `continue`, `remediate` | `continue` | How to handle review failures |
 | `max_retries` | No | Integer | `3` | Retry attempts for remediation |
 | `finding_threshold` | No | `P0`, `P1`, `P2`, `P3`, `none` | `none` | Minimum severity to report |
-| `baseline` | Required for cumulative | `since_run_start`, `since_last_review` | - | What code to include |
+| `baseline` | Required for cumulative* | `since_run_start`, `since_last_review` | - | What code to include |
 | `cerberus` | No | Object | - | Cerberus-specific settings |
+
+*If omitted for `epic_completion` or `run_end`, mala logs a warning and defaults to `since_run_start`.
 
 ### Trigger Types and Code Review
 
@@ -88,7 +116,7 @@ validation_triggers:
       finding_threshold: P0
 ```
 
-### Review Flow
+### Review Flow (Per-Issue Review Gate)
 
 1. **Review spawns**: The configured reviewer (`cerberus` or `agent_sdk`) reviews issue commits
 2. **Scope verification**: Reviewers check commits against issue description and acceptance criteria
@@ -97,15 +125,17 @@ validation_triggers:
    - List of issues (file, line, priority, message) from all reviewers
    - Instructions to fix errors and re-run validations
    - Commit list for the issue (includes all work across retry attempts)
-5. **Re-gating**: After fixes, runs both deterministic gate AND code review again
+5. **Re-gating**: After fixes, runs both the gate and review again
 
-Review retries are capped at `max_retries` in the `code_review` block (default: 3). Disable code review by setting `validation_triggers.<trigger>.code_review.enabled: false` or by passing `disable_validations={"review"}` when building a validation spec programmatically.
+Trigger-based code_review uses fixer remediation (when configured) rather than resuming the original implementer session.
 
-**Skipped for no-work resolutions**: Issues resolved with `ISSUE_NO_CHANGE`, `ISSUE_OBSOLETE`, or `ISSUE_ALREADY_COMPLETE` skip code review entirely since there's no new code to review.
+Trigger code_review remediation retries are capped by `code_review.max_retries` (default: 3). Per-issue external review retries are capped by an internal default (currently 3) and are not configured in `mala.yaml`.
+
+**Skipped for no-work resolutions**: Issues resolved with `ISSUE_NO_CHANGE`, `ISSUE_OBSOLETE`, `ISSUE_ALREADY_COMPLETE`, or `ISSUE_DOCS_ONLY` skip code review entirely since there's no new code to review.
 
 ### Low-Priority Review Findings (P2/P3)
 
-When code review passes but includes P2/P3 priority findings, the orchestrator automatically creates tracking issues:
+When code review passes but includes P2/P3 findings, mala can automatically create tracking issues:
 
 1. **Collection**: P2/P3 findings are collected from the review result (P0/P1 block the review)
 2. **Issue creation**: After the issue is successfully closed, beads issues are created for each finding
@@ -141,52 +171,20 @@ validation_triggers:
 
 For complete migration instructions, see [validation-triggers.md](validation-triggers.md#migration-guide).
 
-## Global Validation
+## Trigger Validation
 
-After all issues complete, the orchestrator runs a final validation pass. This catches issues that only manifest when all changes are combined:
+Validation triggers (`session_end`, `periodic`, `epic_completion`, `run_end`) execute configured commands from `mala.yaml`:
 
-1. **Triggers**: After all per-session work completes (with at least one success)
-2. **Worktree validation**: Runs tests in isolated worktree at HEAD commit
-3. **Fixer agent**: On failure, spawns a dedicated fixer agent with the failure output
-4. **Retry loop**: Continues up to `max_gate_retries` attempts
+- Commands run **sequentially** and **fail-fast**
+- Validation runs **block new issue assignments** while they execute
+- `failure_mode: remediate` spawns a fixer agent and retries the trigger commands
+- `run_end` fires based on `fire_on` (success/failure/both)
 
-Global validations use the configured `commands` in `mala.yaml` (preset or explicit).
-
-### Validation Scopes
-
-| Scope | When | What runs |
-|-------|------|-----------|
-| **Per-session** | After each issue completes | pytest, ruff, ty |
-| **Global** | After all issues complete | pytest, ruff, ty, + E2E fixture test |
-
-### Test Flags
-
-| Flag | Default | Effect |
-|------|---------|--------|
-| `integration-tests` | included | Pytest tests marked `@pytest.mark.integration` are skipped when this value is in the disable list |
-| `e2e` | enabled (global only) | E2E fixture test runs only during global validation |
-
-### Disable Values (Programmatic)
-
-- `global-validate`: Skip global validation entirely
-- `integration-tests`: Exclude integration-marked pytest tests
-- `e2e`: Disable E2E fixture test (only affects global)
-- `followup-on-run-validate-fail`: Don't mark issues on global validation failure
-
-## Repo Type Detection
-
-mala automatically detects the repository type and adjusts validation accordingly:
-
-| Repo Type | Detection | Validation |
-|-----------|-----------|------------|
-| **Python** | Has `pyproject.toml`, `uv.lock`, or `requirements.txt` | Full Python toolchain (pytest, ruff, ty) |
-| **Generic** | No Python project markers | Minimal validation (no Python-specific tools) |
-
-This allows mala to process issues in non-Python repositories without failing on missing Python tooling.
+Trigger commands execute in the repository root (no worktree isolation).
 
 ## ValidationSpec
 
-Defines what validations run per scope (per-session vs global):
+Defines validation commands and evidence expectations per scope. If `mala.yaml` is missing, mala returns a default Python/uv spec with **no evidence requirements**.
 
 ```python
 from src.domain.validation import build_validation_spec, ValidationScope
@@ -199,26 +197,19 @@ spec = build_validation_spec(
 
 ## Code vs Docs Classification
 
-Changes are classified to determine validation requirements:
+Changes are classified to determine whether `ISSUE_DOCS_ONLY` is allowed:
 
 | Category | Paths/Files | Validation |
 |----------|-------------|------------|
-| **Code** | `src/**`, `tests/**`, `commands/**`, `.py`, `.sh`, `.toml` | Full suite (tests + coverage) |
-| **Docs** | `.md`, `.rst`, `.txt` outside code paths | Full suite (tests still run) |
+| **Code** | Matches `code_patterns`, `config_files`, or `setup_files` (plus `mala.yaml`) | Docs-only resolution **rejected** |
+| **Docs** | Does not match validation trigger patterns | Docs-only resolution allowed |
 
-Note: For docs-only issues that need no changes, agents can use `ISSUE_NO_CHANGE` to skip validation entirely.
+Note: For documentation-only commits, use `ISSUE_DOCS_ONLY` to skip evidence checks when files do not match validation trigger patterns.
 
-## Worktree Validation
+## Worktree Validation (Programmatic)
 
-Clean-room validation runs in isolated git worktrees:
-
-```
-/tmp/mala-worktrees/{run_id}/{issue_id}/{attempt}/
-```
-
-- Commits are tested in isolation from the working tree
-- Failed validations can keep worktrees for debugging (`--keep-worktrees`)
-- Stale worktrees from crashed runs are auto-cleaned
+The `SpecValidationRunner` uses isolated git worktrees when run directly in code
+or tests. The orchestrator's trigger validation runs in the repository root.
 
 ## Parallel Validation
 

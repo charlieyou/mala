@@ -1,28 +1,28 @@
 # Validation Triggers
 
-Validation triggers let you run validation commands at specific checkpoints during a mala session. Instead of running all validations at session end, you can configure fast checks after each epic and comprehensive checks only at the end.
+Validation triggers let you run validation commands at specific checkpoints during a mala session. Instead of running all validations only at the end, you can configure fast checks after each issue or epic and comprehensive checks at run end.
 
 ## Overview
 
 The trigger system provides:
 
 - **Faster feedback**: Run appropriate validations at each checkpoint (e.g., lint after each epic)
-- **Cost-effective validation**: Run expensive tests only when needed (e.g., E2E tests at session end)
+- **Cost-effective validation**: Run expensive tests only when needed (e.g., E2E tests at run end)
 - **Flexible strategies**: Different failure modes per trigger (abort, continue, or auto-fix)
 
 ## Configuration
 
 Triggers are configured in `mala.yaml` using two sections:
 
-1. **Base command pool**: Built from `commands` (preset or explicit)
+1. **Base command pool**: Built from `commands` (preset or explicit), including custom commands
 2. **Trigger configuration** (`validation_triggers`): Specifies when and how to run them
 
 ### Base Pool Construction
 
 The base command pool determines which commands can be referenced in triggers:
 
-- **Built-in commands** (`test`, `lint`, `format`, `typecheck`, `e2e`, `setup`, `build`): Use `commands` (from preset or explicit config)
-- **Custom commands**: Use additional keys defined in `commands`
+- **Built-in commands** (`setup`, `build`, `test`, `lint`, `format`, `typecheck`, `e2e`): Use `commands` (from preset or explicit config)
+- **Custom commands**: Any additional keys defined under `commands`
 
 ```yaml
 preset: python-uv  # Provides test, lint, typecheck, format in commands
@@ -91,7 +91,9 @@ validation_triggers:
 
 ### session_end
 
-Fires when all issues complete and the session ends normally.
+Fires after each **agent session** completes (per-issue), after the quality gate passes.
+
+Commands run in the repository root via the orchestrator (not inside the agent session).
 
 | Field | Required | Values | Description |
 |-------|----------|--------|-------------|
@@ -99,9 +101,9 @@ Fires when all issues complete and the session ends normally.
 | `max_retries` | When remediate | Integer | Retry attempts for remediation |
 | `commands` | No | List | Commands to run (empty = no validation) |
 
-**Skip conditions:**
-- Session was aborted (e.g., user pressed Ctrl+C)
-- No successful work completed (`success_count == 0`)
+**Notes:**
+- Runs after each issue's gate pass (not after the whole run)
+- Session_end failures do **not** block the external review stage (unless `failure_mode: abort`)
 
 ```yaml
 validation_triggers:
@@ -219,8 +221,8 @@ For simple references without overrides:
 
 ```yaml
 commands:
-  - ref: lint
-  - ref: typecheck
+  - lint
+  - typecheck
 ```
 
 ### Full Object Form
@@ -301,7 +303,7 @@ Multiple triggers queue and execute sequentially. No parallel validation runs.
 
 ### Blocking
 
-Global trigger validation **blocks new issue assignments** to prevent workspace conflicts. Active agents continue running, but no new issues start until validation completes.
+Trigger validation **blocks new issue assignments** to prevent workspace conflicts. Active agents continue running, but no new issues start until validation completes.
 
 ## Code Review
 
@@ -322,7 +324,7 @@ Each trigger can optionally include a `code_review` block to run automated code 
 | `agent_sdk_model` | No | `sonnet`, `opus`, `haiku` | `sonnet` | Model for Agent SDK reviewer |
 | `track_review_issues` | No | Boolean | `true` | Create beads issues for P2/P3 review findings |
 
-**baseline requirement:** The `baseline` field is required for `epic_completion` and `run_end` triggers because they review accumulated changes across multiple issues. It is not used for `session_end`, which reviews only the single issue's changes.
+**baseline requirement:** The `baseline` field is required for `epic_completion` and `run_end` triggers because they review accumulated changes across multiple issues. If omitted, mala logs a warning and defaults to `since_run_start`. It is not used for `session_end`, which reviews only the single issue's changes.
 
 ### Per-Issue Code Review (session_end)
 
@@ -344,7 +346,7 @@ validation_triggers:
 
 ### Cumulative Code Review (epic_completion, run_end)
 
-Reviews accumulated changes across multiple issues. The `baseline` field is required:
+Reviews accumulated changes across multiple issues. The `baseline` field is required (if omitted, mala defaults to `since_run_start` with a warning):
 
 - `since_run_start`: Review all changes since the run began
 - `since_last_review`: Review changes since the last successful review at this trigger point

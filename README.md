@@ -46,7 +46,8 @@ claude login
 
 ### Cerberus Review-Gate (Optional)
 
-[Cerberus](https://github.com/charlieyou/cerberus) provides automated code review. Disable with `--disable review`.
+[Cerberus](https://github.com/charlieyou/cerberus) provides automated code review when `reviewer_type: cerberus`
+is enabled in `mala.yaml`. If you use `reviewer_type: agent_sdk`, no Cerberus install is required.
 
 ```bash
 claude /plugin marketplace add charlieyou/cerberus
@@ -63,14 +64,21 @@ uv tool install . --reinstall
 
 ```bash
 mala init                                 # Interactively create mala.yaml
+mala init --yes --preset python-uv         # Non-interactive init with defaults
 mala run /path/to/repo                    # Run the parallel worker
 mala run --max-agents 5 /path/to/repo     # Limit concurrent agents
 mala run --scope epic:proj-abc /path/to/repo    # Process children of epic
 mala run --scope ids:issue-1,issue-2 --order input /path/to/repo  # Specific issues in order
-mala run --resume /path/to/repo            # Include in_progress issues
+mala run --resume /path/to/repo            # Include in_progress issues and resume sessions
+mala run --strict --resume /path/to/repo   # Fail if a resumed issue has no session
 mala run --watch /path/to/repo             # Keep polling for new issues
 mala status                               # Check locks, config, logs
-mala clean                                # Clean up locks and logs
+mala status --all                          # Show running instances across directories
+mala logs list                            # List recent runs
+mala logs sessions --issue ISSUE-123      # Find sessions for an issue
+mala logs show <run_id_prefix>            # Show run metadata
+mala clean                                # Clean up locks
+mala clean --force                         # Clean even if mala is running
 mala epic-verify proj-abc /path/to/repo   # Verify and close an epic
 ```
 
@@ -79,8 +87,8 @@ mala epic-verify proj-abc /path/to/repo   # Verify and close an epic
 1. **Orchestrator** queries `bd ready --json` for available issues
 2. **Filtering**: Epics are skipped - only tasks/bugs are processed
 3. **Spawning**: Up to N parallel agent tasks (unlimited by default)
-4. **Per-session pipeline**: Agent implements → evidence check → external review → close
-5. **Global validation**: Final validation pass catches cross-issue regressions
+4. **Per-session pipeline**: Agent implements → quality gate (commit + evidence) → session_end trigger (optional) → external review → close
+5. **Trigger validation**: `periodic`, `epic_completion`, and `run_end` triggers run configured commands with optional fixer remediation
 6. **Epic verification**: When all children close, verifies acceptance criteria
 
 ### Agent Workflow
@@ -88,9 +96,10 @@ mala epic-verify proj-abc /path/to/repo   # Verify and close an epic
 1. **Understand**: Read issue with `bd show <id>`
 2. **Lock files**: Acquire filesystem locks before editing
 3. **Implement**: Write code following project conventions
-4. **Quality checks**: Run linters, formatters, type checkers
+4. **Quality checks**: Run the required validations for evidence (see `evidence_check` in `mala.yaml`)
 5. **Commit**: Stage and commit changes locally
-6. **Cleanup**: Release locks (orchestrator closes issue after gate passes)
+6. **Session-end validation**: Orchestrator may run additional commands after gate passes
+7. **Cleanup**: Release locks (orchestrator closes issue after gate + review)
 
 ### Resolution Markers
 
@@ -101,6 +110,7 @@ Agents can signal non-implementation resolutions:
 | `ISSUE_NO_CHANGE` | Issue requires no code changes |
 | `ISSUE_OBSOLETE` | Issue is no longer relevant |
 | `ISSUE_ALREADY_COMPLETE` | Work was already done in a prior commit |
+| `ISSUE_DOCS_ONLY` | Documentation-only changes; skip validation evidence |
 
 ### Epics and Parent-Child Issues
 
@@ -124,8 +134,14 @@ File locks are enforced at two levels:
 
 ### Git Safety
 
-Dangerous git operations that can cause conflicts between concurrent agents are blocked:
-`git stash`, `git reset --hard`, `git rebase`, `git checkout -f`, `git restore`, `git clean -f`, `git merge --abort`
+Dangerous commands are blocked to avoid destructive or conflicting actions:
+
+- **Destructive git operations**: `git reset --hard|--soft|--mixed`, `git reset HEAD`, `git checkout -f|--force|--`, `git restore`,
+  `git clean -f|-fd`, `git rebase`, `git commit --amend`, `git branch -D`, `git merge --abort`, `git rebase --abort`,
+  `git cherry-pick --abort`, `git worktree remove`, `git submodule deinit -f`, `git stash`
+- **Dangerous shell patterns**: `rm -rf /`, `rm -rf ~`, fork bombs, `mkfs.*`, raw disk writes, `curl|wget | bash/sh`
+
+The hook errors include safe alternatives where possible.
 
 ## Creating Issues
 
@@ -146,7 +162,8 @@ See `commands/bd-breakdown.md` for the full issue creation workflow.
 - [Architecture](docs/architecture.md) — Layered architecture, module responsibilities, key flows
 - [CLI Reference](docs/cli-reference.md) — CLI options, environment variables, integrations
 - [Project Configuration](docs/project-config.md) — mala.yaml schema, presets, coverage settings
-- [Validation](docs/validation.md) — Evidence check, external review, global validation
+- [Validation](docs/validation.md) — Evidence check, session_end, review gates, trigger validation
+- [Validation Triggers](docs/validation-triggers.md) — Trigger-based validation and code review
 - [Development](docs/development.md) — Type checking, testing, package structure
 - `plans/` — Historical design documents (not actively maintained)
 

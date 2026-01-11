@@ -37,11 +37,13 @@ preset: string           # Optional. Preset to extend (python-uv, node-npm, go, 
 
 commands:                   # Optional. Command definitions
   setup: string | object | null     # Environment setup (e.g., "uv sync", "npm install")
+  build: string | object | null     # Build step (e.g., "npm run build")
   test: string | object | null      # Test runner (e.g., "uv run pytest", "go test ./...")
   lint: string | object | null      # Linter (e.g., "uvx ruff check .", "golangci-lint run")
   format: string | object | null    # Formatter command (e.g., "uvx ruff format .")
   typecheck: string | object | null # Type checker (e.g., "uvx ty check", "tsc --noEmit")
   e2e: string | object | null       # End-to-end tests (e.g., "uv run pytest -m e2e")
+  <custom>: string | object         # Custom commands (e.g., "security-scan")
 
 code_patterns:           # Optional. Glob patterns for code files
   - "*.py"
@@ -61,6 +63,9 @@ coverage:                # Optional. Omit to disable coverage
   file: string           # Required. Path to coverage report
   threshold: number      # Required. Minimum coverage percentage (0-100)
 
+evidence_check:          # Optional. Gate evidence requirements
+  required: list         # Command names that must have evidence in session logs
+
 claude_settings_sources: list     # Optional. SDK settings sources (default: [local, project])
 
 timeout_minutes: int             # Optional. Agent timeout in minutes (default: 60)
@@ -77,6 +82,7 @@ validation_triggers:             # Optional. See validation-triggers.md
   epic_completion: object        # Run validation when epics complete
   session_end: object            # Run validation at session end
   periodic: object               # Run validation periodically
+  run_end: object                # Run validation at end of run
 ```
 
 ## Field Reference
@@ -86,6 +92,8 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `preset` | string | No | Preset name to extend |
 | `commands` | object | No | Map of command kind to shell command or object |
 | `commands.<kind>` | string, object, or null | No | Shell command or `{command, timeout}`. `null` explicitly disables |
+| `commands.build` | string, object, or null | No | Build step (optional) |
+| `commands.<custom>` | string or object | No | Custom command definition (name must be a valid identifier) |
 | `code_patterns` | list | No | Glob patterns for code files |
 | `config_files` | list | No | Tool config files that trigger re-lint |
 | `setup_files` | list | No | Lock files that trigger setup re-run |
@@ -102,6 +110,8 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `idle_timeout_seconds` | float | No | Seconds to wait for SDK activity before triggering idle recovery (default: derived from `timeout_minutes`). Set to 0 to disable idle timeout. |
 | `max_diff_size_kb` | integer | No | Maximum diff size in KB for epic verification. Diffs larger than this limit will skip verification. |
 | `validation_triggers` | object | No | Trigger configuration. See [validation-triggers.md](validation-triggers.md) |
+| `evidence_check` | object | No | Evidence requirements for the quality gate |
+| `evidence_check.required` | list | No | List of command names that must appear in session logs |
 
 *Required when `coverage` section is present.
 
@@ -114,6 +124,34 @@ commands:
   test:
     command: "uv run pytest"
     timeout: 600
+```
+
+## Custom Commands
+
+Define additional validation commands under `commands` using custom names:
+
+```yaml
+commands:
+  security-scan:
+    command: "uv run bandit -r src/"
+    timeout: 120
+    allow_fail: true
+```
+
+Notes:
+- Custom command names must match `[A-Za-z_][A-Za-z0-9_-]*`
+- `allow_fail: true` means a failed custom command does **not** fail the evidence gate
+- Custom commands default to a 120s timeout when not specified
+  - `allow_fail` does **not** bypass trigger command failures (triggers always fail-fast)
+
+## Evidence Check
+
+`evidence_check.required` controls which commands must appear (and pass) in agent session logs.
+If omitted or an empty list, the quality gate does **not** require validation evidence.
+
+```yaml
+evidence_check:
+  required: [test, lint]
 ```
 
 ## Built-in Presets
@@ -246,9 +284,10 @@ code_patterns:
 When using a preset:
 
 - **Commands**: User value replaces preset value. `null` disables. Omitted inherits from preset.
-- **Global commands**: User value overrides base commands for global validation only. Omitted inherits from `commands`.
 - **Lists** (`code_patterns`, `config_files`, `setup_files`): User list **replaces** preset list entirely.
 - **Coverage**: User config **replaces** preset coverage. `coverage: null` disables.
+- **Evidence check**: User config **replaces** preset (presets do not define evidence checks).
+- **Validation triggers**: User config **replaces** preset (presets do not define triggers).
 
 ## Code Patterns
 
