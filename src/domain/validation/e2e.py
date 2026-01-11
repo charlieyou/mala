@@ -441,7 +441,9 @@ def _inject_cerberus_mode(repo_path: Path, cerberus_mode: str) -> None:
         return
 
     content = config_path.read_text()
-    config = yaml.safe_load(content) or {}
+    loaded = yaml.safe_load(content)
+    # Guard against non-dict YAML roots (list, scalar, null)
+    config = loaded if isinstance(loaded, dict) else {}
 
     # Ensure nested structure exists
     if "validation_triggers" not in config:
