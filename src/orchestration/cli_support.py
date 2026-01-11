@@ -108,12 +108,13 @@ def get_preset_config_commands(preset_name: str) -> list[str]:
     registry = PresetRegistry()
     config = registry.get(preset_name)
 
-    # Get command names that are defined (not None) in the preset
+    # Get command names that are defined (not None and have non-empty command) in the preset
     commands_config = config.commands
     result: list[str] = []
     for name in BUILTIN_COMMAND_NAMES:
         cmd = getattr(commands_config, name, None)
-        if cmd is not None:
+        # Exclude None and empty-string sentinels (from requires_command=False)
+        if cmd is not None and cmd.command:
             result.append(name)
     # Sort for consistent ordering
     return sorted(result)

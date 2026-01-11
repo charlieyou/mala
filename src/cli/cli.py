@@ -1149,10 +1149,12 @@ def _build_validation_triggers_dict(commands: list[str]) -> dict[str, Any]:
 
 def _print_trigger_reference_table() -> None:
     """Print a reference table showing available trigger types."""
+    import sys
+
     from rich.console import Console
     from rich.table import Table
 
-    console = Console()
+    console = Console(file=sys.stdout)
     table = Table(title="Available Trigger Types")
     table.add_column("Trigger", style="cyan")
     table.add_column("Description", style="white")
