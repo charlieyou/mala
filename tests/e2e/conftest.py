@@ -5,8 +5,12 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest  # noqa: TC002 - needed at runtime for pytest_configure
+
+if TYPE_CHECKING:
+    from _pytest.nodes import Item
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -18,3 +22,10 @@ def pytest_configure(config: pytest.Config) -> None:
     real_credentials = Path.home() / ".claude" / ".credentials.json"
     if real_credentials.exists():
         shutil.copy2(real_credentials, test_claude_dir / ".credentials.json")
+
+
+def pytest_collection_modifyitems(items: list[Item]) -> None:
+    """Add reruns to flaky_sdk tests."""
+    for item in items:
+        if item.get_closest_marker("flaky_sdk"):
+            item.add_marker(pytest.mark.flaky(reruns=2, reruns_delay=1))
