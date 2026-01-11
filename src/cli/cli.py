@@ -915,53 +915,6 @@ def _is_interactive() -> bool:
     return sys.stdin.isatty()
 
 
-def _prompt_menu_selection(presets: list[str]) -> int:
-    """Prompt user to select a preset or custom configuration.
-
-    Args:
-        presets: List of available preset names.
-
-    Returns:
-        Selected option number (1 to len(presets)+1).
-    """
-    max_choice = len(presets) + 1
-    while True:
-        typer.echo("Select configuration:", err=True)
-        for i, preset in enumerate(presets, 1):
-            typer.echo(f"  {i}) {preset}", err=True)
-        typer.echo(f"  {max_choice}) custom", err=True)
-
-        choice = typer.prompt("Enter choice", default="", err=True)
-        try:
-            num = int(choice)
-            if 1 <= num <= max_choice:
-                return num
-        except ValueError:
-            pass
-        typer.echo(f"Invalid choice, please enter 1-{max_choice}:", err=True)
-
-
-def _prompt_custom_commands() -> dict[str, str]:
-    """Prompt user for custom validation commands.
-
-    Returns:
-        Dictionary of command name to command string (empty values omitted).
-    """
-    commands: dict[str, str] = {}
-    command_names = ["setup", "build", "test", "lint", "format", "typecheck", "e2e"]
-    for name in command_names:
-        value = typer.prompt(
-            f"Command for '{name}' (Enter to skip)",
-            default="",
-            show_default=False,
-            err=True,
-        )
-        value = value.strip()
-        if value:
-            commands[name] = value
-    return commands
-
-
 def _write_with_backup(path: Path, content: str) -> None:
     """Backup existing file and write new content."""
     if path.exists():
@@ -1313,7 +1266,13 @@ def init(
                     config_data.pop("evidence_check", None)
                     config_data.pop("validation_triggers", None)
                 else:
-                    # Revise - re-prompt for evidence and triggers
+                    # Revise - if no commands, re-prompt custom commands
+                    if not commands:
+                        custom_commands = _prompt_custom_commands_questionary()
+                        if custom_commands:
+                            commands = list(custom_commands.keys())
+                            config_data["commands"] = custom_commands
+                    # Re-prompt for evidence and triggers
                     if not skip_evidence and commands:
                         evidence_required = _prompt_evidence_check(commands, is_preset)
                         if evidence_required is not None:
