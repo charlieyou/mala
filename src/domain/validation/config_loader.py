@@ -1207,7 +1207,7 @@ def _validate_trigger_command_refs(config: ValidationConfig) -> None:
     Raises:
         ConfigError: If any trigger references a command that doesn't exist in the base pool.
     """
-    from src.domain.validation.config import TriggerType
+    from src.domain.validation.config import BUILTIN_COMMAND_NAMES, TriggerType
 
     triggers = config.validation_triggers
     if triggers is None:
@@ -1220,7 +1220,7 @@ def _validate_trigger_command_refs(config: ValidationConfig) -> None:
     base_cmds = config.commands
 
     # Add built-in commands
-    for cmd_name in ("test", "lint", "format", "typecheck", "e2e", "setup", "build"):
+    for cmd_name in BUILTIN_COMMAND_NAMES:
         base_cmd = getattr(base_cmds, cmd_name, None)
         if base_cmd is not None:
             base_pool.add(cmd_name)

@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from src.domain.validation.config import (
+    BUILTIN_COMMAND_NAMES,
     CommandsConfig,
     ConfigError,
     ValidationConfig,
@@ -47,8 +48,7 @@ def _validate_no_partial_commands(commands: CommandsConfig) -> None:
     Raises:
         ConfigError: If any command has an empty command string.
     """
-    command_fields = ["setup", "build", "test", "lint", "format", "typecheck", "e2e"]
-    for field_name in command_fields:
+    for field_name in BUILTIN_COMMAND_NAMES:
         cmd = getattr(commands, field_name)
         if cmd is not None and not cmd.command:
             raise ConfigError(
