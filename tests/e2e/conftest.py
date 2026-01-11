@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import pytest  # noqa: TC002 - needed at runtime for pytest_configure
+import pytest  # needed at runtime for pytest_configure
 
 if TYPE_CHECKING:
     from _pytest.nodes import Item
