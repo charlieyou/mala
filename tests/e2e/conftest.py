@@ -5,10 +5,8 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import pytest
+import pytest  # noqa: TC002 - needed at runtime for pytest_configure
 
 
 def pytest_configure(config: pytest.Config) -> None:

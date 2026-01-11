@@ -486,6 +486,11 @@ def build_validation_spec(
         required_env=[],
     )
 
+    # Extract evidence_required from config (will be empty tuple if parsing stub returns None)
+    evidence_required: tuple[str, ...] = ()
+    if merged_config.evidence_check is not None:
+        evidence_required = merged_config.evidence_check.required
+
     return ValidationSpec(
         commands=commands,
         scope=scope,
@@ -497,6 +502,7 @@ def build_validation_spec(
         config_files=list(merged_config.config_files),
         setup_files=list(merged_config.setup_files),
         yaml_coverage_config=merged_config.coverage if coverage_enabled else None,
+        evidence_required=evidence_required,
     )
 
 

@@ -256,7 +256,7 @@ class TestEvidenceCheckConfigIntegration:
         NOT with import errors or syntax errors. The skeleton infrastructure
         must be wired correctly for downstream tasks.
         """
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_loader import load_config
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         # Create minimal mala.yaml with evidence_check
@@ -272,28 +272,25 @@ evidence_check:
 """
         )
 
-        # Parse the config - should NOT raise (stubs are wired)
-        config = ValidationConfig.from_dict(
-            {
-                "commands": {"test": "echo test"},
-                "evidence_check": {"required": ["test"]},
-            }
-        )
+        # Load the config from mala.yaml - exercises the full parsing path
+        config = load_config(tmp_path)
 
         # Verify evidence_check field exists on ValidationConfig
-        # This will be None because the stub returns None
+        # This will be None because _parse_evidence_check_config() stub returns None
         assert hasattr(config, "evidence_check")
 
-        # Build validation spec from config file
+        # Build validation spec passing the loaded config explicitly
+        # This ensures we test the wiring from config → spec
         spec = build_validation_spec(
             tmp_path,
             scope=ValidationScope.PER_SESSION,
+            validation_config=config,
         )
 
         # This assertion FAILS because:
         # 1. _parse_evidence_check_config() returns None (stub)
         # 2. build_validation_spec() doesn't yet propagate evidence_required from config
-        # T002 will implement parsing, T004 will implement the flow
+        # T002 will implement parsing, T004 will wire build_validation_spec()
         assert spec.evidence_required == ("test",), (
             f"Expected evidence_required=('test',) but got {spec.evidence_required!r}. "
             "This failure is expected until T002 implements evidence_check parsing."
