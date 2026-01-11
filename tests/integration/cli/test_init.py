@@ -217,154 +217,199 @@ def mock_questionary(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
 
 class TestInitEvidencePrompts:
-    """Tests for evidence check prompting behavior.
+    """Tests for evidence check prompting behavior."""
 
-    These tests verify that stub functions raise NotImplementedError.
-    Once T002 implements the functions, these tests should be updated
-    to verify actual behavior with mocked questionary.
-    """
-
-    def test_prompt_evidence_check_preset_raises(
+    def test_prompt_evidence_check_preset_returns_selection(
         self,
         mock_questionary: MagicMock,
     ) -> None:
-        """Stub should raise NotImplementedError until implemented."""
+        """With preset, confirm Y and selection returns that list."""
         from src.cli.cli import _prompt_evidence_check
 
-        with pytest.raises(NotImplementedError):
-            _prompt_evidence_check(["test", "lint", "typecheck"], is_preset=True)
+        mock_questionary.confirm_return = True
+        mock_questionary.checkbox_return = ["test", "lint"]
+        result = _prompt_evidence_check(["test", "lint", "typecheck"], is_preset=True)
+        assert result == ["test", "lint"]
 
-    def test_prompt_evidence_check_custom_raises(
+    def test_prompt_evidence_check_skip_returns_none(
         self,
         mock_questionary: MagicMock,
     ) -> None:
-        """Stub should raise NotImplementedError until implemented."""
+        """User declines configure evidence checks -> returns None."""
         from src.cli.cli import _prompt_evidence_check
 
-        with pytest.raises(NotImplementedError):
-            _prompt_evidence_check(["build", "test"], is_preset=False)
+        mock_questionary.confirm_return = False
+        result = _prompt_evidence_check(["build", "test"], is_preset=False)
+        assert result is None
 
-    def test_compute_evidence_defaults_preset_raises(self) -> None:
-        """Stub should raise NotImplementedError until implemented."""
+    def test_compute_evidence_defaults_preset_path(self) -> None:
+        """Preset path returns intersection with {test, lint}."""
         from src.cli.cli import _compute_evidence_defaults
 
-        with pytest.raises(NotImplementedError):
-            _compute_evidence_defaults(
-                ["setup", "test", "lint", "typecheck"], is_preset=True
-            )
+        result = _compute_evidence_defaults(["test", "lint", "format"], is_preset=True)
+        assert result == ["test", "lint"]
 
-    def test_compute_evidence_defaults_custom_raises(self) -> None:
-        """Stub should raise NotImplementedError until implemented."""
+    def test_compute_evidence_defaults_custom_path(self) -> None:
+        """Custom path returns empty list."""
         from src.cli.cli import _compute_evidence_defaults
 
-        with pytest.raises(NotImplementedError):
-            _compute_evidence_defaults(["build", "test", "lint"], is_preset=False)
+        result = _compute_evidence_defaults(["build", "test", "lint"], is_preset=False)
+        assert result == []
 
 
 class TestInitTriggerPrompts:
-    """Tests for validation trigger prompting behavior.
+    """Tests for validation trigger prompting behavior."""
 
-    These tests verify that stub functions raise NotImplementedError.
-    Once T002 implements the functions, these tests should be updated
-    to verify actual behavior.
-    """
-
-    def test_prompt_run_end_trigger_raises(
+    def test_prompt_run_end_trigger_returns_selection(
         self,
         mock_questionary: MagicMock,
     ) -> None:
-        """Stub should raise NotImplementedError until implemented."""
+        """With preset, confirm Y and selection returns that list."""
         from src.cli.cli import _prompt_run_end_trigger
 
-        with pytest.raises(NotImplementedError):
-            _prompt_run_end_trigger(["test", "lint"], is_preset=True)
+        mock_questionary.confirm_return = True
+        mock_questionary.checkbox_return = ["test", "lint"]
+        result = _prompt_run_end_trigger(["test", "lint"], is_preset=True)
+        assert result == ["test", "lint"]
 
-    def test_compute_trigger_defaults_raises(self) -> None:
-        """Stub should raise NotImplementedError until implemented."""
+    def test_compute_trigger_defaults_excludes_setup_e2e(self) -> None:
+        """Preset path excludes setup and e2e from defaults."""
         from src.cli.cli import _compute_trigger_defaults
 
-        with pytest.raises(NotImplementedError):
-            _compute_trigger_defaults(
-                ["setup", "build", "test", "lint"], is_preset=True
-            )
+        result = _compute_trigger_defaults(
+            ["setup", "test", "lint", "e2e"], is_preset=True
+        )
+        assert result == ["test", "lint"]
 
-    def test_print_trigger_reference_table_raises(self) -> None:
-        """Stub should raise NotImplementedError until implemented."""
+    def test_compute_trigger_defaults_custom_path(self) -> None:
+        """Custom path returns empty list."""
+        from src.cli.cli import _compute_trigger_defaults
+
+        result = _compute_trigger_defaults(
+            ["setup", "build", "test", "lint"], is_preset=False
+        )
+        assert result == []
+
+    def test_print_trigger_reference_table_outputs(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Table output contains key trigger types and phrases."""
         from src.cli.cli import _print_trigger_reference_table
 
-        with pytest.raises(NotImplementedError):
-            _print_trigger_reference_table()
+        _print_trigger_reference_table()
+        captured = capsys.readouterr()
+        output = captured.out
+        # Verify semantic content (key phrases), not exact formatting
+        assert "epic_completion" in output
+        assert "session_end" in output
+        assert "periodic" in output
+        assert "run_end" in output
+        assert "ends" in output.lower() or "verification" in output.lower()
 
 
 class TestInitNonInteractive:
-    """Tests for non-interactive/defaults behavior.
+    """Tests for non-interactive/defaults behavior."""
 
-    These tests verify that stub functions raise NotImplementedError.
-    Once T002 implements the functions, these tests should be updated
-    to verify actual return values.
-    """
-
-    def test_get_preset_command_names_raises(self) -> None:
-        """Stub should raise NotImplementedError until implemented."""
+    def test_get_preset_command_names_returns_commands(self) -> None:
+        """Returns list of command names from preset."""
         from src.cli.cli import _get_preset_command_names
 
-        with pytest.raises(NotImplementedError):
-            _get_preset_command_names("python-uv")
+        result = _get_preset_command_names("python-uv")
+        # python-uv preset has these commands defined
+        assert "test" in result
+        assert "lint" in result
+        assert "setup" in result
 
     def test_get_preset_command_names_invalid_raises(self) -> None:
-        """Stub should raise NotImplementedError for invalid preset."""
+        """Invalid preset raises PresetNotFoundError."""
         from src.cli.cli import _get_preset_command_names
+        from src.domain.validation.preset_registry import PresetNotFoundError
 
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(PresetNotFoundError):
             _get_preset_command_names("nonexistent-preset")
 
-    def test_build_evidence_check_dict_raises(self) -> None:
-        """Stub should raise NotImplementedError until implemented."""
+    def test_build_evidence_check_dict(self) -> None:
+        """Returns dict with 'required' key."""
         from src.cli.cli import _build_evidence_check_dict
 
-        with pytest.raises(NotImplementedError):
-            _build_evidence_check_dict(["test", "lint"])
+        result = _build_evidence_check_dict(["test", "lint"])
+        assert result == {"required": ["test", "lint"]}
 
-    def test_build_evidence_check_dict_empty_raises(self) -> None:
-        """Stub should raise NotImplementedError for empty list."""
+    def test_build_evidence_check_dict_empty(self) -> None:
+        """Empty list returns dict with empty 'required'."""
         from src.cli.cli import _build_evidence_check_dict
 
-        with pytest.raises(NotImplementedError):
-            _build_evidence_check_dict([])
+        result = _build_evidence_check_dict([])
+        assert result == {"required": []}
 
-    def test_build_validation_triggers_dict_raises(self) -> None:
-        """Stub should raise NotImplementedError until implemented."""
+    def test_build_validation_triggers_dict_ref_syntax(self) -> None:
+        """Returns dict with run_end.commands using ref syntax."""
         from src.cli.cli import _build_validation_triggers_dict
 
-        with pytest.raises(NotImplementedError):
-            _build_validation_triggers_dict(["test", "lint"])
+        result = _build_validation_triggers_dict(["test", "lint"])
+        assert result == {
+            "run_end": {
+                "commands": [{"ref": "test"}, {"ref": "lint"}],
+            }
+        }
 
-    def test_prompt_preset_selection_raises(self, mock_questionary: MagicMock) -> None:
-        """Stub should raise NotImplementedError until implemented."""
+    def test_prompt_preset_selection_returns_preset(
+        self, mock_questionary: MagicMock
+    ) -> None:
+        """User selecting a preset returns that preset name."""
         from src.cli.cli import _prompt_preset_selection
 
-        with pytest.raises(NotImplementedError):
-            _prompt_preset_selection(["go", "python-uv", "rust"])
+        mock_questionary.select_return = "python-uv"
+        result = _prompt_preset_selection(["go", "python-uv", "rust"])
+        assert result == "python-uv"
 
-    def test_prompt_custom_commands_questionary_raises(self) -> None:
-        """Stub should raise NotImplementedError until implemented."""
+    def test_prompt_preset_selection_custom_returns_none(
+        self, mock_questionary: MagicMock
+    ) -> None:
+        """User selecting custom returns None."""
+        from src.cli.cli import _prompt_preset_selection
+
+        mock_questionary.select_return = "custom"
+        result = _prompt_preset_selection(["go", "python-uv", "rust"])
+        assert result is None
+
+    def test_prompt_custom_commands_questionary_returns_commands(
+        self, mock_questionary: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Returns dict of command name to command string."""
         from src.cli.cli import _prompt_custom_commands_questionary
 
-        with pytest.raises(NotImplementedError):
-            _prompt_custom_commands_questionary()
+        # Commands are sorted: build, e2e, format, lint, setup, test, typecheck
+        # Provide values for build and setup, skip others
+        responses = iter(["cargo build", "", "", "", "cargo install", "", ""])
+
+        def make_text(*args: object, **kwargs: object) -> MagicMock:
+            result = MagicMock()
+            result.ask.return_value = next(responses, "")
+            return result
+
+        monkeypatch.setattr("src.cli.cli.questionary.text", make_text)
+        result = _prompt_custom_commands_questionary()
+        # Only non-empty commands are returned
+        assert "build" in result
+        assert result["build"] == "cargo build"
+        assert "setup" in result
+        assert result["setup"] == "cargo install"
 
 
 class TestInitTriggerTable:
-    """Tests for trigger reference table display.
+    """Tests for trigger reference table display."""
 
-    These tests verify that stub functions raise NotImplementedError.
-    Once T002 implements the functions, these tests should be updated
-    to verify actual output.
-    """
-
-    def test_trigger_table_raises(self) -> None:
-        """Stub should raise NotImplementedError until implemented."""
+    def test_trigger_table_contains_all_types(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Table output contains all four trigger types."""
         from src.cli.cli import _print_trigger_reference_table
 
-        with pytest.raises(NotImplementedError):
-            _print_trigger_reference_table()
+        _print_trigger_reference_table()
+        captured = capsys.readouterr()
+        output = captured.out
+        assert "epic_completion" in output
+        assert "session_end" in output
+        assert "periodic" in output
+        assert "run_end" in output

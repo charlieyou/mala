@@ -79,13 +79,55 @@ def dump_config_yaml(data: dict[str, Any]) -> str:
     return _dump_config_yaml(data)
 
 
+def get_builtin_command_names() -> frozenset[str]:
+    """Get the set of built-in command names.
+
+    Returns:
+        Frozenset of built-in command names (e.g., 'setup', 'test', 'lint', etc.).
+    """
+    from src.domain.validation.config import BUILTIN_COMMAND_NAMES
+
+    return BUILTIN_COMMAND_NAMES
+
+
+def get_preset_config_commands(preset_name: str) -> list[str]:
+    """Get the command names defined in a preset.
+
+    Args:
+        preset_name: Name of the preset (e.g., 'python-uv', 'go').
+
+    Returns:
+        Sorted list of command names defined in the preset.
+
+    Raises:
+        PresetNotFoundError: If the preset name is not recognized.
+    """
+    from src.domain.validation.config import BUILTIN_COMMAND_NAMES
+    from src.domain.validation.preset_registry import PresetRegistry
+
+    registry = PresetRegistry()
+    config = registry.get(preset_name)
+
+    # Get command names that are defined (not None) in the preset
+    commands_config = config.commands
+    result: list[str] = []
+    for name in BUILTIN_COMMAND_NAMES:
+        cmd = getattr(commands_config, name, None)
+        if cmd is not None:
+            result.append(name)
+    # Sort for consistent ordering
+    return sorted(result)
+
+
 __all__ = [
     "USER_CONFIG_DIR",
     "Colors",
     "ConfigError",
     "dump_config_yaml",
+    "get_builtin_command_names",
     "get_init_presets",
     "get_lock_dir",
+    "get_preset_config_commands",
     "get_running_instances",
     "get_running_instances_for_dir",
     "get_runs_dir",

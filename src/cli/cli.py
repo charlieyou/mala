@@ -19,7 +19,7 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import questionary  # noqa: F401 - will be used in T002 implementation
+import questionary
 
 from ..orchestration.cli_support import USER_CONFIG_DIR, get_runs_dir, load_user_env
 
@@ -971,7 +971,9 @@ def _get_preset_command_names(preset_name: str) -> list[str]:
     Returns:
         List of command names defined in the preset.
     """
-    raise NotImplementedError("Not implemented")
+    from ..orchestration.cli_support import get_preset_config_commands
+
+    return get_preset_config_commands(preset_name)
 
 
 def _prompt_preset_selection(presets: list[str]) -> str | None:
@@ -983,7 +985,14 @@ def _prompt_preset_selection(presets: list[str]) -> str | None:
     Returns:
         Selected preset name, or None if user chooses custom.
     """
-    raise NotImplementedError("Not implemented")
+    choices = [*presets, "custom"]
+    result = questionary.select(
+        "Select a preset:",
+        choices=choices,
+    ).ask()
+    if result == "custom":
+        return None
+    return result
 
 
 def _prompt_custom_commands_questionary() -> dict[str, str]:
@@ -992,7 +1001,14 @@ def _prompt_custom_commands_questionary() -> dict[str, str]:
     Returns:
         Dictionary of command name to command string (empty values omitted).
     """
-    raise NotImplementedError("Not implemented")
+    from ..orchestration.cli_support import get_builtin_command_names
+
+    commands: dict[str, str] = {}
+    for name in sorted(get_builtin_command_names()):
+        result = questionary.text(f"Command for '{name}' (leave empty to skip):").ask()
+        if result:
+            commands[name] = result
+    return commands
 
 
 def _compute_evidence_defaults(commands: list[str], is_preset: bool) -> list[str]:
@@ -1005,7 +1021,11 @@ def _compute_evidence_defaults(commands: list[str], is_preset: bool) -> list[str
     Returns:
         List of command names that should be evidence checks by default.
     """
-    raise NotImplementedError("Not implemented")
+    if not is_preset:
+        return []
+    # For preset path, return intersection of {test, lint} with available commands
+    evidence_candidates = {"test", "lint"}
+    return [cmd for cmd in commands if cmd in evidence_candidates]
 
 
 def _compute_trigger_defaults(commands: list[str], is_preset: bool) -> list[str]:
@@ -1018,7 +1038,11 @@ def _compute_trigger_defaults(commands: list[str], is_preset: bool) -> list[str]
     Returns:
         List of command names that should be triggers by default.
     """
-    raise NotImplementedError("Not implemented")
+    if not is_preset:
+        return []
+    # For preset path, exclude setup and e2e from defaults
+    excluded = {"setup", "e2e"}
+    return [cmd for cmd in commands if cmd not in excluded]
 
 
 def _prompt_evidence_check(commands: list[str], is_preset: bool) -> list[str] | None:
@@ -1031,7 +1055,30 @@ def _prompt_evidence_check(commands: list[str], is_preset: bool) -> list[str] | 
     Returns:
         List of selected command names, or None to skip.
     """
-    raise NotImplementedError("Not implemented")
+    defaults = _compute_evidence_defaults(commands, is_preset)
+
+    # First confirm if user wants evidence checks
+    if not questionary.confirm("Configure evidence checks?", default=True).ask():
+        return None
+
+    # Show checkbox for selection
+    choices = [questionary.Choice(cmd, checked=(cmd in defaults)) for cmd in commands]
+    selected = questionary.checkbox(
+        "Select commands that must pass for evidence verification:",
+        choices=choices,
+    ).ask()
+
+    # Handle "uncheck all" scenario
+    if not selected:
+        skip = questionary.confirm(
+            "No commands selected. Skip this section?", default=True
+        ).ask()
+        if skip:
+            return None
+        # If user doesn't want to skip, return empty list (keep section but empty)
+        return []
+
+    return selected
 
 
 def _prompt_run_end_trigger(commands: list[str], is_preset: bool) -> list[str] | None:
@@ -1044,7 +1091,32 @@ def _prompt_run_end_trigger(commands: list[str], is_preset: bool) -> list[str] |
     Returns:
         List of selected command names, or None to skip.
     """
-    raise NotImplementedError("Not implemented")
+    defaults = _compute_trigger_defaults(commands, is_preset)
+
+    # First confirm if user wants run-end triggers
+    if not questionary.confirm(
+        "Configure run-end validation triggers?", default=True
+    ).ask():
+        return None
+
+    # Show checkbox for selection
+    choices = [questionary.Choice(cmd, checked=(cmd in defaults)) for cmd in commands]
+    selected = questionary.checkbox(
+        "Select commands to run at the end of mala run:",
+        choices=choices,
+    ).ask()
+
+    # Handle "uncheck all" scenario
+    if not selected:
+        skip = questionary.confirm(
+            "No commands selected. Skip this section?", default=True
+        ).ask()
+        if skip:
+            return None
+        # If user doesn't want to skip, return empty list (keep section but empty)
+        return []
+
+    return selected
 
 
 def _build_evidence_check_dict(required: list[str]) -> dict[str, list[str]]:
@@ -1056,7 +1128,7 @@ def _build_evidence_check_dict(required: list[str]) -> dict[str, list[str]]:
     Returns:
         Dict with 'required' key mapping to the command list.
     """
-    raise NotImplementedError("Not implemented")
+    return {"required": required}
 
 
 def _build_validation_triggers_dict(commands: list[str]) -> dict[str, Any]:
@@ -1068,12 +1140,29 @@ def _build_validation_triggers_dict(commands: list[str]) -> dict[str, Any]:
     Returns:
         Dict with trigger configuration.
     """
-    raise NotImplementedError("Not implemented")
+    return {
+        "run_end": {
+            "commands": [{"ref": cmd} for cmd in commands],
+        }
+    }
 
 
 def _print_trigger_reference_table() -> None:
     """Print a reference table showing available trigger types."""
-    raise NotImplementedError("Not implemented")
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    table = Table(title="Available Trigger Types")
+    table.add_column("Trigger", style="cyan")
+    table.add_column("Description", style="white")
+
+    table.add_row("epic_completion", "Run verification when an epic ends")
+    table.add_row("session_end", "Run verification when a session ends")
+    table.add_row("periodic", "Run verification after N issues complete")
+    table.add_row("run_end", "Run verification when mala run completes")
+
+    console.print(table)
 
 
 @app.command()
