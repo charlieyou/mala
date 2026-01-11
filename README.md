@@ -62,12 +62,13 @@ uv tool install . --reinstall
 ## Usage
 
 ```bash
+mala init                                 # Interactively create mala.yaml
 mala run /path/to/repo                    # Run the parallel worker
 mala run --max-agents 5 /path/to/repo     # Limit concurrent agents
 mala run --scope epic:proj-abc /path/to/repo    # Process children of epic
 mala run --scope ids:issue-1,issue-2 --order input /path/to/repo  # Specific issues in order
 mala run --resume /path/to/repo            # Include in_progress issues
-mala run --watch --validate-every 10 /path/to/repo  # Keep polling and validate every N issues
+mala run --watch /path/to/repo             # Keep polling for new issues
 mala status                               # Check locks, config, logs
 mala clean                                # Clean up locks and logs
 mala epic-verify proj-abc /path/to/repo   # Verify and close an epic

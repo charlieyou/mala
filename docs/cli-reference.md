@@ -2,6 +2,42 @@
 
 > For project-level validation configuration (`mala.yaml`), see [Project Configuration](project-config.md).
 
+## Commands
+
+### `mala run`
+
+The main command to run the mala orchestrator. See [CLI Options](#cli-options) below.
+
+### `mala init`
+
+Interactively generate a `mala.yaml` configuration file.
+
+```bash
+mala init              # Create mala.yaml interactively
+mala init --dry-run    # Preview config without writing
+```
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview the generated config without writing to disk |
+
+**Workflow:**
+
+1. Select a preset (python-uv, node-npm, go, rust) or choose custom
+2. For custom: enter commands for setup, test, lint, format, typecheck
+3. Config is validated and written to `mala.yaml`
+4. If `mala.yaml` exists, a backup is created at `mala.yaml.bak`
+
+### `mala status`
+
+Show recent session logs and run status.
+
+```bash
+mala status
+```
+
 ## CLI Options
 
 ### Execution Limits
@@ -106,6 +142,7 @@ Configure these settings in `mala.yaml` instead:
 | `MALA_CERBERUS_ENV` | `validation_triggers.<trigger>.code_review.cerberus.env` |
 | `MALA_MAX_EPIC_VERIFICATION_RETRIES` | `validation_triggers.epic_completion.max_epic_verification_retries` |
 | `MALA_MAX_DIFF_SIZE_KB` | `max_diff_size_kb` (root level) |
+| `MALA_TRACK_REVIEW_ISSUES` | `track_review_issues` (root level) or `validation_triggers.<trigger>.code_review.track_review_issues` |
 
 ## Logs
 
