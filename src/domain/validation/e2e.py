@@ -427,43 +427,39 @@ def _disable_fixture_e2e_config(repo_path: Path) -> None:
 def _inject_cerberus_mode(repo_path: Path, cerberus_mode: str) -> None:
     """Inject cerberus mode into the fixture's mala.yaml.
 
-    Appends a validation_triggers.session_end.code_review.cerberus.spawn_args
-    block to the config. This is safe for E2E fixtures which are freshly created
-    and don't have existing cerberus spawn_args.
+    Merges session_end.code_review.cerberus.spawn_args into the existing
+    validation_triggers config using proper YAML parsing to avoid duplicate keys.
 
     Args:
         repo_path: Path to the fixture repository.
         cerberus_mode: Cerberus mode to set (e.g., "fast", "smart", "max").
     """
+    import yaml
+
     config_path = repo_path / "mala.yaml"
     if not config_path.exists():
         return
 
     content = config_path.read_text()
-    spawn_args_line = f'spawn_args: ["--mode={cerberus_mode}"]'
+    config = yaml.safe_load(content) or {}
 
-    # Always append the cerberus config block at the end
-    # This is safe because E2E fixtures are freshly created without cerberus config
-    # Note: YAML replaces duplicate keys entirely (doesn't merge), so we must include
-    # all required fields like failure_mode in the injected block.
-    # We also re-include run_end from the original fixture config to preserve it,
-    # since appending a new validation_triggers block replaces the original entirely.
-    content += f"""
+    # Ensure nested structure exists
+    if "validation_triggers" not in config:
+        config["validation_triggers"] = {}
+    if "session_end" not in config["validation_triggers"]:
+        config["validation_triggers"]["session_end"] = {}
+    if "code_review" not in config["validation_triggers"]["session_end"]:
+        config["validation_triggers"]["session_end"]["code_review"] = {}
+    if "cerberus" not in config["validation_triggers"]["session_end"]["code_review"]:
+        config["validation_triggers"]["session_end"]["code_review"]["cerberus"] = {}
 
-# E2E cerberus mode injection (must include run_end to preserve original fixture config)
-validation_triggers:
-  run_end:
-    failure_mode: continue
-    commands:
-      - ref: test
-        command: "uv run pytest --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${{AGENT_ID:-default}}"
-  session_end:
-    failure_mode: continue
-    code_review:
-      cerberus:
-        {spawn_args_line}
-"""
-    config_path.write_text(content)
+    # Set the spawn_args
+    config["validation_triggers"]["session_end"]["code_review"]["cerberus"][
+        "spawn_args"
+    ] = [f"--mode={cerberus_mode}"]
+
+    # Write back with yaml.dump
+    config_path.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
 
 
 def _select_python_invoker(repo_root: Path) -> list[str]:
