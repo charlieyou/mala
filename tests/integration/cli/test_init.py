@@ -44,6 +44,10 @@ def _extract_yaml_from_output(output: str) -> str:
         r"^Invalid choice, please enter \d+-\d+:$",  # Validation error
         r"^Run `mala run` to start$",  # Success tip
         r"^$",  # Blank lines
+        r"^\s*[┏┗┡━]",  # Rich table borders (top/bottom/divider)
+        r"^\s*[┃│]",  # Rich table row content (header/data)
+        r"^\s*[└─┴]",  # Rich table bottom corners
+        r"^.*Available Trigger Types.*$",  # Table title
     ]
     combined = re.compile("|".join(prompt_patterns))
 
@@ -65,13 +69,18 @@ class TestInitDryRun:
     """Tests for init --dry-run mode."""
 
     def test_dry_run_preset(self) -> None:
-        """Input '1' (preset), --dry-run outputs valid YAML to stdout."""
-        result = runner.invoke(app, ["init", "--dry-run"], input="1\n")
+        """--dry-run with --preset outputs valid YAML to stdout."""
+        result = runner.invoke(
+            app,
+            ["init", "--dry-run", "--preset", "go", "--yes"],
+        )
         assert result.exit_code == 0
         yaml_output = _extract_yaml_from_output(result.output)
         config = yaml.safe_load(yaml_output)
-        # Presets are sorted alphabetically: ['go', 'node-npm', 'python-uv', 'rust']
-        assert config == {"preset": "go"}
+        assert config.get("preset") == "go"
+        # --yes uses computed defaults (evidence_check and validation_triggers)
+        assert "evidence_check" in config
+        assert "validation_triggers" in config
 
     def test_dry_run_no_backup(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -82,40 +91,70 @@ class TestInitDryRun:
         original_content = "preset: existing\n"
         mala_yaml.write_text(original_content)
 
-        result = runner.invoke(app, ["init", "--dry-run"], input="1\n")
+        result = runner.invoke(
+            app,
+            ["init", "--dry-run", "--preset", "go", "--yes"],
+        )
         # Command outputs to stdout, doesn't touch file
         assert result.exit_code == 0
         assert mala_yaml.read_text() == original_content
 
-    def test_dry_run_custom(self) -> None:
-        """Input '5' (custom), --dry-run outputs valid YAML with indented commands."""
-        # 5 = custom, provide setup and build, skip remaining 5 commands
-        input_text = "5\nuv sync\nuv run build\n\n\n\n\n\n"
-        result = runner.invoke(app, ["init", "--dry-run"], input=input_text)
+    def test_dry_run_skip_evidence_triggers(self) -> None:
+        """--dry-run with --skip-evidence --skip-triggers omits those sections."""
+        result = runner.invoke(
+            app,
+            [
+                "init",
+                "--dry-run",
+                "--preset",
+                "go",
+                "--skip-evidence",
+                "--skip-triggers",
+            ],
+        )
         assert result.exit_code == 0
         yaml_output = _extract_yaml_from_output(result.output)
         config = yaml.safe_load(yaml_output)
-        assert config == {"commands": {"setup": "uv sync", "build": "uv run build"}}
+        assert config == {"preset": "go"}
 
 
 class TestInitCustomFlow:
-    """Tests for init custom commands flow."""
+    """Tests for init custom commands flow via questionary (mocked)."""
 
-    def test_custom_flow(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Input '5' (custom), provide commands, verify mala.yaml content."""
+    def test_custom_flow_via_mocked_questionary(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_questionary: MagicMock,
+    ) -> None:
+        """Custom flow via mocked questionary produces valid config."""
         monkeypatch.chdir(tmp_path)
+        # Mock _is_interactive to enable interactive mode
+        monkeypatch.setattr("src.cli.cli._is_interactive", lambda: True)
 
-        # Input: 5 = custom, then provide setup and build commands, skip remaining 5
-        # Command order: setup, build, test, lint, format, typecheck, e2e
-        input_text = "5\nuv sync\nuv run build\n\n\n\n\n\n"
-        result = runner.invoke(app, ["init"], input=input_text)
+        # Mock questionary returns: select "custom", then text prompts for commands
+        mock_questionary.select_return = "custom"
+        mock_questionary.confirm_return = False  # Skip evidence and trigger prompts
+
+        # Mock text for custom commands
+        # Order: build, e2e, format, lint, setup, test, typecheck
+        text_responses = iter(["uv run build", "", "", "", "uv sync", "", ""])
+
+        def make_text(*args: object, **kwargs: object) -> MagicMock:
+            result = MagicMock()
+            result.ask.return_value = next(text_responses, "")
+            return result
+
+        monkeypatch.setattr("src.cli.cli.questionary.text", make_text)
+
+        result = runner.invoke(app, ["init"])
 
         assert result.exit_code == 0
         mala_yaml = tmp_path / "mala.yaml"
         assert mala_yaml.exists()
         config = yaml.safe_load(mala_yaml.read_text())
-        assert config.get("commands", {}).get("setup") == "uv sync"
         assert config.get("commands", {}).get("build") == "uv run build"
+        assert config.get("commands", {}).get("setup") == "uv sync"
 
 
 class TestInitBackup:
@@ -130,7 +169,10 @@ class TestInitBackup:
         old_content = "preset: old\n"
         mala_yaml.write_text(old_content)
 
-        result = runner.invoke(app, ["init"], input="1\n")
+        result = runner.invoke(
+            app,
+            ["init", "--preset", "go", "--yes"],
+        )
 
         assert result.exit_code == 0
         backup = tmp_path / "mala.yaml.bak"
@@ -141,38 +183,61 @@ class TestInitBackup:
 class TestInitValidation:
     """Tests for validation failure scenarios."""
 
-    def test_validation_fail_empty_commands(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    def test_validation_fail_empty_commands_via_questionary(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_questionary: MagicMock,
     ) -> None:
-        """Input '5' (custom), skip all commands -> exit 1, error in stderr."""
+        """Custom flow with empty commands -> exit 1, error in output."""
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr("src.cli.cli._is_interactive", lambda: True)
 
-        # Input: 5 = custom, then skip all 7 commands (just newlines)
-        input_text = "5\n\n\n\n\n\n\n\n"
-        result = runner.invoke(app, ["init"], input=input_text)
+        # First select returns "custom" for preset selection
+        # Second select returns "Abort init" for validation error recovery
+        select_responses = iter(["custom", "Abort init"])
+
+        def make_select(*args: object, **kwargs: object) -> MagicMock:
+            result = MagicMock()
+            result.ask.return_value = next(select_responses, "Abort init")
+            return result
+
+        monkeypatch.setattr("src.cli.cli.questionary.select", make_select)
+        mock_questionary.confirm_return = False
+
+        # All text prompts return empty
+        def make_text(*args: object, **kwargs: object) -> MagicMock:
+            result = MagicMock()
+            result.ask.return_value = ""
+            return result
+
+        monkeypatch.setattr("src.cli.cli.questionary.text", make_text)
+
+        result = runner.invoke(app, ["init"])
 
         assert result.exit_code == 1
-        assert "error" in result.stderr.lower() or "command" in result.stderr.lower()
 
 
 class TestInitInputValidation:
-    """Tests for input validation and retry loops."""
+    """Tests for input validation and CLI flag errors."""
 
-    def test_invalid_input_loop(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Invalid inputs ('0', '6', 'abc') are rejected, then '1' succeeds."""
-        monkeypatch.chdir(tmp_path)
+    def test_yes_without_preset_fails(self) -> None:
+        """--yes without --preset shows error."""
+        result = runner.invoke(app, ["init", "--yes"])
+        assert result.exit_code == 1
+        assert "--yes requires --preset" in result.output
 
-        # Input: invalid choices, then valid choice
-        input_text = "0\n6\nabc\n1\n"
-        result = runner.invoke(app, ["init", "--dry-run"], input=input_text)
+    def test_non_tty_without_flags_fails(self) -> None:
+        """Non-TTY mode without proper flags shows error."""
+        result = runner.invoke(app, ["init"])
+        assert result.exit_code == 1
+        assert "non-interactive" in result.output.lower()
 
-        assert result.exit_code == 0
-        yaml_output = _extract_yaml_from_output(result.output)
-        config = yaml.safe_load(yaml_output)
-        # Presets are sorted alphabetically: ['go', 'node-npm', 'python-uv', 'rust']
-        assert config == {"preset": "go"}
+    def test_invalid_preset_fails(self) -> None:
+        """Unknown preset shows error."""
+        result = runner.invoke(app, ["init", "--preset", "nonexistent", "--yes"])
+        assert result.exit_code == 1
+        assert "unknown preset" in result.output.lower()
 
 
 # ============================================================================
@@ -293,12 +358,12 @@ class TestInitTriggerPrompts:
     def test_print_trigger_reference_table_outputs(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Table output contains key trigger types and phrases."""
+        """Table output contains key trigger types and phrases (printed to stderr)."""
         from src.cli.cli import _print_trigger_reference_table
 
         _print_trigger_reference_table()
         captured = capsys.readouterr()
-        output = captured.out
+        output = captured.err  # Table is printed to stderr
         # Verify semantic content (key phrases), not exact formatting
         assert "epic_completion" in output
         assert "session_end" in output
@@ -343,12 +408,13 @@ class TestInitNonInteractive:
         assert result == {"required": []}
 
     def test_build_validation_triggers_dict_ref_syntax(self) -> None:
-        """Returns dict with run_end.commands using ref syntax."""
+        """Returns dict with run_end.commands using ref syntax and failure_mode."""
         from src.cli.cli import _build_validation_triggers_dict
 
         result = _build_validation_triggers_dict(["test", "lint"])
         assert result == {
             "run_end": {
+                "failure_mode": "continue",
                 "commands": [{"ref": "test"}, {"ref": "lint"}],
             }
         }
@@ -403,12 +469,12 @@ class TestInitTriggerTable:
     def test_trigger_table_contains_all_types(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Table output contains all four trigger types."""
+        """Table output contains all four trigger types (printed to stderr)."""
         from src.cli.cli import _print_trigger_reference_table
 
         _print_trigger_reference_table()
         captured = capsys.readouterr()
-        output = captured.out
+        output = captured.err  # Table is printed to stderr
         assert "epic_completion" in output
         assert "session_end" in output
         assert "periodic" in output

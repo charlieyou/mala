@@ -907,6 +907,14 @@ def status(
     print()
 
 
+def _is_interactive() -> bool:
+    """Check if stdin is a TTY (interactive mode).
+
+    This is a separate function to allow mocking in tests.
+    """
+    return sys.stdin.isatty()
+
+
 def _prompt_menu_selection(presets: list[str]) -> int:
     """Prompt user to select a preset or custom configuration.
 
@@ -1142,6 +1150,7 @@ def _build_validation_triggers_dict(commands: list[str]) -> dict[str, Any]:
     """
     return {
         "run_end": {
+            "failure_mode": "continue",
             "commands": [{"ref": cmd} for cmd in commands],
         }
     }
@@ -1154,7 +1163,7 @@ def _print_trigger_reference_table() -> None:
     from rich.console import Console
     from rich.table import Table
 
-    console = Console(file=sys.stdout)
+    console = Console(file=sys.stderr)
     table = Table(title="Available Trigger Types")
     table.add_column("Trigger", style="cyan")
     table.add_column("Description", style="white")
@@ -1173,6 +1182,22 @@ def init(
         bool,
         typer.Option("--dry-run", help="Preview without writing"),
     ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Accept defaults (requires --preset)"),
+    ] = False,
+    preset: Annotated[
+        str | None,
+        typer.Option("--preset", "-p", help="Use preset"),
+    ] = None,
+    skip_evidence: Annotated[
+        bool,
+        typer.Option("--skip-evidence", help="Omit evidence_check"),
+    ] = False,
+    skip_triggers: Annotated[
+        bool,
+        typer.Option("--skip-triggers", help="Omit validation_triggers"),
+    ] = False,
 ) -> None:
     """Initialize mala.yaml configuration interactively."""
     try:
@@ -1182,19 +1207,123 @@ def init(
             validate_init_config,
         )
 
+        # TTY detection
+        is_tty = _is_interactive()
+
+        # Flag validation
+        if yes and not preset:
+            typer.echo("Error: --yes requires --preset", err=True)
+            raise typer.Exit(1)
+
+        # Non-TTY validation: needs --yes or (--preset + --skip-evidence + --skip-triggers)
+        prompts_needed = not (skip_evidence and skip_triggers and preset)
+        if not is_tty and not yes and prompts_needed:
+            typer.echo(
+                "Error: Non-interactive mode requires --yes with --preset, "
+                "or --preset with --skip-evidence and --skip-triggers",
+                err=True,
+            )
+            raise typer.Exit(1)
+
         presets = get_init_presets()
-        selection = _prompt_menu_selection(presets)
+        is_preset = False
+        commands: list[str] = []
 
-        if selection <= len(presets):
-            # Preset flow
-            config_data: dict[str, object] = {"preset": presets[selection - 1]}
+        if preset:
+            # Validate preset exists
+            if preset not in presets:
+                typer.echo(f"Error: Unknown preset '{preset}'", err=True)
+                raise typer.Exit(1)
+            is_preset = True
+            commands = _get_preset_command_names(preset)
+            config_data: dict[str, object] = {"preset": preset}
+        elif is_tty:
+            # Interactive preset selection
+            selected_preset = _prompt_preset_selection(presets)
+            if selected_preset:
+                is_preset = True
+                commands = _get_preset_command_names(selected_preset)
+                config_data = {"preset": selected_preset}
+            else:
+                # Custom flow via questionary
+                custom_commands = _prompt_custom_commands_questionary()
+                if custom_commands:
+                    commands = list(custom_commands.keys())
+                config_data = {"commands": custom_commands}
         else:
-            # Custom flow
-            commands = _prompt_custom_commands()
-            config_data = {"commands": commands}
+            # Should not reach here due to validation above
+            typer.echo("Error: Cannot run interactively in non-TTY mode", err=True)
+            raise typer.Exit(1)
 
-        # Validate the generated config (raises ConfigError on failure)
-        validate_init_config(config_data)  # type: ignore[arg-type]
+        # If no commands, print message and skip evidence/trigger prompts
+        if not commands:
+            typer.echo("No commands defined; skipping evidence and trigger setup.")
+        else:
+            # Evidence check section
+            evidence_required: list[str] | None = None
+            if not skip_evidence:
+                if yes:
+                    # Use computed defaults
+                    evidence_required = _compute_evidence_defaults(commands, is_preset)
+                elif is_tty:
+                    evidence_required = _prompt_evidence_check(commands, is_preset)
+
+            if evidence_required is not None:
+                config_data["evidence_check"] = _build_evidence_check_dict(
+                    evidence_required
+                )
+
+            # Validation triggers section
+            trigger_commands: list[str] | None = None
+            if not skip_triggers:
+                if yes:
+                    # Use computed defaults
+                    trigger_commands = _compute_trigger_defaults(commands, is_preset)
+                elif is_tty:
+                    trigger_commands = _prompt_run_end_trigger(commands, is_preset)
+
+            if trigger_commands is not None:
+                config_data["validation_triggers"] = _build_validation_triggers_dict(
+                    trigger_commands
+                )
+
+        # Validate the generated config
+        while True:
+            try:
+                validate_init_config(config_data)  # type: ignore[arg-type]
+                break
+            except ConfigError as e:
+                if not is_tty:
+                    raise
+                # Interactive recovery
+                choice = questionary.select(
+                    f"Validation error: {e}",
+                    choices=["Revise selections", "Skip section", "Abort init"],
+                ).ask()
+                if choice == "Abort init":
+                    raise typer.Exit(1)
+                elif choice == "Skip section":
+                    # Remove problematic sections and retry
+                    config_data.pop("evidence_check", None)
+                    config_data.pop("validation_triggers", None)
+                else:
+                    # Revise - re-prompt for evidence and triggers
+                    if not skip_evidence and commands:
+                        evidence_required = _prompt_evidence_check(commands, is_preset)
+                        if evidence_required is not None:
+                            config_data["evidence_check"] = _build_evidence_check_dict(
+                                evidence_required
+                            )
+                        else:
+                            config_data.pop("evidence_check", None)
+                    if not skip_triggers and commands:
+                        trigger_commands = _prompt_run_end_trigger(commands, is_preset)
+                        if trigger_commands is not None:
+                            config_data["validation_triggers"] = (
+                                _build_validation_triggers_dict(trigger_commands)
+                            )
+                        else:
+                            config_data.pop("validation_triggers", None)
 
         # Generate YAML content
         yaml_content = dump_config_yaml(config_data)
@@ -1211,6 +1340,9 @@ def init(
         if not dry_run:
             typer.echo()
             typer.echo("Run `mala run` to start")
+
+        # Always print trigger reference table at end
+        _print_trigger_reference_table()
 
     except ConfigError as e:
         typer.echo(f"Error: {e}", err=True)
