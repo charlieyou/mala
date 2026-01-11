@@ -467,6 +467,7 @@ class TestInitNonInteractive:
         monkeypatch.setattr("src.cli.cli.questionary.text", make_text)
         result = _prompt_custom_commands_questionary()
         # Only non-empty commands are returned
+        assert result is not None
         assert "build" in result
         assert result["build"] == "cargo build"
         assert "setup" in result

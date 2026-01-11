@@ -962,17 +962,20 @@ def _prompt_preset_selection(presets: list[str]) -> str | None:
     return result
 
 
-def _prompt_custom_commands_questionary() -> dict[str, str]:
+def _prompt_custom_commands_questionary() -> dict[str, str] | None:
     """Prompt user for custom validation commands using questionary.
 
     Returns:
-        Dictionary of command name to command string (empty values omitted).
+        Dictionary of command name to command string (empty values omitted),
+        or None if user cancels (Ctrl-C).
     """
     from ..orchestration.cli_support import get_builtin_command_names
 
     commands: dict[str, str] = {}
     for name in sorted(get_builtin_command_names()):
         result = questionary.text(f"Command for '{name}' (leave empty to skip):").ask()
+        if result is None:
+            return None  # User cancelled
         if result:
             commands[name] = result
     return commands
@@ -1206,6 +1209,8 @@ def init(
             else:
                 # Custom flow via questionary
                 custom_commands = _prompt_custom_commands_questionary()
+                if custom_commands is None:
+                    raise typer.Exit(1)
                 if custom_commands:
                     commands = list(custom_commands.keys())
                 config_data = {"commands": custom_commands}
@@ -1263,16 +1268,21 @@ def init(
                     f"Validation error: {e}",
                     choices=["Revise selections", "Skip section", "Abort init"],
                 ).ask()
-                if choice == "Abort init":
+                if choice is None or choice == "Abort init":
                     raise typer.Exit(1)
                 elif choice == "Skip section":
-                    # Remove problematic sections and retry
+                    # Remove problematic sections; if commands are empty, abort
+                    if not commands:
+                        typer.echo("Error: Cannot skip - no commands defined", err=True)
+                        raise typer.Exit(1)
                     config_data.pop("evidence_check", None)
                     config_data.pop("validation_triggers", None)
                 else:
                     # Revise - if no commands, re-prompt custom commands
                     if not commands:
                         custom_commands = _prompt_custom_commands_questionary()
+                        if custom_commands is None:
+                            raise typer.Exit(1)
                         if custom_commands:
                             commands = list(custom_commands.keys())
                             config_data["commands"] = custom_commands
