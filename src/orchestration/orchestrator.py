@@ -456,11 +456,11 @@ class MalaOrchestrator:
         )
 
     def _get_track_review_issues(self) -> bool:
-        """Get track_review_issues from code_review config or fall back to env var.
+        """Get track_review_issues from session_end code_review config or env var.
 
-        Checks validation_triggers for the first enabled code_review config
-        and returns its track_review_issues setting. Falls back to the env var
-        setting in MalaConfig if no code_review config is enabled.
+        IssueFinalizer handles session_end tracking issues, so we check
+        session_end.code_review specifically. Falls back to env var setting
+        if session_end has no enabled code_review config.
 
         Returns:
             True if review issues should be tracked, False otherwise.
@@ -468,19 +468,13 @@ class MalaOrchestrator:
         if self._validation_config is not None:
             triggers = getattr(self._validation_config, "validation_triggers", None)
             if triggers is not None:
-                for trigger_name in (
-                    "session_end",
-                    "epic_completion",
-                    "run_end",
-                    "periodic",
-                ):
-                    trigger = getattr(triggers, trigger_name, None)
-                    if trigger is not None:
-                        code_review = getattr(trigger, "code_review", None)
-                        if code_review is not None and getattr(
-                            code_review, "enabled", False
-                        ):
-                            return getattr(code_review, "track_review_issues", True)
+                session_end = getattr(triggers, "session_end", None)
+                if session_end is not None:
+                    code_review = getattr(session_end, "code_review", None)
+                    if code_review is not None and getattr(
+                        code_review, "enabled", False
+                    ):
+                        return getattr(code_review, "track_review_issues", True)
         # Fall back to env var setting
         return self._mala_config.track_review_issues
 

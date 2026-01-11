@@ -27,6 +27,7 @@ class FakeCodeReviewConfig:
 
     baseline: str | None = None
     failure_mode: FailureMode = FailureMode.ABORT
+    track_review_issues: bool = True
 
 
 @dataclass
@@ -918,6 +919,44 @@ class TestRunReviewFindings:
         # Review should still succeed even if beads creation failed
         assert result.status == "success"
         assert len(result.findings) == 1
+
+    @pytest.mark.asyncio
+    async def test_beads_issues_skipped_when_track_review_issues_false(
+        self, tmp_path: Path
+    ) -> None:
+        """Beads issues are NOT created when track_review_issues=False."""
+        git_utils = FakeGitUtils(head_commit="abc1234")
+        review_result = FakeReviewResult(
+            passed=False,
+            issues=[
+                FakeReviewIssue(
+                    file="src/main.py",
+                    line_start=10,
+                    line_end=15,
+                    priority=1,
+                    title="Security issue",
+                    body="Found SQL injection",
+                ),
+            ],
+        )
+        review_runner = FakeReviewRunner(output=FakeReviewOutput(result=review_result))
+        runner, _, _, beads = make_runner(
+            git_utils=git_utils, review_runner=review_runner
+        )
+        metadata = FakeRunMetadata(run_start_commit="baseline-sha")
+
+        result = await runner.run_review(
+            trigger_type=TriggerType.RUN_END,
+            config=FakeCodeReviewConfig(track_review_issues=False),  # type: ignore[arg-type]
+            run_metadata=metadata,  # type: ignore[arg-type]
+            repo_path=tmp_path,
+            interrupt_event=asyncio.Event(),
+        )
+
+        # Review should succeed but NO beads issues created
+        assert result.status == "success"
+        assert len(result.findings) == 1  # findings still extracted
+        assert len(beads.create_issue_calls) == 0  # but no beads issues created
 
 
 class TestLargeDiffThreshold:

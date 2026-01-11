@@ -281,7 +281,14 @@ class CumulativeReviewRunner:
             )
 
         # 9. Create beads issues for findings with dedup and metadata
+        # Skip if track_review_issues is disabled
+        if not config.track_review_issues:
+            self._logger.debug(
+                "Skipping beads issue creation: track_review_issues=False"
+            )
         for finding in findings:
+            if not config.track_review_issues:
+                continue
             fingerprint = _get_finding_fingerprint(finding)
             fingerprint_tag = f"fp:{fingerprint}"
 
