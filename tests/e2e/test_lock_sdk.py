@@ -175,7 +175,7 @@ class TestAgentAcquiresLocks:
     @pytest.mark.asyncio
     @pytest.mark.xfail(
         reason="LLM may not reliably execute shell scripts verbatim",
-        strict=False,
+        strict=True,
     )
     async def test_agent_runs_lock_try_script(
         self,
@@ -215,10 +215,6 @@ After running the commands, respond with "DONE".
         assert get_lock_holder(lock_dir, "test_file.py", cwd) == agent_id
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="LLM may not reliably execute shell scripts verbatim",
-        strict=False,
-    )
     async def test_agent_checks_lock_ownership(
         self,
         lock_env: dict[str, Path],
@@ -269,10 +265,6 @@ class TestAgentReleasesLocks:
     """Test that agents properly release locks."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="LLM may not reliably execute shell scripts verbatim",
-        strict=False,
-    )
     async def test_agent_releases_single_lock(
         self,
         lock_env: dict[str, Path],
@@ -315,10 +307,6 @@ Respond with "DONE".
         assert not lock_file_exists(lock_dir, "release_test.py", cwd)
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="LLM may not reliably execute shell scripts verbatim",
-        strict=False,
-    )
     async def test_agent_releases_all_locks(
         self, lock_env: dict[str, Path], tmp_path: Path
     ) -> None:
@@ -369,7 +357,7 @@ class TestAgentHandlesContention:
     @pytest.mark.asyncio
     @pytest.mark.xfail(
         reason="LLM may not reliably execute shell scripts verbatim",
-        strict=False,
+        strict=True,
     )
     async def test_agent_detects_blocked_file(
         self,
@@ -427,10 +415,6 @@ class TestStopHookWithSDK:
     """Test the Stop hook integration with real SDK."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="LLM may not reliably execute shell scripts verbatim",
-        strict=False,
-    )
     async def test_stop_hook_cleans_locks_on_agent_exit(
         self, lock_env: dict[str, Path], tmp_path: Path
     ) -> None:
@@ -499,7 +483,7 @@ class TestMultiAgentWithSDK:
     @pytest.mark.asyncio
     @pytest.mark.xfail(
         reason="LLM may not reliably execute shell scripts verbatim",
-        strict=False,
+        strict=True,
     )
     async def test_sequential_agents_handoff_lock(
         self,
@@ -575,10 +559,6 @@ class TestAgentWorkflowE2E:
     """End-to-end test of a realistic agent workflow."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="LLM may not reliably execute shell scripts verbatim",
-        strict=False,
-    )
     async def test_full_implementation_workflow(
         self, lock_env: dict[str, Path], tmp_path: Path
     ) -> None:
