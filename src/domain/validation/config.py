@@ -1113,7 +1113,9 @@ class ValidationConfig:
                 )
 
                 per_issue_review = _parse_code_review_config(
-                    cast("dict[str, object]", pir_data), "per_issue_review"
+                    cast("dict[str, object]", pir_data),
+                    "per_issue_review",
+                    is_per_issue_review=True,
                 )
 
         return cls(

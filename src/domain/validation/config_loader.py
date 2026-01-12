@@ -500,13 +500,20 @@ def _parse_cerberus_config(data: dict[str, Any]) -> CerberusConfig:
 
 
 def _parse_code_review_config(
-    data: dict[str, Any], trigger_name: str
+    data: dict[str, Any],
+    trigger_name: str,
+    *,
+    is_per_issue_review: bool = False,
 ) -> CodeReviewConfig | None:
     """Parse code_review configuration block.
 
     Args:
-        data: The code_review config dict from the trigger.
-        trigger_name: Name of the parent trigger (for validation warnings).
+        data: The code_review config dict from the trigger or per_issue_review section.
+        trigger_name: Name of the parent trigger (for validation warnings/errors).
+            When is_per_issue_review=True, this is used only in error messages.
+        is_per_issue_review: If True, parse as per_issue_review config rather than
+            a trigger's code_review config. This affects validation: baseline is
+            not applicable for per_issue_review and will emit a warning if set.
 
     Returns:
         CodeReviewConfig if data is provided, None otherwise.
@@ -634,8 +641,17 @@ def _parse_code_review_config(
                     f"Invalid code_review.baseline '{bl_val}' for trigger {trigger_name}. "
                     f"Valid values: {', '.join(valid_baselines)}"
                 )
+            # WARN if baseline set for per_issue_review - ignore field
+            # per_issue_review reviews individual commits, not a range of code
+            if is_per_issue_review:
+                logger.warning(
+                    "baseline is not applicable for per_issue_review; "
+                    "ignoring baseline='%s'",
+                    bl_val,
+                )
+                baseline = None
             # WARN if baseline set for session_end - ignore field
-            if trigger_name == "session_end":
+            elif trigger_name == "session_end":
                 logger.warning(
                     "code_review.baseline is not applicable for session_end trigger; "
                     "ignoring baseline='%s'",
@@ -647,7 +663,12 @@ def _parse_code_review_config(
 
     # WARN if baseline missing/null for epic_completion/run_end - default to since_run_start
     # Explicit null counts as missing since baseline is required for these triggers
-    if trigger_name in ("epic_completion", "run_end") and baseline is None:
+    # This does NOT apply to per_issue_review (baseline is not applicable there)
+    if (
+        not is_per_issue_review
+        and trigger_name in ("epic_completion", "run_end")
+        and baseline is None
+    ):
         logger.warning(
             "code_review.baseline not specified for %s trigger; "
             "defaulting to 'since_run_start'",

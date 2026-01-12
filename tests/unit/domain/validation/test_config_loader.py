@@ -492,6 +492,39 @@ class TestCodeReviewBaselineValidation:
         assert result.baseline == "since_run_start"
         assert "baseline not specified for epic_completion trigger" in caplog.text
 
+    def test_baseline_set_for_per_issue_review_warns_and_ignores(
+        self, caplog: LogCaptureFixture
+    ) -> None:
+        """baseline set with is_per_issue_review=True logs warning and ignores field."""
+        with caplog.at_level(logging.WARNING):
+            result = _parse_code_review_config(
+                {"baseline": "since_last_review"},
+                "per_issue_review",
+                is_per_issue_review=True,
+            )
+
+        assert result is not None
+        assert result.baseline is None
+        assert "baseline is not applicable for per_issue_review" in caplog.text
+        assert "ignoring baseline='since_last_review'" in caplog.text
+
+    def test_baseline_missing_for_per_issue_review_no_warning_no_default(
+        self, caplog: LogCaptureFixture
+    ) -> None:
+        """baseline missing with is_per_issue_review=True does not warn or default.
+
+        Unlike epic_completion/run_end, per_issue_review should not get a default
+        baseline since the field is not applicable.
+        """
+        with caplog.at_level(logging.WARNING):
+            result = _parse_code_review_config(
+                {}, "per_issue_review", is_per_issue_review=True
+            )
+
+        assert result is not None
+        assert result.baseline is None
+        assert "baseline" not in caplog.text
+
 
 class TestCodeReviewFullConfig:
     """Tests for complete code_review configurations."""
@@ -753,6 +786,45 @@ class TestPerIssueReviewParsing:
         assert config.per_issue_review.reviewer_type == "agent_sdk"
         assert config.per_issue_review.agent_sdk_timeout == 300
         assert config.per_issue_review.agent_sdk_model == "sonnet"
+
+    def test_per_issue_review_baseline_warns_and_ignored(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """baseline in per_issue_review emits warning and is ignored."""
+        from src.domain.validation.config import ValidationConfig
+
+        data: dict[str, object] = {
+            "preset": "python-uv",
+            "per_issue_review": {
+                "enabled": True,
+                "baseline": "since_run_start",
+            },
+        }
+        with caplog.at_level("WARNING"):
+            config = ValidationConfig.from_dict(data)
+
+        # baseline should be ignored (set to None)
+        assert config.per_issue_review.baseline is None
+        # Warning should have been logged
+        assert "baseline is not applicable for per_issue_review" in caplog.text
+        assert "since_run_start" in caplog.text
+
+    def test_per_issue_review_no_default_baseline(self) -> None:
+        """per_issue_review does NOT get default baseline like epic_completion/run_end."""
+        from src.domain.validation.config import ValidationConfig
+
+        # If we were treating per_issue_review as a trigger, it might get
+        # an unexpected default baseline. This test ensures it doesn't.
+        data: dict[str, object] = {
+            "preset": "python-uv",
+            "per_issue_review": {
+                "enabled": True,
+            },
+        }
+        config = ValidationConfig.from_dict(data)
+
+        # baseline should remain None, not defaulted to "since_run_start"
+        assert config.per_issue_review.baseline is None
 
 
 class TestValidateGeneratedConfig:
