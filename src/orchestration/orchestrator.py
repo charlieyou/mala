@@ -84,9 +84,12 @@ if TYPE_CHECKING:
     from src.pipeline.issue_execution_coordinator import AbortResult
     from src.core.protocols import (
         CodeReviewer,
+        CommandRunnerPort,
+        EnvConfigPort,
         EpicVerifierProtocol,
         GateChecker,
         IssueProvider,
+        LockManagerPort,
         LogProvider,
     )
     from src.domain.prompts import PromptProvider
@@ -230,6 +233,9 @@ class MalaOrchestrator:
         _telemetry_provider: TelemetryProvider,
         _event_sink: MalaEventSink,
         _epic_verifier: EpicVerifierProtocol | None = None,
+        _command_runner: CommandRunnerPort | None = None,
+        _env_config: EnvConfigPort | None = None,
+        _lock_manager: LockManagerPort | None = None,
         runs_dir: Path | None = None,
         lock_releaser: Callable[[list[str]], int] | None = None,
     ):
@@ -244,6 +250,9 @@ class MalaOrchestrator:
             _telemetry_provider,
             _event_sink,
             _epic_verifier,
+            _command_runner=_command_runner,
+            _env_config=_env_config,
+            _lock_manager=_lock_manager,
             runs_dir=runs_dir,
             lock_releaser=lock_releaser,
         )
@@ -261,6 +270,9 @@ class MalaOrchestrator:
         event_sink: MalaEventSink,
         epic_verifier: EpicVerifierProtocol | None,
         *,
+        _command_runner: CommandRunnerPort | None = None,
+        _env_config: EnvConfigPort | None = None,
+        _lock_manager: LockManagerPort | None = None,
         runs_dir: Path | None = None,
         lock_releaser: Callable[[list[str]], int] | None = None,
     ) -> None:
@@ -315,6 +327,18 @@ class MalaOrchestrator:
         self.epic_verifier = epic_verifier
         self.code_reviewer = code_reviewer
         self.telemetry_provider = telemetry_provider
+        # Runtime deps for pipeline wiring (constructed by factory)
+        self._command_runner: CommandRunnerPort = (
+            _command_runner
+            if _command_runner is not None
+            else CommandRunner(cwd=self.repo_path)
+        )
+        self._env_config: EnvConfigPort = (
+            _env_config if _env_config is not None else EnvConfig()
+        )
+        self._lock_manager: LockManagerPort = (
+            _lock_manager if _lock_manager is not None else LockManager()
+        )
         self._sdk_client_factory = SDKClientFactory()
         self._init_pipeline_runners()
 
@@ -361,7 +385,16 @@ class MalaOrchestrator:
 
     def _init_pipeline_runners(self) -> None:
         """Initialize pipeline runner components using wiring functions."""
-        runtime = self._build_runtime_deps()
+        runtime = RuntimeDeps(
+            evidence_check=self.evidence_check,
+            code_reviewer=self.code_reviewer,
+            beads=self.beads,
+            event_sink=self.event_sink,
+            command_runner=self._command_runner,
+            env_config=self._env_config,
+            lock_manager=self._lock_manager,
+            mala_config=self._mala_config,
+        )
         pipeline = self._build_pipeline_config()
         filters = self._build_issue_filter_config()
 
@@ -410,19 +443,6 @@ class MalaOrchestrator:
             lambda info: self._deadlock_handler.handle_deadlock(
                 info, self._state, self.active_tasks
             )
-        )
-
-    def _build_runtime_deps(self) -> RuntimeDeps:
-        """Build RuntimeDeps from orchestrator state."""
-        return RuntimeDeps(
-            evidence_check=self.evidence_check,
-            code_reviewer=self.code_reviewer,
-            beads=self.beads,
-            event_sink=self.event_sink,
-            command_runner=CommandRunner(cwd=self.repo_path),
-            env_config=EnvConfig(),
-            lock_manager=LockManager(),
-            mala_config=self._mala_config,
         )
 
     def _build_pipeline_config(self) -> PipelineConfig:

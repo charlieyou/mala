@@ -123,6 +123,9 @@ class OrchestratorDependencies:
         log_provider: LogProvider for session log access.
         telemetry_provider: TelemetryProvider for tracing.
         event_sink: MalaEventSink for run lifecycle logging.
+        command_runner: CommandRunnerPort for executing shell commands.
+        env_config: EnvConfigPort for environment configuration.
+        lock_manager: LockManagerPort for file locking coordination.
         runs_dir: Directory for run markers (for testing).
         lock_releaser: Function to release locks (for testing).
     """
@@ -133,6 +136,9 @@ class OrchestratorDependencies:
     log_provider: LogProvider | None = None
     telemetry_provider: TelemetryProvider | None = None
     event_sink: MalaEventSink | None = None
+    command_runner: CommandRunnerPort | None = None
+    env_config: EnvConfigPort | None = None
+    lock_manager: LockManagerPort | None = None
     runs_dir: Path | None = None
     lock_releaser: Callable[[list[str]], int] | None = None
 

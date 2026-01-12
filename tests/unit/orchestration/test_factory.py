@@ -1002,3 +1002,172 @@ class TestExtractReviewerConfig:
         assert result.reviewer_type == "agent_sdk"
         assert result.agent_sdk_review_timeout == 600
         assert result.agent_sdk_reviewer_model == "sonnet"
+
+
+class TestBuildDependenciesRuntimeDeps:
+    """Tests for RuntimeDeps construction in _build_dependencies."""
+
+    def test_constructs_defaults_when_deps_none(self, tmp_path: Path) -> None:
+        """Factory constructs CommandRunner, EnvConfig, LockManager when deps=None."""
+        from src.infra.tools.command_runner import CommandRunner
+        from src.infra.tools.env import EnvConfig
+        from src.infra.tools.locking import LockManager
+        from src.orchestration.factory import _build_dependencies, _ReviewerConfig
+        from src.orchestration.types import _DerivedConfig
+
+        config = OrchestratorConfig(repo_path=tmp_path)
+        mala_config = MalaConfig.from_env(validate=False)
+        derived = _DerivedConfig(
+            timeout_seconds=600,
+            disabled_validations=set(),
+            context_restart_threshold=0.8,
+            context_limit=100000,
+            max_idle_retries=3,
+            idle_timeout_seconds=None,
+        )
+        reviewer_config = _ReviewerConfig()
+
+        result = _build_dependencies(
+            config, mala_config, derived, None, reviewer_config
+        )
+
+        # Unpack result (10 elements)
+        (
+            _issue_provider,
+            _code_reviewer,
+            _gate_checker,
+            _log_provider,
+            _telemetry_provider,
+            _event_sink,
+            _epic_verifier,
+            command_runner,
+            env_config,
+            lock_manager,
+        ) = result
+
+        # Verify types are concrete implementations
+        assert isinstance(command_runner, CommandRunner)
+        assert isinstance(env_config, EnvConfig)
+        assert isinstance(lock_manager, LockManager)
+
+    def test_uses_provided_command_runner(self, tmp_path: Path) -> None:
+        """Factory uses provided command_runner instead of creating default."""
+        from tests.fakes.command_runner import FakeCommandRunner
+        from src.orchestration.factory import _build_dependencies, _ReviewerConfig
+        from src.orchestration.types import OrchestratorDependencies, _DerivedConfig
+
+        fake_runner = FakeCommandRunner(allow_unregistered=True)
+        deps = OrchestratorDependencies(command_runner=fake_runner)
+        config = OrchestratorConfig(repo_path=tmp_path)
+        mala_config = MalaConfig.from_env(validate=False)
+        derived = _DerivedConfig(
+            timeout_seconds=600,
+            disabled_validations=set(),
+            context_restart_threshold=0.8,
+            context_limit=100000,
+            max_idle_retries=3,
+            idle_timeout_seconds=None,
+        )
+        reviewer_config = _ReviewerConfig()
+
+        result = _build_dependencies(
+            config, mala_config, derived, deps, reviewer_config
+        )
+        command_runner = result[7]
+
+        assert command_runner is fake_runner
+
+    def test_uses_provided_env_config(self, tmp_path: Path) -> None:
+        """Factory uses provided env_config instead of creating default."""
+        from tests.fakes.env_config import FakeEnvConfig
+        from src.orchestration.factory import _build_dependencies, _ReviewerConfig
+        from src.orchestration.types import OrchestratorDependencies, _DerivedConfig
+
+        fake_env = FakeEnvConfig()
+        deps = OrchestratorDependencies(env_config=fake_env)
+        config = OrchestratorConfig(repo_path=tmp_path)
+        mala_config = MalaConfig.from_env(validate=False)
+        derived = _DerivedConfig(
+            timeout_seconds=600,
+            disabled_validations=set(),
+            context_restart_threshold=0.8,
+            context_limit=100000,
+            max_idle_retries=3,
+            idle_timeout_seconds=None,
+        )
+        reviewer_config = _ReviewerConfig()
+
+        result = _build_dependencies(
+            config, mala_config, derived, deps, reviewer_config
+        )
+        env_config = result[8]
+
+        assert env_config is fake_env
+
+    def test_uses_provided_lock_manager(self, tmp_path: Path) -> None:
+        """Factory uses provided lock_manager instead of creating default."""
+        from tests.fakes.lock_manager import FakeLockManager
+        from src.orchestration.factory import _build_dependencies, _ReviewerConfig
+        from src.orchestration.types import OrchestratorDependencies, _DerivedConfig
+
+        fake_manager = FakeLockManager()
+        deps = OrchestratorDependencies(lock_manager=fake_manager)
+        config = OrchestratorConfig(repo_path=tmp_path)
+        mala_config = MalaConfig.from_env(validate=False)
+        derived = _DerivedConfig(
+            timeout_seconds=600,
+            disabled_validations=set(),
+            context_restart_threshold=0.8,
+            context_limit=100000,
+            max_idle_retries=3,
+            idle_timeout_seconds=None,
+        )
+        reviewer_config = _ReviewerConfig()
+
+        result = _build_dependencies(
+            config, mala_config, derived, deps, reviewer_config
+        )
+        lock_manager = result[9]
+
+        assert lock_manager is fake_manager
+
+    def test_fills_gaps_with_defaults(self, tmp_path: Path) -> None:
+        """Factory fills None fields with defaults while respecting provided ones."""
+        from tests.fakes.command_runner import FakeCommandRunner
+        from tests.fakes.env_config import FakeEnvConfig
+        from src.infra.tools.locking import LockManager
+        from src.orchestration.factory import _build_dependencies, _ReviewerConfig
+        from src.orchestration.types import OrchestratorDependencies, _DerivedConfig
+
+        # Provide only command_runner and env_config, leave lock_manager as None
+        fake_runner = FakeCommandRunner(allow_unregistered=True)
+        fake_env = FakeEnvConfig()
+        deps = OrchestratorDependencies(
+            command_runner=fake_runner,
+            env_config=fake_env,
+            lock_manager=None,  # Should be filled with default
+        )
+        config = OrchestratorConfig(repo_path=tmp_path)
+        mala_config = MalaConfig.from_env(validate=False)
+        derived = _DerivedConfig(
+            timeout_seconds=600,
+            disabled_validations=set(),
+            context_restart_threshold=0.8,
+            context_limit=100000,
+            max_idle_retries=3,
+            idle_timeout_seconds=None,
+        )
+        reviewer_config = _ReviewerConfig()
+
+        result = _build_dependencies(
+            config, mala_config, derived, deps, reviewer_config
+        )
+        command_runner = result[7]
+        env_config = result[8]
+        lock_manager = result[9]
+
+        # Provided values are used
+        assert command_runner is fake_runner
+        assert env_config is fake_env
+        # Missing value is filled with default
+        assert isinstance(lock_manager, LockManager)

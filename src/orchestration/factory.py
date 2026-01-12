@@ -60,15 +60,19 @@ if TYPE_CHECKING:
 
     from src.core.protocols import (
         CodeReviewer,
+        CommandRunnerPort,
+        EnvConfigPort,
         EpicVerificationModel,
         GateChecker,
         IssueProvider,
+        LockManagerPort,
         LogProvider,
     )
     from src.domain.validation.config import CerberusConfig, ValidationConfig
     from src.infra.io.config import MalaConfig
     from src.core.protocols import EpicVerifierProtocol, MalaEventSink
     from src.infra.telemetry import TelemetryProvider
+    from src.infra.tools.command_runner import CommandRunner
 
     from .orchestrator import MalaOrchestrator
 
@@ -563,6 +567,9 @@ def _build_dependencies(
     TelemetryProvider,
     MalaEventSink,
     EpicVerifierProtocol | None,
+    CommandRunnerPort,
+    EnvConfigPort,
+    LockManagerPort,
 ]:
     """Build all dependencies, using provided ones or creating defaults.
 
@@ -584,12 +591,32 @@ def _build_dependencies(
     from src.infra.io.session_log_parser import FileSystemLogProvider
     from src.infra.telemetry import NullTelemetryProvider
     from src.infra.tools.command_runner import CommandRunner
+    from src.infra.tools.env import EnvConfig
+    from src.infra.tools.locking import LockManager
 
     # Get resolved path
     repo_path = config.repo_path.resolve()
 
     # Command runner (shared by components that need it)
-    command_runner = CommandRunner(cwd=repo_path)
+    command_runner: CommandRunnerPort
+    if deps is not None and deps.command_runner is not None:
+        command_runner = deps.command_runner
+    else:
+        command_runner = CommandRunner(cwd=repo_path)
+
+    # Env config
+    env_config: EnvConfigPort
+    if deps is not None and deps.env_config is not None:
+        env_config = deps.env_config
+    else:
+        env_config = EnvConfig()
+
+    # Lock manager
+    lock_manager: LockManagerPort
+    if deps is not None and deps.lock_manager is not None:
+        lock_manager = deps.lock_manager
+    else:
+        lock_manager = LockManager()
 
     # Event sink (needed for log_warning in BeadsClient)
     if deps is not None and deps.event_sink is not None:
@@ -637,17 +664,15 @@ def _build_dependencies(
             retry_config=RetryConfig(),
             repo_path=repo_path,
         )
-        from src.infra.tools.locking import LockManager
-
         epic_verifier = cast(
             "EpicVerifierProtocol",
             EpicVerifier(
                 beads=issue_provider,
                 model=cast("EpicVerificationModel", verification_model),
                 repo_path=repo_path,
-                command_runner=command_runner,
+                command_runner=cast("CommandRunner", command_runner),
                 event_sink=event_sink,
-                lock_manager=LockManager(),
+                lock_manager=lock_manager,
                 max_diff_size_kb=derived.max_diff_size_kb,
                 lock_timeout_seconds=derived.epic_verify_lock_timeout_seconds,
             ),
@@ -680,6 +705,9 @@ def _build_dependencies(
         telemetry_provider,
         event_sink,
         epic_verifier,
+        command_runner,
+        env_config,
+        lock_manager,
     )
 
 
@@ -788,6 +816,9 @@ def create_orchestrator(
         telemetry_provider,
         event_sink,
         epic_verifier,
+        command_runner,
+        env_config,
+        lock_manager,
     ) = _build_dependencies(config, mala_config, derived, deps, reviewer_config)
 
     # Create orchestrator using internal constructor
@@ -807,6 +838,9 @@ def create_orchestrator(
         _telemetry_provider=telemetry_provider,
         _event_sink=event_sink,
         _epic_verifier=epic_verifier,
+        _command_runner=command_runner,
+        _env_config=env_config,
+        _lock_manager=lock_manager,
         runs_dir=deps.runs_dir if deps else None,
         lock_releaser=deps.lock_releaser if deps else None,
     )
