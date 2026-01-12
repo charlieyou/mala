@@ -29,7 +29,10 @@ from src.domain.validation.config import (
     ValidationConfig,
     ValidationTriggersConfig,
 )
-from src.pipeline.session_callback_factory import SessionCallbackFactory
+from src.pipeline.session_callback_factory import (
+    SessionCallbackFactory,
+    SessionRunContext,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -157,24 +160,28 @@ def _create_factory(
     session_end_timeout: float = 600.0,
 ) -> SessionCallbackFactory:
     """Create a SessionCallbackFactory with test dependencies."""
+    context = SessionRunContext(
+        log_provider_getter=lambda: MagicMock(),
+        evidence_check_getter=lambda: MagicMock(),
+        on_session_log_path=lambda issue_id, path: None,
+        on_review_log_path=lambda issue_id, path: None,
+        interrupt_event_getter=lambda: interrupt_event,
+        get_base_sha=lambda issue_id: (base_sha_map or {}).get(issue_id),
+        get_run_metadata=lambda: run_metadata or FakeRunMetadata(),  # type: ignore[return-value]
+        on_abort=on_abort or (lambda reason: None),
+        abort_event_getter=lambda: None,
+    )
     return SessionCallbackFactory(
         gate_async_runner=MagicMock(),
         review_runner=MagicMock(),
-        log_provider=MagicMock(return_value=MagicMock()),
+        context=context,
         event_sink=MagicMock(return_value=MagicMock()),
-        evidence_check=MagicMock(return_value=MagicMock()),
         repo_path=Path("/test/repo"),
-        on_session_log_path=MagicMock(),
-        on_review_log_path=MagicMock(),
         get_per_session_spec=MagicMock(return_value=None),
         is_verbose=MagicMock(return_value=False),
-        get_interrupt_event=lambda: interrupt_event,
         get_validation_config=lambda: validation_config,
         command_runner=command_runner,  # type: ignore[arg-type]
         cumulative_review_runner=cumulative_review_runner,  # type: ignore[arg-type]
-        get_run_metadata=lambda: run_metadata or FakeRunMetadata(),  # type: ignore[return-value]
-        get_base_sha=lambda issue_id: (base_sha_map or {}).get(issue_id),
-        on_abort=on_abort,
         session_end_timeout=session_end_timeout,
     )
 

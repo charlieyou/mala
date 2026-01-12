@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
     from src.core.protocols import (
         CommandResultProtocol,
+        GateChecker,
         LogProvider,
         MalaEventSink,
         ReviewIssueProtocol,
@@ -57,6 +58,40 @@ if TYPE_CHECKING:
     from src.core.session_end_result import SessionEndRetryState
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SessionRunContext:
+    """Late-bound getters for session callback wiring.
+
+    Bundles the 9 callable parameters currently passed individually to
+    build_session_callback_factory(), consolidating "lambda soup" into a
+    single typed context object.
+
+    All fields are callables to support late-binding - values are resolved
+    at call time rather than construction time.
+
+    Attributes:
+        log_provider_getter: Returns the LogProvider for session logging.
+        evidence_check_getter: Returns the GateChecker for evidence validation.
+        on_session_log_path: Called with (issue_id, path) when session log path is known.
+        on_review_log_path: Called with (issue_id, path) when review log path is known.
+        interrupt_event_getter: Returns the interrupt Event or None if not set.
+        get_base_sha: Returns base SHA for an issue, or None if unavailable.
+        get_run_metadata: Returns RunMetadata or None if unavailable.
+        on_abort: Called with issue_id when session is aborted.
+        abort_event_getter: Returns the abort Event or None if not set.
+    """
+
+    log_provider_getter: Callable[[], LogProvider]
+    evidence_check_getter: Callable[[], GateChecker]
+    on_session_log_path: Callable[[str, Path], None]
+    on_review_log_path: Callable[[str, str], None]
+    interrupt_event_getter: Callable[[], asyncio.Event | None]
+    get_base_sha: Callable[[str], str | None]
+    get_run_metadata: Callable[[], RunMetadata | None]
+    on_abort: Callable[[str], None]
+    abort_event_getter: Callable[[], asyncio.Event | None]
 
 
 @dataclass
@@ -98,14 +133,19 @@ class SessionCallbackFactory:
     pipeline runners without coupling the runners to orchestrator internals.
 
     Usage:
+        context = SessionRunContext(
+            log_provider_getter=...,
+            evidence_check_getter=...,
+            on_session_log_path=...,
+            on_review_log_path=...,
+            ...
+        )
         factory = SessionCallbackFactory(
-            gate_async_runner=...,  # Protocol for async gate checks
+            gate_async_runner=...,
             review_runner=...,
-            log_provider=...,
+            context=context,
             event_sink=...,
             repo_path=...,
-            on_session_log_path=...,  # Callback for session log path
-            on_review_log_path=...,   # Callback for review log path
         )
         callbacks = factory.build(issue_id)
     """
@@ -114,75 +154,50 @@ class SessionCallbackFactory:
         self,
         gate_async_runner: GateAsyncRunner,
         review_runner: ReviewRunner,
-        log_provider: Callable[[], LogProvider],
+        context: SessionRunContext,
         event_sink: Callable[[], MalaEventSink],
-        evidence_check: Callable[[], GateChecker],
         repo_path: Path,
-        on_session_log_path: Callable[[str, Path], None],
-        on_review_log_path: Callable[[str, str], None],
         get_per_session_spec: GetPerSessionSpec,
         is_verbose: IsVerboseCheck,
-        get_interrupt_event: Callable[[], asyncio.Event | None] | None = None,
         get_validation_config: Callable[[], ValidationConfig | None] | None = None,
         command_runner: CommandRunnerPort | None = None,
         fixer_interface: FixerInterface | None = None,
         cumulative_review_runner: CumulativeReviewRunner | None = None,
-        get_run_metadata: Callable[[], RunMetadata | None] | None = None,
-        get_base_sha: Callable[[str], str | None] | None = None,
-        on_abort: Callable[[str], None] | None = None,
         session_end_timeout: float = 600.0,
-        get_abort_event: Callable[[], asyncio.Event | None] | None = None,
     ) -> None:
         """Initialize the factory with dependencies.
 
         Args:
             gate_async_runner: Protocol for running async gate checks.
             review_runner: Runner for Cerberus code review.
-            log_provider: Callable returning the log provider (late-bound).
+            context: SessionRunContext with late-bound getters for orchestrator state.
             event_sink: Callable returning the event sink (late-bound).
-            evidence_check: Callable returning the gate checker (late-bound).
             repo_path: Repository path for git operations.
-            on_session_log_path: Callback when session log path becomes known.
-            on_review_log_path: Callback when review log path becomes known.
             get_per_session_spec: Callable to get current per-session spec.
             is_verbose: Callable to check verbose mode.
-            get_interrupt_event: Callable to get the interrupt event (late-bound).
             get_validation_config: Callable to get validation config (late-bound).
             command_runner: Command runner for executing session_end commands.
             fixer_interface: Interface for running fixer agents during remediation.
             cumulative_review_runner: Runner for session_end code review.
-            get_run_metadata: Callable to get run metadata (late-bound).
-            get_base_sha: Callable to get base_sha for an issue (late-bound).
-            on_abort: Callback when session_end abort mode triggers run abort.
             session_end_timeout: Overall timeout for session_end in seconds.
-            get_abort_event: Callable to get the abort event (late-bound).
 
         Note:
-            log_provider, event_sink, evidence_check, and get_interrupt_event are
-            callables to support late-bound lookups. This allows tests to patch
-            orchestrator attributes after factory construction and have the
-            patches take effect.
+            The context bundles late-bound getters (log_provider, evidence_check,
+            interrupt_event, etc.) to support runtime patching. This allows tests
+            to swap orchestrator attributes after factory construction.
         """
         self._gate_async_runner = gate_async_runner
         self._review_runner = review_runner
-        self._get_log_provider = log_provider
+        self._context = context
         self._get_event_sink = event_sink
-        self._get_evidence_check = evidence_check
         self._repo_path = repo_path
-        self._on_session_log_path = on_session_log_path
-        self._on_review_log_path = on_review_log_path
         self._get_per_session_spec = get_per_session_spec
         self._is_verbose = is_verbose
-        self._get_interrupt_event = get_interrupt_event or (lambda: None)
         self._get_validation_config = get_validation_config or (lambda: None)
         self._command_runner = command_runner
         self._fixer_interface = fixer_interface
         self._cumulative_review_runner = cumulative_review_runner
-        self._get_run_metadata = get_run_metadata or (lambda: None)
-        self._get_base_sha = get_base_sha or (lambda _: None)
-        self._on_abort = on_abort
         self._session_end_timeout = session_end_timeout
-        self._get_abort_event = get_abort_event or (lambda: None)
 
     def build(
         self,
@@ -207,7 +222,7 @@ class SessionCallbackFactory:
             issue_id: str, log_path: Path, retry_state: RetryState
         ) -> tuple[GateOutcome, int]:
             result, offset = await self._gate_async_runner.run_gate_async(
-                issue_id, log_path, retry_state, self._get_interrupt_event()
+                issue_id, log_path, retry_state, self._context.interrupt_event_getter()
             )
             return result, offset  # type: ignore[return-value]
 
@@ -236,10 +251,10 @@ class SessionCallbackFactory:
                 session_end_result=session_end_result,
             )
             output = await self._review_runner.run_review(
-                review_input, self._get_interrupt_event()
+                review_input, self._context.interrupt_event_getter()
             )
             if output.session_log_path:
-                self._on_review_log_path(issue_id, output.session_log_path)
+                self._context.on_review_log_path(issue_id, output.session_log_path)
 
             # Propagate interrupted flag: if output.interrupted is True but
             # the result's interrupted flag is False (e.g., SIGINT fired after
@@ -272,14 +287,16 @@ class SessionCallbackFactory:
             return self._review_runner.check_no_progress(no_progress_input)
 
         def get_log_path(session_id: str) -> Path:
-            log_path = self._get_log_provider().get_log_path(
+            log_path = self._context.log_provider_getter().get_log_path(
                 self._repo_path, session_id
             )
-            self._on_session_log_path(issue_id, log_path)
+            self._context.on_session_log_path(issue_id, log_path)
             return log_path
 
         def get_log_offset(log_path: Path, start_offset: int) -> int:
-            return self._get_evidence_check().get_log_end_offset(log_path, start_offset)
+            return self._context.evidence_check_getter().get_log_end_offset(
+                log_path, start_offset
+            )
 
         def on_tool_use(agent_id: str, tool_name: str, arguments: dict | None) -> None:
             self._get_event_sink().on_tool_use(agent_id, tool_name, arguments=arguments)
@@ -322,7 +339,7 @@ class SessionCallbackFactory:
             on_tool_use=on_tool_use,
             on_agent_text=on_agent_text,
             on_session_end_check=on_session_end_check,
-            get_abort_event=self._get_abort_event,
+            get_abort_event=self._context.abort_event_getter,
         )
 
     async def _execute_session_end(
@@ -360,7 +377,7 @@ class SessionCallbackFactory:
             )
 
         started_at = datetime.now(UTC)
-        interrupt_event = self._get_interrupt_event()
+        interrupt_event = self._context.interrupt_event_getter()
         command_outcomes: list[CommandOutcome] = []
 
         try:
@@ -469,11 +486,11 @@ class SessionCallbackFactory:
                             issue_id,
                         )
                         # Set abort_event directly for immediate propagation
-                        abort_event = self._get_abort_event()
+                        abort_event = self._context.abort_event_getter()
                         if abort_event is not None:
                             abort_event.set()
-                        if self._on_abort:
-                            self._on_abort(
+                        if self._context.on_abort:
+                            self._context.on_abort(
                                 f"session_end validation failed for {issue_id}"
                             )
                         return SessionEndResult(
@@ -980,13 +997,13 @@ class SessionCallbackFactory:
             )
             return CodeReviewResult(ran=False, passed=None, findings=[])
 
-        run_metadata = self._get_run_metadata()
+        run_metadata = self._context.get_run_metadata()
         if run_metadata is None:
             logger.warning("session_end code_review: no run_metadata available")
             return CodeReviewResult(ran=False, passed=None, findings=[])
 
         # Get base_sha for the issue (per spec R11)
-        base_sha = self._get_base_sha(issue_id)
+        base_sha = self._context.get_base_sha(issue_id)
         if base_sha is None:
             logger.warning(
                 "session_end code_review: no base_sha for issue %s",

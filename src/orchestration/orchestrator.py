@@ -72,6 +72,7 @@ from src.orchestration.types import (
     PipelineConfig,
     RuntimeDeps,
 )
+from src.pipeline.session_callback_factory import SessionRunContext
 from src.pipeline.issue_result import IssueResult
 from src.orchestration.review_tracking import create_review_tracking_issues
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
@@ -377,21 +378,24 @@ class MalaOrchestrator:
         self.epic_verification_coordinator = self._build_epic_verification_coordinator()
 
         # Build session infrastructure
+        context = SessionRunContext(
+            log_provider_getter=lambda: self.log_provider,
+            evidence_check_getter=lambda: self.evidence_check,
+            on_session_log_path=self._on_session_log_path,
+            on_review_log_path=self._on_review_log_path,
+            interrupt_event_getter=lambda: self._interrupt_event,
+            get_base_sha=lambda issue_id: self._state.issue_base_shas.get(issue_id),
+            get_run_metadata=lambda: self.run_coordinator.run_metadata,
+            on_abort=lambda reason: self._request_abort(reason),
+            abort_event_getter=lambda: self.issue_coordinator.abort_event,
+        )
         self.session_callback_factory = build_session_callback_factory(
             runtime,
             pipeline,
             self.async_gate_runner,
             self.review_runner,
-            lambda: self.log_provider,
-            lambda: self.evidence_check,
-            on_session_log_path=self._on_session_log_path,
-            on_review_log_path=self._on_review_log_path,
-            interrupt_event_getter=lambda: self._interrupt_event,
-            get_base_sha=lambda issue_id: self._state.issue_base_shas.get(issue_id),
+            context,
             cumulative_review_runner=self.run_coordinator.cumulative_review_runner,
-            get_run_metadata=lambda: self.run_coordinator.run_metadata,
-            on_abort=lambda reason: self._request_abort(reason),
-            abort_event_getter=lambda: self.issue_coordinator.abort_event,
         )
         self._session_config = build_session_config(
             pipeline,

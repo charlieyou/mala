@@ -3,8 +3,26 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from src.pipeline.session_callback_factory import SessionCallbackFactory
+from src.pipeline.session_callback_factory import (
+    SessionCallbackFactory,
+    SessionRunContext,
+)
 from src.core.session_end_result import SessionEndResult, SessionEndRetryState
+
+
+def _create_minimal_context() -> SessionRunContext:
+    """Create a SessionRunContext with minimal lambda stubs."""
+    return SessionRunContext(
+        log_provider_getter=lambda: MagicMock(),
+        evidence_check_getter=lambda: MagicMock(),
+        on_session_log_path=lambda issue_id, path: None,
+        on_review_log_path=lambda issue_id, path: None,
+        interrupt_event_getter=lambda: None,
+        get_base_sha=lambda issue_id: None,
+        get_run_metadata=lambda: None,
+        on_abort=lambda reason: None,
+        abort_event_getter=lambda: None,
+    )
 
 
 def _create_minimal_factory() -> SessionCallbackFactory:
@@ -12,12 +30,9 @@ def _create_minimal_factory() -> SessionCallbackFactory:
     return SessionCallbackFactory(
         gate_async_runner=MagicMock(),
         review_runner=MagicMock(),
-        log_provider=MagicMock(return_value=MagicMock()),
+        context=_create_minimal_context(),
         event_sink=MagicMock(return_value=MagicMock()),
-        evidence_check=MagicMock(return_value=MagicMock()),
         repo_path=Path("/test/repo"),
-        on_session_log_path=MagicMock(),
-        on_review_log_path=MagicMock(),
         get_per_session_spec=MagicMock(return_value=None),
         is_verbose=MagicMock(return_value=False),
     )

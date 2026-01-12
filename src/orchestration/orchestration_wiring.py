@@ -64,6 +64,7 @@ if TYPE_CHECKING:
         PipelineConfig,
         RuntimeDeps,
     )
+    from src.pipeline.session_callback_factory import SessionRunContext
     from src.pipeline.issue_result import IssueResult
 
 
@@ -251,16 +252,8 @@ def build_session_callback_factory(
     pipeline: PipelineConfig,
     async_gate_runner: AsyncGateRunner,
     review_runner: ReviewRunner,
-    log_provider_getter: Callable,
-    evidence_check_getter: Callable,
-    on_session_log_path: Callable[[str, Path], None],
-    on_review_log_path: Callable[[str, str], None],
-    interrupt_event_getter: Callable | None = None,
-    get_base_sha: Callable[[str], str | None] | None = None,
+    context: SessionRunContext,
     cumulative_review_runner: CumulativeReviewRunner | None = None,
-    get_run_metadata: Callable | None = None,
-    on_abort: Callable[[str], None] | None = None,
-    abort_event_getter: Callable | None = None,
 ) -> SessionCallbackFactory:
     """Build SessionCallbackFactory.
 
@@ -269,16 +262,8 @@ def build_session_callback_factory(
         pipeline: Pipeline configuration.
         async_gate_runner: Async gate runner for quality checks.
         review_runner: Review runner for code reviews.
-        log_provider_getter: Callable to get log provider.
-        evidence_check_getter: Callable to get evidence check.
-        on_session_log_path: Callback when session log path becomes known.
-        on_review_log_path: Callback when review log path becomes known.
-        interrupt_event_getter: Callable to get the interrupt event (late-bound).
-        get_base_sha: Callable to get base_sha for an issue (late-bound for session_end).
+        context: Session run context with late-bound getters.
         cumulative_review_runner: Runner for session_end code review.
-        get_run_metadata: Callable to get run metadata (late-bound for session_end).
-        on_abort: Callback when session_end abort mode triggers run abort.
-        abort_event_getter: Callable to get the abort event (late-bound for run abort).
 
     Returns:
         Configured SessionCallbackFactory.
@@ -286,22 +271,14 @@ def build_session_callback_factory(
     return SessionCallbackFactory(
         gate_async_runner=async_gate_runner,
         review_runner=review_runner,
-        log_provider=log_provider_getter,
+        context=context,
         event_sink=lambda: runtime.event_sink,
-        evidence_check=evidence_check_getter,
         repo_path=pipeline.repo_path,
-        on_session_log_path=on_session_log_path,
-        on_review_log_path=on_review_log_path,
         get_per_session_spec=lambda: async_gate_runner.per_session_spec,
         is_verbose=is_verbose_enabled,
-        get_interrupt_event=interrupt_event_getter,
         get_validation_config=lambda: pipeline.validation_config,
         command_runner=runtime.command_runner,
         cumulative_review_runner=cumulative_review_runner,
-        get_run_metadata=get_run_metadata,
-        get_base_sha=get_base_sha,
-        on_abort=on_abort,
-        get_abort_event=abort_event_getter,
     )
 
 

@@ -17,6 +17,7 @@ from src.orchestration.orchestration_wiring import (
     build_issue_coordinator,
     build_review_runner,
     build_run_coordinator,
+    build_session_callback_factory,
     build_session_config,
 )
 from src.orchestration.types import (
@@ -24,10 +25,12 @@ from src.orchestration.types import (
     PipelineConfig,
     RuntimeDeps,
 )
+from src.pipeline.session_callback_factory import SessionRunContext
 from src.pipeline.gate_runner import AsyncGateRunner, GateRunner
 from src.pipeline.issue_execution_coordinator import IssueExecutionCoordinator
 from src.pipeline.review_runner import ReviewRunner
 from src.pipeline.run_coordinator import RunCoordinator
+from src.pipeline.session_callback_factory import SessionCallbackFactory
 from tests.fakes import (
     FakeCommandRunner,
     FakeEventSink,
@@ -282,3 +285,70 @@ class TestBuildSessionConfig:
         assert session_config.prompts.idle_resume == "idle"
         assert session_config.prompts.checkpoint_request == "checkpoint"
         assert session_config.prompts.continuation == "continuation"
+
+
+@pytest.fixture
+def mock_session_run_context() -> SessionRunContext:
+    """Create a SessionRunContext with lambda stubs."""
+    return SessionRunContext(
+        log_provider_getter=lambda: MagicMock(),
+        evidence_check_getter=lambda: MagicMock(),
+        on_session_log_path=lambda issue_id, path: None,
+        on_review_log_path=lambda issue_id, path: None,
+        interrupt_event_getter=lambda: None,
+        get_base_sha=lambda issue_id: None,
+        get_run_metadata=lambda: None,
+        on_abort=lambda reason: None,
+        abort_event_getter=lambda: None,
+    )
+
+
+@pytest.mark.unit
+class TestBuildSessionCallbackFactory:
+    """Tests for build_session_callback_factory function."""
+
+    def test_returns_session_callback_factory(
+        self,
+        mock_runtime_deps: RuntimeDeps,
+        mock_pipeline_config: PipelineConfig,
+        mock_session_run_context: SessionRunContext,
+    ) -> None:
+        """build_session_callback_factory returns a SessionCallbackFactory instance."""
+        _, async_gate_runner = build_gate_runner(
+            mock_runtime_deps, mock_pipeline_config
+        )
+        review_runner = build_review_runner(mock_runtime_deps, mock_pipeline_config)
+
+        factory = build_session_callback_factory(
+            mock_runtime_deps,
+            mock_pipeline_config,
+            async_gate_runner,
+            review_runner,
+            mock_session_run_context,
+        )
+
+        assert isinstance(factory, SessionCallbackFactory)
+
+    def test_factory_accepts_optional_cumulative_review_runner(
+        self,
+        mock_runtime_deps: RuntimeDeps,
+        mock_pipeline_config: PipelineConfig,
+        mock_session_run_context: SessionRunContext,
+    ) -> None:
+        """build_session_callback_factory accepts optional cumulative_review_runner."""
+        _, async_gate_runner = build_gate_runner(
+            mock_runtime_deps, mock_pipeline_config
+        )
+        review_runner = build_review_runner(mock_runtime_deps, mock_pipeline_config)
+        mock_cumulative_runner = MagicMock()
+
+        factory = build_session_callback_factory(
+            mock_runtime_deps,
+            mock_pipeline_config,
+            async_gate_runner,
+            review_runner,
+            mock_session_run_context,
+            cumulative_review_runner=mock_cumulative_runner,
+        )
+
+        assert isinstance(factory, SessionCallbackFactory)
