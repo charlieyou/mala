@@ -702,6 +702,7 @@ class RunCoordinator:
                     Literal["skipped", "passed", "failed"] | None
                 ) = None
                 code_review_blocking_count = 0
+                review_result: CumulativeReviewResult | None = None
 
                 try:
                     review_result = await self._run_trigger_code_review(
@@ -740,6 +741,8 @@ class RunCoordinator:
                             code_review_end_status = "passed"
                 except Exception as e:
                     # Exception bubbles up - emit error event
+                    # Clear end_status to prevent finally block from emitting duplicate event
+                    code_review_end_status = None
                     if self.event_sink is not None:
                         self.event_sink.on_trigger_code_review_error(
                             trigger_type.value, str(e)

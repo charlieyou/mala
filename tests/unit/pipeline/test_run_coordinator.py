@@ -2739,3 +2739,66 @@ class TestTriggerCodeReviewEvents:
             f"Expected exactly 1 end event, got {end_event_count}. "
             f"Events: {[e.event_type for e in event_sink.events]}"
         )
+
+    @pytest.mark.asyncio
+    async def test_exception_emits_exactly_one_error_event(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
+    ) -> None:
+        """Exception emits exactly one error event, not error + other end event.
+
+        This tests the fix for the bug where an exception could cause both
+        on_trigger_code_review_error() to be emitted from the except block AND
+        another end event from the finally block if code_review_end_status was
+        set before the exception occurred.
+        """
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from tests.fakes.event_sink import FakeEventSink
+
+        coordinator, mock_review_runner, event_sink = coordinator_with_review_runner
+        assert isinstance(event_sink, FakeEventSink)
+
+        code_review_config = CodeReviewConfig(enabled=True)
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+        coordinator.config.validation_config = validation_config
+
+        # Review raises exception
+        mock_review_runner.run_review = AsyncMock(
+            side_effect=RuntimeError("test error")
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+
+        with pytest.raises(RuntimeError, match="test error"):
+            await coordinator.run_trigger_validation(dry_run=False)
+
+        # Count end events (all terminal events)
+        end_event_types = [
+            "trigger_code_review_passed",
+            "trigger_code_review_failed",
+            "trigger_code_review_skipped",
+            "trigger_code_review_error",
+        ]
+        end_events = [e for e in event_sink.events if e.event_type in end_event_types]
+
+        # Verify exactly one end event (the error event)
+        assert len(end_events) == 1, (
+            f"Expected exactly 1 end event, got {len(end_events)}. "
+            f"End events: {[e.event_type for e in end_events]}"
+        )
+        assert end_events[0].event_type == "trigger_code_review_error", (
+            f"Expected error event, got {end_events[0].event_type}"
+        )

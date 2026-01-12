@@ -30,7 +30,6 @@ from src.infra.io.log_output.run_metadata import (
     write_run_marker,
 )
 from src.infra.tools.env import (
-    EnvConfig,
     PROMPTS_DIR,
     encode_repo_path,
     get_lock_dir,
@@ -41,7 +40,6 @@ from src.orchestration.orchestrator_state import OrchestratorState
 from src.orchestration.deadlock_handler import DeadlockHandler, DeadlockHandlerCallbacks
 from src.infra.tools.command_runner import CommandRunner
 from src.infra.tools.locking import (
-    LockManager,
     cleanup_agent_locks,
     release_run_locks,
 )
@@ -233,9 +231,9 @@ class MalaOrchestrator:
         _telemetry_provider: TelemetryProvider,
         _event_sink: MalaEventSink,
         _epic_verifier: EpicVerifierProtocol | None = None,
-        _command_runner: CommandRunnerPort | None = None,
-        _env_config: EnvConfigPort | None = None,
-        _lock_manager: LockManagerPort | None = None,
+        _command_runner: CommandRunnerPort,
+        _env_config: EnvConfigPort,
+        _lock_manager: LockManagerPort,
         runs_dir: Path | None = None,
         lock_releaser: Callable[[list[str]], int] | None = None,
     ):
@@ -270,9 +268,9 @@ class MalaOrchestrator:
         event_sink: MalaEventSink,
         epic_verifier: EpicVerifierProtocol | None,
         *,
-        _command_runner: CommandRunnerPort | None = None,
-        _env_config: EnvConfigPort | None = None,
-        _lock_manager: LockManagerPort | None = None,
+        _command_runner: CommandRunnerPort,
+        _env_config: EnvConfigPort,
+        _lock_manager: LockManagerPort,
         runs_dir: Path | None = None,
         lock_releaser: Callable[[list[str]], int] | None = None,
     ) -> None:
@@ -327,18 +325,10 @@ class MalaOrchestrator:
         self.epic_verifier = epic_verifier
         self.code_reviewer = code_reviewer
         self.telemetry_provider = telemetry_provider
-        # Runtime deps for pipeline wiring (constructed by factory)
-        self._command_runner: CommandRunnerPort = (
-            _command_runner
-            if _command_runner is not None
-            else CommandRunner(cwd=self.repo_path)
-        )
-        self._env_config: EnvConfigPort = (
-            _env_config if _env_config is not None else EnvConfig()
-        )
-        self._lock_manager: LockManagerPort = (
-            _lock_manager if _lock_manager is not None else LockManager()
-        )
+        # Runtime deps for pipeline wiring (always provided by factory)
+        self._command_runner = _command_runner
+        self._env_config = _env_config
+        self._lock_manager = _lock_manager
         self._sdk_client_factory = SDKClientFactory()
         self._init_pipeline_runners()
 
