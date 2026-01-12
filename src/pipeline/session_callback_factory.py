@@ -79,7 +79,7 @@ class SessionRunContext:
         interrupt_event_getter: Returns the interrupt Event or None if not set.
         get_base_sha: Returns base SHA for an issue, or None if unavailable.
         get_run_metadata: Returns RunMetadata or None if unavailable.
-        on_abort: Called with issue_id when session is aborted.
+        on_abort: Called with issue_id when session is aborted, or None to disable.
         abort_event_getter: Returns the abort Event or None if not set.
     """
 
@@ -90,7 +90,7 @@ class SessionRunContext:
     interrupt_event_getter: Callable[[], asyncio.Event | None]
     get_base_sha: Callable[[str], str | None]
     get_run_metadata: Callable[[], RunMetadata | None]
-    on_abort: Callable[[str], None]
+    on_abort: Callable[[str], None] | None
     abort_event_getter: Callable[[], asyncio.Event | None]
 
 

@@ -851,7 +851,8 @@ class RunCoordinator:
                         # Otherwise it contains the last review result for proper event emission
                         if remediation_result is None:
                             # Remediation couldn't run (max_retries=0, interrupted, etc.)
-                            # Emit deferred code_review_failed event
+                            # Emit deferred code_review_failed event and clear defer flag
+                            # to prevent any accidental double-emission
                             last_failure = (
                                 "code_review_findings",
                                 trigger_type.value,
@@ -866,6 +867,8 @@ class RunCoordinator:
                                 defer_code_review_end_event
                                 and self.event_sink is not None
                             ):
+                                # Clear defer flag before emitting to prevent double-emission
+                                defer_code_review_end_event = False
                                 self.event_sink.on_trigger_code_review_failed(
                                     trigger_type.value, code_review_blocking_count
                                 )
@@ -908,6 +911,8 @@ class RunCoordinator:
                                 defer_code_review_end_event
                                 and self.event_sink is not None
                             ):
+                                # Clear defer flag before emitting to prevent double-emission
+                                defer_code_review_end_event = False
                                 # Count blocking findings from final review result
                                 final_blocking_count = sum(
                                     1
@@ -934,6 +939,8 @@ class RunCoordinator:
                                 defer_code_review_end_event
                                 and self.event_sink is not None
                             ):
+                                # Clear defer flag before emitting to prevent double-emission
+                                defer_code_review_end_event = False
                                 self.event_sink.on_trigger_code_review_passed(
                                     trigger_type.value
                                 )
