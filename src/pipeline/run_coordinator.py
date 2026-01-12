@@ -845,7 +845,7 @@ class RunCoordinator:
                         )
 
                         if interrupt_event.is_set():
-                            # Emit deferred terminal event before returning
+                            # Emit error event for SIGINT (not failed - that's for findings)
                             # to maintain exactly-one-end-event invariant
                             if (
                                 defer_code_review_end_event
@@ -853,8 +853,8 @@ class RunCoordinator:
                             ):
                                 defer_code_review_end_event = False
                                 code_review_end_status = None
-                                self.event_sink.on_trigger_code_review_failed(
-                                    trigger_type.value, code_review_blocking_count
+                                self.event_sink.on_trigger_code_review_error(
+                                    trigger_type.value, "SIGINT"
                                 )
                             self.clear_trigger_queue("sigint")
                             return TriggerValidationResult(
