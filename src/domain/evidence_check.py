@@ -18,8 +18,6 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
-from src.core.tool_name_extractor import extract_tool_name
-
 from .validation.spec import (
     CommandKind,
     IssueResolution,
@@ -565,15 +563,15 @@ class EvidenceCheck:
                     command, evidence, kind_patterns
                 )
                 if matched_kinds:
-                    cmd_name = extract_tool_name(command)
+                    # Store full command for display in failure messages
                     tool_id_to_info[tool_id] = [
-                        (kind, cmd_name) for kind in matched_kinds
+                        (kind, command) for kind in matched_kinds
                     ]
             for tool_use_id, is_error in self._log_provider.extract_tool_results(entry):
                 if tool_use_id in tool_id_to_info:
-                    for kind, cmd_name in tool_id_to_info[tool_use_id]:
+                    for kind, full_cmd in tool_id_to_info[tool_use_id]:
                         # Latest status for this CommandKind wins (allows retries to succeed)
-                        kind_failed[kind] = (is_error, cmd_name)
+                        kind_failed[kind] = (is_error, full_cmd)
 
             # Extract tool result content for custom command marker parsing
             for (
@@ -582,14 +580,14 @@ class EvidenceCheck:
             ) in self._log_provider.extract_tool_result_content(entry):
                 self._parse_custom_markers(content, custom_marker_state)
 
-        # Build failed_commands from kinds that failed, using display names
+        # Build failed_commands from kinds that failed, using full command strings
         # Filter out ignored kinds (e.g., SETUP) so they don't block the gate
         # Filter out CUSTOM kinds - custom command failures use marker/allow_fail path
-        # Deduplicate: multiple kinds (LINT, FORMAT) may map to the same tool (ruff)
+        # Deduplicate: multiple kinds (LINT, FORMAT) may map to the same command
         evidence.failed_commands = list(
             dict.fromkeys(
-                cmd_name
-                for kind, (is_failed, cmd_name) in kind_failed.items()
+                full_cmd
+                for kind, (is_failed, full_cmd) in kind_failed.items()
                 if is_failed
                 and kind not in EVIDENCE_CHECK_IGNORED_KINDS
                 and kind != CommandKind.CUSTOM

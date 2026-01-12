@@ -760,22 +760,22 @@ class ConsoleEventSink(BaseEventSink):
     def on_session_end_started(self, issue_id: str) -> None:
         log(
             "→",
-            f"[trigger] session_end started: issue_id={issue_id}",
-            agent_id="trigger",
+            "[session_end] started",
+            issue_id=issue_id,
         )
 
     def on_session_end_completed(self, issue_id: str, result: str) -> None:
         log(
             "✓",
-            f"[trigger] session_end completed: issue_id={issue_id}, result={result}",
-            agent_id="trigger",
+            f"[session_end] completed: result={Colors.GREEN}{result}{Colors.RESET}",
+            issue_id=issue_id,
         )
 
     def on_session_end_skipped(self, issue_id: str, reason: str) -> None:
         log(
             "○",
-            f"[trigger] session_end skipped: issue_id={issue_id}, reason={reason}",
-            agent_id="trigger",
+            f"[session_end] skipped: reason={reason}",
+            issue_id=issue_id,
         )
 
 

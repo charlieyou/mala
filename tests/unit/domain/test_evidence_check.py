@@ -3123,9 +3123,8 @@ class TestValidationExitCodeParsing:
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        # Should have "pytest" in failed_commands, not "uv run pytest"
-        assert "pytest" in evidence.failed_commands
-        assert "uv run pytest" not in evidence.failed_commands
+        # Should have full command in failed_commands for better error messages
+        assert "uv run pytest" in evidence.failed_commands
 
     def test_gate_fails_when_ruff_check_exits_nonzero(
         self,
@@ -3196,10 +3195,10 @@ class TestValidationExitCodeParsing:
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        # Should have "ruff" in failed_commands (ruff_check failed with is_error=True)
-        assert "ruff" in evidence.failed_commands
+        # Should have full command in failed_commands (ruff_check failed with is_error=True)
+        assert "uvx ruff check ." in evidence.failed_commands
         # Other commands succeeded, so they should not be in failed_commands
-        assert "pytest" not in evidence.failed_commands
+        assert "uv run pytest" not in evidence.failed_commands
 
     def test_gate_passes_when_all_commands_succeed(
         self,
@@ -3335,9 +3334,8 @@ class TestValidationExitCodeParsing:
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        # Should have "ty" in failed_commands, not "uvx ty check"
-        assert "ty" in evidence.failed_commands
-        assert "uvx ty check" not in evidence.failed_commands
+        # Should have full command in failed_commands for better error messages
+        assert "uvx ty check" in evidence.failed_commands
 
     def test_gate_passes_when_command_fails_then_succeeds(
         self,
@@ -4589,21 +4587,20 @@ class TestLogProviderInjection:
 
 
 class TestExtractedToolNames:
-    """Test that quality gate uses extracted tool names instead of hardcoded KIND_TO_NAME.
+    """Test that quality gate shows full commands for better error messages.
 
     These tests verify that:
-    - Quality gate shows "pytest" not "uv run pytest" in failure messages
-    - Quality gate shows "eslint" not "npx eslint ." in failure messages
-    - ValidationEvidence.failed_commands contains extracted names
+    - ValidationEvidence.failed_commands contains full commands for clarity
+    - Users can see exactly what command failed
     """
 
-    def test_failed_commands_shows_pytest_not_full_command(
+    def test_failed_commands_shows_full_pytest_command(
         self,
         tmp_path: Path,
         log_provider: LogProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
-        """Failed commands should show 'pytest' not 'uv run pytest'."""
+        """Failed commands should show full command like 'uv run pytest'."""
         log_path = tmp_path / "session.jsonl"
 
         # Tool use for pytest
@@ -4646,17 +4643,16 @@ class TestExtractedToolNames:
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        # Should have "pytest" in failed_commands, not "uv run pytest"
-        assert "pytest" in evidence.failed_commands
-        assert "uv run pytest" not in evidence.failed_commands
+        # Should have full command in failed_commands for better error messages
+        assert "uv run pytest" in evidence.failed_commands
 
-    def test_failed_commands_shows_ruff_not_full_command(
+    def test_failed_commands_shows_full_ruff_command(
         self,
         tmp_path: Path,
         log_provider: LogProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
-        """Failed commands should show 'ruff' not 'uvx ruff check .'."""
+        """Failed commands should show full command like 'uvx ruff check .'."""
         log_path = tmp_path / "session.jsonl"
 
         # Tool use for ruff check
@@ -4699,17 +4695,16 @@ class TestExtractedToolNames:
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        # Should have "ruff" in failed_commands, not "uvx ruff check ."
-        assert "ruff" in evidence.failed_commands
-        assert "uvx ruff check ." not in evidence.failed_commands
+        # Should have full command in failed_commands for better error messages
+        assert "uvx ruff check ." in evidence.failed_commands
 
-    def test_gate_failure_message_shows_extracted_names(
+    def test_gate_failure_message_shows_full_commands(
         self,
         tmp_path: Path,
         log_provider: LogProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
-        """Gate failure messages should show extracted tool names like 'pytest'."""
+        """Gate failure messages should show full commands for clarity."""
         log_path = tmp_path / "session.jsonl"
 
         # All commands succeed except pytest (which fails)
@@ -4766,21 +4761,19 @@ class TestExtractedToolNames:
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        # Should have "pytest" in failed_commands (pytest failed with is_error=True)
-        assert "pytest" in evidence.failed_commands
-        # "uv run pytest" should not appear (extracted name is "pytest")
-        assert "uv run pytest" not in evidence.failed_commands
+        # Should have full command in failed_commands for better error messages
+        assert "uv run pytest" in evidence.failed_commands
 
-    def test_failed_commands_deduplicates_same_tool_multiple_kinds(
+    def test_failed_commands_deduplicates_same_command_multiple_kinds(
         self,
         tmp_path: Path,
         log_provider: LogProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
-        """Failed commands should deduplicate when same tool matches multiple kinds.
+        """Failed commands should deduplicate when same command matches multiple kinds.
 
         When ruff fails and matches both LINT and FORMAT kinds, the
-        failed_commands list should contain 'ruff' only once, not duplicated.
+        failed_commands list should contain the command only once, not duplicated.
         """
         log_path = tmp_path / "session.jsonl"
 
@@ -4823,9 +4816,9 @@ class TestExtractedToolNames:
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        # Should have "ruff" in failed_commands, not duplicated
-        assert evidence.failed_commands.count("ruff") == 1
-        assert evidence.failed_commands == ["ruff"]
+        # Should have full command in failed_commands, not duplicated
+        assert evidence.failed_commands.count("uvx ruff check .") == 1
+        assert evidence.failed_commands == ["uvx ruff check ."]
 
 
 class TestCustomCommandMarkerParsing:
