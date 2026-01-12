@@ -80,6 +80,7 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "idle_timeout_seconds",
         "max_diff_size_kb",
         "evidence_check",
+        "per_issue_review",
     }
 )
 
