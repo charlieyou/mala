@@ -1090,6 +1090,93 @@ def _prompt_run_end_trigger(commands: list[str], is_preset: bool) -> list[str] |
     return selected
 
 
+def _prompt_per_issue_review() -> dict[str, Any] | None:
+    """Prompt user to configure per-issue code review settings.
+
+    Returns:
+        Dict with per_issue_review config, or None to skip.
+    """
+    # Main enable/disable prompt
+    enable = questionary.select(
+        "Enable per-issue code review? (Reviews code after each issue session)",
+        choices=[
+            questionary.Choice("No (faster, no review overhead)", value=False),
+            questionary.Choice("Yes (review every issue session)", value=True),
+        ],
+    ).ask()
+
+    if enable is None:  # User cancelled
+        return None
+    if not enable:
+        return None
+
+    # Show note about reviewer type scope
+    typer.echo(
+        "\nNote: This reviewer type will be used for ALL reviews, "
+        "including trigger-based reviews.\n"
+    )
+
+    # Reviewer type prompt
+    reviewer_type = questionary.select(
+        "Reviewer type:",
+        choices=[
+            questionary.Choice("Cerberus (multi-model consensus)", value="cerberus"),
+            questionary.Choice("Agent SDK (single model)", value="agent_sdk"),
+        ],
+    ).ask()
+
+    if reviewer_type is None:  # User cancelled
+        return None
+
+    # Max retries prompt
+    max_retries_str = questionary.text(
+        "Maximum review retries:",
+        default="3",
+    ).ask()
+
+    if max_retries_str is None:  # User cancelled
+        return None
+
+    try:
+        max_retries = int(max_retries_str)
+    except ValueError:
+        max_retries = 3  # Fall back to default
+
+    # Finding threshold prompt
+    threshold = questionary.select(
+        "Minimum finding priority to block (P0 = critical only, none = all findings):",
+        choices=[
+            questionary.Choice("none (report all)", value="none"),
+            questionary.Choice("P3 (low and above)", value="P3"),
+            questionary.Choice("P2 (medium and above)", value="P2"),
+            questionary.Choice("P1 (high and above)", value="P1"),
+            questionary.Choice("P0 (critical only)", value="P0"),
+        ],
+    ).ask()
+
+    if threshold is None:  # User cancelled
+        return None
+
+    return {
+        "enabled": True,
+        "reviewer_type": reviewer_type,
+        "max_retries": max_retries,
+        "finding_threshold": threshold,
+    }
+
+
+def _build_per_issue_review_dict(config: dict[str, Any]) -> dict[str, Any]:
+    """Build per_issue_review config dict from prompt selections.
+
+    Args:
+        config: Dict with enabled, reviewer_type, max_retries, finding_threshold.
+
+    Returns:
+        Dict suitable for YAML output.
+    """
+    return config
+
+
 def _build_evidence_check_dict(required: list[str]) -> dict[str, list[str]]:
     """Build evidence_check config dict from selected commands.
 
@@ -1238,6 +1325,17 @@ def init(
                     evidence_required
                 )
 
+        # Per-issue review section (independent of commands)
+        # Only prompt in interactive mode; --yes uses default (disabled)
+        if is_tty and not yes:
+            per_issue_review_config = _prompt_per_issue_review()
+            if per_issue_review_config is not None:
+                config_data["per_issue_review"] = _build_per_issue_review_dict(
+                    per_issue_review_config
+                )
+
+        # Continue with validation triggers (commands-dependent)
+        if commands:
             # Validation triggers section
             trigger_commands: list[str] | None = None
             if not skip_triggers:

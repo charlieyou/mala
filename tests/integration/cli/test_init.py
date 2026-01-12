@@ -132,8 +132,9 @@ class TestInitCustomFlow:
         # Mock _is_interactive to enable interactive mode
         monkeypatch.setattr("src.cli.cli._is_interactive", lambda: True)
 
-        # Mock questionary returns: select "custom", then text prompts for commands
-        mock_questionary.select_return = "custom"
+        # Mock questionary returns: select "custom", then per_issue_review disabled
+        # First select is preset selection, second is per_issue_review enable
+        mock_questionary.select_returns = ["custom", False]
         mock_questionary.confirm_return = False  # Skip evidence and trigger prompts
 
         # Mock text for custom commands
@@ -248,9 +249,11 @@ class TestInitInputValidation:
 
 @pytest.fixture
 def mock_questionary(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Fixture that mocks questionary.confirm/checkbox/select.
+    """Fixture that mocks questionary.confirm/checkbox/select/text.
 
     Returns a mock object with methods to set return values for prompts.
+    Set select_returns as a list for sequenced returns across multiple prompts.
+    Set text_return for text prompt return value.
     """
     mock = MagicMock()
 
@@ -258,6 +261,11 @@ def mock_questionary(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     mock.confirm_return = True
     mock.checkbox_return = []
     mock.select_return = None
+    mock.select_returns: list[object] = []  # For sequenced select returns
+    mock.text_return = ""
+
+    # Track call index for sequenced returns
+    mock._select_call_index = 0
 
     def make_confirm(*args: object, **kwargs: object) -> MagicMock:
         result = MagicMock()
@@ -271,12 +279,26 @@ def mock_questionary(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
     def make_select(*args: object, **kwargs: object) -> MagicMock:
         result = MagicMock()
-        result.ask.return_value = mock.select_return
+        # Use sequenced returns if available, otherwise use single value
+        if mock.select_returns:
+            if mock._select_call_index < len(mock.select_returns):
+                result.ask.return_value = mock.select_returns[mock._select_call_index]
+                mock._select_call_index += 1
+            else:
+                result.ask.return_value = None
+        else:
+            result.ask.return_value = mock.select_return
+        return result
+
+    def make_text(*args: object, **kwargs: object) -> MagicMock:
+        result = MagicMock()
+        result.ask.return_value = mock.text_return
         return result
 
     monkeypatch.setattr("src.cli.cli.questionary.confirm", make_confirm)
     monkeypatch.setattr("src.cli.cli.questionary.checkbox", make_checkbox)
     monkeypatch.setattr("src.cli.cli.questionary.select", make_select)
+    monkeypatch.setattr("src.cli.cli.questionary.text", make_text)
 
     return mock
 
@@ -370,6 +392,83 @@ class TestInitTriggerPrompts:
         assert "periodic" in output
         assert "run_end" in output
         assert "ends" in output.lower() or "verification" in output.lower()
+
+
+class TestInitPerIssueReviewPrompts:
+    """Tests for per-issue review prompting behavior."""
+
+    def test_prompt_per_issue_review_disabled_returns_none(
+        self,
+        mock_questionary: MagicMock,
+    ) -> None:
+        """User selecting 'No' returns None (no config section)."""
+        from src.cli.cli import _prompt_per_issue_review
+
+        mock_questionary.select_return = False  # User selects "No"
+        result = _prompt_per_issue_review()
+        assert result is None
+
+    def test_prompt_per_issue_review_enabled_returns_config(
+        self,
+        mock_questionary: MagicMock,
+    ) -> None:
+        """User enabling review with all options returns complete config."""
+        from src.cli.cli import _prompt_per_issue_review
+
+        # Sequence: enable=True, reviewer_type="cerberus", threshold="P2"
+        mock_questionary.select_returns = [True, "cerberus", "P2"]
+        mock_questionary.text_return = "5"  # max_retries
+
+        result = _prompt_per_issue_review()
+
+        assert result is not None
+        assert result["enabled"] is True
+        assert result["reviewer_type"] == "cerberus"
+        assert result["max_retries"] == 5
+        assert result["finding_threshold"] == "P2"
+
+    def test_prompt_per_issue_review_agent_sdk_reviewer(
+        self,
+        mock_questionary: MagicMock,
+    ) -> None:
+        """User selecting agent_sdk reviewer type."""
+        from src.cli.cli import _prompt_per_issue_review
+
+        mock_questionary.select_returns = [True, "agent_sdk", "none"]
+        mock_questionary.text_return = "3"
+
+        result = _prompt_per_issue_review()
+
+        assert result is not None
+        assert result["reviewer_type"] == "agent_sdk"
+
+    def test_prompt_per_issue_review_invalid_retries_defaults(
+        self,
+        mock_questionary: MagicMock,
+    ) -> None:
+        """Invalid max_retries input falls back to default of 3."""
+        from src.cli.cli import _prompt_per_issue_review
+
+        mock_questionary.select_returns = [True, "cerberus", "none"]
+        mock_questionary.text_return = "invalid"  # Non-numeric
+
+        result = _prompt_per_issue_review()
+
+        assert result is not None
+        assert result["max_retries"] == 3  # Default
+
+    def test_build_per_issue_review_dict_passthrough(self) -> None:
+        """Build function returns config as-is."""
+        from src.cli.cli import _build_per_issue_review_dict
+
+        config = {
+            "enabled": True,
+            "reviewer_type": "cerberus",
+            "max_retries": 3,
+            "finding_threshold": "none",
+        }
+        result = _build_per_issue_review_dict(config)
+        assert result == config
 
 
 class TestInitNonInteractive:
