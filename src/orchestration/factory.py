@@ -332,9 +332,10 @@ def _extract_reviewer_config(
 ) -> _ReviewerConfig:
     """Extract reviewer configuration from a ValidationConfig.
 
-    Gets settings from the first enabled code_review config in validation
-    triggers. Defaults to 'agent_sdk' with standard timeout/model if no
-    code_review config is enabled.
+    Priority order (only when enabled=True):
+    1. per_issue_review - highest priority
+    2. First enabled trigger code_review config
+    3. Defaults (agent_sdk with timeout=600, model=sonnet)
 
     When reviewer_type='cerberus', also extracts code_review.cerberus config.
 
@@ -344,6 +345,22 @@ def _extract_reviewer_config(
     Returns:
         _ReviewerConfig with reviewer settings.
     """
+    # Check per_issue_review first (only when enabled)
+    if validation_config is not None:
+        per_issue_review = getattr(validation_config, "per_issue_review", None)
+        if per_issue_review is not None and getattr(per_issue_review, "enabled", False):
+            return _ReviewerConfig(
+                reviewer_type=getattr(per_issue_review, "reviewer_type", "agent_sdk"),
+                agent_sdk_review_timeout=getattr(
+                    per_issue_review, "agent_sdk_timeout", 600
+                ),
+                agent_sdk_reviewer_model=getattr(
+                    per_issue_review, "agent_sdk_model", "sonnet"
+                ),
+                cerberus_config=getattr(per_issue_review, "cerberus", None),
+            )
+
+    # Fall back to trigger configs
     code_review = _get_first_enabled_code_review(validation_config)
     if code_review is None:
         # No enabled code_review config - use defaults

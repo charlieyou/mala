@@ -11,7 +11,11 @@ from unittest.mock import patch
 import pytest
 
 from src.infra.io.config import MalaConfig
-from src.orchestration.factory import _check_review_availability, _derive_config
+from src.orchestration.factory import (
+    _check_review_availability,
+    _derive_config,
+    _extract_reviewer_config,
+)
 from src.orchestration.types import OrchestratorConfig
 
 
@@ -820,3 +824,181 @@ class TestDeriveConfig:
 
         # per_issue_review.max_retries defaults to 3, which takes precedence
         assert derived.max_review_retries == 3
+
+
+class TestExtractReviewerConfig:
+    """Tests for _extract_reviewer_config priority order."""
+
+    def test_per_issue_review_takes_priority_when_enabled(self) -> None:
+        """per_issue_review settings win over triggers when enabled=True."""
+        from src.domain.validation.config import (
+            CerberusConfig,
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        # per_issue_review: cerberus with timeout=300, model=opus
+        per_issue_review = CodeReviewConfig(
+            enabled=True,
+            reviewer_type="cerberus",
+            agent_sdk_timeout=300,
+            agent_sdk_model="opus",
+            cerberus=CerberusConfig(timeout=400),
+        )
+        # trigger: agent_sdk with timeout=900, model=haiku
+        trigger_review = CodeReviewConfig(
+            enabled=True,
+            reviewer_type="agent_sdk",
+            agent_sdk_timeout=900,
+            agent_sdk_model="haiku",
+        )
+        validation_config = ValidationConfig(
+            per_issue_review=per_issue_review,
+            validation_triggers=ValidationTriggersConfig(
+                run_end=RunEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                    fire_on=FireOn.SUCCESS,
+                    code_review=trigger_review,
+                ),
+            ),
+        )
+
+        result = _extract_reviewer_config(validation_config)
+
+        # per_issue_review wins
+        assert result.reviewer_type == "cerberus"
+        assert result.agent_sdk_review_timeout == 300
+        assert result.agent_sdk_reviewer_model == "opus"
+        assert result.cerberus_config is not None
+
+    def test_disabled_per_issue_review_ignored(self) -> None:
+        """per_issue_review with enabled=False is completely ignored."""
+        from src.domain.validation.config import (
+            CerberusConfig,
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        # per_issue_review disabled but has other settings
+        per_issue_review = CodeReviewConfig(
+            enabled=False,
+            reviewer_type="cerberus",
+            agent_sdk_timeout=300,
+            agent_sdk_model="opus",
+            cerberus=CerberusConfig(timeout=400),
+        )
+        # trigger enabled with agent_sdk
+        trigger_review = CodeReviewConfig(
+            enabled=True,
+            reviewer_type="agent_sdk",
+            agent_sdk_timeout=900,
+            agent_sdk_model="haiku",
+        )
+        validation_config = ValidationConfig(
+            per_issue_review=per_issue_review,
+            validation_triggers=ValidationTriggersConfig(
+                run_end=RunEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                    fire_on=FireOn.SUCCESS,
+                    code_review=trigger_review,
+                ),
+            ),
+        )
+
+        result = _extract_reviewer_config(validation_config)
+
+        # Falls back to trigger config since per_issue_review disabled
+        assert result.reviewer_type == "agent_sdk"
+        assert result.agent_sdk_review_timeout == 900
+        assert result.agent_sdk_reviewer_model == "haiku"
+        assert result.cerberus_config is None
+
+    def test_triggers_used_when_no_per_issue_review(self) -> None:
+        """Trigger config used when per_issue_review not set."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        trigger_review = CodeReviewConfig(
+            enabled=True,
+            reviewer_type="agent_sdk",
+            agent_sdk_timeout=500,
+            agent_sdk_model="haiku",
+        )
+        validation_config = ValidationConfig(
+            validation_triggers=ValidationTriggersConfig(
+                run_end=RunEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                    fire_on=FireOn.SUCCESS,
+                    code_review=trigger_review,
+                ),
+            ),
+        )
+
+        result = _extract_reviewer_config(validation_config)
+
+        assert result.reviewer_type == "agent_sdk"
+        assert result.agent_sdk_review_timeout == 500
+        assert result.agent_sdk_reviewer_model == "haiku"
+
+    def test_defaults_when_both_disabled(self) -> None:
+        """Returns defaults when both per_issue_review and triggers disabled."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        per_issue_review = CodeReviewConfig(
+            enabled=False,
+            reviewer_type="cerberus",
+        )
+        trigger_review = CodeReviewConfig(
+            enabled=False,
+            reviewer_type="cerberus",
+        )
+        validation_config = ValidationConfig(
+            per_issue_review=per_issue_review,
+            validation_triggers=ValidationTriggersConfig(
+                run_end=RunEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                    fire_on=FireOn.SUCCESS,
+                    code_review=trigger_review,
+                ),
+            ),
+        )
+
+        result = _extract_reviewer_config(validation_config)
+
+        # Falls back to defaults
+        assert result.reviewer_type == "agent_sdk"
+        assert result.agent_sdk_review_timeout == 600
+        assert result.agent_sdk_reviewer_model == "sonnet"
+
+    def test_defaults_when_no_validation_config(self) -> None:
+        """Returns defaults when validation_config is None."""
+        result = _extract_reviewer_config(None)
+
+        assert result.reviewer_type == "agent_sdk"
+        assert result.agent_sdk_review_timeout == 600
+        assert result.agent_sdk_reviewer_model == "sonnet"
