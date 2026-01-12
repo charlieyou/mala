@@ -459,7 +459,7 @@ class RunCoordinator:
                                                 lint_type, cmd
                                             )
                         elif msg_type == "ResultMessage":
-                            result = getattr(message, "result", "") or ""
+                            result = getattr(message, "result", "") or "completed"
                             if self.event_sink is not None:
                                 self.event_sink.on_fixer_completed(result)
 
@@ -845,6 +845,17 @@ class RunCoordinator:
                         )
 
                         if interrupt_event.is_set():
+                            # Emit deferred terminal event before returning
+                            # to maintain exactly-one-end-event invariant
+                            if (
+                                defer_code_review_end_event
+                                and self.event_sink is not None
+                            ):
+                                defer_code_review_end_event = False
+                                code_review_end_status = None
+                                self.event_sink.on_trigger_code_review_failed(
+                                    trigger_type.value, code_review_blocking_count
+                                )
                             self.clear_trigger_queue("sigint")
                             return TriggerValidationResult(
                                 status="aborted",
@@ -872,12 +883,13 @@ class RunCoordinator:
                                 defer_code_review_end_event
                                 and self.event_sink is not None
                             ):
-                                # Clear flags before emitting to prevent double-emission
-                                defer_code_review_end_event = False
                                 code_review_end_status = None
                                 self.event_sink.on_trigger_code_review_failed(
                                     trigger_type.value, code_review_blocking_count
                                 )
+                            # Always clear defer flag to prevent double-emission,
+                            # regardless of whether event_sink is available
+                            defer_code_review_end_event = False
                         elif remediation_result.status == "failed":
                             # Last re-review had execution error - emit error event
                             # This is the terminal event, not failed/passed
