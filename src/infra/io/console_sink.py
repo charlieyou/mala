@@ -758,21 +758,37 @@ class ConsoleEventSink(BaseEventSink):
     # -------------------------------------------------------------------------
 
     def on_trigger_code_review_started(self, trigger_type: str) -> None:
-        pass  # Stub - formatting added in T003
+        log("→", f"[{trigger_type}] code_review_started", agent_id="trigger")
 
     def on_trigger_code_review_skipped(self, trigger_type: str, reason: str) -> None:
-        pass  # Stub - formatting added in T003
+        log(
+            "◦",
+            f"{Colors.MUTED}[{trigger_type}] code_review_skipped: {reason}{Colors.RESET}",
+            agent_id="trigger",
+        )
 
     def on_trigger_code_review_passed(self, trigger_type: str) -> None:
-        pass  # Stub - formatting added in T003
+        log(
+            "✓",
+            f"{Colors.GREEN}[{trigger_type}] code_review_passed{Colors.RESET}",
+            agent_id="trigger",
+        )
 
     def on_trigger_code_review_failed(
         self, trigger_type: str, blocking_count: int
     ) -> None:
-        pass  # Stub - formatting added in T003
+        log(
+            "✗",
+            f"{Colors.RED}[{trigger_type}] code_review_failed ({blocking_count} blocking){Colors.RESET}",
+            agent_id="trigger",
+        )
 
     def on_trigger_code_review_error(self, trigger_type: str, error: str) -> None:
-        pass  # Stub - formatting added in T003
+        log(
+            "✗",
+            f"{Colors.RED}[{trigger_type}] code_review_error: {error}{Colors.RESET}",
+            agent_id="trigger",
+        )
 
     # -------------------------------------------------------------------------
     # Session end lifecycle
