@@ -38,7 +38,11 @@ if TYPE_CHECKING:
     )
     from src.domain.deadlock import DeadlockMonitor
     from src.domain.prompts import PromptProvider
-    from src.domain.validation.config import PromptValidationCommands, ValidationConfig
+    from src.domain.validation.config import (
+        CodeReviewConfig,
+        PromptValidationCommands,
+        ValidationConfig,
+    )
     from src.infra.io.config import MalaConfig
     from src.infra.telemetry import TelemetryProvider
 
@@ -152,6 +156,7 @@ class _DerivedConfig:
     max_diff_size_kb: int | None = None
     epic_verify_lock_timeout_seconds: int | None = None
     review_disabled_reason: str | None = None
+    per_issue_review: CodeReviewConfig | None = None
     validation_config: ValidationConfig | None = None
     validation_config_missing: bool = False
 

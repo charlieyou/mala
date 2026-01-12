@@ -676,3 +676,147 @@ class TestDeriveConfig:
         )
 
         assert derived.idle_timeout_seconds == 0.0
+
+    def test_derive_config_passes_per_issue_review(self) -> None:
+        """per_issue_review is passed through from ValidationConfig."""
+        from src.domain.validation.config import CodeReviewConfig, ValidationConfig
+
+        per_issue_review = CodeReviewConfig(enabled=True, max_retries=5)
+        validation_config = ValidationConfig(per_issue_review=per_issue_review)
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        assert derived.per_issue_review is per_issue_review
+
+    def test_derive_config_per_issue_review_none_when_no_validation_config(
+        self,
+    ) -> None:
+        """per_issue_review is None when validation_config is None."""
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=None,
+            validation_config_missing=True,
+        )
+
+        assert derived.per_issue_review is None
+
+    def test_derive_config_max_review_retries_from_per_issue_review(self) -> None:
+        """max_review_retries uses per_issue_review.max_retries when enabled."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        # Set up per_issue_review with max_retries=7
+        per_issue_review = CodeReviewConfig(enabled=True, max_retries=7)
+        # Also set up a trigger with different max_retries=3
+        validation_config = ValidationConfig(
+            per_issue_review=per_issue_review,
+            validation_triggers=ValidationTriggersConfig(
+                run_end=RunEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                    fire_on=FireOn.SUCCESS,
+                    code_review=CodeReviewConfig(enabled=True, max_retries=3),
+                ),
+            ),
+        )
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        # per_issue_review takes precedence when enabled
+        assert derived.max_review_retries == 7
+
+    def test_derive_config_max_review_retries_falls_back_to_triggers(self) -> None:
+        """max_review_retries falls back to trigger config when per_issue_review disabled."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        # Set up per_issue_review disabled
+        per_issue_review = CodeReviewConfig(enabled=False, max_retries=7)
+        # Set up a trigger with max_retries=3
+        validation_config = ValidationConfig(
+            per_issue_review=per_issue_review,
+            validation_triggers=ValidationTriggersConfig(
+                run_end=RunEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                    fire_on=FireOn.SUCCESS,
+                    code_review=CodeReviewConfig(enabled=True, max_retries=3),
+                ),
+            ),
+        )
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        # Falls back to trigger config when per_issue_review disabled
+        assert derived.max_review_retries == 3
+
+    def test_derive_config_max_review_retries_per_issue_review_uses_default(
+        self,
+    ) -> None:
+        """per_issue_review uses its default max_retries (3) when enabled."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+
+        # per_issue_review enabled, max_retries defaults to 3
+        per_issue_review = CodeReviewConfig(enabled=True)
+        validation_config = ValidationConfig(
+            per_issue_review=per_issue_review,
+            validation_triggers=ValidationTriggersConfig(
+                run_end=RunEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                    fire_on=FireOn.SUCCESS,
+                    code_review=CodeReviewConfig(enabled=True, max_retries=4),
+                ),
+            ),
+        )
+        orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        derived = _derive_config(
+            orch_config,
+            MalaConfig.from_env(validate=False),
+            validation_config=validation_config,
+            validation_config_missing=False,
+        )
+
+        # per_issue_review.max_retries defaults to 3, which takes precedence
+        assert derived.max_review_retries == 3

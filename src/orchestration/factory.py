@@ -162,11 +162,22 @@ def _derive_config(
         set(config.disable_validations) if config.disable_validations else set()
     )
 
-    # Extract max_review_retries from first enabled code_review config
+    # Extract max_review_retries - precedence:
+    # 1. per_issue_review.max_retries (only when per_issue_review.enabled=True)
+    # 2. First enabled trigger code_review.max_retries (existing behavior)
     max_review_retries: int | None = None
-    code_review = _get_first_enabled_code_review(validation_config)
-    if code_review is not None:
-        max_review_retries = getattr(code_review, "max_retries", None)
+    per_issue_review = (
+        getattr(validation_config, "per_issue_review", None)
+        if validation_config is not None
+        else None
+    )
+    if per_issue_review is not None and getattr(per_issue_review, "enabled", False):
+        max_review_retries = getattr(per_issue_review, "max_retries", None)
+    if max_review_retries is None:
+        # Fall back to trigger config
+        code_review = _get_first_enabled_code_review(validation_config)
+        if code_review is not None:
+            max_review_retries = getattr(code_review, "max_retries", None)
 
     # Extract max_gate_retries from session_end trigger config
     max_gate_retries: int | None = None
@@ -271,6 +282,7 @@ def _derive_config(
         max_epic_verification_retries=max_epic_verification_retries,
         max_diff_size_kb=max_diff_size_kb,
         epic_verify_lock_timeout_seconds=epic_verify_lock_timeout_seconds,
+        per_issue_review=per_issue_review,
         validation_config=validation_config,
         validation_config_missing=validation_config_missing,
     )
