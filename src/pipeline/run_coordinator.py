@@ -872,6 +872,8 @@ class RunCoordinator:
                         elif remediation_result.status == "failed":
                             # Last re-review had execution error - emit error event
                             # This is the terminal event, not failed/passed
+                            # Clear defer flag to prevent duplicate terminal events
+                            defer_code_review_end_event = False
                             error_reason = (
                                 remediation_result.skip_reason or "unknown error"
                             )
