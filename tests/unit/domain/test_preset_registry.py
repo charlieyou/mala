@@ -24,9 +24,9 @@ class TestPresetRegistryUnit:
 
         error = exc_info.value
         assert error.preset_name == "unknown-preset"
-        assert error.available == ["go", "node-npm", "python-uv", "rust"]
+        assert error.available == ["gleam", "go", "node-npm", "python-uv", "rust"]
         assert "Unknown preset 'unknown-preset'" in str(error)
-        assert "go, node-npm, python-uv, rust" in str(error)
+        assert "gleam, go, node-npm, python-uv, rust" in str(error)
 
 
 class TestPresetRegistryProhibitions:
