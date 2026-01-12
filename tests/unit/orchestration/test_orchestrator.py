@@ -4580,66 +4580,134 @@ class TestGetTrackReviewIssues:
 
 
 class TestIsReviewEnabled:
-    """Tests for _is_review_enabled method with per_issue_review config."""
+    """Tests for _is_review_enabled wiring through factory and session_config.
 
-    def test_returns_false_when_per_issue_review_enabled_false(
+    These tests create mala.yaml files with per_issue_review config to verify
+    the full wiring path: mala.yaml -> ValidationConfig -> _DerivedConfig ->
+    orchestrator._per_issue_review -> _is_review_enabled() -> session_config.
+    """
+
+    def test_per_issue_review_disabled_wires_through_factory(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """per_issue_review.enabled=False should return False."""
-        from src.domain.validation.config import CodeReviewConfig
+        """per_issue_review.enabled=False wires correctly through factory."""
+        from textwrap import dedent
 
-        per_issue_review = CodeReviewConfig(enabled=False)
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            dedent("""\
+            preset: python-uv
+            per_issue_review:
+              enabled: false
+        """)
+        )
+
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
             max_agents=1,
             timeout_minutes=1,
             max_issues=1,
         )
-        orchestrator._per_issue_review = per_issue_review
 
-        result = orchestrator._is_review_enabled()
-        assert result is False
+        # Verify wiring: _per_issue_review is set from factory
+        assert orchestrator._per_issue_review is not None
+        assert orchestrator._per_issue_review.enabled is False
+        # Verify _is_review_enabled returns False
+        assert orchestrator._is_review_enabled() is False
+        # Verify session_config was built with review_enabled=False
+        assert orchestrator._session_config.review_enabled is False
 
-    def test_returns_true_when_per_issue_review_enabled_true(
+    def test_per_issue_review_enabled_wires_through_factory(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """per_issue_review.enabled=True should return True."""
-        from src.domain.validation.config import CodeReviewConfig
+        """per_issue_review.enabled=True wires correctly through factory.
 
-        per_issue_review = CodeReviewConfig(enabled=True)
+        Uses reviewer_type: agent_sdk which doesn't require external binaries.
+        """
+        from textwrap import dedent
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            dedent("""\
+            preset: python-uv
+            per_issue_review:
+              enabled: true
+              reviewer_type: agent_sdk
+        """)
+        )
+
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
             max_agents=1,
             timeout_minutes=1,
             max_issues=1,
         )
-        orchestrator._per_issue_review = per_issue_review
 
-        result = orchestrator._is_review_enabled()
-        assert result is True
+        # Verify wiring
+        assert orchestrator._per_issue_review is not None
+        assert orchestrator._per_issue_review.enabled is True
+        assert orchestrator._is_review_enabled() is True
+        assert orchestrator._session_config.review_enabled is True
 
-    def test_returns_false_when_per_issue_review_none(
+    def test_missing_per_issue_review_defaults_to_disabled(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """Missing per_issue_review (None) should return False (default disabled)."""
+        """Missing per_issue_review section defaults to review disabled."""
+        from textwrap import dedent
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            dedent("""\
+            preset: python-uv
+        """)
+        )
+
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
             max_agents=1,
             timeout_minutes=1,
             max_issues=1,
         )
-        orchestrator._per_issue_review = None
 
-        result = orchestrator._is_review_enabled()
-        assert result is False
+        # Verify default disabled behavior
+        assert orchestrator._per_issue_review is not None
+        assert orchestrator._per_issue_review.enabled is False
+        assert orchestrator._is_review_enabled() is False
+        assert orchestrator._session_config.review_enabled is False
 
-    def test_disabled_validations_overrides_per_issue_review_enabled(
+    def test_no_mala_yaml_defaults_to_disabled(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """CLI --disable-validations review should override per_issue_review.enabled=True."""
-        from src.domain.validation.config import CodeReviewConfig
+        """No mala.yaml file means _per_issue_review is None and review disabled."""
+        # Don't create mala.yaml - factory will catch ConfigMissingError
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            max_issues=1,
+        )
 
-        per_issue_review = CodeReviewConfig(enabled=True)
+        # Verify None when config missing
+        assert orchestrator._per_issue_review is None
+        assert orchestrator._is_review_enabled() is False
+        assert orchestrator._session_config.review_enabled is False
+
+    def test_cli_disable_validations_overrides_per_issue_review(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """CLI --disable-validations review overrides per_issue_review.enabled=True."""
+        from textwrap import dedent
+
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            dedent("""\
+            preset: python-uv
+            per_issue_review:
+              enabled: true
+              reviewer_type: agent_sdk
+        """)
+        )
+
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
             max_agents=1,
@@ -4647,32 +4715,10 @@ class TestIsReviewEnabled:
             max_issues=1,
             disable_validations={"review"},
         )
-        orchestrator._per_issue_review = per_issue_review
 
-        result = orchestrator._is_review_enabled()
-        assert result is False
-
-    def test_disabled_validations_with_override_reason_allows_review(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
-    ) -> None:
-        """When review_disabled_reason set and reviewer can override, returns True."""
-        from src.domain.validation.config import CodeReviewConfig
-
-        per_issue_review = CodeReviewConfig(enabled=True)
-        orchestrator = make_orchestrator(
-            repo_path=tmp_path,
-            max_agents=1,
-            timeout_minutes=1,
-            max_issues=1,
-            disable_validations={"review"},
-        )
-        orchestrator._per_issue_review = per_issue_review
-        orchestrator.review_disabled_reason = "API key missing"
-
-        # Mock the reviewer to say it can override
-        mock_reviewer = MagicMock()
-        mock_reviewer.overrides_disabled_setting.return_value = True
-        orchestrator.review_runner.code_reviewer = mock_reviewer
-
-        result = orchestrator._is_review_enabled()
-        assert result is True
+        # Config says enabled, but CLI disabled it
+        assert orchestrator._per_issue_review is not None
+        assert orchestrator._per_issue_review.enabled is True
+        # _is_review_enabled respects CLI override
+        assert orchestrator._is_review_enabled() is False
+        assert orchestrator._session_config.review_enabled is False

@@ -227,6 +227,9 @@ def merge_configs(
     # evidence_check: User value always takes precedence (presets don't define this)
     merged_evidence_check = user.evidence_check
 
+    # per_issue_review: User value always takes precedence (presets don't define this)
+    merged_per_issue_review = user.per_issue_review
+
     return ValidationConfig(
         preset=user.preset,  # Keep user's preset reference
         commands=merged_commands,
@@ -243,6 +246,7 @@ def merge_configs(
         idle_timeout_seconds=merged_idle_timeout_seconds,
         max_diff_size_kb=merged_max_diff_size_kb,
         evidence_check=merged_evidence_check,
+        per_issue_review=merged_per_issue_review,
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 

@@ -14,6 +14,57 @@ if TYPE_CHECKING:
     from src.orchestration.orchestrator import MalaOrchestrator
 
 
+def test_trigger_review_independent_of_per_issue_review(
+    tmp_path: Path,
+    make_orchestrator: Callable[..., MalaOrchestrator],
+) -> None:
+    """Trigger code_review.enabled is independent of per_issue_review.enabled.
+
+    This test verifies that:
+    - per_issue_review absent/disabled does NOT affect trigger code_review
+    - Trigger code_review uses its own enabled flag, not _is_review_enabled()
+
+    The separation is:
+    - _is_review_enabled() -> per-issue reviews (via session_config.review_enabled)
+    - trigger_config.code_review.enabled -> trigger reviews (_run_trigger_code_review)
+    """
+    # Configure: per_issue_review absent, but run_end trigger has code_review enabled
+    config_content = dedent("""\
+        preset: python-uv
+        validation_triggers:
+          run_end:
+            failure_mode: continue
+            commands: []
+            code_review:
+              enabled: true
+              reviewer_type: cerberus
+    """)
+    config_file = tmp_path / "mala.yaml"
+    config_file.write_text(config_content)
+
+    orchestrator = make_orchestrator(
+        repo_path=tmp_path,
+        max_agents=1,
+        timeout_minutes=1,
+        max_issues=1,
+    )
+
+    # per_issue_review is absent, so _is_review_enabled() returns False
+    assert orchestrator._per_issue_review is not None
+    assert orchestrator._per_issue_review.enabled is False
+    assert orchestrator._is_review_enabled() is False
+    assert orchestrator._session_config.review_enabled is False
+
+    # But trigger code_review should still be enabled (independent path)
+    validation_config = orchestrator._validation_config
+    assert validation_config is not None
+    assert validation_config.validation_triggers is not None
+    run_end = validation_config.validation_triggers.run_end
+    assert run_end is not None
+    assert run_end.code_review is not None
+    assert run_end.code_review.enabled is True
+
+
 def test_config_loads_validation_triggers_via_normal_path(tmp_path: Path) -> None:
     """Test that validation_triggers are loaded through the normal config path.
 
