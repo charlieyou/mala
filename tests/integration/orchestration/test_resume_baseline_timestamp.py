@@ -111,17 +111,30 @@ async def test_resume_reuses_persisted_baseline_timestamp(
         commit_since.append(since_timestamp)
         return ["c1", "c2"]
 
-    async def fake_reviewer(
-        *,
-        context_file: Path | None = None,
-        timeout: int = 300,
-        claude_session_id: str | None = None,
-        author_context: str | None = None,
-        commit_shas: Sequence[str],
-        interrupt_event: object | None = None,
-    ) -> ReviewResult:
-        commit_shas_seen.append(commit_shas)
-        return ReviewResult(passed=True, issues=[])
+    class FakeReviewer:
+        """Fake reviewer that implements CodeReviewer protocol."""
+
+        def overrides_disabled_setting(self) -> bool:
+            return True
+
+        async def __call__(
+            self,
+            *,
+            context_file: Path | None = None,
+            timeout: int = 300,
+            claude_session_id: str | None = None,
+            author_context: str | None = None,
+            commit_shas: Sequence[str],
+            interrupt_event: object | None = None,
+        ) -> ReviewResult:
+            commit_shas_seen.append(commit_shas)
+            return ReviewResult(passed=True, issues=[])
+
+    fake_reviewer = FakeReviewer()
+
+    # Create mala.yaml with per_issue_review enabled so the review path is triggered
+    mala_yaml = tmp_path / "mala.yaml"
+    mala_yaml.write_text("preset: python-uv\nper_issue_review:\n  enabled: true\n")
 
     orchestrator_run2 = make_orchestrator(
         repo_path=tmp_path,

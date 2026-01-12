@@ -643,7 +643,8 @@ class TestConsoleEventSink:
         sink.on_session_end_started("issue-123")
 
         captured = capsys.readouterr()
-        assert "[trigger] session_end started: issue_id=issue-123" in captured.out
+        assert "[issue-123]" in captured.out
+        assert "[session_end] started" in captured.out
 
     def test_on_session_end_completed_log_format(
         self, capsys: pytest.CaptureFixture[str]
@@ -654,10 +655,10 @@ class TestConsoleEventSink:
         sink.on_session_end_completed("issue-456", "pass")
 
         captured = capsys.readouterr()
-        assert (
-            "[trigger] session_end completed: issue_id=issue-456, result=pass"
-            in captured.out
-        )
+        assert "[issue-456]" in captured.out
+        assert "[session_end] completed" in captured.out
+        assert "result=" in captured.out
+        assert "pass" in captured.out
 
     def test_on_session_end_skipped_log_format(
         self, capsys: pytest.CaptureFixture[str]
@@ -668,7 +669,6 @@ class TestConsoleEventSink:
         sink.on_session_end_skipped("issue-789", "gate_failed")
 
         captured = capsys.readouterr()
-        assert (
-            "[trigger] session_end skipped: issue_id=issue-789, reason=gate_failed"
-            in captured.out
-        )
+        assert "[issue-789]" in captured.out
+        assert "[session_end] skipped" in captured.out
+        assert "reason=gate_failed" in captured.out
