@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 from src.core.models import OrderPreference as _OrderPreference
 
 if TYPE_CHECKING:
+    import asyncio
     from collections.abc import Callable
 
     from src.core.models import OrderPreference
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
         ValidationConfig,
     )
     from src.infra.io.config import MalaConfig
+    from src.infra.io.log_output.run_metadata import RunMetadata
     from src.infra.telemetry import TelemetryProvider
 
 # Default timeout for agent execution (protects against hung MCP server subprocesses)
@@ -254,3 +256,37 @@ class IssueFilterConfig:
     orphans_only: bool = False
     epic_override_ids: set[str] = field(default_factory=set)
     order_preference: OrderPreference = _OrderPreference.EPIC_PRIORITY
+
+
+@dataclass(frozen=True)
+class SessionRunContext:
+    """Late-bound getters for session callback wiring.
+
+    Bundles the 9 callable parameters currently passed individually to
+    build_session_callback_factory(), consolidating "lambda soup" into a
+    single typed context object.
+
+    All fields are callables to support late-binding - values are resolved
+    at call time rather than construction time.
+
+    Attributes:
+        log_provider_getter: Returns the LogProvider for session logging.
+        evidence_check_getter: Returns the GateChecker for evidence validation.
+        on_session_log_path: Called with (issue_id, path) when session log path is known.
+        on_review_log_path: Called with (issue_id, path) when review log path is known.
+        interrupt_event_getter: Returns the interrupt Event or None if not set.
+        get_base_sha: Returns base SHA for an issue, or None if unavailable.
+        get_run_metadata: Returns RunMetadata or None if unavailable.
+        on_abort: Called with issue_id when session is aborted.
+        abort_event_getter: Returns the abort Event or None if not set.
+    """
+
+    log_provider_getter: Callable[[], LogProvider]
+    evidence_check_getter: Callable[[], GateChecker]
+    on_session_log_path: Callable[[str, Path], None]
+    on_review_log_path: Callable[[str, str], None]
+    interrupt_event_getter: Callable[[], asyncio.Event | None]
+    get_base_sha: Callable[[str], str | None]
+    get_run_metadata: Callable[[], RunMetadata | None]
+    on_abort: Callable[[str], None]
+    abort_event_getter: Callable[[], asyncio.Event | None]
