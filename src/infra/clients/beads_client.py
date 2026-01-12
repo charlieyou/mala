@@ -179,7 +179,7 @@ class BeadsClient:
             Tuple of (issues list, success flag). Returns ([], False) on error.
         """
         result = await self._run_subprocess_async(
-            ["bd", "ready", "--json", "-t", "task"]
+            ["bd", "ready", "--json", "-t", "task", "--limit", "0"]
         )
         if result.returncode != 0:
             self._log_warning(f"bd ready failed: {result.stderr}")
@@ -193,7 +193,7 @@ class BeadsClient:
     async def fetch_wip_issues_async(self) -> list[dict[str, object]]:
         """Fetch in_progress issues from bd CLI (raw I/O, no processing)."""
         result = await self._run_subprocess_async(
-            ["bd", "list", "--status", "in_progress", "--json", "-t", "task"]
+            ["bd", "list", "--status", "in_progress", "--json", "-t", "task", "--limit", "0"]
         )
         if result.returncode != 0:
             return []
