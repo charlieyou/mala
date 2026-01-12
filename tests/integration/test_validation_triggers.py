@@ -319,3 +319,93 @@ async def test_orchestrator_fires_periodic_trigger_at_interval(
         f"Trigger queue should be empty after execution, got {len(trigger_queue)} items. "
         "This indicates run_trigger_validation() was not called (blocking fix missing)."
     )
+
+
+def test_trigger_code_review_emits_lifecycle_events(tmp_path: Path) -> None:
+    """Verify code review lifecycle events are emitted during trigger validation.
+
+    This test sets up a trigger with code_review enabled and runs trigger
+    validation. It asserts that the FakeEventSink recorded the expected
+    event sequence: started → (passed|failed|skipped|error).
+
+    NOTE: This test will FAIL until T002 wires up event emission in RunCoordinator.
+    The expected failure is an assertion error about missing events, not an
+    import or compile error.
+    """
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from src.domain.validation.config import (
+        CodeReviewConfig,
+        CommandsConfig,
+        FailureMode,
+        RunEndTriggerConfig,
+        ValidationConfig,
+        ValidationTriggersConfig,
+    )
+    from src.pipeline.run_coordinator import RunCoordinator, RunCoordinatorConfig
+    from tests.fakes import FakeEnvConfig
+    from tests.fakes.command_runner import FakeCommandRunner
+    from tests.fakes.event_sink import FakeEventSink
+    from tests.fakes.lock_manager import FakeLockManager
+
+    # Create validation config with run_end trigger that has code_review enabled
+    validation_config = ValidationConfig(
+        commands=CommandsConfig(),
+        validation_triggers=ValidationTriggersConfig(
+            run_end=RunEndTriggerConfig(
+                failure_mode=FailureMode.CONTINUE,
+                commands=(),
+                code_review=CodeReviewConfig(
+                    enabled=True,
+                    reviewer_type="cerberus",
+                ),
+            )
+        ),
+    )
+
+    # Create command runner (no commands, just testing code review path)
+    command_runner = FakeCommandRunner(allow_unregistered=True)
+
+    # Create FakeEventSink to capture events
+    event_sink = FakeEventSink()
+
+    config = RunCoordinatorConfig(
+        repo_path=tmp_path,
+        timeout_seconds=60,
+        validation_config=validation_config,
+    )
+
+    coordinator = RunCoordinator(
+        config=config,
+        gate_checker=MagicMock(),
+        command_runner=command_runner,
+        env_config=FakeEnvConfig(),
+        lock_manager=FakeLockManager(),
+        sdk_client_factory=MagicMock(),
+        event_sink=event_sink,
+    )
+
+    # Queue the run_end trigger (simulating end of run)
+    from src.domain.validation.config import TriggerType
+
+    coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+
+    # Run trigger validation
+    async def run_validation() -> None:
+        await coordinator.run_trigger_validation()
+
+    asyncio.run(run_validation())
+
+    # Assert event sequence: should see trigger_code_review_started followed by
+    # one of: passed, failed, skipped, or error
+    #
+    # NOTE: This assertion will FAIL until T002 implements event emission.
+    # The failure message helps identify what's missing.
+    assert event_sink.has_event("trigger_code_review_started"), (
+        "Expected trigger_code_review_started event not recorded. "
+        "Events recorded: "
+        + ", ".join(e.event_type for e in event_sink.events)
+        + "\n\nThis test is expected to fail until T002 wires up event emission "
+        "in RunCoordinator._run_trigger_code_review()."
+    )

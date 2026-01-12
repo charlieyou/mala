@@ -601,6 +601,35 @@ class FakeEventSink:
         )
 
     # -------------------------------------------------------------------------
+    # Trigger code review lifecycle
+    # -------------------------------------------------------------------------
+
+    def on_trigger_code_review_started(self, trigger_type: str) -> None:
+        self._record("trigger_code_review_started", trigger_type=trigger_type)
+
+    def on_trigger_code_review_skipped(self, trigger_type: str, reason: str) -> None:
+        self._record(
+            "trigger_code_review_skipped", trigger_type=trigger_type, reason=reason
+        )
+
+    def on_trigger_code_review_passed(self, trigger_type: str) -> None:
+        self._record("trigger_code_review_passed", trigger_type=trigger_type)
+
+    def on_trigger_code_review_failed(
+        self, trigger_type: str, blocking_count: int
+    ) -> None:
+        self._record(
+            "trigger_code_review_failed",
+            trigger_type=trigger_type,
+            blocking_count=blocking_count,
+        )
+
+    def on_trigger_code_review_error(self, trigger_type: str, error: str) -> None:
+        self._record(
+            "trigger_code_review_error", trigger_type=trigger_type, error=error
+        )
+
+    # -------------------------------------------------------------------------
     # Session end lifecycle
     # -------------------------------------------------------------------------
 

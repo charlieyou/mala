@@ -754,6 +754,27 @@ class ConsoleEventSink(BaseEventSink):
         )
 
     # -------------------------------------------------------------------------
+    # Trigger code review lifecycle
+    # -------------------------------------------------------------------------
+
+    def on_trigger_code_review_started(self, trigger_type: str) -> None:
+        pass  # Stub - formatting added in T003
+
+    def on_trigger_code_review_skipped(self, trigger_type: str, reason: str) -> None:
+        pass  # Stub - formatting added in T003
+
+    def on_trigger_code_review_passed(self, trigger_type: str) -> None:
+        pass  # Stub - formatting added in T003
+
+    def on_trigger_code_review_failed(
+        self, trigger_type: str, blocking_count: int
+    ) -> None:
+        pass  # Stub - formatting added in T003
+
+    def on_trigger_code_review_error(self, trigger_type: str, error: str) -> None:
+        pass  # Stub - formatting added in T003
+
+    # -------------------------------------------------------------------------
     # Session end lifecycle
     # -------------------------------------------------------------------------
 

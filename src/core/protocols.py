@@ -2317,6 +2317,55 @@ class MalaEventSink(Protocol):
         ...
 
     # -------------------------------------------------------------------------
+    # Trigger code review lifecycle
+    # -------------------------------------------------------------------------
+
+    def on_trigger_code_review_started(self, trigger_type: str) -> None:
+        """Called when trigger code review starts.
+
+        Args:
+            trigger_type: Type of trigger (e.g., "run_end", "epic_completion").
+        """
+        ...
+
+    def on_trigger_code_review_skipped(self, trigger_type: str, reason: str) -> None:
+        """Called when trigger code review is skipped.
+
+        Args:
+            trigger_type: Type of trigger.
+            reason: Reason for skipping (e.g., "disabled", "no_changes").
+        """
+        ...
+
+    def on_trigger_code_review_passed(self, trigger_type: str) -> None:
+        """Called when trigger code review passes.
+
+        Args:
+            trigger_type: Type of trigger.
+        """
+        ...
+
+    def on_trigger_code_review_failed(
+        self, trigger_type: str, blocking_count: int
+    ) -> None:
+        """Called when trigger code review fails.
+
+        Args:
+            trigger_type: Type of trigger.
+            blocking_count: Number of blocking issues found.
+        """
+        ...
+
+    def on_trigger_code_review_error(self, trigger_type: str, error: str) -> None:
+        """Called when trigger code review encounters an error.
+
+        Args:
+            trigger_type: Type of trigger.
+            error: Error message.
+        """
+        ...
+
+    # -------------------------------------------------------------------------
     # Session end lifecycle
     # -------------------------------------------------------------------------
 
