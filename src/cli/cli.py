@@ -1325,17 +1325,15 @@ def init(
                     evidence_required
                 )
 
-        # Per-issue review section (independent of commands)
-        # Only prompt in interactive mode; --yes uses default (disabled)
-        if is_tty and not yes:
-            per_issue_review_config = _prompt_per_issue_review()
-            if per_issue_review_config is not None:
-                config_data["per_issue_review"] = _build_per_issue_review_dict(
-                    per_issue_review_config
-                )
-
-        # Continue with validation triggers (commands-dependent)
-        if commands:
+            # Per-issue review section (within commands block to avoid prompting
+            # when init will fail for empty commands)
+            # Only prompt in interactive mode; --yes uses default (disabled)
+            if is_tty and not yes:
+                per_issue_review_config = _prompt_per_issue_review()
+                if per_issue_review_config is not None:
+                    config_data["per_issue_review"] = _build_per_issue_review_dict(
+                        per_issue_review_config
+                    )
             # Validation triggers section
             trigger_commands: list[str] | None = None
             if not skip_triggers:
@@ -1375,6 +1373,7 @@ def init(
                         typer.echo("Error: Cannot skip - no commands defined", err=True)
                         raise typer.Exit(1)
                     config_data.pop("evidence_check", None)
+                    config_data.pop("per_issue_review", None)
                     config_data.pop("validation_triggers", None)
                 else:
                     # Revise - if no commands, re-prompt custom commands
@@ -1385,7 +1384,7 @@ def init(
                         if custom_commands:
                             commands = list(custom_commands.keys())
                             config_data["commands"] = custom_commands
-                    # Re-prompt for evidence and triggers
+                    # Re-prompt for evidence, per-issue review, and triggers
                     if not skip_evidence and commands:
                         evidence_required = _prompt_evidence_check(commands, is_preset)
                         if evidence_required is not None:
@@ -1394,6 +1393,15 @@ def init(
                             )
                         else:
                             config_data.pop("evidence_check", None)
+                    # Re-prompt per-issue review (only when commands exist)
+                    if commands:
+                        per_issue_review_config = _prompt_per_issue_review()
+                        if per_issue_review_config is not None:
+                            config_data["per_issue_review"] = (
+                                _build_per_issue_review_dict(per_issue_review_config)
+                            )
+                        else:
+                            config_data.pop("per_issue_review", None)
                     if not skip_triggers and commands:
                         trigger_commands = _prompt_run_end_trigger(commands, is_preset)
                         if trigger_commands is not None:
