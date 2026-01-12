@@ -793,7 +793,12 @@ class RunCoordinator:
             # Handle code review result for trigger validation flow
             # Note: status="failed" (execution error) is handled above with early return,
             # so here we only handle status="success" or "skipped" cases.
-            if review_result is not None and code_review_config is not None:
+            # Also gate on code_review_enabled to avoid handling when disabled.
+            if (
+                code_review_enabled
+                and review_result is not None
+                and code_review_config is not None
+            ):
                 review_failure_mode = code_review_config.failure_mode
                 threshold = code_review_config.finding_threshold
 
@@ -867,16 +872,18 @@ class RunCoordinator:
                                 defer_code_review_end_event
                                 and self.event_sink is not None
                             ):
-                                # Clear defer flag before emitting to prevent double-emission
+                                # Clear flags before emitting to prevent double-emission
                                 defer_code_review_end_event = False
+                                code_review_end_status = None
                                 self.event_sink.on_trigger_code_review_failed(
                                     trigger_type.value, code_review_blocking_count
                                 )
                         elif remediation_result.status == "failed":
                             # Last re-review had execution error - emit error event
                             # This is the terminal event, not failed/passed
-                            # Clear defer flag to prevent duplicate terminal events
+                            # Clear flags to prevent duplicate terminal events
                             defer_code_review_end_event = False
+                            code_review_end_status = None
                             error_reason = (
                                 remediation_result.skip_reason or "unknown error"
                             )
@@ -911,8 +918,9 @@ class RunCoordinator:
                                 defer_code_review_end_event
                                 and self.event_sink is not None
                             ):
-                                # Clear defer flag before emitting to prevent double-emission
+                                # Clear flags before emitting to prevent double-emission
                                 defer_code_review_end_event = False
+                                code_review_end_status = None
                                 # Count blocking findings from final review result
                                 final_blocking_count = sum(
                                     1
@@ -939,8 +947,9 @@ class RunCoordinator:
                                 defer_code_review_end_event
                                 and self.event_sink is not None
                             ):
-                                # Clear defer flag before emitting to prevent double-emission
+                                # Clear flags before emitting to prevent double-emission
                                 defer_code_review_end_event = False
+                                code_review_end_status = None
                                 self.event_sink.on_trigger_code_review_passed(
                                     trigger_type.value
                                 )
