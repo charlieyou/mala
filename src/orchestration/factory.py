@@ -72,7 +72,6 @@ if TYPE_CHECKING:
     from src.infra.io.config import MalaConfig
     from src.core.protocols import EpicVerifierProtocol, MalaEventSink
     from src.infra.telemetry import TelemetryProvider
-    from src.infra.tools.command_runner import CommandRunner
 
     from .orchestrator import MalaOrchestrator
 
@@ -670,7 +669,7 @@ def _build_dependencies(
                 beads=issue_provider,
                 model=cast("EpicVerificationModel", verification_model),
                 repo_path=repo_path,
-                command_runner=cast("CommandRunner", command_runner),
+                command_runner=command_runner,
                 event_sink=event_sink,
                 lock_manager=lock_manager,
                 max_diff_size_kb=derived.max_diff_size_kb,

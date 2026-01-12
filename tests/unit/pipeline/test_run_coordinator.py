@@ -879,7 +879,7 @@ class TestCodeReviewRemediateFailureMode:
     """Tests for failure_mode: remediate handling in code review."""
 
     @pytest.mark.asyncio
-    async def test_remediate_retries_on_execution_error(
+    async def test_execution_error_aborts_ignoring_remediate_mode(
         self,
         tmp_path: Path,
         fake_command_runner: FakeCommandRunner,
@@ -887,7 +887,12 @@ class TestCodeReviewRemediateFailureMode:
         fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
-        """failure_mode: remediate retries review on execution error."""
+        """Execution errors abort immediately, ignoring failure_mode=REMEDIATE.
+
+        Code review execution errors (status='failed') are treated as hard
+        failures that abort validation immediately. The failure_mode setting
+        only applies to finding threshold failures, not execution errors.
+        """
         from src.domain.validation.config import (
             CodeReviewConfig,
             FailureMode,
@@ -937,21 +942,14 @@ class TestCodeReviewRemediateFailureMode:
             event_sink=mock_event_sink,
         )
 
-        # First call fails, second succeeds
+        # Execution error - should abort immediately regardless of failure_mode
         mock_review_runner.run_review = AsyncMock(
-            side_effect=[
-                CumulativeReviewResult(
-                    status="failed",
-                    findings=(),
-                    new_baseline_commit=None,
-                    skip_reason="execution_error: timeout",
-                ),
-                CumulativeReviewResult(
-                    status="success",
-                    findings=(),
-                    new_baseline_commit="abc123",
-                ),
-            ]
+            return_value=CumulativeReviewResult(
+                status="failed",
+                findings=(),
+                new_baseline_commit=None,
+                skip_reason="execution_error: timeout",
+            )
         )
 
         # Queue the trigger
@@ -959,14 +957,14 @@ class TestCodeReviewRemediateFailureMode:
 
         result = await coordinator.run_trigger_validation(dry_run=False)
 
-        assert result.status == "passed"
-        assert mock_review_runner.run_review.call_count == 2
-        mock_event_sink.on_trigger_remediation_started.assert_called_once_with(
-            "run_end", 1, 2
-        )
-        mock_event_sink.on_trigger_remediation_succeeded.assert_called_once_with(
-            "run_end", 1
-        )
+        # Execution errors always abort - no retries regardless of failure_mode
+        assert result.status == "aborted"
+        assert "execution_error" in (result.details or "")
+        # Only called once - no retries for execution errors
+        assert mock_review_runner.run_review.call_count == 1
+        # Error event should be emitted, not remediation events
+        mock_event_sink.on_trigger_code_review_error.assert_called_once()
+        mock_event_sink.on_trigger_remediation_started.assert_not_called()
 
 
 class TestRunEndRunMetadata:
@@ -1044,7 +1042,7 @@ class TestRunEndRunMetadata:
         assert meta.coverage_percent == pytest.approx(75.0)
 
     @pytest.mark.asyncio
-    async def test_remediate_exhausted_continues_with_failure(
+    async def test_execution_error_aborts_validation(
         self,
         tmp_path: Path,
         fake_command_runner: FakeCommandRunner,
@@ -1052,7 +1050,12 @@ class TestRunEndRunMetadata:
         fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
-        """failure_mode: remediate exhausted continues and records failure."""
+        """Execution error (status='failed') aborts validation immediately.
+
+        This tests that code review execution errors are treated as hard failures
+        that abort validation immediately, without following the failure_mode
+        remediation path. The error event is the terminal event.
+        """
         from src.domain.validation.config import (
             CodeReviewConfig,
             FailureMode,
@@ -1101,7 +1104,7 @@ class TestRunEndRunMetadata:
             event_sink=mock_event_sink,
         )
 
-        # All retries fail
+        # Execution error (status="failed")
         mock_review_runner.run_review = AsyncMock(
             return_value=CumulativeReviewResult(
                 status="failed",
@@ -1115,14 +1118,14 @@ class TestRunEndRunMetadata:
 
         result = await coordinator.run_trigger_validation(dry_run=False)
 
-        # Should be "failed" not "aborted" per plan behavior matrix
-        assert result.status == "failed"
-        # Initial call + 2 retries = 3 total
-        assert mock_review_runner.run_review.call_count == 3
-        mock_event_sink.on_trigger_remediation_exhausted.assert_called_once_with(
-            "run_end", 2
-        )
-        # Must NOT emit validation_passed after emitting validation_failed
+        # Execution errors abort immediately - no retries regardless of failure_mode
+        assert result.status == "aborted"
+        assert "execution_error" in (result.details or "")
+        # Only called once - no retries for execution errors
+        assert mock_review_runner.run_review.call_count == 1
+        # Error event emitted, no remediation events
+        mock_event_sink.on_trigger_code_review_error.assert_called_once()
+        mock_event_sink.on_trigger_remediation_exhausted.assert_not_called()
         mock_event_sink.on_trigger_validation_passed.assert_not_called()
 
 

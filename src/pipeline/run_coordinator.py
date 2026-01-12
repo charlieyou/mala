@@ -686,23 +686,26 @@ class RunCoordinator:
                 code_review_config is not None and code_review_config.enabled
             )
 
+            # Track end status for exactly-one-end-event invariant
+            # Defined outside if-else to be accessible in remediation handling
+            code_review_end_status: Literal["skipped", "passed", "failed"] | None = None
+            code_review_blocking_count = 0
+            defer_code_review_end_event = False
+            review_result: CumulativeReviewResult | None = None
+
             if not code_review_enabled:
                 # No events when code review is disabled/not configured
-                review_result = None
+                pass
             else:
                 # code_review_enabled is True implies code_review_config is not None
                 assert code_review_config is not None
 
+                # Get failure mode early to determine if we should defer end event
+                review_failure_mode = code_review_config.failure_mode
+
                 # Emit started AFTER enabled check passes
                 if self.event_sink is not None:
                     self.event_sink.on_trigger_code_review_started(trigger_type.value)
-
-                # Track end status for exactly-one-end-event invariant
-                code_review_end_status: (
-                    Literal["skipped", "passed", "failed"] | None
-                ) = None
-                code_review_blocking_count = 0
-                review_result: CumulativeReviewResult | None = None
 
                 try:
                     review_result = await self._run_trigger_code_review(
@@ -718,13 +721,20 @@ class RunCoordinator:
                         code_review_end_status = "skipped"
                     elif review_result.status == "failed":
                         # Review execution failed internally - emit error event
+                        # and abort validation. This is treated like an exception:
+                        # error event is the terminal event, no further processing.
+                        error_reason = review_result.skip_reason or "unknown error"
                         if self.event_sink is not None:
                             self.event_sink.on_trigger_code_review_error(
                                 trigger_type.value,
-                                review_result.skip_reason or "unknown error",
+                                error_reason,
                             )
-                        # Don't set end_status - error event already emitted
-                        code_review_end_status = None
+                        # Abort validation - execution error is a hard failure
+                        self.clear_trigger_queue("code_review_execution_error")
+                        return TriggerValidationResult(
+                            status="aborted",
+                            details=f"Code review execution failed: {error_reason}",
+                        )
                     else:
                         # Review completed successfully - check findings threshold
                         threshold = code_review_config.finding_threshold
@@ -737,6 +747,10 @@ class RunCoordinator:
                                 for f in review_result.findings
                                 if f.priority <= int(threshold[1])
                             )
+                            # Defer end event if remediation will run - emit after
+                            # remediation completes to reflect final state
+                            if review_failure_mode == FailureMode.REMEDIATE:
+                                defer_code_review_end_event = True
                         else:
                             code_review_end_status = "passed"
                 except Exception as e:
@@ -750,9 +764,11 @@ class RunCoordinator:
                     raise
                 finally:
                     # Emit exactly one end event based on status
+                    # Skip emission if deferred (will be emitted after remediation)
                     if (
                         self.event_sink is not None
                         and code_review_end_status is not None
+                        and not defer_code_review_end_event
                     ):
                         if code_review_end_status == "skipped":
                             skip_reason = (
@@ -773,72 +789,13 @@ class RunCoordinator:
                             )
 
             # Handle code review result for trigger validation flow
+            # Note: status="failed" (execution error) is handled above with early return,
+            # so here we only handle status="success" or "skipped" cases.
             if review_result is not None and code_review_config is not None:
                 review_failure_mode = code_review_config.failure_mode
                 threshold = code_review_config.finding_threshold
 
-                # Case 1: Execution error (status == "failed")
-                if review_result.status == "failed":
-                    if review_failure_mode == FailureMode.ABORT:
-                        if self.event_sink is not None:
-                            self.event_sink.on_trigger_validation_failed(
-                                trigger_type.value, "code_review", "abort"
-                            )
-                        self.clear_trigger_queue("code_review_failed")
-                        return TriggerValidationResult(
-                            status="aborted",
-                            details=f"Code review failed in trigger {trigger_type.value}",
-                        )
-                    elif review_failure_mode == FailureMode.CONTINUE:
-                        last_failure = ("code_review", trigger_type.value)
-                        if self.event_sink is not None:
-                            self.event_sink.on_trigger_validation_failed(
-                                trigger_type.value, "code_review", "continue"
-                            )
-                    elif review_failure_mode == FailureMode.REMEDIATE:
-                        # Retry code review execution up to max_retries
-                        max_retries = code_review_config.max_retries
-                        retry_success = False
-                        for attempt in range(1, max_retries + 1):
-                            if interrupt_event.is_set():
-                                self.clear_trigger_queue("sigint")
-                                return TriggerValidationResult(
-                                    status="aborted",
-                                    details="Validation interrupted by SIGINT",
-                                )
-                            if self.event_sink is not None:
-                                self.event_sink.on_trigger_remediation_started(
-                                    trigger_type.value, attempt, max_retries
-                                )
-                            review_result = await self._run_trigger_code_review(
-                                trigger_type,
-                                trigger_config,
-                                context,
-                                interrupt_event,
-                            )
-                            if (
-                                review_result is not None
-                                and review_result.status != "failed"
-                            ):
-                                retry_success = True
-                                if self.event_sink is not None:
-                                    self.event_sink.on_trigger_remediation_succeeded(
-                                        trigger_type.value, attempt
-                                    )
-                                break
-                        if not retry_success:
-                            # Retries exhausted - continue (don't abort on execution error)
-                            if self.event_sink is not None:
-                                self.event_sink.on_trigger_remediation_exhausted(
-                                    trigger_type.value, max_retries
-                                )
-                            last_failure = ("code_review", trigger_type.value)
-                            if self.event_sink is not None:
-                                self.event_sink.on_trigger_validation_failed(
-                                    trigger_type.value, "code_review", "remediate"
-                                )
-
-                # Case 2: Review completed - check finding_threshold
+                # Check finding_threshold for successful reviews
                 if (
                     review_result is not None
                     and review_result.status == "success"
@@ -900,6 +857,14 @@ class RunCoordinator:
                                     "code_review_findings",
                                     "remediate",
                                 )
+                            # Emit deferred code_review_failed event
+                            if (
+                                defer_code_review_end_event
+                                and self.event_sink is not None
+                            ):
+                                self.event_sink.on_trigger_code_review_failed(
+                                    trigger_type.value, code_review_blocking_count
+                                )
                         else:
                             # Remediation succeeded - clear code_review failure only.
                             # Command failures from this trigger (if failure_mode=CONTINUE)
@@ -909,6 +874,14 @@ class RunCoordinator:
                                 "code_review_findings",
                             ):
                                 last_failure = None
+                            # Emit deferred code_review_passed event (remediation fixed findings)
+                            if (
+                                defer_code_review_end_event
+                                and self.event_sink is not None
+                            ):
+                                self.event_sink.on_trigger_code_review_passed(
+                                    trigger_type.value
+                                )
 
             # Emit validation_passed (only if no failure occurred)
             if last_failure is None:

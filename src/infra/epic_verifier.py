@@ -37,9 +37,13 @@ from src.infra.epic_scope import EpicScopeAnalyzer
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from src.core.protocols import EpicVerificationModel, LockManagerPort, MalaEventSink
+    from src.core.protocols import (
+        CommandRunnerPort,
+        EpicVerificationModel,
+        LockManagerPort,
+        MalaEventSink,
+    )
     from src.infra.clients.beads_client import BeadsClient
-    from src.infra.tools.command_runner import CommandRunner
 
 # Spec path patterns from docs (case-insensitive)
 SPEC_PATH_PATTERNS = [
@@ -381,7 +385,7 @@ class EpicVerifier:
         beads: BeadsClient,
         model: EpicVerificationModel,
         repo_path: Path,
-        command_runner: CommandRunner,
+        command_runner: CommandRunnerPort,
         retry_config: RetryConfig | None = None,
         lock_manager: LockManagerPort | None = None,
         event_sink: MalaEventSink | None = None,
@@ -395,7 +399,7 @@ class EpicVerifier:
             beads: BeadsClient for issue operations.
             model: EpicVerificationModel for verification.
             repo_path: Path to the repository.
-            command_runner: Command runner for executing commands.
+            command_runner: CommandRunnerPort for executing commands.
             retry_config: Configuration for retry behavior.
             lock_manager: Optional lock manager for sequential processing.
             event_sink: Optional event sink for emitting verification lifecycle events.
