@@ -78,6 +78,17 @@ idle_timeout_seconds: float      # Optional. Idle timeout in seconds (default: d
 
 max_diff_size_kb: int            # Optional. Maximum diff size in KB for epic verification
 
+per_issue_review:                # Optional. Per-issue code review (disabled by default)
+  enabled: bool                  # Enable/disable per-issue review (default: false)
+  reviewer_type: string          # "cerberus" or "agent_sdk" (default: cerberus)
+  max_retries: int               # Maximum review retry attempts (default: 3)
+  finding_threshold: string      # P0 | P1 | P2 | P3 | none (default: none)
+  track_review_issues: bool      # Create beads issues for findings (default: true)
+  failure_mode: string           # continue | abort | remediate (default: continue)
+  cerberus: object               # Cerberus-specific settings
+  agent_sdk_timeout: int         # Agent SDK timeout in seconds (default: 600)
+  agent_sdk_model: string        # sonnet | opus | haiku (default: sonnet)
+
 validation_triggers:             # Optional. See validation-triggers.md
   epic_completion: object        # Run validation when epics complete
   session_end: object            # Run validation at session end
@@ -112,6 +123,20 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `validation_triggers` | object | No | Trigger configuration. See [validation-triggers.md](validation-triggers.md) |
 | `evidence_check` | object | No | Evidence requirements for the quality gate |
 | `evidence_check.required` | list | No | List of command names that must appear in session logs |
+| `per_issue_review` | object | No | Per-issue code review configuration |
+| `per_issue_review.enabled` | boolean | No | Enable per-issue review (default: `false`) |
+| `per_issue_review.reviewer_type` | string | No | Reviewer type: `cerberus` or `agent_sdk` (default: `cerberus`) |
+| `per_issue_review.max_retries` | integer | No | Maximum review retry attempts (default: 3) |
+| `per_issue_review.finding_threshold` | string | No | Minimum severity to fail: `P0`, `P1`, `P2`, `P3`, `none` (default: `none`) |
+| `per_issue_review.track_review_issues` | boolean | No | Create beads issues for P2/P3 findings (default: `true`) |
+| `per_issue_review.failure_mode` | string | No | Failure handling: `continue`, `abort`, `remediate` (default: `continue`) |
+| `per_issue_review.cerberus` | object | No | Cerberus-specific settings (see below) |
+| `per_issue_review.cerberus.timeout` | integer | No | Timeout in seconds (default: 300) |
+| `per_issue_review.cerberus.spawn_args` | list | No | Additional arguments for spawn command |
+| `per_issue_review.cerberus.wait_args` | list | No | Additional arguments for wait command |
+| `per_issue_review.cerberus.env` | object | No | Environment variables as key-value pairs |
+| `per_issue_review.agent_sdk_timeout` | integer | No | Agent SDK timeout in seconds (default: 600) |
+| `per_issue_review.agent_sdk_model` | string | No | Agent SDK model: `sonnet`, `opus`, `haiku` (default: `sonnet`) |
 
 *Required when `coverage` section is present.
 
@@ -490,6 +515,81 @@ validation_triggers:
 |------|-------------|
 | `cerberus` (default) | Uses the Cerberus CLI plugin for review. Requires plugin installation. |
 | `agent_sdk` | Uses Claude agents for interactive code review. |
+
+## Per-Issue Review
+
+> **Breaking Change (2026-01-12)**: Per-issue code review is now disabled by default.
+> To restore the previous behavior where every issue session is reviewed, add:
+> ```yaml
+> per_issue_review:
+>   enabled: true
+> ```
+
+Per-issue review runs code review at the end of each issue session, reviewing only the commits made for that specific issue. This is separate from trigger-based reviews (configured under `validation_triggers`).
+
+### Minimal Configuration
+
+Enable per-issue review with defaults:
+
+```yaml
+per_issue_review:
+  enabled: true
+```
+
+### Full Configuration
+
+All available options with their defaults:
+
+```yaml
+per_issue_review:
+  enabled: true
+  reviewer_type: cerberus        # "cerberus" or "agent_sdk"
+  max_retries: 3                 # Retry attempts on execution error
+  finding_threshold: none        # P0 | P1 | P2 | P3 | none
+  track_review_issues: true      # Create beads issues for findings
+  failure_mode: continue         # continue | abort | remediate
+
+  # Cerberus-specific settings (when reviewer_type: cerberus)
+  cerberus:
+    timeout: 300
+    spawn_args: []
+    wait_args: []
+    env: {}
+
+  # Agent SDK settings (when reviewer_type: agent_sdk)
+  agent_sdk_timeout: 600
+  agent_sdk_model: sonnet        # sonnet | opus | haiku
+```
+
+### Reviewer Selection Priority
+
+> **Reviewer Selection**: When `per_issue_review` is enabled, it also determines the reviewer type
+> (Cerberus or Agent SDK) used for **all reviews**, including trigger-based reviews. To use
+> different reviewer settings for triggers, leave `per_issue_review.enabled: false` so your
+> trigger configs take priority.
+
+The reviewer selection priority is:
+1. `per_issue_review` settings (if `enabled: true`)
+2. Individual trigger `code_review` settings
+3. Built-in defaults
+
+### Finding Threshold Behavior
+
+| `finding_threshold` | Behavior |
+|---------------------|----------|
+| `none` (default) | Never fail on findings; create beads issues and continue |
+| `P3` | Fail if any finding (P0-P3) |
+| `P2` | Fail if any P0, P1, or P2 finding |
+| `P1` | Fail if any P0 or P1 finding |
+| `P0` | Fail only if P0 (critical) finding |
+
+### Failure Mode Behavior
+
+| `failure_mode` | On execution error | On findings exceeding threshold |
+|----------------|-------------------|--------------------------------|
+| `continue` (default) | Log warning, skip review, continue | Create beads issues, continue |
+| `abort` | Fail the run | Create beads issues, fail the run |
+| `remediate` | Retry reviewer up to `max_retries` | Attempt to fix findings, then fail if unresolved |
 
 ## Limitations
 
