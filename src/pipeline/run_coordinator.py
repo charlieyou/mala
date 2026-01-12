@@ -459,7 +459,7 @@ class RunCoordinator:
                                                 lint_type, cmd
                                             )
                         elif msg_type == "ResultMessage":
-                            result = getattr(message, "result", "") or "completed"
+                            result = getattr(message, "result", "") or ""
                             if self.event_sink is not None:
                                 self.event_sink.on_fixer_completed(result)
 
@@ -930,8 +930,6 @@ class RunCoordinator:
                                 defer_code_review_end_event
                                 and self.event_sink is not None
                             ):
-                                # Clear flags before emitting to prevent double-emission
-                                defer_code_review_end_event = False
                                 code_review_end_status = None
                                 # Count blocking findings from final review result
                                 final_blocking_count = sum(
@@ -945,6 +943,9 @@ class RunCoordinator:
                                 self.event_sink.on_trigger_code_review_failed(
                                     trigger_type.value, final_blocking_count
                                 )
+                            # Always clear defer flag to prevent double-emission,
+                            # regardless of whether event_sink is available
+                            defer_code_review_end_event = False
                         else:
                             # Remediation succeeded - findings dropped below threshold
                             # Clear code_review failure only. Command failures from this
@@ -959,12 +960,13 @@ class RunCoordinator:
                                 defer_code_review_end_event
                                 and self.event_sink is not None
                             ):
-                                # Clear flags before emitting to prevent double-emission
-                                defer_code_review_end_event = False
                                 code_review_end_status = None
                                 self.event_sink.on_trigger_code_review_passed(
                                     trigger_type.value
                                 )
+                            # Always clear defer flag to prevent double-emission,
+                            # regardless of whether event_sink is available
+                            defer_code_review_end_event = False
 
             # Emit validation_passed (only if no failure occurred)
             if last_failure is None:
