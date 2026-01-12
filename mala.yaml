@@ -3,10 +3,13 @@ preset: python-uv
 commands:
   import-linter: "uvx --from import-linter lint-imports"
 
-validation_triggers:
-  session_end:
-    failure_mode: continue
+per_issue_review:
+  enabled: true
+  reviewer_type: cerberus
+  max_retries: 5
+  finding_threshold: P1
 
+validation_triggers:
   run_end:
     fire_on: both
     failure_mode: remediate 
@@ -22,6 +25,7 @@ validation_triggers:
         timeout: 300
       - ref: e2e
         command: "uv run pytest -m 'e2e and not flaky_sdk'"
+
     code_review:
       enabled: true
       reviewer_type: cerberus
