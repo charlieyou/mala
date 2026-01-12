@@ -1096,6 +1096,26 @@ class ValidationConfig:
                     cast("dict[str, object]", ec_data)
                 )
 
+        # Parse per_issue_review - use lazy import to avoid circular dependency
+        per_issue_review: CodeReviewConfig | None = None
+        if "per_issue_review" in data:
+            fields_set.add("per_issue_review")
+            pir_data = data["per_issue_review"]
+            if pir_data is not None:
+                if not isinstance(pir_data, dict):
+                    raise ConfigError(
+                        f"per_issue_review must be an object, "
+                        f"got {type(pir_data).__name__}"
+                    )
+                # Lazy import to avoid circular dependency with config_loader
+                from src.domain.validation.config_loader import (
+                    _parse_code_review_config,
+                )
+
+                per_issue_review = _parse_code_review_config(
+                    cast("dict[str, object]", pir_data), "per_issue_review"
+                )
+
         return cls(
             preset=preset,
             commands=commands,
@@ -1112,6 +1132,9 @@ class ValidationConfig:
             idle_timeout_seconds=idle_timeout_seconds,
             max_diff_size_kb=max_diff_size_kb,
             evidence_check=evidence_check,
+            per_issue_review=per_issue_review
+            if per_issue_review is not None
+            else CodeReviewConfig(enabled=False),
             _fields_set=frozenset(fields_set),
         )
 

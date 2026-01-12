@@ -637,6 +637,124 @@ class TestParsePeriodicTrigger:
             )
 
 
+class TestPerIssueReviewParsing:
+    """Tests for per_issue_review parsing in ValidationConfig.from_dict."""
+
+    def test_per_issue_review_all_fields(self) -> None:
+        """All per_issue_review fields are parsed correctly."""
+        from src.domain.validation.config import ValidationConfig
+
+        data: dict[str, object] = {
+            "preset": "python-uv",
+            "per_issue_review": {
+                "enabled": True,
+                "reviewer_type": "cerberus",
+                "max_retries": 2,
+                "finding_threshold": "P2",
+                "track_review_issues": True,
+                "failure_mode": "abort",
+                "cerberus": {"timeout": 600},
+            },
+        }
+        config = ValidationConfig.from_dict(data)
+
+        assert config.per_issue_review.enabled is True
+        assert config.per_issue_review.reviewer_type == "cerberus"
+        assert config.per_issue_review.max_retries == 2
+        assert config.per_issue_review.finding_threshold == "P2"
+        assert config.per_issue_review.track_review_issues is True
+        assert config.per_issue_review.failure_mode == FailureMode.ABORT
+        assert config.per_issue_review.cerberus is not None
+        assert config.per_issue_review.cerberus.timeout == 600
+        assert "per_issue_review" in config._fields_set
+
+    def test_per_issue_review_minimal(self) -> None:
+        """Minimal per_issue_review (just enabled) works with defaults."""
+        from src.domain.validation.config import ValidationConfig
+
+        data: dict[str, object] = {
+            "preset": "python-uv",
+            "per_issue_review": {"enabled": True},
+        }
+        config = ValidationConfig.from_dict(data)
+
+        assert config.per_issue_review.enabled is True
+        assert config.per_issue_review.reviewer_type == "cerberus"
+        assert config.per_issue_review.max_retries == 3  # Default from CodeReviewConfig
+        assert config.per_issue_review.failure_mode == FailureMode.CONTINUE
+
+    def test_per_issue_review_missing_defaults_to_disabled(self) -> None:
+        """Missing per_issue_review defaults to CodeReviewConfig(enabled=False)."""
+        from src.domain.validation.config import ValidationConfig
+
+        data: dict[str, object] = {"preset": "python-uv"}
+        config = ValidationConfig.from_dict(data)
+
+        assert config.per_issue_review.enabled is False
+        assert "per_issue_review" not in config._fields_set
+
+    def test_per_issue_review_null_defaults_to_disabled(self) -> None:
+        """Explicit null per_issue_review defaults to CodeReviewConfig(enabled=False)."""
+        from src.domain.validation.config import ValidationConfig
+
+        data: dict[str, object] = {"preset": "python-uv", "per_issue_review": None}
+        config = ValidationConfig.from_dict(data)
+
+        assert config.per_issue_review.enabled is False
+        assert "per_issue_review" in config._fields_set
+
+    def test_per_issue_review_not_dict_raises(self) -> None:
+        """Non-dict per_issue_review raises ConfigError."""
+        from src.domain.validation.config import ValidationConfig
+
+        data: dict[str, object] = {"preset": "python-uv", "per_issue_review": "invalid"}
+        with pytest.raises(ConfigError, match=r"per_issue_review must be an object"):
+            ValidationConfig.from_dict(data)
+
+    def test_per_issue_review_invalid_enabled_raises(self) -> None:
+        """Non-boolean enabled in per_issue_review raises ConfigError."""
+        from src.domain.validation.config import ValidationConfig
+
+        data: dict[str, object] = {
+            "preset": "python-uv",
+            "per_issue_review": {"enabled": "yes"},
+        }
+        with pytest.raises(
+            ConfigError, match=r"code_review\.enabled must be a boolean"
+        ):
+            ValidationConfig.from_dict(data)
+
+    def test_per_issue_review_unknown_field_raises(self) -> None:
+        """Unknown field in per_issue_review raises ConfigError."""
+        from src.domain.validation.config import ValidationConfig
+
+        data: dict[str, object] = {
+            "preset": "python-uv",
+            "per_issue_review": {"enabled": True, "unknown_field": "value"},
+        }
+        with pytest.raises(ConfigError, match=r"Unknown field 'unknown_field'"):
+            ValidationConfig.from_dict(data)
+
+    def test_per_issue_review_agent_sdk_type(self) -> None:
+        """Agent SDK reviewer type is parsed correctly."""
+        from src.domain.validation.config import ValidationConfig
+
+        data: dict[str, object] = {
+            "preset": "python-uv",
+            "per_issue_review": {
+                "enabled": True,
+                "reviewer_type": "agent_sdk",
+                "agent_sdk_timeout": 300,
+                "agent_sdk_model": "sonnet",
+            },
+        }
+        config = ValidationConfig.from_dict(data)
+
+        assert config.per_issue_review.reviewer_type == "agent_sdk"
+        assert config.per_issue_review.agent_sdk_timeout == 300
+        assert config.per_issue_review.agent_sdk_model == "sonnet"
+
+
 class TestValidateGeneratedConfig:
     """Tests for validate_generated_config."""
 
