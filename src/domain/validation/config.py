@@ -824,6 +824,9 @@ class ValidationConfig:
     idle_timeout_seconds: float | None = None
     max_diff_size_kb: int | None = None
     evidence_check: EvidenceCheckConfig | None = None
+    per_issue_review: CodeReviewConfig = field(
+        default_factory=lambda: CodeReviewConfig(enabled=False)
+    )
     _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:

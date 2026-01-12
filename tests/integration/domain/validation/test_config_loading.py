@@ -263,6 +263,32 @@ class TestCodeReviewParsing:
         assert code_review.track_review_issues is False
 
 
+class TestPerIssueReviewConfig:
+    """Tests for per_issue_review root-level config parsing."""
+
+    def test_per_issue_review_config_loads_from_yaml(self, tmp_path: Path) -> None:
+        """Integration test: per_issue_review is parsed from mala.yaml.
+
+        This test exercises the full config loading path to verify that
+        per_issue_review flows from YAML to ValidationConfig. Currently
+        expected to fail because parsing is not yet implemented (TDD).
+        """
+        yaml_content = dedent("""\
+            preset: python-uv
+            per_issue_review:
+              enabled: true
+              reviewer_type: cerberus
+        """)
+        config_file = tmp_path / "mala.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_config(tmp_path)
+
+        # This should pass once T002 implements parsing
+        assert config.per_issue_review.enabled is True
+        assert config.per_issue_review.reviewer_type == "cerberus"
+
+
 class TestEpicCompletionTriggerFields:
     """Tests for epic_completion trigger-specific fields."""
 
