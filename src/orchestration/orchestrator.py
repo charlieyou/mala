@@ -305,6 +305,7 @@ class MalaOrchestrator:
         self.max_idle_retries = derived.max_idle_retries
         self.idle_timeout_seconds = derived.idle_timeout_seconds
         self.review_disabled_reason = derived.review_disabled_reason
+        self._per_issue_review = derived.per_issue_review
         self._init_runtime_state()
         self.log_provider = log_provider
         self.evidence_check = gate_checker
@@ -691,14 +692,32 @@ class MalaOrchestrator:
         self.issue_coordinator.request_abort(reason)
 
     def _is_review_enabled(self) -> bool:
-        """Return whether review should run for this orchestrator instance."""
-        if "review" not in self._disabled_validations:
-            return True
-        if (
-            self.review_disabled_reason
-            and self.review_runner.code_reviewer.overrides_disabled_setting()
-        ):
-            return True
+        """Return whether per-issue review should run for this orchestrator.
+
+        Precedence order:
+        1. CLI --disable-validations review -> returns False
+        2. per_issue_review.enabled from mala.yaml
+        3. Default: False (per-issue review disabled unless explicitly enabled)
+
+        Note: This does NOT affect trigger-based reviews. Triggers check their
+        own code_review.enabled flag in run_coordinator._run_trigger_code_review().
+        """
+        # Check CLI --disable-validations first
+        if "review" in self._disabled_validations:
+            # Allow override only if review was auto-disabled AND reviewer
+            # supports overriding (e.g., a forced reviewer type)
+            if (
+                self.review_disabled_reason
+                and self.review_runner.code_reviewer.overrides_disabled_setting()
+            ):
+                return True
+            return False
+
+        # Check per_issue_review.enabled from mala.yaml
+        if self._per_issue_review is not None:
+            return self._per_issue_review.enabled
+
+        # Default: per-issue review is disabled
         return False
 
     def _on_session_log_path(self, issue_id: str, log_path: Path) -> None:
