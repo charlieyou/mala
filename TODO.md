@@ -1,31 +1,4 @@
-# Roadmap to v1
-
-After config changes:
-* failure mode and retry max not needed when commands are null
-* 01:26:28 [trigger] ◦ [session_end] queued: success_count=7
-
-Non-session review
-* add to mala init
-* Spawn fixer
-* Logging
-* config in mala.yaml
-
-* show full command: Validation command(s) failed: gleam
-
-* match trigger log color with the issue id up front
-03:53:30 [casg-g03.4] ✓ GATE passed
-03:53:30 [casg-g03.4] ✓ VALIDATE
-03:53:30 [trigger] → [trigger] session_end started: issue_id=casg-g03.4
-03:53:30 [trigger] ○ [trigger] session_end skipped: issue_id=casg-g03.4, reason=not_configured
-
-refine logs:
-04:00:49 [trigger] ◦ [run_end] command_started: setup (index=0)
-04:00:49 [trigger] ◦ [run_end] command_completed: setup passed (0.0s)
-04:00:49 [trigger] ◦ [run_end] command_started: format (index=1)
-
 * Publish to PyPi
-
-# Later
 
 New Features
 * Use cerberus for epic verification
@@ -40,6 +13,8 @@ New Features
   * Replace with new Edit tools
 
 * CLI command for run statistics - tokens used, tools calls, reviewer/validation pass rates, etc.
+
+* deadlock victims should have their changes restored?
 
 Tech Debt
 * Use pydantic-settings, or some other library for config
