@@ -47,6 +47,7 @@ class PresetRegistry:
 
     # Mapping of preset names to YAML filenames
     _PRESET_FILES: ClassVar[dict[str, str]] = {
+        "gleam": "gleam.yaml",
         "go": "go.yaml",
         "node-npm": "node-npm.yaml",
         "python-uv": "python-uv.yaml",

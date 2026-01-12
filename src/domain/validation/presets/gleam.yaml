@@ -1,0 +1,18 @@
+# Gleam project
+commands:
+  setup: "gleam deps download"
+  build: "gleam build"
+  test: "gleam test"
+  lint: "gleam check"
+  format: "gleam format --check"
+
+code_patterns:
+  - "**/*.gleam"
+
+config_files:
+  - "gleam.toml"
+  - "manifest.toml"
+
+setup_files:
+  - "gleam.toml"
+  - "manifest.toml"
