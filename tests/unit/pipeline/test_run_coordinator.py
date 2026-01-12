@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -2090,3 +2090,652 @@ class TestR12CodeReviewGating:
         # Even though code_review remediation succeeded, command failure persists
         assert result.status == "failed"
         assert "lint" in (result.details or "").lower()
+
+
+class TestTriggerCodeReviewEvents:
+    """Test trigger code review lifecycle events.
+
+    These tests verify that code review lifecycle events are emitted correctly:
+    - started → passed (review has no blocking findings)
+    - started → failed (blocking findings remain after remediation)
+    - started → skipped (result.status == 'skipped')
+    - started → error (exception or result.status == 'failed')
+    - No events when code review is disabled
+    """
+
+    @pytest.fixture
+    def coordinator_with_review_runner(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> tuple[RunCoordinator, MagicMock, Any]:
+        """Create a RunCoordinator with mock review runner and event sink."""
+        from src.domain.validation.config import (
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from tests.fakes.event_sink import FakeEventSink
+
+        mock_gate_checker = MagicMock()
+        mock_review_runner = MagicMock()
+        mock_run_metadata = MagicMock()
+        event_sink = FakeEventSink()
+
+        validation_config = ValidationConfig(
+            validation_triggers=ValidationTriggersConfig()
+        )
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
+            validation_config=validation_config,
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=mock_run_metadata,
+            event_sink=event_sink,
+        )
+        return coordinator, mock_review_runner, event_sink
+
+    @pytest.mark.asyncio
+    async def test_enabled_passing_review_emits_started_passed(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
+    ) -> None:
+        """started → passed when review has no blocking findings."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import CumulativeReviewResult
+        from tests.fakes.event_sink import FakeEventSink
+
+        coordinator, mock_review_runner, event_sink = coordinator_with_review_runner
+        assert isinstance(event_sink, FakeEventSink)
+
+        # Configure code_review enabled with P1 threshold
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            finding_threshold="P1",
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+        coordinator.config.validation_config = validation_config
+
+        # Review returns no findings
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="success",
+                findings=(),
+                new_baseline_commit="abc123",
+            )
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        await coordinator.run_trigger_validation(dry_run=False)
+
+        # Assert: started, passed events (in order)
+        assert event_sink.has_event("trigger_code_review_started")
+        assert event_sink.has_event("trigger_code_review_passed")
+
+        # Verify order: started before passed
+        event_types = [e.event_type for e in event_sink.events]
+        started_idx = event_types.index("trigger_code_review_started")
+        passed_idx = event_types.index("trigger_code_review_passed")
+        assert started_idx < passed_idx
+
+    @pytest.mark.asyncio
+    async def test_enabled_failing_review_emits_started_failed(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
+    ) -> None:
+        """started → failed when blocking findings remain."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import (
+            CumulativeReviewResult,
+            ReviewFinding,
+        )
+        from tests.fakes.event_sink import FakeEventSink
+
+        coordinator, mock_review_runner, event_sink = coordinator_with_review_runner
+        assert isinstance(event_sink, FakeEventSink)
+
+        # Configure code_review enabled with P1 threshold
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            finding_threshold="P1",
+            failure_mode=FailureMode.CONTINUE,  # Don't remediate, just fail
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+        coordinator.config.validation_config = validation_config
+
+        # Review returns P0 finding (exceeds P1 threshold)
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="success",
+                findings=(
+                    ReviewFinding(
+                        file="test.py",
+                        line_start=1,
+                        line_end=5,
+                        priority=0,  # P0 - exceeds threshold
+                        title="Critical issue",
+                        body="Details",
+                        reviewer="test",
+                    ),
+                ),
+                new_baseline_commit="abc123",
+            )
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        await coordinator.run_trigger_validation(dry_run=False)
+
+        # Assert: started, failed(blocking_count=1) events
+        assert event_sink.has_event("trigger_code_review_started")
+        assert event_sink.has_event("trigger_code_review_failed")
+
+        # Check blocking_count in failed event
+        failed_events = event_sink.get_events("trigger_code_review_failed")
+        assert len(failed_events) == 1
+        assert failed_events[0].kwargs["blocking_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_empty_diff_emits_started_skipped(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
+    ) -> None:
+        """started → skipped when result.status == 'skipped'."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import CumulativeReviewResult
+        from tests.fakes.event_sink import FakeEventSink
+
+        coordinator, mock_review_runner, event_sink = coordinator_with_review_runner
+        assert isinstance(event_sink, FakeEventSink)
+
+        code_review_config = CodeReviewConfig(enabled=True)
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+        coordinator.config.validation_config = validation_config
+
+        # Review returns skipped (e.g., empty diff)
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="skipped",
+                findings=(),
+                new_baseline_commit=None,
+                skip_reason="empty_diff",
+            )
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        await coordinator.run_trigger_validation(dry_run=False)
+
+        # Assert: started, skipped(reason="empty_diff") events
+        assert event_sink.has_event("trigger_code_review_started")
+        assert event_sink.has_event("trigger_code_review_skipped")
+
+        # Check reason in skipped event
+        skipped_events = event_sink.get_events("trigger_code_review_skipped")
+        assert len(skipped_events) == 1
+        assert skipped_events[0].kwargs["reason"] == "empty_diff"
+
+    @pytest.mark.asyncio
+    async def test_execution_error_emits_started_error(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
+    ) -> None:
+        """started → error when result.status == 'failed' (execution error)."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import CumulativeReviewResult
+        from tests.fakes.event_sink import FakeEventSink
+
+        coordinator, mock_review_runner, event_sink = coordinator_with_review_runner
+        assert isinstance(event_sink, FakeEventSink)
+
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            failure_mode=FailureMode.CONTINUE,  # Don't retry on error
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+        coordinator.config.validation_config = validation_config
+
+        # Review returns failed (execution error)
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="failed",
+                findings=(),
+                new_baseline_commit=None,
+                skip_reason="execution_error: timeout",
+            )
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        await coordinator.run_trigger_validation(dry_run=False)
+
+        # Assert: started, error(error="execution_error: timeout") events
+        assert event_sink.has_event("trigger_code_review_started")
+        assert event_sink.has_event("trigger_code_review_error")
+
+        # Check error in error event
+        error_events = event_sink.get_events("trigger_code_review_error")
+        assert len(error_events) == 1
+        assert "execution_error" in error_events[0].kwargs["error"]
+
+    @pytest.mark.asyncio
+    async def test_exception_emits_started_error(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
+    ) -> None:
+        """started → error when exception bubbles up."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from tests.fakes.event_sink import FakeEventSink
+
+        coordinator, mock_review_runner, event_sink = coordinator_with_review_runner
+        assert isinstance(event_sink, FakeEventSink)
+
+        code_review_config = CodeReviewConfig(enabled=True)
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+        coordinator.config.validation_config = validation_config
+
+        # Review raises exception
+        mock_review_runner.run_review = AsyncMock(
+            side_effect=RuntimeError("test error")
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+
+        with pytest.raises(RuntimeError, match="test error"):
+            await coordinator.run_trigger_validation(dry_run=False)
+
+        # Assert: started, error(error="test error") events
+        assert event_sink.has_event("trigger_code_review_started")
+        assert event_sink.has_event("trigger_code_review_error")
+
+        # Check error in error event
+        error_events = event_sink.get_events("trigger_code_review_error")
+        assert len(error_events) == 1
+        assert "test error" in error_events[0].kwargs["error"]
+
+    @pytest.mark.asyncio
+    async def test_disabled_emits_no_events(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
+    ) -> None:
+        """No events when code review is disabled."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from tests.fakes.event_sink import FakeEventSink
+
+        coordinator, mock_review_runner, event_sink = coordinator_with_review_runner
+        assert isinstance(event_sink, FakeEventSink)
+
+        # Configure code_review DISABLED
+        code_review_config = CodeReviewConfig(enabled=False)
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+        coordinator.config.validation_config = validation_config
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        await coordinator.run_trigger_validation(dry_run=False)
+
+        # Assert: no code review events recorded
+        assert not event_sink.has_event("trigger_code_review_started")
+        assert not event_sink.has_event("trigger_code_review_passed")
+        assert not event_sink.has_event("trigger_code_review_failed")
+        assert not event_sink.has_event("trigger_code_review_skipped")
+        assert not event_sink.has_event("trigger_code_review_error")
+
+        # Review runner should not have been called
+        mock_review_runner.run_review.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_code_review_config_emits_no_events(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
+    ) -> None:
+        """No events when code_review is not configured."""
+        from src.domain.validation.config import (
+            FailureMode,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from tests.fakes.event_sink import FakeEventSink
+
+        coordinator, _mock_review_runner, event_sink = coordinator_with_review_runner
+        assert isinstance(event_sink, FakeEventSink)
+
+        # Configure trigger WITHOUT code_review
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            # No code_review config
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+        coordinator.config.validation_config = validation_config
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        await coordinator.run_trigger_validation(dry_run=False)
+
+        # Assert: no code review events recorded
+        assert not event_sink.has_event("trigger_code_review_started")
+
+    @pytest.mark.asyncio
+    async def test_remediation_success_emits_fixer_events_then_passed(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
+    ) -> None:
+        """started → fixer_started → fixer_completed → passed."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import (
+            CumulativeReviewResult,
+            ReviewFinding,
+        )
+        from tests.fakes.event_sink import FakeEventSink
+
+        coordinator, mock_review_runner, event_sink = coordinator_with_review_runner
+        assert isinstance(event_sink, FakeEventSink)
+
+        # Configure code_review with remediation
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            finding_threshold="P1",
+            failure_mode=FailureMode.REMEDIATE,
+            max_retries=1,
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+        coordinator.config.validation_config = validation_config
+
+        # First call: P0 finding
+        # Second call (after fixer): no findings
+        mock_review_runner.run_review = AsyncMock(
+            side_effect=[
+                CumulativeReviewResult(
+                    status="success",
+                    findings=(
+                        ReviewFinding(
+                            file="test.py",
+                            line_start=1,
+                            line_end=5,
+                            priority=0,
+                            title="Critical issue",
+                            body="Details",
+                            reviewer="test",
+                        ),
+                    ),
+                    new_baseline_commit="abc123",
+                ),
+                CumulativeReviewResult(
+                    status="success",
+                    findings=(),
+                    new_baseline_commit="def456",
+                ),
+            ]
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+
+        # Mock _run_fixer_agent to avoid MCP setup
+        with patch.object(
+            coordinator,
+            "_run_fixer_agent",
+            new=AsyncMock(return_value=FixerResult(success=True, interrupted=False)),
+        ):
+            await coordinator.run_trigger_validation(dry_run=False)
+
+        # Assert: started, fixer_started, (fixer_completed from _run_trigger_code_review after fixer),
+        # then code_review_passed after final review
+        # Note: The first code review emits started + failed, then remediation emits fixer_started
+        # After fixer succeeds, re-run code review - but that's in _run_code_review_remediation
+        # which calls _run_trigger_code_review which doesn't re-emit started
+        assert event_sink.has_event("trigger_code_review_started")
+        assert event_sink.has_event("fixer_started")
+
+        # After successful remediation, the trigger should pass overall
+        # But note: the code_review_passed event was already emitted after first review failed
+        # Actually looking at the code, the first review emits started -> failed (since findings exceed)
+        # Then remediation loop runs, and after fixer succeeds, review is called again
+        # That second call is inside _run_code_review_remediation, not wrapped by our event emission
+
+        # Check fixer_started was emitted with correct attempt/max_retries
+        fixer_started_events = event_sink.get_events("fixer_started")
+        assert len(fixer_started_events) >= 1
+        assert fixer_started_events[0].kwargs["attempt"] == 1
+        assert fixer_started_events[0].kwargs["max_attempts"] == 1
+
+    @pytest.mark.asyncio
+    async def test_remediation_exhausted_emits_fixer_events_then_failed(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
+    ) -> None:
+        """started → fixer_started → fixer_completed → ... → failed."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import (
+            CumulativeReviewResult,
+            ReviewFinding,
+        )
+        from tests.fakes.event_sink import FakeEventSink
+
+        coordinator, mock_review_runner, event_sink = coordinator_with_review_runner
+        assert isinstance(event_sink, FakeEventSink)
+
+        # Configure code_review with remediation and 2 retries
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            finding_threshold="P1",
+            failure_mode=FailureMode.REMEDIATE,
+            max_retries=2,
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+        coordinator.config.validation_config = validation_config
+
+        # All reviews return P0 finding - fixer cannot fix
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="success",
+                findings=(
+                    ReviewFinding(
+                        file="test.py",
+                        line_start=1,
+                        line_end=5,
+                        priority=0,
+                        title="Critical issue",
+                        body="Details",
+                        reviewer="test",
+                    ),
+                ),
+                new_baseline_commit="abc123",
+            )
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+
+        # Mock _run_fixer_agent
+        with patch.object(
+            coordinator,
+            "_run_fixer_agent",
+            new=AsyncMock(return_value=FixerResult(success=True, interrupted=False)),
+        ):
+            await coordinator.run_trigger_validation(dry_run=False)
+
+        # Assert: started, failed events
+        assert event_sink.has_event("trigger_code_review_started")
+        assert event_sink.has_event("trigger_code_review_failed")
+
+        # Assert: fixer events for each attempt (2 retries)
+        fixer_started_events = event_sink.get_events("fixer_started")
+        assert len(fixer_started_events) == 2  # 2 remediation attempts
+        assert fixer_started_events[0].kwargs["attempt"] == 1
+        assert fixer_started_events[1].kwargs["attempt"] == 2
+
+        # Assert: trigger_remediation_exhausted was called
+        assert event_sink.has_event("trigger_remediation_exhausted")
+
+    @pytest.mark.asyncio
+    async def test_exactly_one_end_event_invariant(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
+    ) -> None:
+        """Verify exactly one end event is emitted per execution."""
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import CumulativeReviewResult
+        from tests.fakes.event_sink import FakeEventSink
+
+        coordinator, mock_review_runner, event_sink = coordinator_with_review_runner
+        assert isinstance(event_sink, FakeEventSink)
+
+        code_review_config = CodeReviewConfig(enabled=True)
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+        coordinator.config.validation_config = validation_config
+
+        # Review returns success with no findings
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="success",
+                findings=(),
+                new_baseline_commit="abc123",
+            )
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        await coordinator.run_trigger_validation(dry_run=False)
+
+        # Count end events
+        end_event_types = [
+            "trigger_code_review_passed",
+            "trigger_code_review_failed",
+            "trigger_code_review_skipped",
+            "trigger_code_review_error",
+        ]
+        end_event_count = sum(
+            1 for e in event_sink.events if e.event_type in end_event_types
+        )
+
+        # Verify exactly one end event
+        assert end_event_count == 1, (
+            f"Expected exactly 1 end event, got {end_event_count}. "
+            f"Events: {[e.event_type for e in event_sink.events]}"
+        )

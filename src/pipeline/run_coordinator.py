@@ -681,12 +681,95 @@ class RunCoordinator:
 
             # Run code_review if configured (regardless of command outcome,
             # unless ABORT which returned above)
-            review_result = await self._run_trigger_code_review(
-                trigger_type, trigger_config, context, interrupt_event
+            code_review_config = trigger_config.code_review
+            code_review_enabled = (
+                code_review_config is not None and code_review_config.enabled
             )
 
-            # Handle code review result
-            code_review_config = trigger_config.code_review
+            if not code_review_enabled:
+                # No events when code review is disabled/not configured
+                review_result = None
+            else:
+                # code_review_enabled is True implies code_review_config is not None
+                assert code_review_config is not None
+
+                # Emit started AFTER enabled check passes
+                if self.event_sink is not None:
+                    self.event_sink.on_trigger_code_review_started(trigger_type.value)
+
+                # Track end status for exactly-one-end-event invariant
+                code_review_end_status: (
+                    Literal["skipped", "passed", "failed"] | None
+                ) = None
+                code_review_blocking_count = 0
+
+                try:
+                    review_result = await self._run_trigger_code_review(
+                        trigger_type, trigger_config, context, interrupt_event
+                    )
+
+                    # Map result to status (precedence rule from issue)
+                    if review_result is None:
+                        # Not configured or runner not wired - should not reach here
+                        # since we checked code_review_enabled, but be defensive
+                        code_review_end_status = "skipped"
+                    elif review_result.status == "skipped":
+                        code_review_end_status = "skipped"
+                    elif review_result.status == "failed":
+                        # Review execution failed internally - emit error event
+                        if self.event_sink is not None:
+                            self.event_sink.on_trigger_code_review_error(
+                                trigger_type.value,
+                                review_result.skip_reason or "unknown error",
+                            )
+                        # Don't set end_status - error event already emitted
+                        code_review_end_status = None
+                    else:
+                        # Review completed successfully - check findings threshold
+                        threshold = code_review_config.finding_threshold
+                        if self._findings_exceed_threshold(
+                            review_result.findings, threshold
+                        ):
+                            code_review_end_status = "failed"
+                            code_review_blocking_count = sum(
+                                1
+                                for f in review_result.findings
+                                if f.priority <= int(threshold[1])
+                            )
+                        else:
+                            code_review_end_status = "passed"
+                except Exception as e:
+                    # Exception bubbles up - emit error event
+                    if self.event_sink is not None:
+                        self.event_sink.on_trigger_code_review_error(
+                            trigger_type.value, str(e)
+                        )
+                    raise
+                finally:
+                    # Emit exactly one end event based on status
+                    if (
+                        self.event_sink is not None
+                        and code_review_end_status is not None
+                    ):
+                        if code_review_end_status == "skipped":
+                            skip_reason = (
+                                review_result.skip_reason
+                                if review_result is not None
+                                else "unknown"
+                            )
+                            self.event_sink.on_trigger_code_review_skipped(
+                                trigger_type.value, skip_reason or "unknown"
+                            )
+                        elif code_review_end_status == "passed":
+                            self.event_sink.on_trigger_code_review_passed(
+                                trigger_type.value
+                            )
+                        elif code_review_end_status == "failed":
+                            self.event_sink.on_trigger_code_review_failed(
+                                trigger_type.value, code_review_blocking_count
+                            )
+
+            # Handle code review result for trigger validation flow
             if review_result is not None and code_review_config is not None:
                 review_failure_mode = code_review_config.failure_mode
                 threshold = code_review_config.finding_threshold
@@ -949,6 +1032,10 @@ class RunCoordinator:
                 self.event_sink.on_trigger_remediation_started(
                     trigger_type.value, attempt, max_retries
                 )
+
+            # Emit fixer_started event per remediation attempt
+            if self.event_sink is not None:
+                self.event_sink.on_fixer_started(attempt, max_retries)
 
             # Spawn fixer agent
             fixer_result = await self._run_fixer_agent(
@@ -1489,6 +1576,10 @@ class RunCoordinator:
                 self.event_sink.on_trigger_remediation_started(
                     trigger_type.value, attempt, max_retries
                 )
+
+            # Emit fixer_started event per remediation attempt
+            if self.event_sink is not None:
+                self.event_sink.on_fixer_started(attempt, max_retries)
 
             # Build validation commands summary for fixer
             findings_summary = "\n".join(
