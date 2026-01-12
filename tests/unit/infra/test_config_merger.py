@@ -58,6 +58,7 @@ class TestMergeConfigsPresetWithNoUserOverrides:
         """Preset commands are used when user doesn't override."""
         preset = ValidationConfig(
             commands=CommandsConfig(
+                build=CommandConfig(command="python -m build"),
                 test=CommandConfig(command="pytest"),
                 lint=CommandConfig(command="ruff check ."),
             ),
@@ -65,6 +66,8 @@ class TestMergeConfigsPresetWithNoUserOverrides:
         user = ValidationConfig()  # No overrides
         result = merge_configs(preset, user)
 
+        assert result.commands.build is not None
+        assert result.commands.build.command == "python -m build"
         assert result.commands.test is not None
         assert result.commands.test.command == "pytest"
         assert result.commands.lint is not None

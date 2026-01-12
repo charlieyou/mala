@@ -275,6 +275,7 @@ def _merge_commands(
 
     return CommandsConfig(
         setup=merge_fn(preset.setup, user.setup, "setup", user._fields_set),
+        build=merge_fn(preset.build, user.build, "build", user._fields_set),
         test=merge_fn(preset.test, user.test, "test", user._fields_set),
         lint=merge_fn(preset.lint, user.lint, "lint", user._fields_set),
         format=merge_fn(preset.format, user.format, "format", user._fields_set),
