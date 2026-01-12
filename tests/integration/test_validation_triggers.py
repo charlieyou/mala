@@ -327,10 +327,6 @@ def test_trigger_code_review_emits_lifecycle_events(tmp_path: Path) -> None:
     This test sets up a trigger with code_review enabled and runs trigger
     validation. It asserts that the FakeEventSink recorded the expected
     event sequence: started → (passed|failed|skipped|error).
-
-    NOTE: This test will FAIL until T002 wires up event emission in RunCoordinator.
-    The expected failure is an assertion error about missing events, not an
-    import or compile error.
     """
     import asyncio
     from unittest.mock import MagicMock
@@ -399,13 +395,8 @@ def test_trigger_code_review_emits_lifecycle_events(tmp_path: Path) -> None:
 
     # Assert event sequence: should see trigger_code_review_started followed by
     # one of: passed, failed, skipped, or error
-    #
-    # NOTE: This assertion will FAIL until T002 implements event emission.
-    # The failure message helps identify what's missing.
     assert event_sink.has_event("trigger_code_review_started"), (
         "Expected trigger_code_review_started event not recorded. "
         "Events recorded: "
         + ", ".join(e.event_type for e in event_sink.events)
-        + "\n\nThis test is expected to fail until T002 wires up event emission "
-        "in RunCoordinator._run_trigger_code_review()."
     )
