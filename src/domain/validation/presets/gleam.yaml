@@ -2,9 +2,8 @@
 commands:
   setup: "gleam deps download"
   build: "gleam build"
-  test: "gleam test"
-  lint: "gleam check"
   format: "gleam format --check"
+  test: "gleam test"
 
 code_patterns:
   - "**/*.gleam"
