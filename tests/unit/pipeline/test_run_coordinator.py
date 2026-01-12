@@ -622,7 +622,7 @@ class TestRunTriggerCodeReview:
         mock_review_runner.run_review.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_runner_not_wired(
+    async def test_returns_failed_when_runner_not_wired(
         self,
         tmp_path: Path,
         fake_command_runner: FakeCommandRunner,
@@ -630,7 +630,12 @@ class TestRunTriggerCodeReview:
         fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
-        """_run_trigger_code_review returns None and logs warning when runner not wired."""
+        """_run_trigger_code_review returns failed status when runner not wired.
+
+        Wiring errors return status="failed" (not None) to distinguish from
+        intentional skips. This ensures the caller emits an error event rather
+        than a skipped event.
+        """
         from src.domain.validation.config import (
             CodeReviewConfig,
             FailureMode,
@@ -675,10 +680,84 @@ class TestRunTriggerCodeReview:
             interrupt_event,
         )
 
-        assert result is None
+        # Wiring errors return failed status (not None) to trigger error event
+        assert result is not None
+        assert result.status == "failed"
+        assert result.skip_reason == "CumulativeReviewRunner not wired"
         mock_event_sink.on_warning.assert_called_once()
         assert (
             "CumulativeReviewRunner not wired"
+            in mock_event_sink.on_warning.call_args[0][0]
+        )
+
+    @pytest.mark.asyncio
+    async def test_returns_failed_when_run_metadata_not_available(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """_run_trigger_code_review returns failed status when run_metadata not available.
+
+        Wiring errors return status="failed" (not None) to distinguish from
+        intentional skips. This ensures the caller emits an error event rather
+        than a skipped event.
+        """
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerCommandRef,
+            TriggerType,
+        )
+
+        mock_gate_checker = MagicMock()
+        mock_event_sink = MagicMock()
+        mock_review_runner = MagicMock()
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
+        )
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            event_sink=mock_event_sink,
+            cumulative_review_runner=mock_review_runner,
+            # No run_metadata wired
+        )
+
+        code_review_config = CodeReviewConfig(enabled=True)
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(TriggerCommandRef(ref="test"),),
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+
+        interrupt_event = asyncio.Event()
+        result = await coordinator._run_trigger_code_review(
+            TriggerType.RUN_END,
+            trigger_config,
+            {},
+            interrupt_event,
+        )
+
+        # Wiring errors return failed status (not None) to trigger error event
+        assert result is not None
+        assert result.status == "failed"
+        assert result.skip_reason == "run_metadata not available"
+        mock_event_sink.on_warning.assert_called_once()
+        assert (
+            "run_metadata not available"
             in mock_event_sink.on_warning.call_args[0][0]
         )
 
@@ -1698,6 +1777,123 @@ class TestFindingThresholdEnforcement:
         )
         # Must NOT emit validation_passed after emitting validation_failed
         mock_event_sink.on_trigger_validation_passed.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_remediation_execution_error_on_rereview_emits_error_event(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """Execution error on re-review during remediation aborts with error event.
+
+        When the fixer runs but the subsequent re-review returns status='failed'
+        (execution error), we should emit on_trigger_code_review_error and abort,
+        NOT on_trigger_code_review_failed (which implies findings exceeded threshold).
+        """
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import (
+            CumulativeReviewResult,
+            ReviewFinding,
+        )
+        from src.pipeline.run_coordinator import FixerResult
+
+        mock_gate_checker = MagicMock()
+        mock_review_runner = MagicMock()
+        mock_run_metadata = MagicMock()
+        mock_event_sink = MagicMock()
+
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            finding_threshold="P1",
+            failure_mode=FailureMode.REMEDIATE,
+            max_retries=1,
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(),
+            fire_on=FireOn.SUCCESS,
+            code_review=code_review_config,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        validation_config = ValidationConfig(validation_triggers=triggers_config)
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
+            validation_config=validation_config,
+        )
+
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=mock_run_metadata,
+            event_sink=mock_event_sink,
+        )
+
+        # First review returns P0 finding (triggers remediation)
+        # Second review (re-review after fixer) returns execution error
+        mock_review_runner.run_review = AsyncMock(
+            side_effect=[
+                CumulativeReviewResult(
+                    status="success",
+                    findings=(
+                        ReviewFinding(
+                            file="test.py",
+                            line_start=1,
+                            line_end=5,
+                            priority=0,
+                            title="Critical issue",
+                            body="Details",
+                            reviewer="test",
+                        ),
+                    ),
+                    new_baseline_commit="abc123",
+                ),
+                CumulativeReviewResult(
+                    status="failed",
+                    findings=(),
+                    new_baseline_commit=None,
+                    skip_reason="execution_error: model timeout",
+                ),
+            ]
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+
+        # Mock _run_fixer_agent to avoid MCP setup
+        with patch.object(
+            coordinator,
+            "_run_fixer_agent",
+            new=AsyncMock(return_value=FixerResult(success=True, interrupted=False)),
+        ):
+            result = await coordinator.run_trigger_validation(dry_run=False)
+
+        # Should abort with error event, not failed event
+        assert result.status == "aborted"
+        assert result.details is not None
+        assert "execution failed" in result.details.lower()
+
+        # Error event should be emitted, NOT failed event
+        mock_event_sink.on_trigger_code_review_error.assert_called_once()
+        # code_review_failed should NOT be called (error is the terminal event)
+        mock_event_sink.on_trigger_code_review_failed.assert_not_called()
 
 
 class TestR12CodeReviewGating:

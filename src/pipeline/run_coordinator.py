@@ -714,8 +714,10 @@ class RunCoordinator:
 
                     # Map result to status (precedence rule from issue)
                     if review_result is None:
-                        # Not configured or runner not wired - should not reach here
-                        # since we checked code_review_enabled, but be defensive
+                        # None is only returned for defensive cases that occur before
+                        # the started event would be emitted (disabled, fixer session).
+                        # Wiring errors now return status="failed" instead of None.
+                        # This case should rarely be reached since we checked enabled above.
                         code_review_end_status = "skipped"
                     elif review_result.status == "skipped":
                         code_review_end_status = "skipped"
@@ -844,9 +846,12 @@ class RunCoordinator:
                                 details="Validation interrupted by SIGINT",
                             )
 
+                        # Determine final state from remediation result
+                        # remediation_result is None only if interrupted or couldn't run
+                        # Otherwise it contains the last review result for proper event emission
                         if remediation_result is None:
-                            # Remediation failed/exhausted - record failure and continue
-                            # (consistent with execution error remediation behavior)
+                            # Remediation couldn't run (max_retries=0, interrupted, etc.)
+                            # Emit deferred code_review_failed event
                             last_failure = (
                                 "code_review_findings",
                                 trigger_type.value,
@@ -857,7 +862,6 @@ class RunCoordinator:
                                     "code_review_findings",
                                     "remediate",
                                 )
-                            # Emit deferred code_review_failed event
                             if (
                                 defer_code_review_end_event
                                 and self.event_sink is not None
@@ -865,16 +869,65 @@ class RunCoordinator:
                                 self.event_sink.on_trigger_code_review_failed(
                                     trigger_type.value, code_review_blocking_count
                                 )
+                        elif remediation_result.status == "failed":
+                            # Last re-review had execution error - emit error event
+                            # This is the terminal event, not failed/passed
+                            error_reason = (
+                                remediation_result.skip_reason or "unknown error"
+                            )
+                            if self.event_sink is not None:
+                                self.event_sink.on_trigger_code_review_error(
+                                    trigger_type.value,
+                                    error_reason,
+                                )
+                            # Abort validation - execution error is a hard failure
+                            self.clear_trigger_queue("code_review_execution_error")
+                            return TriggerValidationResult(
+                                status="aborted",
+                                details=f"Code review execution failed after remediation: {error_reason}",
+                            )
+                        elif self._findings_exceed_threshold(
+                            remediation_result.findings,
+                            code_review_config.finding_threshold,
+                        ):
+                            # Remediation exhausted - findings still exceed threshold
+                            last_failure = (
+                                "code_review_findings",
+                                trigger_type.value,
+                            )
+                            if self.event_sink is not None:
+                                self.event_sink.on_trigger_validation_failed(
+                                    trigger_type.value,
+                                    "code_review_findings",
+                                    "remediate",
+                                )
+                            # Emit deferred code_review_failed with updated count
+                            if (
+                                defer_code_review_end_event
+                                and self.event_sink is not None
+                            ):
+                                # Count blocking findings from final review result
+                                final_blocking_count = sum(
+                                    1
+                                    for f in remediation_result.findings
+                                    if f.priority
+                                    <= int(
+                                        code_review_config.finding_threshold[1]
+                                    )
+                                )
+                                self.event_sink.on_trigger_code_review_failed(
+                                    trigger_type.value, final_blocking_count
+                                )
                         else:
-                            # Remediation succeeded - clear code_review failure only.
-                            # Command failures from this trigger (if failure_mode=CONTINUE)
-                            # must be preserved - only clear code_review-related failures.
+                            # Remediation succeeded - findings dropped below threshold
+                            # Clear code_review failure only. Command failures from this
+                            # trigger (if failure_mode=CONTINUE) must be preserved.
                             if last_failure is not None and last_failure[0] in (
                                 "code_review",
                                 "code_review_findings",
                             ):
                                 last_failure = None
-                            # Emit deferred code_review_passed event (remediation fixed findings)
+                            # Emit deferred code_review_passed event
                             if (
                                 defer_code_review_end_event
                                 and self.event_sink is not None
@@ -1431,22 +1484,39 @@ class RunCoordinator:
             return None
 
         # Check if CumulativeReviewRunner is wired
+        # Return failed status instead of None to distinguish wiring errors
+        # from intentional skips. This ensures the caller emits an error event
+        # rather than a skipped event (see issue: avoid started+skipped for wiring errors).
         if self.cumulative_review_runner is None:
+            from src.pipeline.cumulative_review_runner import CumulativeReviewResult
+
             if self.event_sink is not None:
                 self.event_sink.on_warning(
                     f"code_review enabled for {trigger_type.value} but "
                     "CumulativeReviewRunner not wired"
                 )
-            return None
+            return CumulativeReviewResult(
+                status="failed",
+                findings=(),
+                new_baseline_commit=None,
+                skip_reason="CumulativeReviewRunner not wired",
+            )
 
         # Check if run_metadata is available
         if self.run_metadata is None:
+            from src.pipeline.cumulative_review_runner import CumulativeReviewResult
+
             if self.event_sink is not None:
                 self.event_sink.on_warning(
                     f"code_review enabled for {trigger_type.value} but "
                     "run_metadata not available"
                 )
-            return None
+            return CumulativeReviewResult(
+                status="failed",
+                findings=(),
+                new_baseline_commit=None,
+                skip_reason="run_metadata not available",
+            )
 
         # Run cumulative code review
         return await self.cumulative_review_runner.run_review(
@@ -1523,8 +1593,12 @@ class RunCoordinator:
             initial_findings: The findings that exceeded threshold.
 
         Returns:
-            CumulativeReviewResult if remediation succeeded (findings resolved or
-            dropped below threshold), None if remediation failed/exhausted.
+            CumulativeReviewResult with final state after remediation attempts:
+            - status="success" with findings below threshold: remediation succeeded
+            - status="success" with findings above threshold: remediation exhausted
+            - status="failed": last re-review had execution error
+            Returns None only if remediation couldn't run (max_retries=0, interrupted,
+            or review couldn't run at all).
         """
         code_review_config = trigger_config.code_review
         if code_review_config is None:
@@ -1541,6 +1615,9 @@ class RunCoordinator:
         failure_output = self._build_findings_failure_output(
             initial_findings, threshold
         )
+
+        # Track last review result to return on exhaustion
+        last_review_result: CumulativeReviewResult | None = None
 
         for attempt in range(1, max_retries + 1):
             # Check for SIGINT before fixer attempt
@@ -1585,6 +1662,9 @@ class RunCoordinator:
                 # Review couldn't run (not configured, etc.)
                 return None
 
+            # Track this result as the last known state
+            last_review_result = review_result
+
             if review_result.status == "failed":
                 # Execution error during re-review - update failure output
                 failure_output = (
@@ -1613,7 +1693,8 @@ class RunCoordinator:
                 trigger_type.value, max_retries
             )
 
-        return None
+        # Return last review result so caller can determine proper terminal event
+        return last_review_result
 
     def _build_findings_failure_output(
         self,
