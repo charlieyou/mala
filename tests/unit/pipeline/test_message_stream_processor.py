@@ -455,6 +455,190 @@ class TestMessageStreamProcessorContextPressure:
         assert result.success is True
         assert lifecycle_ctx.context_usage.input_tokens == 40_000
 
+    @pytest.mark.asyncio
+    async def test_accumulates_usage_across_multiple_messages(
+        self, lifecycle_ctx: LifecycleContext
+    ) -> None:
+        """Multiple ResultMessages accumulate tokens correctly."""
+        config = StreamProcessorConfig(
+            context_limit=200_000,
+            context_restart_threshold=0.90,
+        )
+        processor = MessageStreamProcessor(config=config)
+
+        # First message: 10K input, 5K output
+        usage1 = {
+            "input_tokens": 10_000,
+            "output_tokens": 5_000,
+            "cache_read_input_tokens": 1_000,
+        }
+        result1 = make_result_message(session_id="sess-accum", usage=usage1)
+        state = MessageIterationState()
+
+        stream1 = messages_to_stream([], result1)
+        await processor.process_stream(
+            stream1,
+            issue_id="issue-accum",
+            state=state,
+            lifecycle_ctx=lifecycle_ctx,
+            lint_cache=FakeLintCache(),
+            query_start=0.0,
+            tracer=None,
+        )
+
+        assert lifecycle_ctx.context_usage.input_tokens == 10_000
+        assert lifecycle_ctx.context_usage.output_tokens == 5_000
+        assert lifecycle_ctx.context_usage.cache_read_tokens == 1_000
+
+        # Second message: 20K input, 8K output
+        usage2 = {
+            "input_tokens": 20_000,
+            "output_tokens": 8_000,
+            "cache_read_input_tokens": 2_000,
+        }
+        result2 = make_result_message(session_id="sess-accum", usage=usage2)
+
+        stream2 = messages_to_stream([], result2)
+        await processor.process_stream(
+            stream2,
+            issue_id="issue-accum",
+            state=state,
+            lifecycle_ctx=lifecycle_ctx,
+            lint_cache=FakeLintCache(),
+            query_start=0.0,
+            tracer=None,
+        )
+
+        # Cumulative: 30K input, 13K output, 3K cache_read
+        assert lifecycle_ctx.context_usage.input_tokens == 30_000
+        assert lifecycle_ctx.context_usage.output_tokens == 13_000
+        assert lifecycle_ctx.context_usage.cache_read_tokens == 3_000
+
+    @pytest.mark.asyncio
+    async def test_pressure_calculation_ignores_cache_read(
+        self, lifecycle_ctx: LifecycleContext
+    ) -> None:
+        """Large cache_read tokens should not trigger ContextPressureError."""
+        config = StreamProcessorConfig(
+            context_limit=100_000,
+            context_restart_threshold=0.90,
+        )
+        processor = MessageStreamProcessor(config=config)
+
+        # 40K input + 10K output = 50% pressure (under 90% threshold)
+        # Even with 80K cache_read (which would be 130K total if counted)
+        usage = {
+            "input_tokens": 40_000,
+            "output_tokens": 10_000,
+            "cache_read_input_tokens": 80_000,
+        }
+        result_msg = make_result_message(session_id="sess-cache", usage=usage)
+        state = MessageIterationState()
+
+        stream = messages_to_stream([], result_msg)
+        result = await processor.process_stream(
+            stream,
+            issue_id="issue-cache",
+            state=state,
+            lifecycle_ctx=lifecycle_ctx,
+            lint_cache=FakeLintCache(),
+            query_start=0.0,
+            tracer=None,
+        )
+
+        # Should succeed - cache_read not counted in pressure
+        assert result.success is True
+        assert lifecycle_ctx.context_usage.cache_read_tokens == 80_000
+
+    @pytest.mark.asyncio
+    async def test_context_pressure_error_contains_cumulative_totals(
+        self, lifecycle_ctx: LifecycleContext
+    ) -> None:
+        """ContextPressureError should contain cumulative values, not per-turn."""
+        config = StreamProcessorConfig(
+            context_limit=100_000,
+            context_restart_threshold=0.90,
+        )
+        processor = MessageStreamProcessor(config=config)
+
+        # First turn: 30K input, 10K output (40% pressure - OK)
+        usage1 = {
+            "input_tokens": 30_000,
+            "output_tokens": 10_000,
+            "cache_read_input_tokens": 5_000,
+        }
+        result1 = make_result_message(session_id="sess-cumul", usage=usage1)
+        state = MessageIterationState()
+
+        stream1 = messages_to_stream([], result1)
+        await processor.process_stream(
+            stream1,
+            issue_id="issue-cumul",
+            state=state,
+            lifecycle_ctx=lifecycle_ctx,
+            lint_cache=FakeLintCache(),
+            query_start=0.0,
+            tracer=None,
+        )
+
+        # Second turn: 50K input, 5K output
+        # Per-turn: 55K / 100K = 55% (would not trigger)
+        # Cumulative: (30K+50K) input + (10K+5K) output = 95K / 100K = 95% (triggers)
+        usage2 = {
+            "input_tokens": 50_000,
+            "output_tokens": 5_000,
+            "cache_read_input_tokens": 3_000,
+        }
+        result2 = make_result_message(session_id="sess-cumul", usage=usage2)
+
+        stream2 = messages_to_stream([], result2)
+        with pytest.raises(ContextPressureError) as exc_info:
+            await processor.process_stream(
+                stream2,
+                issue_id="issue-cumul",
+                state=state,
+                lifecycle_ctx=lifecycle_ctx,
+                lint_cache=FakeLintCache(),
+                query_start=0.0,
+                tracer=None,
+            )
+
+        err = exc_info.value
+        # Error should have cumulative totals, not just second turn values
+        assert err.input_tokens == 80_000  # 30K + 50K
+        assert err.output_tokens == 15_000  # 10K + 5K
+        assert err.cache_read_tokens == 8_000  # 5K + 3K
+        assert err.pressure_ratio >= 0.90
+
+    @pytest.mark.asyncio
+    async def test_missing_usage_disables_tracking(
+        self, lifecycle_ctx: LifecycleContext
+    ) -> None:
+        """ResultMessage without usage field disables tracking."""
+        config = StreamProcessorConfig(
+            context_limit=100_000,
+            context_restart_threshold=0.90,
+        )
+        processor = MessageStreamProcessor(config=config)
+
+        # Result with no usage field
+        result_msg = make_result_message(session_id="sess-no-usage", usage=None)
+        state = MessageIterationState()
+
+        stream = messages_to_stream([], result_msg)
+        result = await processor.process_stream(
+            stream,
+            issue_id="issue-no-usage",
+            state=state,
+            lifecycle_ctx=lifecycle_ctx,
+            lint_cache=FakeLintCache(),
+            query_start=0.0,
+            tracer=None,
+        )
+
+        assert result.success is True
+        assert lifecycle_ctx.context_usage.tracking_disabled is True
+
 
 class TestMessageStreamProcessorTracer:
     """Tests for tracer integration."""

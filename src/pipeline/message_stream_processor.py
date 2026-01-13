@@ -357,10 +357,12 @@ class MessageStreamProcessor:
                 output_tokens = getattr(usage, "output_tokens", 0) or 0
                 cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
 
-            # Update lifecycle context with cumulative usage
-            lifecycle_ctx.context_usage.input_tokens = input_tokens
-            lifecycle_ctx.context_usage.output_tokens = output_tokens
-            lifecycle_ctx.context_usage.cache_read_tokens = cache_read
+            # Accumulate usage across turns
+            lifecycle_ctx.context_usage.add_turn(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_tokens=cache_read,
+            )
 
             # Check context pressure threshold
             pressure = lifecycle_ctx.context_usage.pressure_ratio(
@@ -368,9 +370,9 @@ class MessageStreamProcessor:
             )
             logger.debug(
                 "Context usage: input=%d output=%d cache_read=%d limit=%d pressure=%.1f%%",
-                input_tokens,
-                output_tokens,
-                cache_read,
+                lifecycle_ctx.context_usage.input_tokens,
+                lifecycle_ctx.context_usage.output_tokens,
+                lifecycle_ctx.context_usage.cache_read_tokens,
                 self.config.context_limit,
                 pressure * 100,
             )
@@ -378,9 +380,9 @@ class MessageStreamProcessor:
                 # session_id was already extracted above
                 raise ContextPressureError(
                     session_id=state.session_id or "",
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cache_read_tokens=cache_read,
+                    input_tokens=lifecycle_ctx.context_usage.input_tokens,
+                    output_tokens=lifecycle_ctx.context_usage.output_tokens,
+                    cache_read_tokens=lifecycle_ctx.context_usage.cache_read_tokens,
                     pressure_ratio=pressure,
                 )
         else:
