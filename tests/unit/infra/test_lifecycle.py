@@ -820,15 +820,15 @@ class TestContextUsage:
         usage = ContextUsage(input_tokens=100_000)
         assert usage.pressure_ratio(-1) == 0.0
 
-    def test_pressure_ratio_includes_cache_read_tokens(self) -> None:
-        """pressure_ratio sums input + output + cache_read tokens."""
+    def test_pressure_ratio_excludes_cache_read_tokens(self) -> None:
+        """pressure_ratio excludes cache_read_tokens (uses input + output only)."""
         usage = ContextUsage(
             input_tokens=50_000,
             output_tokens=30_000,
             cache_read_tokens=20_000,
         )
-        # Total: 100_000 / 200_000 = 0.5
-        assert usage.pressure_ratio(200_000) == 0.5
+        # Total: 80_000 / 200_000 = 0.4 (cache_read_tokens excluded)
+        assert usage.pressure_ratio(200_000) == 0.4
 
     def test_disable_tracking_sets_sentinel(self) -> None:
         """disable_tracking() sets input_tokens to -1 sentinel."""

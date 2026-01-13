@@ -249,11 +249,15 @@ TRACKING_DISABLED: int = -1
 class ContextUsage:
     """Tracks token usage for context exhaustion detection.
 
-    The SDK provides cumulative input_tokens in ResultMessage.usage.
-    We track usage to detect when approaching the 200K context limit.
+    The SDK provides per-turn token deltas in ResultMessage.usage.
+    We accumulate these to track cumulative usage and detect when
+    approaching the context limit.
 
-    When usage is unavailable (SDK doesn't provide it), input_tokens is set
-    to TRACKING_DISABLED (-1) to distinguish from zero usage.
+    Pressure calculation uses only input_tokens + output_tokens.
+    cache_read_tokens are tracked for telemetry but excluded from
+    pressure since they represent cached prefix, not new consumption.
+
+    When usage is unavailable, input_tokens is set to TRACKING_DISABLED (-1).
     """
 
     input_tokens: int = 0
@@ -269,23 +273,53 @@ class ContextUsage:
         """Mark tracking as disabled by setting sentinel value."""
         self.input_tokens = TRACKING_DISABLED
 
-    def pressure_ratio(self, limit: int) -> float:
-        """Return ratio of total tokens used to the limit.
+    def add_turn(
+        self, *, input_tokens: int, output_tokens: int, cache_read_tokens: int = 0
+    ) -> None:
+        """Accumulate per-turn usage into cumulative totals.
 
-        Note: cache_read_tokens are reported separately by the SDK and
-        are not included in input_tokens, so we sum input + output + cache_read.
+        No-op if tracking is disabled. Values are clamped to >= 0.
+        """
+        if self.tracking_disabled:
+            return
+        self.input_tokens += max(0, input_tokens)
+        self.output_tokens += max(0, output_tokens)
+        self.cache_read_tokens += max(0, cache_read_tokens)
+
+    def reset(self) -> None:
+        """Reset counters for a new context.
+
+        If tracking was disabled, it remains disabled.
+        """
+        if self.tracking_disabled:
+            self.output_tokens = 0
+            self.cache_read_tokens = 0
+        else:
+            self.input_tokens = 0
+            self.output_tokens = 0
+            self.cache_read_tokens = 0
+
+    def is_tracking_enabled(self) -> bool:
+        """Return True if tracking is not disabled."""
+        return not self.tracking_disabled
+
+    def pressure_ratio(self, limit: int) -> float:
+        """Return ratio of token usage to context limit.
+
+        Uses only input_tokens + output_tokens. cache_read_tokens are
+        excluded as they represent cached prefix, not new consumption.
 
         Args:
             limit: Maximum context tokens (e.g., 200_000)
 
         Returns:
-            Ratio from 0.0 to 1.0+ (e.g., 90000/200000 = 0.45)
-            Returns 0.0 if limit is 0, or if tracking is disabled.
+            Ratio from 0.0 to 1.0+ (can exceed 1.0 if over limit).
+            Returns 0.0 if limit <= 0 or tracking is disabled.
         """
         if limit <= 0 or self.tracking_disabled:
             return 0.0
-        total_tokens = self.input_tokens + self.output_tokens + self.cache_read_tokens
-        return total_tokens / limit
+        live_tokens = max(0, self.input_tokens) + max(0, self.output_tokens)
+        return live_tokens / limit
 
 
 @dataclass
