@@ -366,6 +366,14 @@ class MessageStreamProcessor:
             pressure = lifecycle_ctx.context_usage.pressure_ratio(
                 self.config.context_limit
             )
+            logger.debug(
+                "Context usage: input=%d output=%d cache_read=%d limit=%d pressure=%.1f%%",
+                input_tokens,
+                output_tokens,
+                cache_read,
+                self.config.context_limit,
+                pressure * 100,
+            )
             if pressure >= self.config.context_restart_threshold:
                 # session_id was already extracted above
                 raise ContextPressureError(
