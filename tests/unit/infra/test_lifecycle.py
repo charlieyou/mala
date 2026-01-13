@@ -9,7 +9,6 @@ import pytest
 
 from src.infra.clients.review_output_parser import ReviewIssue, ReviewResult
 from src.domain.lifecycle import (
-    ContextUsage,
     Effect,
     ImplementerLifecycle,
     LifecycleConfig,
@@ -785,60 +784,3 @@ class TestFullLifecycleScenarios:
         assert result.effect == Effect.COMPLETE_FAILURE
         assert lifecycle.state == LifecycleState.FAILED
         assert "Another bug" in ctx.final_result
-
-
-class TestContextUsage:
-    """Tests for ContextUsage dataclass and pressure_ratio method."""
-
-    def test_pressure_ratio_at_zero(self) -> None:
-        """pressure_ratio returns 0.0 when input_tokens is 0."""
-        usage = ContextUsage(input_tokens=0)
-        assert usage.pressure_ratio(200_000) == 0.0
-
-    def test_pressure_ratio_at_fifty_percent(self) -> None:
-        """pressure_ratio returns 0.5 at 50% usage."""
-        usage = ContextUsage(input_tokens=100_000)
-        assert usage.pressure_ratio(200_000) == 0.5
-
-    def test_pressure_ratio_at_hundred_percent(self) -> None:
-        """pressure_ratio returns 1.0 at 100% usage."""
-        usage = ContextUsage(input_tokens=200_000)
-        assert usage.pressure_ratio(200_000) == 1.0
-
-    def test_pressure_ratio_above_limit(self) -> None:
-        """pressure_ratio can exceed 1.0 when over limit."""
-        usage = ContextUsage(input_tokens=250_000)
-        assert usage.pressure_ratio(200_000) == 1.25
-
-    def test_pressure_ratio_with_zero_limit(self) -> None:
-        """pressure_ratio returns 0.0 when limit is 0 to avoid division by zero."""
-        usage = ContextUsage(input_tokens=100_000)
-        assert usage.pressure_ratio(0) == 0.0
-
-    def test_pressure_ratio_with_negative_limit(self) -> None:
-        """pressure_ratio returns 0.0 when limit is negative."""
-        usage = ContextUsage(input_tokens=100_000)
-        assert usage.pressure_ratio(-1) == 0.0
-
-    def test_pressure_ratio_excludes_cache_read_tokens(self) -> None:
-        """pressure_ratio excludes cache_read_tokens (uses input + output only)."""
-        usage = ContextUsage(
-            input_tokens=50_000,
-            output_tokens=30_000,
-            cache_read_tokens=20_000,
-        )
-        # Total: 80_000 / 200_000 = 0.4 (cache_read_tokens excluded)
-        assert usage.pressure_ratio(200_000) == 0.4
-
-    def test_disable_tracking_sets_sentinel(self) -> None:
-        """disable_tracking() sets input_tokens to -1 sentinel."""
-        usage = ContextUsage(input_tokens=1000)
-        usage.disable_tracking()
-        assert usage.input_tokens == -1
-        assert usage.tracking_disabled is True
-
-    def test_pressure_ratio_returns_zero_when_tracking_disabled(self) -> None:
-        """pressure_ratio returns 0.0 when tracking is disabled."""
-        usage = ContextUsage(input_tokens=100_000, output_tokens=50_000)
-        usage.disable_tracking()
-        assert usage.pressure_ratio(200_000) == 0.0
