@@ -422,20 +422,22 @@ class AgentSDKReviewer:
                         except Exception as e:  # pragma: no cover - best effort cleanup
                             logger.debug(f"Failed to close SDK response iterator: {e}")
 
-            query_handle = getattr(client, "_query", None)
-            if query_handle is not None:
-                for stream_name in ("_message_send", "_message_receive"):
-                    stream = getattr(query_handle, stream_name, None)
-                    aclose = getattr(stream, "aclose", None)
-                    if callable(aclose):
-                        try:
-                            await aclose()
-                        except Exception as e:  # pragma: no cover - best effort cleanup
-                            logger.debug(
-                                "Failed to close SDK query stream %s: %s",
-                                stream_name,
-                                e,
-                            )
+                query_handle = getattr(client, "_query", None)
+                if query_handle is not None:
+                    for stream_name in ("_message_send", "_message_receive"):
+                        stream = getattr(query_handle, stream_name, None)
+                        aclose = getattr(stream, "aclose", None)
+                        if callable(aclose):
+                            try:
+                                await aclose()
+                            except (
+                                Exception
+                            ) as e:  # pragma: no cover - best effort cleanup
+                                logger.debug(
+                                    "Failed to close SDK query stream %s: %s",
+                                    stream_name,
+                                    e,
+                                )
 
         try:
             await client.disconnect()  # type: ignore[union-attr]
