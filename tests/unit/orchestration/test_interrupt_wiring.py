@@ -299,12 +299,13 @@ class TestInterruptWiring:
 
         orchestrator.async_gate_runner.run_gate_async = mock_run_gate_async  # type: ignore[method-assign]
 
-        # Build callbacks and invoke the gate check callback
-        callbacks = orchestrator.session_callback_factory.build("test-issue")
+        # Build adapters and invoke the gate check via adapter
+        adapters = orchestrator.session_callback_factory.build_adapters("test-issue")
 
-        # Call the gate callback
-        assert callbacks.on_gate_check is not None
-        await callbacks.on_gate_check("test-issue", tmp_path / "test.log", RetryState())
+        # Call the gate check via adapter
+        await adapters.gate_runner.run_gate_check(
+            "test-issue", tmp_path / "test.log", RetryState()
+        )
 
         # Verify interrupt_event was passed
         assert captured_interrupt_event is interrupt_event
@@ -368,17 +369,14 @@ class TestInterruptWiring:
 
         orchestrator.review_runner.run_review = mock_run_review  # type: ignore[method-assign]
 
-        # Build callbacks and invoke the review check callback
-        callbacks = orchestrator.session_callback_factory.build("test-issue")
-
-        # Call the review callback
-        assert callbacks.on_review_check is not None
+        # Build adapters and invoke the review check via adapter
+        adapters = orchestrator.session_callback_factory.build_adapters("test-issue")
 
         with patch(
             "src.infra.git_utils.get_issue_commits_async",
             new=AsyncMock(return_value=["abc123"]),
         ):
-            await callbacks.on_review_check(
+            await adapters.review_runner.run_review(
                 "test-issue",
                 "test description",
                 "session-123",

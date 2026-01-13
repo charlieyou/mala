@@ -22,10 +22,14 @@ from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,
     AgentSessionRunner,
-    SessionCallbacks,
     SessionConfig,
     SessionExecutionState,
     SessionPrompts,
+)
+from tests.helpers.protocol_stubs import (
+    StubGateRunner,
+    StubReviewRunner,
+    StubSessionLifecycle,
 )
 
 
@@ -412,7 +416,9 @@ class TestEarlyInterruptPath:
         runner = AgentSessionRunner(
             config=config,
             sdk_client_factory=FakeSDKClientFactory(),  # type: ignore[arg-type]
-            callbacks=SessionCallbacks(),
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
         )
 
         session_input = AgentSessionInput(
@@ -445,7 +451,9 @@ class TestEarlyInterruptPath:
         runner = AgentSessionRunner(
             config=config,
             sdk_client_factory=FakeSDKClientFactory(),  # type: ignore[arg-type]
-            callbacks=SessionCallbacks(),
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
         )
 
         session_input = AgentSessionInput(
@@ -478,7 +486,9 @@ class TestEarlyInterruptPath:
         runner = AgentSessionRunner(
             config=config,
             sdk_client_factory=FakeSDKClientFactory(),  # type: ignore[arg-type]
-            callbacks=SessionCallbacks(),
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
         )
 
         session_input = AgentSessionInput(
@@ -586,8 +596,8 @@ class TestProtocolInterfaceAcceptance:
         assert runner.review_runner is not None
         assert runner.session_lifecycle is not None
 
-    def test_bridge_methods_use_protocols_when_available(self) -> None:
-        """Bridge methods use protocol interfaces when available."""
+    def test_bridge_methods_use_protocols(self) -> None:
+        """Bridge methods use protocol interfaces."""
         from dataclasses import dataclass
 
         log_path_calls: list[str] = []
@@ -619,6 +629,45 @@ class TestProtocolInterfaceAcceptance:
             def on_agent_text(self, agent_id: str, text: str) -> None:
                 pass
 
+        @dataclass
+        class FakeGateRunner:
+            """Fake IGateRunner implementation."""
+
+            async def run_gate_check(
+                self, issue_id: str, log_path: object, retry_state: object
+            ) -> tuple[object, int]:
+                raise NotImplementedError
+
+            async def run_session_end_check(
+                self, issue_id: str, log_path: object, retry_state: object
+            ) -> object:
+                raise NotImplementedError
+
+        @dataclass
+        class FakeReviewRunner:
+            """Fake IReviewRunner implementation."""
+
+            async def run_review(
+                self,
+                issue_id: str,
+                description: str | None,
+                session_id: str | None,
+                retry_state: object,
+                author_context: str | None,
+                previous_findings: object,
+                session_end_result: object,
+            ) -> object:
+                raise NotImplementedError
+
+            def check_no_progress(
+                self,
+                log_path: object,
+                log_offset: int,
+                prev_commit: str | None,
+                curr_commit: str | None,
+            ) -> bool:
+                return False
+
         config = AgentSessionConfig(
             repo_path=Path("/tmp/test-repo"),
             timeout_seconds=300,
@@ -628,6 +677,8 @@ class TestProtocolInterfaceAcceptance:
         runner = AgentSessionRunner(
             config=config,
             sdk_client_factory=FakeSDKClientFactory(),  # type: ignore[arg-type]
+            gate_runner=FakeGateRunner(),  # type: ignore[arg-type]
+            review_runner=FakeReviewRunner(),  # type: ignore[arg-type]
             session_lifecycle=FakeSessionLifecycle(),
         )
 
@@ -640,28 +691,3 @@ class TestProtocolInterfaceAcceptance:
         result_offset = runner._get_log_offset(Path("/tmp/test.jsonl"), 10)
         assert result_offset == 42
         assert log_offset_calls == [(Path("/tmp/test.jsonl"), 10)]
-
-    def test_bridge_methods_fallback_to_callbacks(self) -> None:
-        """Bridge methods fall back to callbacks when protocols not available."""
-        log_path_calls: list[str] = []
-
-        def fake_get_log_path(session_id: str) -> Path:
-            log_path_calls.append(session_id)
-            return Path("/tmp/callback-log.jsonl")
-
-        config = AgentSessionConfig(
-            repo_path=Path("/tmp/test-repo"),
-            timeout_seconds=300,
-            prompts=make_prompts(),
-        )
-
-        runner = AgentSessionRunner(
-            config=config,
-            sdk_client_factory=FakeSDKClientFactory(),  # type: ignore[arg-type]
-            callbacks=SessionCallbacks(get_log_path=fake_get_log_path),
-        )
-
-        # No protocol, should use callback
-        result_path = runner._get_log_path("callback-session")
-        assert result_path == Path("/tmp/callback-log.jsonl")
-        assert log_path_calls == ["callback-session"]

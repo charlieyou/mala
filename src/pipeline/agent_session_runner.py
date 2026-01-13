@@ -13,7 +13,7 @@ Design principles:
 - Protocol-based SDK client for testability
 - Explicit input/output types for clarity
 - Lifecycle state machine drives policy decisions
-- Callbacks for external operations (gate checks, reviews)
+- Protocol interfaces for external operations (gate checks, reviews, lifecycle)
 """
 
 from __future__ import annotations
@@ -22,9 +22,7 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -63,6 +61,9 @@ from src.pipeline.message_stream_processor import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
+
     from src.core.protocols.lifecycle import ISessionLifecycle
     from src.core.protocols.review import IReviewRunner
     from src.core.protocols.validation import IGateRunner
@@ -80,10 +81,6 @@ if TYPE_CHECKING:
     from src.domain.validation.config import PromptValidationCommands
     from src.infra.hooks import LintCache
     from src.infra.telemetry import TelemetrySpan
-    from src.pipeline.message_stream_processor import (
-        AgentTextCallback,
-        ToolUseCallback,
-    )
     from src.core.session_end_result import SessionEndResult
 
 
@@ -114,34 +111,6 @@ def _is_stale_session_error(exc: Exception) -> bool:
             return True
 
     return False
-
-
-# Type aliases for callbacks
-GateCheckCallback = Callable[
-    [str, Path, "RetryState"],
-    Coroutine[Any, Any, tuple["GateOutcome", int]],
-]
-ReviewCheckCallback = Callable[
-    [
-        str,
-        str | None,
-        str | None,
-        "RetryState",
-        str | None,
-        Sequence["ReviewIssueProtocol"] | None,
-        "SessionEndResult | None",
-    ],
-    Coroutine[Any, Any, "ReviewOutcome"],
-]
-ReviewNoProgressCallback = Callable[
-    [Path, int, str | None, str | None],
-    bool,
-]
-LogOffsetCallback = Callable[[Path, int], int]
-SessionEndCheckCallback = Callable[
-    [str, Path, "SessionEndRetryState"],
-    Coroutine[Any, Any, "SessionEndResult"],
-]
 
 
 @dataclass
@@ -337,57 +306,6 @@ class AgentSessionOutput:
 
 
 @dataclass
-class SessionCallbacks:
-    """Callbacks for external actions during session execution.
-
-    .. deprecated::
-        This dataclass is deprecated. Use the protocol interfaces instead:
-        - IGateRunner for gate checking (on_gate_check, on_session_end_check)
-        - IReviewRunner for review operations (on_review_check, on_review_no_progress)
-        - ISessionLifecycle for lifecycle operations (get_log_path, get_log_offset,
-          on_abort, get_abort_event, on_tool_use, on_agent_text)
-
-    These callbacks allow the orchestrator to inject behavior for
-    actions that require external state (gate checks, review, etc.)
-    without coupling AgentSessionRunner to those implementations.
-
-    Attributes:
-        on_gate_check: Async callback to run quality gate check.
-            Args: (issue_id, log_path, retry_state) -> (GateResult, new_offset)
-        on_review_check: Async callback to run external review (Cerberus).
-            Args: (issue_id, issue_description, session_id, retry_state, author_context)
-                -> ReviewOutcome
-        on_review_no_progress: Sync callback to check if no progress on review retry.
-            Args: (log_path, log_offset, prev_commit, curr_commit) -> bool
-        get_log_path: Callback to get log path from session ID.
-            Args: (session_id) -> Path
-        get_log_offset: Callback to get log end offset.
-            Args: (log_path, start_offset) -> int
-        on_abort: Callback when fatal error requires run abort.
-            Args: (reason) -> None
-        on_tool_use: Callback for SDK tool use events.
-            Args: (agent_id, tool_name, arguments) -> None
-        on_agent_text: Callback for SDK text output events.
-            Args: (agent_id, text) -> None
-        on_session_end_check: Async callback to run session_end validation.
-            Args: (issue_id, log_path, retry_state) -> SessionEndResult
-        get_abort_event: Callback to get abort event for run abort detection.
-            Args: () -> asyncio.Event | None
-    """
-
-    on_gate_check: GateCheckCallback | None = None
-    on_review_check: ReviewCheckCallback | None = None
-    on_review_no_progress: ReviewNoProgressCallback | None = None
-    get_log_path: Callable[[str], Path] | None = None
-    get_log_offset: LogOffsetCallback | None = None
-    on_abort: Callable[[str], None] | None = None
-    on_tool_use: ToolUseCallback | None = None
-    on_agent_text: AgentTextCallback | None = None
-    on_session_end_check: SessionEndCheckCallback | None = None
-    get_abort_event: Callable[[], asyncio.Event | None] | None = None
-
-
-@dataclass
 class AgentSessionRunner:
     """Runs agent sessions with lifecycle management.
 
@@ -398,10 +316,10 @@ class AgentSessionRunner:
     - Hook setup (lock enforcement, lint cache, etc.)
     - Message logging and telemetry
 
-    The runner accepts either protocol interfaces (recommended) or the legacy
-    SessionCallbacks dataclass for external operations.
+    The runner uses protocol interfaces for external operations (gate checks,
+    reviews, lifecycle operations) to decouple from orchestrator internals.
 
-    Usage with protocols (preferred):
+    Usage:
         runner = AgentSessionRunner(
             config=AgentSessionConfig(repo_path=repo_path, ...),
             sdk_client_factory=SDKClientFactory(),
@@ -411,31 +329,21 @@ class AgentSessionRunner:
         )
         output = await runner.run_session(input)
 
-    Usage with callbacks (deprecated):
-        runner = AgentSessionRunner(
-            config=AgentSessionConfig(repo_path=repo_path, ...),
-            callbacks=SessionCallbacks(on_gate_check=..., ...),
-            sdk_client_factory=SDKClientFactory(),
-        )
-        output = await runner.run_session(input)
-
     Attributes:
         config: Session configuration.
         sdk_client_factory: Factory for creating SDK clients (required).
-        callbacks: Legacy callbacks for external operations (deprecated).
         event_sink: Optional event sink for structured logging.
-        gate_runner: Protocol for gate checking operations.
-        review_runner: Protocol for review operations.
-        session_lifecycle: Protocol for session lifecycle operations.
+        gate_runner: Protocol for gate checking operations (required).
+        review_runner: Protocol for review operations (required).
+        session_lifecycle: Protocol for session lifecycle operations (required).
     """
 
     config: AgentSessionConfig
     sdk_client_factory: SDKClientFactoryProtocol
-    callbacks: SessionCallbacks = field(default_factory=SessionCallbacks)
+    gate_runner: IGateRunner
+    review_runner: IReviewRunner
+    session_lifecycle: ISessionLifecycle
     event_sink: MalaEventSink | None = None
-    gate_runner: IGateRunner | None = None
-    review_runner: IReviewRunner | None = None
-    session_lifecycle: ISessionLifecycle | None = None
     _context_pressure_handler: ContextPressureHandler = field(init=False, repr=False)
     _retry_policy: IdleTimeoutRetryPolicy = field(init=False, repr=False)
     _effect_handler: LifecycleEffectHandler = field(init=False, repr=False)
@@ -463,7 +371,6 @@ class AgentSessionRunner:
         # Initialize lifecycle effect handler
         self._effect_handler = LifecycleEffectHandler(
             config=self.config,
-            callbacks=self.callbacks,
             event_sink=self.event_sink,
             gate_runner=self.gate_runner,
             review_runner=self.review_runner,
@@ -986,90 +893,57 @@ class AgentSessionRunner:
         result = lifecycle.on_log_ready(lifecycle_ctx)
         return log_path, result
 
-    # ===== Protocol / Callback Bridge Methods =====
-    # These methods use protocol interfaces when available, falling back to callbacks
+    # ===== Protocol Bridge Methods =====
+    # These methods delegate to protocol interfaces
 
     def _get_abort_event(self) -> asyncio.Event | None:
-        """Get abort event from protocol or callback."""
-        if self.session_lifecycle is not None:
-            return self.session_lifecycle.get_abort_event()
-        if self.callbacks.get_abort_event is not None:
-            return self.callbacks.get_abort_event()
-        return None
+        """Get abort event from session lifecycle protocol."""
+        return self.session_lifecycle.get_abort_event()
 
     def _get_log_path(self, session_id: str) -> Path:
-        """Get log path from protocol or callback."""
-        if self.session_lifecycle is not None:
-            return self.session_lifecycle.get_log_path(session_id)
-        if self.callbacks.get_log_path is not None:
-            return self.callbacks.get_log_path(session_id)
-        raise ValueError(
-            "get_log_path not configured: set session_lifecycle or callbacks"
-        )
+        """Get log path from session lifecycle protocol."""
+        return self.session_lifecycle.get_log_path(session_id)
 
     def _get_log_offset(self, log_path: Path, start_offset: int) -> int:
-        """Get log offset from protocol or callback."""
-        if self.session_lifecycle is not None:
-            return self.session_lifecycle.get_log_offset(log_path, start_offset)
-        if self.callbacks.get_log_offset is not None:
-            return self.callbacks.get_log_offset(log_path, start_offset)
-        return 0
+        """Get log offset from session lifecycle protocol."""
+        return self.session_lifecycle.get_log_offset(log_path, start_offset)
 
     def _on_abort(self, reason: str) -> None:
-        """Call on_abort from protocol or callback."""
-        if self.session_lifecycle is not None:
-            self.session_lifecycle.on_abort(reason)
-        elif self.callbacks.on_abort is not None:
-            self.callbacks.on_abort(reason)
+        """Call on_abort from session lifecycle protocol."""
+        self.session_lifecycle.on_abort(reason)
 
     async def _run_gate_check(
         self, issue_id: str, log_path: Path, retry_state: RetryState
     ) -> tuple[GateOutcome, int]:
-        """Run gate check via protocol or callback."""
-        if self.gate_runner is not None:
-            return await self.gate_runner.run_gate_check(
-                issue_id, log_path, retry_state
-            )
-        if self.callbacks.on_gate_check is not None:
-            return await self.callbacks.on_gate_check(issue_id, log_path, retry_state)
-        raise ValueError("on_gate_check not configured: set gate_runner or callbacks")
+        """Run gate check via protocol."""
+        return await self.gate_runner.run_gate_check(issue_id, log_path, retry_state)
 
     def _has_session_end_check(self) -> bool:
         """Check if session_end check is available.
 
-        Note: This is a conservative check. Even if gate_runner is set, the actual
-        run_session_end_check call may fall back to callbacks or return skipped if
-        the gate_runner doesn't support session_end.
+        Always returns True since gate_runner is now required.
+        The actual run_session_end_check call may still return skipped
+        if the gate_runner doesn't support session_end.
         """
-        return (
-            self.gate_runner is not None
-            or self.callbacks.on_session_end_check is not None
-        )
+        return True
 
     async def _run_session_end_check(
         self, issue_id: str, log_path: Path, retry_state: SessionEndRetryState
     ) -> SessionEndResult:
-        """Run session_end check via protocol or callback.
+        """Run session_end check via protocol.
 
-        If gate_runner is set but run_session_end_check raises NotImplementedError
-        or AttributeError (method not present), falls back to callback.
-        If neither is configured, returns skipped result.
+        If gate_runner's run_session_end_check raises NotImplementedError
+        or AttributeError (method not present), returns skipped result.
         """
         from src.core.session_end_result import SessionEndResult
 
-        if self.gate_runner is not None:
-            try:
-                return await self.gate_runner.run_session_end_check(
-                    issue_id, log_path, retry_state
-                )
-            except (NotImplementedError, AttributeError):
-                # gate_runner doesn't support session_end, fall through to callback
-                pass
-        if self.callbacks.on_session_end_check is not None:
-            return await self.callbacks.on_session_end_check(
+        try:
+            return await self.gate_runner.run_session_end_check(
                 issue_id, log_path, retry_state
             )
-        return SessionEndResult(status="skipped", reason="not_configured")
+        except (NotImplementedError, AttributeError):
+            # gate_runner doesn't support session_end
+            return SessionEndResult(status="skipped", reason="not_configured")
 
     async def _run_review_check(
         self,
@@ -1081,51 +955,26 @@ class AgentSessionRunner:
         previous_findings: Sequence[ReviewIssueProtocol] | None,
         session_end_result: SessionEndResult | None,
     ) -> ReviewOutcome:
-        """Run review via protocol or callback."""
-        if self.review_runner is not None:
-            return await self.review_runner.run_review(
-                issue_id,
-                description,
-                session_id,
-                retry_state,
-                author_context,
-                previous_findings,
-                session_end_result,
-            )
-        if self.callbacks.on_review_check is not None:
-            return await self.callbacks.on_review_check(
-                issue_id,
-                description,
-                session_id,
-                retry_state,
-                author_context,
-                previous_findings,
-                session_end_result,
-            )
-        raise ValueError(
-            "on_review_check not configured: set review_runner or callbacks"
+        """Run review via protocol."""
+        return await self.review_runner.run_review(
+            issue_id,
+            description,
+            session_id,
+            retry_state,
+            author_context,
+            previous_findings,
+            session_end_result,
         )
 
     def _get_stream_processor(self) -> MessageStreamProcessor:
-        """Create a MessageStreamProcessor with current config/callbacks."""
+        """Create a MessageStreamProcessor with protocol callbacks."""
         config = StreamProcessorConfig(
             context_limit=self.config.context_limit,
             context_restart_threshold=self.config.context_restart_threshold,
         )
-        # Use protocol methods if available, fall back to callbacks
-        on_tool_use = (
-            self.session_lifecycle.on_tool_use
-            if self.session_lifecycle is not None
-            else self.callbacks.on_tool_use
-        )
-        on_agent_text = (
-            self.session_lifecycle.on_agent_text
-            if self.session_lifecycle is not None
-            else self.callbacks.on_agent_text
-        )
         callbacks = StreamProcessorCallbacks(
-            on_tool_use=on_tool_use,
-            on_agent_text=on_agent_text,
+            on_tool_use=self.session_lifecycle.on_tool_use,
+            on_agent_text=self.session_lifecycle.on_agent_text,
         )
         return MessageStreamProcessor(config, callbacks)
 

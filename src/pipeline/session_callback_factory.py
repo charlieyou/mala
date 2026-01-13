@@ -24,7 +24,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
-from src.pipeline.agent_session_runner import SessionCallbacks
 from src.core.session_end_result import (
     CodeReviewResult,
     CommandOutcome,
@@ -54,7 +53,6 @@ if TYPE_CHECKING:
         GateOutcome,
         RetryState,
         ReviewIssue,
-        ReviewOutcome,
     )
     from src.domain.validation.config import (
         SessionEndTriggerConfig,
@@ -233,153 +231,6 @@ class SessionCallbackFactory:
             gate_runner=_GateRunnerAdapter(self, issue_id),
             review_runner=_ReviewRunnerAdapter(self, issue_id),
             session_lifecycle=_SessionLifecycleAdapter(self, issue_id, on_abort),
-        )
-
-    def build(
-        self,
-        issue_id: str,
-        on_abort: Callable[[str], None] | None = None,
-    ) -> SessionCallbacks:
-        """Build SessionCallbacks for a specific issue.
-
-        .. deprecated::
-            Use build_adapters() instead, which returns protocol implementations
-            for the new AgentSessionRunner interface.
-
-        Args:
-            issue_id: The issue ID for tracking state.
-            on_abort: Optional callback for fatal error signaling.
-
-        Returns:
-            SessionCallbacks with gate, review, and logging callbacks.
-        """
-        # Import here to avoid circular imports
-        from src.core.models import ReviewInput
-        from src.infra.git_utils import get_issue_commits_async
-        from src.pipeline.review_runner import NoProgressInput
-
-        async def on_gate_check(
-            issue_id: str, log_path: Path, retry_state: RetryState
-        ) -> tuple[GateOutcome, int]:
-            result, offset = await self._gate_async_runner.run_gate_async(
-                issue_id, log_path, retry_state, self._context.interrupt_event_getter()
-            )
-            return result, offset  # type: ignore[return-value]
-
-        async def on_review_check(
-            issue_id: str,
-            issue_desc: str | None,
-            session_id: str | None,
-            _retry_state: RetryState,  # unused after removing timestamp filtering
-            author_context: str | None,
-            previous_findings: Sequence[ReviewIssueProtocol] | None,
-            session_end_result: SessionEndResult | None,
-        ) -> ReviewOutcome:
-            self._review_runner.config.capture_session_log = self._is_verbose()
-            commit_shas = await get_issue_commits_async(
-                self._repo_path,
-                issue_id,
-            )
-            review_input = ReviewInput(
-                issue_id=issue_id,
-                repo_path=self._repo_path,
-                issue_description=issue_desc,
-                commit_shas=commit_shas,
-                claude_session_id=session_id,
-                author_context=author_context,
-                previous_findings=previous_findings,
-                session_end_result=session_end_result,
-            )
-            output = await self._review_runner.run_review(
-                review_input, self._context.interrupt_event_getter()
-            )
-            if output.session_log_path:
-                self._context.on_review_log_path(issue_id, output.session_log_path)
-
-            # Propagate interrupted flag: if output.interrupted is True but
-            # the result's interrupted flag is False (e.g., SIGINT fired after
-            # reviewer completed), wrap the result to ensure correct flag.
-            result: ReviewOutcome = output.result  # type: ignore[assignment]
-            if output.interrupted and not getattr(result, "interrupted", False):
-                result = _InterruptedReviewResultWrapper(
-                    passed=result.passed,
-                    issues=list(result.issues),
-                    parse_error=result.parse_error,
-                    fatal_error=result.fatal_error,
-                    review_log_path=getattr(result, "review_log_path", None),
-                    interrupted=True,
-                )
-            return result
-
-        def on_review_no_progress(
-            log_path: Path,
-            log_offset: int,
-            prev_commit: str | None,
-            curr_commit: str | None,
-        ) -> bool:
-            no_progress_input = NoProgressInput(
-                log_path=log_path,
-                log_offset=log_offset,
-                previous_commit_hash=prev_commit,
-                current_commit_hash=curr_commit,
-                spec=self._get_per_session_spec(),
-            )
-            return self._review_runner.check_no_progress(no_progress_input)
-
-        def get_log_path(session_id: str) -> Path:
-            log_path = self._context.log_provider_getter().get_log_path(
-                self._repo_path, session_id
-            )
-            self._context.on_session_log_path(issue_id, log_path)
-            return log_path
-
-        def get_log_offset(log_path: Path, start_offset: int) -> int:
-            return self._context.evidence_check_getter().get_log_end_offset(
-                log_path, start_offset
-            )
-
-        def on_tool_use(agent_id: str, tool_name: str, arguments: dict | None) -> None:
-            self._get_event_sink().on_tool_use(agent_id, tool_name, arguments=arguments)
-
-        def on_agent_text(agent_id: str, text: str) -> None:
-            self._get_event_sink().on_agent_text(agent_id, text)
-
-        async def on_session_end_check(
-            issue_id: str, log_path: Path, retry_state: SessionEndRetryState
-        ) -> SessionEndResult:
-            """Execute session_end trigger: commands, timeout, and code_review.
-
-            Implements per spec R9-R11:
-            - R9: Commands execute sequentially; failure_mode (abort, continue)
-            - R10: Overall asyncio.timeout wrapper; on timeout/interrupt return
-              appropriate SessionEndResult with empty commands
-            - R11: code_review uses base_sha..HEAD range
-
-            Args:
-                issue_id: The issue ID for context.
-                log_path: Path to session log (for logging).
-                retry_state: Retry state for remediation tracking.
-
-            Returns:
-                SessionEndResult with execution outcome.
-            """
-            return await self._execute_session_end(
-                issue_id=issue_id,
-                log_path=log_path,
-                retry_state=retry_state,
-            )
-
-        return SessionCallbacks(
-            on_gate_check=on_gate_check,
-            on_review_check=on_review_check,
-            on_review_no_progress=on_review_no_progress,
-            get_log_path=get_log_path,
-            get_log_offset=get_log_offset,
-            on_abort=on_abort,
-            on_tool_use=on_tool_use,
-            on_agent_text=on_agent_text,
-            on_session_end_check=on_session_end_check,
-            get_abort_event=self._context.abort_event_getter,
         )
 
     async def _execute_session_end(

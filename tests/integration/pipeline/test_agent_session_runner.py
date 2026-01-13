@@ -10,6 +10,7 @@ isinstance checks work correctly in the runner.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -22,8 +23,12 @@ from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,
     AgentSessionRunner,
-    SessionCallbacks,
     SessionPrompts,
+)
+from tests.helpers.protocol_stubs import (
+    StubGateRunner,
+    StubReviewRunner,
+    StubSessionLifecycle,
 )
 from src.pipeline.message_stream_processor import (
     ContextPressureError,
@@ -37,7 +42,6 @@ from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Sequence
-    from pathlib import Path
 
     from src.core.protocols.review import ReviewIssueProtocol
     from src.core.protocols.sdk import McpServerFactory, SDKClientProtocol
@@ -289,15 +293,12 @@ class TestAgentSessionRunnerBasics:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input = AgentSessionInput(
@@ -334,15 +335,12 @@ class TestAgentSessionRunnerBasics:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input = AgentSessionInput(
@@ -375,7 +373,9 @@ class TestAgentSessionRunnerBasics:
 
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=SessionCallbacks(),
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             sdk_client_factory=fake_factory,
         )
 
@@ -418,15 +418,12 @@ class TestAgentSessionRunnerBasics:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input = AgentSessionInput(
@@ -467,15 +464,12 @@ class TestAgentSessionRunnerBasics:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input = AgentSessionInput(
@@ -535,15 +529,12 @@ class TestAgentSessionRunnerGateHandling:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input = AgentSessionInput(
@@ -592,15 +583,12 @@ class TestAgentSessionRunnerGateHandling:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input = AgentSessionInput(
@@ -638,21 +626,26 @@ class TestAgentSessionRunnerCallbacks:
         )
 
     @pytest.mark.asyncio
-    async def test_raises_when_callback_missing(
+    async def test_works_with_default_protocol_stubs(
         self,
         session_config: AgentSessionConfig,
+        tmp_path: Path,
     ) -> None:
-        """Runner should raise when required callback is missing."""
+        """Runner should work with default protocol stub implementations."""
         fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
 
-        # No callbacks configured
-        callbacks = SessionCallbacks()
+        # Create a log file at the default path used by StubSessionLifecycle
+        default_log_path = Path("/tmp/test-log.jsonl")
+        default_log_path.write_text("")
 
+        # Use default stub configurations
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
         )
 
         input = AgentSessionInput(
@@ -660,11 +653,10 @@ class TestAgentSessionRunnerCallbacks:
             prompt="Test prompt",
         )
 
-        # Should fail because get_log_path is not set
+        # Should succeed with default stub implementations
         output = await runner.run_session(input)
-        # The error should be caught and reported in summary
-        assert output.success is False
-        assert "get_log_path" in output.summary
+        # Default stubs return passing results
+        assert output.success is True
 
 
 class TestAgentSessionRunnerStreamingCallbacks:
@@ -724,16 +716,14 @@ class TestAgentSessionRunnerStreamingCallbacks:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-            on_tool_use=on_tool_use,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(
+                on_get_log_path=get_log_path, on_tool_use_callback=on_tool_use
+            ),  # type: ignore[arg-type]
         )
 
         input = AgentSessionInput(
@@ -778,16 +768,14 @@ class TestAgentSessionRunnerStreamingCallbacks:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-            on_agent_text=on_agent_text,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(
+                on_get_log_path=get_log_path, on_agent_text_callback=on_agent_text
+            ),  # type: ignore[arg-type]
         )
 
         input = AgentSessionInput(
@@ -831,15 +819,12 @@ class TestAgentSessionRunnerStreamingCallbacks:
             )
 
         # No on_tool_use or on_agent_text callbacks
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input = AgentSessionInput(
@@ -1041,15 +1026,12 @@ class TestAgentSessionRunnerEventSink:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
@@ -1128,15 +1110,12 @@ class TestAgentSessionRunnerEventSink:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
@@ -1224,15 +1203,12 @@ class TestAgentSessionRunnerEventSink:
                     2000,
                 )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
@@ -1277,15 +1253,12 @@ class TestAgentSessionRunnerEventSink:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
             event_sink=None,  # No event sink
         )
 
@@ -1351,16 +1324,12 @@ class TestAgentSessionRunnerEventSink:
             assert previous_findings is None
             return ReviewResult(passed=True, issues=[], parse_error=None)
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-            on_review_check=on_review_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(on_review=on_review_check),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
@@ -1486,16 +1455,12 @@ class TestAgentSessionRunnerEventSink:
                 # Second check passes
                 return ReviewResult(passed=True, issues=[], parse_error=None)
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-            on_review_check=on_review_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(on_review=on_review_check),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
@@ -1572,11 +1537,6 @@ class TestContextPressureDetection:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
@@ -1588,8 +1548,10 @@ class TestContextPressureDetection:
         )
         runner = AgentSessionRunner(
             config=config,
-            callbacks=callbacks,
             sdk_client_factory=factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input_data = AgentSessionInput(issue_id="test-usage", prompt="Test")
@@ -1624,11 +1586,6 @@ class TestContextPressureDetection:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
@@ -1638,8 +1595,10 @@ class TestContextPressureDetection:
         )
         runner = AgentSessionRunner(
             config=config,
-            callbacks=callbacks,
             sdk_client_factory=factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input_data = AgentSessionInput(issue_id="test-no-usage", prompt="Test")
@@ -1699,7 +1658,11 @@ class TestContextPressureDetection:
             mcp_server_factory=make_noop_mcp_factory(),
         )
         runner = AgentSessionRunner(
-            config=config, sdk_client_factory=mock_sdk_client_factory
+            config=config,
+            sdk_client_factory=mock_sdk_client_factory,
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
         )
 
         # Create a simple async generator that yields the result message
@@ -1770,11 +1733,6 @@ class TestContextPressureDetection:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
@@ -1786,8 +1744,10 @@ class TestContextPressureDetection:
         )
         runner = AgentSessionRunner(
             config=config,
-            callbacks=callbacks,
             sdk_client_factory=factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input_data = AgentSessionInput(issue_id="test-safe", prompt="Test")
@@ -1849,15 +1809,12 @@ class TestIdleTimeoutRetry:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input_data = AgentSessionInput(
@@ -1906,7 +1863,9 @@ class TestIdleTimeoutRetry:
 
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=SessionCallbacks(),
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             sdk_client_factory=factory,
         )
 
@@ -1949,7 +1908,9 @@ class TestIdleTimeoutRetry:
 
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=SessionCallbacks(),
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             sdk_client_factory=factory,
         )
 
@@ -2004,15 +1965,12 @@ class TestIdleTimeoutRetry:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input_data = AgentSessionInput(
@@ -2064,7 +2022,9 @@ class TestIdleTimeoutRetry:
 
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=SessionCallbacks(),
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             sdk_client_factory=factory,
         )
 
@@ -2119,15 +2079,12 @@ class TestIdleTimeoutRetry:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input_data = AgentSessionInput(
@@ -2186,15 +2143,12 @@ class TestIdleTimeoutRetry:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input_data = AgentSessionInput(
@@ -2347,15 +2301,12 @@ class TestIdleTimeoutRetry:
                     5000,
                 )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input_data = AgentSessionInput(
@@ -2405,7 +2356,9 @@ class TestInitializeSession:
         fake_client = FakeSDKClient(result_message=make_result_message())
         return AgentSessionRunner(
             config=session_config,
-            callbacks=SessionCallbacks(),
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             sdk_client_factory=FakeSDKClientFactory(fake_client),
         )
 
@@ -2505,7 +2458,9 @@ class TestInitializeSession:
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=SessionCallbacks(),
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             sdk_client_factory=FakeSDKClientFactory(fake_client),
         )
 
@@ -2531,7 +2486,9 @@ class TestInitializeSession:
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=SessionCallbacks(),
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             sdk_client_factory=FakeSDKClientFactory(fake_client),
         )
 
@@ -2557,7 +2514,9 @@ class TestInitializeSession:
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=SessionCallbacks(),
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             sdk_client_factory=FakeSDKClientFactory(fake_client),
         )
 
@@ -2583,7 +2542,9 @@ class TestInitializeSession:
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=SessionCallbacks(),
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             sdk_client_factory=FakeSDKClientFactory(fake_client),
         )
 
@@ -2609,7 +2570,9 @@ class TestInitializeSession:
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=SessionCallbacks(),
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             sdk_client_factory=FakeSDKClientFactory(fake_client),
         )
 
@@ -2651,7 +2614,9 @@ class TestBuildSessionOutput:
         return AgentSessionRunner(
             config=session_config,
             sdk_client_factory=mock_sdk_client_factory,
-            callbacks=SessionCallbacks(),
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
         )
 
     @pytest.mark.unit
@@ -3269,11 +3234,12 @@ class TestCheckReviewNoProgress:
         ) -> bool:
             raise AssertionError("Should not be called")
 
-        callbacks = SessionCallbacks(on_review_no_progress=on_review_no_progress)
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=mock_sdk_client_factory,
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(on_check_no_progress=on_review_no_progress),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
         )
 
         lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=True))
@@ -3300,11 +3266,12 @@ class TestCheckReviewNoProgress:
             LifecycleContext,
         )
 
-        callbacks = SessionCallbacks()
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=mock_sdk_client_factory,
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
         )
 
         lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=True))
@@ -3337,11 +3304,12 @@ class TestCheckReviewNoProgress:
         ) -> bool:
             return False
 
-        callbacks = SessionCallbacks(on_review_no_progress=on_review_no_progress)
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=mock_sdk_client_factory,
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(on_check_no_progress=on_review_no_progress),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
         )
 
         lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=True))
@@ -3382,11 +3350,12 @@ class TestCheckReviewNoProgress:
         ) -> bool:
             return True
 
-        callbacks = SessionCallbacks(on_review_no_progress=on_review_no_progress)
         runner = AgentSessionRunner(
             config=session_config,
             sdk_client_factory=mock_sdk_client_factory,
-            callbacks=callbacks,
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(on_check_no_progress=on_review_no_progress),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
@@ -3475,15 +3444,12 @@ class TestRunLifecycleLoop:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
             sdk_client_factory=fake_factory,
-            callbacks=callbacks,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
@@ -3548,7 +3514,9 @@ class TestRunLifecycleLoop:
         runner = AgentSessionRunner(
             config=session_config,
             sdk_client_factory=fake_factory,
-            callbacks=SessionCallbacks(),
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
         )
 
         session_cfg = SessionConfig(
@@ -3611,15 +3579,12 @@ class TestRunLifecycleLoop:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         runner = AgentSessionRunner(
             config=session_config,
             sdk_client_factory=fake_factory,
-            callbacks=callbacks,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
@@ -3829,11 +3794,6 @@ class TestSessionRestartLoop:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=120,
@@ -3846,8 +3806,10 @@ class TestSessionRestartLoop:
 
         runner = AgentSessionRunner(
             config=config,
-            callbacks=callbacks,
             sdk_client_factory=factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input_data = AgentSessionInput(
@@ -3920,11 +3882,6 @@ class TestSessionRestartLoop:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=180,
@@ -3937,8 +3894,10 @@ class TestSessionRestartLoop:
 
         runner = AgentSessionRunner(
             config=config,
-            callbacks=callbacks,
             sdk_client_factory=factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input_data = AgentSessionInput(
@@ -4018,11 +3977,6 @@ class TestSessionRestartLoop:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=120,
@@ -4035,8 +3989,10 @@ class TestSessionRestartLoop:
 
         runner = AgentSessionRunner(
             config=config,
-            callbacks=callbacks,
             sdk_client_factory=factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         # Patch _initialize_session
@@ -4097,11 +4053,6 @@ class TestSessionRestartLoop:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=120,
@@ -4114,8 +4065,10 @@ class TestSessionRestartLoop:
 
         runner = AgentSessionRunner(
             config=config,
-            callbacks=callbacks,
             sdk_client_factory=factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         input_data = AgentSessionInput(
@@ -4173,11 +4126,6 @@ class TestResumeSessionId:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=120,
@@ -4188,8 +4136,10 @@ class TestResumeSessionId:
 
         runner = AgentSessionRunner(
             config=config,
-            callbacks=callbacks,
             sdk_client_factory=factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         # Create input with resume_session_id
@@ -4240,11 +4190,6 @@ class TestResumeSessionId:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=120,
@@ -4255,8 +4200,10 @@ class TestResumeSessionId:
 
         runner = AgentSessionRunner(
             config=config,
-            callbacks=callbacks,
             sdk_client_factory=factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         # Save original methods
@@ -4329,11 +4276,6 @@ class TestResumeSessionId:
                 1000,
             )
 
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
         config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=120,
@@ -4345,8 +4287,10 @@ class TestResumeSessionId:
 
         runner = AgentSessionRunner(
             config=config,
-            callbacks=callbacks,
             sdk_client_factory=factory,
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         )
 
         original_init = runner._initialize_session
@@ -4503,7 +4447,9 @@ class TestLocalSettingsIntegration:
 
         runner = AgentSessionRunner(
             config=session_config_with_local_settings,
-            callbacks=SessionCallbacks(),
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             sdk_client_factory=hybrid_factory,  # type: ignore[arg-type]
         )
 

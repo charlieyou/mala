@@ -21,8 +21,12 @@ from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,
     AgentSessionRunner,
-    SessionCallbacks,
     SessionPrompts,
+)
+from tests.helpers.protocol_stubs import (
+    StubGateRunner,
+    StubReviewRunner,
+    StubSessionLifecycle,
 )
 from src.core.session_end_result import SessionEndResult
 from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
@@ -197,16 +201,14 @@ async def test_session_end_invoked_after_gate_passes(
         session_end_calls.append((issue_id, log_path, retry_state))
         return SessionEndResult(status="skipped", reason="not_implemented")
 
-    callbacks = SessionCallbacks(
-        get_log_path=get_log_path,
-        on_gate_check=on_gate_check,
-        on_session_end_check=on_session_end_check,
-    )
-
     runner = AgentSessionRunner(
         config=session_config,
-        callbacks=callbacks,
         sdk_client_factory=fake_factory,
+        gate_runner=StubGateRunner(
+            on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
+        ),  # type: ignore[arg-type]
+        review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+        session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
 
@@ -273,16 +275,14 @@ async def test_session_end_completed_event_on_pass(
     ) -> SessionEndResult:
         return SessionEndResult(status="pass")
 
-    callbacks = SessionCallbacks(
-        get_log_path=get_log_path,
-        on_gate_check=on_gate_check,
-        on_session_end_check=on_session_end_check,
-    )
-
     runner = AgentSessionRunner(
         config=session_config,
-        callbacks=callbacks,
         sdk_client_factory=fake_factory,
+        gate_runner=StubGateRunner(
+            on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
+        ),  # type: ignore[arg-type]
+        review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+        session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
 
@@ -342,16 +342,14 @@ async def test_session_end_not_invoked_when_gate_fails(
         mcp_server_factory=make_noop_mcp_factory(),
     )
 
-    callbacks = SessionCallbacks(
-        get_log_path=get_log_path,
-        on_gate_check=on_gate_check,
-        on_session_end_check=on_session_end_check,
-    )
-
     runner = AgentSessionRunner(
         config=config_no_retries,
-        callbacks=callbacks,
         sdk_client_factory=fake_factory,
+        gate_runner=StubGateRunner(
+            on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
+        ),  # type: ignore[arg-type]
+        review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+        session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
 
@@ -414,16 +412,14 @@ async def test_session_end_timeout_scenario(
             commands=[],  # Per spec R10: partial results discarded on timeout
         )
 
-    callbacks = SessionCallbacks(
-        get_log_path=get_log_path,
-        on_gate_check=on_gate_check,
-        on_session_end_check=on_session_end_check,
-    )
-
     runner = AgentSessionRunner(
         config=session_config,
-        callbacks=callbacks,
         sdk_client_factory=fake_factory,
+        gate_runner=StubGateRunner(
+            on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
+        ),  # type: ignore[arg-type]
+        review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+        session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
 
@@ -497,16 +493,14 @@ async def test_session_end_interrupt_scenario(
             commands=[],
         )
 
-    callbacks = SessionCallbacks(
-        get_log_path=get_log_path,
-        on_gate_check=on_gate_check,
-        on_session_end_check=on_session_end_check,
-    )
-
     runner = AgentSessionRunner(
         config=session_config,
-        callbacks=callbacks,
         sdk_client_factory=fake_factory,
+        gate_runner=StubGateRunner(
+            on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
+        ),  # type: ignore[arg-type]
+        review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+        session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
 
@@ -626,17 +620,14 @@ async def test_session_end_timeout_proceeds_to_review_with_correct_result(
         review_check_called = True
         return FakeReviewOutcome(passed=True)
 
-    callbacks = SessionCallbacks(
-        get_log_path=get_log_path,
-        on_gate_check=on_gate_check,
-        on_session_end_check=on_session_end_check,
-        on_review_check=on_review_check,  # type: ignore[arg-type]
-    )
-
     runner = AgentSessionRunner(
         config=config_with_review,
-        callbacks=callbacks,
         sdk_client_factory=fake_factory,
+        gate_runner=StubGateRunner(
+            on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
+        ),  # type: ignore[arg-type]
+        review_runner=StubReviewRunner(on_review=on_review_check),  # type: ignore[arg-type]
+        session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
 
@@ -769,17 +760,14 @@ async def test_mixed_outcomes_both_proceed_to_review(
         review_calls.append((issue_id, session_end_result))
         return FakeReviewOutcome(passed=True)
 
-    callbacks = SessionCallbacks(
-        get_log_path=get_log_path,
-        on_gate_check=on_gate_check,
-        on_session_end_check=on_session_end_check,
-        on_review_check=on_review_check,  # type: ignore[arg-type]
-    )
-
     runner = AgentSessionRunner(
         config=config_with_review,
-        callbacks=callbacks,
         sdk_client_factory=fake_factory,
+        gate_runner=StubGateRunner(
+            on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
+        ),  # type: ignore[arg-type]
+        review_runner=StubReviewRunner(on_review=on_review_check),  # type: ignore[arg-type]
+        session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
 

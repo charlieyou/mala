@@ -1,4 +1,4 @@
-"""Unit tests for SessionCallbackFactory on_session_end_check callback."""
+"""Unit tests for SessionCallbackFactory protocol adapters."""
 
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -38,23 +38,24 @@ def _create_minimal_factory() -> SessionCallbackFactory:
     )
 
 
-class TestSessionEndCheckCallback:
-    """Tests for on_session_end_check callback in SessionCallbacks."""
+class TestSessionEndCheckViaAdapter:
+    """Tests for run_session_end_check via protocol adapter."""
 
-    def test_callback_is_present_in_session_callbacks(self) -> None:
-        """SessionCallbacks from factory includes on_session_end_check."""
+    def test_adapters_are_present_in_build_adapters(self) -> None:
+        """build_adapters returns adapters with gate_runner, review_runner, session_lifecycle."""
         factory = _create_minimal_factory()
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
+        assert adapters.gate_runner is not None
+        assert adapters.review_runner is not None
+        assert adapters.session_lifecycle is not None
 
     async def test_returns_skipped_when_not_configured(self) -> None:
-        """on_session_end_check returns skipped when session_end not configured."""
+        """run_session_end_check returns skipped when session_end not configured."""
         factory = _create_minimal_factory()
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        result = await adapters.gate_runner.run_session_end_check(
             "test-issue",
             Path("/test/log.txt"),
             SessionEndRetryState(),
@@ -64,10 +65,10 @@ class TestSessionEndCheckCallback:
         assert result.status == "skipped"
         assert result.reason == "not_configured"
 
-    async def test_callback_accepts_correct_signature(self) -> None:
-        """Callback accepts (issue_id, log_path, retry_state) parameters."""
+    async def test_adapter_accepts_correct_signature(self) -> None:
+        """Adapter accepts (issue_id, log_path, retry_state) parameters."""
         factory = _create_minimal_factory()
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
         retry_state = SessionEndRetryState(
             attempt=2,
@@ -76,8 +77,7 @@ class TestSessionEndCheckCallback:
             previous_commit_hash="abc123",
         )
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        result = await adapters.gate_runner.run_session_end_check(
             "my-issue-id",
             Path("/path/to/session.log"),
             retry_state,

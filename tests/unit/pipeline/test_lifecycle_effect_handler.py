@@ -21,10 +21,14 @@ from src.domain.evidence_check import GateResult
 from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,
-    SessionCallbacks,
     SessionPrompts,
 )
 from src.pipeline.lifecycle_effect_handler import LifecycleEffectHandler
+from tests.helpers.protocol_stubs import (
+    StubGateRunner,
+    StubReviewRunner,
+    StubSessionLifecycle,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -225,10 +229,11 @@ class TestProcessGateCheck:
     ) -> None:
         """process_gate_check should emit validation_started event."""
         fake_sink = FakeEventSink()
-        callbacks = SessionCallbacks()
         handler = LifecycleEffectHandler(
             config=session_config,
-            callbacks=callbacks,
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
@@ -268,10 +273,11 @@ class TestProcessGateEffect:
     ) -> None:
         """process_gate_effect should emit passed events on gate pass."""
         fake_sink = FakeEventSink()
-        callbacks = SessionCallbacks()
         handler = LifecycleEffectHandler(
             config=session_config,
-            callbacks=callbacks,
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
@@ -301,10 +307,11 @@ class TestProcessGateEffect:
     ) -> None:
         """process_gate_effect should return retry query on failure with retries left."""
         fake_sink = FakeEventSink()
-        callbacks = SessionCallbacks()
         handler = LifecycleEffectHandler(
             config=session_config,
-            callbacks=callbacks,
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
@@ -353,10 +360,11 @@ class TestProcessReviewCheck:
     ) -> None:
         """process_review_check should emit gate_passed on first review attempt."""
         fake_sink = FakeEventSink()
-        callbacks = SessionCallbacks()
         handler = LifecycleEffectHandler(
             config=session_config,
-            callbacks=callbacks,
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
@@ -394,10 +402,11 @@ class TestProcessReviewEffect:
     ) -> None:
         """process_review_effect should return no retry on pass."""
         fake_sink = FakeEventSink()
-        callbacks = SessionCallbacks()
         handler = LifecycleEffectHandler(
             config=session_config,
-            callbacks=callbacks,
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
@@ -427,10 +436,11 @@ class TestProcessReviewEffect:
     ) -> None:
         """process_review_effect should return retry query on failure with retries left."""
         fake_sink = FakeEventSink()
-        callbacks = SessionCallbacks()
         handler = LifecycleEffectHandler(
             config=session_config,
-            callbacks=callbacks,
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
@@ -499,20 +509,14 @@ class TestCheckReviewNoProgress:
         """check_review_no_progress should return result when no progress detected."""
         fake_sink = FakeEventSink()
 
-        def on_review_no_progress(
-            log_path: Path,
-            log_offset: int,
-            prev_commit: str | None,
-            curr_commit: str | None,
-        ) -> bool:
-            return True  # No progress detected
+        # Create a review runner that detects no progress
+        review_runner = StubReviewRunner(no_progress_result=True)
 
-        callbacks = SessionCallbacks(
-            on_review_no_progress=on_review_no_progress,
-        )
         handler = LifecycleEffectHandler(
             config=session_config,
-            callbacks=callbacks,
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=review_runner,  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
@@ -545,21 +549,14 @@ class TestCheckReviewNoProgress:
         tmp_log_path: Path,
     ) -> None:
         """check_review_no_progress should return None on first attempt."""
+        # Review runner would detect no progress, but should be skipped on first attempt
+        review_runner = StubReviewRunner(no_progress_result=True)
 
-        def on_review_no_progress(
-            log_path: Path,
-            log_offset: int,
-            prev_commit: str | None,
-            curr_commit: str | None,
-        ) -> bool:
-            return True  # Would detect no progress, but should be skipped
-
-        callbacks = SessionCallbacks(
-            on_review_no_progress=on_review_no_progress,
-        )
         handler = LifecycleEffectHandler(
             config=session_config,
-            callbacks=callbacks,
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=review_runner,  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=None,
         )
 
@@ -579,16 +576,20 @@ class TestCheckReviewNoProgress:
         assert result is None
 
     @pytest.mark.unit
-    def test_returns_none_when_callback_not_set(
+    def test_returns_none_when_progress_detected(
         self,
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
     ) -> None:
-        """check_review_no_progress should return None when callback not configured."""
-        callbacks = SessionCallbacks()  # No on_review_no_progress
+        """check_review_no_progress should return None when progress is detected."""
+        # Review runner detects progress (no_progress_result=False)
+        review_runner = StubReviewRunner(no_progress_result=False)
+
         handler = LifecycleEffectHandler(
             config=session_config,
-            callbacks=callbacks,
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
+            review_runner=review_runner,  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=None,
         )
 

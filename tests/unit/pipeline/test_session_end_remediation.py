@@ -299,10 +299,9 @@ class TestRemediationLoopBasics:
             command_runner=runner,
             fixer_interface=fixer,
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        result = await adapters.gate_runner.run_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -336,10 +335,9 @@ class TestRemediationLoopBasics:
             command_runner=runner,
             fixer_interface=fixer,
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        result = await adapters.gate_runner.run_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -379,10 +377,9 @@ class TestRemediationSuccess:
             command_runner=runner,
             fixer_interface=fixer,
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        result = await adapters.gate_runner.run_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -419,10 +416,9 @@ class TestRemediationSuccess:
             command_runner=runner,
             fixer_interface=fixer,
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        result = await adapters.gate_runner.run_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -456,10 +452,9 @@ class TestRemediationExhausted:
             command_runner=runner,
             fixer_interface=fixer,
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        result = await adapters.gate_runner.run_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -499,10 +494,9 @@ class TestCodeReviewAfterRemediation:
             cumulative_review_runner=review_runner,
             base_sha_map=base_sha_map,
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        result = await adapters.gate_runner.run_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -542,10 +536,9 @@ class TestCodeReviewAfterRemediation:
             cumulative_review_runner=review_runner,
             base_sha_map=base_sha_map,
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        result = await adapters.gate_runner.run_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -584,10 +577,9 @@ class TestCodeReviewAfterRemediation:
             cumulative_review_runner=review_runner,
             base_sha_map=base_sha_map,
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        result = await adapters.gate_runner.run_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -619,14 +611,13 @@ class TestRetryStateTracking:
             command_runner=runner,
             fixer_interface=fixer,
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
         # Create a retry_state to track attempt increments
         retry_state = SessionEndRetryState()
         assert retry_state.attempt == 1  # Initial attempt
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        result = await adapters.gate_runner.run_session_end_check(
             "test-issue", Path("/test/log.txt"), retry_state
         )
 
@@ -667,10 +658,9 @@ class TestFixerInterruption:
             command_runner=runner,
             fixer_interface=fixer,
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        result = await adapters.gate_runner.run_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -709,10 +699,9 @@ class TestMaxRetriesZero:
             command_runner=runner,
             fixer_interface=fixer,
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        result = await adapters.gate_runner.run_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -747,10 +736,9 @@ class TestNoFixerInterface:
             command_runner=runner,
             fixer_interface=None,  # No fixer interface
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        result = await adapters.gate_runner.run_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 

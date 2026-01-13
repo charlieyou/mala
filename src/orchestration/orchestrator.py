@@ -96,9 +96,9 @@ if TYPE_CHECKING:
     from src.infra.io.config import MalaConfig
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.infra.telemetry import TelemetryProvider
-    from src.pipeline.agent_session_runner import SessionCallbacks
     from src.pipeline.epic_verification_coordinator import EpicVerificationCoordinator
     from src.pipeline.issue_finalizer import IssueFinalizer
+    from src.pipeline.session_callback_factory import SessionRunnerAdapters
 
     from src.core.models import PeriodicValidationConfig, RunResult, WatchConfig
 
@@ -850,18 +850,19 @@ class MalaOrchestrator:
             is_interrupt=is_interrupt,
         )
 
-    def _build_session_callbacks(self, issue_id: str) -> SessionCallbacks:
-        """Build callbacks for session operations.
+    def _build_session_adapters(self, issue_id: str) -> SessionRunnerAdapters:
+        """Build protocol adapters for session operations.
 
-        Delegates to SessionCallbackFactory for callback construction.
+        Delegates to SessionCallbackFactory for adapter construction.
 
         Args:
             issue_id: The issue ID for tracking state.
 
         Returns:
-            SessionCallbacks with gate, review, and logging callbacks.
+            SessionRunnerAdapters with IGateRunner, IReviewRunner, and
+            ISessionLifecycle implementations.
         """
-        return self.session_callback_factory.build(
+        return self.session_callback_factory.build_adapters(
             issue_id=issue_id,
             on_abort=self._request_abort,
         )
@@ -960,10 +961,13 @@ class MalaOrchestrator:
             if base_sha:
                 self._state.issue_base_shas[issue_id] = base_sha
 
+        adapters = self._build_session_adapters(issue_id)
         runner = AgentSessionRunner(
             config=self._session_config,
             sdk_client_factory=self._sdk_client_factory,
-            callbacks=self._build_session_callbacks(issue_id),
+            gate_runner=adapters.gate_runner,
+            review_runner=adapters.review_runner,
+            session_lifecycle=adapters.session_lifecycle,
             event_sink=self.event_sink,
         )
         tracer = self.telemetry_provider.create_span(

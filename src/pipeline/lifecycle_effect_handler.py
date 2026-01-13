@@ -45,7 +45,6 @@ if TYPE_CHECKING:
     from .agent_session_runner import (
         AgentSessionConfig,
         AgentSessionInput,
-        SessionCallbacks,
     )
 
 T = TypeVar("T")
@@ -265,24 +264,16 @@ class LifecycleEffectHandler:
     AgentSessionRunner. Manages event emission, retry prompt building,
     and lifecycle state transitions for gate and review operations.
 
-    The handler accepts either protocol interfaces (recommended) or the legacy
-    SessionCallbacks dataclass for external operations.
+    The handler uses protocol interfaces for external operations (gate checks,
+    reviews, lifecycle operations) to decouple from orchestrator internals.
 
-    Usage with protocols (preferred):
+    Usage:
         handler = LifecycleEffectHandler(
             config=config,
-            callbacks=SessionCallbacks(),  # Empty for protocol mode
             event_sink=event_sink,
             gate_runner=gate_runner_impl,
             review_runner=review_runner_impl,
             session_lifecycle=session_lifecycle_impl,
-        )
-
-    Usage with callbacks (deprecated):
-        handler = LifecycleEffectHandler(
-            config=config,
-            callbacks=callbacks,
-            event_sink=event_sink,
         )
         handler.process_gate_check(input, lifecycle, lifecycle_ctx)
         retry_query, should_break, trans = handler.process_gate_effect(...)
@@ -290,19 +281,17 @@ class LifecycleEffectHandler:
 
     Attributes:
         config: Session configuration with prompts and retry limits.
-        callbacks: Legacy callbacks for external operations (deprecated).
         event_sink: Optional event sink for structured logging.
-        gate_runner: Protocol for gate checking operations.
-        review_runner: Protocol for review operations.
-        session_lifecycle: Protocol for session lifecycle operations.
+        gate_runner: Protocol for gate checking operations (required).
+        review_runner: Protocol for review operations (required).
+        session_lifecycle: Protocol for session lifecycle operations (required).
     """
 
     config: AgentSessionConfig
-    callbacks: SessionCallbacks
+    gate_runner: IGateRunner
+    review_runner: IReviewRunner
+    session_lifecycle: ISessionLifecycle
     event_sink: MalaEventSink | None = None
-    gate_runner: IGateRunner | None = None
-    review_runner: IReviewRunner | None = None
-    session_lifecycle: ISessionLifecycle | None = None
 
     def process_gate_check(
         self,
@@ -529,12 +518,8 @@ class LifecycleEffectHandler:
             ReviewEffectResult if no progress detected (caller should return early),
             None if review should proceed normally.
         """
-        # Only check on retry attempts (attempt > 1) when check is configured
-        has_no_progress_check = (
-            self.review_runner is not None
-            or self.callbacks.on_review_no_progress is not None
-        )
-        if lifecycle_ctx.retry_state.review_attempt <= 1 or not has_no_progress_check:
+        # Only check on retry attempts (attempt > 1)
+        if lifecycle_ctx.retry_state.review_attempt <= 1:
             return None
 
         current_commit = (
@@ -543,23 +528,12 @@ class LifecycleEffectHandler:
             else None
         )
 
-        # Use protocol if available, fall back to callback
-        if self.review_runner is not None:
-            no_progress = self.review_runner.check_no_progress(
-                log_path,
-                lifecycle_ctx.retry_state.log_offset,
-                lifecycle_ctx.retry_state.previous_commit_hash,
-                current_commit,
-            )
-        elif self.callbacks.on_review_no_progress is not None:
-            no_progress = self.callbacks.on_review_no_progress(
-                log_path,
-                lifecycle_ctx.retry_state.log_offset,
-                lifecycle_ctx.retry_state.previous_commit_hash,
-                current_commit,
-            )
-        else:
-            return None
+        no_progress = self.review_runner.check_no_progress(
+            log_path,
+            lifecycle_ctx.retry_state.log_offset,
+            lifecycle_ctx.retry_state.previous_commit_hash,
+            current_commit,
+        )
 
         if not no_progress:
             return None
@@ -571,17 +545,9 @@ class LifecycleEffectHandler:
         # Create synthetic failed review
         synthetic = SyntheticReviewOutcome(passed=False, issues=[])
 
-        # Get log offset using protocol if available, fall back to callback
-        if self.session_lifecycle is not None:
-            new_offset = self.session_lifecycle.get_log_offset(
-                log_path, lifecycle_ctx.retry_state.log_offset
-            )
-        elif self.callbacks.get_log_offset is not None:
-            new_offset = self.callbacks.get_log_offset(
-                log_path, lifecycle_ctx.retry_state.log_offset
-            )
-        else:
-            new_offset = 0
+        new_offset = self.session_lifecycle.get_log_offset(
+            log_path, lifecycle_ctx.retry_state.log_offset
+        )
         no_progress_result = lifecycle.on_review_result(
             lifecycle_ctx,
             synthetic,

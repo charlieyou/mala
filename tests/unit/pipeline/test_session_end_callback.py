@@ -224,15 +224,15 @@ def _make_validation_config(
     )
 
 
-class TestSessionEndCallbackPresence:
-    """Tests for on_session_end_check callback presence in SessionCallbacks."""
+class TestSessionEndAdapterPresence:
+    """Tests for run_session_end_check in protocol adapters."""
 
-    def test_callback_is_present_in_session_callbacks(self) -> None:
-        """SessionCallbacks from factory includes on_session_end_check."""
+    def test_adapter_has_run_session_end_check(self) -> None:
+        """Gate runner adapter has run_session_end_check method."""
         factory = _create_factory()
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
+        assert hasattr(adapters.gate_runner, "run_session_end_check")
 
 
 class TestSessionEndNotConfigured:
@@ -241,10 +241,10 @@ class TestSessionEndNotConfigured:
     async def test_returns_skipped_when_no_validation_config(self) -> None:
         """Returns skipped when validation_config is None."""
         factory = _create_factory(validation_config=None)
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        on_session_end_check = adapters.gate_runner.run_session_end_check
+        result = await on_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -256,10 +256,10 @@ class TestSessionEndNotConfigured:
         """Returns skipped when validation_triggers is None."""
         config = ValidationConfig(commands=CommandsConfig(), validation_triggers=None)
         factory = _create_factory(validation_config=config)
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        on_session_end_check = adapters.gate_runner.run_session_end_check
+        result = await on_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -272,10 +272,10 @@ class TestSessionEndNotConfigured:
             commands=CommandsConfig(), validation_triggers=ValidationTriggersConfig()
         )
         factory = _create_factory(validation_config=config)
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        on_session_end_check = adapters.gate_runner.run_session_end_check
+        result = await on_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -304,10 +304,10 @@ class TestCommandExecution:
             base_commands={"lint": "ruff check .", "test": "uv run pytest"},
         )
         factory = _create_factory(validation_config=config, command_runner=runner)
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        on_session_end_check = adapters.gate_runner.run_session_end_check
+        result = await on_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -331,10 +331,10 @@ class TestCommandExecution:
             base_commands={"lint": "ruff check .", "test": "uv run pytest"},
         )
         factory = _create_factory(validation_config=config, command_runner=runner)
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        on_session_end_check = adapters.gate_runner.run_session_end_check
+        result = await on_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -349,10 +349,10 @@ class TestCommandExecution:
         factory = _create_factory(
             validation_config=config, command_runner=FakeCommandRunner()
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        on_session_end_check = adapters.gate_runner.run_session_end_check
+        result = await on_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -364,11 +364,11 @@ class TestCommandExecution:
         factory = _create_factory(
             validation_config=config, command_runner=FakeCommandRunner()
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
         before = datetime.now(UTC)
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        on_session_end_check = adapters.gate_runner.run_session_end_check
+        result = await on_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
         after = datetime.now(UTC)
@@ -407,10 +407,10 @@ class TestTimeoutBehavior:
             command_runner=runner,
             session_end_timeout=0.1,  # Very short timeout
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        on_session_end_check = adapters.gate_runner.run_session_end_check
+        result = await on_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -436,10 +436,10 @@ class TestInterruptBehavior:
             command_runner=FakeCommandRunner(),
             interrupt_event=interrupt_event,
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        on_session_end_check = adapters.gate_runner.run_session_end_check
+        result = await on_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -482,10 +482,10 @@ class TestInterruptBehavior:
             command_runner=runner,
             interrupt_event=interrupt_event,
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        on_session_end_check = adapters.gate_runner.run_session_end_check
+        result = await on_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -530,13 +530,12 @@ class TestInterruptBehavior:
             command_runner=runner,  # type: ignore[arg-type]
             interrupt_event=interrupt_event,
         )
-        callbacks = factory.build("test-issue")
-        assert callbacks.on_session_end_check is not None
-        on_session_end = callbacks.on_session_end_check
+        adapters = factory.build_adapters("test-issue")
+        on_session_end_check = adapters.gate_runner.run_session_end_check
 
         async def run_and_sigint() -> SessionEndResult:
             task = asyncio.create_task(
-                on_session_end(
+                on_session_end_check(
                     "test-issue", Path("/test/log.txt"), SessionEndRetryState()
                 )
             )
@@ -579,10 +578,10 @@ class TestFailureModeAbort:
         factory = _create_factory(
             validation_config=config, command_runner=runner, on_abort=on_abort
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        on_session_end_check = adapters.gate_runner.run_session_end_check
+        result = await on_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -614,10 +613,10 @@ class TestFailureModeContinue:
         factory = _create_factory(
             validation_config=config, command_runner=runner, on_abort=on_abort
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        on_session_end_check = adapters.gate_runner.run_session_end_check
+        result = await on_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -651,10 +650,10 @@ class TestCodeReviewIntegration:
             cumulative_review_runner=review_runner,
             base_sha_map=base_sha_map,
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        on_session_end_check = adapters.gate_runner.run_session_end_check
+        result = await on_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -686,10 +685,10 @@ class TestCodeReviewIntegration:
             cumulative_review_runner=review_runner,
             base_sha_map=base_sha_map,
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        on_session_end_check = adapters.gate_runner.run_session_end_check
+        result = await on_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -713,10 +712,10 @@ class TestCodeReviewIntegration:
             cumulative_review_runner=review_runner,
             base_sha_map={},  # No base_sha for test-issue
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        on_session_end_check = adapters.gate_runner.run_session_end_check
+        result = await on_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
@@ -756,10 +755,10 @@ class TestCodeReviewIntegration:
             cumulative_review_runner=review_runner,
             base_sha_map=base_sha_map,
         )
-        callbacks = factory.build("test-issue")
+        adapters = factory.build_adapters("test-issue")
 
-        assert callbacks.on_session_end_check is not None
-        result = await callbacks.on_session_end_check(
+        on_session_end_check = adapters.gate_runner.run_session_end_check
+        result = await on_session_end_check(
             "test-issue", Path("/test/log.txt"), SessionEndRetryState()
         )
 
