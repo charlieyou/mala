@@ -1044,13 +1044,21 @@ class AgentSessionRunner:
     async def _run_session_end_check(
         self, issue_id: str, log_path: Path, retry_state: SessionEndRetryState
     ) -> SessionEndResult:
-        """Run session_end check via protocol or callback."""
+        """Run session_end check via protocol or callback.
+
+        If gate_runner is set but run_session_end_check raises NotImplementedError,
+        falls back to callback. If neither is configured, returns skipped result.
+        """
         from src.core.session_end_result import SessionEndResult
 
         if self.gate_runner is not None:
-            return await self.gate_runner.run_session_end_check(
-                issue_id, log_path, retry_state
-            )
+            try:
+                return await self.gate_runner.run_session_end_check(
+                    issue_id, log_path, retry_state
+                )
+            except NotImplementedError:
+                # gate_runner doesn't support session_end, fall through to callback
+                pass
         if self.callbacks.on_session_end_check is not None:
             return await self.callbacks.on_session_end_check(
                 issue_id, log_path, retry_state
