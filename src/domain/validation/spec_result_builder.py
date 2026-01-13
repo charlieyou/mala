@@ -30,7 +30,8 @@ from pathlib import Path
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from src.core.protocols import CommandRunnerPort, EnvConfigPort, MalaEventSink
+    from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.infra import CommandRunnerPort, EnvConfigPort
 
     from .config import YamlCoverageConfig
     from .e2e import E2EResult

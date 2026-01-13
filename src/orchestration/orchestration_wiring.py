@@ -52,10 +52,8 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
-    from src.core.protocols import (
-        ReviewIssueProtocol,
-        SDKClientFactoryProtocol,
-    )
+    from src.core.protocols.review import ReviewIssueProtocol
+    from src.core.protocols.sdk import SDKClientFactoryProtocol
     from src.core.models import EpicVerificationResult
     from src.domain.validation.config import EpicCompletionTriggerConfig, TriggerType
     from src.infra.io.log_output.run_metadata import RunMetadata

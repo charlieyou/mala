@@ -6,7 +6,7 @@ and exhibits correct behavioral parity with the real CommandRunner.
 
 import pytest
 
-from src.core.protocols import CommandRunnerPort
+from src.core.protocols.infra import CommandRunnerPort
 from tests.contracts import get_protocol_members
 from tests.fakes.command_runner import FakeCommandRunner
 

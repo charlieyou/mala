@@ -30,9 +30,7 @@ from src.domain.prompts import (
 from src.pipeline.message_stream_processor import ContextPressureError
 
 if TYPE_CHECKING:
-    from src.core.protocols import (
-        SDKClientFactoryProtocol,
-    )
+    from src.core.protocols.sdk import SDKClientFactoryProtocol
 
 
 logger = logging.getLogger(__name__)

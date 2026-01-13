@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.models import IssueResolution
-    from src.core.protocols import ReviewIssueProtocol
+    from src.core.protocols.review import ReviewIssueProtocol
     from src.core.session_end_result import SessionEndResult
 
 

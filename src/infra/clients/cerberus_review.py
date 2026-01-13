@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     import asyncio
     from collections.abc import Sequence
 
-    from src.core.protocols import MalaEventSink
+    from src.core.protocols.events import MalaEventSink
 
 
 @dataclass

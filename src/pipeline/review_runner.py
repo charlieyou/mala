@@ -31,12 +31,8 @@ if TYPE_CHECKING:
     import asyncio
 
     from src.core.models import ReviewInput
-    from src.core.protocols import (
-        CodeReviewer,
-        GateChecker,
-        ReviewResultProtocol,
-        ValidationSpecProtocol,
-    )
+    from src.core.protocols.review import CodeReviewer, ReviewResultProtocol
+    from src.core.protocols.validation import GateChecker, ValidationSpecProtocol
     from src.core.session_end_result import SessionEndResult
     from src.domain.validation.spec import ValidationSpec
 

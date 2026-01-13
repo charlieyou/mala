@@ -8,7 +8,8 @@ import math
 import re
 from typing import Any
 
-from src.core.protocols import DeadlockInfoProtocol, EventRunConfig, MalaEventSink
+from src.core.protocols.events import EventRunConfig, MalaEventSink
+from src.core.protocols.lifecycle import DeadlockInfoProtocol
 from src.infra.io.base_sink import BaseEventSink
 from src.infra.io.log_output.console import (
     Colors,

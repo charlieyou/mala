@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from src.core.protocols import GateChecker
+from src.core.protocols.validation import GateChecker
 from src.domain.evidence_check import CommitResult, GateResult, ValidationEvidence
 from tests.contracts import get_protocol_members
 from tests.fakes.gate_checker import FakeGateChecker

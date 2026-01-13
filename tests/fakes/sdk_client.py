@@ -16,7 +16,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Self
 
-from src.core.protocols import SDKClientFactoryProtocol, SDKClientProtocol
+from src.core.protocols.sdk import SDKClientFactoryProtocol, SDKClientProtocol
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

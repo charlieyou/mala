@@ -14,13 +14,11 @@ LockReleaserFunc = Callable[[list[str]], int]
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.core.protocols import (
-        CodeReviewer,
-        GateChecker,
-        IssueProvider,
-        LogProvider,
-        MalaEventSink,
-    )
+    from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.issue import IssueProvider
+    from src.core.protocols.log import LogProvider
+    from src.core.protocols.review import CodeReviewer
+    from src.core.protocols.validation import GateChecker
     from src.infra.io.config import MalaConfig
     from src.infra.telemetry import TelemetryProvider
     from src.orchestration.orchestrator import MalaOrchestrator

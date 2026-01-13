@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.core.protocols import CommandRunnerPort
+    from src.core.protocols.infra import CommandRunnerPort
 
 
 def _run_git_command(

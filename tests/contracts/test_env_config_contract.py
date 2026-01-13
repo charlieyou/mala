@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.core.protocols import EnvConfigPort
+from src.core.protocols.infra import EnvConfigPort
 from tests.contracts import get_protocol_members
 from tests.fakes.env_config import FakeEnvConfig
 

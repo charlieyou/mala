@@ -28,7 +28,11 @@ from .coverage_args import rewrite_coverage_command
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from src.core.protocols import CommandRunnerPort, EnvConfigPort, LockManagerPort
+    from src.core.protocols.infra import (
+        CommandRunnerPort,
+        EnvConfigPort,
+        LockManagerPort,
+    )
 
     from .spec import ValidationSpec
 

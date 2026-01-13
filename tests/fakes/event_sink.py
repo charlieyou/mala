@@ -6,7 +6,8 @@ FakeEventSink captures all MalaEventSink events for assertion in tests.
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.core.protocols import DeadlockInfoProtocol, EventRunConfig
+from src.core.protocols.events import EventRunConfig
+from src.core.protocols.lifecycle import DeadlockInfoProtocol
 
 
 @dataclass

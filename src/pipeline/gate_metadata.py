@@ -17,7 +17,7 @@ from src.infra.io.log_output.run_metadata import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.core.protocols import (
+    from src.core.protocols.validation import (
         GateChecker,
         GateResultProtocol,
         ValidationSpecProtocol,

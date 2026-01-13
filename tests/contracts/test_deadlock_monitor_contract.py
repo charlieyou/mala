@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from src.core.protocols import DeadlockMonitorProtocol
+from src.core.protocols.lifecycle import DeadlockMonitorProtocol
 from tests.contracts import get_protocol_members
 from tests.fakes.deadlock_monitor import FakeDeadlockMonitor
 

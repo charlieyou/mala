@@ -21,7 +21,7 @@ from src.domain.validation.spec import (
     build_validation_spec,
 )
 
-from src.core.protocols import LogProvider
+from src.core.protocols.log import LogProvider
 from src.domain.evidence_check import (
     EvidenceCheck,
     ValidationEvidence,

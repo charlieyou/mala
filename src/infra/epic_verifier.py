@@ -37,12 +37,9 @@ from src.infra.epic_scope import EpicScopeAnalyzer
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from src.core.protocols import (
-        CommandRunnerPort,
-        EpicVerificationModel,
-        LockManagerPort,
-        MalaEventSink,
-    )
+    from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.infra import CommandRunnerPort, LockManagerPort
+    from src.core.protocols.validation import EpicVerificationModel
     from src.infra.clients.beads_client import BeadsClient
 
 # Spec path patterns from docs (case-insensitive)

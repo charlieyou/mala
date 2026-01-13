@@ -31,13 +31,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from pathlib import Path
 
-    from src.core.protocols import (
-        CommandResultProtocol,
-        GateChecker,
-        LogProvider,
-        MalaEventSink,
-        ReviewIssueProtocol,
-    )
+    from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.infra import CommandResultProtocol, CommandRunnerPort
+    from src.core.protocols.log import LogProvider
+    from src.core.protocols.review import ReviewIssueProtocol
+    from src.core.protocols.validation import GateChecker
     from src.domain.lifecycle import (
         GateOutcome,
         RetryState,
@@ -52,7 +50,6 @@ if TYPE_CHECKING:
     from src.domain.validation.spec import ValidationSpec
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.pipeline.cumulative_review_runner import CumulativeReviewRunner
-    from src.core.protocols import CommandRunnerPort
     from src.pipeline.fixer_interface import FixerInterface
     from src.pipeline.review_runner import ReviewRunner
     from src.core.session_end_result import SessionEndRetryState

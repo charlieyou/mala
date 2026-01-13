@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from src.core.models import ReviewInput
-from src.core.protocols import ReviewResultProtocol
+from src.core.protocols.review import ReviewResultProtocol
 from src.pipeline.review_runner import (
     NoProgressInput,
     ReviewOutput,
@@ -26,11 +26,11 @@ from tests.fakes.gate_checker import FakeGateChecker
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from src.core.protocols import (
+    from src.core.protocols.review import (
         CodeReviewer,
-        GateChecker,
         ReviewIssueProtocol,
     )
+    from src.core.protocols.validation import GateChecker
 
 
 @dataclass

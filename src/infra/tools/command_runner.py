@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.core.protocols import CommandRunnerPort
+from src.core.protocols.infra import CommandRunnerPort
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

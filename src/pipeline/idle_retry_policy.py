@@ -25,7 +25,7 @@ from src.pipeline.message_stream_processor import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from src.core.protocols import SDKClientFactoryProtocol, SDKClientProtocol
+    from src.core.protocols.sdk import SDKClientFactoryProtocol, SDKClientProtocol
     from src.domain.lifecycle import LifecycleContext
     from src.infra.telemetry import TelemetrySpan
     from src.pipeline.message_stream_processor import (

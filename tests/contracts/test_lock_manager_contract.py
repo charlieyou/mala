@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from src.core.protocols import LockManagerPort
+from src.core.protocols.infra import LockManagerPort
 from tests.contracts import get_protocol_members
 from tests.fakes.lock_manager import FakeLockManager
 

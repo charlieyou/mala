@@ -39,13 +39,10 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Sequence
     from pathlib import Path
 
-    from src.core.protocols import (
-        McpServerFactory,
-        ReviewIssueProtocol,
-        SDKClientProtocol,
-    )
-    from src.domain.lifecycle import RetryState
+    from src.core.protocols.review import ReviewIssueProtocol
+    from src.core.protocols.sdk import McpServerFactory, SDKClientProtocol
     from src.core.session_end_result import SessionEndResult
+    from src.domain.lifecycle import RetryState
     from src.pipeline.agent_session_runner import (
         SessionConfig,
         SessionExecutionState,

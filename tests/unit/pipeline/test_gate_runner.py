@@ -15,7 +15,7 @@ from src.pipeline.gate_runner import (
     GateRunnerConfig,
     PerSessionGateInput,
 )
-from src.core.protocols import GateChecker  # noqa: TC001 - needed at runtime for cast()
+from src.core.protocols.validation import GateChecker  # noqa: TC001 - needed at runtime for cast()
 from src.domain.evidence_check import GateResult
 from src.domain.validation.spec import (
     CommandKind,

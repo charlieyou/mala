@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.core.protocols import CommandRunnerPort
+    from src.core.protocols.infra import CommandRunnerPort
 
 
 def tail(text: str, max_chars: int = 800, max_lines: int = 20) -> str:

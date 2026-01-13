@@ -33,11 +33,8 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
-    from src.core.protocols import (
-        GateChecker,
-        GateResultProtocol,
-        ReviewIssueProtocol,
-    )
+    from src.core.protocols.review import ReviewIssueProtocol
+    from src.core.protocols.validation import GateChecker, GateResultProtocol
     from src.domain.evidence_check import GateResult
     from src.domain.validation.spec import ValidationSpec
     from src.infra.io.log_output.run_metadata import RunMetadata

@@ -11,7 +11,7 @@ system. See tests/fakes/epic_model.py:150-153 for details.
 
 import pytest
 
-from src.core.protocols import EpicVerificationModel
+from src.core.protocols.validation import EpicVerificationModel
 from tests.contracts import get_protocol_members
 from tests.fakes.epic_model import (
     FakeEpicVerificationModel,

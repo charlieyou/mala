@@ -6,7 +6,8 @@ methods, and NullEventSink for testing.
 
 from typing import Any
 
-from src.core.protocols import DeadlockInfoProtocol, EventRunConfig, MalaEventSink
+from src.core.protocols.events import EventRunConfig, MalaEventSink
+from src.core.protocols.lifecycle import DeadlockInfoProtocol
 
 
 class BaseEventSink:

@@ -7,7 +7,7 @@ This package contains:
 - log_output/: Console logging and run metadata
 """
 
-from src.core.protocols import EventRunConfig, MalaEventSink
+from src.core.protocols.events import EventRunConfig, MalaEventSink
 from src.infra.io.base_sink import BaseEventSink, NullEventSink
 from src.infra.io.config import ConfigurationError, MalaConfig
 from src.infra.io.console_sink import ConsoleEventSink

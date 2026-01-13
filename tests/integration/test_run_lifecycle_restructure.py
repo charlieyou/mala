@@ -31,9 +31,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from src.core.protocols import McpServerFactory
-    from src.domain.lifecycle import RetryState
+    from src.core.protocols.sdk import McpServerFactory
     from src.core.session_end_result import SessionEndRetryState
+    from src.domain.lifecycle import RetryState
 
 
 def make_noop_mcp_factory() -> McpServerFactory:
@@ -558,7 +558,7 @@ async def test_session_end_timeout_proceeds_to_review_with_correct_result(
     if TYPE_CHECKING:
         from collections.abc import Sequence
 
-        from src.core.protocols import ReviewIssueProtocol
+        from src.core.protocols.review import ReviewIssueProtocol
 
     @dc
     class FakeReviewOutcome:
@@ -704,7 +704,7 @@ async def test_mixed_outcomes_both_proceed_to_review(
     if TYPE_CHECKING:
         from collections.abc import Sequence
 
-        from src.core.protocols import ReviewIssueProtocol
+        from src.core.protocols.review import ReviewIssueProtocol
 
     @dc
     class FakeReviewOutcome:

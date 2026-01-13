@@ -20,7 +20,7 @@ from pathlib import Path  # noqa: TC003 (runtime import for get_type_hints compa
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.core.protocols import MalaEventSink
+    from src.core.protocols.events import MalaEventSink
 
 
 @dataclass

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from src.core.protocols import ReviewIssueProtocol
+    from src.core.protocols.review import ReviewIssueProtocol
 
 
 def _to_relative_path(file_path: str, resolved_base: Path) -> str:

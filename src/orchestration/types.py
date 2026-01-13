@@ -26,16 +26,16 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from src.core.models import OrderPreference
-    from src.core.protocols import (
-        CodeReviewer,
+    from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.infra import (
         CommandRunnerPort,
         EnvConfigPort,
-        GateChecker,
-        IssueProvider,
         LockManagerPort,
-        LogProvider,
-        MalaEventSink,
     )
+    from src.core.protocols.issue import IssueProvider
+    from src.core.protocols.log import LogProvider
+    from src.core.protocols.review import CodeReviewer
+    from src.core.protocols.validation import GateChecker
     from src.domain.deadlock import DeadlockMonitor
     from src.domain.prompts import PromptProvider
     from src.domain.validation.config import (

@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from src.core.protocols import SDKClientProtocol
+    from src.core.protocols.sdk import SDKClientProtocol
 
 
 class SDKClientFactory:

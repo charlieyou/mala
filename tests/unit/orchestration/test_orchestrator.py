@@ -27,7 +27,7 @@ from src.infra.tools.env import PROMPTS_DIR
 from src.infra.tools.command_runner import CommandRunner
 
 from src.core.models import OrderPreference
-from src.core.protocols import LogProvider
+from src.core.protocols.log import LogProvider
 from tests.fakes.issue_provider import FakeIssueProvider, FakeIssue
 
 
@@ -2798,7 +2798,7 @@ class TestBuildGateMetadataFromLogs:
         from src.domain.evidence_check import EvidenceCheck
 
         if TYPE_CHECKING:
-            from src.core.protocols import GateChecker
+            from src.core.protocols.validation import GateChecker
 
         log_path = tmp_path / "test.log"
         log_path.write_text("{}")
@@ -2837,7 +2837,7 @@ class TestBuildGateMetadataFromLogs:
         )
 
         if TYPE_CHECKING:
-            from src.core.protocols import GateChecker
+            from src.core.protocols.validation import GateChecker
 
         log_path = tmp_path / "test.log"
         # Write a minimal log entry
@@ -2887,7 +2887,7 @@ class TestBuildGateMetadataFromLogs:
         from src.domain.validation.spec import ValidationScope, ValidationSpec
 
         if TYPE_CHECKING:
-            from src.core.protocols import GateChecker
+            from src.core.protocols.validation import GateChecker
 
         log_path = tmp_path / "test.log"
         log_path.write_text('{"type":"result"}\n')
@@ -2923,7 +2923,7 @@ class TestBuildGateMetadataFromLogs:
         from src.domain.validation.spec import ValidationScope, ValidationSpec
 
         if TYPE_CHECKING:
-            from src.core.protocols import GateChecker
+            from src.core.protocols.validation import GateChecker
 
         log_path = tmp_path / "test.log"
         log_path.write_text('{"type":"result"}\n')
@@ -2961,7 +2961,7 @@ class TestBuildGateMetadataFromLogs:
         from src.domain.validation.spec import ValidationScope, ValidationSpec
 
         if TYPE_CHECKING:
-            from src.core.protocols import GateChecker
+            from src.core.protocols.validation import GateChecker
 
         # Create log file
         log_path = tmp_path / "test.log"

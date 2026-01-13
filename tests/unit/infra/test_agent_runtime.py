@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.models import LockEvent
-    from src.core.protocols import McpServerFactory
+    from src.core.protocols.sdk import McpServerFactory
 
 
 def _create_mcp_server_factory() -> McpServerFactory:

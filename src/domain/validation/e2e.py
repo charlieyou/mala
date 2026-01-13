@@ -33,7 +33,7 @@ from .helpers import (
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-    from src.core.protocols import CommandRunnerPort, EnvConfigPort
+    from src.core.protocols.infra import CommandRunnerPort, EnvConfigPort
 
 
 class E2EStatus(Enum):

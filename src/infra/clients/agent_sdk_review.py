@@ -29,7 +29,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from src.core.protocols import MalaEventSink, SDKClientFactoryProtocol
+    from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.sdk import SDKClientFactoryProtocol
 
 
 class StructuredOutputError(RuntimeError):

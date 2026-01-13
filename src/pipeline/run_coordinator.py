@@ -36,15 +36,14 @@ if TYPE_CHECKING:
     from pathlib import Path
     from types import FrameType
 
-    from src.core.protocols import (
+    from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.infra import (
         CommandRunnerPort,
         EnvConfigPort,
-        GateChecker,
         LockManagerPort,
-        MalaEventSink,
-        McpServerFactory,
-        SDKClientFactoryProtocol,
     )
+    from src.core.protocols.sdk import McpServerFactory, SDKClientFactoryProtocol
+    from src.core.protocols.validation import GateChecker
     from src.domain.validation.result import ValidationResult
     from src.domain.validation.config import (
         BaseTriggerConfig,

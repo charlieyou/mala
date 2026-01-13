@@ -6,7 +6,7 @@ import pytest
 
 from src.infra.io.base_sink import BaseEventSink, NullEventSink
 from src.infra.io.console_sink import ConsoleEventSink
-from src.core.protocols import EventRunConfig, MalaEventSink
+from src.core.protocols.events import EventRunConfig, MalaEventSink
 
 
 @dataclass
@@ -584,7 +584,7 @@ class TestConsoleEventSink:
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """on_run_started with triggers should log trigger summary."""
-        from src.core.protocols import TriggerSummary, ValidationTriggersSummary
+        from src.core.protocols.events import TriggerSummary, ValidationTriggersSummary
 
         sink = ConsoleEventSink()
         triggers = ValidationTriggersSummary(

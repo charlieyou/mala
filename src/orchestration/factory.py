@@ -58,19 +58,22 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from src.core.protocols import (
-        CodeReviewer,
+    from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.infra import (
         CommandRunnerPort,
         EnvConfigPort,
-        EpicVerificationModel,
-        GateChecker,
-        IssueProvider,
         LockManagerPort,
-        LogProvider,
+    )
+    from src.core.protocols.issue import IssueProvider
+    from src.core.protocols.log import LogProvider
+    from src.core.protocols.review import CodeReviewer
+    from src.core.protocols.validation import (
+        EpicVerificationModel,
+        EpicVerifierProtocol,
+        GateChecker,
     )
     from src.domain.validation.config import CerberusConfig, ValidationConfig
     from src.infra.io.config import MalaConfig
-    from src.core.protocols import EpicVerifierProtocol, MalaEventSink
     from src.infra.telemetry import TelemetryProvider
 
     from .orchestrator import MalaOrchestrator

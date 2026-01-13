@@ -6,7 +6,7 @@ respective protocols and exhibit correct behavioral parity.
 
 import pytest
 
-from src.core.protocols import SDKClientFactoryProtocol, SDKClientProtocol
+from src.core.protocols.sdk import SDKClientFactoryProtocol, SDKClientProtocol
 from tests.contracts import get_protocol_members
 from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 

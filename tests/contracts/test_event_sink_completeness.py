@@ -5,7 +5,7 @@ Ensures FakeEventSink implements all methods of MalaEventSink protocol.
 
 import pytest
 
-from src.core.protocols import MalaEventSink
+from src.core.protocols.events import MalaEventSink
 from tests.fakes.event_sink import FakeEventSink
 
 

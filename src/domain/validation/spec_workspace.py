@@ -31,7 +31,11 @@ from .worktree import (
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-    from src.core.protocols import CommandRunnerPort, EnvConfigPort, LockManagerPort
+    from src.core.protocols.infra import (
+        CommandRunnerPort,
+        EnvConfigPort,
+        LockManagerPort,
+    )
 
     from .spec import ValidationContext, ValidationSpec
     from .worktree import WorktreeContext

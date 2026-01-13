@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
-    from src.core.protocols import MalaEventSink
+    from src.core.protocols.events import MalaEventSink
     from src.domain.lifecycle import (
         GateOutcome,
         ImplementerLifecycle,

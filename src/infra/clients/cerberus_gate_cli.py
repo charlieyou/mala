@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from src.core.protocols import CommandRunnerPort
+    from src.core.protocols.infra import CommandRunnerPort
 
 
 @dataclass

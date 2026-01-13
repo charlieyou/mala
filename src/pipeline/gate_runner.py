@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.domain.lifecycle import RetryState
-    from src.core.protocols import (
+    from src.core.protocols.validation import (
         GateChecker,
         GateResultProtocol,
         ValidationSpecProtocol,

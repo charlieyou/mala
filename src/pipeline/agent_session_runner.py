@@ -64,12 +64,9 @@ from src.pipeline.message_stream_processor import (
 
 if TYPE_CHECKING:
     from src.core.models import IssueResolution
-    from src.core.protocols import (
-        MalaEventSink,
-        McpServerFactory,
-        ReviewIssueProtocol,
-        SDKClientFactoryProtocol,
-    )
+    from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.review import ReviewIssueProtocol
+    from src.core.protocols.sdk import McpServerFactory, SDKClientFactoryProtocol
     from src.domain.deadlock import DeadlockMonitor
     from src.domain.lifecycle import (
         GateOutcome,

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.core.protocols import CommandResultProtocol, CommandRunnerPort
+    from src.core.protocols.infra import CommandResultProtocol, CommandRunnerPort
 
 
 # Pattern for valid path components (alphanumeric, dash, underscore, dot)

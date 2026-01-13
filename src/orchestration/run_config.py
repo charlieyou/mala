@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.core.protocols import (
+from src.core.protocols.events import (
     EventRunConfig,
     TriggerSummary,
     ValidationTriggersSummary,

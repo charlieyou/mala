@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.core.protocols import CommandRunnerPort
+from src.core.protocols.infra import CommandRunnerPort
 
 
 @dataclass

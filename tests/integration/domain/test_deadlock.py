@@ -22,7 +22,7 @@ from src.infra.io.base_sink import NullEventSink
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.core.protocols import DeadlockInfoProtocol
+    from src.core.protocols.lifecycle import DeadlockInfoProtocol
     from src.domain.deadlock import DeadlockInfo
 
 pytestmark = pytest.mark.integration

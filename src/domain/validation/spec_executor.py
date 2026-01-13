@@ -28,7 +28,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from src.core.protocols import CommandRunnerPort, EnvConfigPort, MalaEventSink
+    from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.infra import CommandRunnerPort, EnvConfigPort
 
     from .spec import ValidationCommand
 

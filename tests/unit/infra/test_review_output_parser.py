@@ -22,7 +22,7 @@ from src.infra.clients.review_output_parser import (
 from src.infra.io.base_sink import BaseEventSink
 
 if TYPE_CHECKING:
-    from src.core.protocols import MalaEventSink
+    from src.core.protocols.events import MalaEventSink
 
 # Path to golden files captured from real Cerberus output
 FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures" / "cerberus"

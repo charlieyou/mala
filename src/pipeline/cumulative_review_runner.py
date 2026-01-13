@@ -28,7 +28,8 @@ if TYPE_CHECKING:
     import asyncio
     from pathlib import Path
 
-    from src.core.protocols import IssueProvider, ReviewRunnerProtocol
+    from src.core.protocols.issue import IssueProvider
+    from src.core.protocols.review import ReviewRunnerProtocol
     from src.domain.validation.config import CodeReviewConfig, TriggerType
     from src.infra.git_utils import GitUtils
     from src.infra.io.log_output.run_metadata import RunMetadata

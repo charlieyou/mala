@@ -31,13 +31,10 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from src.core.protocols import (
-        CommandRunnerPort,
-        IssueResolutionProtocol,
-        JsonlEntryProtocol,
-        LogProvider,
-        ValidationEvidenceProtocol,
-    )
+    from src.core.protocols.infra import CommandRunnerPort
+    from src.core.protocols.issue import IssueResolutionProtocol
+    from src.core.protocols.log import JsonlEntryProtocol, LogProvider
+    from src.core.protocols.validation import ValidationEvidenceProtocol
 
     from .validation.spec import ValidationSpec
 

@@ -80,20 +80,19 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.pipeline.issue_execution_coordinator import AbortResult
-    from src.core.protocols import (
-        CodeReviewer,
+    from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.infra import (
         CommandRunnerPort,
         EnvConfigPort,
-        EpicVerifierProtocol,
-        GateChecker,
-        IssueProvider,
         LockManagerPort,
-        LogProvider,
     )
+    from src.core.protocols.issue import IssueProvider
+    from src.core.protocols.log import LogProvider
+    from src.core.protocols.review import CodeReviewer
+    from src.core.protocols.validation import EpicVerifierProtocol, GateChecker
     from src.domain.prompts import PromptProvider
     from src.domain.validation.config import PromptValidationCommands
     from src.infra.io.config import MalaConfig
-    from src.core.protocols import MalaEventSink
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.infra.telemetry import TelemetryProvider
     from src.pipeline.agent_session_runner import SessionCallbacks
@@ -108,7 +107,7 @@ if TYPE_CHECKING:
 # Version (from package metadata)
 from importlib.metadata import version as pkg_version
 
-__version__ = pkg_version("mala")
+__version__ = pkg_version("mala-agent")
 
 logger = logging.getLogger(__name__)
 

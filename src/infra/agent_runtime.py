@@ -36,11 +36,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.models import LockEvent
-    from src.core.protocols import (
-        DeadlockMonitorProtocol,
-        McpServerFactory,
-        SDKClientFactoryProtocol,
-    )
+    from src.core.protocols.lifecycle import DeadlockMonitorProtocol
+    from src.core.protocols.sdk import McpServerFactory, SDKClientFactoryProtocol
     from src.infra.hooks import FileReadCache, LintCache
 
 

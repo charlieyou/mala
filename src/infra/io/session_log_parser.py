@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.log_events import LogEntry
-    from src.core.protocols import JsonlEntryProtocol
+    from src.core.protocols.log import JsonlEntryProtocol
 
 
 @dataclass

@@ -23,7 +23,8 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from src.core.models import PeriodicValidationConfig, WatchConfig
-    from src.core.protocols import IssueProvider, MalaEventSink
+    from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.issue import IssueProvider
 
 logger = logging.getLogger(__name__)
 
