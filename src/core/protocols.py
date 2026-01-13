@@ -1431,17 +1431,3 @@ class LoggerPort(Protocol):
             color: Optional color name (e.g., "cyan", "green", "red").
         """
         ...
-
-
-# =============================================================================
-# Event Sink Protocol
-# =============================================================================
-# Re-exported from src.core.protocols.events for backward compatibility.
-# =============================================================================
-
-from src.core.protocols.events import (  # noqa: E402
-    EventRunConfig as EventRunConfig,
-    MalaEventSink as MalaEventSink,
-    TriggerSummary as TriggerSummary,
-    ValidationTriggersSummary as ValidationTriggersSummary,
-)
