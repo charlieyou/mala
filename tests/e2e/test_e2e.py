@@ -382,6 +382,7 @@ class TestE2ERunnerIntegration:
     ) -> None:
         from src.infra.tools.command_runner import CommandRunner
         from src.infra.tools.env import EnvConfig
+
         if shutil.which("mala") is None or shutil.which("bd") is None:
             pytest.skip("E2E requires mala and bd CLIs")
         if not is_claude_cli_available():
