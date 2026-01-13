@@ -1,5 +1,7 @@
 # mala
 
+[![PyPI version](https://img.shields.io/pypi/v/mala-agent.svg)](https://pypi.org/project/mala-agent/)
+
 **M**ulti-**A**gent **L**oop **A**rchitecture
 
 A multi-agent system for processing beads issues in parallel using the Claude Agent SDK.
@@ -23,26 +25,11 @@ LLM agents become unreliable as their context window fills up. Early in a sessio
 
 ### Beads (`bd`)
 
-[Beads](https://github.com/steveyegge/beads) is the issue tracking system that agents pull work from.
-
-```bash
-# Install (pick one)
-npm install -g @beads/bd
-# or: brew install steveyegge/beads/bd
-# or: go install github.com/steveyegge/beads/cmd/bd@latest
-
-# Initialize in your repo
-cd /path/to/repo && bd init
-```
+[Beads](https://github.com/steveyegge/beads) is the issue tracking system that agents pull work from. See the repo for installation instructions.
 
 ### Claude Code
 
-[Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI is the agent runtime.
-
-```bash
-npm install -g @anthropic-ai/claude-code
-claude login
-```
+[Claude Code](https://code.claude.com/docs/en/setup) CLI is the agent runtime. See the docs for installation instructions.
 
 ### Cerberus Review-Gate (Optional)
 
@@ -57,7 +44,7 @@ claude /plugin install cerberus
 ## Installation
 
 ```bash
-uv tool install . --reinstall
+uv tool install mala-agent
 ```
 
 ## Usage
