@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.models import EpicVerificationResult
+    from src.core.session_end_result import SessionEndResult, SessionEndRetryState
 
     from .issue import IssueResolutionProtocol
 
@@ -334,5 +335,116 @@ class EpicVerificationModel(Protocol):
 
         Returns:
             Structured verdict with pass/fail and unmet criteria details.
+        """
+        ...
+
+
+@runtime_checkable
+class GateOutcomeProtocol(Protocol):
+    """Protocol for gate check outcome.
+
+    Matches the shape of domain.lifecycle.GateOutcome for structural typing.
+    This allows IGateRunner to reference the return type without importing
+    from domain.
+    """
+
+    @property
+    def passed(self) -> bool:
+        """Whether the gate check passed."""
+        ...
+
+    @property
+    def failure_reasons(self) -> list[str]:
+        """Reasons for failure (empty if passed)."""
+        ...
+
+    @property
+    def commit_hash(self) -> str | None:
+        """Commit hash if a commit was found."""
+        ...
+
+    @property
+    def no_progress(self) -> bool:
+        """Whether no progress was detected since last attempt."""
+        ...
+
+    @property
+    def resolution(self) -> IssueResolutionProtocol | None:
+        """Issue resolution if a resolution marker was found."""
+        ...
+
+
+@runtime_checkable
+class RetryStateProtocol(Protocol):
+    """Protocol for retry state.
+
+    Matches the shape of domain.lifecycle.RetryState for structural typing.
+    This allows protocols to reference retry state without importing from domain.
+    """
+
+    gate_attempt: int
+    """Current gate attempt number (1-indexed)."""
+
+    session_end_attempt: int
+    """Current session_end attempt number."""
+
+    review_attempt: int
+    """Current review attempt number."""
+
+    log_offset: int
+    """Byte offset in log file for resuming."""
+
+    previous_commit_hash: str | None
+    """Commit hash from the previous attempt."""
+
+    baseline_timestamp: int
+    """Timestamp for baseline comparisons."""
+
+
+@runtime_checkable
+class IGateRunner(Protocol):
+    """Protocol for gate checking operations.
+
+    This protocol defines methods for running quality gate checks and
+    session-end validation. It replaces the on_gate_check and on_session_end_check
+    callbacks from SessionCallbacks.
+
+    The canonical implementation is SessionCallbackFactory in
+    src/pipeline/session_callback_factory.py.
+    """
+
+    async def run_gate_check(
+        self,
+        issue_id: str,
+        log_path: Path,
+        retry_state: RetryStateProtocol,
+    ) -> tuple[GateOutcomeProtocol, int]:
+        """Run quality gate check.
+
+        Args:
+            issue_id: The issue ID being checked.
+            log_path: Path to the JSONL log file from agent session.
+            retry_state: Current retry state with attempt counts and log offset.
+
+        Returns:
+            Tuple of (GateOutcome indicating pass/fail/retry, new log offset).
+        """
+        ...
+
+    async def run_session_end_check(
+        self,
+        issue_id: str,
+        log_path: Path,
+        retry_state: SessionEndRetryState,
+    ) -> SessionEndResult:
+        """Run session-end validation check.
+
+        Args:
+            issue_id: The issue ID being checked.
+            log_path: Path to the JSONL log file from agent session.
+            retry_state: Current session-end retry state.
+
+        Returns:
+            SessionEndResult with validation outcome.
         """
         ...

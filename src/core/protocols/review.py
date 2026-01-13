@@ -14,6 +14,10 @@ if TYPE_CHECKING:
     import asyncio
     from pathlib import Path
 
+    from src.core.session_end_result import SessionEndResult
+
+    from .validation import RetryStateProtocol
+
 
 @runtime_checkable
 class ReviewIssueProtocol(Protocol):
@@ -172,5 +176,99 @@ class ReviewRunnerProtocol(Protocol):
 
         Returns:
             ReviewOutput with result and optional session log path.
+        """
+        ...
+
+
+@runtime_checkable
+class ReviewOutcomeProtocol(Protocol):
+    """Protocol for review outcome.
+
+    Matches the shape of domain.lifecycle.ReviewOutcome for structural typing.
+    This allows IReviewRunner to reference the return type without importing
+    from domain.
+    """
+
+    @property
+    def passed(self) -> bool:
+        """Whether the review passed."""
+        ...
+
+    @property
+    def parse_error(self) -> str | None:
+        """Parse error message if JSON parsing failed."""
+        ...
+
+    @property
+    def fatal_error(self) -> bool:
+        """Whether the review failure is unrecoverable."""
+        ...
+
+    @property
+    def issues(self) -> Sequence[ReviewIssueProtocol]:
+        """List of issues found during review."""
+        ...
+
+    @property
+    def interrupted(self) -> bool:
+        """Whether the review was interrupted by SIGINT."""
+        ...
+
+
+@runtime_checkable
+class IReviewRunner(Protocol):
+    """Protocol for review operations.
+
+    This protocol defines methods for running code reviews and checking
+    progress. It replaces the on_review_check and on_review_no_progress
+    callbacks from SessionCallbacks.
+
+    The canonical implementation is SessionCallbackFactory in
+    src/pipeline/session_callback_factory.py.
+    """
+
+    async def run_review(
+        self,
+        issue_id: str,
+        description: str | None,
+        session_id: str | None,
+        retry_state: RetryStateProtocol,
+        author_context: str | None,
+        previous_findings: Sequence[ReviewIssueProtocol] | None,
+        session_end_result: SessionEndResult | None,
+    ) -> ReviewOutcomeProtocol:
+        """Run code review.
+
+        Args:
+            issue_id: The issue ID being reviewed.
+            description: Optional issue description for context.
+            session_id: Optional Claude session ID for review attribution.
+            retry_state: Current retry state with attempt counts.
+            author_context: Optional author-provided context for the reviewer.
+            previous_findings: Optional list of findings from previous review.
+            session_end_result: Optional session-end validation result.
+
+        Returns:
+            ReviewOutcome indicating pass/fail/retry.
+        """
+        ...
+
+    def check_no_progress(
+        self,
+        log_path: Path,
+        log_offset: int,
+        prev_commit: str | None,
+        curr_commit: str | None,
+    ) -> bool:
+        """Check if no progress was made since the last attempt.
+
+        Args:
+            log_path: Path to the JSONL log file.
+            log_offset: Byte offset marking the end of the previous attempt.
+            prev_commit: Commit hash from the previous attempt.
+            curr_commit: Commit hash from this attempt.
+
+        Returns:
+            True if no progress was made, False if progress was detected.
         """
         ...
