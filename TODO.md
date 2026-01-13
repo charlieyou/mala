@@ -1,5 +1,3 @@
-* Publish to PyPi
-
 New Features
 * Use cerberus for epic verification
 * Add fixer sessions and cerberus reviews to logs search
