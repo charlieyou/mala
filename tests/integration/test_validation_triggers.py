@@ -397,6 +397,5 @@ def test_trigger_code_review_emits_lifecycle_events(tmp_path: Path) -> None:
     # one of: passed, failed, skipped, or error
     assert event_sink.has_event("trigger_code_review_started"), (
         "Expected trigger_code_review_started event not recorded. "
-        "Events recorded: "
-        + ", ".join(e.event_type for e in event_sink.events)
+        "Events recorded: " + ", ".join(e.event_type for e in event_sink.events)
     )

@@ -757,8 +757,7 @@ class TestRunTriggerCodeReview:
         assert result.skip_reason == "run_metadata not available"
         mock_event_sink.on_warning.assert_called_once()
         assert (
-            "run_metadata not available"
-            in mock_event_sink.on_warning.call_args[0][0]
+            "run_metadata not available" in mock_event_sink.on_warning.call_args[0][0]
         )
 
     @pytest.mark.asyncio

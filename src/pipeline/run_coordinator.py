@@ -936,9 +936,7 @@ class RunCoordinator:
                                     1
                                     for f in remediation_result.findings
                                     if f.priority
-                                    <= int(
-                                        code_review_config.finding_threshold[1]
-                                    )
+                                    <= int(code_review_config.finding_threshold[1])
                                 )
                                 self.event_sink.on_trigger_code_review_failed(
                                     trigger_type.value, final_blocking_count
