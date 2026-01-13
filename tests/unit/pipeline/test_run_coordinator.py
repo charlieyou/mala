@@ -2266,6 +2266,111 @@ class TestR12CodeReviewGating:
         mock_review_runner.run_review.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_run_end_remediation_continues_remaining_commands(
+        self,
+        tmp_path: Path,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """Remediation success resumes remaining validation commands."""
+        from src.domain.validation.config import (
+            CommandConfig,
+            CommandsConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerCommandRef,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.infra.tools.command_runner import CommandResult
+
+        mock_gate_checker = MagicMock()
+        mock_run_metadata = MagicMock()
+
+        command_calls: list[str] = []
+        call_count = {"build_cmd": 0}
+
+        async def mock_run_async(
+            cmd: str | list[str], **kwargs: object
+        ) -> CommandResult:
+            cmd_str = cmd if isinstance(cmd, str) else " ".join(cmd)
+            command_calls.append(cmd_str)
+            if cmd_str == "build_cmd":
+                call_count["build_cmd"] += 1
+                if call_count["build_cmd"] == 1:
+                    return CommandResult(
+                        command=cmd_str, returncode=1, stdout="", stderr="Build failed"
+                    )
+            return CommandResult(command=cmd_str, returncode=0, stdout="", stderr="")
+
+        smart_runner = MagicMock()
+        smart_runner.run_async = mock_run_async
+
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.REMEDIATE,
+            max_retries=1,
+            commands=(
+                TriggerCommandRef(ref="setup"),
+                TriggerCommandRef(ref="format"),
+                TriggerCommandRef(ref="build"),
+                TriggerCommandRef(ref="test"),
+                TriggerCommandRef(ref="e2e"),
+            ),
+            fire_on=FireOn.SUCCESS,
+        )
+        triggers_config = ValidationTriggersConfig(run_end=trigger_config)
+        commands_config = CommandsConfig(
+            setup=CommandConfig(command="setup_cmd"),
+            format=CommandConfig(command="format_cmd"),
+            build=CommandConfig(command="build_cmd"),
+            test=CommandConfig(command="test_cmd"),
+            e2e=CommandConfig(command="e2e_cmd"),
+        )
+        validation_config = ValidationConfig(
+            commands=commands_config,
+            validation_triggers=triggers_config,
+        )
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix: {failure_output}",
+            validation_config=validation_config,
+        )
+        coordinator = _make_coordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=smart_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
+            run_metadata=mock_run_metadata,
+        )
+
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]
+            return_value=FixerResult(success=True, interrupted=False)
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        result = await coordinator.run_trigger_validation(dry_run=False)
+
+        assert result.status == "passed"
+        assert command_calls == [
+            "setup_cmd",
+            "format_cmd",
+            "build_cmd",
+            "build_cmd",
+            "test_cmd",
+            "e2e_cmd",
+        ]
+
+        meta = mock_run_metadata.record_run_validation.call_args_list[-1][0][0]
+        assert meta.commands_run == ["setup", "format", "build", "test", "e2e"]
+
+    @pytest.mark.asyncio
     async def test_command_continue_failure_preserved_after_code_review_remediation(
         self,
         tmp_path: Path,
