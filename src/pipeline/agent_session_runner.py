@@ -1035,7 +1035,12 @@ class AgentSessionRunner:
         raise ValueError("on_gate_check not configured: set gate_runner or callbacks")
 
     def _has_session_end_check(self) -> bool:
-        """Check if session_end check is available."""
+        """Check if session_end check is available.
+
+        Note: This is a conservative check. Even if gate_runner is set, the actual
+        run_session_end_check call may fall back to callbacks or return skipped if
+        the gate_runner doesn't support session_end.
+        """
         return (
             self.gate_runner is not None
             or self.callbacks.on_session_end_check is not None
@@ -1046,8 +1051,9 @@ class AgentSessionRunner:
     ) -> SessionEndResult:
         """Run session_end check via protocol or callback.
 
-        If gate_runner is set but run_session_end_check raises NotImplementedError,
-        falls back to callback. If neither is configured, returns skipped result.
+        If gate_runner is set but run_session_end_check raises NotImplementedError
+        or AttributeError (method not present), falls back to callback.
+        If neither is configured, returns skipped result.
         """
         from src.core.session_end_result import SessionEndResult
 
@@ -1056,7 +1062,7 @@ class AgentSessionRunner:
                 return await self.gate_runner.run_session_end_check(
                     issue_id, log_path, retry_state
                 )
-            except NotImplementedError:
+            except (NotImplementedError, AttributeError):
                 # gate_runner doesn't support session_end, fall through to callback
                 pass
         if self.callbacks.on_session_end_check is not None:
