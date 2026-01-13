@@ -377,7 +377,7 @@ class BaseEventSink:
         pass
 
     def on_trigger_command_started(
-        self, trigger_type: str, command_ref: str, index: int
+        self, trigger_type: str, command_ref: str, index: int, total_commands: int
     ) -> None:
         pass
 
@@ -386,6 +386,7 @@ class BaseEventSink:
         trigger_type: str,
         command_ref: str,
         index: int,
+        total_commands: int,
         passed: bool,
         duration_seconds: float,
     ) -> None:

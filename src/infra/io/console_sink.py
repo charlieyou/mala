@@ -674,14 +674,14 @@ class ConsoleEventSink(BaseEventSink):
         self, trigger_type: str, commands: list[str]
     ) -> None:
         cmds_str = ", ".join(commands) if commands else "(none)"
-        log("→", f"[{trigger_type}] validation_started: {cmds_str}", agent_id="trigger")
+        log("→", f"[{trigger_type}] VALIDATE {cmds_str}", agent_id="trigger")
 
     def on_trigger_command_started(
-        self, trigger_type: str, command_ref: str, index: int
+        self, trigger_type: str, command_ref: str, index: int, total_commands: int
     ) -> None:
         log(
             "◦",
-            f"[{trigger_type}] command_started: {command_ref} (index={index})",
+            f"[{trigger_type}] ({index + 1}/{total_commands}) {command_ref.upper()} ...",
             agent_id="trigger",
         )
 
@@ -690,17 +690,18 @@ class ConsoleEventSink(BaseEventSink):
         trigger_type: str,
         command_ref: str,
         index: int,
+        total_commands: int,
         passed: bool,
         duration_seconds: float,
     ) -> None:
         status = (
-            f"{Colors.GREEN}passed{Colors.RESET}"
+            f"{Colors.GREEN}✓{Colors.RESET}"
             if passed
-            else f"{Colors.RED}failed{Colors.RESET}"
+            else f"{Colors.RED}✗{Colors.RESET}"
         )
         log(
             "◦",
-            f"[{trigger_type}] command_completed: {command_ref} {status} ({duration_seconds:.1f}s)",
+            f"[{trigger_type}] ({index + 1}/{total_commands}) {command_ref.upper()} {status} ({duration_seconds:.1f}s)",
             agent_id="trigger",
         )
 

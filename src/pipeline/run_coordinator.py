@@ -415,6 +415,7 @@ class RunCoordinator:
             results: list[TriggerCommandResult] = []
             current_index = 0
 
+            total_commands = len(resolved_commands)
             while current_index < len(resolved_commands):
                 # Execute remaining commands with fail-fast and interrupt support
                 (
@@ -426,6 +427,7 @@ class RunCoordinator:
                     dry_run=dry_run,
                     interrupt_event=interrupt_event,
                     start_index=current_index,
+                    total_commands=total_commands,
                 )
 
                 # Check for interrupt during command execution
@@ -968,6 +970,7 @@ class RunCoordinator:
                 dry_run=dry_run,
                 interrupt_event=interrupt_event,
                 start_index=failed_index,
+                total_commands=len(resolved_commands),
             )
 
             if was_interrupted:
@@ -1122,6 +1125,7 @@ class RunCoordinator:
         dry_run: bool = False,
         interrupt_event: asyncio.Event,
         start_index: int = 0,
+        total_commands: int,
     ) -> tuple[list[TriggerCommandResult], bool]:
         """Execute resolved commands with interrupt support.
 
@@ -1135,6 +1139,7 @@ class RunCoordinator:
             dry_run: If True, skip subprocess execution.
             interrupt_event: Event set when SIGINT received.
             start_index: Offset for command indices in emitted events.
+            total_commands: Total number of commands in this validation.
 
         Returns:
             Tuple of (results, was_interrupted) where was_interrupted is True
@@ -1151,7 +1156,7 @@ class RunCoordinator:
             # Emit command_started event
             if self.event_sink is not None:
                 self.event_sink.on_trigger_command_started(
-                    trigger_type.value, cmd.ref, command_index
+                    trigger_type.value, cmd.ref, command_index, total_commands
                 )
 
             if dry_run:
@@ -1161,7 +1166,12 @@ class RunCoordinator:
                 # Emit command_completed event
                 if self.event_sink is not None:
                     self.event_sink.on_trigger_command_completed(
-                        trigger_type.value, cmd.ref, command_index, passed, duration
+                        trigger_type.value,
+                        cmd.ref,
+                        command_index,
+                        total_commands,
+                        passed,
+                        duration,
                     )
                 results.append(
                     TriggerCommandResult(
@@ -1228,6 +1238,7 @@ class RunCoordinator:
                     trigger_type.value,
                     cmd.ref,
                     command_index,
+                    total_commands,
                     passed,
                     cmd_result.duration_seconds,
                 )

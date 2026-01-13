@@ -43,7 +43,7 @@ class TriggerEvents(Protocol):
         ...
 
     def on_trigger_command_started(
-        self, trigger_type: str, command_ref: str, index: int
+        self, trigger_type: str, command_ref: str, index: int, total_commands: int
     ) -> None:
         """Called when a trigger command starts execution.
 
@@ -51,6 +51,7 @@ class TriggerEvents(Protocol):
             trigger_type: Type of trigger.
             command_ref: Reference name of the command.
             index: 0-based index of the command in the trigger's command list.
+            total_commands: Total number of commands in this validation.
         """
         ...
 
@@ -59,6 +60,7 @@ class TriggerEvents(Protocol):
         trigger_type: str,
         command_ref: str,
         index: int,
+        total_commands: int,
         passed: bool,
         duration_seconds: float,
     ) -> None:
@@ -68,6 +70,7 @@ class TriggerEvents(Protocol):
             trigger_type: Type of trigger.
             command_ref: Reference name of the command.
             index: 0-based index of the command.
+            total_commands: Total number of commands in this validation.
             passed: Whether the command passed.
             duration_seconds: Execution duration.
         """

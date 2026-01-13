@@ -523,13 +523,14 @@ class FakeEventSink:
         )
 
     def on_trigger_command_started(
-        self, trigger_type: str, command_ref: str, index: int
+        self, trigger_type: str, command_ref: str, index: int, total_commands: int
     ) -> None:
         self._record(
             "trigger_command_started",
             trigger_type=trigger_type,
             command_ref=command_ref,
             index=index,
+            total_commands=total_commands,
         )
 
     def on_trigger_command_completed(
@@ -537,6 +538,7 @@ class FakeEventSink:
         trigger_type: str,
         command_ref: str,
         index: int,
+        total_commands: int,
         passed: bool,
         duration_seconds: float,
     ) -> None:
@@ -545,6 +547,7 @@ class FakeEventSink:
             trigger_type=trigger_type,
             command_ref=command_ref,
             index=index,
+            total_commands=total_commands,
             passed=passed,
             duration_seconds=duration_seconds,
         )
