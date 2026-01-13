@@ -495,3 +495,173 @@ class TestEarlyInterruptPath:
         assert output.interrupted is True
         assert output.baseline_timestamp == 1700000000
         assert output.agent_id == "agent-123"
+
+
+class TestProtocolInterfaceAcceptance:
+    """Tests for protocol interface acceptance in AgentSessionRunner."""
+
+    def test_accepts_protocol_interfaces(self) -> None:
+        """AgentSessionRunner can be initialized with protocol interfaces."""
+        from dataclasses import dataclass
+
+        @dataclass
+        class FakeGateRunner:
+            """Fake IGateRunner implementation."""
+
+            async def run_gate_check(
+                self, issue_id: str, log_path: object, retry_state: object
+            ) -> tuple[object, int]:
+                raise NotImplementedError
+
+            async def run_session_end_check(
+                self, issue_id: str, log_path: object, retry_state: object
+            ) -> object:
+                raise NotImplementedError
+
+        @dataclass
+        class FakeReviewRunner:
+            """Fake IReviewRunner implementation."""
+
+            async def run_review(
+                self,
+                issue_id: str,
+                description: str | None,
+                session_id: str | None,
+                retry_state: object,
+                author_context: str | None,
+                previous_findings: object,
+                session_end_result: object,
+            ) -> object:
+                raise NotImplementedError
+
+            def check_no_progress(
+                self,
+                log_path: object,
+                log_offset: int,
+                prev_commit: str | None,
+                curr_commit: str | None,
+            ) -> bool:
+                return False
+
+        @dataclass
+        class FakeSessionLifecycle:
+            """Fake ISessionLifecycle implementation."""
+
+            def get_log_path(self, session_id: str) -> Path:
+                return Path("/tmp/test.jsonl")
+
+            def get_log_offset(self, log_path: object, start_offset: int) -> int:
+                return 0
+
+            def on_abort(self, reason: str) -> None:
+                pass
+
+            def get_abort_event(self) -> None:
+                return None
+
+            def on_tool_use(
+                self, agent_id: str, tool_name: str, args: dict | None
+            ) -> None:
+                pass
+
+            def on_agent_text(self, agent_id: str, text: str) -> None:
+                pass
+
+        config = AgentSessionConfig(
+            repo_path=Path("/tmp/test-repo"),
+            timeout_seconds=300,
+            prompts=make_prompts(),
+        )
+
+        # Should not raise
+        runner = AgentSessionRunner(
+            config=config,
+            sdk_client_factory=FakeSDKClientFactory(),  # type: ignore[arg-type]
+            gate_runner=FakeGateRunner(),  # type: ignore[arg-type]
+            review_runner=FakeReviewRunner(),  # type: ignore[arg-type]
+            session_lifecycle=FakeSessionLifecycle(),  # type: ignore[arg-type]
+        )
+
+        assert runner.gate_runner is not None
+        assert runner.review_runner is not None
+        assert runner.session_lifecycle is not None
+
+    def test_bridge_methods_use_protocols_when_available(self) -> None:
+        """Bridge methods use protocol interfaces when available."""
+        from dataclasses import dataclass
+
+        log_path_calls: list[str] = []
+        log_offset_calls: list[tuple[Path, int]] = []
+
+        @dataclass
+        class FakeSessionLifecycle:
+            """Fake ISessionLifecycle that tracks calls."""
+
+            def get_log_path(self, session_id: str) -> Path:
+                log_path_calls.append(session_id)
+                return Path("/tmp/protocol-log.jsonl")
+
+            def get_log_offset(self, log_path: object, start_offset: int) -> int:
+                log_offset_calls.append((log_path, start_offset))  # type: ignore[arg-type]
+                return 42
+
+            def on_abort(self, reason: str) -> None:
+                pass
+
+            def get_abort_event(self) -> None:
+                return None
+
+            def on_tool_use(
+                self, agent_id: str, tool_name: str, args: dict | None
+            ) -> None:
+                pass
+
+            def on_agent_text(self, agent_id: str, text: str) -> None:
+                pass
+
+        config = AgentSessionConfig(
+            repo_path=Path("/tmp/test-repo"),
+            timeout_seconds=300,
+            prompts=make_prompts(),
+        )
+
+        runner = AgentSessionRunner(
+            config=config,
+            sdk_client_factory=FakeSDKClientFactory(),  # type: ignore[arg-type]
+            session_lifecycle=FakeSessionLifecycle(),
+        )
+
+        # Test _get_log_path uses protocol
+        result_path = runner._get_log_path("test-session")
+        assert result_path == Path("/tmp/protocol-log.jsonl")
+        assert log_path_calls == ["test-session"]
+
+        # Test _get_log_offset uses protocol
+        result_offset = runner._get_log_offset(Path("/tmp/test.jsonl"), 10)
+        assert result_offset == 42
+        assert log_offset_calls == [(Path("/tmp/test.jsonl"), 10)]
+
+    def test_bridge_methods_fallback_to_callbacks(self) -> None:
+        """Bridge methods fall back to callbacks when protocols not available."""
+        log_path_calls: list[str] = []
+
+        def fake_get_log_path(session_id: str) -> Path:
+            log_path_calls.append(session_id)
+            return Path("/tmp/callback-log.jsonl")
+
+        config = AgentSessionConfig(
+            repo_path=Path("/tmp/test-repo"),
+            timeout_seconds=300,
+            prompts=make_prompts(),
+        )
+
+        runner = AgentSessionRunner(
+            config=config,
+            sdk_client_factory=FakeSDKClientFactory(),  # type: ignore[arg-type]
+            callbacks=SessionCallbacks(get_log_path=fake_get_log_path),
+        )
+
+        # No protocol, should use callback
+        result_path = runner._get_log_path("callback-session")
+        assert result_path == Path("/tmp/callback-log.jsonl")
+        assert log_path_calls == ["callback-session"]

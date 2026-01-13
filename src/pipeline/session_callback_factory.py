@@ -4,6 +4,10 @@ This factory encapsulates callback construction that bridges orchestrator state
 to the pipeline runners. It receives state references and returns a SessionCallbacks
 instance wired to the appropriate callbacks.
 
+Additionally, SessionCallbackFactory implements the IGateRunner, IReviewRunner,
+and ISessionLifecycle protocols, allowing it to be used directly as a protocol
+implementation when constructing AgentSessionRunner instances.
+
 Design principles:
 - Single responsibility: only builds callbacks, doesn't run gates/reviews
 - Protocol-based dependencies for testability
@@ -18,7 +22,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from src.pipeline.agent_session_runner import SessionCallbacks
 from src.core.session_end_result import (
@@ -31,11 +35,21 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from pathlib import Path
 
+    from src.core.protocols.lifecycle import ISessionLifecycle
+    from src.core.protocols.review import (
+        IReviewRunner,
+        ReviewIssueProtocol,
+        ReviewOutcomeProtocol,
+    )
+    from src.core.protocols.validation import (
+        GateChecker,
+        GateOutcomeProtocol,
+        IGateRunner,
+        RetryStateProtocol,
+    )
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.infra import CommandResultProtocol, CommandRunnerPort
     from src.core.protocols.log import LogProvider
-    from src.core.protocols.review import ReviewIssueProtocol
-    from src.core.protocols.validation import GateChecker
     from src.domain.lifecycle import (
         GateOutcome,
         RetryState,
@@ -196,12 +210,41 @@ class SessionCallbackFactory:
         self._cumulative_review_runner = cumulative_review_runner
         self._session_end_timeout = session_end_timeout
 
+    def build_adapters(
+        self,
+        issue_id: str,
+        on_abort: Callable[[str], None] | None = None,
+    ) -> SessionRunnerAdapters:
+        """Build protocol adapters for AgentSessionRunner.
+
+        This is the preferred method for obtaining protocol implementations
+        to pass to AgentSessionRunner. Use this instead of the deprecated
+        build() method which returns SessionCallbacks.
+
+        Args:
+            issue_id: The issue ID for tracking state.
+            on_abort: Optional callback for fatal error signaling.
+
+        Returns:
+            SessionRunnerAdapters with IGateRunner, IReviewRunner, and
+            ISessionLifecycle implementations.
+        """
+        return SessionRunnerAdapters(
+            gate_runner=_GateRunnerAdapter(self, issue_id),
+            review_runner=_ReviewRunnerAdapter(self, issue_id),
+            session_lifecycle=_SessionLifecycleAdapter(self, issue_id, on_abort),
+        )
+
     def build(
         self,
         issue_id: str,
         on_abort: Callable[[str], None] | None = None,
     ) -> SessionCallbacks:
         """Build SessionCallbacks for a specific issue.
+
+        .. deprecated::
+            Use build_adapters() instead, which returns protocol implementations
+            for the new AgentSessionRunner interface.
 
         Args:
             issue_id: The issue ID for tracking state.
@@ -1071,3 +1114,202 @@ class GateChecker(Protocol):
     def get_log_end_offset(self, log_path: Path, start_offset: int) -> int:
         """Get the end offset of a log file."""
         ...
+
+
+@dataclass
+class SessionRunnerAdapters:
+    """Bundle of protocol implementations for AgentSessionRunner.
+
+    This class provides IGateRunner, IReviewRunner, and ISessionLifecycle
+    implementations by adapting a SessionCallbackFactory instance. Use this
+    to construct an AgentSessionRunner with protocol interfaces instead of
+    the deprecated SessionCallbacks dataclass.
+
+    Usage:
+        factory = SessionCallbackFactory(...)
+        adapters = factory.build_adapters(issue_id)
+        runner = AgentSessionRunner(
+            config=config,
+            sdk_client_factory=sdk_factory,
+            gate_runner=adapters.gate_runner,
+            review_runner=adapters.review_runner,
+            session_lifecycle=adapters.session_lifecycle,
+        )
+
+    Attributes:
+        gate_runner: IGateRunner protocol implementation.
+        review_runner: IReviewRunner protocol implementation.
+        session_lifecycle: ISessionLifecycle protocol implementation.
+    """
+
+    gate_runner: IGateRunner
+    review_runner: IReviewRunner
+    session_lifecycle: ISessionLifecycle
+
+
+class _GateRunnerAdapter:
+    """IGateRunner implementation wrapping SessionCallbackFactory methods."""
+
+    def __init__(
+        self,
+        factory: SessionCallbackFactory,
+        issue_id: str,
+    ) -> None:
+        self._factory = factory
+        self._issue_id = issue_id
+
+    async def run_gate_check(
+        self,
+        issue_id: str,
+        log_path: Path,
+        retry_state: RetryStateProtocol,
+    ) -> tuple[GateOutcomeProtocol, int]:
+        """Run quality gate check."""
+        result, offset = await self._factory._gate_async_runner.run_gate_async(
+            issue_id,
+            log_path,
+            retry_state,  # type: ignore[arg-type] # Protocol → concrete type
+            self._factory._context.interrupt_event_getter(),
+        )
+        return result, offset  # type: ignore[return-value] # concrete → Protocol
+
+    async def run_session_end_check(
+        self,
+        issue_id: str,
+        log_path: Path,
+        retry_state: SessionEndRetryState,
+    ) -> SessionEndResult:
+        """Run session-end validation check."""
+        return await self._factory._execute_session_end(
+            issue_id=issue_id,
+            log_path=log_path,
+            retry_state=retry_state,
+        )
+
+
+class _ReviewRunnerAdapter:
+    """IReviewRunner implementation wrapping SessionCallbackFactory methods."""
+
+    def __init__(
+        self,
+        factory: SessionCallbackFactory,
+        issue_id: str,
+    ) -> None:
+        self._factory = factory
+        self._issue_id = issue_id
+
+    async def run_review(
+        self,
+        issue_id: str,
+        description: str | None,
+        session_id: str | None,
+        retry_state: RetryStateProtocol,
+        author_context: str | None,
+        previous_findings: Sequence[ReviewIssueProtocol] | None,
+        session_end_result: SessionEndResult | None,
+    ) -> ReviewOutcomeProtocol:
+        """Run code review."""
+        from src.core.models import ReviewInput
+        from src.infra.git_utils import get_issue_commits_async
+
+        self._factory._review_runner.config.capture_session_log = (
+            self._factory._is_verbose()
+        )
+        commit_shas = await get_issue_commits_async(
+            self._factory._repo_path,
+            issue_id,
+        )
+        review_input = ReviewInput(
+            issue_id=issue_id,
+            repo_path=self._factory._repo_path,
+            issue_description=description,
+            commit_shas=commit_shas,
+            claude_session_id=session_id,
+            author_context=author_context,
+            previous_findings=previous_findings,
+            session_end_result=session_end_result,
+        )
+        output = await self._factory._review_runner.run_review(
+            review_input, self._factory._context.interrupt_event_getter()
+        )
+        if output.session_log_path:
+            self._factory._context.on_review_log_path(issue_id, output.session_log_path)
+
+        # Propagate interrupted flag
+        result = output.result
+        if output.interrupted and not getattr(result, "interrupted", False):
+            result = _InterruptedReviewResultWrapper(
+                passed=result.passed,
+                issues=list(result.issues),
+                parse_error=result.parse_error,
+                fatal_error=result.fatal_error,
+                review_log_path=getattr(result, "review_log_path", None),
+                interrupted=True,
+            )
+        return result
+
+    def check_no_progress(
+        self,
+        log_path: Path,
+        log_offset: int,
+        prev_commit: str | None,
+        curr_commit: str | None,
+    ) -> bool:
+        """Check if no progress was made since the last attempt."""
+        from src.pipeline.review_runner import NoProgressInput
+
+        no_progress_input = NoProgressInput(
+            log_path=log_path,
+            log_offset=log_offset,
+            previous_commit_hash=prev_commit,
+            current_commit_hash=curr_commit,
+            spec=self._factory._get_per_session_spec(),
+        )
+        return self._factory._review_runner.check_no_progress(no_progress_input)
+
+
+class _SessionLifecycleAdapter:
+    """ISessionLifecycle implementation wrapping SessionCallbackFactory methods."""
+
+    def __init__(
+        self,
+        factory: SessionCallbackFactory,
+        issue_id: str,
+        on_abort: Callable[[str], None] | None = None,
+    ) -> None:
+        self._factory = factory
+        self._issue_id = issue_id
+        self._on_abort = on_abort
+
+    def get_log_path(self, session_id: str) -> Path:
+        """Get the log file path for a session."""
+        log_path = self._factory._context.log_provider_getter().get_log_path(
+            self._factory._repo_path, session_id
+        )
+        self._factory._context.on_session_log_path(self._issue_id, log_path)
+        return log_path
+
+    def get_log_offset(self, log_path: Path, start_offset: int) -> int:
+        """Get the current byte offset at the end of a log file."""
+        return self._factory._context.evidence_check_getter().get_log_end_offset(
+            log_path, start_offset
+        )
+
+    def on_abort(self, reason: str) -> None:
+        """Handle session abort."""
+        if self._on_abort is not None:
+            self._on_abort(reason)
+
+    def get_abort_event(self) -> asyncio.Event | None:
+        """Get the abort event for run abort detection."""
+        return self._factory._context.abort_event_getter()
+
+    def on_tool_use(
+        self, agent_id: str, tool_name: str, args: dict[str, Any] | None
+    ) -> None:
+        """Handle tool use event from SDK."""
+        self._factory._get_event_sink().on_tool_use(agent_id, tool_name, arguments=args)
+
+    def on_agent_text(self, agent_id: str, text: str) -> None:
+        """Handle text output event from SDK."""
+        self._factory._get_event_sink().on_agent_text(agent_id, text)

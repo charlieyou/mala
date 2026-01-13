@@ -63,6 +63,9 @@ from src.pipeline.message_stream_processor import (
 )
 
 if TYPE_CHECKING:
+    from src.core.protocols.lifecycle import ISessionLifecycle
+    from src.core.protocols.review import IReviewRunner
+    from src.core.protocols.validation import IGateRunner
     from src.core.models import IssueResolution
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.review import ReviewIssueProtocol
@@ -337,6 +340,13 @@ class AgentSessionOutput:
 class SessionCallbacks:
     """Callbacks for external actions during session execution.
 
+    .. deprecated::
+        This dataclass is deprecated. Use the protocol interfaces instead:
+        - IGateRunner for gate checking (on_gate_check, on_session_end_check)
+        - IReviewRunner for review operations (on_review_check, on_review_no_progress)
+        - ISessionLifecycle for lifecycle operations (get_log_path, get_log_offset,
+          on_abort, get_abort_event, on_tool_use, on_agent_text)
+
     These callbacks allow the orchestrator to inject behavior for
     actions that require external state (gate checks, review, etc.)
     without coupling AgentSessionRunner to those implementations.
@@ -388,10 +398,20 @@ class AgentSessionRunner:
     - Hook setup (lock enforcement, lint cache, etc.)
     - Message logging and telemetry
 
-    The runner uses callbacks for external operations (gate checks, reviews)
-    to avoid tight coupling with the orchestrator's dependencies.
+    The runner accepts either protocol interfaces (recommended) or the legacy
+    SessionCallbacks dataclass for external operations.
 
-    Usage:
+    Usage with protocols (preferred):
+        runner = AgentSessionRunner(
+            config=AgentSessionConfig(repo_path=repo_path, ...),
+            sdk_client_factory=SDKClientFactory(),
+            gate_runner=gate_runner_impl,
+            review_runner=review_runner_impl,
+            session_lifecycle=session_lifecycle_impl,
+        )
+        output = await runner.run_session(input)
+
+    Usage with callbacks (deprecated):
         runner = AgentSessionRunner(
             config=AgentSessionConfig(repo_path=repo_path, ...),
             callbacks=SessionCallbacks(on_gate_check=..., ...),
@@ -401,15 +421,21 @@ class AgentSessionRunner:
 
     Attributes:
         config: Session configuration.
-        callbacks: Callbacks for external operations.
         sdk_client_factory: Factory for creating SDK clients (required).
+        callbacks: Legacy callbacks for external operations (deprecated).
         event_sink: Optional event sink for structured logging.
+        gate_runner: Protocol for gate checking operations.
+        review_runner: Protocol for review operations.
+        session_lifecycle: Protocol for session lifecycle operations.
     """
 
     config: AgentSessionConfig
     sdk_client_factory: SDKClientFactoryProtocol
     callbacks: SessionCallbacks = field(default_factory=SessionCallbacks)
     event_sink: MalaEventSink | None = None
+    gate_runner: IGateRunner | None = None
+    review_runner: IReviewRunner | None = None
+    session_lifecycle: ISessionLifecycle | None = None
     _context_pressure_handler: ContextPressureHandler = field(init=False, repr=False)
     _retry_policy: IdleTimeoutRetryPolicy = field(init=False, repr=False)
     _effect_handler: LifecycleEffectHandler = field(init=False, repr=False)
@@ -439,6 +465,9 @@ class AgentSessionRunner:
             config=self.config,
             callbacks=self.callbacks,
             event_sink=self.event_sink,
+            gate_runner=self.gate_runner,
+            review_runner=self.review_runner,
+            session_lifecycle=self.session_lifecycle,
         )
 
     def _initialize_session(
@@ -554,11 +583,7 @@ class AgentSessionRunner:
 
         while not lifecycle.is_terminal:
             # Check for run abort before each major stage
-            abort_event = (
-                self.callbacks.get_abort_event()
-                if self.callbacks.get_abort_event
-                else None
-            )
+            abort_event = self._get_abort_event()
             if abort_event is not None and abort_event.is_set():
                 logger.info(
                     "Session %s: aborting due to run abort signal", input.issue_id
@@ -621,11 +646,8 @@ class AgentSessionRunner:
                 # Emit validation started BEFORE the gate check
                 self._effect_handler.process_gate_check(input, lifecycle, lifecycle_ctx)
 
-                if self.callbacks.on_gate_check is None:
-                    raise ValueError("on_gate_check callback must be set")
-
                 assert state.log_path is not None
-                gate_result, new_offset = await self.callbacks.on_gate_check(
+                gate_result, new_offset = await self._run_gate_check(
                     input.issue_id, state.log_path, lifecycle_ctx.retry_state
                 )
 
@@ -667,8 +689,8 @@ class AgentSessionRunner:
                 # Emit session_end started event BEFORE the check
                 self._effect_handler.process_session_end_check(input, lifecycle_ctx)
 
-                # If callback not set, skip session_end with "not_configured" reason
-                if self.callbacks.on_session_end_check is None:
+                # Check if session_end is configured
+                if not self._has_session_end_check():
                     from src.core.session_end_result import SessionEndResult
 
                     session_end_result = SessionEndResult(
@@ -685,20 +707,15 @@ class AgentSessionRunner:
                         log_offset=lifecycle_ctx.retry_state.log_offset,
                         previous_commit_hash=lifecycle_ctx.retry_state.previous_commit_hash,
                     )
-                    session_end_result = await self.callbacks.on_session_end_check(
+                    session_end_result = await self._run_session_end_check(
                         input.issue_id,
                         state.log_path,
                         session_end_retry_state,
                     )
 
                     # Get new log offset after callback execution
-                    new_offset = (
-                        self.callbacks.get_log_offset(
-                            state.log_path,
-                            lifecycle_ctx.retry_state.log_offset,
-                        )
-                        if self.callbacks.get_log_offset
-                        else 0
+                    new_offset = self._get_log_offset(
+                        state.log_path, lifecycle_ctx.retry_state.log_offset
                     )
 
                 _, should_break, session_end_trans = (
@@ -748,9 +765,6 @@ class AgentSessionRunner:
                 # Emit review_started event
                 self._effect_handler.emit_review_started(input, lifecycle_ctx)
 
-                if self.callbacks.on_review_check is None:
-                    raise ValueError("on_review_check callback must be set")
-
                 logger.debug(
                     "Session %s: starting review (attempt %d/%d, session_id=%s)",
                     input.issue_id,
@@ -769,7 +783,7 @@ class AgentSessionRunner:
                             "Sequence[ReviewIssueProtocol]",
                             lifecycle_ctx.last_review_result.issues,
                         )
-                review_result = await self.callbacks.on_review_check(
+                review_result = await self._run_review_check(
                     input.issue_id,
                     input.issue_description,
                     lifecycle_ctx.session_id,
@@ -794,10 +808,9 @@ class AgentSessionRunner:
 
                 # Check for fatal error
                 if review_result.fatal_error:
-                    if self.callbacks.on_abort is not None:
-                        self.callbacks.on_abort(
-                            review_result.parse_error or "Unrecoverable review error"
-                        )
+                    self._on_abort(
+                        review_result.parse_error or "Unrecoverable review error"
+                    )
 
                 # Capture Cerberus review log if available
                 log_attr = getattr(review_result, "review_log_path", None)
@@ -805,13 +818,8 @@ class AgentSessionRunner:
                     cerberus_log_path = str(log_attr)
 
                 # Get new log offset
-                new_offset = (
-                    self.callbacks.get_log_offset(
-                        state.log_path,
-                        lifecycle_ctx.retry_state.log_offset,
-                    )
-                    if self.callbacks.get_log_offset
-                    else 0
+                new_offset = self._get_log_offset(
+                    state.log_path, lifecycle_ctx.retry_state.log_offset
                 )
 
                 # Process review result via effect handler
@@ -939,11 +947,9 @@ class AgentSessionRunner:
         Returns:
             Tuple of (updated log_path, TransitionResult from log ready/timeout).
         """
-        if self.callbacks.get_log_path is None:
-            raise ValueError("get_log_path callback must be set")
         if session_id is None:
             raise ValueError("session_id must be set before waiting for log")
-        new_log_path = self.callbacks.get_log_path(session_id)
+        new_log_path = self._get_log_path(session_id)
 
         # Reset log_offset if log file changed (new session started)
         # This prevents using a stale offset from a previous session's
@@ -980,15 +986,132 @@ class AgentSessionRunner:
         result = lifecycle.on_log_ready(lifecycle_ctx)
         return log_path, result
 
+    # ===== Protocol / Callback Bridge Methods =====
+    # These methods use protocol interfaces when available, falling back to callbacks
+
+    def _get_abort_event(self) -> asyncio.Event | None:
+        """Get abort event from protocol or callback."""
+        if self.session_lifecycle is not None:
+            return self.session_lifecycle.get_abort_event()
+        if self.callbacks.get_abort_event is not None:
+            return self.callbacks.get_abort_event()
+        return None
+
+    def _get_log_path(self, session_id: str) -> Path:
+        """Get log path from protocol or callback."""
+        if self.session_lifecycle is not None:
+            return self.session_lifecycle.get_log_path(session_id)
+        if self.callbacks.get_log_path is not None:
+            return self.callbacks.get_log_path(session_id)
+        raise ValueError(
+            "get_log_path not configured: set session_lifecycle or callbacks"
+        )
+
+    def _get_log_offset(self, log_path: Path, start_offset: int) -> int:
+        """Get log offset from protocol or callback."""
+        if self.session_lifecycle is not None:
+            return self.session_lifecycle.get_log_offset(log_path, start_offset)
+        if self.callbacks.get_log_offset is not None:
+            return self.callbacks.get_log_offset(log_path, start_offset)
+        return 0
+
+    def _on_abort(self, reason: str) -> None:
+        """Call on_abort from protocol or callback."""
+        if self.session_lifecycle is not None:
+            self.session_lifecycle.on_abort(reason)
+        elif self.callbacks.on_abort is not None:
+            self.callbacks.on_abort(reason)
+
+    async def _run_gate_check(
+        self, issue_id: str, log_path: Path, retry_state: RetryState
+    ) -> tuple[GateOutcome, int]:
+        """Run gate check via protocol or callback."""
+        if self.gate_runner is not None:
+            return await self.gate_runner.run_gate_check(
+                issue_id, log_path, retry_state
+            )
+        if self.callbacks.on_gate_check is not None:
+            return await self.callbacks.on_gate_check(issue_id, log_path, retry_state)
+        raise ValueError("on_gate_check not configured: set gate_runner or callbacks")
+
+    def _has_session_end_check(self) -> bool:
+        """Check if session_end check is available."""
+        return (
+            self.gate_runner is not None
+            or self.callbacks.on_session_end_check is not None
+        )
+
+    async def _run_session_end_check(
+        self, issue_id: str, log_path: Path, retry_state: SessionEndRetryState
+    ) -> SessionEndResult:
+        """Run session_end check via protocol or callback."""
+        from src.core.session_end_result import SessionEndResult
+
+        if self.gate_runner is not None:
+            return await self.gate_runner.run_session_end_check(
+                issue_id, log_path, retry_state
+            )
+        if self.callbacks.on_session_end_check is not None:
+            return await self.callbacks.on_session_end_check(
+                issue_id, log_path, retry_state
+            )
+        return SessionEndResult(status="skipped", reason="not_configured")
+
+    async def _run_review_check(
+        self,
+        issue_id: str,
+        description: str | None,
+        session_id: str | None,
+        retry_state: RetryState,
+        author_context: str | None,
+        previous_findings: Sequence[ReviewIssueProtocol] | None,
+        session_end_result: SessionEndResult | None,
+    ) -> ReviewOutcome:
+        """Run review via protocol or callback."""
+        if self.review_runner is not None:
+            return await self.review_runner.run_review(
+                issue_id,
+                description,
+                session_id,
+                retry_state,
+                author_context,
+                previous_findings,
+                session_end_result,
+            )
+        if self.callbacks.on_review_check is not None:
+            return await self.callbacks.on_review_check(
+                issue_id,
+                description,
+                session_id,
+                retry_state,
+                author_context,
+                previous_findings,
+                session_end_result,
+            )
+        raise ValueError(
+            "on_review_check not configured: set review_runner or callbacks"
+        )
+
     def _get_stream_processor(self) -> MessageStreamProcessor:
         """Create a MessageStreamProcessor with current config/callbacks."""
         config = StreamProcessorConfig(
             context_limit=self.config.context_limit,
             context_restart_threshold=self.config.context_restart_threshold,
         )
+        # Use protocol methods if available, fall back to callbacks
+        on_tool_use = (
+            self.session_lifecycle.on_tool_use
+            if self.session_lifecycle is not None
+            else self.callbacks.on_tool_use
+        )
+        on_agent_text = (
+            self.session_lifecycle.on_agent_text
+            if self.session_lifecycle is not None
+            else self.callbacks.on_agent_text
+        )
         callbacks = StreamProcessorCallbacks(
-            on_tool_use=self.callbacks.on_tool_use,
-            on_agent_text=self.callbacks.on_agent_text,
+            on_tool_use=on_tool_use,
+            on_agent_text=on_agent_text,
         )
         return MessageStreamProcessor(config, callbacks)
 
