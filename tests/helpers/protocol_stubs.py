@@ -7,12 +7,12 @@ and ISessionLifecycle protocols for use in unit and integration tests.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path  # Used at runtime in default_factory
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import asyncio
     from collections.abc import Callable, Sequence
+    from pathlib import Path
 
     from src.core.protocols.review import ReviewIssueProtocol
     from src.core.session_end_result import SessionEndResult, SessionEndRetryState
@@ -190,9 +190,13 @@ class StubSessionLifecycle:
     Provides default implementations for lifecycle operations.
     Configure via constructor arguments or by assigning to attributes
     after construction.
+
+    IMPORTANT: log_path has no default - callers must provide it explicitly
+    or use on_get_log_path callback. This avoids hardcoded /tmp paths that
+    fail in sandboxed CI environments.
     """
 
-    log_path: Path = field(default_factory=lambda: Path("/tmp/test-log.jsonl"))
+    log_path: Path | None = None
     log_offset: int = 0
     abort_event: asyncio.Event | None = None
     on_get_log_path: Callable[[str], Path] | None = None
@@ -204,9 +208,14 @@ class StubSessionLifecycle:
     on_agent_text_callback: Callable[[str, str], None] | None = None
 
     def get_log_path(self, session_id: str) -> Path:
-        """Get log path - returns configured path or default."""
+        """Get log path - returns configured path or raises if not configured."""
         if self.on_get_log_path is not None:
             return self.on_get_log_path(session_id)
+        if self.log_path is None:
+            raise ValueError(
+                "StubSessionLifecycle.log_path not configured. "
+                "Pass log_path=tmp_path/'log.jsonl' or on_get_log_path callback."
+            )
         return self.log_path
 
     def get_log_offset(self, log_path: Path, start_offset: int) -> int:
