@@ -164,9 +164,13 @@ class FixerService:
                 include_mala_disallowed_tools_hook=False,
             )
             .with_env(extra={"MALA_SDK_FLOW": "fixer"})
-            .with_mcp()
             .with_disallowed_tools()
         )
+        # Configure MCP: use factory if available, otherwise empty (no MCP tools)
+        if self._config.mcp_server_factory is not None:
+            builder = builder.with_mcp()
+        else:
+            builder = builder.with_mcp(servers={})
         # Only set lint_tools if we have them; otherwise use builder defaults
         if lint_tools is not None:
             builder = builder.with_lint_tools(lint_tools)
