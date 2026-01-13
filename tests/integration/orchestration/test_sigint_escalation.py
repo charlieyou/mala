@@ -796,11 +796,11 @@ async def main():
         pass
 
     # Check internal state to verify drain mode was triggered
-    if _orchestrator._drain_mode_active:
+    if _orchestrator._lifecycle.is_drain_mode():
         print("DRAIN_MODE_ACTIVE", flush=True)
     else:
-        print(f"drain_mode_active={_orchestrator._drain_mode_active}", flush=True)
-        print(f"sigint_count={_orchestrator._sigint_count}", flush=True)
+        print(f"drain_mode_active={_orchestrator._lifecycle.is_drain_mode()}", flush=True)
+        print(f"sigint_count={_orchestrator._lifecycle._sigint_count}", flush=True)
 
     sys.stdout.flush()
     sys.stderr.flush()
@@ -813,7 +813,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         # Check state even after KeyboardInterrupt
         if _orchestrator is not None:
-            if _orchestrator._drain_mode_active:
+            if _orchestrator._lifecycle.is_drain_mode():
                 print("DRAIN_MODE_ACTIVE", flush=True)
             sys.stdout.flush()
         sys.exit(130)
@@ -1026,11 +1026,11 @@ async def main():
         pass
 
     # Check internal state (more reliable than async event sink)
-    if _orchestrator._abort_mode_active:
+    if _orchestrator._lifecycle.is_abort_mode():
         print("ABORT_MODE_ACTIVE", flush=True)
     else:
-        print(f"abort_mode_active={_orchestrator._abort_mode_active}", flush=True)
-    print(f"sigint_count={_orchestrator._sigint_count}", flush=True)
+        print(f"abort_mode_active={_orchestrator._lifecycle.is_abort_mode()}", flush=True)
+    print(f"sigint_count={_orchestrator._lifecycle._sigint_count}", flush=True)
 
     sys.stdout.flush()
     sys.stderr.flush()
@@ -1043,9 +1043,9 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         # Check state even after KeyboardInterrupt
         if _orchestrator is not None:
-            if _orchestrator._abort_mode_active:
+            if _orchestrator._lifecycle.is_abort_mode():
                 print("ABORT_MODE_ACTIVE", flush=True)
-            print(f"sigint_count={_orchestrator._sigint_count}", flush=True)
+            print(f"sigint_count={_orchestrator._lifecycle._sigint_count}", flush=True)
             sys.stdout.flush()
         sys.exit(130)
 """
@@ -1160,12 +1160,12 @@ _orchestrator = None
 _original_handle_sigint = MalaOrchestrator._handle_sigint
 
 
-def _slow_handle_sigint(self, loop, drain_event, interrupt_event):
+def _slow_handle_sigint(self, loop):
     # Call original handler first
-    _original_handle_sigint(self, loop, drain_event, interrupt_event)
+    _original_handle_sigint(self, loop)
     # If Stage 2 was just entered, sleep to allow Stage 3 SIGINT to arrive
     # (signal handlers run synchronously, so time.sleep works here)
-    if self._abort_mode_active and not self._shutdown_requested:
+    if self._lifecycle.is_abort_mode() and not self._lifecycle.is_shutdown_requested():
         time.sleep(1.0)
 
 
@@ -1268,11 +1268,11 @@ async def main():
         pass
 
     # Check internal state for Stage 3 indicators
-    if _orchestrator._shutdown_requested:
+    if _orchestrator._lifecycle.is_shutdown_requested():
         print("SHUTDOWN_REQUESTED", flush=True)
     else:
-        print(f"shutdown_requested={_orchestrator._shutdown_requested}", flush=True)
-    print(f"sigint_count={_orchestrator._sigint_count}", flush=True)
+        print(f"shutdown_requested={_orchestrator._lifecycle.is_shutdown_requested()}", flush=True)
+    print(f"sigint_count={_orchestrator._lifecycle._sigint_count}", flush=True)
 
     sys.stdout.flush()
     sys.stderr.flush()
@@ -1285,11 +1285,11 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         # Check state even after KeyboardInterrupt
         if _orchestrator is not None:
-            if _orchestrator._shutdown_requested:
+            if _orchestrator._lifecycle.is_shutdown_requested():
                 print("SHUTDOWN_REQUESTED", flush=True)
             else:
-                print(f"shutdown_requested={_orchestrator._shutdown_requested}", flush=True)
-            print(f"sigint_count={_orchestrator._sigint_count}", flush=True)
+                print(f"shutdown_requested={_orchestrator._lifecycle.is_shutdown_requested()}", flush=True)
+            print(f"sigint_count={_orchestrator._lifecycle._sigint_count}", flush=True)
             sys.stdout.flush()
         sys.exit(130)
 """

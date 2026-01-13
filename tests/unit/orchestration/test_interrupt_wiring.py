@@ -36,12 +36,13 @@ class TestInterruptWiring:
     the callback chains from orchestrator to all flow components.
     """
 
-    def test_interrupt_event_none_before_run(
+    def test_interrupt_event_exists_before_run(
         self, tmp_path: Path, tmp_runs_dir: Path
     ) -> None:
-        """MalaOrchestrator._interrupt_event is None before run() is called.
+        """MalaOrchestrator._interrupt_event exists before run() is called.
 
-        This is a precondition check - the interrupt_event is created in run().
+        LifecycleController creates events on init. They're reset fresh per-run
+        in _reset_sigint_state(), ensuring callbacks always get fresh events.
         """
         from src.orchestration.factory import create_orchestrator
         from tests.fakes.event_sink import FakeEventSink
@@ -62,8 +63,9 @@ class TestInterruptWiring:
         )
         orchestrator = create_orchestrator(config, deps=deps)
 
-        # Before run(), _interrupt_event should be None
-        assert orchestrator._interrupt_event is None
+        # LifecycleController creates events on init, not set initially
+        assert orchestrator._interrupt_event is not None
+        assert not orchestrator._interrupt_event.is_set()
 
     async def test_trigger_epic_closure_callback_passes_interrupt_event(
         self, tmp_path: Path, tmp_runs_dir: Path

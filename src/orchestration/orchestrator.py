@@ -38,6 +38,7 @@ from src.infra.tools.env import (
 from src.domain.deadlock import DeadlockMonitor
 from src.orchestration.orchestrator_state import OrchestratorState
 from src.orchestration.deadlock_handler import DeadlockHandler, DeadlockHandlerCallbacks
+from src.orchestration.lifecycle_controller import LifecycleController
 from src.infra.tools.command_runner import CommandRunner
 from src.infra.tools.locking import (
     cleanup_agent_locks,
@@ -116,9 +117,6 @@ logger = logging.getLogger(__name__)
 # 60s allows time for Claude SDK to flush logs, especially under load.
 LOG_FILE_WAIT_TIMEOUT = 60
 LOG_FILE_POLL_INTERVAL = 0.5
-
-# SIGINT escalation timing constant (5s window for counting consecutive Ctrl-C)
-ESCALATION_WINDOW_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -350,16 +348,8 @@ class MalaOrchestrator:
         self._state = OrchestratorState()
         self._lint_tools: frozenset[str] | None = None
         self._exit_code: int = 0  # Exit code from last run (0=success, 130=interrupted)
-        # SIGINT escalation state (initialized here, reset per-run via _reset_sigint_state)
-        self._sigint_count: int = 0
-        self._sigint_last_at: float = 0.0
-        self._drain_mode_active: bool = False
-        self._abort_mode_active: bool = False
-        self._abort_exit_code: int = 130
-        self._validation_failed: bool = False
-        self._shutdown_requested: bool = False
-        self._run_task: asyncio.Task[Any] | None = None
-        self._interrupt_event: asyncio.Event | None = None
+        # Lifecycle controller manages SIGINT escalation and shutdown state
+        self._lifecycle = LifecycleController()
         # Trigger state for periodic validation (see T009-T011)
         self._non_epic_completed_count: int = 0
         self._prompt_validation_commands = build_prompt_validation_commands(
@@ -692,6 +682,20 @@ class MalaOrchestrator:
             130: Interrupted (SIGINT)
         """
         return self._exit_code
+
+    @property
+    def _interrupt_event(self) -> asyncio.Event | None:
+        """Interrupt event, delegated to lifecycle controller.
+
+        Returns None before run() is called (events created fresh per-run).
+        """
+        return self._lifecycle.interrupt_event if hasattr(self, "_lifecycle") else None
+
+    @_interrupt_event.setter
+    def _interrupt_event(self, value: asyncio.Event | None) -> None:
+        """Set interrupt event (for test compatibility)."""
+        if value is not None and hasattr(self, "_lifecycle"):
+            self._lifecycle.interrupt_event = value
 
     def _cleanup_agent_locks(self, agent_id: str) -> None:
         """Remove locks held by a specific agent (crash/timeout cleanup).
@@ -1159,15 +1163,15 @@ class MalaOrchestrator:
 
     def _reset_sigint_state(self) -> None:
         """Reset SIGINT escalation state for a new run."""
-        self._sigint_count = 0
-        self._sigint_last_at = 0.0
-        self._drain_mode_active = False
-        self._abort_mode_active = False
-        self._abort_exit_code = 130
-        self._validation_failed = False
-        self._shutdown_requested = False
-        self._run_task = None
-        self._interrupt_event = None
+        self._lifecycle.reset()
+        self._lifecycle.configure_callbacks(
+            get_active_task_count=lambda: len(self.issue_coordinator.active_tasks),
+            on_drain_started=self.event_sink.on_drain_started,
+            on_abort_started=self.event_sink.on_abort_started,
+            on_force_abort=self.event_sink.on_force_abort,
+            forward_sigint=CommandRunner.forward_sigint,
+            kill_processes=CommandRunner.kill_active_process_groups,
+        )
 
     def _check_and_queue_periodic_trigger(self, result: IssueResult) -> None:
         """Check if periodic trigger should fire and queue it if so.
@@ -1308,8 +1312,6 @@ class MalaOrchestrator:
     def _handle_sigint(
         self,
         loop: asyncio.AbstractEventLoop,
-        drain_event: asyncio.Event,
-        interrupt_event: asyncio.Event,
     ) -> None:
         """Handle SIGINT with three-stage escalation.
 
@@ -1317,41 +1319,9 @@ class MalaOrchestrator:
         Stage 2 (2nd Ctrl-C): Graceful abort - cancel tasks, forward SIGINT
         Stage 3 (3rd Ctrl-C): Hard abort - SIGKILL all processes, cancel run task
 
-        The escalation window (5s) resets only when idle (not in drain/abort mode).
+        Delegates to LifecycleController.handle_sigint for state management.
         """
-        now = time.monotonic()
-        # Reset escalation window if idle (not in drain/abort mode)
-        if not self._drain_mode_active and not self._abort_mode_active:
-            if now - self._sigint_last_at > ESCALATION_WINDOW_SECONDS:
-                self._sigint_count = 0
-
-        self._sigint_count += 1
-        self._sigint_last_at = now
-
-        if self._sigint_count == 1:
-            # Stage 1: Drain
-            self._drain_mode_active = True
-            loop.call_soon_threadsafe(drain_event.set)
-            # Get active task count from coordinator (capture before lambda)
-            active_count = len(self.issue_coordinator.active_tasks)
-            loop.call_soon_threadsafe(
-                lambda: self.event_sink.on_drain_started(active_count)
-            )
-        elif self._sigint_count == 2:
-            # Stage 2: Graceful Abort
-            self._abort_mode_active = True
-            self._abort_exit_code = 1 if self._validation_failed else 130
-            loop.call_soon_threadsafe(interrupt_event.set)
-            loop.call_soon_threadsafe(CommandRunner.forward_sigint)
-            loop.call_soon_threadsafe(self.event_sink.on_abort_started)
-        else:
-            # Stage 3: Hard Abort - always exit 130 regardless of validation state
-            self._shutdown_requested = True
-            self._abort_exit_code = 130  # Hard abort always uses 130
-            loop.call_soon_threadsafe(CommandRunner.kill_active_process_groups)
-            loop.call_soon_threadsafe(self.event_sink.on_force_abort)
-            if self._run_task:
-                loop.call_soon_threadsafe(self._run_task.cancel)
+        self._lifecycle.handle_sigint(loop)
 
     async def run(
         self,
@@ -1453,15 +1423,14 @@ class MalaOrchestrator:
             max_agents=self.max_agents,
         )
 
-        # Create events for SIGINT handling
-        drain_event = asyncio.Event()
-        interrupt_event = asyncio.Event()
-        self._interrupt_event = interrupt_event  # Store for callback access
+        # Get events from lifecycle controller (created fresh in _reset_sigint_state)
+        drain_event = self._lifecycle.drain_event
+        interrupt_event = self._lifecycle.interrupt_event
         loop = asyncio.get_running_loop()
 
         # Install SIGINT handler using _handle_sigint for three-stage escalation
         def handle_sigint(sig: int, frame: object) -> None:
-            self._handle_sigint(loop, drain_event, interrupt_event)
+            self._handle_sigint(loop)
 
         original_handler = signal.signal(signal.SIGINT, handle_sigint)
 
@@ -1472,7 +1441,7 @@ class MalaOrchestrator:
             interrupted = False
             try:
                 # Create task and store it so Stage 3 can cancel it
-                self._run_task = asyncio.create_task(
+                run_task = asyncio.create_task(
                     self._run_main_loop(
                         run_metadata,
                         watch_config=watch_config,
@@ -1482,14 +1451,17 @@ class MalaOrchestrator:
                         validation_callback=None,
                     )
                 )
-                loop_result = await self._run_task
+                self._lifecycle.run_task = run_task
+                loop_result = await run_task
                 exit_code = loop_result.exit_code
             except asyncio.CancelledError:
                 # Only treat as SIGINT if interrupt_event is set or shutdown requested
-                if interrupt_event.is_set() or self._shutdown_requested:
+                if interrupt_event.is_set() or self._lifecycle.is_shutdown_requested():
                     # Use abort_exit_code for Stage 2/3 (set by _handle_sigint)
                     exit_code = (
-                        self._abort_exit_code if self._abort_mode_active else 130
+                        self._lifecycle.abort_exit_code
+                        if self._lifecycle.is_abort_mode()
+                        else 130
                     )
                     interrupted = True
                 else:
@@ -1507,14 +1479,16 @@ class MalaOrchestrator:
                     self.event_sink.on_locks_released(released)
                 remove_run_marker(run_metadata.run_id)
 
-            # Check if interrupted - use _abort_exit_code for Stage 2 (snapshotted at
+            # Check if interrupted - use abort_exit_code for Stage 2 (snapshotted at
             # abort entry based on whether validation had already failed), or exit_code
             # from loop_result for Stage 1 drain completion
             if interrupted or interrupt_event.is_set():
                 # Stage 2 abort: use snapshotted exit code from abort entry
                 # Stage 1 drain: use loop_result exit code (validation ran after drain)
                 final_exit_code = (
-                    self._abort_exit_code if self._abort_mode_active else exit_code
+                    self._lifecycle.abort_exit_code
+                    if self._lifecycle.is_abort_mode()
+                    else exit_code
                 )
                 self._exit_code = final_exit_code
                 return await self._finalize_run(run_metadata, None)
@@ -1528,7 +1502,9 @@ class MalaOrchestrator:
             # Check if SIGINT occurred during triggers
             if interrupt_event.is_set():
                 final_exit_code = (
-                    self._abort_exit_code if self._abort_mode_active else 130
+                    self._lifecycle.abort_exit_code
+                    if self._lifecycle.is_abort_mode()
+                    else 130
                 )
                 self._exit_code = final_exit_code
                 return await self._finalize_run(run_metadata, None)

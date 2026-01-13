@@ -3049,89 +3049,104 @@ class TestContextConfigWiring:
 
 
 class TestSigintEscalation:
-    """Tests for SIGINT three-stage escalation state machine."""
+    """Tests for SIGINT three-stage escalation via LifecycleController.
+
+    Detailed escalation state tests are in test_lifecycle_controller.py.
+    These tests verify the orchestrator wiring to LifecycleController.
+    """
 
     def test_handle_sigint_stage1_drain(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """First SIGINT sets drain_event and calls on_drain_started."""
+        """First SIGINT sets drain mode via lifecycle controller."""
         orchestrator = make_orchestrator(repo_path=tmp_path)
         loop = MagicMock(spec=asyncio.AbstractEventLoop)
-        drain_event = MagicMock(spec=asyncio.Event)
-        interrupt_event = MagicMock(spec=asyncio.Event)
 
         # Ensure active_tasks exists and is empty
         orchestrator.issue_coordinator.active_tasks.clear()
 
-        # First SIGINT
-        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
-
-        assert orchestrator._sigint_count == 1
-        assert orchestrator._drain_mode_active is True
-        assert orchestrator._abort_mode_active is False
-        loop.call_soon_threadsafe.assert_any_call(drain_event.set)
-        # Verify on_drain_started is scheduled (via lambda)
-        assert any(
-            call[0][0].__name__ == "<lambda>"
-            for call in loop.call_soon_threadsafe.call_args_list
-            if callable(call[0][0]) and hasattr(call[0][0], "__name__")
+        # Configure lifecycle callbacks (normally done in _reset_sigint_state)
+        orchestrator._lifecycle.configure_callbacks(
+            get_active_task_count=lambda: len(
+                orchestrator.issue_coordinator.active_tasks
+            ),
+            on_drain_started=orchestrator.event_sink.on_drain_started,
+            on_abort_started=orchestrator.event_sink.on_abort_started,
+            on_force_abort=orchestrator.event_sink.on_force_abort,
+            forward_sigint=CommandRunner.forward_sigint,
+            kill_processes=CommandRunner.kill_active_process_groups,
         )
+
+        # First SIGINT
+        orchestrator._handle_sigint(loop)
+
+        assert orchestrator._lifecycle._sigint_count == 1
+        assert orchestrator._lifecycle.is_drain_mode()
+        assert not orchestrator._lifecycle.is_abort_mode()
 
     def test_handle_sigint_stage2_abort(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """Second SIGINT sets interrupt_event and forwards SIGINT."""
+        """Second SIGINT sets abort mode via lifecycle controller."""
         orchestrator = make_orchestrator(repo_path=tmp_path)
         loop = MagicMock(spec=asyncio.AbstractEventLoop)
-        drain_event = MagicMock(spec=asyncio.Event)
-        interrupt_event = MagicMock(spec=asyncio.Event)
         orchestrator.issue_coordinator.active_tasks.clear()
 
+        # Configure lifecycle callbacks
+        orchestrator._lifecycle.configure_callbacks(
+            get_active_task_count=lambda: len(
+                orchestrator.issue_coordinator.active_tasks
+            ),
+            on_drain_started=orchestrator.event_sink.on_drain_started,
+            on_abort_started=orchestrator.event_sink.on_abort_started,
+            on_force_abort=orchestrator.event_sink.on_force_abort,
+            forward_sigint=CommandRunner.forward_sigint,
+            kill_processes=CommandRunner.kill_active_process_groups,
+        )
+
         # First SIGINT (drain mode)
-        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
+        orchestrator._handle_sigint(loop)
 
         # Second SIGINT
-        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
+        orchestrator._handle_sigint(loop)
 
-        assert orchestrator._sigint_count == 2
-        assert orchestrator._abort_mode_active is True
-        assert orchestrator._abort_exit_code == 130  # No validation failure
-        loop.call_soon_threadsafe.assert_any_call(interrupt_event.set)
-        loop.call_soon_threadsafe.assert_any_call(CommandRunner.forward_sigint)
-        loop.call_soon_threadsafe.assert_any_call(
-            orchestrator.event_sink.on_abort_started
-        )
+        assert orchestrator._lifecycle._sigint_count == 2
+        assert orchestrator._lifecycle.is_abort_mode()
+        assert orchestrator._lifecycle.abort_exit_code == 130  # No validation failure
 
     def test_handle_sigint_stage3_force_abort(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """Third SIGINT kills processes and cancels run task."""
+        """Third SIGINT triggers hard abort via lifecycle controller."""
         orchestrator = make_orchestrator(repo_path=tmp_path)
         loop = MagicMock(spec=asyncio.AbstractEventLoop)
-        drain_event = MagicMock(spec=asyncio.Event)
-        interrupt_event = MagicMock(spec=asyncio.Event)
         orchestrator.issue_coordinator.active_tasks.clear()
 
         # Set up run task
         run_task = MagicMock(spec=asyncio.Task)
-        orchestrator._run_task = run_task
+        orchestrator._lifecycle.run_task = run_task
+
+        # Configure lifecycle callbacks
+        orchestrator._lifecycle.configure_callbacks(
+            get_active_task_count=lambda: len(
+                orchestrator.issue_coordinator.active_tasks
+            ),
+            on_drain_started=orchestrator.event_sink.on_drain_started,
+            on_abort_started=orchestrator.event_sink.on_abort_started,
+            on_force_abort=orchestrator.event_sink.on_force_abort,
+            forward_sigint=CommandRunner.forward_sigint,
+            kill_processes=CommandRunner.kill_active_process_groups,
+        )
 
         # First two SIGINTs
-        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
-        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
+        orchestrator._handle_sigint(loop)
+        orchestrator._handle_sigint(loop)
 
         # Third SIGINT
-        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
+        orchestrator._handle_sigint(loop)
 
-        assert orchestrator._sigint_count == 3
-        assert orchestrator._shutdown_requested is True
-        loop.call_soon_threadsafe.assert_any_call(
-            CommandRunner.kill_active_process_groups
-        )
-        loop.call_soon_threadsafe.assert_any_call(
-            orchestrator.event_sink.on_force_abort
-        )
-        loop.call_soon_threadsafe.assert_any_call(run_task.cancel)
+        assert orchestrator._lifecycle._sigint_count == 3
+        assert orchestrator._lifecycle.is_shutdown_requested()
 
     def test_handle_sigint_exit_code_with_validation_failure(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
@@ -3139,70 +3154,106 @@ class TestSigintEscalation:
         """Stage 2 exit code is 1 when validation has failed."""
         orchestrator = make_orchestrator(repo_path=tmp_path)
         loop = MagicMock(spec=asyncio.AbstractEventLoop)
-        drain_event = MagicMock(spec=asyncio.Event)
-        interrupt_event = MagicMock(spec=asyncio.Event)
         orchestrator.issue_coordinator.active_tasks.clear()
 
+        # Configure lifecycle callbacks
+        orchestrator._lifecycle.configure_callbacks(
+            get_active_task_count=lambda: len(
+                orchestrator.issue_coordinator.active_tasks
+            ),
+            on_drain_started=orchestrator.event_sink.on_drain_started,
+            on_abort_started=orchestrator.event_sink.on_abort_started,
+            on_force_abort=orchestrator.event_sink.on_force_abort,
+            forward_sigint=CommandRunner.forward_sigint,
+            kill_processes=CommandRunner.kill_active_process_groups,
+        )
+
         # Mark validation as failed
-        orchestrator._validation_failed = True
+        orchestrator._lifecycle.validation_failed = True
 
         # First SIGINT
-        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
+        orchestrator._handle_sigint(loop)
 
         # Second SIGINT - should snapshot exit code as 1
-        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
+        orchestrator._handle_sigint(loop)
 
-        assert orchestrator._abort_exit_code == 1
+        assert orchestrator._lifecycle.abort_exit_code == 1
 
     def test_handle_sigint_escalation_window_resets_when_idle(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Escalation window resets after 5s when not in drain/abort mode."""
-        from src.orchestration.orchestrator import ESCALATION_WINDOW_SECONDS
+        from src.orchestration.lifecycle_controller import ESCALATION_WINDOW_SECONDS
 
         orchestrator = make_orchestrator(repo_path=tmp_path)
         loop = MagicMock(spec=asyncio.AbstractEventLoop)
-        drain_event = MagicMock(spec=asyncio.Event)
-        interrupt_event = MagicMock(spec=asyncio.Event)
         orchestrator.issue_coordinator.active_tasks.clear()
 
+        # Configure lifecycle callbacks
+        orchestrator._lifecycle.configure_callbacks(
+            get_active_task_count=lambda: len(
+                orchestrator.issue_coordinator.active_tasks
+            ),
+            on_drain_started=orchestrator.event_sink.on_drain_started,
+            on_abort_started=orchestrator.event_sink.on_abort_started,
+            on_force_abort=orchestrator.event_sink.on_force_abort,
+            forward_sigint=CommandRunner.forward_sigint,
+            kill_processes=CommandRunner.kill_active_process_groups,
+        )
+
         # Simulate time passage beyond escalation window
-        orchestrator._sigint_last_at = time.monotonic() - ESCALATION_WINDOW_SECONDS - 1
-        orchestrator._sigint_count = 1  # Leftover from previous, but not in drain mode
+        orchestrator._lifecycle._sigint_last_at = (
+            time.monotonic() - ESCALATION_WINDOW_SECONDS - 1
+        )
+        orchestrator._lifecycle._sigint_count = (
+            1  # Leftover from previous, but not in drain mode
+        )
 
         # This SIGINT should reset count since not in drain/abort mode
-        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
+        orchestrator._handle_sigint(loop)
 
         # Count should be 1 (reset to 0, then incremented)
-        assert orchestrator._sigint_count == 1
-        assert orchestrator._drain_mode_active is True
+        assert orchestrator._lifecycle._sigint_count == 1
+        assert orchestrator._lifecycle.is_drain_mode()
 
     def test_handle_sigint_escalation_window_does_not_reset_in_drain_mode(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Escalation window does NOT reset when in drain mode (continuous escalation)."""
-        from src.orchestration.orchestrator import ESCALATION_WINDOW_SECONDS
+        from src.orchestration.lifecycle_controller import ESCALATION_WINDOW_SECONDS
 
         orchestrator = make_orchestrator(repo_path=tmp_path)
         loop = MagicMock(spec=asyncio.AbstractEventLoop)
-        drain_event = MagicMock(spec=asyncio.Event)
-        interrupt_event = MagicMock(spec=asyncio.Event)
         orchestrator.issue_coordinator.active_tasks.clear()
 
+        # Configure lifecycle callbacks
+        orchestrator._lifecycle.configure_callbacks(
+            get_active_task_count=lambda: len(
+                orchestrator.issue_coordinator.active_tasks
+            ),
+            on_drain_started=orchestrator.event_sink.on_drain_started,
+            on_abort_started=orchestrator.event_sink.on_abort_started,
+            on_force_abort=orchestrator.event_sink.on_force_abort,
+            forward_sigint=CommandRunner.forward_sigint,
+            kill_processes=CommandRunner.kill_active_process_groups,
+        )
+
         # Enter drain mode
-        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
-        assert orchestrator._sigint_count == 1
-        assert orchestrator._drain_mode_active is True
+        orchestrator._handle_sigint(loop)
+        assert orchestrator._lifecycle._sigint_count == 1
+        assert orchestrator._lifecycle.is_drain_mode()
 
         # Simulate time passage beyond escalation window
-        orchestrator._sigint_last_at = time.monotonic() - ESCALATION_WINDOW_SECONDS - 1
+        orchestrator._lifecycle._sigint_last_at = (
+            time.monotonic() - ESCALATION_WINDOW_SECONDS - 1
+        )
 
         # Second SIGINT should still escalate (not reset) since in drain mode
-        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
+        orchestrator._handle_sigint(loop)
 
         # Should escalate to abort mode, not reset
-        assert orchestrator._sigint_count == 2
-        assert orchestrator._abort_mode_active is True
+        assert orchestrator._lifecycle._sigint_count == 2
+        assert orchestrator._lifecycle.is_abort_mode()
 
     def test_sigint_state_reset_per_run(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
@@ -3210,37 +3261,35 @@ class TestSigintEscalation:
         """SIGINT state is reset by _reset_sigint_state()."""
         orchestrator = make_orchestrator(repo_path=tmp_path)
 
-        # Simulate previous run's dirty state
-        orchestrator._sigint_count = 2
-        orchestrator._sigint_last_at = 123.456
-        orchestrator._drain_mode_active = True
-        orchestrator._abort_mode_active = True
-        orchestrator._abort_exit_code = 1
-        orchestrator._validation_failed = True
-        orchestrator._shutdown_requested = True
-        orchestrator._run_task = MagicMock()
+        # Simulate previous run's dirty state via lifecycle controller
+        orchestrator._lifecycle._sigint_count = 2
+        orchestrator._lifecycle._sigint_last_at = 123.456
+        orchestrator._lifecycle._drain_mode_active = True
+        orchestrator._lifecycle._abort_mode_active = True
+        orchestrator._lifecycle._abort_exit_code = 1
+        orchestrator._lifecycle._validation_failed = True
+        orchestrator._lifecycle._shutdown_requested = True
+        orchestrator._lifecycle._run_task = MagicMock()
 
         # Call the reset helper (used by run())
         orchestrator._reset_sigint_state()
 
         # Verify all SIGINT state is clean
-        assert orchestrator._sigint_count == 0
-        assert orchestrator._sigint_last_at == 0.0
-        assert orchestrator._drain_mode_active is False
-        assert orchestrator._abort_mode_active is False
-        assert orchestrator._abort_exit_code == 130
-        assert orchestrator._validation_failed is False
-        assert orchestrator._shutdown_requested is False
-        assert orchestrator._run_task is None
+        assert orchestrator._lifecycle._sigint_count == 0
+        assert orchestrator._lifecycle._sigint_last_at == 0.0
+        assert not orchestrator._lifecycle.is_drain_mode()
+        assert not orchestrator._lifecycle.is_abort_mode()
+        assert orchestrator._lifecycle.abort_exit_code == 130
+        assert not orchestrator._lifecycle.validation_failed
+        assert not orchestrator._lifecycle.is_shutdown_requested()
+        assert orchestrator._lifecycle.run_task is None
 
     def test_handle_sigint_on_drain_started_receives_active_count(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """on_drain_started receives correct active task count."""
+        """on_drain_started receives correct active task count via lifecycle."""
         orchestrator = make_orchestrator(repo_path=tmp_path)
         loop = MagicMock(spec=asyncio.AbstractEventLoop)
-        drain_event = MagicMock(spec=asyncio.Event)
-        interrupt_event = MagicMock(spec=asyncio.Event)
 
         # Set up mock active tasks
         mock_task = MagicMock(spec=asyncio.Task)
@@ -3251,8 +3300,20 @@ class TestSigintEscalation:
         mock_on_drain_started = MagicMock()
         orchestrator.event_sink.on_drain_started = mock_on_drain_started  # type: ignore[method-assign]
 
+        # Configure lifecycle callbacks (use the mocked on_drain_started)
+        orchestrator._lifecycle.configure_callbacks(
+            get_active_task_count=lambda: len(
+                orchestrator.issue_coordinator.active_tasks
+            ),
+            on_drain_started=mock_on_drain_started,
+            on_abort_started=orchestrator.event_sink.on_abort_started,
+            on_force_abort=orchestrator.event_sink.on_force_abort,
+            forward_sigint=CommandRunner.forward_sigint,
+            kill_processes=CommandRunner.kill_active_process_groups,
+        )
+
         # First SIGINT
-        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
+        orchestrator._handle_sigint(loop)
 
         # Extract the lambda and call it to verify the count
         lambda_calls = [
