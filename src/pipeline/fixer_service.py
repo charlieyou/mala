@@ -170,7 +170,10 @@ class FixerService:
         if self._config.mcp_server_factory is not None:
             builder = builder.with_mcp()
         else:
-            builder = builder.with_mcp(servers={})
+            # No MCP tools means no lock_acquire - disable lock enforcement
+            builder = builder.with_mcp(servers={}).with_hooks(
+                include_lock_enforcement_hook=False
+            )
         # Only set lint_tools if we have them; otherwise use builder defaults
         if lint_tools is not None:
             builder = builder.with_lint_tools(lint_tools)
