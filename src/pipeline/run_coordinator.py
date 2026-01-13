@@ -31,6 +31,7 @@ from src.infra.tools.locking import cleanup_agent_locks
 from src.domain.validation.e2e import E2EStatus
 from src.domain.validation.config import ConfigError
 from src.domain.validation.spec import extract_lint_tools_from_spec
+from src.pipeline.trigger_engine import ResolvedCommand
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -112,21 +113,6 @@ class TriggerValidationResult:
 
     status: Literal["passed", "failed", "aborted"]
     details: str | None = None
-
-
-@dataclass(frozen=True)
-class ResolvedCommand:
-    """A trigger command resolved from the base pool with overrides applied.
-
-    Attributes:
-        ref: The command reference name (e.g., "test", "lint").
-        effective_command: The resolved command string to execute.
-        effective_timeout: The resolved timeout in seconds (None for system default).
-    """
-
-    ref: str
-    effective_command: str
-    effective_timeout: int | None
 
 
 @dataclass(frozen=True)

@@ -15,7 +15,6 @@ from src.domain.validation.config import (
     FireOn,
     TriggerType,
 )
-from src.pipeline.run_coordinator import ResolvedCommand
 
 if TYPE_CHECKING:
     from src.domain.validation.config import (
@@ -25,6 +24,21 @@ if TYPE_CHECKING:
         ValidationTriggersConfig,
     )
     from src.pipeline.issue_result import IssueResult
+
+
+@dataclass(frozen=True)
+class ResolvedCommand:
+    """A trigger command resolved from the base pool with overrides applied.
+
+    Attributes:
+        ref: The command reference name (e.g., "test", "lint").
+        effective_command: The resolved command string to execute.
+        effective_timeout: The resolved timeout in seconds (None for system default).
+    """
+
+    ref: str
+    effective_command: str
+    effective_timeout: int | None
 
 
 @dataclass(frozen=True)
