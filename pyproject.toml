@@ -1,6 +1,6 @@
 [project]
 name = "mala-agent"
-version = "1.0.1"
+version = "1.0.2"
 description = "Agent SDK orchestrator for parallel issue processing"
 readme = "README.md"
 license = "GPL-3.0-or-later"

@@ -11,7 +11,7 @@ CumulativeReviewRunner
 
 from __future__ import annotations
 
-import asyncio
+import inspect
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
@@ -210,4 +210,4 @@ def test_cumulative_review_runner_has_expected_interface() -> None:
     # Check methods exist (inspection only, not calling)
     assert hasattr(CumulativeReviewRunner, "run_review")
     assert hasattr(CumulativeReviewRunner, "_get_baseline_commit")
-    assert asyncio.iscoroutinefunction(CumulativeReviewRunner.run_review)
+    assert inspect.iscoroutinefunction(CumulativeReviewRunner.run_review)
