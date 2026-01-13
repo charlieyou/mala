@@ -10,7 +10,7 @@ isinstance checks work correctly in the runner.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
+from pathlib import Path  # noqa: TC003 - used at runtime
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -635,17 +635,17 @@ class TestAgentSessionRunnerCallbacks:
         fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
 
-        # Create a log file at the default path used by StubSessionLifecycle
-        default_log_path = Path("/tmp/test-log.jsonl")
-        default_log_path.write_text("")
+        # Create a log file in tmp_path (avoids hardcoded /tmp path)
+        log_path = tmp_path / "test-log.jsonl"
+        log_path.write_text("")
 
-        # Use default stub configurations
+        # Use stub configurations with tmp_path-based log path
         runner = AgentSessionRunner(
             config=session_config,
             sdk_client_factory=fake_factory,
             gate_runner=StubGateRunner(),  # type: ignore[arg-type]
             review_runner=StubReviewRunner(),  # type: ignore[arg-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            session_lifecycle=StubSessionLifecycle(log_path=log_path),  # type: ignore[arg-type]
         )
 
         input = AgentSessionInput(
