@@ -7,12 +7,21 @@ claude_agent_sdk directly.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+from collections.abc import Callable
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from types import TracebackType
     from typing import Self
+
+
+# Factory function for creating MCP servers configuration.
+# Parameters: agent_id, repo_path, optional emit_lock_event callback
+# Returns: Dict mapping server names to server configurations
+McpServerFactory = Callable[[str, Path, Callable | None], dict[str, object]]
 
 
 @runtime_checkable
