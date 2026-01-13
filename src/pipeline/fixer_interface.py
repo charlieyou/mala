@@ -6,7 +6,7 @@ between the session_end callback and RunCoordinator implementation details.
 Design principles:
 - Protocol-based for testability and flexibility
 - Simple signature suitable for session_end callback usage
-- Adapter pattern to wrap existing RunCoordinator._run_fixer_agent()
+- Adapter pattern to wrap FixerService
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from src.pipeline.run_coordinator import RunCoordinator
+    from src.pipeline.fixer_service import FixerService
 
 
 @dataclass
@@ -53,49 +53,56 @@ class FixerInterface(Protocol):
         ...
 
 
-class RunCoordinatorFixerAdapter:
-    """Adapter that wraps RunCoordinator to satisfy FixerInterface.
+class FixerServiceAdapter:
+    """Adapter that wraps FixerService to satisfy FixerInterface.
 
-    This adapter provides a simplified interface over RunCoordinator._run_fixer_agent(),
+    This adapter provides a simplified interface over FixerService.run_fixer(),
     making it suitable for injection into the session_end callback.
     """
 
-    def __init__(self, coordinator: RunCoordinator) -> None:
-        """Initialize adapter with a RunCoordinator instance.
+    def __init__(self, fixer_service: FixerService, max_attempts: int = 3) -> None:
+        """Initialize adapter with a FixerService instance.
 
         Args:
-            coordinator: The RunCoordinator to delegate fixer calls to.
+            fixer_service: The FixerService to delegate fixer calls to.
+            max_attempts: Maximum number of fixer attempts (for prompt context).
         """
-        self._coordinator = coordinator
+        self._fixer_service = fixer_service
+        self._max_attempts = max_attempts
         self._attempt_counter: dict[str, int] = {}
 
     async def run_fixer(self, failure_output: str, issue_id: str) -> FixerResult:
-        """Run a fixer agent via the wrapped RunCoordinator.
+        """Run a fixer agent via the wrapped FixerService.
 
         Args:
             failure_output: Human-readable description of what failed.
             issue_id: The issue ID for context.
 
         Returns:
-            FixerResult from the underlying coordinator.
+            FixerResult from the underlying service.
         """
+        from src.pipeline.fixer_service import FailureContext
+
         # Track attempts per issue for multi-call scenarios
         attempt = self._attempt_counter.get(issue_id, 0) + 1
         self._attempt_counter[issue_id] = attempt
 
-        # Call the coordinator's internal fixer method
-        result = await self._coordinator._run_fixer_agent(
+        # Build context and delegate to FixerService
+        context = FailureContext(
             failure_output=failure_output,
             attempt=attempt,
-            spec=None,  # session_end doesn't have spec context
-            interrupt_event=None,  # session_end handles its own interrupts
+            max_attempts=self._max_attempts,
             failed_command="session_end validation",
         )
+        result = await self._fixer_service.run_fixer(context, interrupt_event=None)
 
         # Convert to our FixerResult (same structure, but our type)
-        # Access attributes directly to avoid import issues
         return FixerResult(
             success=result.success,
             interrupted=result.interrupted,
             log_path=result.log_path,
         )
+
+
+# Keep backward compatibility alias
+RunCoordinatorFixerAdapter = FixerServiceAdapter

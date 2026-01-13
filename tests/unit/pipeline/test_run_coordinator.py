@@ -17,13 +17,50 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
 from src.pipeline.run_coordinator import (
-    FixerResult,
     RunCoordinator,
     RunCoordinatorConfig,
 )
+from src.pipeline.fixer_interface import FixerResult
+from src.pipeline.fixer_service import FixerService, FixerServiceConfig
+from src.pipeline.trigger_engine import TriggerEngine
 from tests.fakes import FakeEnvConfig
 from tests.fakes.command_runner import FakeCommandRunner
 from tests.fakes.lock_manager import FakeLockManager
+
+
+def _make_coordinator(
+    config: RunCoordinatorConfig,
+    gate_checker: Any,  # noqa: ANN401
+    command_runner: Any,  # noqa: ANN401
+    env_config: Any,  # noqa: ANN401
+    lock_manager: Any,  # noqa: ANN401
+    sdk_client_factory: Any,  # noqa: ANN401
+    event_sink: Any = None,  # noqa: ANN401
+    cumulative_review_runner: Any = None,  # noqa: ANN401
+    run_metadata: Any = None,  # noqa: ANN401
+    trigger_engine: TriggerEngine | None = None,
+    fixer_service: Any = None,  # noqa: ANN401
+) -> RunCoordinator:
+    """Helper to construct RunCoordinator with required deps for tests."""
+    if trigger_engine is None:
+        # Use validation_config from RunCoordinatorConfig if available
+        trigger_engine = TriggerEngine(validation_config=config.validation_config)
+    if fixer_service is None:
+        fixer_service = MagicMock(spec=FixerService)
+        fixer_service.cleanup_locks = MagicMock()
+    return RunCoordinator(
+        config=config,
+        gate_checker=gate_checker,
+        command_runner=command_runner,
+        env_config=env_config,
+        lock_manager=lock_manager,
+        sdk_client_factory=sdk_client_factory,
+        trigger_engine=trigger_engine,
+        fixer_service=fixer_service,
+        event_sink=event_sink,
+        cumulative_review_runner=cumulative_review_runner,
+        run_metadata=run_metadata,
+    )
 
 
 @pytest.fixture
@@ -50,8 +87,39 @@ def mock_sdk_client_factory() -> MagicMock:
     return MagicMock()
 
 
+@pytest.fixture
+def mock_fixer_service() -> MagicMock:
+    """Create a mock FixerService for testing."""
+    mock = MagicMock(spec=FixerService)
+    mock.cleanup_locks = MagicMock()
+    return mock
+
+
+@pytest.fixture
+def mock_trigger_engine() -> TriggerEngine:
+    """Create a TriggerEngine with no validation config for testing."""
+    return TriggerEngine(validation_config=None)
+
+
 class TestFixerInterruptHandling:
-    """Test fixer agent interrupt behavior in RunCoordinator."""
+    """Test fixer agent interrupt behavior via FixerService."""
+
+    @pytest.fixture
+    def fixer_service(
+        self,
+        tmp_path: Path,
+        mock_sdk_client_factory: MagicMock,
+    ) -> FixerService:
+        """Create a FixerService with test dependencies."""
+        config = FixerServiceConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
+        )
+        return FixerService(
+            config=config,
+            sdk_client_factory=mock_sdk_client_factory,
+        )
 
     @pytest.fixture
     def coordinator(
@@ -61,6 +129,7 @@ class TestFixerInterruptHandling:
         mock_env_config: FakeEnvConfig,
         fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
+        fixer_service: FixerService,
     ) -> RunCoordinator:
         """Create a RunCoordinator with test dependencies."""
         mock_gate_checker = MagicMock()
@@ -69,6 +138,7 @@ class TestFixerInterruptHandling:
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
         )
+        trigger_engine = TriggerEngine(validation_config=None)
         return RunCoordinator(
             config=config,
             gate_checker=mock_gate_checker,
@@ -76,22 +146,27 @@ class TestFixerInterruptHandling:
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
             sdk_client_factory=mock_sdk_client_factory,
+            trigger_engine=trigger_engine,
+            fixer_service=fixer_service,
         )
 
     @pytest.mark.asyncio
     async def test_fixer_returns_interrupted_when_event_set_before_start(
         self,
-        coordinator: RunCoordinator,
+        fixer_service: FixerService,
     ) -> None:
         """Fixer should return interrupted=True when event is set before starting."""
+        from src.pipeline.fixer_service import FailureContext
+
         interrupt_event = asyncio.Event()
         interrupt_event.set()  # Set before calling
 
-        result = await coordinator._run_fixer_agent(
+        context = FailureContext(
             failure_output="Test failure",
             attempt=1,
-            interrupt_event=interrupt_event,
+            max_attempts=3,
         )
+        result = await fixer_service.run_fixer(context, interrupt_event)
 
         assert isinstance(result, FixerResult)
         assert result.interrupted is True
@@ -100,18 +175,21 @@ class TestFixerInterruptHandling:
     @pytest.mark.asyncio
     async def test_fixer_checks_interrupt_before_starting(
         self,
-        coordinator: RunCoordinator,
+        fixer_service: FixerService,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Fixer should check interrupt and exit before SDK client is created."""
+        from src.pipeline.fixer_service import FailureContext
+
         interrupt_event = asyncio.Event()
         interrupt_event.set()
 
-        result = await coordinator._run_fixer_agent(
+        context = FailureContext(
             failure_output="Test failure",
             attempt=1,
-            interrupt_event=interrupt_event,
+            max_attempts=3,
         )
+        result = await fixer_service.run_fixer(context, interrupt_event)
 
         # SDK client should NOT be created when interrupted before start
         mock_sdk_client_factory.create.assert_not_called()
@@ -120,10 +198,12 @@ class TestFixerInterruptHandling:
     @pytest.mark.asyncio
     async def test_fixer_returns_success_when_not_interrupted(
         self,
-        coordinator: RunCoordinator,
+        fixer_service: FixerService,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Fixer should return success=True when completing without interrupt."""
+        from src.pipeline.fixer_service import FailureContext
+
         # Create a mock client that simulates a successful run
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -150,7 +230,7 @@ class TestFixerInterruptHandling:
         mock_runtime.lint_cache = MagicMock()
 
         with patch(
-            "src.pipeline.run_coordinator.AgentRuntimeBuilder"
+            "src.pipeline.fixer_service.AgentRuntimeBuilder"
         ) as mock_builder_class:
             mock_builder = MagicMock()
             mock_builder_class.return_value = mock_builder
@@ -161,11 +241,12 @@ class TestFixerInterruptHandling:
             mock_builder.with_lint_tools.return_value = mock_builder
             mock_builder.build.return_value = mock_runtime
 
-            result = await coordinator._run_fixer_agent(
+            context = FailureContext(
                 failure_output="Test failure",
                 attempt=1,
-                interrupt_event=None,  # No interrupt event
+                max_attempts=3,
             )
+            result = await fixer_service.run_fixer(context, interrupt_event=None)
 
         assert isinstance(result, FixerResult)
         assert result.success is True
@@ -174,11 +255,13 @@ class TestFixerInterruptHandling:
     @pytest.mark.asyncio
     async def test_fixer_captures_log_path(
         self,
-        coordinator: RunCoordinator,
+        fixer_service: FixerService,
         mock_sdk_client_factory: MagicMock,
         tmp_path: Path,
     ) -> None:
         """Fixer should capture log path using upfront session_id."""
+        from src.pipeline.fixer_service import FailureContext
+
         # Create a mock client
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -207,10 +290,10 @@ class TestFixerInterruptHandling:
 
         with (
             patch(
-                "src.pipeline.run_coordinator.AgentRuntimeBuilder"
+                "src.pipeline.fixer_service.AgentRuntimeBuilder"
             ) as mock_builder_class,
-            patch("src.infra.tools.env.get_claude_log_path") as mock_log_path,
-            patch("src.pipeline.run_coordinator.uuid.uuid4", return_value=mock_uuid),
+            patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path,
+            patch("src.pipeline.fixer_service.uuid.uuid4", return_value=mock_uuid),
         ):
             mock_builder = MagicMock()
             mock_builder_class.return_value = mock_builder
@@ -223,11 +306,12 @@ class TestFixerInterruptHandling:
 
             mock_log_path.return_value = Path("/mock/log/path/session.jsonl")
 
-            result = await coordinator._run_fixer_agent(
+            context = FailureContext(
                 failure_output="Test failure",
                 attempt=1,
-                interrupt_event=None,
+                max_attempts=3,
             )
+            result = await fixer_service.run_fixer(context, interrupt_event=None)
 
         assert result.success is True
         assert result.log_path == "/mock/log/path/session.jsonl"
@@ -241,10 +325,12 @@ class TestFixerInterruptHandling:
     @pytest.mark.asyncio
     async def test_fixer_returns_interrupted_during_message_loop(
         self,
-        coordinator: RunCoordinator,
+        fixer_service: FixerService,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Fixer should check interrupt between messages and exit early."""
+        from src.pipeline.fixer_service import FailureContext
+
         interrupt_event = asyncio.Event()
 
         mock_client = AsyncMock()
@@ -274,7 +360,7 @@ class TestFixerInterruptHandling:
         mock_runtime.lint_cache = MagicMock()
 
         with patch(
-            "src.pipeline.run_coordinator.AgentRuntimeBuilder"
+            "src.pipeline.fixer_service.AgentRuntimeBuilder"
         ) as mock_builder_class:
             mock_builder = MagicMock()
             mock_builder_class.return_value = mock_builder
@@ -285,11 +371,12 @@ class TestFixerInterruptHandling:
             mock_builder.with_lint_tools.return_value = mock_builder
             mock_builder.build.return_value = mock_runtime
 
-            result = await coordinator._run_fixer_agent(
+            context = FailureContext(
                 failure_output="Test failure",
                 attempt=1,
-                interrupt_event=interrupt_event,
+                max_attempts=3,
             )
+            result = await fixer_service.run_fixer(context, interrupt_event)
 
         assert result.interrupted is True
         assert result.success is None
@@ -297,11 +384,13 @@ class TestFixerInterruptHandling:
     @pytest.mark.asyncio
     async def test_fixer_captures_log_path_on_interrupt_during_loop(
         self,
-        coordinator: RunCoordinator,
+        fixer_service: FixerService,
         mock_sdk_client_factory: MagicMock,
         tmp_path: Path,
     ) -> None:
         """Fixer should capture log path even when interrupted during message loop (Finding 2 fix)."""
+        from src.pipeline.fixer_service import FailureContext
+
         interrupt_event = asyncio.Event()
 
         mock_client = AsyncMock()
@@ -334,10 +423,10 @@ class TestFixerInterruptHandling:
 
         with (
             patch(
-                "src.pipeline.run_coordinator.AgentRuntimeBuilder"
+                "src.pipeline.fixer_service.AgentRuntimeBuilder"
             ) as mock_builder_class,
-            patch("src.infra.tools.env.get_claude_log_path") as mock_log_path,
-            patch("src.pipeline.run_coordinator.uuid.uuid4", return_value=mock_uuid),
+            patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path,
+            patch("src.pipeline.fixer_service.uuid.uuid4", return_value=mock_uuid),
         ):
             mock_builder = MagicMock()
             mock_builder_class.return_value = mock_builder
@@ -350,11 +439,12 @@ class TestFixerInterruptHandling:
 
             mock_log_path.return_value = Path("/mock/log/path/interrupted.jsonl")
 
-            result = await coordinator._run_fixer_agent(
+            context = FailureContext(
                 failure_output="Test failure",
                 attempt=1,
-                interrupt_event=interrupt_event,
+                max_attempts=3,
             )
+            result = await fixer_service.run_fixer(context, interrupt_event)
 
         assert result.interrupted is True
         assert result.success is None
@@ -375,6 +465,8 @@ class TestGetTriggerConfig:
         mock_env_config: FakeEnvConfig,
         fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
+        mock_fixer_service: MagicMock,
+        mock_trigger_engine: TriggerEngine,
     ) -> RunCoordinator:
         """Create a RunCoordinator with test dependencies."""
         mock_gate_checker = MagicMock()
@@ -390,6 +482,8 @@ class TestGetTriggerConfig:
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
             sdk_client_factory=mock_sdk_client_factory,
+            trigger_engine=mock_trigger_engine,
+            fixer_service=mock_fixer_service,
         )
 
     def test_get_trigger_config_run_end(
@@ -515,6 +609,8 @@ class TestRunTriggerCodeReview:
         mock_env_config: FakeEnvConfig,
         fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
+        mock_fixer_service: MagicMock,
+        mock_trigger_engine: TriggerEngine,
     ) -> tuple[RunCoordinator, MagicMock]:
         """Create a RunCoordinator with a mock CumulativeReviewRunner."""
         mock_gate_checker = MagicMock()
@@ -526,13 +622,15 @@ class TestRunTriggerCodeReview:
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
         )
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
             sdk_client_factory=mock_sdk_client_factory,
+            trigger_engine=mock_trigger_engine,
+            fixer_service=mock_fixer_service,
             cumulative_review_runner=mock_review_runner,
             run_metadata=mock_run_metadata,
         )
@@ -653,7 +751,7 @@ class TestRunTriggerCodeReview:
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
         )
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
@@ -723,7 +821,7 @@ class TestRunTriggerCodeReview:
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
         )
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
@@ -812,6 +910,8 @@ class TestFindingsExceedThreshold:
         mock_env_config: FakeEnvConfig,
         fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
+        mock_fixer_service: MagicMock,
+        mock_trigger_engine: TriggerEngine,
     ) -> RunCoordinator:
         """Create a minimal RunCoordinator for testing."""
         mock_gate_checker = MagicMock()
@@ -827,6 +927,8 @@ class TestFindingsExceedThreshold:
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
             sdk_client_factory=mock_sdk_client_factory,
+            trigger_engine=mock_trigger_engine,
+            fixer_service=mock_fixer_service,
         )
 
     def test_threshold_none_never_exceeds(self, coordinator: RunCoordinator) -> None:
@@ -1008,7 +1110,7 @@ class TestCodeReviewRemediateFailureMode:
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
             validation_config=validation_config,
         )
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
@@ -1098,7 +1200,7 @@ class TestRunEndRunMetadata:
             fixer_prompt="Fix: {failure_output}",
             validation_config=validation_config,
         )
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
@@ -1170,7 +1272,7 @@ class TestRunEndRunMetadata:
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
             validation_config=validation_config,
         )
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
@@ -1259,7 +1361,7 @@ class TestFindingThresholdEnforcement:
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
             validation_config=validation_config,
         )
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
@@ -1347,7 +1449,7 @@ class TestFindingThresholdEnforcement:
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
             validation_config=validation_config,
         )
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
@@ -1437,7 +1539,7 @@ class TestFindingThresholdEnforcement:
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
             validation_config=validation_config,
         )
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
@@ -1523,7 +1625,7 @@ class TestFindingThresholdEnforcement:
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
             validation_config=validation_config,
         )
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
@@ -1591,7 +1693,7 @@ class TestFindingThresholdEnforcement:
             CumulativeReviewResult,
             ReviewFinding,
         )
-        from src.pipeline.run_coordinator import FixerResult
+        from src.pipeline.fixer_interface import FixerResult
 
         mock_gate_checker = MagicMock()
         mock_review_runner = MagicMock()
@@ -1620,7 +1722,7 @@ class TestFindingThresholdEnforcement:
             validation_config=validation_config,
         )
 
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
@@ -1661,13 +1763,12 @@ class TestFindingThresholdEnforcement:
 
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
-        # Mock _run_fixer_agent to avoid MCP setup
-        with patch.object(
-            coordinator,
-            "_run_fixer_agent",
-            new=AsyncMock(return_value=FixerResult(success=True, interrupted=False)),
-        ):
-            result = await coordinator.run_trigger_validation(dry_run=False)
+        # Configure mock fixer_service.run_fixer to avoid MCP setup
+        coordinator.fixer_service.run_fixer = AsyncMock(
+            return_value=FixerResult(success=True, interrupted=False)
+        )
+
+        result = await coordinator.run_trigger_validation(dry_run=False)
 
         assert result.status == "passed"
         assert mock_review_runner.run_review.call_count == 2
@@ -1696,7 +1797,7 @@ class TestFindingThresholdEnforcement:
             CumulativeReviewResult,
             ReviewFinding,
         )
-        from src.pipeline.run_coordinator import FixerResult
+        from src.pipeline.fixer_interface import FixerResult
 
         mock_gate_checker = MagicMock()
         mock_review_runner = MagicMock()
@@ -1725,7 +1826,7 @@ class TestFindingThresholdEnforcement:
             validation_config=validation_config,
         )
 
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
@@ -1758,13 +1859,12 @@ class TestFindingThresholdEnforcement:
 
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
-        # Mock _run_fixer_agent to avoid MCP setup
-        with patch.object(
-            coordinator,
-            "_run_fixer_agent",
-            new=AsyncMock(return_value=FixerResult(success=True, interrupted=False)),
-        ):
-            result = await coordinator.run_trigger_validation(dry_run=False)
+        # Configure mock fixer_service.run_fixer to avoid MCP setup
+        coordinator.fixer_service.run_fixer = AsyncMock(
+            return_value=FixerResult(success=True, interrupted=False)
+        )
+
+        result = await coordinator.run_trigger_validation(dry_run=False)
 
         # Should be "failed" not "aborted" - consistent with execution error remediation
         assert result.status == "failed"
@@ -1805,7 +1905,7 @@ class TestFindingThresholdEnforcement:
             CumulativeReviewResult,
             ReviewFinding,
         )
-        from src.pipeline.run_coordinator import FixerResult
+        from src.pipeline.fixer_interface import FixerResult
 
         mock_gate_checker = MagicMock()
         mock_review_runner = MagicMock()
@@ -1834,7 +1934,7 @@ class TestFindingThresholdEnforcement:
             validation_config=validation_config,
         )
 
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
@@ -1876,13 +1976,12 @@ class TestFindingThresholdEnforcement:
 
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
-        # Mock _run_fixer_agent to avoid MCP setup
-        with patch.object(
-            coordinator,
-            "_run_fixer_agent",
-            new=AsyncMock(return_value=FixerResult(success=True, interrupted=False)),
-        ):
-            result = await coordinator.run_trigger_validation(dry_run=False)
+        # Configure mock fixer_service.run_fixer to avoid MCP setup
+        coordinator.fixer_service.run_fixer = AsyncMock(
+            return_value=FixerResult(success=True, interrupted=False)
+        )
+
+        result = await coordinator.run_trigger_validation(dry_run=False)
 
         # Should abort with error event, not failed event
         assert result.status == "aborted"
@@ -1956,7 +2055,7 @@ class TestR12CodeReviewGating:
             fixer_prompt="Fix: {failure_output}",
             validation_config=validation_config,
         )
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=failing_runner,
@@ -2032,7 +2131,7 @@ class TestR12CodeReviewGating:
             fixer_prompt="Fix: {failure_output}",
             validation_config=validation_config,
         )
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=failing_runner,
@@ -2134,7 +2233,7 @@ class TestR12CodeReviewGating:
             fixer_prompt="Fix: {failure_output}",
             validation_config=validation_config,
         )
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=smart_runner,
@@ -2155,13 +2254,12 @@ class TestR12CodeReviewGating:
 
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
-        # Mock fixer to succeed
-        with patch.object(
-            coordinator,
-            "_run_fixer_agent",
-            new=AsyncMock(return_value=FixerResult(success=True, interrupted=False)),
-        ):
-            result = await coordinator.run_trigger_validation(dry_run=False)
+        # Configure mock fixer_service.run_fixer to succeed
+        coordinator.fixer_service.run_fixer = AsyncMock(
+            return_value=FixerResult(success=True, interrupted=False)
+        )
+
+        result = await coordinator.run_trigger_validation(dry_run=False)
 
         # Remediation succeeded, validation should pass, code_review should have run
         assert result.status == "passed"
@@ -2236,7 +2334,7 @@ class TestR12CodeReviewGating:
             fixer_prompt="Fix: {failure_output}",
             validation_config=validation_config,
         )
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=failing_runner,
@@ -2277,13 +2375,12 @@ class TestR12CodeReviewGating:
 
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
-        # Mock fixer to succeed
-        with patch.object(
-            coordinator,
-            "_run_fixer_agent",
-            new=AsyncMock(return_value=FixerResult(success=True, interrupted=False)),
-        ):
-            result = await coordinator.run_trigger_validation(dry_run=False)
+        # Configure mock fixer_service.run_fixer to succeed
+        coordinator.fixer_service.run_fixer = AsyncMock(
+            return_value=FixerResult(success=True, interrupted=False)
+        )
+
+        result = await coordinator.run_trigger_validation(dry_run=False)
 
         # Even though code_review remediation succeeded, command failure persists
         assert result.status == "failed"
@@ -2332,7 +2429,7 @@ class TestTriggerCodeReviewEvents:
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
             validation_config=validation_config,
         )
-        coordinator = RunCoordinator(
+        coordinator = _make_coordinator(
             config=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
@@ -2770,13 +2867,12 @@ class TestTriggerCodeReviewEvents:
 
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
-        # Mock _run_fixer_agent to avoid MCP setup
-        with patch.object(
-            coordinator,
-            "_run_fixer_agent",
-            new=AsyncMock(return_value=FixerResult(success=True, interrupted=False)),
-        ):
-            await coordinator.run_trigger_validation(dry_run=False)
+        # Configure mock fixer_service.run_fixer to avoid MCP setup
+        coordinator.fixer_service.run_fixer = AsyncMock(
+            return_value=FixerResult(success=True, interrupted=False)
+        )
+
+        await coordinator.run_trigger_validation(dry_run=False)
 
         # Assert: started, fixer_started, (fixer_completed from _run_trigger_code_review after fixer),
         # then code_review_passed after final review
@@ -2858,13 +2954,12 @@ class TestTriggerCodeReviewEvents:
 
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
-        # Mock _run_fixer_agent
-        with patch.object(
-            coordinator,
-            "_run_fixer_agent",
-            new=AsyncMock(return_value=FixerResult(success=True, interrupted=False)),
-        ):
-            await coordinator.run_trigger_validation(dry_run=False)
+        # Configure mock fixer_service.run_fixer
+        coordinator.fixer_service.run_fixer = AsyncMock(
+            return_value=FixerResult(success=True, interrupted=False)
+        )
+
+        await coordinator.run_trigger_validation(dry_run=False)
 
         # Assert: started, failed events
         assert event_sink.has_event("trigger_code_review_started")

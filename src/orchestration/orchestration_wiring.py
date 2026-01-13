@@ -44,6 +44,8 @@ from src.pipeline.run_coordinator import (
     RunCoordinatorConfig,
 )
 from src.pipeline.cumulative_review_runner import CumulativeReviewRunner
+from src.pipeline.trigger_engine import TriggerEngine
+from src.pipeline.fixer_service import FixerService, FixerServiceConfig
 
 if TYPE_CHECKING:
     import asyncio
@@ -144,6 +146,22 @@ def build_run_coordinator(
         validation_config_missing=pipeline.validation_config_missing,
     )
 
+    # Build TriggerEngine for trigger policy evaluation
+    trigger_engine = TriggerEngine(pipeline.validation_config)
+
+    # Build FixerService for spawning fixer agents
+    fixer_config = FixerServiceConfig(
+        repo_path=pipeline.repo_path,
+        timeout_seconds=pipeline.timeout_seconds,
+        fixer_prompt=pipeline.prompts.fixer_prompt,
+        mcp_server_factory=mcp_server_factory,
+    )
+    fixer_service = FixerService(
+        config=fixer_config,
+        sdk_client_factory=sdk_client_factory,
+        event_sink=runtime.event_sink,
+    )
+
     # Build CumulativeReviewRunner for code_review in triggers
     cumulative_review_runner = build_cumulative_review_runner(runtime, pipeline)
 
@@ -154,6 +172,8 @@ def build_run_coordinator(
         env_config=runtime.env_config,
         lock_manager=runtime.lock_manager,
         sdk_client_factory=sdk_client_factory,
+        trigger_engine=trigger_engine,
+        fixer_service=fixer_service,
         event_sink=runtime.event_sink,
         cumulative_review_runner=cumulative_review_runner,
     )

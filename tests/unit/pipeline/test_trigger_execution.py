@@ -40,6 +40,8 @@ from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,
 )
+from src.pipeline.fixer_service import FixerService
+from src.pipeline.trigger_engine import TriggerEngine
 from tests.fakes import FakeEnvConfig
 from tests.fakes.command_runner import FakeCommandRunner
 from tests.fakes.lock_manager import FakeLockManager
@@ -63,6 +65,9 @@ def make_coordinator(
         fixer_prompt=fixer_prompt
         or "Fix attempt {attempt}/{max_attempts}: {failure_output}",
     )
+    trigger_engine = TriggerEngine(validation_config=validation_config)
+    mock_fixer_service = MagicMock(spec=FixerService)
+    mock_fixer_service.cleanup_locks = MagicMock()
     return RunCoordinator(
         config=config,
         gate_checker=MagicMock(),
@@ -70,6 +75,8 @@ def make_coordinator(
         env_config=FakeEnvConfig(),
         lock_manager=FakeLockManager(),
         sdk_client_factory=MagicMock(),
+        trigger_engine=trigger_engine,
+        fixer_service=mock_fixer_service,
     )
 
 
@@ -646,7 +653,7 @@ class TestFailureModeRemediate:
 
         stateful_runner = StatefulRunner()
 
-        from src.pipeline.run_coordinator import FixerResult
+        from src.pipeline.fixer_interface import FixerResult
 
         # Track fixer calls
         fixer_calls: list[int] = []
@@ -663,7 +670,7 @@ class TestFailureModeRemediate:
 
         coordinator = make_coordinator(tmp_path, validation_config=config)
         coordinator.command_runner = stateful_runner  # type: ignore[assignment]
-        coordinator._run_fixer_agent = mock_fixer  # type: ignore[method-assign]
+        coordinator.fixer_service.run_fixer = mock_fixer  # type: ignore[method-assign]
         coordinator.queue_trigger_validation(
             TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
         )
@@ -698,7 +705,7 @@ class TestFailureModeRemediate:
             ),
         )
 
-        from src.pipeline.run_coordinator import FixerResult
+        from src.pipeline.fixer_interface import FixerResult
 
         # Track fixer calls
         fixer_calls: list[int] = []
@@ -716,7 +723,7 @@ class TestFailureModeRemediate:
         coordinator = make_coordinator(
             tmp_path, validation_config=config, command_runner=runner
         )
-        coordinator._run_fixer_agent = mock_fixer  # type: ignore[method-assign]
+        coordinator.fixer_service.run_fixer = mock_fixer  # type: ignore[method-assign]
         coordinator.queue_trigger_validation(
             TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
         )
@@ -749,7 +756,7 @@ class TestFailureModeRemediate:
             ),
         )
 
-        from src.pipeline.run_coordinator import FixerResult
+        from src.pipeline.fixer_interface import FixerResult
 
         # Track fixer calls
         fixer_calls: list[int] = []
@@ -767,7 +774,7 @@ class TestFailureModeRemediate:
         coordinator = make_coordinator(
             tmp_path, validation_config=config, command_runner=runner
         )
-        coordinator._run_fixer_agent = mock_fixer  # type: ignore[method-assign]
+        coordinator.fixer_service.run_fixer = mock_fixer  # type: ignore[method-assign]
         coordinator.queue_trigger_validation(
             TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
         )

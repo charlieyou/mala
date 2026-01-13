@@ -20,18 +20,13 @@ from __future__ import annotations
 import asyncio
 import signal
 import time
-import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 
-from src.infra.agent_runtime import AgentRuntimeBuilder
 from src.infra.tools.command_runner import CommandRunner
-from src.infra.tools.locking import cleanup_agent_locks
 from src.domain.validation.e2e import E2EStatus
-from src.domain.validation.config import ConfigError
-from src.domain.validation.spec import extract_lint_tools_from_spec
-from src.pipeline.trigger_engine import ResolvedCommand
+from src.pipeline.fixer_service import FailureContext
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -52,7 +47,6 @@ if TYPE_CHECKING:
         ValidationConfig,
         ValidationTriggersConfig,
     )
-    from src.domain.validation.spec import ValidationSpec
     from src.infra.io.log_output.run_metadata import (
         RunMetadata,
         ValidationResult as MetaValidationResult,
@@ -62,6 +56,8 @@ if TYPE_CHECKING:
         CumulativeReviewRunner,
         ReviewFinding,
     )
+    from src.pipeline.fixer_service import FixerService
+    from src.pipeline.trigger_engine import ResolvedCommand, TriggerEngine
 
 
 class _FixerPromptNotSet:
@@ -133,21 +129,6 @@ class TriggerCommandResult:
 
 
 @dataclass
-class FixerResult:
-    """Result from a fixer agent session.
-
-    Attributes:
-        success: Whether the fixer completed successfully. None if not evaluated.
-        interrupted: Whether the fixer was interrupted by SIGINT.
-        log_path: Path to the fixer session log (if captured).
-    """
-
-    success: bool | None
-    interrupted: bool = False
-    log_path: str | None = None
-
-
-@dataclass
 class SpecResultBuilder:
     """Builds ValidationResult to MetaValidationResult conversions.
 
@@ -215,7 +196,8 @@ class RunCoordinator:
     This class encapsulates the global orchestration logic that was
     previously inline in MalaOrchestrator. It handles:
     - Global validation (global validation) with fixer retries
-    - Fixer agent spawning
+    - Fixer agent spawning (via FixerService)
+    - Trigger validation (via TriggerEngine for policy evaluation)
 
     The orchestrator delegates to this class for global operations
     while retaining per-session coordination.
@@ -227,6 +209,8 @@ class RunCoordinator:
         env_config: Environment configuration for paths.
         lock_manager: Lock manager for file locking.
         sdk_client_factory: Factory for creating SDK clients (required).
+        trigger_engine: TriggerEngine for trigger policy evaluation.
+        fixer_service: FixerService for spawning fixer agents.
         event_sink: Optional event sink for structured logging.
     """
 
@@ -236,10 +220,11 @@ class RunCoordinator:
     env_config: EnvConfigPort
     lock_manager: LockManagerPort
     sdk_client_factory: SDKClientFactoryProtocol
+    trigger_engine: TriggerEngine
+    fixer_service: FixerService
     event_sink: MalaEventSink | None = None
     cumulative_review_runner: CumulativeReviewRunner | None = None
     run_metadata: RunMetadata | None = None
-    _active_fixer_ids: list[str] = field(default_factory=list, init=False)
     _trigger_queue: list[tuple[TriggerType, dict[str, Any]]] = field(
         default_factory=list, init=False
     )
@@ -282,23 +267,6 @@ class RunCoordinator:
             "\n".join(lines) if lines else "Validation failed (no details available)."
         )
 
-    def _build_validation_commands_string(self, spec: ValidationSpec | None) -> str:
-        """Build formatted validation commands string for fixer prompt.
-
-        Args:
-            spec: ValidationSpec containing commands. If None, returns a placeholder.
-
-        Returns:
-            Formatted string with commands as markdown list items.
-        """
-        if spec is None or not spec.commands:
-            return "   - (Run the appropriate validation commands for this project)"
-
-        lines = []
-        for cmd in spec.commands:
-            lines.append(f"   - `{cmd.command}`")
-        return "\n".join(lines)
-
     def _extract_failed_command(self, result: ValidationResult | None) -> str:
         """Extract the first failed command from a ValidationResult.
 
@@ -316,157 +284,9 @@ class RunCoordinator:
             return failed_steps[0].command
         return "unknown"
 
-    async def _run_fixer_agent(
-        self,
-        failure_output: str,
-        attempt: int,
-        spec: ValidationSpec | None = None,
-        interrupt_event: asyncio.Event | None = None,
-        *,
-        failed_command: str = "unknown",
-        validation_commands: str | None = None,
-    ) -> FixerResult:
-        """Spawn a fixer agent to address global validation failures.
-
-        Args:
-            failure_output: Human-readable description of what failed.
-            attempt: Current attempt number.
-            spec: Optional ValidationSpec for extracting lint tool names.
-            interrupt_event: Optional event to monitor for interruption.
-            failed_command: The command that failed (for prompt context).
-            validation_commands: Formatted list of validation commands to re-run.
-                If None, builds from spec or uses a placeholder.
-
-        Returns:
-            FixerResult indicating success/failure/interrupted status.
-        """
-        from src.infra.sigint_guard import InterruptGuard
-        from src.infra.tools.env import get_claude_log_path
-
-        # Check for interrupt before starting
-        guard = InterruptGuard(interrupt_event)
-        if guard.is_interrupted():
-            return FixerResult(success=None, interrupted=True)
-
-        agent_id = f"fixer-{uuid.uuid4().hex[:8]}"
-        self._active_fixer_ids.append(agent_id)
-
-        # Build validation commands string if not provided
-        if validation_commands is None:
-            validation_commands = self._build_validation_commands_string(spec)
-
-        prompt = self.config.fixer_prompt.format(
-            attempt=attempt,
-            max_attempts=self.config.max_gate_retries,
-            failure_output=failure_output,
-            failed_command=failed_command,
-            validation_commands=validation_commands,
-        )
-
-        fixer_cwd = self.config.repo_path
-
-        # Build runtime using AgentRuntimeBuilder
-        # Note: include_mala_disallowed_tools_hook=False matches original fixer behavior
-        lint_tools = extract_lint_tools_from_spec(spec)
-        runtime = (
-            AgentRuntimeBuilder(
-                fixer_cwd,
-                agent_id,
-                self.sdk_client_factory,
-                mcp_server_factory=self.config.mcp_server_factory,
-            )
-            .with_hooks(
-                deadlock_monitor=None,
-                include_stop_hook=True,
-                include_mala_disallowed_tools_hook=False,
-            )
-            .with_env(extra={"MALA_SDK_FLOW": "fixer"})
-            .with_mcp()
-            .with_disallowed_tools()
-            .with_lint_tools(lint_tools)
-            .build()
-        )
-        client = self.sdk_client_factory.create(runtime.options)
-
-        pending_lint_commands: dict[str, tuple[str, str]] = {}
-        # Use agent_id for log path to ensure logs are correctly associated with the fixer agent.
-        # This ensures log_path is available even on interrupt/timeout/error.
-        log_path: str = str(get_claude_log_path(self.config.repo_path, agent_id))
-
-        try:
-            async with asyncio.timeout(self.config.timeout_seconds):
-                async with client:
-                    await client.query(prompt, session_id=agent_id)
-
-                    async for message in client.receive_response():
-                        # Check for interrupt between messages
-                        if guard.is_interrupted():
-                            return FixerResult(
-                                success=None, interrupted=True, log_path=log_path
-                            )
-
-                        # Use duck typing to avoid SDK imports
-                        msg_type = type(message).__name__
-                        if msg_type == "AssistantMessage":
-                            content = getattr(message, "content", [])
-                            for block in content:
-                                block_type = type(block).__name__
-                                if block_type == "TextBlock":
-                                    text = getattr(block, "text", "")
-                                    if self.event_sink is not None:
-                                        self.event_sink.on_fixer_text(attempt, text)
-                                elif block_type == "ToolUseBlock":
-                                    name = getattr(block, "name", "")
-                                    block_input = getattr(block, "input", {})
-                                    if self.event_sink is not None:
-                                        self.event_sink.on_fixer_tool_use(
-                                            attempt, name, block_input
-                                        )
-                                    if name.lower() == "bash":
-                                        cmd = block_input.get("command", "")
-                                        lint_type = (
-                                            runtime.lint_cache.detect_lint_command(cmd)
-                                        )
-                                        if lint_type:
-                                            block_id = getattr(block, "id", "")
-                                            pending_lint_commands[block_id] = (
-                                                lint_type,
-                                                cmd,
-                                            )
-                                elif block_type == "ToolResultBlock":
-                                    tool_use_id = getattr(block, "tool_use_id", None)
-                                    if tool_use_id in pending_lint_commands:
-                                        lint_type, cmd = pending_lint_commands.pop(
-                                            tool_use_id
-                                        )
-                                        if not getattr(block, "is_error", False):
-                                            runtime.lint_cache.mark_success(
-                                                lint_type, cmd
-                                            )
-                        elif msg_type == "ResultMessage":
-                            result = getattr(message, "result", "") or ""
-                            if self.event_sink is not None:
-                                self.event_sink.on_fixer_completed(result)
-
-            return FixerResult(success=True, log_path=log_path)
-
-        except TimeoutError:
-            if self.event_sink is not None:
-                self.event_sink.on_fixer_failed("timeout")
-            return FixerResult(success=False, log_path=log_path)
-        except Exception as e:
-            if self.event_sink is not None:
-                self.event_sink.on_fixer_failed(str(e))
-            return FixerResult(success=False, log_path=log_path)
-        finally:
-            self._active_fixer_ids.remove(agent_id)
-            cleanup_agent_locks(agent_id)
-
     def cleanup_fixer_locks(self) -> None:
         """Clean up any remaining fixer agent locks."""
-        for agent_id in self._active_fixer_ids:
-            cleanup_agent_locks(agent_id)
-        self._active_fixer_ids.clear()
+        self.fixer_service.cleanup_locks()
 
     def queue_trigger_validation(
         self, trigger_type: TriggerType, context: dict[str, Any]
@@ -521,9 +341,6 @@ class RunCoordinator:
             self._trigger_queue.clear()
             return TriggerValidationResult(status="passed")
 
-        # Build base pool from commands config
-        base_pool = self._build_base_pool(validation_config)
-
         # Set up SIGINT handling with asyncio.Event for async cancellation
         interrupt_event = asyncio.Event()
         original_handler = signal.getsignal(signal.SIGINT)
@@ -538,7 +355,6 @@ class RunCoordinator:
         try:
             return await self._run_trigger_validation_loop(
                 triggers_config,
-                base_pool,
                 dry_run,
                 interrupt_event,
             )
@@ -548,7 +364,6 @@ class RunCoordinator:
     async def _run_trigger_validation_loop(
         self,
         triggers_config: ValidationTriggersConfig,
-        base_pool: dict[str, tuple[str, int | None]],
         dry_run: bool,
         interrupt_event: asyncio.Event,
     ) -> TriggerValidationResult:
@@ -556,7 +371,6 @@ class RunCoordinator:
 
         Args:
             triggers_config: The trigger configuration.
-            base_pool: Map of command refs to (command, timeout).
             dry_run: If True, simulate execution.
             interrupt_event: Event set when SIGINT received.
 
@@ -583,9 +397,9 @@ class RunCoordinator:
             if trigger_config is None:
                 continue
 
-            # Resolve commands from base pool
-            resolved_commands = self._resolve_trigger_commands(
-                trigger_type, trigger_config, base_pool
+            # Resolve commands via TriggerEngine
+            resolved_commands = self.trigger_engine.resolve_commands(
+                trigger_config, trigger_type
             )
 
             # Emit validation_started event
@@ -1081,13 +895,16 @@ class RunCoordinator:
             if self.event_sink is not None:
                 self.event_sink.on_fixer_started(attempt, max_retries)
 
-            # Spawn fixer agent
-            fixer_result = await self._run_fixer_agent(
+            # Spawn fixer agent via FixerService
+            fixer_context = FailureContext(
                 failure_output=failure_output,
                 attempt=attempt,
-                interrupt_event=interrupt_event,
+                max_attempts=max_retries,
                 failed_command=failed_cmd.effective_command,
                 validation_commands=f"   - `{failed_cmd.effective_command}`",
+            )
+            fixer_result = await self.fixer_service.run_fixer(
+                fixer_context, interrupt_event
             )
 
             # Check for SIGINT after fixer (either via result or event)
@@ -1154,44 +971,6 @@ class RunCoordinator:
             lines.append(f"Error: {result.error_message}")
         return "\n".join(lines)
 
-    def _build_base_pool(
-        self, validation_config: ValidationConfig
-    ) -> dict[str, tuple[str, int | None]]:
-        """Build the base command pool from validation config.
-
-        The base pool maps command names to (command_string, timeout) tuples.
-        Per the validation triggers spec, the base pool comes from commands.
-
-        Args:
-            validation_config: The validation configuration (should be merged
-                with preset before calling).
-
-        Returns:
-            Dict mapping command ref names to (command, timeout) tuples.
-        """
-        pool: dict[str, tuple[str, int | None]] = {}
-        base_cmds = validation_config.commands
-
-        # Add built-in commands
-        for cmd_name in (
-            "test",
-            "lint",
-            "format",
-            "typecheck",
-            "e2e",
-            "setup",
-            "build",
-        ):
-            cmd = getattr(base_cmds, cmd_name, None)
-            if cmd is not None:
-                pool[cmd_name] = (cmd.command, cmd.timeout)
-
-        # Add custom commands
-        for name, custom_cmd in base_cmds.custom_commands.items():
-            pool[name] = (custom_cmd.command, custom_cmd.timeout)
-
-        return pool
-
     def _get_trigger_config(
         self, triggers_config: ValidationTriggersConfig, trigger_type: TriggerType
     ) -> BaseTriggerConfig | None:
@@ -1215,58 +994,6 @@ class RunCoordinator:
         elif trigger_type == TriggerType.RUN_END:
             return triggers_config.run_end
         return None
-
-    def _resolve_trigger_commands(
-        self,
-        trigger_type: TriggerType,
-        trigger_config: BaseTriggerConfig,
-        base_pool: dict[str, tuple[str, int | None]],
-    ) -> list[ResolvedCommand]:
-        """Resolve trigger command refs to executable commands.
-
-        For each TriggerCommandRef in the trigger config, looks up the command
-        in the base pool and applies any overrides (command string, timeout).
-
-        Args:
-            trigger_type: The type of trigger (for error messages).
-            trigger_config: The trigger configuration with command refs.
-            base_pool: Dict mapping ref names to (command, timeout).
-
-        Returns:
-            List of ResolvedCommand with effective command and timeout.
-
-        Raises:
-            ConfigError: If a ref is not found in the base pool.
-        """
-        resolved: list[ResolvedCommand] = []
-
-        for cmd_ref in trigger_config.commands:
-            if cmd_ref.ref not in base_pool:
-                available = ", ".join(sorted(base_pool.keys()))
-                raise ConfigError(
-                    f"trigger {trigger_type.value} references unknown command "
-                    f"'{cmd_ref.ref}'. Available: {available}"
-                )
-
-            base_cmd, base_timeout = base_pool[cmd_ref.ref]
-
-            # Apply overrides - use `is not None` to allow falsy values like timeout=0
-            effective_command = (
-                cmd_ref.command if cmd_ref.command is not None else base_cmd
-            )
-            effective_timeout = (
-                cmd_ref.timeout if cmd_ref.timeout is not None else base_timeout
-            )
-
-            resolved.append(
-                ResolvedCommand(
-                    ref=cmd_ref.ref,
-                    effective_command=effective_command,
-                    effective_timeout=effective_timeout,
-                )
-            )
-
-        return resolved
 
     async def _execute_trigger_commands(
         self,
@@ -1655,13 +1382,16 @@ class RunCoordinator:
                 for f in initial_findings
             )
 
-            # Spawn fixer agent to address findings
-            fixer_result = await self._run_fixer_agent(
+            # Spawn fixer agent via FixerService to address findings
+            fixer_context = FailureContext(
                 failure_output=failure_output,
                 attempt=attempt,
-                interrupt_event=interrupt_event,
+                max_attempts=max_retries,
                 failed_command="code_review",
                 validation_commands=f"Review findings:\n{findings_summary}",
+            )
+            fixer_result = await self.fixer_service.run_fixer(
+                fixer_context, interrupt_event
             )
 
             # Check for SIGINT after fixer

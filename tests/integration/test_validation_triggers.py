@@ -153,6 +153,8 @@ def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None
         ValidationTriggersConfig,
     )
     from src.pipeline.run_coordinator import RunCoordinator, RunCoordinatorConfig
+    from src.pipeline.fixer_service import FixerService
+    from src.pipeline.trigger_engine import TriggerEngine
     from tests.fakes import FakeEnvConfig
     from tests.fakes.command_runner import FakeCommandRunner
     from tests.fakes.lock_manager import FakeLockManager
@@ -181,6 +183,10 @@ def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None
         validation_config=validation_config,
     )
 
+    trigger_engine = TriggerEngine(validation_config=validation_config)
+    mock_fixer_service = MagicMock(spec=FixerService)
+    mock_fixer_service.cleanup_locks = MagicMock()
+
     coordinator = RunCoordinator(
         config=config,
         gate_checker=MagicMock(),
@@ -188,6 +194,8 @@ def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None
         env_config=FakeEnvConfig(),
         lock_manager=FakeLockManager(),
         sdk_client_factory=MagicMock(),
+        trigger_engine=trigger_engine,
+        fixer_service=mock_fixer_service,
     )
 
     # Verify trigger queue starts empty
@@ -340,6 +348,8 @@ def test_trigger_code_review_emits_lifecycle_events(tmp_path: Path) -> None:
         ValidationTriggersConfig,
     )
     from src.pipeline.run_coordinator import RunCoordinator, RunCoordinatorConfig
+    from src.pipeline.fixer_service import FixerService
+    from src.pipeline.trigger_engine import TriggerEngine
     from tests.fakes import FakeEnvConfig
     from tests.fakes.command_runner import FakeCommandRunner
     from tests.fakes.event_sink import FakeEventSink
@@ -372,6 +382,10 @@ def test_trigger_code_review_emits_lifecycle_events(tmp_path: Path) -> None:
         validation_config=validation_config,
     )
 
+    trigger_engine = TriggerEngine(validation_config=validation_config)
+    mock_fixer_service = MagicMock(spec=FixerService)
+    mock_fixer_service.cleanup_locks = MagicMock()
+
     coordinator = RunCoordinator(
         config=config,
         gate_checker=MagicMock(),
@@ -379,6 +393,8 @@ def test_trigger_code_review_emits_lifecycle_events(tmp_path: Path) -> None:
         env_config=FakeEnvConfig(),
         lock_manager=FakeLockManager(),
         sdk_client_factory=MagicMock(),
+        trigger_engine=trigger_engine,
+        fixer_service=mock_fixer_service,
         event_sink=event_sink,
     )
 
