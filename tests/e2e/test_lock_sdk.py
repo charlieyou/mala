@@ -173,10 +173,6 @@ class TestAgentAcquiresLocks:
     """Test that agents can acquire locks using the scripts."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="LLM may not reliably execute shell scripts verbatim",
-        strict=True,
-    )
     async def test_agent_runs_lock_try_script(
         self,
         lock_env: dict[str, Path],
@@ -355,10 +351,6 @@ class TestAgentHandlesContention:
     """Test agent behavior when encountering locked files."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="LLM may not reliably execute shell scripts verbatim",
-        strict=True,
-    )
     async def test_agent_detects_blocked_file(
         self,
         lock_env: dict[str, Path],
@@ -481,10 +473,6 @@ class TestMultiAgentWithSDK:
     """Test multiple agents interacting with locks via SDK."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="LLM may not reliably execute shell scripts verbatim",
-        strict=True,
-    )
     async def test_sequential_agents_handoff_lock(
         self,
         lock_env: dict[str, Path],

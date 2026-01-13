@@ -19,7 +19,7 @@ The external reviewers found the following issues:
 {custom_commands_section}
 {test_command}
 ```
-6. Commit your changes with message: `bd-{issue_id}: <description>` (multiple commits allowed; use the prefix on each)
+6. Commit your changes with message: `bd-{issue_id}: <description>` (multiple commits allowed; use the prefix on each). Use `git add <files>` with explicit file paths only (no `-A`, `-u`, `--all`, directories, or globs) and commit in the same command.
 
 **Disputing findings:** Your final summary message will be passed to the reviewer on retry. If you believe a finding is a **false positive**:
 - State clearly: "P1 at line X is a false positive because..."

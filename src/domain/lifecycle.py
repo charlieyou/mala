@@ -272,8 +272,8 @@ class ContextUsage:
     def pressure_ratio(self, limit: int) -> float:
         """Return ratio of total tokens used to the limit.
 
-        Note: cache_read_tokens are already included in input_tokens
-        per the Anthropic API, so we only sum input + output.
+        Note: cache_read_tokens are reported separately by the SDK and
+        are not included in input_tokens, so we sum input + output + cache_read.
 
         Args:
             limit: Maximum context tokens (e.g., 200_000)
@@ -284,7 +284,8 @@ class ContextUsage:
         """
         if limit <= 0 or self.tracking_disabled:
             return 0.0
-        return (self.input_tokens + self.output_tokens) / limit
+        total_tokens = self.input_tokens + self.output_tokens + self.cache_read_tokens
+        return total_tokens / limit
 
 
 @dataclass

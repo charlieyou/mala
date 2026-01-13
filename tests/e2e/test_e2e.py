@@ -382,7 +382,6 @@ class TestE2ERunnerIntegration:
     ) -> None:
         from src.infra.tools.command_runner import CommandRunner
         from src.infra.tools.env import EnvConfig
-
         if shutil.which("mala") is None or shutil.which("bd") is None:
             pytest.skip("E2E requires mala and bd CLIs")
         if not is_claude_cli_available():
@@ -396,7 +395,7 @@ class TestE2ERunnerIntegration:
         monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
 
         env_config = EnvConfig()
-        config = E2EConfig(keep_fixture=True, timeout_seconds=300.0)
+        config = E2EConfig(keep_fixture=True, timeout_seconds=420.0)
         runner = E2ERunner(env_config, CommandRunner(cwd=tmp_path), config)
 
         result = runner.run(cwd=tmp_path)

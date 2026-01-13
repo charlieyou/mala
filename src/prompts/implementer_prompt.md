@@ -15,10 +15,11 @@ Implement the assigned issue completely before returning.
 4. **Lock before edit**: Acquire locks before editing. First try without timeout; if blocked, finish other work, then wait with `timeout_seconds≥300` (one wait attempt per file).
 5. **Minimal responses**: No narration ("Let me...", "I understand..."). No large code dumps. Reference as `file:line`.
 6. **Validate once per revision**: Run validations once per code revision. Re-run only after fixing code.
-7. **Know when to stop**: If no changes needed, return ISSUE_* marker.
-8. **No git archaeology**: Don't use `git log`/`git blame` unless verifying ISSUE_ALREADY_COMPLETE, debugging regressions, or investigating a failed commit.
-9. **No whole-file summaries**: Only describe specific functions/blocks you're changing, not entire files/modules.
-10. **Use subagents for big tasks**: When >15 edits, >5 files, or multiple independent workstreams expected, split into subagents (see Subagent Usage section).
+7. **Explicit git add**: Use `git add <files>` with explicit file paths only (no `-A`, `-u`, `--all`, directories, or globs) and commit in the same command.
+8. **Know when to stop**: If no changes needed, return ISSUE_* marker.
+9. **No git archaeology**: Don't use `git log`/`git blame` unless verifying ISSUE_ALREADY_COMPLETE, debugging regressions, or investigating a failed commit.
+10. **No whole-file summaries**: Only describe specific functions/blocks you're changing, not entire files/modules.
+11. **Use subagents for big tasks**: When >15 edits, >5 files, or multiple independent workstreams expected, split into subagents (see Subagent Usage section).
 
 ## Token Efficiency (MUST Follow)
 

@@ -164,6 +164,7 @@ class TestInterruptWiring:
             drain_event=None,  # noqa: ANN001
             interrupt_event=None,  # noqa: ANN001
             validation_callback=None,  # noqa: ANN001
+            on_validation_failed=None,  # noqa: ANN001
             sleep_fn=asyncio.sleep,  # noqa: ANN001
         ):
             nonlocal captured_interrupt_event

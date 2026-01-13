@@ -108,7 +108,7 @@ if TYPE_CHECKING:
 # Version (from package metadata)
 from importlib.metadata import version as pkg_version
 
-__version__ = pkg_version("mala")
+__version__ = pkg_version("mala-agent")
 
 logger = logging.getLogger(__name__)
 
