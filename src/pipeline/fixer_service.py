@@ -151,7 +151,7 @@ class FixerService:
 
         # Build runtime using AgentRuntimeBuilder
         lint_tools = extract_lint_tools_from_spec(failure_context.spec)
-        runtime = (
+        builder = (
             AgentRuntimeBuilder(
                 fixer_cwd,
                 agent_id,
@@ -166,9 +166,11 @@ class FixerService:
             .with_env(extra={"MALA_SDK_FLOW": "fixer"})
             .with_mcp()
             .with_disallowed_tools()
-            .with_lint_tools(lint_tools)
-            .build()
         )
+        # Only set lint_tools if we have them; otherwise use builder defaults
+        if lint_tools is not None:
+            builder = builder.with_lint_tools(lint_tools)
+        runtime = builder.build()
         client = self._sdk_client_factory.create(runtime.options)
 
         pending_lint_commands: dict[str, tuple[str, str]] = {}
@@ -205,7 +207,9 @@ class FixerService:
                 self._event_sink.on_fixer_failed(str(e))
             return FixerResult(success=False, log_path=log_path)
         finally:
-            self._active_fixer_ids.remove(agent_id)
+            # Safe removal - list may have been cleared by cleanup_locks()
+            if agent_id in self._active_fixer_ids:
+                self._active_fixer_ids.remove(agent_id)
             cleanup_agent_locks(agent_id)
 
     def _process_message(
