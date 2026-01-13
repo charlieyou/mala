@@ -1,7 +1,19 @@
 [project]
-name = "mala"
-version = "0.1.0"
+name = "mala-agent"
+version = "1.0.0"
 description = "Agent SDK orchestrator for parallel issue processing"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+authors = [{ name = "Charlie You" }]
+keywords = ["agent", "sdk", "orchestrator", "ai", "automation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 requires-python = ">=3.11"
 dependencies = [
     "claude-agent-sdk",
@@ -11,6 +23,9 @@ dependencies = [
     "questionary>=2.0.0",
     "tabulate>=0.9.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/charlieyou/mala"
 
 [project.scripts]
 mala = "src.cli.main:app"
