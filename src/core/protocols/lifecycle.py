@@ -132,13 +132,15 @@ class ISessionLifecycle(Protocol):
         """
         ...
 
-    def on_tool_use(self, agent_id: str, tool_name: str, args: dict[str, Any]) -> None:
+    def on_tool_use(
+        self, agent_id: str, tool_name: str, args: dict[str, Any] | None
+    ) -> None:
         """Handle tool use event from SDK.
 
         Args:
             agent_id: The agent ID that used the tool.
             tool_name: The name of the tool used.
-            args: The tool arguments.
+            args: The tool arguments, or None if no arguments.
         """
         ...
 
