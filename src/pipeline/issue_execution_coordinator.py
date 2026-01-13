@@ -211,6 +211,7 @@ class IssueExecutionCoordinator:
         validation_callback: Callable[[], Awaitable[bool]] | None = None,
         sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
         drain_event: asyncio.Event | None = None,
+        on_validation_failed: Callable[[], None] | None = None,
     ) -> RunResult:
         """Run the main agent spawning and completion loop.
 
@@ -234,6 +235,9 @@ class IssueExecutionCoordinator:
                 are spawned, but active tasks complete normally. When all active tasks
                 finish, validation is triggered (if validation_callback present) and
                 the loop exits. If interrupt_event is also set, interrupt takes precedence.
+            on_validation_failed: Called when validation fails, before returning with
+                exit_code=1. Used to propagate validation failure state to orchestrator
+                (e.g., for correct SIGINT exit code handling).
 
         Returns:
             RunResult with issues_spawned, exit_code, and exit_reason.
@@ -299,6 +303,8 @@ class IssueExecutionCoordinator:
                             validation_passed = await validation_callback()
                             watch_state.last_validation_at = watch_state.completed_count
                             if not validation_passed:
+                                if on_validation_failed:
+                                    on_validation_failed()
                                 return RunResult(
                                     issues_spawned=issues_spawned,
                                     exit_code=1,
@@ -369,6 +375,8 @@ class IssueExecutionCoordinator:
                                     watch_state.completed_count
                                 )
                                 if not valid:
+                                    if on_validation_failed:
+                                        on_validation_failed()
                                     return RunResult(
                                         issues_spawned,
                                         exit_code=1,
@@ -450,6 +458,8 @@ class IssueExecutionCoordinator:
                                     watch_state.completed_count
                                 )
                                 if not validation_passed:
+                                    if on_validation_failed:
+                                        on_validation_failed()
                                     return RunResult(
                                         issues_spawned=issues_spawned,
                                         exit_code=1,
@@ -516,6 +526,8 @@ class IssueExecutionCoordinator:
                                         watch_state.completed_count
                                     )
                                     if not validation_passed:
+                                        if on_validation_failed:
+                                            on_validation_failed()
                                         return RunResult(
                                             issues_spawned=issues_spawned,
                                             exit_code=1,
@@ -609,6 +621,8 @@ class IssueExecutionCoordinator:
                     if validation_callback:
                         validation_passed = await validation_callback()
                         if not validation_passed:
+                            if on_validation_failed:
+                                on_validation_failed()
                             return RunResult(
                                 issues_spawned,
                                 exit_code=1,

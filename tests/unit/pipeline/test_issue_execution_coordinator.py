@@ -764,6 +764,49 @@ class TestDrainMode:
         assert result.issues_spawned == 1
         assert "issue-1" in coord.completed_ids
 
+    @pytest.mark.asyncio
+    async def test_on_validation_failed_callback_invoked(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """on_validation_failed callback is invoked when validation fails."""
+        beads = MockIssueProvider(ready_issues=[["issue-1"], []])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]
+            event_sink=event_sink,  # type: ignore[arg-type]
+            config=CoordinatorConfig(),
+        )
+
+        validation_failed_called = False
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
+            async def work() -> None:
+                pass
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
+            coord.mark_completed(issue_id)
+
+        async def validation_callback() -> bool:
+            return False  # Validation fails
+
+        def on_validation_failed() -> None:
+            nonlocal validation_failed_called
+            validation_failed_called = True
+
+        result = await coord.run_loop(
+            spawn_callback,
+            finalize_callback,
+            AsyncMock(),
+            validation_config=PeriodicValidationConfig(validate_every=10),
+            validation_callback=validation_callback,
+            on_validation_failed=on_validation_failed,
+        )
+
+        assert result.exit_reason == "validation_failed"
+        assert result.exit_code == 1
+        assert validation_failed_called
+
 
 class TestInterruptWithUnresponsiveTasks:
     """Tests for interrupt handling when tasks are unresponsive."""

@@ -687,7 +687,9 @@ class MalaOrchestrator:
     def _interrupt_event(self) -> asyncio.Event | None:
         """Interrupt event, delegated to lifecycle controller.
 
-        Returns None before run() is called (events created fresh per-run).
+        The event is available immediately after __init__ (LifecycleController
+        creates it in its default_factory). Returns None only if accessed before
+        _lifecycle is initialized.
         """
         return self._lifecycle.interrupt_event if hasattr(self, "_lifecycle") else None
 
@@ -707,6 +709,14 @@ class MalaOrchestrator:
     def _request_abort(self, reason: str) -> None:
         """Signal that the current run should stop due to a fatal error."""
         self.issue_coordinator.request_abort(reason)
+
+    def _mark_validation_failed(self) -> None:
+        """Mark that validation has failed.
+
+        Called by issue_coordinator when validation fails. This ensures the
+        correct exit code (1) is used if SIGINT occurs after validation failure.
+        """
+        self._lifecycle.validation_failed = True
 
     def _is_review_enabled(self) -> bool:
         """Return whether per-issue review should run for this orchestrator.
@@ -1114,6 +1124,7 @@ class MalaOrchestrator:
             drain_event=drain_event,
             interrupt_event=interrupt_event,
             validation_callback=validation_callback,
+            on_validation_failed=self._mark_validation_failed,
         )
 
     async def _finalize_run(
