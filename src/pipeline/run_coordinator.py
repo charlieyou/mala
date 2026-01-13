@@ -412,34 +412,44 @@ class RunCoordinator:
             # Track start time for duration calculation
             trigger_start_time = time.monotonic()
 
-            # Execute commands with fail-fast and interrupt support
-            (
-                results,
-                was_interrupted,
-            ) = await self._execute_trigger_commands_interruptible(
-                resolved_commands,
-                trigger_type=trigger_type,
-                dry_run=dry_run,
-                interrupt_event=interrupt_event,
-            )
+            results: list[TriggerCommandResult] = []
+            current_index = 0
 
-            # Check for interrupt during command execution
-            if was_interrupted:
-                self.clear_trigger_queue("sigint")
-                return TriggerValidationResult(
-                    status="aborted", details="Validation interrupted by SIGINT"
+            while current_index < len(resolved_commands):
+                # Execute remaining commands with fail-fast and interrupt support
+                (
+                    partial_results,
+                    was_interrupted,
+                ) = await self._execute_trigger_commands_interruptible(
+                    resolved_commands[current_index:],
+                    trigger_type=trigger_type,
+                    dry_run=dry_run,
+                    interrupt_event=interrupt_event,
+                    start_index=current_index,
                 )
 
-            self._record_run_validation(trigger_type, results)
+                # Check for interrupt during command execution
+                if was_interrupted:
+                    self.clear_trigger_queue("sigint")
+                    return TriggerValidationResult(
+                        status="aborted", details="Validation interrupted by SIGINT"
+                    )
 
-            # Check for failures
-            failed_result: TriggerCommandResult | None = None
-            for result in results:
-                if not result.passed:
-                    failed_result = result
+                results.extend(partial_results)
+
+                # Check for failures in the partial results
+                failed_offset: int | None = None
+                for offset, result in enumerate(partial_results):
+                    if not result.passed:
+                        failed_offset = offset
+                        break
+
+                if failed_offset is None:
                     break
 
-            if failed_result is not None:
+                failed_index = current_index + failed_offset
+                failed_result = results[failed_index]
+
                 # Handle failure based on failure_mode BEFORE code_review
                 failure_mode = trigger_config.failure_mode
 
@@ -450,33 +460,48 @@ class RunCoordinator:
                         self.event_sink.on_trigger_validation_failed(
                             trigger_type.value, failed_result.ref, "continue"
                         )
+                    break
 
-                elif failure_mode == FailureMode.REMEDIATE:
+                if failure_mode == FailureMode.REMEDIATE:
                     # Attempt remediation with fixer agent
-                    remediation_result = await self._run_trigger_remediation(
+                    (
+                        remediation_result,
+                        remediated_result,
+                    ) = await self._run_trigger_remediation(
                         trigger_type,
                         trigger_config,
                         resolved_commands,
                         failed_result,
+                        failed_index,
                         dry_run,
                         interrupt_event,
                     )
                     if remediation_result is not None:
                         # Remediation exhausted/aborted - skip code_review
+                        self._record_run_validation(trigger_type, results)
                         return remediation_result
-                    # Remediation succeeded - proceed to code_review
 
-                else:  # ABORT (default)
-                    # Skip code_review and abort immediately
-                    if self.event_sink is not None:
-                        self.event_sink.on_trigger_validation_failed(
-                            trigger_type.value, failed_result.ref, "abort"
-                        )
-                    self.clear_trigger_queue("run_aborted")
-                    return TriggerValidationResult(
-                        status="aborted",
-                        details=f"Command '{failed_result.ref}' failed in trigger {trigger_type.value}",
+                    if remediated_result is not None:
+                        results[failed_index] = remediated_result
+
+                    current_index = failed_index + 1
+                    continue
+
+                # ABORT (default)
+                if self.event_sink is not None:
+                    self.event_sink.on_trigger_validation_failed(
+                        trigger_type.value, failed_result.ref, "abort"
                     )
+                self.clear_trigger_queue("run_aborted")
+                self._record_run_validation(trigger_type, results)
+                return TriggerValidationResult(
+                    status="aborted",
+                    details=(
+                        f"Command '{failed_result.ref}' failed in trigger {trigger_type.value}"
+                    ),
+                )
+
+            self._record_run_validation(trigger_type, results)
 
             # Run code_review if configured (regardless of command outcome,
             # unless ABORT which returned above)
@@ -832,9 +857,10 @@ class RunCoordinator:
         trigger_config: BaseTriggerConfig,
         resolved_commands: list[ResolvedCommand],
         failed_result: TriggerCommandResult,
+        failed_index: int,
         dry_run: bool,
         interrupt_event: asyncio.Event,
-    ) -> TriggerValidationResult | None:
+    ) -> tuple[TriggerValidationResult | None, TriggerCommandResult | None]:
         """Run remediation loop for a failed trigger command.
 
         Spawns fixer agent and re-runs failed command up to max_retries times.
@@ -848,16 +874,23 @@ class RunCoordinator:
             interrupt_event: Event set when SIGINT received.
 
         Returns:
-            TriggerValidationResult if remediation failed/aborted, None if succeeded.
+            Tuple of (TriggerValidationResult, TriggerCommandResult).
+            TriggerValidationResult is returned when remediation fails or aborts.
+            TriggerCommandResult is returned when remediation succeeds.
         """
         max_retries = trigger_config.max_retries or 0
 
         # max_retries=0 means no fixer spawned, immediate abort
         if max_retries == 0:
             self.clear_trigger_queue("run_aborted")
-            return TriggerValidationResult(
-                status="aborted",
-                details=f"Command '{failed_result.ref}' failed in trigger {trigger_type.value} (max_retries=0)",
+            return (
+                TriggerValidationResult(
+                    status="aborted",
+                    details=(
+                        f"Command '{failed_result.ref}' failed in trigger {trigger_type.value} (max_retries=0)"
+                    ),
+                ),
+                None,
             )
 
         # Find the failed command to re-run
@@ -867,9 +900,14 @@ class RunCoordinator:
         if failed_cmd is None:
             # Shouldn't happen, but handle gracefully
             self.clear_trigger_queue("run_aborted")
-            return TriggerValidationResult(
-                status="aborted",
-                details=f"Failed to find command '{failed_result.ref}' for remediation",
+            return (
+                TriggerValidationResult(
+                    status="aborted",
+                    details=(
+                        f"Failed to find command '{failed_result.ref}' for remediation"
+                    ),
+                ),
+                None,
             )
 
         # Build failure output for fixer
@@ -881,8 +919,11 @@ class RunCoordinator:
             # Check for SIGINT before fixer attempt
             if interrupt_event.is_set():
                 self.clear_trigger_queue("sigint")
-                return TriggerValidationResult(
-                    status="aborted", details="Validation interrupted by SIGINT"
+                return (
+                    TriggerValidationResult(
+                        status="aborted", details="Validation interrupted by SIGINT"
+                    ),
+                    None,
                 )
 
             # Emit remediation_started event
@@ -910,8 +951,11 @@ class RunCoordinator:
             # Check for SIGINT after fixer (either via result or event)
             if fixer_result.interrupted or interrupt_event.is_set():
                 self.clear_trigger_queue("sigint")
-                return TriggerValidationResult(
-                    status="aborted", details="Validation interrupted by SIGINT"
+                return (
+                    TriggerValidationResult(
+                        status="aborted", details="Validation interrupted by SIGINT"
+                    ),
+                    None,
                 )
 
             # Re-run the failed command with interrupt support
@@ -923,12 +967,16 @@ class RunCoordinator:
                 trigger_type=trigger_type,
                 dry_run=dry_run,
                 interrupt_event=interrupt_event,
+                start_index=failed_index,
             )
 
             if was_interrupted:
                 self.clear_trigger_queue("sigint")
-                return TriggerValidationResult(
-                    status="aborted", details="Validation interrupted by SIGINT"
+                return (
+                    TriggerValidationResult(
+                        status="aborted", details="Validation interrupted by SIGINT"
+                    ),
+                    None,
                 )
 
             if retry_results and retry_results[0].passed:
@@ -937,7 +985,7 @@ class RunCoordinator:
                     self.event_sink.on_trigger_remediation_succeeded(
                         trigger_type.value, attempt
                     )
-                return None
+                return None, retry_results[0]
 
             # Update failure output for next attempt
             if retry_results:
@@ -952,9 +1000,14 @@ class RunCoordinator:
                 trigger_type.value, failed_result.ref, "remediate"
             )
         self.clear_trigger_queue("run_aborted")
-        return TriggerValidationResult(
-            status="aborted",
-            details=f"Command '{failed_result.ref}' failed after {max_retries} remediation attempts",
+        return (
+            TriggerValidationResult(
+                status="aborted",
+                details=(
+                    f"Command '{failed_result.ref}' failed after {max_retries} remediation attempts"
+                ),
+            ),
+            None,
         )
 
     def _build_trigger_failure_output(self, result: TriggerCommandResult) -> str:
@@ -1068,6 +1121,7 @@ class RunCoordinator:
         trigger_type: TriggerType,
         dry_run: bool = False,
         interrupt_event: asyncio.Event,
+        start_index: int = 0,
     ) -> tuple[list[TriggerCommandResult], bool]:
         """Execute resolved commands with interrupt support.
 
@@ -1080,6 +1134,7 @@ class RunCoordinator:
             trigger_type: The trigger type (for event emission).
             dry_run: If True, skip subprocess execution.
             interrupt_event: Event set when SIGINT received.
+            start_index: Offset for command indices in emitted events.
 
         Returns:
             Tuple of (results, was_interrupted) where was_interrupted is True
@@ -1088,6 +1143,7 @@ class RunCoordinator:
         results: list[TriggerCommandResult] = []
 
         for index, cmd in enumerate(commands):
+            command_index = start_index + index
             # Check interrupt before each command
             if interrupt_event.is_set():
                 return results, True
@@ -1095,7 +1151,7 @@ class RunCoordinator:
             # Emit command_started event
             if self.event_sink is not None:
                 self.event_sink.on_trigger_command_started(
-                    trigger_type.value, cmd.ref, index
+                    trigger_type.value, cmd.ref, command_index
                 )
 
             if dry_run:
@@ -1105,7 +1161,7 @@ class RunCoordinator:
                 # Emit command_completed event
                 if self.event_sink is not None:
                     self.event_sink.on_trigger_command_completed(
-                        trigger_type.value, cmd.ref, index, passed, duration
+                        trigger_type.value, cmd.ref, command_index, passed, duration
                     )
                 results.append(
                     TriggerCommandResult(
@@ -1171,7 +1227,7 @@ class RunCoordinator:
                 self.event_sink.on_trigger_command_completed(
                     trigger_type.value,
                     cmd.ref,
-                    index,
+                    command_index,
                     passed,
                     cmd_result.duration_seconds,
                 )
