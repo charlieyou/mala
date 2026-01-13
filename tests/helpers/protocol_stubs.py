@@ -11,12 +11,22 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import asyncio
-    from collections.abc import Callable, Sequence
+    from collections.abc import Awaitable, Callable, Sequence
     from pathlib import Path
 
     from src.core.protocols.review import ReviewIssueProtocol
     from src.core.session_end_result import SessionEndResult, SessionEndRetryState
     from src.domain.lifecycle import GateOutcome, RetryState, ReviewOutcome
+
+    # Callback types that accept both sync and async functions
+    GateCheckCallback = Callable[
+        [str, Path, RetryState],
+        tuple[GateOutcome, int] | Awaitable[tuple[GateOutcome, int]],
+    ]
+    SessionEndCheckCallback = Callable[
+        [str, Path, SessionEndRetryState],
+        SessionEndResult | Awaitable[SessionEndResult],
+    ]
 
 
 @dataclass
@@ -53,12 +63,8 @@ class StubGateRunner:
     gate_result: StubGateOutcome = field(default_factory=StubGateOutcome)
     gate_offset: int = 0
     session_end_result: SessionEndResult | None = None
-    on_gate_check: Callable[[str, Path, RetryState], tuple[GateOutcome, int]] | None = (
-        None
-    )
-    on_session_end_check: (
-        Callable[[str, Path, SessionEndRetryState], SessionEndResult] | None
-    ) = None
+    on_gate_check: GateCheckCallback | None = None
+    on_session_end_check: SessionEndCheckCallback | None = None
 
     async def run_gate_check(
         self,
