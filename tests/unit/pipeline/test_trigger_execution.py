@@ -824,7 +824,6 @@ class TestSigintHandling:
         validation_config = config
         triggers_config = validation_config.validation_triggers
         assert triggers_config is not None  # Satisfy type checker
-        base_pool = coordinator._build_base_pool(validation_config)
 
         # Create an event that's already set (simulating SIGINT received)
         interrupt_event = asyncio.Event()
@@ -833,7 +832,6 @@ class TestSigintHandling:
         result = asyncio.run(
             coordinator._run_trigger_validation_loop(
                 triggers_config,
-                base_pool,
                 dry_run=False,
                 interrupt_event=interrupt_event,
             )

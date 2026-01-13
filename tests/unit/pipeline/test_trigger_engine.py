@@ -564,6 +564,7 @@ class TestCommandResolution:
         engine = TriggerEngine(config)
 
         trigger_config = config.validation_triggers.session_end  # type: ignore[union-attr]
+        assert trigger_config is not None
         resolved = engine.resolve_commands(trigger_config, TriggerType.SESSION_END)
 
         assert len(resolved) == 1

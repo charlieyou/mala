@@ -1764,7 +1764,7 @@ class TestFindingThresholdEnforcement:
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
         # Configure mock fixer_service.run_fixer to avoid MCP setup
-        coordinator.fixer_service.run_fixer = AsyncMock(
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]
             return_value=FixerResult(success=True, interrupted=False)
         )
 
@@ -1860,7 +1860,7 @@ class TestFindingThresholdEnforcement:
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
         # Configure mock fixer_service.run_fixer to avoid MCP setup
-        coordinator.fixer_service.run_fixer = AsyncMock(
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]
             return_value=FixerResult(success=True, interrupted=False)
         )
 
@@ -1977,7 +1977,7 @@ class TestFindingThresholdEnforcement:
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
         # Configure mock fixer_service.run_fixer to avoid MCP setup
-        coordinator.fixer_service.run_fixer = AsyncMock(
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]
             return_value=FixerResult(success=True, interrupted=False)
         )
 
@@ -2255,7 +2255,7 @@ class TestR12CodeReviewGating:
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
         # Configure mock fixer_service.run_fixer to succeed
-        coordinator.fixer_service.run_fixer = AsyncMock(
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]
             return_value=FixerResult(success=True, interrupted=False)
         )
 
@@ -2376,7 +2376,7 @@ class TestR12CodeReviewGating:
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
         # Configure mock fixer_service.run_fixer to succeed
-        coordinator.fixer_service.run_fixer = AsyncMock(
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]
             return_value=FixerResult(success=True, interrupted=False)
         )
 
@@ -2868,7 +2868,7 @@ class TestTriggerCodeReviewEvents:
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
         # Configure mock fixer_service.run_fixer to avoid MCP setup
-        coordinator.fixer_service.run_fixer = AsyncMock(
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]
             return_value=FixerResult(success=True, interrupted=False)
         )
 
@@ -2955,7 +2955,7 @@ class TestTriggerCodeReviewEvents:
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
         # Configure mock fixer_service.run_fixer
-        coordinator.fixer_service.run_fixer = AsyncMock(
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]
             return_value=FixerResult(success=True, interrupted=False)
         )
 
