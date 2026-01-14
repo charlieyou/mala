@@ -318,6 +318,8 @@ class BaseEventSink:
         epic_id: str,
         unmet_count: int,
         remediation_ids: list[str],
+        *,
+        reason: str | None = None,
     ) -> None:
         pass
 

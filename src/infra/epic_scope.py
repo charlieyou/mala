@@ -25,6 +25,7 @@ class EpicScopeAnalyzer:
             repo_path: Path to the git repository.
             runner: CommandRunner instance for executing git commands.
         """
+        self._repo_path = repo_path
         self._runner = runner
 
     async def compute_scoped_commits(
@@ -91,7 +92,7 @@ class EpicScopeAnalyzer:
         for issue_id in sorted_issue_ids:
             cmd.append(f"--grep=bd-{issue_id}:")
 
-        result = await self._runner.run_async(cmd)
+        result = await self._runner.run_async(cmd, cwd=self._repo_path)
         if not result.ok or not result.stdout.strip():
             return []
 
@@ -118,7 +119,8 @@ class EpicScopeAnalyzer:
 
         # Batch fetch timestamps for all commits in a single git command (Finding 2)
         result = await self._runner.run_async(
-            ["git", "show", "-s", "--format=%H %ct", "--no-walk", *commits]
+            ["git", "show", "-s", "--format=%H %ct", "--no-walk", *commits],
+            cwd=self._repo_path,
         )
         if not result.ok:
             return None
@@ -144,7 +146,8 @@ class EpicScopeAnalyzer:
             return base
         # Check if base has a parent (not a root commit) before using base^
         parent_check = await self._runner.run_async(
-            ["git", "rev-parse", "--verify", f"{base}^", "--"]
+            ["git", "rev-parse", "--verify", f"{base}^", "--"],
+            cwd=self._repo_path,
         )
         if parent_check.ok:
             # base has a parent, use base^..tip for inclusive range
@@ -176,7 +179,8 @@ class EpicScopeAnalyzer:
 
         # Batch fetch commit summaries in a single git command (Finding 2)
         result = await self._runner.run_async(
-            ["git", "show", "-s", "--format=%H %s", "--no-walk", *display_commits]
+            ["git", "show", "-s", "--format=%H %s", "--no-walk", *display_commits],
+            cwd=self._repo_path,
         )
 
         lines: list[str] = []

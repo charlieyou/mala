@@ -138,6 +138,8 @@ class DiagnosticsEvents(Protocol):
         epic_id: str,
         unmet_count: int,
         remediation_ids: list[str],
+        *,
+        reason: str | None = None,
     ) -> None:
         """Called when epic verification fails with unmet criteria.
 
@@ -145,6 +147,7 @@ class DiagnosticsEvents(Protocol):
             epic_id: The epic that failed verification.
             unmet_count: Number of unmet criteria.
             remediation_ids: IDs of created remediation issues.
+            reason: Optional reason for failure (e.g., when verification couldn't run).
         """
         ...
 

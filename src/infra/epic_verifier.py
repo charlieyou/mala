@@ -450,7 +450,8 @@ class EpicVerifier:
             to_commit = commit_range
 
         result = await self._runner.run_async(
-            ["git", "diff", "--numstat", from_commit, to_commit]
+            ["git", "diff", "--numstat", from_commit, to_commit],
+            cwd=self.repo_path,
         )
         if not result.ok:
             return None
@@ -679,10 +680,13 @@ class EpicVerifier:
         # Prefer bd epic status --eligible-only when supported; fall back to
         # full status and filter eligible_for_close.
         result = await self._runner.run_async(
-            ["bd", "epic", "status", "--eligible-only", "--json"]
+            ["bd", "epic", "status", "--eligible-only", "--json"],
+            cwd=self.repo_path,
         )
         if not result.ok:
-            result = await self._runner.run_async(["bd", "epic", "status", "--json"])
+            result = await self._runner.run_async(
+                ["bd", "epic", "status", "--json"], cwd=self.repo_path
+            )
         if not result.ok:
             return []
         try:
@@ -725,7 +729,9 @@ class EpicVerifier:
         Returns:
             Human-readable reason if ineligible, None if eligible or status unavailable.
         """
-        result = await self._runner.run_async(["bd", "epic", "status", "--json"])
+        result = await self._runner.run_async(
+            ["bd", "epic", "status", "--json"], cwd=self.repo_path
+        )
         if not result.ok:
             return None
         try:
@@ -835,7 +841,9 @@ class EpicVerifier:
                         reasoning="Human override close failed - epic could not be closed",
                     )
                     if self.event_sink is not None:
-                        self.event_sink.on_epic_verification_failed(epic_id, 0, [])
+                        self.event_sink.on_epic_verification_failed(
+                            epic_id, 0, [], reason="Epic could not be closed"
+                        )
             else:
                 verdicts[epic_id] = EpicVerdict(
                     passed=True,
@@ -889,9 +897,15 @@ class EpicVerifier:
                     await self.add_epic_blockers(epic_id, blocking_ids)
                 failed_count = 1
                 if self.event_sink is not None:
-                    self.event_sink.on_epic_verification_failed(
-                        epic_id, len(blocking_ids), blocking_ids
-                    )
+                    # If no blocking issues but still failed, include reasoning in log
+                    if not blocking_ids and verdict.reasoning:
+                        self.event_sink.on_epic_verification_failed(
+                            epic_id, 0, [], reason=verdict.reasoning
+                        )
+                    else:
+                        self.event_sink.on_epic_verification_failed(
+                            epic_id, len(blocking_ids), blocking_ids
+                        )
             else:
                 # No blocking issues and verdict.passed=True - close epic if requested (may have P2/P3 advisories)
                 if close_epic:
@@ -906,7 +920,9 @@ class EpicVerifier:
                         # Close failed - treat as verification failure
                         failed_count = 1
                         if self.event_sink is not None:
-                            self.event_sink.on_epic_verification_failed(epic_id, 0, [])
+                            self.event_sink.on_epic_verification_failed(
+                                epic_id, 0, [], reason="Epic could not be closed"
+                            )
                 else:
                     passed_count = 1
                     if self.event_sink is not None:
@@ -1071,5 +1087,6 @@ This issue was auto-created by epic verification for epic `{epic_id}`.
         """
         for blocker_id in blocker_issue_ids:
             await self._runner.run_async(
-                ["bd", "dep", "add", epic_id, "--blocked-by", blocker_id]
+                ["bd", "dep", "add", epic_id, "--blocked-by", blocker_id],
+                cwd=self.repo_path,
             )

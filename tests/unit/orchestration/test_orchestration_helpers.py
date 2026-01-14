@@ -30,7 +30,6 @@ from tests.fakes.gate_checker import FakeGateChecker
 from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 
 if TYPE_CHECKING:
-    from src.core.protocols.events import MalaEventSink
     from src.core.protocols.issue import IssueProvider
     from src.core.protocols.validation import GateChecker
 

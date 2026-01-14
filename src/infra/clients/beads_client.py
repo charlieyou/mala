@@ -112,7 +112,7 @@ class BeadsClient:
             Set of issue IDs that are children of the epic.
         """
         result = await self._run_subprocess_async(
-            ["bd", "list", "--parent", epic_id, "--json"]
+            ["bd", "list", "--parent", epic_id, "--all", "--json"]
         )
         if result.returncode != 0:
             self._log_warning(f"bd list --parent failed for {epic_id}: {result.stderr}")

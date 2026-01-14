@@ -581,12 +581,21 @@ class ConsoleEventSink(BaseEventSink):
         epic_id: str,
         unmet_count: int,
         remediation_ids: list[str],
+        *,
+        reason: str | None = None,
     ) -> None:
-        log(
-            "✗",
-            f"VERIFY {Colors.RED}{epic_id}: {unmet_count} criteria unmet{Colors.RESET}",
-            agent_id="epic",
-        )
+        if reason:
+            log(
+                "✗",
+                f"VERIFY {Colors.RED}{epic_id}: {reason}{Colors.RESET}",
+                agent_id="epic",
+            )
+        else:
+            log(
+                "✗",
+                f"VERIFY {Colors.RED}{epic_id}: {unmet_count} criteria unmet{Colors.RESET}",
+                agent_id="epic",
+            )
         for issue_id in remediation_ids:
             log("→", f"  → Remediation: {issue_id}", agent_id="epic")
 
