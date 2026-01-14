@@ -798,7 +798,7 @@ class ValidationConfig:
         timeout_minutes: Timeout per agent in minutes. None means use default (60).
         context_restart_threshold: Ratio (0.0-1.0) at which to restart agent on
             context pressure. None means use default (0.70).
-        context_limit: Maximum context tokens. None means use default (200000).
+        context_limit: Maximum context tokens. None means use default (100000).
         max_idle_retries: Maximum number of idle timeout retries. None means use default (2).
         idle_timeout_seconds: Idle timeout for SDK stream in seconds.
             None means derive from agent timeout; 0 disables idle timeout.

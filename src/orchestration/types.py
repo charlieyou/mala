@@ -51,7 +51,13 @@ DEFAULT_AGENT_TIMEOUT_MINUTES = 60
 
 # Default context exhaustion thresholds
 DEFAULT_CONTEXT_RESTART_THRESHOLD = 0.70
-DEFAULT_CONTEXT_LIMIT = 200_000
+# NOTE: Claude's actual context limit is 200K, but we use 100K as default because
+# the Claude Agent SDK reports cumulative cache_read_input_tokens in ResultMessage.usage,
+# which breaks our context pressure tracking (we accumulate already-cumulative values).
+# See: https://github.com/anthropics/claude-agent-sdk-python/issues/112
+# Until the SDK is fixed or we implement per-turn delta tracking, this conservative
+# default helps trigger context restarts before hitting "Prompt is too long" errors.
+DEFAULT_CONTEXT_LIMIT = 100_000
 
 # Default idle timeout retry configuration
 DEFAULT_MAX_IDLE_RETRIES = 2
@@ -81,7 +87,7 @@ class OrchestratorConfig:
         epic_override_ids: Epic IDs to close without verification.
         orphans_only: Only process issues with no parent epic.
         context_restart_threshold: Ratio (0.0-1.0) at which to restart agent.
-        context_limit: Maximum context tokens (default 200K for Claude).
+        context_limit: Maximum context tokens (default 100K due to SDK bug).
     """
 
     repo_path: Path
@@ -207,7 +213,7 @@ class PipelineConfig:
         max_review_retries: Maximum code review retry attempts per issue.
         disabled_validations: Set of validation types to disable.
         context_restart_threshold: Ratio (0.0-1.0) at which to restart agent.
-        context_limit: Maximum context tokens (default 200K for Claude).
+        context_limit: Maximum context tokens (default 100K due to SDK bug).
         max_idle_retries: Maximum number of idle timeout retries.
         idle_timeout_seconds: Idle timeout for SDK stream (None = derive from timeout).
         prompts: PromptProvider with loaded prompt templates.

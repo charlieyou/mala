@@ -213,7 +213,7 @@ class AgentSessionConfig:
             ContextPressureError. Default 0.70 (70% of context_limit).
             Set lower than actual limit because API reports cached token
             counts which underestimate true prompt size by ~20-25%.
-        context_limit: Maximum context tokens. Default 200K for Claude.
+        context_limit: Maximum context tokens. Default 100K due to SDK bug.
         strict_resume: When True and session resumption fails (stale session),
             fail the session instead of retrying with a fresh session.
         setting_sources: Optional list of Claude settings sources to use.
@@ -233,7 +233,7 @@ class AgentSessionConfig:
     lint_tools: frozenset[str] | None = None
     prompt_validation_commands: PromptValidationCommands | None = None
     context_restart_threshold: float = 0.70
-    context_limit: int = 200_000
+    context_limit: int = 100_000
     deadlock_monitor: DeadlockMonitor | None = None
     mcp_server_factory: McpServerFactory | None = None
     strict_resume: bool = False

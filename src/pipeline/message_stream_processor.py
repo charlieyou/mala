@@ -185,7 +185,7 @@ class StreamProcessorConfig:
         context_restart_threshold: Ratio (0.0-1.0) at which to raise ContextPressureError.
     """
 
-    context_limit: int = 200_000
+    context_limit: int = 100_000
     context_restart_threshold: float = 0.70
 
 
