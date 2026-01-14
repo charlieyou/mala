@@ -112,14 +112,14 @@ class BeadsClient:
             Set of issue IDs that are children of the epic.
         """
         result = await self._run_subprocess_async(
-            ["bd", "dep", "tree", epic_id, "--direction=up", "--json"]
+            ["bd", "list", "--parent", epic_id, "--json"]
         )
         if result.returncode != 0:
-            self._log_warning(f"bd dep tree failed for {epic_id}: {result.stderr}")
+            self._log_warning(f"bd list --parent failed for {epic_id}: {result.stderr}")
             return set()
         try:
-            tree = json.loads(result.stdout)
-            return {item["id"] for item in tree if item.get("depth", 0) > 0}
+            issues = json.loads(result.stdout)
+            return {item["id"] for item in issues}
         except json.JSONDecodeError:
             return set()
 
@@ -838,9 +838,9 @@ class BeadsClient:
 
                 # Cache for this issue only
                 # Note: We don't cache all children of the epic here because
-                # get_epic_children_async returns ALL descendants (not just direct
-                # children), which would incorrectly cache nested epic children
-                # as belonging to the top-level epic.
+                # get_epic_children_async returns all descendants under --parent,
+                # which would incorrectly cache nested epic children as belonging
+                # to the top-level epic.
                 self._parent_epic_cache[issue_id] = parent_epic
 
                 return parent_epic
