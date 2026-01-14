@@ -28,6 +28,7 @@ from tests.helpers.protocol_stubs import (
     StubReviewRunner,
     StubSessionLifecycle,
 )
+from src.core.protocols.events import MalaEventSink
 from src.core.session_end_result import SessionEndResult
 from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 
@@ -126,7 +127,7 @@ def fake_factory(fake_client: FakeSDKClient) -> FakeSDKClientFactory:
     return FakeSDKClientFactory(fake_client)
 
 
-class FakeEventSink:
+class FakeEventSink(MalaEventSink):
     """Fake event sink that tracks lifecycle events in order."""
 
     def __init__(self) -> None:
@@ -149,11 +150,15 @@ class FakeEventSink:
         self.events.append(f"session_end_skipped:{issue_id}:{reason}")
 
     def on_review_started(
-        self, agent_id: str, attempt: int, max_attempts: int, **kwargs: object
+        self,
+        agent_id: str,
+        attempt: int,
+        max_attempts: int,
+        issue_id: str | None = None,
     ) -> None:
-        # agent_id is passed as first positional, issue_id as keyword
-        issue_id = kwargs.get("issue_id", agent_id)
-        self.events.append(f"review_started:{issue_id}")
+        # issue_id is passed as keyword arg, fallback to agent_id if not provided
+        eid = issue_id or agent_id
+        self.events.append(f"review_started:{eid}")
 
     # Stub out other event methods that may be called
     def __getattr__(self, name: str) -> object:

@@ -6,7 +6,7 @@ FakeEventSink captures all MalaEventSink events for assertion in tests.
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.core.protocols.events import EventRunConfig
+from src.core.protocols.events import EventRunConfig, MalaEventSink
 from src.core.protocols.lifecycle import DeadlockInfoProtocol
 
 
@@ -18,7 +18,7 @@ class RecordedEvent:
     kwargs: dict[str, Any] = field(default_factory=dict)
 
 
-class FakeEventSink:
+class FakeEventSink(MalaEventSink):
     """In-memory event sink that records all events for testing.
 
     Usage:
@@ -437,12 +437,15 @@ class FakeEventSink:
         epic_id: str,
         unmet_count: int,
         remediation_ids: list[str],
+        *,
+        reason: str | None = None,
     ) -> None:
         self._record(
             "epic_verification_failed",
             epic_id=epic_id,
             unmet_count=unmet_count,
             remediation_ids=remediation_ids,
+            reason=reason,
         )
 
     def on_epic_remediation_created(

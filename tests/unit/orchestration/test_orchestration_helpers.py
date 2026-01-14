@@ -25,6 +25,7 @@ from src.orchestration.review_tracking import (
     create_review_tracking_issues,
 )
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
+from src.core.protocols.events import MalaEventSink
 from tests.fakes.gate_checker import FakeGateChecker
 from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 
@@ -248,13 +249,13 @@ class FakeReviewIssue:
 # Import from there: from tests.fakes.issue_provider import FakeIssueProvider
 
 
-class FakeEventSink:
+class FakeEventSink(MalaEventSink):
     """Fake event sink for testing."""
 
     def __init__(self) -> None:
         self.warnings: list[str] = []
 
-    def on_warning(self, message: str, agent_id: str) -> None:
+    def on_warning(self, message: str, agent_id: str | None = None) -> None:
         self.warnings.append(message)
 
 

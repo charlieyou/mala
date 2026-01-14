@@ -35,6 +35,7 @@ from src.pipeline.message_stream_processor import (
     IdleTimeoutStream,
     MessageIterationState,
 )
+from src.core.protocols.events import MalaEventSink
 from src.domain.evidence_check import GateResult
 from src.domain.validation.config import PromptValidationCommands
 from tests.fakes import FakeLintCache
@@ -837,7 +838,7 @@ class TestAgentSessionRunnerStreamingCallbacks:
         assert output.success is True
 
 
-class FakeEventSink:
+class FakeEventSink(MalaEventSink):
     """Fake event sink for testing that records all event calls."""
 
     def __init__(self) -> None:

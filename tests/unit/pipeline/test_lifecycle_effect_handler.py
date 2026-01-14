@@ -24,6 +24,7 @@ from src.pipeline.agent_session_runner import (
     SessionPrompts,
 )
 from src.pipeline.lifecycle_effect_handler import LifecycleEffectHandler
+from src.core.protocols.events import MalaEventSink
 from tests.helpers.protocol_stubs import (
     StubGateRunner,
     StubReviewRunner,
@@ -76,7 +77,7 @@ def make_test_prompts() -> SessionPrompts:
     )
 
 
-class FakeEventSink:
+class FakeEventSink(MalaEventSink):
     """Fake event sink for testing that records all event calls."""
 
     def __init__(self) -> None:
@@ -107,7 +108,7 @@ class FakeEventSink:
             "on_gate_started", agent_id, attempt, max_attempts, issue_id=issue_id
         )
 
-    def on_gate_passed(self, agent_id: str, issue_id: str | None = None) -> None:
+    def on_gate_passed(self, agent_id: str | None, issue_id: str | None = None) -> None:
         self._record("on_gate_passed", agent_id, issue_id=issue_id)
 
     def on_gate_failed(
@@ -126,7 +127,6 @@ class FakeEventSink:
         agent_id: str,
         attempt: int,
         max_attempts: int,
-        error_count: int | None = None,
         issue_id: str | None = None,
     ) -> None:
         self._record(
@@ -134,7 +134,6 @@ class FakeEventSink:
             agent_id,
             attempt,
             max_attempts,
-            error_count=error_count,
             issue_id=issue_id,
         )
 
