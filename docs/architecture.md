@@ -320,8 +320,7 @@ Pipeline components for running agent sessions.
 | Module | Purpose |
 |--------|---------|
 | `agent_session_runner.py` | Main session loop (SDK stream handling + lifecycle) |
-| `message_stream_processor.py` | SDK stream iteration + idle/context pressure handling |
-| `context_pressure_handler.py` | Checkpoint + restart handling for context pressure |
+| `message_stream_processor.py` | SDK stream iteration + idle timeout handling |
 | `idle_retry_policy.py` | Idle timeout retry/backoff policy for SDK streams |
 | `lifecycle_effect_handler.py` | Gate/review side-effect handling + retry prompts |
 | `gate_runner.py` | Quality gate execution |
@@ -407,10 +406,7 @@ Supporting orchestration components:
     - `_build_agent_env()`: per-agent env including lock/agent IDs.
 
 - `MessageStreamProcessor` (`src/pipeline/message_stream_processor.py`)
-  - Iterates SDK streams, tracks tool calls, and detects idle/context pressure.
-
-- `ContextPressureHandler` (`src/pipeline/context_pressure_handler.py`)
-  - Requests checkpoints and builds continuation prompts when context pressure is high.
+  - Iterates SDK streams, tracks tool calls, and detects idle timeouts.
 
 - `IdleTimeoutRetryPolicy` (`src/pipeline/idle_retry_policy.py`)
   - Handles idle timeout retries with backoff and session resume prompts.

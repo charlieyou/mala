@@ -5,7 +5,6 @@ session lifecycle management. This module handles:
 - Wrapping SDK streams with idle timeout detection
 - Iterating and processing SDK messages (AssistantMessage, ResultMessage)
 - Tracking tool calls and lint cache updates
-- Context pressure detection from usage data
 
 Design principles:
 - Protocol-based message/block checks for testability (no SDK imports at runtime)
