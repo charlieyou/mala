@@ -168,8 +168,19 @@ Run validation commands before committing:
 - If checks fail in YOUR code: fix and re-run
 - If checks fail in UNTOUCHED files: report failure in `Quality checks:` and stop (do not fix others' code)
 - If a command is unavailable or fails for non-code reasons: record `Not run (reason)` and proceed
-- Do NOT pipe to `head`/`tail` or truncate output
 - Do NOT skip validation without recording a concrete reason
+
+**Output handling (context preservation):**
+- Always redirect output to `{lock_dir}/{issue_id}.<check>.log` (where `<check>` is `test`, `lint`, `format`, or `typecheck`)
+- Always report: command, exit code, log path (regardless of pass/fail)
+- **On success**: Just the summary line, no output in chat
+- **On failure**: Include a focused excerpt (first unique error + one traceback) + log path for full details
+- Pattern:
+  ```bash
+  mkdir -p {lock_dir}
+  {test_command} > {lock_dir}/{issue_id}.test.log 2>&1; echo "exit=$? log={lock_dir}/{issue_id}.test.log"
+  ```
+- If exit≠0, extract key errors: `grep -E "^(ERROR|FAILED|error\[)" {lock_dir}/{issue_id}.test.log | head -20`
 
 ### 5. Self-Review
 Verify before committing:
