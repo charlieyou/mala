@@ -1,6 +1,5 @@
 """Unit tests for PreCompact hook archive logic."""
 
-import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -122,6 +121,37 @@ class TestPreCompactHookHandlesMissingPath:
         result = await hook({"transcript_path": None}, None, None)
         assert result == {}
 
+    @pytest.mark.asyncio
+    async def test_precompact_hook_handles_invalid_type(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Hook should handle invalid transcript_path types without crashing."""
+        hook = make_precompact_hook(tmp_path)
+
+        # Pass an integer - should not raise TypeError, should return {}
+        result = await hook({"transcript_path": 12345}, None, None)
+        assert result == {}
+        assert "invalid transcript_path type" in caplog.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_precompact_hook_accepts_path_object(
+        self, tmp_path: Path, runs_dir: Path
+    ) -> None:
+        """Hook should accept Path objects as transcript_path."""
+        transcript = tmp_path / "transcript.json"
+        transcript.write_text("{}")
+
+        hook = make_precompact_hook(tmp_path)
+
+        # Pass Path object directly - should work
+        result = await hook({"transcript_path": transcript}, None, None)
+        assert result == {}
+
+        # Verify archive was created
+        archive_dir = runs_dir / "archives"
+        archives = list(archive_dir.glob("*.json"))
+        assert len(archives) == 1
+
 
 class TestPreCompactHookHandlesIOError:
     """Tests for handling I/O errors during archiving."""
@@ -158,16 +188,15 @@ class TestPreCompactHookTimestampUniqueness:
 
         hook = make_precompact_hook(tmp_path, session_id="sess")
 
-        # Archive twice with a brief delay
+        # Archive twice with NO delay - microsecond precision should ensure uniqueness
         await hook({"transcript_path": str(transcript)}, None, None)
-        time.sleep(1.1)  # Ensure timestamp changes (second granularity)
         await hook({"transcript_path": str(transcript)}, None, None)
 
         archive_dir = runs_dir / "archives"
         archives = list(archive_dir.glob("*.json"))
         assert len(archives) == 2
 
-        # Filenames should be different
+        # Filenames should be different even without delay
         names = [a.name for a in archives]
         assert len(set(names)) == 2
 

@@ -57,7 +57,13 @@ def make_precompact_hook(
             _logger.warning("PreCompact hook: missing transcript_path in hook_input")
             return {}
 
-        transcript_path = Path(transcript_path_str)
+        # Safely convert to Path - accept str, Path, or PathLike
+        try:
+            transcript_path = Path(transcript_path_str)
+        except (TypeError, ValueError) as e:
+            _logger.warning("PreCompact hook: invalid transcript_path type: %s", e)
+            return {}
+
         if not transcript_path.exists():
             _logger.warning(
                 "PreCompact hook: transcript file not found: %s", transcript_path
@@ -71,8 +77,8 @@ def make_precompact_hook(
             archive_dir.mkdir(parents=True, exist_ok=True)
             archive_dir.chmod(0o700)
 
-            # Build archive filename
-            timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+            # Build archive filename with microseconds for uniqueness
+            timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
             ext = transcript_path.suffix or ""
             session_prefix = f"{session_id}_" if session_id else ""
             archive_name = f"{session_prefix}{timestamp}_transcript{ext}"
