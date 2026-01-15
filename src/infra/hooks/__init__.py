@@ -45,6 +45,9 @@ from .deadlock import (
 from .commit_guard import (
     make_commit_guard_hook,
 )
+from .precompact import (
+    make_precompact_hook,
+)
 from .locking import (
     StopHook,
     get_lock_holder,
@@ -78,5 +81,6 @@ __all__ = [
     "make_lint_cache_hook",
     "make_lock_enforcement_hook",
     "make_lock_event_hook",
+    "make_precompact_hook",
     "make_stop_hook",
 ]

@@ -312,6 +312,7 @@ class AgentRuntimeBuilder:
             make_lint_cache_hook,
             make_lock_enforcement_hook,
             make_lock_event_hook,
+            make_precompact_hook,
             make_stop_hook,
         )
 
@@ -400,8 +401,10 @@ class AgentRuntimeBuilder:
 
         # Build hooks dict using factory
         make_matcher = self._sdk_client_factory.create_hook_matcher
+        precompact_hook = make_precompact_hook(self._repo_path)
         hooks_dict: dict[str, list[object]] = {
             "PreToolUse": [make_matcher(None, pre_tool_hooks)],
+            "PreCompact": [make_matcher(None, [precompact_hook])],
         }
         if stop_hooks:
             hooks_dict["Stop"] = [make_matcher(None, stop_hooks)]
@@ -409,7 +412,7 @@ class AgentRuntimeBuilder:
             hooks_dict["PostToolUse"] = [make_matcher(None, post_tool_hooks)]
 
         logger.debug(
-            "Built hooks: PreToolUse=%d PostToolUse=%d Stop=%d",
+            "Built hooks: PreToolUse=%d PostToolUse=%d Stop=%d PreCompact=1",
             len(pre_tool_hooks),
             len(post_tool_hooks),
             len(stop_hooks),
