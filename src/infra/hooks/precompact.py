@@ -1,18 +1,21 @@
 """PreCompact hook for archiving transcripts before SDK compaction.
 
 This hook is called by the SDK before compacting the conversation context.
-The stub implementation returns {} to allow compaction to proceed.
-
-Full archive implementation is in T002.
+It archives the transcript to a timestamped file for later analysis.
 """
 
 from __future__ import annotations
 
+import logging
+import shutil
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from datetime import datetime, UTC
+from pathlib import Path
+from typing import Any
 
-if TYPE_CHECKING:
-    from pathlib import Path
+from src.infra.tools.env import get_repo_runs_dir
+
+_logger = logging.getLogger(__name__)
 
 # Type alias for PreCompact hooks (matches PreToolUse pattern, using Any for SDK types)
 PreCompactHook = Callable[
@@ -21,17 +24,20 @@ PreCompactHook = Callable[
 ]
 
 
-def make_precompact_hook(repo_path: Path) -> PreCompactHook:
-    """Create a PreCompact hook stub.
+def make_precompact_hook(
+    repo_path: Path, session_id: str | None = None
+) -> PreCompactHook:
+    """Create a PreCompact hook that archives transcripts before compaction.
 
-    This is a skeleton that will be extended in T002 to archive transcripts
-    before SDK compaction.
+    Archives the transcript to:
+    ~/.config/mala/runs/{repo-key}/archives/{session_id}_{timestamp}_transcript{ext}
 
     Args:
-        repo_path: Repository root path (used by archive logic in T002).
+        repo_path: Repository root path for determining archive location.
+        session_id: Optional session ID prefix for archive filename.
 
     Returns:
-        An async hook function that returns {} (stub).
+        An async hook function that archives the transcript and returns {}.
     """
 
     async def precompact_hook(
@@ -39,7 +45,54 @@ def make_precompact_hook(repo_path: Path) -> PreCompactHook:
         *args: Any,  # noqa: ANN401 - Accept additional args to match adapter signature
         **kwargs: Any,  # noqa: ANN401
     ) -> dict[str, Any]:
-        """PreCompact hook stub - returns empty dict to allow compaction."""
+        """PreCompact hook - archives transcript before compaction."""
+        # Extract transcript_path from hook_input
+        transcript_path_str: str | None = None
+        if isinstance(hook_input, dict):
+            transcript_path_str = hook_input.get("transcript_path")
+        elif hasattr(hook_input, "transcript_path"):
+            transcript_path_str = getattr(hook_input, "transcript_path", None)
+
+        if not transcript_path_str:
+            _logger.warning("PreCompact hook: missing transcript_path in hook_input")
+            return {}
+
+        transcript_path = Path(transcript_path_str)
+        if not transcript_path.exists():
+            _logger.warning(
+                "PreCompact hook: transcript file not found: %s", transcript_path
+            )
+            return {}
+
+        try:
+            # Create archive directory
+            runs_dir = get_repo_runs_dir(repo_path)
+            archive_dir = runs_dir / "archives"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            archive_dir.chmod(0o700)
+
+            # Build archive filename
+            timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+            ext = transcript_path.suffix or ""
+            session_prefix = f"{session_id}_" if session_id else ""
+            archive_name = f"{session_prefix}{timestamp}_transcript{ext}"
+            archive_path = archive_dir / archive_name
+
+            # Copy transcript preserving metadata
+            shutil.copy2(transcript_path, archive_path)
+            archive_path.chmod(0o600)
+
+            # Log archive size
+            size_kb = archive_path.stat().st_size / 1024
+            _logger.info(
+                "PreCompact hook: archived transcript to %s (%.1f KB)",
+                archive_path,
+                size_kb,
+            )
+
+        except OSError as e:
+            _logger.error("PreCompact hook: failed to archive transcript: %s", e)
+
         return {}
 
     return precompact_hook
