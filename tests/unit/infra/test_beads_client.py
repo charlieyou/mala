@@ -2314,13 +2314,13 @@ class TestGetEpicChildrenAsync:
 
     @pytest.mark.asyncio
     async def test_returns_child_ids(self, tmp_path: Path) -> None:
-        """Should return child IDs from tree response."""
+        """Should return child IDs from bd list --parent response."""
         beads = BeadsClient(tmp_path)
-        tree = json.dumps(
+        # bd list --parent returns only children, not the parent epic itself
+        children = json.dumps(
             [
-                {"id": "epic-1", "depth": 0},
-                {"id": "task-1", "depth": 1},
-                {"id": "task-2", "depth": 1},
+                {"id": "task-1"},
+                {"id": "task-2"},
             ]
         )
 
@@ -2328,7 +2328,7 @@ class TestGetEpicChildrenAsync:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_command_result(stdout=tree)),
+                AsyncMock(return_value=make_command_result(stdout=children)),
             )
             result = await beads.get_epic_children_async("epic-1")
 
@@ -2336,7 +2336,7 @@ class TestGetEpicChildrenAsync:
 
     @pytest.mark.asyncio
     async def test_returns_empty_set_on_failure(self, tmp_path: Path) -> None:
-        """Should return empty set when bd dep tree fails."""
+        """Should return empty set when bd list --parent fails."""
         beads = BeadsClient(tmp_path)
         warnings: list[str] = []
         beads._log_warning = lambda msg: warnings.append(msg)  # type: ignore[method-assign]
