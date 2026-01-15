@@ -1,3 +1,6 @@
+Bugs
+* Normal operation includes in_progress tasks
+
 New Features
 * Use cerberus for epic verification
 * Add fixer sessions and cerberus reviews to logs search
@@ -23,6 +26,12 @@ Config: Make it actually make sense / be consistent
 * top level validation block that has commands and triggers under it?
 * add config for evidence check, separate validation from code review?
 * Separate mala agent logs from system claude code with CLAUDE_CONFIG_DIR env var
+
+* Optimize commands:
+    Keep tool output token-efficient (especially tests)
+	•	Don’t dump massive logs into the context.
+	•	Prefer outputting only failing test cases; otherwise you burn context and lose signal.
+	•	This is directly tied back to “stay in the smart zone.”
 
 # Ideas
 * Inter-agent communication
