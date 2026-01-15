@@ -166,7 +166,7 @@ class MessageStreamProcessor:
     """Processes SDK message streams.
 
     Handles iteration over SDK streams, tracking tool calls, updating lint cache,
-    and detecting context pressure. Uses duck typing for SDK message types to
+    and detecting idle timeouts. Uses duck typing for SDK message types to
     avoid SDK imports at runtime.
 
     Usage:
