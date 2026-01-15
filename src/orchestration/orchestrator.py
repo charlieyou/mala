@@ -308,8 +308,6 @@ class MalaOrchestrator:
         self.order_preference = orch_config.order_preference
         self.cli_args = orch_config.cli_args
         self.epic_override_ids = orch_config.epic_override_ids
-        self.context_restart_threshold = derived.context_restart_threshold
-        self.context_limit = derived.context_limit
         self.max_idle_retries = derived.max_idle_retries
         self.idle_timeout_seconds = derived.idle_timeout_seconds
         self.review_disabled_reason = derived.review_disabled_reason
@@ -434,8 +432,6 @@ class MalaOrchestrator:
             disabled_validations=set(self._disabled_validations)
             if self._disabled_validations
             else None,
-            context_restart_threshold=self.context_restart_threshold,
-            context_limit=self.context_limit,
             max_idle_retries=self.max_idle_retries,
             idle_timeout_seconds=self.idle_timeout_seconds,
             prompts=self._prompts,

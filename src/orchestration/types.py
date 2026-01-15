@@ -49,11 +49,6 @@ if TYPE_CHECKING:
 # Default timeout for agent execution (protects against hung MCP server subprocesses)
 DEFAULT_AGENT_TIMEOUT_MINUTES = 60
 
-# Default context exhaustion thresholds
-DEFAULT_CONTEXT_RESTART_THRESHOLD = 0.85
-# Claude's context limit is 200K tokens
-DEFAULT_CONTEXT_LIMIT = 200_000
-
 # Default idle timeout retry configuration
 DEFAULT_MAX_IDLE_RETRIES = 2
 
@@ -81,8 +76,6 @@ class OrchestratorConfig:
         cli_args: CLI arguments for logging and metadata.
         epic_override_ids: Epic IDs to close without verification.
         orphans_only: Only process issues with no parent epic.
-        context_restart_threshold: Ratio (0.0-1.0) at which to restart agent.
-        context_limit: Maximum context tokens (default 100K due to SDK bug).
     """
 
     repo_path: Path
@@ -100,9 +93,6 @@ class OrchestratorConfig:
     cli_args: dict[str, object] | None = None
     epic_override_ids: set[str] = field(default_factory=set)
     orphans_only: bool = False
-    # Context exhaustion handling thresholds (None = use yaml or default)
-    context_restart_threshold: float | None = None
-    context_limit: int | None = None
     # Session resume strict mode: fail issue if no prior session found
     strict_resume: bool = False
 
@@ -153,8 +143,6 @@ class _DerivedConfig:
 
     timeout_seconds: int
     disabled_validations: set[str]
-    context_restart_threshold: float
-    context_limit: int
     max_idle_retries: int
     idle_timeout_seconds: float | None
     max_gate_retries: int | None = None
@@ -207,8 +195,6 @@ class PipelineConfig:
         max_gate_retries: Maximum quality gate retry attempts per issue.
         max_review_retries: Maximum code review retry attempts per issue.
         disabled_validations: Set of validation types to disable.
-        context_restart_threshold: Ratio (0.0-1.0) at which to restart agent.
-        context_limit: Maximum context tokens (default 100K due to SDK bug).
         max_idle_retries: Maximum number of idle timeout retries.
         idle_timeout_seconds: Idle timeout for SDK stream (None = derive from timeout).
         prompts: PromptProvider with loaded prompt templates.
@@ -223,8 +209,6 @@ class PipelineConfig:
     max_gate_retries: int
     max_review_retries: int
     disabled_validations: set[str] | None
-    context_restart_threshold: float
-    context_limit: int
     max_idle_retries: int
     idle_timeout_seconds: float | None
     prompts: PromptProvider

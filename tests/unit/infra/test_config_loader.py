@@ -363,6 +363,30 @@ class TestValidateSchema:
         assert "in mala.yaml" in str(exc_info.value)
 
 
+class TestRemovedConfigFieldsRejected:
+    """Regression tests for removed config fields."""
+
+    def test_context_restart_threshold_rejected(self) -> None:
+        """Removed context_restart_threshold raises ConfigError."""
+        data = {"commands": {"test": "pytest"}, "context_restart_threshold": 0.85}
+
+        with pytest.raises(ConfigError) as exc_info:
+            _validate_schema(data)
+
+        assert "Unknown field 'context_restart_threshold' in mala.yaml" == str(
+            exc_info.value
+        )
+
+    def test_context_limit_rejected(self) -> None:
+        """Removed context_limit raises ConfigError."""
+        data = {"commands": {"test": "pytest"}, "context_limit": 200000}
+
+        with pytest.raises(ConfigError) as exc_info:
+            _validate_schema(data)
+
+        assert "Unknown field 'context_limit' in mala.yaml" == str(exc_info.value)
+
+
 class TestBuildConfig:
     """Tests for _build_config function."""
 

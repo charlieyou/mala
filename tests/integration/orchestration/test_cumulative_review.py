@@ -98,8 +98,6 @@ async def test_epic_completion_trigger_invokes_cumulative_review(
         max_gate_retries=3,
         max_review_retries=3,
         disabled_validations=set(),
-        context_restart_threshold=0.9,
-        context_limit=200000,
         max_idle_retries=2,
         idle_timeout_seconds=None,
         prompts=MagicMock(fixer_prompt="Fix the issue"),

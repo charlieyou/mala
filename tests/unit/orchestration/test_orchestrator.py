@@ -2990,27 +2990,6 @@ class TestBuildGateMetadataFromLogs:
         assert isinstance(result.validation_result.commands_failed, list)
 
 
-class TestContextConfigWiring:
-    """Test that context threshold config propagates correctly."""
-
-    def test_context_thresholds_propagate_to_pipeline_config(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
-    ) -> None:
-        """Verify context_restart_threshold and context_limit reach PipelineConfig."""
-        # Create orchestrator with non-default values
-        orchestrator = make_orchestrator(
-            repo_path=tmp_path,
-            context_restart_threshold=0.75,
-            context_limit=150_000,
-        )
-
-        # Build pipeline config
-        pipeline = orchestrator._build_pipeline_config()
-
-        # Verify values propagated
-        assert pipeline.context_restart_threshold == 0.75
-        assert pipeline.context_limit == 150_000
-
 class TestSigintEscalation:
     """Tests for SIGINT three-stage escalation via LifecycleController.
 

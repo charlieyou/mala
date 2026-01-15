@@ -162,10 +162,6 @@ dev = [
     (repo_path / "mala.yaml").write_text(
         """preset: python-uv
 
-# Avoid context pressure restarts during E2E runs
-context_restart_threshold: 0.98
-context_limit: 400000
-
 # Explicit run_end trigger with validation commands
 validation_triggers:
   run_end:

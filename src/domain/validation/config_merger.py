@@ -209,12 +209,6 @@ def merge_configs(
     # timeout_minutes: User value always takes precedence (presets don't define this)
     merged_timeout_minutes = user.timeout_minutes
 
-    # context_restart_threshold: User value always takes precedence (presets don't define this)
-    merged_context_restart_threshold = user.context_restart_threshold
-
-    # context_limit: User value always takes precedence (presets don't define this)
-    merged_context_limit = user.context_limit
-
     # max_idle_retries: User value always takes precedence (presets don't define this)
     merged_max_idle_retries = user.max_idle_retries
 
@@ -240,8 +234,6 @@ def merge_configs(
         validation_triggers=merged_triggers,
         claude_settings_sources=merged_claude_settings_sources,
         timeout_minutes=merged_timeout_minutes,
-        context_restart_threshold=merged_context_restart_threshold,
-        context_limit=merged_context_limit,
         max_idle_retries=merged_max_idle_retries,
         idle_timeout_seconds=merged_idle_timeout_seconds,
         max_diff_size_kb=merged_max_diff_size_kb,

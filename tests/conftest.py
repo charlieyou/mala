@@ -120,8 +120,6 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
         orphans_only: bool = False,
         cli_args: dict[str, Any] | None = None,
         epic_override_ids: set[str] | None = None,
-        context_restart_threshold: float = 0.90,
-        context_limit: int = 200_000,
         issue_provider: IssueProvider | None = None,
         code_reviewer: CodeReviewer | None = None,
         gate_checker: GateChecker | None = None,
@@ -151,8 +149,6 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
             orphans_only=orphans_only,
             cli_args=cli_args,
             epic_override_ids=epic_override_ids or set(),
-            context_restart_threshold=context_restart_threshold,
-            context_limit=context_limit,
         )
 
         deps = OrchestratorDependencies(

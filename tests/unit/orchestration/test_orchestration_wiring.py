@@ -99,8 +99,6 @@ def mock_pipeline_config(
         max_gate_retries=3,
         max_review_retries=3,
         disabled_validations={"lint"},
-        context_restart_threshold=0.90,
-        context_limit=200_000,
         max_idle_retries=2,
         idle_timeout_seconds=None,
         prompts=mock_prompt_provider,

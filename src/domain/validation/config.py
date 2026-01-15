@@ -796,9 +796,6 @@ class ValidationConfig:
         claude_settings_sources: Sources to load Claude settings from. Valid sources are
             'local', 'project', 'user'. None means use default. Empty tuple means no sources.
         timeout_minutes: Timeout per agent in minutes. None means use default (60).
-        context_restart_threshold: Ratio (0.0-1.0) at which to restart agent on
-            context pressure. None means use default (0.70).
-        context_limit: Maximum context tokens. None means use default (100000).
         max_idle_retries: Maximum number of idle timeout retries. None means use default (2).
         idle_timeout_seconds: Idle timeout for SDK stream in seconds.
             None means derive from agent timeout; 0 disables idle timeout.
@@ -818,8 +815,6 @@ class ValidationConfig:
     validation_triggers: ValidationTriggersConfig | None = None
     claude_settings_sources: tuple[str, ...] | None = None
     timeout_minutes: int | None = None
-    context_restart_threshold: float | None = None
-    context_limit: int | None = None
     max_idle_retries: int | None = None
     idle_timeout_seconds: float | None = None
     max_diff_size_kb: int | None = None
@@ -983,43 +978,6 @@ class ValidationConfig:
                     )
                 timeout_minutes = tm_value
 
-        # Parse context_restart_threshold
-        context_restart_threshold: float | None = None
-        if "context_restart_threshold" in data:
-            fields_set.add("context_restart_threshold")
-            crt_value = data["context_restart_threshold"]
-            if crt_value is not None:
-                # Accept int or float, but reject bool
-                if isinstance(crt_value, bool) or not isinstance(
-                    crt_value, (int, float)
-                ):
-                    raise ConfigError(
-                        f"context_restart_threshold must be a number, "
-                        f"got {type(crt_value).__name__}"
-                    )
-                if not (0.0 < crt_value <= 1.0):
-                    raise ConfigError(
-                        f"context_restart_threshold must be between 0.0 (exclusive) "
-                        f"and 1.0 (inclusive), got {crt_value}"
-                    )
-                context_restart_threshold = float(crt_value)
-
-        # Parse context_limit
-        context_limit: int | None = None
-        if "context_limit" in data:
-            fields_set.add("context_limit")
-            cl_value = data["context_limit"]
-            if cl_value is not None:
-                # Reject booleans (bool is subclass of int in Python)
-                if isinstance(cl_value, bool) or not isinstance(cl_value, int):
-                    raise ConfigError(
-                        f"context_limit must be an integer, "
-                        f"got {type(cl_value).__name__}"
-                    )
-                if cl_value <= 0:
-                    raise ConfigError(f"context_limit must be positive, got {cl_value}")
-                context_limit = cl_value
-
         # Parse max_idle_retries
         max_idle_retries: int | None = None
         if "max_idle_retries" in data:
@@ -1128,8 +1086,6 @@ class ValidationConfig:
             claude_settings_sources=claude_settings_sources,
             validation_triggers=validation_triggers,
             timeout_minutes=timeout_minutes,
-            context_restart_threshold=context_restart_threshold,
-            context_limit=context_limit,
             max_idle_retries=max_idle_retries,
             idle_timeout_seconds=idle_timeout_seconds,
             max_diff_size_kb=max_diff_size_kb,

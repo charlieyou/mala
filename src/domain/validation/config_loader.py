@@ -74,8 +74,6 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "validation_triggers",
         "claude_settings_sources",
         "timeout_minutes",
-        "context_restart_threshold",
-        "context_limit",
         "max_idle_retries",
         "idle_timeout_seconds",
         "max_diff_size_kb",
