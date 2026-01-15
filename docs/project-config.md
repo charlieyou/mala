@@ -70,9 +70,6 @@ claude_settings_sources: list     # Optional. SDK settings sources (default: [lo
 
 timeout_minutes: int             # Optional. Agent timeout in minutes (default: 60)
 
-context_restart_threshold: float # Optional. Ratio (0.0-1.0) to restart agent on context pressure (default: 0.70)
-context_limit: int               # Optional. Maximum context tokens (default: 100000, see note below)
-
 max_idle_retries: int            # Optional. Maximum idle timeout retries (default: 2)
 idle_timeout_seconds: float      # Optional. Idle timeout in seconds (default: derived from timeout_minutes)
 
@@ -115,8 +112,6 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `coverage.threshold` | number | Yes* | Minimum coverage % |
 | `claude_settings_sources` | list | No | SDK settings sources: `local`, `project`, `user` (default: `[local, project]`) |
 | `timeout_minutes` | integer | No | Agent timeout in minutes (default: 60). Can be overridden by CLI `--timeout` |
-| `context_restart_threshold` | float | No | Ratio (0.0-1.0) at which to restart agent on context pressure (default: 0.70) |
-| `context_limit` | integer | No | Maximum context tokens (default: 100000). See [Context Limit Note](#context-limit-note) |
 | `max_idle_retries` | integer | No | Maximum idle timeout retries before aborting (default: 2). Set to 0 to disable retries. |
 | `idle_timeout_seconds` | float | No | Seconds to wait for SDK activity before triggering idle recovery (default: derived from `timeout_minutes`). Set to 0 to disable idle timeout. |
 | `max_diff_size_kb` | integer | No | Maximum diff size in KB for epic verification. Diffs larger than this limit will skip verification. |
@@ -140,19 +135,9 @@ validation_triggers:             # Optional. See validation-triggers.md
 
 *Required when `coverage` section is present.
 
-## Context Limit Note
+## Context Management
 
-The default `context_limit` is 100,000 tokens (100K), which is lower than Claude's actual 200K context window. This conservative default is due to a bug in the Claude Agent SDK where `cache_read_input_tokens` in `ResultMessage.usage` is reported as cumulative across the session rather than per-turn.
-
-Mala's context pressure tracking accumulates these already-cumulative values, causing the tracked context size to grow much faster than actual usage. The 100K default helps trigger context restarts before hitting "Prompt is too long" API errors.
-
-See: [anthropics/claude-agent-sdk-python#112](https://github.com/anthropics/claude-agent-sdk-python/issues/112)
-
-If you need longer context and are willing to accept occasional "Prompt is too long" errors, you can increase this:
-
-```yaml
-context_limit: 200000
-```
+The Claude Agent SDK handles context management automatically via prompt caching and auto-compaction. No manual configuration is required.
 
 ## Command Object Form
 
