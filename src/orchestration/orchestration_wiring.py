@@ -323,8 +323,6 @@ def build_session_config(
         review_enabled=review_enabled,
         lint_tools=None,  # Set at run start
         prompt_validation_commands=pipeline.prompt_validation_commands,
-        context_restart_threshold=pipeline.context_restart_threshold,
-        context_limit=pipeline.context_limit,
         max_idle_retries=pipeline.max_idle_retries,
         idle_timeout_seconds=pipeline.idle_timeout_seconds,
         deadlock_monitor=pipeline.deadlock_monitor,

@@ -57,39 +57,6 @@ class IdleTimeoutError(Exception):
     """Raised when the SDK response stream is idle for too long."""
 
 
-class ContextPressureError(Exception):
-    """Raised when context usage exceeds the restart threshold.
-
-    This exception signals that the agent session should be checkpointed
-    and restarted with a fresh context to avoid context exhaustion.
-
-    Attributes:
-        session_id: SDK session ID for checkpoint query.
-        input_tokens: Current input token count.
-        output_tokens: Current output token count.
-        cache_read_tokens: Current cache read token count.
-        pressure_ratio: Ratio of usage to limit (e.g., 0.92 = 92%).
-    """
-
-    def __init__(
-        self,
-        session_id: str,
-        input_tokens: int,
-        output_tokens: int,
-        cache_read_tokens: int,
-        pressure_ratio: float,
-    ) -> None:
-        self.session_id = session_id
-        self.input_tokens = input_tokens
-        self.output_tokens = output_tokens
-        self.cache_read_tokens = cache_read_tokens
-        self.pressure_ratio = pressure_ratio
-        super().__init__(
-            f"Context pressure {pressure_ratio:.1%} exceeds threshold "
-            f"(input={input_tokens}, output={output_tokens}, session={session_id})"
-        )
-
-
 class IdleTimeoutStream(Generic[_T]):
     """Wrap an async iterator with idle timeout detection.
 
@@ -178,15 +145,9 @@ AgentTextCallback = Callable[[str, str], None]
 
 @dataclass
 class StreamProcessorConfig:
-    """Configuration for MessageStreamProcessor.
+    """Configuration for MessageStreamProcessor."""
 
-    Attributes:
-        context_limit: Maximum context tokens for pressure detection.
-        context_restart_threshold: Ratio (0.0-1.0) at which to raise ContextPressureError.
-    """
-
-    context_limit: int = 100_000
-    context_restart_threshold: float = 0.70
+    pass
 
 
 @dataclass
@@ -250,9 +211,6 @@ class MessageStreamProcessor:
 
         Returns:
             MessageIterationResult with success status.
-
-        Raises:
-            ContextPressureError: If context pressure exceeds threshold.
         """
         # Use duck typing to avoid SDK imports - check type name instead of isinstance
         async for message in stream:
@@ -335,70 +293,7 @@ class MessageStreamProcessor:
         state: MessageIterationState,
         lifecycle_ctx: LifecycleContext,
     ) -> None:
-        """Process a ResultMessage, extracting session ID and usage.
-
-        Raises:
-            ContextPressureError: If context pressure exceeds threshold.
-        """
+        """Process a ResultMessage, extracting session ID and final result."""
         state.session_id = getattr(message, "session_id", None)
         lifecycle_ctx.session_id = state.session_id
         lifecycle_ctx.final_result = getattr(message, "result", "") or ""
-
-        # Extract token usage from SDK for context pressure detection
-        # Uses per-request values (not accumulated) since each request includes
-        # the full conversation. Pressure = prompt_tokens / limit where
-        # prompt_tokens = input + cache_read + cache_creation.
-        usage = getattr(message, "usage", None)
-        if usage is not None:
-            # Handle both dict and object forms of usage
-            if isinstance(usage, dict):
-                input_tokens = usage.get("input_tokens", 0) or 0
-                output_tokens = usage.get("output_tokens", 0) or 0
-                cache_read = usage.get("cache_read_input_tokens", 0) or 0
-                cache_creation = usage.get("cache_creation_input_tokens", 0) or 0
-            else:
-                input_tokens = getattr(usage, "input_tokens", 0) or 0
-                output_tokens = getattr(usage, "output_tokens", 0) or 0
-                cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
-                cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
-
-            # Update with per-request values (replaces previous, does not accumulate)
-            lifecycle_ctx.context_usage.update_from_request(
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cache_read_tokens=cache_read,
-                cache_creation_tokens=cache_creation,
-            )
-
-            # Check context pressure threshold
-            pressure = lifecycle_ctx.context_usage.pressure_ratio(
-                self.config.context_limit
-            )
-            prompt_tokens = lifecycle_ctx.context_usage.prompt_tokens
-            logger.debug(
-                "Context usage: prompt=%d (input=%d cache_read=%d cache_creation=%d) "
-                "output=%d limit=%d pressure=%.1f%%",
-                prompt_tokens,
-                input_tokens,
-                cache_read,
-                cache_creation,
-                output_tokens,
-                self.config.context_limit,
-                pressure * 100,
-            )
-            if pressure >= self.config.context_restart_threshold:
-                # session_id was already extracted above
-                raise ContextPressureError(
-                    session_id=state.session_id or "",
-                    input_tokens=lifecycle_ctx.context_usage.input_tokens,
-                    output_tokens=lifecycle_ctx.context_usage.output_tokens,
-                    cache_read_tokens=lifecycle_ctx.context_usage.cache_read_tokens,
-                    pressure_ratio=pressure,
-                )
-        else:
-            logger.warning(
-                "Session %s: ResultMessage missing usage field, "
-                "context pressure tracking disabled",
-                issue_id,
-            )
-            lifecycle_ctx.context_usage.disable_tracking()

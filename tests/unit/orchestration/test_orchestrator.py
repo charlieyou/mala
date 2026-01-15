@@ -3011,43 +3011,6 @@ class TestContextConfigWiring:
         assert pipeline.context_restart_threshold == 0.75
         assert pipeline.context_limit == 150_000
 
-    def test_context_thresholds_propagate_to_session_config(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
-    ) -> None:
-        """Verify context config propagates from OrchestratorConfig to AgentSessionConfig."""
-        from src.orchestration.orchestration_wiring import build_session_config
-
-        # Create orchestrator with non-default values
-        orchestrator = make_orchestrator(
-            repo_path=tmp_path,
-            context_restart_threshold=0.85,
-            context_limit=180_000,
-        )
-
-        # Build pipeline config and session config
-        pipeline = orchestrator._build_pipeline_config()
-        session_config = build_session_config(pipeline, review_enabled=False)
-
-        # Verify values propagated through entire path
-        assert session_config.context_restart_threshold == 0.85
-        assert session_config.context_limit == 180_000
-
-    def test_context_thresholds_use_defaults_when_not_specified(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
-    ) -> None:
-        """Verify default values when context config not explicitly set."""
-        from src.orchestration.orchestration_wiring import build_session_config
-
-        orchestrator = make_orchestrator(repo_path=tmp_path)
-
-        pipeline = orchestrator._build_pipeline_config()
-        session_config = build_session_config(pipeline, review_enabled=False)
-
-        # Default values from OrchestratorConfig
-        assert session_config.context_restart_threshold == 0.90
-        assert session_config.context_limit == 200_000
-
-
 class TestSigintEscalation:
     """Tests for SIGINT three-stage escalation via LifecycleController.
 

@@ -265,8 +265,6 @@ class TestBuildSessionConfig:
         assert session_config.max_gate_retries == 3
         assert session_config.max_review_retries == 3
         assert session_config.review_enabled is True
-        assert session_config.context_restart_threshold == 0.90
-        assert session_config.context_limit == 200_000
 
     def test_session_config_review_disabled(
         self, mock_pipeline_config: PipelineConfig

@@ -38,10 +38,6 @@ from src.domain.lifecycle import (
     LifecycleContext,
     LifecycleState,
 )
-from src.pipeline.context_pressure_handler import (
-    ContextPressureConfig,
-    ContextPressureHandler,
-)
 from src.pipeline.idle_retry_policy import (
     IdleTimeoutRetryPolicy,
     RetryConfig,
@@ -52,12 +48,10 @@ from src.pipeline.lifecycle_effect_handler import (
 )
 from src.core.session_end_result import SessionEndRetryState
 from src.pipeline.message_stream_processor import (
-    ContextPressureError,
     IdleTimeoutError,
     MessageIterationState,
     MessageStreamProcessor,
     StreamProcessorCallbacks,
-    StreamProcessorConfig,
 )
 
 if TYPE_CHECKING:
@@ -209,11 +203,6 @@ class AgentSessionConfig:
             lint tools. Populated from ValidationSpec commands.
         prompt_validation_commands: Validation commands for prompt templates.
             If None, uses default Python/uv commands.
-        context_restart_threshold: Ratio (0.0-1.0) at which to raise
-            ContextPressureError. Default 0.70 (70% of context_limit).
-            Set lower than actual limit because API reports cached token
-            counts which underestimate true prompt size by ~20-25%.
-        context_limit: Maximum context tokens. Default 100K due to SDK bug.
         strict_resume: When True and session resumption fails (stale session),
             fail the session instead of retrying with a fresh session.
         setting_sources: Optional list of Claude settings sources to use.
@@ -232,8 +221,6 @@ class AgentSessionConfig:
     idle_retry_backoff: tuple[float, ...] = (0.0, 5.0, 15.0)
     lint_tools: frozenset[str] | None = None
     prompt_validation_commands: PromptValidationCommands | None = None
-    context_restart_threshold: float = 0.70
-    context_limit: int = 100_000
     deadlock_monitor: DeadlockMonitor | None = None
     mcp_server_factory: McpServerFactory | None = None
     strict_resume: bool = False
@@ -344,19 +331,11 @@ class AgentSessionRunner:
     review_runner: IReviewRunner
     session_lifecycle: ISessionLifecycle
     event_sink: MalaEventSink | None = None
-    _context_pressure_handler: ContextPressureHandler = field(init=False, repr=False)
     _retry_policy: IdleTimeoutRetryPolicy = field(init=False, repr=False)
     _effect_handler: LifecycleEffectHandler = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Initialize derived components."""
-        self._context_pressure_handler = ContextPressureHandler(
-            config=ContextPressureConfig(
-                checkpoint_request_prompt=self.config.prompts.checkpoint_request,
-                continuation_template=self.config.prompts.continuation,
-            ),
-            sdk_client_factory=self.sdk_client_factory,
-        )
         # Initialize retry policy with stream processor factory
         retry_config = RetryConfig(
             max_idle_retries=self.config.max_idle_retries,
@@ -968,15 +947,11 @@ class AgentSessionRunner:
 
     def _get_stream_processor(self) -> MessageStreamProcessor:
         """Create a MessageStreamProcessor with protocol callbacks."""
-        config = StreamProcessorConfig(
-            context_limit=self.config.context_limit,
-            context_restart_threshold=self.config.context_restart_threshold,
-        )
         callbacks = StreamProcessorCallbacks(
             on_tool_use=self.session_lifecycle.on_tool_use,
             on_agent_text=self.session_lifecycle.on_agent_text,
         )
-        return MessageStreamProcessor(config, callbacks)
+        return MessageStreamProcessor(callbacks=callbacks)
 
     async def run_session(
         self,
@@ -991,7 +966,6 @@ class AgentSessionRunner:
         2. Sends initial prompt and streams responses
         3. Handles lifecycle transitions (gate, review, retries)
         4. Returns session output with results and metadata
-        5. On ContextPressureError: checkpoints, restarts with fresh lifecycle
 
         Args:
             input: AgentSessionInput with issue_id, prompt, etc.
@@ -1018,10 +992,9 @@ class AgentSessionRunner:
             )
 
         start_time = asyncio.get_event_loop().time()
-        continuation_count = 0
         current_prompt = input.prompt
         # Only use resume_session_id on first iteration; clear after to avoid resuming
-        # exhausted sessions on context pressure restarts
+        # on stale session retry
         current_resume_session_id = input.resume_session_id
         # Track whether we've already retried after a stale session error
         stale_session_retried = False
@@ -1069,22 +1042,6 @@ class AgentSessionRunner:
                 if state is not None:
                     state.final_result = "Session interrupted by SIGINT"
                 break
-            except ContextPressureError as e:
-                # Delegate to handler for checkpoint fetch and continuation prompt
-                checkpoint_remaining = self.config.timeout_seconds - (
-                    loop.time() - start_time
-                )
-                (
-                    current_prompt,
-                    continuation_count,
-                ) = await self._context_pressure_handler.handle_pressure_error(
-                    error=e,
-                    issue_id=input.issue_id,
-                    options=session_cfg.options,
-                    continuation_count=continuation_count,
-                    remaining_time=checkpoint_remaining,
-                )
-                # Loop continues with fresh lifecycle and continuation prompt
             except IdleTimeoutError as e:
                 state.lifecycle.on_error(state.lifecycle_ctx, e)
                 state.final_result = state.lifecycle_ctx.final_result
