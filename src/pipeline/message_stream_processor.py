@@ -345,6 +345,9 @@ class MessageStreamProcessor:
         lifecycle_ctx.final_result = getattr(message, "result", "") or ""
 
         # Extract token usage from SDK for context pressure detection
+        # Uses per-request values (not accumulated) since each request includes
+        # the full conversation. Pressure = prompt_tokens / limit where
+        # prompt_tokens = input + cache_read + cache_creation.
         usage = getattr(message, "usage", None)
         if usage is not None:
             # Handle both dict and object forms of usage
@@ -352,27 +355,34 @@ class MessageStreamProcessor:
                 input_tokens = usage.get("input_tokens", 0) or 0
                 output_tokens = usage.get("output_tokens", 0) or 0
                 cache_read = usage.get("cache_read_input_tokens", 0) or 0
+                cache_creation = usage.get("cache_creation_input_tokens", 0) or 0
             else:
                 input_tokens = getattr(usage, "input_tokens", 0) or 0
                 output_tokens = getattr(usage, "output_tokens", 0) or 0
                 cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+                cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
 
-            # Accumulate usage across turns
-            lifecycle_ctx.context_usage.add_turn(
+            # Update with per-request values (replaces previous, does not accumulate)
+            lifecycle_ctx.context_usage.update_from_request(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 cache_read_tokens=cache_read,
+                cache_creation_tokens=cache_creation,
             )
 
             # Check context pressure threshold
             pressure = lifecycle_ctx.context_usage.pressure_ratio(
                 self.config.context_limit
             )
+            prompt_tokens = lifecycle_ctx.context_usage.prompt_tokens
             logger.debug(
-                "Context usage: input=%d output=%d cache_read=%d limit=%d pressure=%.1f%%",
-                lifecycle_ctx.context_usage.input_tokens,
-                lifecycle_ctx.context_usage.output_tokens,
-                lifecycle_ctx.context_usage.cache_read_tokens,
+                "Context usage: prompt=%d (input=%d cache_read=%d cache_creation=%d) "
+                "output=%d limit=%d pressure=%.1f%%",
+                prompt_tokens,
+                input_tokens,
+                cache_read,
+                cache_creation,
+                output_tokens,
                 self.config.context_limit,
                 pressure * 100,
             )

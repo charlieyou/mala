@@ -50,14 +50,9 @@ if TYPE_CHECKING:
 DEFAULT_AGENT_TIMEOUT_MINUTES = 60
 
 # Default context exhaustion thresholds
-DEFAULT_CONTEXT_RESTART_THRESHOLD = 0.70
-# NOTE: Claude's actual context limit is 200K, but we use 100K as default because
-# the Claude Agent SDK reports cumulative cache_read_input_tokens in ResultMessage.usage,
-# which breaks our context pressure tracking (we accumulate already-cumulative values).
-# See: https://github.com/anthropics/claude-agent-sdk-python/issues/112
-# Until the SDK is fixed or we implement per-turn delta tracking, this conservative
-# default helps trigger context restarts before hitting "Prompt is too long" errors.
-DEFAULT_CONTEXT_LIMIT = 100_000
+DEFAULT_CONTEXT_RESTART_THRESHOLD = 0.85
+# Claude's context limit is 200K tokens
+DEFAULT_CONTEXT_LIMIT = 200_000
 
 # Default idle timeout retry configuration
 DEFAULT_MAX_IDLE_RETRIES = 2
