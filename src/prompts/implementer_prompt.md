@@ -12,7 +12,7 @@ Implement the assigned issue completely before returning.
 1. **Follow issue methodology**: If the issue specifies steps (e.g., "write test first, see it fail, then fix"), follow them exactly. Issue workflow instructions override defaults.
 2. **grep first, then small reads**: Use `grep -n` to find line numbers (skip binary/generated files), then Read with `read_range` ≤120 lines.
 3. **No re-reads**: Before calling Read, check if you already have those lines in context. Reuse what you saw.
-4. **Lock before edit**: Acquire locks before editing. First try without timeout; if blocked, finish other work, then wait with `timeout_seconds≥300` (one wait attempt per file).
+4. **Lock before edit**: Acquire locks before editing. First try without timeout; if blocked, finish other work, then wait with `timeout_seconds≥300`. May increase timeout and retry waiting, but don't spam non-blocking reacquire calls.
 5. **Minimal responses**: No narration ("Let me...", "I understand..."). No large code dumps. Reference as `file:line`.
 6. **Validate once per revision**: Run validations once per code revision. Re-run only after fixing code.
 7. **Explicit git add**: Use `git add <files>` with explicit file paths only (no `-A`, `-u`, `--all`, directories, or globs) and commit in the same command.
@@ -92,6 +92,35 @@ bd show {issue_id}     # View issue details
 - Use `grep -n` to find relevant functions/files
 - List minimal set of files to change; prioritize: core logic → tests → wiring
 
+**Modeling Gate:** Before implementing, check if your task matches any of these patterns. If yes, do the Modeling step.
+
+| Pattern | Signals (you might be guessing) | Modeling required |
+|---------|--------------------------------|-------------------|
+| Hidden invariants | "must/never/always", implicit assumptions, ordering/timing dependent | Identify invariant + who enforces it |
+| Multiple plausible fixes | ≥2 approaches seem reasonable, "either way should work" feeling | Compare approaches + pick with justification |
+| Subtle failure modes | intermittent/flaky, edge-case driven, "only sometimes" bugs | Enumerate failure modes + adversarial check |
+| Non-local effects | changes affect other modules/clients, shared config, cross-layer | Map dependencies + compatibility constraints |
+| Irreversible changes | migrations, deletions, permission changes, data-loss potential | Define rollback/escape hatch + safety checks |
+
+**If triggered (before coding):**
+1. Find **internal prior art** (`file:line` of same invariant/contract being enforced)
+2. Find **external reference** (spec/docs/library behavior) — or record: "No authoritative reference; treating as risky"
+3. Write 3-5 line **Operating Model**:
+   - Environment (where/when it runs, single vs many, sync vs async)
+   - Inputs/outputs + trust boundaries (who provides what; what can be invalid)
+   - Failure modes (what goes wrong if assumption is false)
+   - **Invariant** (what must always be true)
+   - **Mechanism** (what enforces it; why it's reliable)
+
+**Example Operating Model:**
+```
+Environment: Background job updates derived records from user input
+Inputs: Untrusted user fields; existing DB rows may be stale
+Failure modes: Partial update, duplicate derivation, silent truncation
+Invariant: Derived record matches canonical input exactly once per version
+Mechanism: Versioned key + idempotent upsert + validation at boundary
+```
+
 ### 2. File Locking Protocol
 
 Use the MCP locking tools to coordinate file access with other agents.
@@ -110,8 +139,8 @@ Use the MCP locking tools to coordinate file access with other agents.
 4. If still blocked after timeout, keep waiting—the lock holder will eventually release
 
 **Hard rules:**
-- **No retries**: Do not call `lock_acquire` multiple times for the same file (except one wait attempt)
-- **Timeout is single-shot**: Call with timeout at most once per file. If it times out, wait again with a longer timeout
+- **No spam**: Do not call non-blocking `lock_acquire` (timeout=0) multiple times for the same file
+- **Waiting is allowed**: You may call `lock_acquire` with timeout multiple times (increasing timeout) to wait for a blocked file
 
 **Example workflow:**
 ```json
@@ -189,8 +218,11 @@ Verify before committing:
 - [ ] Code follows existing project patterns
 - [ ] Lint/format/type checks run and passing
 - [ ] Tests run (or justified reason to skip)
+- [ ] **For Modeling Gate tasks**: At least one adversarial test that would fail under broken behavior
 
 If issues found, fix them and re-run quality checks.
+
+**Adversarial testing (when Modeling Gate triggered):** Add a test/assertion that would fail if a tempting-but-wrong approach were used. If deterministic test impossible, add runtime assertion or anomaly logging instead.
 
 ### 6. If No Code Changes Required
 
