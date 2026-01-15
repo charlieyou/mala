@@ -174,6 +174,21 @@ class TestPreCompactHookHandlesIOError:
         assert result == {}
         assert "failed to archive" in caplog.text.lower()
 
+    @pytest.mark.asyncio
+    async def test_precompact_hook_handles_exists_oserror(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Hook should catch OSError from exists() (e.g., permission denied)."""
+        hook = make_precompact_hook(tmp_path)
+
+        # Mock Path.exists to raise OSError (permission denied scenario)
+        with patch("src.infra.hooks.precompact.Path.exists") as mock_exists:
+            mock_exists.side_effect = OSError("Permission denied")
+            result = await hook({"transcript_path": "/root/secret.json"}, None, None)
+
+        assert result == {}
+        assert "failed to archive" in caplog.text.lower()
+
 
 class TestPreCompactHookTimestampUniqueness:
     """Tests for timestamp uniqueness in archive filenames."""

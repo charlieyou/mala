@@ -64,13 +64,12 @@ def make_precompact_hook(
             _logger.warning("PreCompact hook: invalid transcript_path type: %s", e)
             return {}
 
-        if not transcript_path.exists():
-            _logger.warning(
-                "PreCompact hook: transcript file not found: %s", transcript_path
-            )
-            return {}
-
         try:
+            if not transcript_path.exists():
+                _logger.warning(
+                    "PreCompact hook: transcript file not found: %s", transcript_path
+                )
+                return {}
             # Create archive directory
             runs_dir = get_repo_runs_dir(repo_path)
             archive_dir = runs_dir / "archives"
