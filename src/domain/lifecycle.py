@@ -241,115 +241,6 @@ class RetryState:
     baseline_timestamp: int = 0
 
 
-# Sentinel value indicating usage tracking is disabled (e.g., SDK returned no usage)
-TRACKING_DISABLED: int = -1
-
-
-@dataclass
-class ContextUsage:
-    """Tracks token usage for context exhaustion detection.
-
-    Uses PER-REQUEST values from the SDK's ResultMessage.usage, not accumulated
-    values. Each request already includes the full conversation as its prompt,
-    so we only need to track the latest request's token counts.
-
-    Pressure calculation: prompt_tokens = input + cache_read + cache_creation
-    This represents the total prompt size sent to the model. Output tokens are
-    NOT included because prior outputs are already reflected in future prompts.
-
-    With prompt caching:
-    - input_tokens: Uncached portion of the prompt (often tiny, e.g., 2 tokens)
-    - cache_read_input_tokens: Tokens read from cache (cached conversation prefix)
-    - cache_creation_input_tokens: New tokens written to cache
-
-    NOTE: The Claude Agent SDK reports per-request token counts in ResultMessage.usage.
-    See: https://github.com/anthropics/claude-agent-sdk-python/issues/112
-    If the SDK behavior changes to report cumulative values, this class would need
-    to track deltas instead of replacing values.
-
-    When usage is unavailable, input_tokens is set to TRACKING_DISABLED (-1).
-    """
-
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_creation_tokens: int = 0
-
-    @property
-    def tracking_disabled(self) -> bool:
-        """Return True if usage tracking is disabled."""
-        return self.input_tokens == TRACKING_DISABLED
-
-    def disable_tracking(self) -> None:
-        """Mark tracking as disabled by setting sentinel value."""
-        self.input_tokens = TRACKING_DISABLED
-
-    def update_from_request(
-        self,
-        *,
-        input_tokens: int,
-        output_tokens: int,
-        cache_read_tokens: int = 0,
-        cache_creation_tokens: int = 0,
-    ) -> None:
-        """Update with per-request usage values (replaces, does not accumulate).
-
-        No-op if tracking is disabled. Values are clamped to >= 0.
-        """
-        if self.tracking_disabled:
-            return
-        self.input_tokens = max(0, input_tokens)
-        self.output_tokens = max(0, output_tokens)
-        self.cache_read_tokens = max(0, cache_read_tokens)
-        self.cache_creation_tokens = max(0, cache_creation_tokens)
-
-    def reset(self) -> None:
-        """Reset counters for a new context.
-
-        If tracking was disabled, it remains disabled.
-        """
-        if self.tracking_disabled:
-            self.output_tokens = 0
-            self.cache_read_tokens = 0
-            self.cache_creation_tokens = 0
-        else:
-            self.input_tokens = 0
-            self.output_tokens = 0
-            self.cache_read_tokens = 0
-            self.cache_creation_tokens = 0
-
-    def is_tracking_enabled(self) -> bool:
-        """Return True if tracking is not disabled."""
-        return not self.tracking_disabled
-
-    @property
-    def prompt_tokens(self) -> int:
-        """Total prompt tokens = input + cache_read + cache_creation."""
-        return (
-            max(0, self.input_tokens)
-            + max(0, self.cache_read_tokens)
-            + max(0, self.cache_creation_tokens)
-        )
-
-    def pressure_ratio(self, limit: int) -> float:
-        """Return ratio of prompt token usage to context limit.
-
-        Uses prompt_tokens (input + cache_read + cache_creation) which
-        represents the total prompt size. Output tokens are excluded
-        because prior outputs are already reflected in future prompts.
-
-        Args:
-            limit: Maximum context tokens (e.g., 200_000)
-
-        Returns:
-            Ratio from 0.0 to 1.0+ (can exceed 1.0 if over limit).
-            Returns 0.0 if limit <= 0 or tracking is disabled.
-        """
-        if limit <= 0 or self.tracking_disabled:
-            return 0.0
-        return self.prompt_tokens / limit
-
-
 @dataclass
 class LifecycleContext:
     """Context passed to and updated by state transitions.
@@ -373,8 +264,6 @@ class LifecycleContext:
     # P2/P3 issues from review to create as tracking issues
     # These are low-priority issues that don't block the review but should be tracked
     low_priority_review_issues: list[ReviewIssue] = field(default_factory=list)
-    # Token usage for context exhaustion detection
-    context_usage: ContextUsage = field(default_factory=ContextUsage)
 
 
 @dataclass

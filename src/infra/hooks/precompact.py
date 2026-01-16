@@ -24,9 +24,7 @@ PreCompactHook = Callable[
 ]
 
 
-def make_precompact_hook(
-    repo_path: Path, session_id: str | None = None
-) -> PreCompactHook:
+def make_precompact_hook(repo_path: Path) -> PreCompactHook:
     """Create a PreCompact hook that archives transcripts before compaction.
 
     Archives the transcript to:
@@ -34,7 +32,6 @@ def make_precompact_hook(
 
     Args:
         repo_path: Repository root path for determining archive location.
-        session_id: Optional session ID prefix for archive filename.
 
     Returns:
         An async hook function that archives the transcript and returns {}.
@@ -48,10 +45,13 @@ def make_precompact_hook(
         """PreCompact hook - archives transcript before compaction."""
         # Extract transcript_path from hook_input
         transcript_path_str: str | None = None
+        hook_session_id: str | None = None
         if isinstance(hook_input, dict):
             transcript_path_str = hook_input.get("transcript_path")
+            hook_session_id = hook_input.get("session_id")
         elif hasattr(hook_input, "transcript_path"):
             transcript_path_str = getattr(hook_input, "transcript_path", None)
+            hook_session_id = getattr(hook_input, "session_id", None)
 
         if not transcript_path_str:
             _logger.warning("PreCompact hook: missing transcript_path in hook_input")
@@ -79,7 +79,7 @@ def make_precompact_hook(
             # Build archive filename with microseconds for uniqueness
             timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
             ext = transcript_path.suffix or ""
-            session_prefix = f"{session_id}_" if session_id else ""
+            session_prefix = f"{hook_session_id}_" if hook_session_id else ""
             archive_name = f"{session_prefix}{timestamp}_transcript{ext}"
             archive_path = archive_dir / archive_name
 
