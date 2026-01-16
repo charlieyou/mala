@@ -98,6 +98,7 @@ class SDKClientFactoryProtocol(Protocol):
         model: str = "opus",
         system_prompt: dict[str, str] | None = None,
         output_format: object | None = None,
+        settings: str | None = None,
         setting_sources: list[str] | None = None,
         mcp_servers: object | None = None,
         disallowed_tools: list[str] | None = None,
@@ -113,6 +114,7 @@ class SDKClientFactoryProtocol(Protocol):
             model: Model to use.
             system_prompt: System prompt configuration.
             output_format: Optional structured output format configuration.
+            settings: JSON settings string passed to ClaudeAgentOptions.
             setting_sources: List of setting sources.
             mcp_servers: List of MCP server configurations.
             disallowed_tools: List of tools to disallow.

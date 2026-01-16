@@ -426,6 +426,7 @@ class AgentRuntimeBuilder:
             env=env,
             hooks=hooks_dict,
             setting_sources=self._setting_sources,
+            settings='{"autoCompactEnabled": true}',
         )
 
         return AgentRuntime(

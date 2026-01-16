@@ -206,6 +206,7 @@ class TestFakeSDKClientFactoryBehavior:
         )
         assert opts["cwd"] == "/home/user/project"
         assert opts["model"] == "sonnet"
+        assert "settings" in opts
         assert len(factory.created_options) == 1
 
     @pytest.mark.unit

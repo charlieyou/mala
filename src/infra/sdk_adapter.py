@@ -61,6 +61,7 @@ class SDKClientFactory:
         model: str = "opus",
         system_prompt: dict[str, str] | None = None,
         output_format: object | None = None,
+        settings: str | None = None,
         setting_sources: list[str] | None = None,
         mcp_servers: object | None = None,
         disallowed_tools: list[str] | None = None,
@@ -79,6 +80,7 @@ class SDKClientFactory:
             model: Model to use (default "opus").
             system_prompt: System prompt configuration.
             output_format: Structured output format configuration.
+            settings: JSON settings string passed to ClaudeAgentOptions.
             setting_sources: List of setting sources (default ["local", "project"]).
             mcp_servers: List of MCP server configurations.
             disallowed_tools: List of tools to disallow.
@@ -105,6 +107,7 @@ class SDKClientFactory:
             model=model,
             system_prompt=system_prompt or {"type": "preset", "preset": "claude_code"},  # type: ignore[arg-type]
             output_format=output_format,  # type: ignore[arg-type]
+            settings=settings,  # type: ignore[arg-type]
             setting_sources=effective_sources,  # type: ignore[arg-type]
             mcp_servers=mcp_servers,  # type: ignore[arg-type]
             disallowed_tools=disallowed_tools,  # type: ignore[arg-type]
@@ -156,5 +159,7 @@ class SDKClientFactory:
         # Build kwargs from existing options, overriding resume
         kwargs = {f.name: getattr(opts, f.name) for f in fields(opts)}
         kwargs["resume"] = resume
+        if "settings" in kwargs and kwargs["settings"] is None:
+            kwargs["settings"] = '{"autoCompactEnabled": true}'
 
         return ClaudeAgentOptions(**kwargs)  # type: ignore[arg-type]

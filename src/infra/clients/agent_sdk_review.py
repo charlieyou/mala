@@ -325,6 +325,7 @@ class AgentSDKReviewer:
             model=self.model,
             permission_mode="bypassPermissions",
             output_format=_REVIEW_OUTPUT_FORMAT,
+            settings='{"autoCompactEnabled": true}',
             env={"MALA_SDK_FLOW": "reviewer"},
         )
 
