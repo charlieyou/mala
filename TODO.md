@@ -1,8 +1,10 @@
 Bugs
 * Normal operation includes in_progress tasks
+* When resuming, have agent verify acceptance criteria
 
 New Features
 * Use cerberus for epic verification
+    * Needs to be way more strict
 * Add fixer sessions and cerberus reviews to logs search
 * Worktree mode: each epic runs in a worktree, signals it is done to process in main branch, which merges it in + resolves conflicts
 * CLI flag to control which beads issue types are processed (currently just tasks)
