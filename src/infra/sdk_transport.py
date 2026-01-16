@@ -17,7 +17,7 @@ def ensure_sigint_isolated_cli_transport() -> None:
     import os
     import sys
     from pathlib import Path
-    from subprocess import PIPE
+    from subprocess import DEVNULL, PIPE
 
     import anyio
     from anyio.streams.text import TextReceiveStream, TextSendStream
@@ -69,7 +69,8 @@ def ensure_sigint_isolated_cli_transport() -> None:
                 )
 
                 # For backward compat: use debug_stderr file object if no callback and debug is on
-                stderr_dest = PIPE if should_pipe_stderr else None
+                # Use DEVNULL when not piping to suppress Claude CLI warnings (e.g., ENXIO socket watcher errors)
+                stderr_dest = PIPE if should_pipe_stderr else DEVNULL
 
                 start_new_session = sys.platform != "win32"
                 self._process = await anyio.open_process(
