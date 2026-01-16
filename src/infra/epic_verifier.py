@@ -274,7 +274,6 @@ class ClaudeEpicVerificationModel:
             permission_mode="bypassPermissions",
             model=self.model,
             system_prompt={"type": "preset", "preset": "claude_code"},
-            settings='{"autoCompactEnabled": true}',
             setting_sources=["project", "user"],
             mcp_servers={},
             allowed_tools=[
