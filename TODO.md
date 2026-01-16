@@ -1,6 +1,6 @@
 Bugs
-* Normal operation includes in_progress tasks
 * When resuming, have agent verify acceptance criteria
+* Epic verification permissions lock down
 
 New Features
 * Use cerberus for epic verification
