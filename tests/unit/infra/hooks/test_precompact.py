@@ -204,8 +204,12 @@ class TestPreCompactHookTimestampUniqueness:
         hook = make_precompact_hook(tmp_path)
 
         # Archive twice with NO delay - microsecond precision should ensure uniqueness
-        await hook({"transcript_path": str(transcript), "session_id": "sess"}, None, None)
-        await hook({"transcript_path": str(transcript), "session_id": "sess"}, None, None)
+        await hook(
+            {"transcript_path": str(transcript), "session_id": "sess"}, None, None
+        )
+        await hook(
+            {"transcript_path": str(transcript), "session_id": "sess"}, None, None
+        )
 
         archive_dir = runs_dir / "archives"
         archives = list(archive_dir.glob("*.json"))
