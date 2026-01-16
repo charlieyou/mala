@@ -105,6 +105,43 @@ class TestFilterBlockedWip:
         assert [i["id"] for i in result] == ["wip-ok"]
 
 
+class TestFilterWipIssues:
+    """Tests for IssueManager.filter_wip_issues."""
+
+    def test_filters_in_progress_issues(self) -> None:
+        """filter_wip_issues removes in_progress issues."""
+        issues = [
+            {"id": "open-1", "status": "open"},
+            {"id": "wip-1", "status": "in_progress"},
+            {"id": "open-2", "status": "open"},
+        ]
+        result = IssueManager.filter_wip_issues(issues)
+        assert [i["id"] for i in result] == ["open-1", "open-2"]
+
+    def test_keeps_open_issues(self) -> None:
+        """filter_wip_issues keeps open issues."""
+        issues = [
+            {"id": "open-1", "status": "open"},
+            {"id": "open-2", "status": "open"},
+        ]
+        result = IssueManager.filter_wip_issues(issues)
+        assert [i["id"] for i in result] == ["open-1", "open-2"]
+
+    def test_empty_list(self) -> None:
+        """filter_wip_issues handles empty list."""
+        result = IssueManager.filter_wip_issues([])
+        assert result == []
+
+    def test_all_in_progress(self) -> None:
+        """filter_wip_issues removes all in_progress issues."""
+        issues = [
+            {"id": "wip-1", "status": "in_progress"},
+            {"id": "wip-2", "status": "in_progress"},
+        ]
+        result = IssueManager.filter_wip_issues(issues)
+        assert result == []
+
+
 class TestFilterBlockedEpics:
     """Tests for IssueManager.filter_blocked_epics."""
 

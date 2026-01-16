@@ -361,6 +361,10 @@ class BeadsClient:
             wip = await self._fetch_wip_issues()
             wip = IssueManager.filter_blocked_wip(wip)
             issues = self._merge_wip_issues(issues, wip)
+        else:
+            # Filter out in_progress issues from bd ready when --resume not passed
+            # bd ready returns both open and in_progress issues by default
+            issues = IssueManager.filter_wip_issues(issues)
         self._warn_missing_ids(only_ids, issues, suppress_warn_ids or set())
         filtered = self._apply_filters(issues, exclude_ids, epic_children, only_ids)
         enriched = await self._enrich_with_epics(filtered)

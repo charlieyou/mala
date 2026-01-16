@@ -59,6 +59,22 @@ class IssueManager:
         ]
 
     @staticmethod
+    def filter_wip_issues(issues: list[dict[str, object]]) -> list[dict[str, object]]:
+        """Filter out in_progress issues.
+
+        Used when include_wip=False to exclude WIP issues from the result set.
+        Since `bd ready` returns both open and in_progress issues, this filter
+        ensures only open issues are returned when --resume is not passed.
+
+        Args:
+            issues: List of issue dicts (may include open + in_progress).
+
+        Returns:
+            List with in_progress issues removed.
+        """
+        return [issue for issue in issues if issue.get("status") != "in_progress"]
+
+    @staticmethod
     def filter_blocked_epics(
         issues: list[dict[str, object]], blocked_epics: set[str]
     ) -> list[dict[str, object]]:

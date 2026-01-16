@@ -1217,6 +1217,92 @@ class TestWipFallbackOnReadyFailure:
         assert result == []
 
 
+class TestFilterWipFromReadyOutput:
+    """Test that in_progress issues from bd ready are filtered when include_wip=False."""
+
+    @pytest.mark.asyncio
+    async def test_filters_in_progress_when_include_wip_false(
+        self, tmp_path: Path
+    ) -> None:
+        """When include_wip=False, in_progress issues from bd ready are filtered out."""
+        beads = BeadsClient(tmp_path)
+
+        async def mock_run_async(cmd: list[str]) -> CommandResult:
+            if cmd == ["bd", "ready", "--json", "-t", "task", "--limit", "0"]:
+                # bd ready returns both open and in_progress issues
+                return make_command_result(
+                    stdout=json.dumps(
+                        [
+                            {"id": "open-1", "priority": 1, "status": "open"},
+                            {"id": "wip-1", "priority": 2, "status": "in_progress"},
+                            {"id": "open-2", "priority": 3, "status": "open"},
+                        ]
+                    )
+                )
+            # Return empty for dep tree lookup
+            return make_command_result(stdout="[]")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads, "_run_subprocess_async", AsyncMock(side_effect=mock_run_async)
+            )
+            result = await beads.get_ready_async(include_wip=False)
+
+        # in_progress issue should be filtered out
+        assert "wip-1" not in result
+        assert result == ["open-1", "open-2"]
+
+    @pytest.mark.asyncio
+    async def test_keeps_in_progress_when_include_wip_true(
+        self, tmp_path: Path
+    ) -> None:
+        """When include_wip=True, in_progress issues from bd ready are kept."""
+        beads = BeadsClient(tmp_path)
+
+        async def mock_run_async(cmd: list[str]) -> CommandResult:
+            if cmd == ["bd", "ready", "--json", "-t", "task", "--limit", "0"]:
+                # bd ready returns both open and in_progress issues
+                return make_command_result(
+                    stdout=json.dumps(
+                        [
+                            {"id": "open-1", "priority": 1, "status": "open"},
+                            {"id": "wip-1", "priority": 2, "status": "in_progress"},
+                        ]
+                    )
+                )
+            if cmd == [
+                "bd",
+                "list",
+                "--status",
+                "in_progress",
+                "--json",
+                "-t",
+                "task",
+                "--limit",
+                "0",
+            ]:
+                # WIP fetch returns the same in_progress issue (will be deduplicated)
+                return make_command_result(
+                    stdout=json.dumps(
+                        [
+                            {"id": "wip-1", "priority": 2, "status": "in_progress"},
+                        ]
+                    )
+                )
+            # Return empty for dep tree lookup
+            return make_command_result(stdout="[]")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads, "_run_subprocess_async", AsyncMock(side_effect=mock_run_async)
+            )
+            result = await beads.get_ready_async(include_wip=True)
+
+        # in_progress issue should be kept
+        assert "wip-1" in result
+        assert result == ["open-1", "wip-1"]
+
+
 class TestFetchBaseIssues:
     """Unit tests for _fetch_base_issues pipeline step."""
 
