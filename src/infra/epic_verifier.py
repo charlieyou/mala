@@ -275,6 +275,7 @@ class ClaudeEpicVerificationModel:
             model=self.model,
             system_prompt={"type": "preset", "preset": "claude_code"},
             setting_sources=["project", "user"],
+            settings='{"autoCompactEnabled": true}',
             mcp_servers={},
             allowed_tools=[
                 # Only these tools are permitted; all others (Edit, Write, etc.)
