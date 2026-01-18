@@ -282,7 +282,7 @@ class EpicVerifierConfig:
     """Configuration for epic verification reviewer choice.
 
     This configuration controls which backend is used for epic verification
-    during epic completion triggers. Similar to CodeReviewConfig's reviewer_type,
+    during epic completion triggers. Similar to CodeReviewConfig's structure,
     this allows selecting between different verification implementations.
 
     Note: Named EpicVerifierConfig (not EpicVerificationConfig) to avoid collision
@@ -290,12 +290,26 @@ class EpicVerifierConfig:
     handles retry configuration.
 
     Attributes:
+        enabled: Whether epic verification is enabled.
         reviewer_type: Type of reviewer to use for epic verification.
             - "agent_sdk": Use Claude Agent SDK for verification (default).
             - "cerberus": Use Cerberus-based verification.
+        timeout: Top-level timeout in seconds (default: 600).
+        max_retries: Maximum retry attempts on failure (default: 3).
+        failure_mode: How to handle verification failures.
+        cerberus: Cerberus-specific settings (timeout, spawn_args, wait_args, env).
+        agent_sdk_timeout: Timeout in seconds for Agent SDK verification.
+        agent_sdk_model: Model for Agent SDK verifier ('sonnet', 'opus', 'haiku').
     """
 
+    enabled: bool = True
     reviewer_type: Literal["cerberus", "agent_sdk"] = "agent_sdk"
+    timeout: int = 600
+    max_retries: int = 3
+    failure_mode: FailureMode = FailureMode.CONTINUE
+    cerberus: CerberusConfig | None = None
+    agent_sdk_timeout: int = 600
+    agent_sdk_model: Literal["sonnet", "opus", "haiku"] = "sonnet"
 
 
 @dataclass(frozen=True, kw_only=True)

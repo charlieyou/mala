@@ -499,6 +499,20 @@ def _parse_cerberus_config(data: dict[str, Any]) -> CerberusConfig:
     )
 
 
+_EPIC_VERIFICATION_FIELDS = frozenset(
+    {
+        "enabled",
+        "reviewer_type",
+        "timeout",
+        "max_retries",
+        "failure_mode",
+        "cerberus",
+        "agent_sdk_timeout",
+        "agent_sdk_model",
+    }
+)
+
+
 def _parse_epic_verification_config(
     data: dict[str, Any] | None,
 ) -> EpicVerifierConfig:
@@ -525,14 +539,24 @@ def _parse_epic_verification_config(
             f"epic_verification must be an object, got {type(data).__name__}"
         )
 
-    # Validate unknown fields
-    known_fields = {"reviewer_type"}
-    unknown = set(data.keys()) - known_fields
+    # Validate unknown fields - fail fast
+    unknown = set(data.keys()) - _EPIC_VERIFICATION_FIELDS
     if unknown:
         first = sorted(str(k) for k in unknown)[0]
         raise ConfigError(f"Unknown field '{first}' in epic_verification")
 
-    # Parse reviewer_type
+    # Parse enabled (optional, defaults to True)
+    enabled = True
+    if "enabled" in data:
+        enabled_val = data["enabled"]
+        if not isinstance(enabled_val, bool):
+            raise ConfigError(
+                f"epic_verification.enabled must be a boolean, "
+                f"got {type(enabled_val).__name__}"
+            )
+        enabled = enabled_val
+
+    # Parse reviewer_type (optional, defaults to "agent_sdk")
     reviewer_type: Literal["cerberus", "agent_sdk"] = "agent_sdk"
     if "reviewer_type" in data:
         val = data["reviewer_type"]
@@ -543,7 +567,103 @@ def _parse_epic_verification_config(
             )
         reviewer_type = val
 
-    return EpicVerifierConfigClass(reviewer_type=reviewer_type)
+    # Parse timeout (optional, defaults to 600)
+    timeout = 600
+    if "timeout" in data:
+        timeout_val = data["timeout"]
+        if isinstance(timeout_val, bool) or not isinstance(timeout_val, int):
+            raise ConfigError(
+                f"epic_verification.timeout must be an integer, "
+                f"got {type(timeout_val).__name__}"
+            )
+        if timeout_val < 0:
+            raise ConfigError(
+                f"epic_verification.timeout must be non-negative, got {timeout_val}"
+            )
+        timeout = timeout_val
+
+    # Parse max_retries (optional, defaults to 3)
+    max_retries = 3
+    if "max_retries" in data:
+        max_retries_val = data["max_retries"]
+        if isinstance(max_retries_val, bool) or not isinstance(max_retries_val, int):
+            raise ConfigError(
+                f"epic_verification.max_retries must be an integer, "
+                f"got {type(max_retries_val).__name__}"
+            )
+        if max_retries_val < 0:
+            raise ConfigError(
+                f"epic_verification.max_retries must be non-negative, "
+                f"got {max_retries_val}"
+            )
+        max_retries = max_retries_val
+
+    # Parse failure_mode (optional, defaults to CONTINUE)
+    failure_mode = FailureMode.CONTINUE
+    if "failure_mode" in data:
+        fm_val = data["failure_mode"]
+        if not isinstance(fm_val, str):
+            raise ConfigError(
+                f"epic_verification.failure_mode must be a string, "
+                f"got {type(fm_val).__name__}"
+            )
+        try:
+            failure_mode = FailureMode(fm_val)
+        except ValueError:
+            valid = ", ".join(f.value for f in FailureMode)
+            raise ConfigError(
+                f"epic_verification.failure_mode must be one of {valid}, got '{fm_val}'"
+            ) from None
+
+    # Parse cerberus (optional nested block)
+    cerberus: CerberusConfig | None = None
+    if "cerberus" in data:
+        cerberus_val = data["cerberus"]
+        if cerberus_val is not None:
+            if not isinstance(cerberus_val, dict):
+                raise ConfigError(
+                    f"epic_verification.cerberus must be an object, "
+                    f"got {type(cerberus_val).__name__}"
+                )
+            cerberus = _parse_cerberus_config(cerberus_val)
+
+    # Parse agent_sdk_timeout (optional, defaults to 600)
+    agent_sdk_timeout = 600
+    if "agent_sdk_timeout" in data:
+        timeout_val = data["agent_sdk_timeout"]
+        if isinstance(timeout_val, bool) or not isinstance(timeout_val, int):
+            raise ConfigError(
+                f"epic_verification.agent_sdk_timeout must be an integer, "
+                f"got {type(timeout_val).__name__}"
+            )
+        if timeout_val < 0:
+            raise ConfigError(
+                f"epic_verification.agent_sdk_timeout must be non-negative, "
+                f"got {timeout_val}"
+            )
+        agent_sdk_timeout = timeout_val
+
+    # Parse agent_sdk_model (optional, defaults to "sonnet")
+    agent_sdk_model: Literal["sonnet", "opus", "haiku"] = "sonnet"
+    if "agent_sdk_model" in data:
+        model_val = data["agent_sdk_model"]
+        if model_val not in ("sonnet", "opus", "haiku"):
+            raise ConfigError(
+                f"epic_verification.agent_sdk_model must be 'sonnet', 'opus', or 'haiku', "
+                f"got '{model_val}'"
+            )
+        agent_sdk_model = model_val
+
+    return EpicVerifierConfigClass(
+        enabled=enabled,
+        reviewer_type=reviewer_type,
+        timeout=timeout,
+        max_retries=max_retries,
+        failure_mode=failure_mode,
+        cerberus=cerberus,
+        agent_sdk_timeout=agent_sdk_timeout,
+        agent_sdk_model=agent_sdk_model,
+    )
 
 
 def _parse_code_review_config(
