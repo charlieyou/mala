@@ -422,14 +422,21 @@ class FakeEventSink(MalaEventSink):
     # Epic verification lifecycle
     # -------------------------------------------------------------------------
 
-    def on_epic_verification_started(self, epic_id: str) -> None:
-        self._record("epic_verification_started", epic_id=epic_id)
+    def on_epic_verification_started(
+        self, epic_id: str, *, reviewer_type: str = "agent_sdk"
+    ) -> None:
+        self._record(
+            "epic_verification_started", epic_id=epic_id, reviewer_type=reviewer_type
+        )
 
-    def on_epic_verification_passed(self, epic_id: str, confidence: float) -> None:
+    def on_epic_verification_passed(
+        self, epic_id: str, confidence: float, *, reviewer_type: str = "agent_sdk"
+    ) -> None:
         self._record(
             "epic_verification_passed",
             epic_id=epic_id,
             confidence=confidence,
+            reviewer_type=reviewer_type,
         )
 
     def on_epic_verification_failed(
@@ -439,6 +446,7 @@ class FakeEventSink(MalaEventSink):
         remediation_ids: list[str],
         *,
         reason: str | None = None,
+        reviewer_type: str = "agent_sdk",
     ) -> None:
         self._record(
             "epic_verification_failed",
@@ -446,6 +454,7 @@ class FakeEventSink(MalaEventSink):
             unmet_count=unmet_count,
             remediation_ids=remediation_ids,
             reason=reason,
+            reviewer_type=reviewer_type,
         )
 
     def on_epic_remediation_created(

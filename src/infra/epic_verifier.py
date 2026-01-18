@@ -847,7 +847,11 @@ class EpicVerifier:
                     )
                     if self.event_sink is not None:
                         self.event_sink.on_epic_verification_failed(
-                            epic_id, 0, [], reason="Epic could not be closed"
+                            epic_id,
+                            0,
+                            [],
+                            reason="Epic could not be closed",
+                            reviewer_type=self.reviewer_type,
                         )
             else:
                 verdicts[epic_id] = EpicVerdict(
@@ -879,7 +883,9 @@ class EpicVerifier:
                 )
 
             if self.event_sink is not None:
-                self.event_sink.on_epic_verification_started(epic_id)
+                self.event_sink.on_epic_verification_started(
+                    epic_id, reviewer_type=self.reviewer_type
+                )
 
             verdict, context = await self._verify_epic_with_context(epic_id)
             verdicts[epic_id] = verdict
@@ -905,11 +911,18 @@ class EpicVerifier:
                     # If no blocking issues but still failed, include reasoning in log
                     if not blocking_ids and verdict.reasoning:
                         self.event_sink.on_epic_verification_failed(
-                            epic_id, 0, [], reason=verdict.reasoning
+                            epic_id,
+                            0,
+                            [],
+                            reason=verdict.reasoning,
+                            reviewer_type=self.reviewer_type,
                         )
                     else:
                         self.event_sink.on_epic_verification_failed(
-                            epic_id, len(blocking_ids), blocking_ids
+                            epic_id,
+                            len(blocking_ids),
+                            blocking_ids,
+                            reviewer_type=self.reviewer_type,
                         )
             else:
                 # No blocking issues and verdict.passed=True - close epic if requested (may have P2/P3 advisories)
@@ -919,20 +932,28 @@ class EpicVerifier:
                         passed_count = 1
                         if self.event_sink is not None:
                             self.event_sink.on_epic_verification_passed(
-                                epic_id, verdict.confidence
+                                epic_id,
+                                verdict.confidence,
+                                reviewer_type=self.reviewer_type,
                             )
                     else:
                         # Close failed - treat as verification failure
                         failed_count = 1
                         if self.event_sink is not None:
                             self.event_sink.on_epic_verification_failed(
-                                epic_id, 0, [], reason="Epic could not be closed"
+                                epic_id,
+                                0,
+                                [],
+                                reason="Epic could not be closed",
+                                reviewer_type=self.reviewer_type,
                             )
                 else:
                     passed_count = 1
                     if self.event_sink is not None:
                         self.event_sink.on_epic_verification_passed(
-                            epic_id, verdict.confidence
+                            epic_id,
+                            verdict.confidence,
+                            reviewer_type=self.reviewer_type,
                         )
         return EpicVerificationResult(
             verified_count=verified_count,

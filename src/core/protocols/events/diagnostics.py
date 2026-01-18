@@ -116,20 +116,26 @@ class DiagnosticsEvents(Protocol):
     # Epic verification lifecycle
     # -------------------------------------------------------------------------
 
-    def on_epic_verification_started(self, epic_id: str) -> None:
+    def on_epic_verification_started(
+        self, epic_id: str, *, reviewer_type: str = "agent_sdk"
+    ) -> None:
         """Called when epic verification begins.
 
         Args:
             epic_id: The epic being verified.
+            reviewer_type: Type of reviewer ('agent_sdk' or 'cerberus').
         """
         ...
 
-    def on_epic_verification_passed(self, epic_id: str, confidence: float) -> None:
+    def on_epic_verification_passed(
+        self, epic_id: str, confidence: float, *, reviewer_type: str = "agent_sdk"
+    ) -> None:
         """Called when epic verification passes.
 
         Args:
             epic_id: The epic that passed verification.
             confidence: Confidence score (0.0 to 1.0).
+            reviewer_type: Type of reviewer ('agent_sdk' or 'cerberus').
         """
         ...
 
@@ -140,6 +146,7 @@ class DiagnosticsEvents(Protocol):
         remediation_ids: list[str],
         *,
         reason: str | None = None,
+        reviewer_type: str = "agent_sdk",
     ) -> None:
         """Called when epic verification fails with unmet criteria.
 
@@ -148,6 +155,7 @@ class DiagnosticsEvents(Protocol):
             unmet_count: Number of unmet criteria.
             remediation_ids: IDs of created remediation issues.
             reason: Optional reason for failure (e.g., when verification couldn't run).
+            reviewer_type: Type of reviewer ('agent_sdk' or 'cerberus').
         """
         ...
 

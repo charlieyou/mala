@@ -566,10 +566,14 @@ class ConsoleEventSink(BaseEventSink):
     # Epic verification lifecycle
     # -------------------------------------------------------------------------
 
-    def on_epic_verification_started(self, epic_id: str) -> None:
+    def on_epic_verification_started(
+        self, epic_id: str, *, reviewer_type: str = "agent_sdk"
+    ) -> None:
         log("→", f"VERIFY Starting verification for {epic_id}", agent_id="epic")
 
-    def on_epic_verification_passed(self, epic_id: str, confidence: float) -> None:
+    def on_epic_verification_passed(
+        self, epic_id: str, confidence: float, *, reviewer_type: str = "agent_sdk"
+    ) -> None:
         log(
             "✓",
             f"VERIFY {epic_id} passed (confidence: {confidence:.0%})",
@@ -583,6 +587,7 @@ class ConsoleEventSink(BaseEventSink):
         remediation_ids: list[str],
         *,
         reason: str | None = None,
+        reviewer_type: str = "agent_sdk",
     ) -> None:
         if reason:
             log(
