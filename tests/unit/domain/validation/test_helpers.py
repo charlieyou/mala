@@ -123,7 +123,7 @@ class TestCheckE2EPrereqs:
 
         monkeypatch.setattr("shutil.which", which)
         result = check_e2e_prereqs({})
-        assert result == "E2E prereq missing: bd CLI not found in PATH"
+        assert result == "E2E prereq missing: br CLI not found in PATH"
 
     def test_both_present(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Returns None when both CLIs are present."""
@@ -225,8 +225,8 @@ class TestInitFixtureRepo:
         assert result is None  # Success
         assert len(commands_run) == 7
         assert commands_run[0] == ["git", "init"]
-        assert commands_run[5] == ["bd", "init"]
-        assert commands_run[6][0:2] == ["bd", "create"]
+        assert commands_run[5] == ["br", "init"]
+        assert commands_run[6][0:2] == ["br", "create"]
 
     def test_returns_error_on_failure(self, tmp_path: Path) -> None:
         """Returns error message when a command fails."""
@@ -254,7 +254,7 @@ class TestGetReadyIssueId:
         mock_runner = MagicMock()
         issues = [{"id": "issue-1"}, {"id": "issue-2"}]
         mock_runner.run.return_value = CommandResult(
-            command=["bd", "ready", "--json"],
+            command=["br", "ready", "--json"],
             returncode=0,
             stdout=json.dumps(issues),
             stderr="",
@@ -268,7 +268,7 @@ class TestGetReadyIssueId:
         """Returns None when bd ready fails."""
         mock_runner = MagicMock()
         mock_runner.run.return_value = CommandResult(
-            command=["bd", "ready", "--json"],
+            command=["br", "ready", "--json"],
             returncode=1,
             stdout="",
             stderr="error",
@@ -282,7 +282,7 @@ class TestGetReadyIssueId:
         """Returns None when bd returns invalid JSON."""
         mock_runner = MagicMock()
         mock_runner.run.return_value = CommandResult(
-            command=["bd", "ready", "--json"],
+            command=["br", "ready", "--json"],
             returncode=0,
             stdout="not json",
             stderr="",
@@ -296,7 +296,7 @@ class TestGetReadyIssueId:
         """Returns None when there are no ready issues."""
         mock_runner = MagicMock()
         mock_runner.run.return_value = CommandResult(
-            command=["bd", "ready", "--json"],
+            command=["br", "ready", "--json"],
             returncode=0,
             stdout="[]",
             stderr="",
@@ -311,7 +311,7 @@ class TestGetReadyIssueId:
         mock_runner = MagicMock()
         issues = [{"id": 123}, {"id": "valid-id"}]
         mock_runner.run.return_value = CommandResult(
-            command=["bd", "ready", "--json"],
+            command=["br", "ready", "--json"],
             returncode=0,
             stdout=json.dumps(issues),
             stderr="",
@@ -337,5 +337,5 @@ class TestAnnotateIssue:
 
         mock_runner.run.assert_called_once()
         call_args = mock_runner.run.call_args[0][0]
-        assert call_args[0:3] == ["bd", "update", "issue-1"]
+        assert call_args[0:3] == ["br", "update", "issue-1"]
         assert "--notes" in call_args

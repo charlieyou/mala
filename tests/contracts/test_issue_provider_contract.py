@@ -29,7 +29,7 @@ from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 
 def _has_bd_cli() -> bool:
     """Check if bd CLI is available in PATH."""
-    return shutil.which("bd") is not None
+    return shutil.which("br") is not None
 
 
 def _has_beads_workspace() -> bool:

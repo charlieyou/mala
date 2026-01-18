@@ -82,13 +82,13 @@ class TestE2EPrereqResult:
     def test_failed_result_with_missing(self) -> None:
         result = E2EPrereqResult(
             ok=False,
-            missing=["mala CLI not found", "bd CLI not found"],
+            missing=["mala CLI not found", "br CLI not found"],
         )
         assert result.ok is False
         reason = result.failure_reason()
         assert reason is not None
         assert "mala CLI not found" in reason
-        assert "bd CLI not found" in reason
+        assert "br CLI not found" in reason
 
     def test_failed_result_empty_missing(self) -> None:
         result = E2EPrereqResult(ok=False, missing=[])
@@ -165,7 +165,7 @@ class TestE2ERunnerPrereqs:
         with patch("shutil.which", side_effect=mock_which):
             result = runner.check_prereqs({})
             assert result.ok is False
-            assert any("bd CLI" in m for m in result.missing)
+            assert any("br CLI" in m for m in result.missing)
 
     def test_uses_os_environ_when_none(self, tmp_path: Path) -> None:
         runner = E2ERunner(make_mock_env_config(tmp_path), make_mock_command_runner())
@@ -344,7 +344,7 @@ class TestE2ERunnerRun:
         ) -> CommandResult:
             """Mock CommandRunner.run - succeed for fixture setup, timeout for mala."""
             # Fixture setup commands (git, bd) succeed
-            if any(x in cmd for x in ["git", "bd"]):
+            if any(x in cmd for x in ["git", "br"]):
                 return CommandResult(command=cmd, returncode=0, stdout="", stderr="")
             # mala command times out
             return CommandResult(
@@ -383,7 +383,7 @@ class TestE2ERunnerIntegration:
         from src.infra.tools.command_runner import CommandRunner
         from src.infra.tools.env import EnvConfig
 
-        if shutil.which("mala") is None or shutil.which("bd") is None:
+        if shutil.which("mala") is None or shutil.which("br") is None:
             pytest.skip("E2E requires mala and bd CLIs")
         if not is_claude_cli_available():
             pytest.skip("Claude Code CLI not installed")
@@ -613,7 +613,7 @@ class TestAnnotateIssue:
         mock_runner.run.assert_called_once()
         args = mock_runner.run.call_args
         cmd = args[0][0]
-        assert "bd" in cmd
+        assert "br" in cmd
         assert "update" in cmd
         assert "test-123" in cmd
 

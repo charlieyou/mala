@@ -29,8 +29,8 @@ def _skip_if_missing_cli() -> None:
     """Skip test if mala or bd CLI is not available."""
     if shutil.which("mala") is None:
         pytest.skip("mala CLI not found in PATH")
-    if shutil.which("bd") is None:
-        pytest.skip("bd CLI not found in PATH")
+    if shutil.which("br") is None:
+        pytest.skip("br CLI not found in PATH")
 
 
 def _init_git_repo(repo_path: Path) -> None:
@@ -268,21 +268,21 @@ class TestInitConfigCompatibility:
 
         # Initialize beads for issue tracking
         result = subprocess.run(
-            ["bd", "init"],
+            ["br", "init"],
             cwd=tmp_path,
             capture_output=True,
             text=True,
         )
-        assert result.returncode == 0, f"bd init failed: {result.stderr}"
+        assert result.returncode == 0, f"br init failed: {result.stderr}"
 
         # Create a test issue
         result = subprocess.run(
-            ["bd", "create", "Test issue", "-p", "1"],
+            ["br", "create", "Test issue", "-p", "1"],
             cwd=tmp_path,
             capture_output=True,
             text=True,
         )
-        assert result.returncode == 0, f"bd create failed: {result.stderr}"
+        assert result.returncode == 0, f"br create failed: {result.stderr}"
 
         # Run mala run --dry-run to verify config is valid and issue is picked up
         # Note: cwd=tmp_path means mala run uses current dir (no positional arg needed)

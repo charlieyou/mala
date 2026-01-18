@@ -94,8 +94,8 @@ def check_e2e_prereqs(env: dict[str, str]) -> str | None:
     """
     if not shutil.which("mala"):
         return "E2E prereq missing: mala CLI not found in PATH"
-    if not shutil.which("bd"):
-        return "E2E prereq missing: bd CLI not found in PATH"
+    if not shutil.which("br"):
+        return "E2E prereq missing: br CLI not found in PATH"
     return None
 
 
@@ -223,8 +223,8 @@ def init_fixture_repo(
         ["git", "config", "user.name", "Mala E2E"],
         ["git", "add", "."],
         ["git", "commit", "-m", "initial"],
-        ["bd", "init"],
-        ["bd", "create", "Fix failing add() test", "-p", "1"],
+        ["br", "init"],
+        ["br", "create", "Fix failing add() test", "-p", "1"],
     ):
         result = runner.run(cmd, cwd=repo_path)
         if not result.ok:
@@ -253,7 +253,7 @@ def get_ready_issue_id(
     """
     runner = command_runner
 
-    result = runner.run(["bd", "ready", "--json"], cwd=repo_path)
+    result = runner.run(["br", "ready", "--json"], cwd=repo_path)
     if not result.ok:
         return None
     try:
@@ -294,4 +294,4 @@ def annotate_issue(
             "- uv run pytest",
         ]
     )
-    runner.run(["bd", "update", issue_id, "--notes", notes], cwd=repo_path)
+    runner.run(["br", "update", issue_id, "--notes", notes], cwd=repo_path)

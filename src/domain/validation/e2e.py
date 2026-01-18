@@ -161,9 +161,9 @@ class E2ERunner:
         if not shutil.which("mala"):
             missing.append("mala CLI not found in PATH")
 
-        # Check for bd CLI
-        if not shutil.which("bd"):
-            missing.append("bd CLI not found in PATH")
+        # Check for br CLI
+        if not shutil.which("br"):
+            missing.append("br CLI not found in PATH")
 
         # Check for Cerberus review-gate (required for E2E to test review flow)
         cerberus_bin = self.env_config.find_cerberus_bin_path()

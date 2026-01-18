@@ -831,12 +831,12 @@ class EpicVerifier:
         # Prefer bd epic status --eligible-only when supported; fall back to
         # full status and filter eligible_for_close.
         result = await self._runner.run_async(
-            ["bd", "epic", "status", "--eligible-only", "--json"],
+            ["br", "epic", "status", "--eligible-only", "--json"],
             cwd=self.repo_path,
         )
         if not result.ok:
             result = await self._runner.run_async(
-                ["bd", "epic", "status", "--json"], cwd=self.repo_path
+                ["br", "epic", "status", "--json"], cwd=self.repo_path
             )
         if not result.ok:
             return []
@@ -881,7 +881,7 @@ class EpicVerifier:
             Human-readable reason if ineligible, None if eligible or status unavailable.
         """
         result = await self._runner.run_async(
-            ["bd", "epic", "status", "--json"], cwd=self.repo_path
+            ["br", "epic", "status", "--json"], cwd=self.repo_path
         )
         if not result.ok:
             return None
@@ -1251,7 +1251,7 @@ This issue was auto-created by epic verification for epic `{epic_id}`.
     async def add_epic_blockers(
         self, epic_id: str, blocker_issue_ids: list[str]
     ) -> None:
-        """Add issues as blockers of the epic via bd dep add.
+        """Add issues as blockers of the epic via br dep add.
 
         Args:
             epic_id: The epic to block.
@@ -1259,6 +1259,6 @@ This issue was auto-created by epic verification for epic `{epic_id}`.
         """
         for blocker_id in blocker_issue_ids:
             await self._runner.run_async(
-                ["bd", "dep", "add", epic_id, "--blocked-by", blocker_id],
+                ["br", "dep", "add", epic_id, blocker_id],
                 cwd=self.repo_path,
             )

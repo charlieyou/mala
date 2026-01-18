@@ -545,7 +545,7 @@ class TestVerifyAndCloseEligible:
                 )
             if "list" in cmd and "--label" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="[]")
-            if cmd[:2] == ["bd", "create"]:
+            if cmd[:2] == ["br", "create"]:
                 created_issues.append("rem-1")
                 return CommandResult(
                     command=cmd,
@@ -750,7 +750,7 @@ class TestVerifyAndCloseEpic:
                 )
             if "list" in cmd and "--label" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="[]")
-            if cmd[:2] == ["bd", "create"]:
+            if cmd[:2] == ["br", "create"]:
                 created_issues.append("rem-1")
                 return CommandResult(
                     command=cmd,

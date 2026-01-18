@@ -83,7 +83,7 @@ class TestGetParentEpicAsync:
 
         assert result is None
         assert len(warnings) == 1
-        assert "bd dep tree failed" in warnings[0]
+        assert "br dep tree failed" in warnings[0]
 
     @pytest.mark.asyncio
     async def test_returns_none_on_invalid_json(self, tmp_path: Path) -> None:
@@ -1166,11 +1166,11 @@ class TestWipFallbackOnReadyFailure:
         beads = BeadsClient(tmp_path)
 
         async def mock_run_async(cmd: list[str]) -> CommandResult:
-            if cmd == ["bd", "ready", "--json", "-t", "task", "--limit", "0"]:
+            if cmd == ["br", "ready", "--json", "-t", "task", "--limit", "0"]:
                 # Simulate bd ready failure
                 return make_command_result(returncode=1, stderr="bd ready failed")
             if cmd == [
-                "bd",
+                "br",
                 "list",
                 "--status",
                 "in_progress",
@@ -1203,7 +1203,7 @@ class TestWipFallbackOnReadyFailure:
         beads = BeadsClient(tmp_path)
 
         async def mock_run_async(cmd: list[str]) -> CommandResult:
-            if cmd == ["bd", "ready", "--json", "-t", "task", "--limit", "0"]:
+            if cmd == ["br", "ready", "--json", "-t", "task", "--limit", "0"]:
                 # Simulate bd ready failure
                 return make_command_result(returncode=1, stderr="bd ready failed")
             return make_command_result(stdout="[]")
@@ -1228,7 +1228,7 @@ class TestFilterWipFromReadyOutput:
         beads = BeadsClient(tmp_path)
 
         async def mock_run_async(cmd: list[str]) -> CommandResult:
-            if cmd == ["bd", "ready", "--json", "-t", "task", "--limit", "0"]:
+            if cmd == ["br", "ready", "--json", "-t", "task", "--limit", "0"]:
                 # bd ready returns both open and in_progress issues
                 return make_command_result(
                     stdout=json.dumps(
@@ -1260,7 +1260,7 @@ class TestFilterWipFromReadyOutput:
         beads = BeadsClient(tmp_path)
 
         async def mock_run_async(cmd: list[str]) -> CommandResult:
-            if cmd == ["bd", "ready", "--json", "-t", "task", "--limit", "0"]:
+            if cmd == ["br", "ready", "--json", "-t", "task", "--limit", "0"]:
                 # bd ready returns both open and in_progress issues
                 return make_command_result(
                     stdout=json.dumps(
@@ -1271,7 +1271,7 @@ class TestFilterWipFromReadyOutput:
                     )
                 )
             if cmd == [
-                "bd",
+                "br",
                 "list",
                 "--status",
                 "in_progress",
@@ -1879,7 +1879,7 @@ class TestGetBlockedCountAsync:
 
         assert len(captured_cmds) == 1
         assert captured_cmds[0] == [
-            "bd",
+            "br",
             "list",
             "--status",
             "blocked",
@@ -1940,7 +1940,7 @@ class TestResetAsync:
             mp.setattr(beads, "_run_subprocess_async", capturing_run)
             await beads.reset_async("issue-1")
 
-        assert captured_cmds[0][0:4] == ["bd", "update", "issue-1", "--status"]
+        assert captured_cmds[0][0:4] == ["br", "update", "issue-1", "--status"]
         assert "ready" in captured_cmds[0]
 
     @pytest.mark.asyncio
@@ -2378,7 +2378,7 @@ class TestRunSubprocessAsyncTimeout:
         mock_runner = MagicMock(spec=CommandRunner)
         mock_runner.run_async = AsyncMock(
             return_value=CommandResult(
-                command=["bd", "test"],
+                command=["br", "test"],
                 returncode=1,
                 stdout="",
                 stderr="",
@@ -2388,7 +2388,7 @@ class TestRunSubprocessAsyncTimeout:
         )
         beads._runner = mock_runner
 
-        result = await beads._run_subprocess_async(["bd", "test"], timeout=30.0)
+        result = await beads._run_subprocess_async(["br", "test"], timeout=30.0)
 
         assert result.timed_out is True
         assert len(warnings) == 1

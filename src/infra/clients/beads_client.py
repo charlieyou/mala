@@ -1,7 +1,7 @@
-"""BeadsClient: Wrapper for bd CLI calls used by MalaOrchestrator.
+"""BeadsClient: Wrapper for br CLI calls used by MalaOrchestrator.
 
 This module provides an async-only client for interacting with the beads issue
-tracker via the bd CLI. All public methods are async to support non-blocking
+tracker via the br CLI. All public methods are async to support non-blocking
 concurrent execution in the orchestrator.
 
 Design note: This client intentionally provides only async implementations.
@@ -29,7 +29,7 @@ DEFAULT_COMMAND_TIMEOUT = 30.0
 
 
 class BeadsClient:
-    """Client for interacting with beads via the bd CLI."""
+    """Client for interacting with beads via the br CLI."""
 
     def __init__(
         self,
@@ -112,10 +112,10 @@ class BeadsClient:
             Set of issue IDs that are children of the epic.
         """
         result = await self._run_subprocess_async(
-            ["bd", "list", "--parent", epic_id, "--all", "--json"]
+            ["br", "list", "--parent", epic_id, "--all", "--json"]
         )
         if result.returncode != 0:
-            self._log_warning(f"bd list --parent failed for {epic_id}: {result.stderr}")
+            self._log_warning(f"br list --parent failed for {epic_id}: {result.stderr}")
             return set()
         try:
             issues = json.loads(result.stdout)
@@ -173,16 +173,16 @@ class BeadsClient:
     # ───────────────────────────────────────────────────────────────────────────
 
     async def fetch_ready_issues_async(self) -> tuple[list[dict[str, object]], bool]:
-        """Fetch ready issues from bd CLI (raw I/O, no processing).
+        """Fetch ready issues from br CLI (raw I/O, no processing).
 
         Returns:
             Tuple of (issues list, success flag). Returns ([], False) on error.
         """
         result = await self._run_subprocess_async(
-            ["bd", "ready", "--json", "-t", "task", "--limit", "0"]
+            ["br", "ready", "--json", "-t", "task", "--limit", "0"]
         )
         if result.returncode != 0:
-            self._log_warning(f"bd ready failed: {result.stderr}")
+            self._log_warning(f"br ready failed: {result.stderr}")
             return [], False
         try:
             issues = json.loads(result.stdout)
@@ -191,10 +191,10 @@ class BeadsClient:
             return [], False
 
     async def fetch_wip_issues_async(self) -> list[dict[str, object]]:
-        """Fetch in_progress issues from bd CLI (raw I/O, no processing)."""
+        """Fetch in_progress issues from br CLI (raw I/O, no processing)."""
         result = await self._run_subprocess_async(
             [
-                "bd",
+                "br",
                 "list",
                 "--status",
                 "in_progress",
@@ -241,7 +241,7 @@ class BeadsClient:
     # ───────────────────────────────────────────────────────────────────────────
 
     async def _fetch_base_issues(self) -> tuple[list[dict[str, object]], bool]:
-        """Fetch ready issues from bd CLI (pipeline step 1).
+        """Fetch ready issues from br CLI (pipeline step 1).
 
         Delegates to fetch_ready_issues_async for actual I/O.
         """
@@ -310,7 +310,7 @@ class BeadsClient:
         return IssueManager.sort_by_epic_groups(issues)
 
     async def _fetch_wip_issues(self) -> list[dict[str, object]]:
-        """Fetch in_progress issues from bd CLI."""
+        """Fetch in_progress issues from br CLI."""
         return await self.fetch_wip_issues_async()
 
     def _warn_missing_ids(
@@ -354,7 +354,7 @@ class BeadsClient:
             return []
         issues, ok = await self._fetch_base_issues()
         if not ok and not include_wip:
-            # WIP fallback: when include_wip=True, continue even if bd ready fails
+            # WIP fallback: when include_wip=True, continue even if br ready fails
             # so we can still return in-progress issues (intentional design)
             return []
         if include_wip:
@@ -362,8 +362,8 @@ class BeadsClient:
             wip = IssueManager.filter_blocked_wip(wip)
             issues = self._merge_wip_issues(issues, wip)
         else:
-            # Filter out in_progress issues from bd ready when --resume not passed
-            # bd ready returns both open and in_progress issues by default
+            # Filter out in_progress issues from br ready when --resume not passed
+            # br ready returns both open and in_progress issues by default
             issues = IssueManager.filter_wip_issues(issues)
         self._warn_missing_ids(only_ids, issues, suppress_warn_ids or set())
         filtered = self._apply_filters(issues, exclude_ids, epic_children, only_ids)
@@ -386,7 +386,7 @@ class BeadsClient:
         orphans_only: bool = False,
         order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
     ) -> list[str]:
-        """Get list of ready issue IDs via bd CLI, sorted by priority (async version).
+        """Get list of ready issue IDs via br CLI, sorted by priority (async version).
 
         Args:
             exclude_ids: Set of issue IDs to exclude from results.
@@ -469,7 +469,7 @@ class BeadsClient:
             True if successfully claimed, False otherwise.
         """
         result = await self._run_subprocess_async(
-            ["bd", "update", issue_id, "--status", "in_progress"]
+            ["br", "update", issue_id, "--status", "in_progress"]
         )
         return result.returncode == 0
 
@@ -483,7 +483,7 @@ class BeadsClient:
             log_path: Optional path to the JSONL log file from the failed attempt.
             error: Optional error summary describing the failure.
         """
-        args = ["bd", "update", issue_id, "--status", "ready"]
+        args = ["br", "update", issue_id, "--status", "ready"]
         if log_path or error:
             notes_parts = []
             if error:
@@ -502,7 +502,7 @@ class BeadsClient:
         Returns:
             The issue status string, or None if not found.
         """
-        result = await self._run_subprocess_async(["bd", "show", issue_id, "--json"])
+        result = await self._run_subprocess_async(["br", "show", issue_id, "--json"])
         if result.returncode != 0:
             return None
         try:
@@ -524,7 +524,7 @@ class BeadsClient:
         Returns:
             The issue description string, or None if not found.
         """
-        result = await self._run_subprocess_async(["bd", "show", issue_id, "--json"])
+        result = await self._run_subprocess_async(["br", "show", issue_id, "--json"])
         if result.returncode != 0:
             return None
         try:
@@ -558,7 +558,7 @@ class BeadsClient:
         """
         result = await self._run_subprocess_async(
             [
-                "bd",
+                "br",
                 "sync",
                 "--no-pull",
                 "--no-push",
@@ -574,7 +574,7 @@ class BeadsClient:
         Returns:
             True if any epics were closed, False otherwise.
         """
-        result = await self._run_subprocess_async(["bd", "epic", "close-eligible"])
+        result = await self._run_subprocess_async(["br", "epic", "close-eligible"])
         return result.returncode == 0 and bool(result.stdout.strip())
 
     async def mark_needs_followup_async(
@@ -595,7 +595,7 @@ class BeadsClient:
             notes += f"\nLog: {log_path}"
         result = await self._run_subprocess_async(
             [
-                "bd",
+                "br",
                 "update",
                 issue_id,
                 "--add-label",
@@ -615,7 +615,7 @@ class BeadsClient:
         Returns:
             True if successfully closed, False otherwise.
         """
-        result = await self._run_subprocess_async(["bd", "close", issue_id])
+        result = await self._run_subprocess_async(["br", "close", issue_id])
         return result.returncode == 0
 
     async def reopen_issue_async(self, issue_id: str) -> bool:
@@ -631,7 +631,7 @@ class BeadsClient:
             True if successfully reopened, False otherwise.
         """
         result = await self._run_subprocess_async(
-            ["bd", "update", issue_id, "--status", "open"]
+            ["br", "update", issue_id, "--status", "open"]
         )
         return result.returncode == 0
 
@@ -649,7 +649,7 @@ class BeadsClient:
             True if dependency added successfully, False otherwise.
         """
         result = await self._run_subprocess_async(
-            ["bd", "dep", "add", issue_id, depends_on_id]
+            ["br", "dep", "add", issue_id, depends_on_id]
         )
         return result.returncode == 0
 
@@ -661,7 +661,7 @@ class BeadsClient:
         tags: list[str] | None = None,
         parent_id: str | None = None,
     ) -> str | None:
-        """Create a new issue via bd CLI (async version).
+        """Create a new issue via br CLI (async version).
 
         Args:
             title: Issue title.
@@ -674,7 +674,7 @@ class BeadsClient:
             Created issue ID, or None on failure.
         """
         cmd = [
-            "bd",
+            "br",
             "create",
             "--title",
             title,
@@ -723,7 +723,7 @@ class BeadsClient:
             Issue ID if found, None otherwise.
         """
         result = await self._run_subprocess_async(
-            ["bd", "list", "--label", tag, "--json"]
+            ["br", "list", "--label", tag, "--json"]
         )
         if result.returncode != 0:
             return None
@@ -749,7 +749,7 @@ class BeadsClient:
             True if successfully updated, False otherwise.
         """
         result = await self._run_subprocess_async(
-            ["bd", "update", issue_id, "--description", description]
+            ["br", "update", issue_id, "--description", description]
         )
         return result.returncode == 0
 
@@ -773,7 +773,7 @@ class BeadsClient:
         if title is None and priority is None:
             return True  # Nothing to update
 
-        cmd = ["bd", "update", issue_id]
+        cmd = ["br", "update", issue_id]
         if title is not None:
             cmd.extend(["--title", title])
         if priority is not None:
@@ -785,7 +785,7 @@ class BeadsClient:
     async def get_parent_epic_async(self, issue_id: str) -> str | None:
         """Get the parent epic ID for an issue.
 
-        Uses `bd dep tree <id> --direction=down` to get the ancestor chain.
+        Uses `br dep tree <id>` to get the ancestor chain.
         The parent epic is the first ancestor with issue_type == "epic".
         Results are cached to avoid repeated subprocess calls.
 
@@ -810,10 +810,10 @@ class BeadsClient:
                 return self._parent_epic_cache[issue_id]
 
             result = await self._run_subprocess_async(
-                ["bd", "dep", "tree", issue_id, "--direction=down", "--json"]
+                ["br", "dep", "tree", issue_id, "--json"]
             )
             if result.returncode != 0:
-                self._log_warning(f"bd dep tree failed for {issue_id}: {result.stderr}")
+                self._log_warning(f"br dep tree failed for {issue_id}: {result.stderr}")
                 self._parent_epic_cache[issue_id] = None
                 return None
             try:
@@ -894,7 +894,7 @@ class BeadsClient:
         Returns:
             Set of issue IDs that are blocking the epic.
         """
-        result = await self._run_subprocess_async(["bd", "show", epic_id, "--json"])
+        result = await self._run_subprocess_async(["br", "show", epic_id, "--json"])
         if result.returncode != 0:
             return set()
 
@@ -945,7 +945,7 @@ class BeadsClient:
             if epic_id in self._blocked_epic_cache:
                 return self._blocked_epic_cache[epic_id]
 
-            result = await self._run_subprocess_async(["bd", "show", epic_id, "--json"])
+            result = await self._run_subprocess_async(["br", "show", epic_id, "--json"])
             if result.returncode != 0:
                 # If we can't get epic info, assume not blocked to avoid hiding tasks
                 self._blocked_epic_cache[epic_id] = False
@@ -994,13 +994,13 @@ class BeadsClient:
 
         Used by watch mode to report how many issues are blocked on
         dependencies or other conditions. Returns None if the count
-        cannot be determined (e.g., bd CLI failure).
+        cannot be determined (e.g., br CLI failure).
 
         Returns:
             Count of blocked issues, or None on error.
         """
         result = await self._run_subprocess_async(
-            ["bd", "list", "--status", "blocked", "--json", "-t", "task"]
+            ["br", "list", "--status", "blocked", "--json", "-t", "task"]
         )
         if result.returncode != 0:
             return None
