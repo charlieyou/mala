@@ -981,11 +981,20 @@ def create_orchestrator(
         if validation_config is not None
         else None
     )
-    # Compute timeout: cerberus uses cerberus.timeout, agent_sdk uses agent_sdk_timeout
+    # Compute timeout:
+    # - cerberus: use cerberus.timeout if config exists, else generic timeout
+    # - agent_sdk: use agent_sdk_timeout
+    # Generic timeout serves as fallback for cerberus when cerberus config is absent
     if epic_verifier_reviewer_type == "cerberus" and epic_verifier_cerberus_config:
         epic_verifier_timeout_seconds = epic_verifier_cerberus_config.timeout
+    elif epic_verifier_reviewer_type == "cerberus" and validation_config is not None:
+        # Cerberus without cerberus config: use generic timeout
+        epic_verifier_timeout_seconds = validation_config.epic_verification.timeout
     elif validation_config is not None:
-        epic_verifier_timeout_seconds = validation_config.epic_verification.agent_sdk_timeout
+        # agent_sdk: use agent_sdk_timeout
+        epic_verifier_timeout_seconds = (
+            validation_config.epic_verification.agent_sdk_timeout
+        )
     else:
         epic_verifier_timeout_seconds = 600  # default
 
