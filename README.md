@@ -23,9 +23,9 @@ LLM agents become unreliable as their context window fills up. Early in a sessio
 
 ## Prerequisites
 
-### Beads (`bd`)
+### Beads
 
-[Beads](https://github.com/steveyegge/beads) is the issue tracking system that agents pull work from. See the repo for installation instructions.
+[Beads](https://github.com/Dicklesworthstone/beads_rust) is the issue tracking system that agents pull work from. See the repo for installation instructions.
 
 ### Claude Code
 
