@@ -75,6 +75,17 @@ idle_timeout_seconds: float      # Optional. Idle timeout in seconds (default: d
 
 max_diff_size_kb: int            # Optional. Maximum diff size in KB for epic verification
 
+epic_verification:               # Optional. Epic verification backend selection
+  enabled: bool                  # Enable/disable epic verification (default: true)
+  reviewer_type: string          # "cerberus" or "agent_sdk" (default: agent_sdk)
+  timeout: int                   # Top-level timeout in seconds (default: 600)
+  max_retries: int               # Maximum retry attempts (default: 3)
+  failure_mode: string           # continue | abort | remediate (default: continue)
+  cerberus: object               # Cerberus-specific settings
+  agent_sdk_timeout: int         # Agent SDK timeout in seconds (default: 600)
+  agent_sdk_model: string        # sonnet | opus | haiku (default: sonnet)
+  retry_policy: object           # Per-category retry limits
+
 per_issue_review:                # Optional. Per-issue code review (disabled by default)
   enabled: bool                  # Enable/disable per-issue review (default: false)
   reviewer_type: string          # "cerberus" or "agent_sdk" (default: cerberus)
@@ -115,6 +126,23 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `max_idle_retries` | integer | No | Maximum idle timeout retries before aborting (default: 2). Set to 0 to disable retries. |
 | `idle_timeout_seconds` | float | No | Seconds to wait for SDK activity before triggering idle recovery (default: derived from `timeout_minutes`). Set to 0 to disable idle timeout. |
 | `max_diff_size_kb` | integer | No | Maximum diff size in KB for epic verification. Diffs larger than this limit will skip verification. |
+| `epic_verification` | object | No | Epic verification backend selection and retries |
+| `epic_verification.enabled` | boolean | No | Enable epic verification (default: `true`) |
+| `epic_verification.reviewer_type` | string | No | Reviewer type: `cerberus` or `agent_sdk` (default: `agent_sdk`) |
+| `epic_verification.timeout` | integer | No | Top-level timeout in seconds (default: 600) |
+| `epic_verification.max_retries` | integer | No | Maximum retry attempts (default: 3) |
+| `epic_verification.failure_mode` | string | No | Failure handling: `continue`, `abort`, `remediate` (default: `continue`) |
+| `epic_verification.cerberus` | object | No | Cerberus-specific settings (see below) |
+| `epic_verification.cerberus.timeout` | integer | No | Timeout in seconds (default: 300) |
+| `epic_verification.cerberus.spawn_args` | list | No | Additional arguments for spawn command |
+| `epic_verification.cerberus.wait_args` | list | No | Additional arguments for wait command |
+| `epic_verification.cerberus.env` | object | No | Environment variables as key-value pairs |
+| `epic_verification.agent_sdk_timeout` | integer | No | Agent SDK timeout in seconds (default: 600) |
+| `epic_verification.agent_sdk_model` | string | No | Agent SDK model: `sonnet`, `opus`, `haiku` (default: `sonnet`) |
+| `epic_verification.retry_policy` | object | No | Per-category retry limits |
+| `epic_verification.retry_policy.timeout_retries` | integer | No | Retry limit for timeouts (default: 3) |
+| `epic_verification.retry_policy.execution_retries` | integer | No | Retry limit for execution errors (default: 2) |
+| `epic_verification.retry_policy.parse_retries` | integer | No | Retry limit for parse errors (default: 1) |
 | `validation_triggers` | object | No | Trigger configuration. See [validation-triggers.md](validation-triggers.md) |
 | `evidence_check` | object | No | Evidence requirements for the quality gate |
 | `evidence_check.required` | list | No | List of command names that must appear in session logs |
@@ -134,6 +162,8 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `per_issue_review.agent_sdk_model` | string | No | Agent SDK model: `sonnet`, `opus`, `haiku` (default: `sonnet`) |
 
 *Required when `coverage` section is present.
+
+**Cerberus epic verification note:** When `epic_verification.reviewer_type: cerberus`, mala invokes `review-gate spawn-epic-verify` and `review-gate wait`. It automatically generates a `CLAUDE_SESSION_ID` scoped to the epic (epic ID prefix + random suffix), so you do not need to set it manually.
 
 ## Context Management
 

@@ -1,11 +1,11 @@
 """Cerberus epic verification adapter for mala orchestrator.
 
 This module provides CerberusEpicVerifier implementing the EpicVerificationModel
-protocol using the spawn-wait pattern with the review-gate CLI.
+protocol using the review-gate CLI spawn/wait flow.
 
 It handles:
-- CLI orchestration (spawn-epic-review + wait)
-- Context JSON file creation
+- CLI orchestration (spawn-epic-verify + wait)
+- Epic file creation for review-gate input
 - JSON response parsing to EpicVerdict
 - Error classification (timeout, execution, parse)
 
@@ -14,24 +14,20 @@ Subprocess management is delegated to CerberusGateCLI patterns.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import re
+import secrets
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
-
 from src.core.models import EpicVerdict, UnmetCriterion
+from src.infra.clients.cerberus_gate_cli import CerberusGateCLI
 from src.infra.tools.command_runner import CommandRunner
 
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
 logger = logging.getLogger(__name__)
-
-# Schema version for context JSON format
-CONTEXT_SCHEMA_VERSION = "1"
 
 
 class VerificationTimeoutError(Exception):
@@ -62,7 +58,7 @@ class CerberusEpicVerifier:
     This class conforms to the EpicVerificationModel protocol and provides
     epic verification using the Cerberus CLI spawn-wait pattern.
 
-    The verifier spawns `spawn-epic-review --context-json <path>` followed by
+    The verifier spawns `spawn-epic-verify <epic-file> [diff args]` followed by
     `wait`, then parses the JSON response to EpicVerdict.
 
     Attributes:
@@ -70,66 +66,71 @@ class CerberusEpicVerifier:
         bin_path: Optional path to directory containing review-gate binary.
             If None, uses bare "review-gate" from PATH.
         timeout: Timeout in seconds for the verification subprocess.
+        spawn_args: Additional arguments for spawn-epic-verify.
+        wait_args: Additional arguments for wait.
         env: Additional environment variables to merge with os.environ.
     """
 
     repo_path: Path
     bin_path: Path | None = None
     timeout: int = 300
+    spawn_args: tuple[str, ...] = ()
+    wait_args: tuple[str, ...] = ()
     env: dict[str, str] | None = None
 
-    def _review_gate_bin(self) -> str:
-        """Get the path to the review-gate binary."""
-        if self.bin_path is not None:
-            return str(self.bin_path / "review-gate")
-        return "review-gate"
+    @staticmethod
+    def _compute_criterion_hash(criterion: str) -> str:
+        """Compute SHA256 hash of criterion text for deduplication."""
+        return hashlib.sha256(criterion.encode()).hexdigest()
 
-    def _write_context_json(
-        self,
-        epic_id: str,
-        acceptance_criteria: str,
-        spec_content: str | None,
-        commit_range: str,
-        commit_list: Sequence[str],
-    ) -> Path:
-        """Write context JSON to a temporary file.
+    @staticmethod
+    def _generate_session_id(epic_id: str) -> str:
+        """Generate a CLAUDE_SESSION_ID for epic verification."""
+        cleaned = re.sub(r"[^a-zA-Z0-9]+", "-", epic_id).strip("-")
+        prefix = cleaned or "epic"
+        return f"{prefix}-{secrets.token_hex(6)}"
+
+    def _parse_commit_shas(self, commit_list: str) -> list[str]:
+        """Parse commit SHAs from a commit summary string.
 
         Args:
-            epic_id: The epic identifier.
-            acceptance_criteria: The epic's acceptance criteria text.
-            spec_content: Optional content of linked spec file.
-            commit_range: Commit range hint covering child issue commits.
-            commit_list: List of commit SHAs to inspect.
+            commit_list: Commit list or summary text (may include subjects).
 
         Returns:
-            Path to the temporary context JSON file.
+            Ordered list of unique commit SHAs.
         """
-        context = {
-            "epic_id": epic_id,
-            "acceptance_criteria": acceptance_criteria,
-            "spec_content": spec_content or "",
-            "commit_range": commit_range,
-            "commit_list": list(commit_list),
-            "schema_version": CONTEXT_SCHEMA_VERSION,
-        }
+        candidates = re.findall(r"\b[0-9a-f]{7,40}\b", commit_list)
+        seen: set[str] = set()
+        result: list[str] = []
+        for sha in candidates:
+            if sha not in seen:
+                seen.add(sha)
+                result.append(sha)
+        return result
 
-        # Create temp file in repo directory for locality
+    def _write_epic_file(self, epic_id: str, epic_text: str) -> Path:
+        """Write epic content to a temporary markdown file.
+
+        Args:
+            epic_id: Epic identifier (used in filename).
+            epic_text: Epic content text (contains acceptance criteria).
+
+        Returns:
+            Path to the temporary epic markdown file.
+        """
         fd, path = tempfile.mkstemp(
-            suffix=".json", prefix=f"epic-verify-{epic_id}-", dir=self.repo_path
+            suffix=".md", prefix=f"epic-verify-{epic_id}-", dir=self.repo_path
         )
         try:
-            # Use os.fdopen to convert fd to file object (fd is int, not path)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(context, f, indent=2)
+                f.write(epic_text)
         except Exception:
-            # Clean up on error
             Path(path).unlink(missing_ok=True)
             raise
-
         return Path(path)
 
-    def _parse_verdict_json(self, stdout: str) -> EpicVerdict:
-        """Parse JSON response into EpicVerdict.
+    def _parse_wait_output(self, stdout: str) -> EpicVerdict:
+        """Parse review-gate wait JSON into EpicVerdict.
 
         Args:
             stdout: Raw JSON output from the wait command.
@@ -139,11 +140,12 @@ class CerberusEpicVerifier:
 
         Raises:
             VerificationParseError: If JSON is invalid or missing required fields.
+            VerificationExecutionError: If review-gate returns error status.
+            VerificationTimeoutError: If review-gate reports a timeout status.
         """
         try:
             data = json.loads(stdout)
         except json.JSONDecodeError as e:
-            # Include first 500 bytes for debugging per R4 spec
             preview = stdout[:500] if stdout else "(empty)"
             raise VerificationParseError(
                 f"Invalid JSON response: {e}. Output preview: {preview}"
@@ -155,58 +157,71 @@ class CerberusEpicVerifier:
                 f"Expected JSON object, got {type(data).__name__}. Output preview: {preview}"
             )
 
-        # Extract required fields
-        try:
-            passed = data["passed"]
-            if not isinstance(passed, bool):
-                raise VerificationParseError(
-                    f"'passed' must be boolean, got {type(passed).__name__}"
-                )
+        status = data.get("status", "")
+        consensus = data.get("consensus_verdict", "")
+        parse_errors = data.get("parse_errors", [])
 
-            confidence = data.get("confidence", 0.0)
-            if not isinstance(confidence, (int, float)):
-                raise VerificationParseError(
-                    f"'confidence' must be number, got {type(confidence).__name__}"
-                )
+        if status == "timeout":
+            raise VerificationTimeoutError("wait returned timeout")
 
-            reasoning = data.get("reasoning", "")
-            if not isinstance(reasoning, str):
-                raise VerificationParseError(
-                    f"'reasoning' must be string, got {type(reasoning).__name__}"
-                )
+        if status in ("error", "no_reviewers"):
+            detail = "review-gate wait returned error status"
+            if isinstance(parse_errors, list) and parse_errors:
+                detail = f"{detail}: {parse_errors[:3]}"
+            raise VerificationExecutionError(detail)
 
-            unmet_criteria_raw = data.get("unmet_criteria", [])
-            if not isinstance(unmet_criteria_raw, list):
-                raise VerificationParseError(
-                    f"'unmet_criteria' must be array, got {type(unmet_criteria_raw).__name__}"
-                )
-
-            unmet_criteria: list[UnmetCriterion] = []
-            for i, item in enumerate(unmet_criteria_raw):
-                if not isinstance(item, dict):
-                    raise VerificationParseError(
-                        f"unmet_criteria[{i}] must be object, got {type(item).__name__}"
-                    )
-                unmet_criteria.append(
-                    UnmetCriterion(
-                        criterion=str(item.get("criterion", "")),
-                        evidence=str(item.get("evidence", "")),
-                        priority=int(item.get("priority", 1)),
-                        criterion_hash=str(item.get("criterion_hash", "")),
-                    )
-                )
-
-            return EpicVerdict(
-                passed=passed,
-                unmet_criteria=unmet_criteria,
-                confidence=float(confidence),
-                reasoning=reasoning,
+        if not consensus:
+            raise VerificationExecutionError(
+                "review-gate wait returned no consensus verdict"
             )
 
-        except KeyError as e:
-            raise VerificationParseError(f"Missing required field: {e}") from e
-        except (ValueError, TypeError) as e:
-            raise VerificationParseError(f"Invalid field value: {e}") from e
+        if consensus == "ERROR":
+            detail = "review-gate consensus ERROR"
+            if isinstance(parse_errors, list) and parse_errors:
+                detail = f"{detail}: {parse_errors[:3]}"
+            raise VerificationExecutionError(detail)
+
+        findings = data.get("aggregated_findings", [])
+        if not isinstance(findings, list):
+            raise VerificationParseError(
+                f"'aggregated_findings' must be array, got {type(findings).__name__}"
+            )
+
+        unmet_criteria: list[UnmetCriterion] = []
+        for i, item in enumerate(findings):
+            if not isinstance(item, dict):
+                raise VerificationParseError(
+                    f"aggregated_findings[{i}] must be object, got {type(item).__name__}"
+                )
+            title = str(item.get("title", "")).strip()
+            body = str(item.get("body", "")).strip()
+            criterion = title or body or "Unspecified criterion"
+            priority_val = item.get("priority", 1)
+            try:
+                priority = int(priority_val)
+            except (TypeError, ValueError):
+                priority = 1
+            priority = max(0, min(3, priority))
+            unmet_criteria.append(
+                UnmetCriterion(
+                    criterion=criterion,
+                    evidence=body,
+                    priority=priority,
+                    criterion_hash=self._compute_criterion_hash(criterion),
+                )
+            )
+
+        passed = consensus == "PASS"
+        reasoning = f"Cerberus epic verification consensus {consensus}."
+        if isinstance(parse_errors, list) and parse_errors:
+            reasoning = f"{reasoning} Parse errors present for some reviewers."
+
+        return EpicVerdict(
+            passed=passed,
+            unmet_criteria=unmet_criteria,
+            confidence=1.0 if passed else 0.0,
+            reasoning=reasoning,
+        )
 
     async def verify(
         self,
@@ -237,82 +252,96 @@ class CerberusEpicVerifier:
             VerificationExecutionError: If subprocess returns non-zero exit.
             VerificationParseError: If response JSON cannot be parsed.
         """
-        # Parse commit list from comma-separated string
-        commits = [c.strip() for c in commit_list.split(",") if c.strip()]
+        _ = spec_content  # spec_content is inferred by review-gate from epic file
+        commit_shas = self._parse_commit_shas(commit_list)
+        diff_args: list[str] = []
+        if commit_shas:
+            diff_args = ["--commit", *commit_shas]
+        elif commit_range:
+            diff_args = [commit_range]
+        else:
+            diff_args = ["--uncommitted"]
 
-        # Write context JSON to temp file
-        context_path = self._write_context_json(
-            epic_id=epic_id,
-            acceptance_criteria=epic_criteria,
-            spec_content=spec_content,
-            commit_range=commit_range,
-            commit_list=commits,
-        )
+        epic_path = self._write_epic_file(epic_id or "epic", epic_criteria)
 
         try:
+            cli = CerberusGateCLI(
+                repo_path=self.repo_path,
+                bin_path=self.bin_path,
+                env=self.env or {},
+            )
+
+            validation_error = cli.validate_binary()
+            if validation_error is not None:
+                raise VerificationExecutionError(validation_error)
+
             runner = CommandRunner(cwd=self.repo_path)
-            # Merge self.env with os.environ to preserve PATH and other required vars
-            env = dict(os.environ)
-            if self.env:
-                env.update(self.env)
+            session_id = self._generate_session_id(epic_id or "epic")
+            env = cli.build_env(claude_session_id=session_id)
 
-            # Step 1: Spawn epic review
-            spawn_cmd = [
-                self._review_gate_bin(),
-                "spawn-epic-review",
-                "--context-json",
-                str(context_path),
-            ]
-
-            logger.info("Spawning epic review: %s", " ".join(spawn_cmd))
-            spawn_result = await runner.run_async(
-                spawn_cmd, env=env, timeout=self.timeout
+            # Step 1: Spawn epic verification
+            logger.info("Spawning epic verification via review-gate")
+            spawn_result = await cli.spawn_epic_verify(
+                runner=runner,
+                env=env,
+                timeout=self.timeout,
+                epic_path=epic_path,
+                diff_args=diff_args,
+                spawn_args=self.spawn_args,
             )
 
             if spawn_result.timed_out:
                 raise VerificationTimeoutError(
-                    f"spawn-epic-review timed out after {self.timeout}s"
+                    f"spawn-epic-verify timed out after {self.timeout}s"
                 )
 
-            if spawn_result.returncode != 0:
-                stderr = spawn_result.stderr_tail()
-                stdout = spawn_result.stdout_tail()
-                detail = stderr or stdout or "spawn failed"
-                raise VerificationExecutionError(
-                    f"spawn-epic-review failed (exit {spawn_result.returncode}): {detail}"
-                )
+            if not spawn_result.success:
+                if spawn_result.already_active:
+                    resolve_result = await cli.resolve_gate(runner, env)
+                    if resolve_result.success:
+                        spawn_result = await cli.spawn_epic_verify(
+                            runner=runner,
+                            env=env,
+                            timeout=self.timeout,
+                            epic_path=epic_path,
+                            diff_args=diff_args,
+                            spawn_args=self.spawn_args,
+                        )
+                        if spawn_result.timed_out:
+                            raise VerificationTimeoutError(
+                                f"spawn-epic-verify timed out after {self.timeout}s"
+                            )
+                        if not spawn_result.success:
+                            raise VerificationExecutionError(
+                                f"spawn failed: {spawn_result.error_detail}"
+                            )
+                    else:
+                        raise VerificationExecutionError(
+                            "spawn failed: "
+                            f"{spawn_result.error_detail} "
+                            f"(auto-resolve failed: {resolve_result.error_detail})"
+                        )
+                else:
+                    raise VerificationExecutionError(
+                        f"spawn failed: {spawn_result.error_detail}"
+                    )
 
             # Step 2: Wait for review completion
-            wait_cmd = [
-                self._review_gate_bin(),
-                "wait",
-                "--json",
-                "--timeout",
-                str(self.timeout),
-            ]
-
-            logger.info("Waiting for epic review: %s", " ".join(wait_cmd))
-            # Use timeout + grace period for subprocess
-            wait_result = await runner.run_async(
-                wait_cmd, env=env, timeout=self.timeout + 30
+            user_timeout = CerberusGateCLI.extract_wait_timeout(self.wait_args)
+            wait_result = await cli.wait_for_review(
+                session_id=session_id,
+                runner=runner,
+                env=env,
+                cli_timeout=self.timeout,
+                wait_args=self.wait_args,
+                user_timeout=user_timeout,
             )
 
-            if wait_result.timed_out:
-                raise VerificationTimeoutError(
-                    f"wait timed out after {self.timeout + 30}s"
-                )
-
-            if wait_result.returncode != 0:
-                stderr = wait_result.stderr_tail()
-                stdout = wait_result.stdout_tail()
-                detail = stderr or stdout or "wait failed"
-                raise VerificationExecutionError(
-                    f"wait failed (exit {wait_result.returncode}): {detail}"
-                )
+            if wait_result.timed_out or wait_result.returncode == 3:
+                raise VerificationTimeoutError(f"wait timed out after {self.timeout}s")
 
             # Step 3: Parse JSON response
-            return self._parse_verdict_json(wait_result.stdout)
+            return self._parse_wait_output(wait_result.stdout)
 
         finally:
-            # Clean up temp file
-            context_path.unlink(missing_ok=True)
+            epic_path.unlink(missing_ok=True)

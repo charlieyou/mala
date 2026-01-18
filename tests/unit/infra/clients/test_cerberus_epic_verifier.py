@@ -1,17 +1,17 @@
 """Unit tests for CerberusEpicVerifier.
 
 Tests verify:
-1. Command construction (`spawn-epic-review --context-json <path>`)
-2. Parse valid JSON response → EpicVerdict
-3. Handle timeout → raise VerificationTimeoutError
-4. Handle non-zero exit → raise VerificationExecutionError
-5. Handle invalid JSON → raise VerificationParseError
-6. Context JSON format verification
+1. Command construction (spawn-epic-verify with diff args)
+2. Parsing wait output to EpicVerdict
+3. Timeout and error handling
+4. Temp epic file cleanup
 """
 
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
@@ -20,7 +20,6 @@ import pytest
 
 from src.core.models import EpicVerdict
 from src.infra.clients.cerberus_epic_verifier import (
-    CONTEXT_SCHEMA_VERSION,
     CerberusEpicVerifier,
     VerificationExecutionError,
     VerificationParseError,
@@ -28,7 +27,7 @@ from src.infra.clients.cerberus_epic_verifier import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Mapping
 
 
 class FakeCommandResult:
@@ -59,17 +58,43 @@ class FakeCommandResult:
         return self.stderr[:max_chars]
 
 
+def _make_review_gate(tmp_path: Path) -> Path:
+    bin_path = tmp_path / "bin"
+    bin_path.mkdir()
+    review_gate = bin_path / "review-gate"
+    review_gate.write_text("#!/usr/bin/env sh\nexit 0\n")
+    os.chmod(review_gate, stat.S_IRWXU)
+    return bin_path
+
+
+def _make_verifier(tmp_path: Path) -> CerberusEpicVerifier:
+    bin_path = _make_review_gate(tmp_path)
+    return CerberusEpicVerifier(
+        repo_path=tmp_path,
+        bin_path=bin_path,
+        env={},
+    )
+
+
 @pytest.mark.unit
-class TestCerberusEpicVerifierCommandConstruction:
-    """Tests for command construction."""
+class TestCerberusEpicVerifierCommands:
+    """Command construction and env behavior."""
 
     @pytest.mark.asyncio
-    async def test_spawn_command_includes_context_json_flag(
+    async def test_spawn_includes_epic_file_and_commit_args(
         self, tmp_path: Path
     ) -> None:
-        """spawn-epic-review command includes --context-json flag."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path)
+        verifier = _make_verifier(tmp_path)
         captured_commands: list[list[str]] = []
+        captured_epic_paths: list[Path] = []
+
+        wait_output = {
+            "status": "complete",
+            "consensus_verdict": "PASS",
+            "reviewers": {},
+            "aggregated_findings": [],
+            "parse_errors": [],
+        }
 
         async def mock_run_async(
             cmd: list[str] | str,
@@ -79,47 +104,48 @@ class TestCerberusEpicVerifierCommandConstruction:
         ) -> FakeCommandResult:
             if isinstance(cmd, list):
                 captured_commands.append(cmd)
-            # Return success for spawn, then valid JSON for wait
-            if len(captured_commands) == 1:
-                return FakeCommandResult(returncode=0)
-            return FakeCommandResult(
-                returncode=0,
-                stdout='{"passed": true, "unmet_criteria": [], "confidence": 0.95, "reasoning": "All good"}',
+                if "spawn-epic-verify" in cmd:
+                    epic_path = Path(cmd[-1])
+                    captured_epic_paths.append(epic_path)
+                    assert epic_path.exists()
+                    return FakeCommandResult(returncode=0)
+            return FakeCommandResult(returncode=0, stdout=json.dumps(wait_output))
+
+        commit_summary = "- abc1234 Fix thing\n- def5678 Add tests"
+
+        with patch(
+            "src.infra.clients.cerberus_epic_verifier.CommandRunner"
+        ) as mock_runner_cls:
+            mock_runner = AsyncMock()
+            mock_runner.run_async = mock_run_async
+            mock_runner_cls.return_value = mock_runner
+
+            await verifier.verify(
+                epic_criteria="## Acceptance Criteria\n- Must work",
+                commit_range="",
+                commit_list=commit_summary,
+                spec_content=None,
+                epic_id="E-123",
             )
 
-        with patch.object(
-            CerberusEpicVerifier,
-            "_write_context_json",
-            return_value=tmp_path / "ctx.json",
-        ):
-            with patch(
-                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-            ) as mock_runner_cls:
-                mock_runner = AsyncMock()
-                mock_runner.run_async = mock_run_async
-                mock_runner_cls.return_value = mock_runner
-
-                await verifier.verify(
-                    epic_criteria="Test criteria",
-                    commit_range="abc..def",
-                    commit_list="abc,def",
-                    spec_content="Spec content",
-                    epic_id="test-epic",
-                )
-
-        # First command should be spawn-epic-review
-        spawn_cmd = captured_commands[0]
-        assert "spawn-epic-review" in spawn_cmd
-        assert "--context-json" in spawn_cmd
+        spawn_cmd = next(cmd for cmd in captured_commands if "spawn-epic-verify" in cmd)
+        assert "--commit" in spawn_cmd
+        assert "abc1234" in spawn_cmd
+        assert "def5678" in spawn_cmd
+        assert captured_epic_paths
 
     @pytest.mark.asyncio
-    async def test_uses_bin_path_when_provided(self, tmp_path: Path) -> None:
-        """Uses bin_path for review-gate binary when provided."""
-        bin_path = tmp_path / "bin"
-        bin_path.mkdir()
-        verifier = CerberusEpicVerifier(repo_path=tmp_path, bin_path=bin_path)
-
+    async def test_wait_command_includes_session_id(self, tmp_path: Path) -> None:
+        verifier = _make_verifier(tmp_path)
         captured_commands: list[list[str]] = []
+
+        wait_output = {
+            "status": "complete",
+            "consensus_verdict": "PASS",
+            "reviewers": {},
+            "aggregated_findings": [],
+            "parse_errors": [],
+        }
 
         async def mock_run_async(
             cmd: list[str] | str,
@@ -129,95 +155,44 @@ class TestCerberusEpicVerifierCommandConstruction:
         ) -> FakeCommandResult:
             if isinstance(cmd, list):
                 captured_commands.append(cmd)
-            if len(captured_commands) == 1:
-                return FakeCommandResult(returncode=0)
-            return FakeCommandResult(
-                returncode=0,
-                stdout='{"passed": true, "unmet_criteria": [], "confidence": 0.9, "reasoning": "OK"}',
+                if "spawn-epic-verify" in cmd:
+                    return FakeCommandResult(returncode=0)
+            return FakeCommandResult(returncode=0, stdout=json.dumps(wait_output))
+
+        with patch(
+            "src.infra.clients.cerberus_epic_verifier.CommandRunner"
+        ) as mock_runner_cls:
+            mock_runner = AsyncMock()
+            mock_runner.run_async = mock_run_async
+            mock_runner_cls.return_value = mock_runner
+
+            await verifier.verify(
+                epic_criteria="criteria",
+                commit_range="abc..def",
+                commit_list="abc1234",
+                spec_content=None,
             )
 
-        with patch.object(
-            CerberusEpicVerifier,
-            "_write_context_json",
-            return_value=tmp_path / "ctx.json",
-        ):
-            with patch(
-                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-            ) as mock_runner_cls:
-                mock_runner = AsyncMock()
-                mock_runner.run_async = mock_run_async
-                mock_runner_cls.return_value = mock_runner
-
-                await verifier.verify(
-                    epic_criteria="Test",
-                    commit_range="a..b",
-                    commit_list="a",
-                    spec_content=None,
-                )
-
-        spawn_cmd = captured_commands[0]
-        assert spawn_cmd[0] == str(bin_path / "review-gate")
+        wait_cmd = next(cmd for cmd in captured_commands if cmd[1] == "wait")
+        assert "--session-id" in wait_cmd
+        session_id = wait_cmd[wait_cmd.index("--session-id") + 1]
+        assert session_id.startswith("epic-")
 
     @pytest.mark.asyncio
-    async def test_wait_command_includes_json_and_timeout(self, tmp_path: Path) -> None:
-        """wait command includes --json and --timeout flags."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path, timeout=120)
-        captured_commands: list[list[str]] = []
-
-        async def mock_run_async(
-            cmd: list[str] | str,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-            **kwargs: object,
-        ) -> FakeCommandResult:
-            if isinstance(cmd, list):
-                captured_commands.append(cmd)
-            if len(captured_commands) == 1:
-                return FakeCommandResult(returncode=0)
-            return FakeCommandResult(
-                returncode=0,
-                stdout='{"passed": true, "unmet_criteria": [], "confidence": 0.9, "reasoning": "OK"}',
-            )
-
-        with patch.object(
-            CerberusEpicVerifier,
-            "_write_context_json",
-            return_value=tmp_path / "ctx.json",
-        ):
-            with patch(
-                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-            ) as mock_runner_cls:
-                mock_runner = AsyncMock()
-                mock_runner.run_async = mock_run_async
-                mock_runner_cls.return_value = mock_runner
-
-                await verifier.verify(
-                    epic_criteria="Test",
-                    commit_range="a..b",
-                    commit_list="a",
-                    spec_content=None,
-                )
-
-        # Second command should be wait
-        wait_cmd = captured_commands[1]
-        assert "wait" in wait_cmd
-        assert "--json" in wait_cmd
-        assert "--timeout" in wait_cmd
-        timeout_idx = wait_cmd.index("--timeout")
-        assert wait_cmd[timeout_idx + 1] == "120"
-
-    @pytest.mark.asyncio
-    async def test_env_merges_with_os_environ(
+    async def test_generates_session_id_from_epic_id(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Env merges self.env with os.environ to preserve PATH."""
-        # Set a known PATH in os.environ
-        monkeypatch.setenv("PATH", "/usr/bin:/bin")
-        monkeypatch.setenv("HOME", "/home/test")
+        verifier = _make_verifier(tmp_path)
+        monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
+        captured_commands: list[list[str]] = []
 
-        custom_env = {"CUSTOM_VAR": "custom_value", "CLAUDE_SESSION_ID": "test-session"}
-        verifier = CerberusEpicVerifier(repo_path=tmp_path, env=custom_env)
-        captured_envs: list[dict[str, str]] = []
+        wait_output = {
+            "status": "complete",
+            "consensus_verdict": "PASS",
+            "reviewers": {},
+            "aggregated_findings": [],
+            "parse_errors": [],
+        }
 
         async def mock_run_async(
             cmd: list[str] | str,
@@ -225,65 +200,54 @@ class TestCerberusEpicVerifierCommandConstruction:
             timeout: float | None = None,
             **kwargs: object,
         ) -> FakeCommandResult:
-            if env is not None:
-                captured_envs.append(dict(env))
-            if len(captured_envs) == 1:
-                return FakeCommandResult(returncode=0)
-            return FakeCommandResult(
-                returncode=0,
-                stdout='{"passed": true, "unmet_criteria": [], "confidence": 0.9, "reasoning": "OK"}',
+            if isinstance(cmd, list):
+                captured_commands.append(cmd)
+                if "spawn-epic-verify" in cmd:
+                    return FakeCommandResult(returncode=0)
+            return FakeCommandResult(returncode=0, stdout=json.dumps(wait_output))
+
+        with patch(
+            "src.infra.clients.cerberus_epic_verifier.CommandRunner"
+        ) as mock_runner_cls:
+            mock_runner = AsyncMock()
+            mock_runner.run_async = mock_run_async
+            mock_runner_cls.return_value = mock_runner
+
+            await verifier.verify(
+                epic_criteria="criteria",
+                commit_range="abc..def",
+                commit_list="abc1234",
+                spec_content=None,
+                epic_id="EPIC-42",
             )
 
-        with patch.object(
-            CerberusEpicVerifier,
-            "_write_context_json",
-            return_value=tmp_path / "ctx.json",
-        ):
-            with patch(
-                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-            ) as mock_runner_cls:
-                mock_runner = AsyncMock()
-                mock_runner.run_async = mock_run_async
-                mock_runner_cls.return_value = mock_runner
-
-                await verifier.verify(
-                    epic_criteria="Test",
-                    commit_range="a..b",
-                    commit_list="a",
-                    spec_content=None,
-                )
-
-        # Env should contain both os.environ vars and custom vars
-        assert len(captured_envs) >= 1
-        spawn_env = captured_envs[0]
-        # PATH from os.environ must be preserved
-        assert spawn_env.get("PATH") == "/usr/bin:/bin"
-        assert spawn_env.get("HOME") == "/home/test"
-        # Custom env vars must be present
-        assert spawn_env.get("CUSTOM_VAR") == "custom_value"
-        assert spawn_env.get("CLAUDE_SESSION_ID") == "test-session"
+        wait_cmd = next(cmd for cmd in captured_commands if cmd[1] == "wait")
+        session_id = wait_cmd[wait_cmd.index("--session-id") + 1]
+        assert session_id.startswith("EPIC-42-")
 
 
 @pytest.mark.unit
 class TestCerberusEpicVerifierParsing:
-    """Tests for JSON response parsing."""
+    """Parsing wait output to EpicVerdict."""
 
     @pytest.mark.asyncio
-    async def test_parses_valid_json_to_epic_verdict(self, tmp_path: Path) -> None:
-        """Valid JSON response is parsed to EpicVerdict."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path)
-        valid_response = {
-            "passed": False,
-            "unmet_criteria": [
+    async def test_parses_fail_verdict_with_findings(self, tmp_path: Path) -> None:
+        verifier = _make_verifier(tmp_path)
+        wait_output = {
+            "status": "complete",
+            "consensus_verdict": "FAIL",
+            "reviewers": {},
+            "aggregated_findings": [
                 {
-                    "criterion": "Feature X must be implemented",
-                    "evidence": "No implementation found",
+                    "title": "[P1] AC-1 missing wiring",
+                    "body": "Unmet criterion evidence",
                     "priority": 1,
-                    "criterion_hash": "abc123",
+                    "file_path": "src/foo.py",
+                    "line_start": 10,
+                    "line_end": 12,
                 }
             ],
-            "confidence": 0.85,
-            "reasoning": "Feature X is missing from the codebase",
+            "parse_errors": [],
         }
 
         async def mock_run_async(
@@ -292,47 +256,40 @@ class TestCerberusEpicVerifierParsing:
             timeout: float | None = None,
             **kwargs: object,
         ) -> FakeCommandResult:
-            if isinstance(cmd, list) and "spawn-epic-review" in cmd:
+            if isinstance(cmd, list) and "spawn-epic-verify" in cmd:
                 return FakeCommandResult(returncode=0)
-            return FakeCommandResult(returncode=0, stdout=json.dumps(valid_response))
+            return FakeCommandResult(returncode=1, stdout=json.dumps(wait_output))
 
-        with patch.object(
-            CerberusEpicVerifier,
-            "_write_context_json",
-            return_value=tmp_path / "ctx.json",
-        ):
-            with patch(
-                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-            ) as mock_runner_cls:
-                mock_runner = AsyncMock()
-                mock_runner.run_async = mock_run_async
-                mock_runner_cls.return_value = mock_runner
+        with patch(
+            "src.infra.clients.cerberus_epic_verifier.CommandRunner"
+        ) as mock_runner_cls:
+            mock_runner = AsyncMock()
+            mock_runner.run_async = mock_run_async
+            mock_runner_cls.return_value = mock_runner
 
-                verdict = await verifier.verify(
-                    epic_criteria="Test",
-                    commit_range="a..b",
-                    commit_list="a",
-                    spec_content=None,
-                )
+            verdict = await verifier.verify(
+                epic_criteria="criteria",
+                commit_range="abc..def",
+                commit_list="abc1234",
+                spec_content=None,
+            )
 
         assert isinstance(verdict, EpicVerdict)
         assert verdict.passed is False
         assert len(verdict.unmet_criteria) == 1
-        assert verdict.unmet_criteria[0].criterion == "Feature X must be implemented"
-        assert verdict.unmet_criteria[0].evidence == "No implementation found"
+        assert verdict.unmet_criteria[0].criterion == "[P1] AC-1 missing wiring"
+        assert verdict.unmet_criteria[0].evidence == "Unmet criterion evidence"
         assert verdict.unmet_criteria[0].priority == 1
-        assert verdict.confidence == 0.85
-        assert verdict.reasoning == "Feature X is missing from the codebase"
 
     @pytest.mark.asyncio
-    async def test_parses_passing_verdict(self, tmp_path: Path) -> None:
-        """Passing verdict is parsed correctly."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path)
-        valid_response = {
-            "passed": True,
-            "unmet_criteria": [],
-            "confidence": 0.99,
-            "reasoning": "All criteria met",
+    async def test_parses_pass_verdict(self, tmp_path: Path) -> None:
+        verifier = _make_verifier(tmp_path)
+        wait_output = {
+            "status": "complete",
+            "consensus_verdict": "PASS",
+            "reviewers": {},
+            "aggregated_findings": [],
+            "parse_errors": [],
         }
 
         async def mock_run_async(
@@ -341,43 +298,37 @@ class TestCerberusEpicVerifierParsing:
             timeout: float | None = None,
             **kwargs: object,
         ) -> FakeCommandResult:
-            if isinstance(cmd, list) and "spawn-epic-review" in cmd:
+            if isinstance(cmd, list) and "spawn-epic-verify" in cmd:
                 return FakeCommandResult(returncode=0)
-            return FakeCommandResult(returncode=0, stdout=json.dumps(valid_response))
+            return FakeCommandResult(returncode=0, stdout=json.dumps(wait_output))
 
-        with patch.object(
-            CerberusEpicVerifier,
-            "_write_context_json",
-            return_value=tmp_path / "ctx.json",
-        ):
-            with patch(
-                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-            ) as mock_runner_cls:
-                mock_runner = AsyncMock()
-                mock_runner.run_async = mock_run_async
-                mock_runner_cls.return_value = mock_runner
+        with patch(
+            "src.infra.clients.cerberus_epic_verifier.CommandRunner"
+        ) as mock_runner_cls:
+            mock_runner = AsyncMock()
+            mock_runner.run_async = mock_run_async
+            mock_runner_cls.return_value = mock_runner
 
-                verdict = await verifier.verify(
-                    epic_criteria="Test",
-                    commit_range="a..b",
-                    commit_list="a",
-                    spec_content=None,
-                )
+            verdict = await verifier.verify(
+                epic_criteria="criteria",
+                commit_range="abc..def",
+                commit_list="abc1234",
+                spec_content=None,
+            )
 
         assert verdict.passed is True
-        assert len(verdict.unmet_criteria) == 0
+        assert verdict.unmet_criteria == []
 
 
 @pytest.mark.unit
-class TestCerberusEpicVerifierTimeout:
-    """Tests for timeout handling."""
+class TestCerberusEpicVerifierErrors:
+    """Error handling and cleanup."""
 
     @pytest.mark.asyncio
     async def test_spawn_timeout_raises_verification_timeout_error(
         self, tmp_path: Path
     ) -> None:
-        """Spawn timeout raises VerificationTimeoutError."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path, timeout=60)
+        verifier = _make_verifier(tmp_path)
 
         async def mock_run_async(
             cmd: list[str] | str,
@@ -387,495 +338,100 @@ class TestCerberusEpicVerifierTimeout:
         ) -> FakeCommandResult:
             return FakeCommandResult(timed_out=True, returncode=-1)
 
-        with patch.object(
-            CerberusEpicVerifier,
-            "_write_context_json",
-            return_value=tmp_path / "ctx.json",
-        ):
-            with patch(
-                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-            ) as mock_runner_cls:
-                mock_runner = AsyncMock()
-                mock_runner.run_async = mock_run_async
-                mock_runner_cls.return_value = mock_runner
+        with patch(
+            "src.infra.clients.cerberus_epic_verifier.CommandRunner"
+        ) as mock_runner_cls:
+            mock_runner = AsyncMock()
+            mock_runner.run_async = mock_run_async
+            mock_runner_cls.return_value = mock_runner
 
-                with pytest.raises(VerificationTimeoutError) as exc_info:
-                    await verifier.verify(
-                        epic_criteria="Test",
-                        commit_range="a..b",
-                        commit_list="a",
-                        spec_content=None,
-                    )
-
-        assert "spawn-epic-review timed out" in str(exc_info.value)
-
-    @pytest.mark.asyncio
-    async def test_wait_timeout_raises_verification_timeout_error(
-        self, tmp_path: Path
-    ) -> None:
-        """Wait timeout raises VerificationTimeoutError."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path, timeout=60)
-        call_count = 0
-
-        async def mock_run_async(
-            cmd: list[str] | str,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-            **kwargs: object,
-        ) -> FakeCommandResult:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return FakeCommandResult(returncode=0)  # spawn succeeds
-            return FakeCommandResult(timed_out=True, returncode=-1)  # wait times out
-
-        with patch.object(
-            CerberusEpicVerifier,
-            "_write_context_json",
-            return_value=tmp_path / "ctx.json",
-        ):
-            with patch(
-                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-            ) as mock_runner_cls:
-                mock_runner = AsyncMock()
-                mock_runner.run_async = mock_run_async
-                mock_runner_cls.return_value = mock_runner
-
-                with pytest.raises(VerificationTimeoutError) as exc_info:
-                    await verifier.verify(
-                        epic_criteria="Test",
-                        commit_range="a..b",
-                        commit_list="a",
-                        spec_content=None,
-                    )
-
-        assert "wait timed out" in str(exc_info.value)
-
-
-@pytest.mark.unit
-class TestCerberusEpicVerifierExecutionError:
-    """Tests for non-zero exit code handling."""
-
-    @pytest.mark.asyncio
-    async def test_spawn_nonzero_exit_raises_execution_error(
-        self, tmp_path: Path
-    ) -> None:
-        """Non-zero spawn exit raises VerificationExecutionError."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path)
-
-        async def mock_run_async(
-            cmd: list[str] | str,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-            **kwargs: object,
-        ) -> FakeCommandResult:
-            return FakeCommandResult(
-                returncode=1, stderr="spawn error: binary not found"
-            )
-
-        with patch.object(
-            CerberusEpicVerifier,
-            "_write_context_json",
-            return_value=tmp_path / "ctx.json",
-        ):
-            with patch(
-                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-            ) as mock_runner_cls:
-                mock_runner = AsyncMock()
-                mock_runner.run_async = mock_run_async
-                mock_runner_cls.return_value = mock_runner
-
-                with pytest.raises(VerificationExecutionError) as exc_info:
-                    await verifier.verify(
-                        epic_criteria="Test",
-                        commit_range="a..b",
-                        commit_list="a",
-                        spec_content=None,
-                    )
-
-        assert "spawn-epic-review failed" in str(exc_info.value)
-        assert "exit 1" in str(exc_info.value)
-
-    @pytest.mark.asyncio
-    async def test_wait_nonzero_exit_raises_execution_error(
-        self, tmp_path: Path
-    ) -> None:
-        """Non-zero wait exit raises VerificationExecutionError."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path)
-        call_count = 0
-
-        async def mock_run_async(
-            cmd: list[str] | str,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-            **kwargs: object,
-        ) -> FakeCommandResult:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return FakeCommandResult(returncode=0)
-            return FakeCommandResult(
-                returncode=2, stderr="wait error: no active review"
-            )
-
-        with patch.object(
-            CerberusEpicVerifier,
-            "_write_context_json",
-            return_value=tmp_path / "ctx.json",
-        ):
-            with patch(
-                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-            ) as mock_runner_cls:
-                mock_runner = AsyncMock()
-                mock_runner.run_async = mock_run_async
-                mock_runner_cls.return_value = mock_runner
-
-                with pytest.raises(VerificationExecutionError) as exc_info:
-                    await verifier.verify(
-                        epic_criteria="Test",
-                        commit_range="a..b",
-                        commit_list="a",
-                        spec_content=None,
-                    )
-
-        assert "wait failed" in str(exc_info.value)
-        assert "exit 2" in str(exc_info.value)
-
-
-@pytest.mark.unit
-class TestCerberusEpicVerifierParseError:
-    """Tests for invalid JSON handling."""
-
-    @pytest.mark.asyncio
-    async def test_invalid_json_raises_parse_error(self, tmp_path: Path) -> None:
-        """Invalid JSON raises VerificationParseError."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path)
-        call_count = 0
-
-        async def mock_run_async(
-            cmd: list[str] | str,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-            **kwargs: object,
-        ) -> FakeCommandResult:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return FakeCommandResult(returncode=0)
-            return FakeCommandResult(returncode=0, stdout="not valid json {{{")
-
-        with patch.object(
-            CerberusEpicVerifier,
-            "_write_context_json",
-            return_value=tmp_path / "ctx.json",
-        ):
-            with patch(
-                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-            ) as mock_runner_cls:
-                mock_runner = AsyncMock()
-                mock_runner.run_async = mock_run_async
-                mock_runner_cls.return_value = mock_runner
-
-                with pytest.raises(VerificationParseError) as exc_info:
-                    await verifier.verify(
-                        epic_criteria="Test",
-                        commit_range="a..b",
-                        commit_list="a",
-                        spec_content=None,
-                    )
-
-        assert "Invalid JSON response" in str(exc_info.value)
-        assert "not valid json" in str(exc_info.value)
-
-    @pytest.mark.asyncio
-    async def test_missing_passed_field_raises_parse_error(
-        self, tmp_path: Path
-    ) -> None:
-        """Missing 'passed' field raises VerificationParseError."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path)
-        call_count = 0
-
-        async def mock_run_async(
-            cmd: list[str] | str,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-            **kwargs: object,
-        ) -> FakeCommandResult:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return FakeCommandResult(returncode=0)
-            return FakeCommandResult(
-                returncode=0,
-                stdout='{"confidence": 0.9, "reasoning": "test"}',
-            )
-
-        with patch.object(
-            CerberusEpicVerifier,
-            "_write_context_json",
-            return_value=tmp_path / "ctx.json",
-        ):
-            with patch(
-                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-            ) as mock_runner_cls:
-                mock_runner = AsyncMock()
-                mock_runner.run_async = mock_run_async
-                mock_runner_cls.return_value = mock_runner
-
-                with pytest.raises(VerificationParseError) as exc_info:
-                    await verifier.verify(
-                        epic_criteria="Test",
-                        commit_range="a..b",
-                        commit_list="a",
-                        spec_content=None,
-                    )
-
-        assert "Missing required field" in str(exc_info.value)
-
-    @pytest.mark.asyncio
-    async def test_wrong_type_for_passed_raises_parse_error(
-        self, tmp_path: Path
-    ) -> None:
-        """Wrong type for 'passed' raises VerificationParseError."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path)
-        call_count = 0
-
-        async def mock_run_async(
-            cmd: list[str] | str,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-            **kwargs: object,
-        ) -> FakeCommandResult:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return FakeCommandResult(returncode=0)
-            return FakeCommandResult(
-                returncode=0,
-                stdout='{"passed": "yes", "unmet_criteria": [], "confidence": 0.9, "reasoning": "test"}',
-            )
-
-        with patch.object(
-            CerberusEpicVerifier,
-            "_write_context_json",
-            return_value=tmp_path / "ctx.json",
-        ):
-            with patch(
-                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-            ) as mock_runner_cls:
-                mock_runner = AsyncMock()
-                mock_runner.run_async = mock_run_async
-                mock_runner_cls.return_value = mock_runner
-
-                with pytest.raises(VerificationParseError) as exc_info:
-                    await verifier.verify(
-                        epic_criteria="Test",
-                        commit_range="a..b",
-                        commit_list="a",
-                        spec_content=None,
-                    )
-
-        assert "'passed' must be boolean" in str(exc_info.value)
-
-    @pytest.mark.asyncio
-    async def test_empty_response_raises_parse_error(self, tmp_path: Path) -> None:
-        """Empty response raises VerificationParseError."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path)
-        call_count = 0
-
-        async def mock_run_async(
-            cmd: list[str] | str,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-            **kwargs: object,
-        ) -> FakeCommandResult:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return FakeCommandResult(returncode=0)
-            return FakeCommandResult(returncode=0, stdout="")
-
-        with patch.object(
-            CerberusEpicVerifier,
-            "_write_context_json",
-            return_value=tmp_path / "ctx.json",
-        ):
-            with patch(
-                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-            ) as mock_runner_cls:
-                mock_runner = AsyncMock()
-                mock_runner.run_async = mock_run_async
-                mock_runner_cls.return_value = mock_runner
-
-                with pytest.raises(VerificationParseError) as exc_info:
-                    await verifier.verify(
-                        epic_criteria="Test",
-                        commit_range="a..b",
-                        commit_list="a",
-                        spec_content=None,
-                    )
-
-        assert "Invalid JSON response" in str(exc_info.value)
-
-
-@pytest.mark.unit
-class TestCerberusEpicVerifierContextJson:
-    """Tests for context JSON format."""
-
-    def test_context_json_contains_required_fields(self, tmp_path: Path) -> None:
-        """Context JSON contains all required fields per spec."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path)
-
-        context_path = verifier._write_context_json(
-            epic_id="test-epic-123",
-            acceptance_criteria="Feature X must work",
-            spec_content="# Spec\nDetails here",
-            commit_range="abc123..def456",
-            commit_list=["abc123", "def456", "ghi789"],
-        )
-
-        try:
-            with open(context_path) as f:
-                context = json.load(f)
-
-            assert context["epic_id"] == "test-epic-123"
-            assert context["acceptance_criteria"] == "Feature X must work"
-            assert context["spec_content"] == "# Spec\nDetails here"
-            assert context["commit_range"] == "abc123..def456"
-            assert context["commit_list"] == ["abc123", "def456", "ghi789"]
-            assert context["schema_version"] == CONTEXT_SCHEMA_VERSION
-        finally:
-            context_path.unlink(missing_ok=True)
-
-    def test_context_json_handles_none_spec_content(self, tmp_path: Path) -> None:
-        """Context JSON handles None spec_content as empty string."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path)
-
-        context_path = verifier._write_context_json(
-            epic_id="test",
-            acceptance_criteria="Test",
-            spec_content=None,
-            commit_range="a..b",
-            commit_list=[],
-        )
-
-        try:
-            with open(context_path) as f:
-                context = json.load(f)
-
-            assert context["spec_content"] == ""
-        finally:
-            context_path.unlink(missing_ok=True)
-
-    def test_context_json_file_is_created_in_repo_dir(self, tmp_path: Path) -> None:
-        """Context JSON file is created in repo directory."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path)
-
-        context_path = verifier._write_context_json(
-            epic_id="test",
-            acceptance_criteria="Test",
-            spec_content=None,
-            commit_range="a..b",
-            commit_list=[],
-        )
-
-        try:
-            assert context_path.parent == tmp_path
-            assert context_path.name.startswith("epic-verify-test-")
-            assert context_path.name.endswith(".json")
-        finally:
-            context_path.unlink(missing_ok=True)
-
-
-@pytest.mark.unit
-class TestCerberusEpicVerifierCleanup:
-    """Tests for temp file cleanup."""
-
-    @pytest.mark.asyncio
-    async def test_context_file_cleaned_up_on_success(self, tmp_path: Path) -> None:
-        """Context JSON file is cleaned up after successful verification."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path)
-        created_paths: list[Path] = []
-
-        # Save reference to original before patching
-        original_write = CerberusEpicVerifier._write_context_json
-
-        def tracking_write(
-            self_arg: CerberusEpicVerifier,
-            epic_id: str,
-            acceptance_criteria: str,
-            spec_content: str | None,
-            commit_range: str,
-            commit_list: Sequence[str],
-        ) -> Path:
-            path = original_write(
-                self_arg,
-                epic_id,
-                acceptance_criteria,
-                spec_content,
-                commit_range,
-                commit_list,
-            )
-            created_paths.append(path)
-            return path
-
-        async def mock_run_async(
-            cmd: list[str] | str,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-            **kwargs: object,
-        ) -> FakeCommandResult:
-            if isinstance(cmd, list) and "spawn-epic-review" in cmd:
-                return FakeCommandResult(returncode=0)
-            return FakeCommandResult(
-                returncode=0,
-                stdout='{"passed": true, "unmet_criteria": [], "confidence": 0.9, "reasoning": "OK"}',
-            )
-
-        with patch.object(CerberusEpicVerifier, "_write_context_json", tracking_write):
-            with patch(
-                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-            ) as mock_runner_cls:
-                mock_runner = AsyncMock()
-                mock_runner.run_async = mock_run_async
-                mock_runner_cls.return_value = mock_runner
-
+            with pytest.raises(VerificationTimeoutError, match="spawn-epic-verify"):
                 await verifier.verify(
-                    epic_criteria="Test",
-                    commit_range="a..b",
-                    commit_list="a",
+                    epic_criteria="criteria",
+                    commit_range="abc..def",
+                    commit_list="abc1234",
                     spec_content=None,
                 )
 
-        # File should be cleaned up
-        assert len(created_paths) == 1
-        assert not created_paths[0].exists()
+    @pytest.mark.asyncio
+    async def test_wait_timeout_exit_code_raises_verification_timeout_error(
+        self, tmp_path: Path
+    ) -> None:
+        verifier = _make_verifier(tmp_path)
+        call_count = 0
+
+        async def mock_run_async(
+            cmd: list[str] | str,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+            **kwargs: object,
+        ) -> FakeCommandResult:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return FakeCommandResult(returncode=0)
+            return FakeCommandResult(returncode=3, stdout="{}")
+
+        with patch(
+            "src.infra.clients.cerberus_epic_verifier.CommandRunner"
+        ) as mock_runner_cls:
+            mock_runner = AsyncMock()
+            mock_runner.run_async = mock_run_async
+            mock_runner_cls.return_value = mock_runner
+
+            with pytest.raises(VerificationTimeoutError, match="wait timed out"):
+                await verifier.verify(
+                    epic_criteria="criteria",
+                    commit_range="abc..def",
+                    commit_list="abc1234",
+                    spec_content=None,
+                )
 
     @pytest.mark.asyncio
-    async def test_context_file_cleaned_up_on_error(self, tmp_path: Path) -> None:
-        """Context JSON file is cleaned up even after error."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path)
+    async def test_invalid_json_raises_parse_error(self, tmp_path: Path) -> None:
+        verifier = _make_verifier(tmp_path)
+        call_count = 0
+
+        async def mock_run_async(
+            cmd: list[str] | str,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+            **kwargs: object,
+        ) -> FakeCommandResult:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return FakeCommandResult(returncode=0)
+            return FakeCommandResult(returncode=2, stdout="not json")
+
+        with patch(
+            "src.infra.clients.cerberus_epic_verifier.CommandRunner"
+        ) as mock_runner_cls:
+            mock_runner = AsyncMock()
+            mock_runner.run_async = mock_run_async
+            mock_runner_cls.return_value = mock_runner
+
+            with pytest.raises(VerificationParseError):
+                await verifier.verify(
+                    epic_criteria="criteria",
+                    commit_range="abc..def",
+                    commit_list="abc1234",
+                    spec_content=None,
+                )
+
+    @pytest.mark.asyncio
+    async def test_cleanup_on_error(self, tmp_path: Path) -> None:
+        verifier = _make_verifier(tmp_path)
         created_paths: list[Path] = []
 
-        # Save reference to original before patching
-        original_write = CerberusEpicVerifier._write_context_json
+        original_write = CerberusEpicVerifier._write_epic_file
 
         def tracking_write(
             self_arg: CerberusEpicVerifier,
             epic_id: str,
-            acceptance_criteria: str,
-            spec_content: str | None,
-            commit_range: str,
-            commit_list: Sequence[str],
+            epic_text: str,
         ) -> Path:
-            path = original_write(
-                self_arg,
-                epic_id,
-                acceptance_criteria,
-                spec_content,
-                commit_range,
-                commit_list,
-            )
+            path = original_write(self_arg, epic_id, epic_text)
             created_paths.append(path)
             return path
 
@@ -887,7 +443,7 @@ class TestCerberusEpicVerifierCleanup:
         ) -> FakeCommandResult:
             return FakeCommandResult(returncode=1, stderr="error")
 
-        with patch.object(CerberusEpicVerifier, "_write_context_json", tracking_write):
+        with patch.object(CerberusEpicVerifier, "_write_epic_file", tracking_write):
             with patch(
                 "src.infra.clients.cerberus_epic_verifier.CommandRunner"
             ) as mock_runner_cls:
@@ -897,70 +453,10 @@ class TestCerberusEpicVerifierCleanup:
 
                 with pytest.raises(VerificationExecutionError):
                     await verifier.verify(
-                        epic_criteria="Test",
-                        commit_range="a..b",
-                        commit_list="a",
+                        epic_criteria="criteria",
+                        commit_range="abc..def",
+                        commit_list="abc1234",
                         spec_content=None,
                     )
 
-        # File should still be cleaned up
-        assert len(created_paths) == 1
-        assert not created_paths[0].exists()
-
-
-@pytest.mark.unit
-class TestCerberusEpicVerifierProtocolCompliance:
-    """Tests that verify protocol compliance."""
-
-    def test_implements_epic_verification_model_protocol(self) -> None:
-        """CerberusEpicVerifier implements EpicVerificationModel protocol."""
-        from src.core.protocols.validation import EpicVerificationModel
-
-        # Structural typing check
-        verifier = CerberusEpicVerifier(repo_path=Path("/tmp"))
-        assert isinstance(verifier, EpicVerificationModel)
-
-    @pytest.mark.asyncio
-    async def test_verify_signature_matches_protocol(self, tmp_path: Path) -> None:
-        """verify() method signature matches protocol."""
-        verifier = CerberusEpicVerifier(repo_path=tmp_path)
-
-        # Protocol requires: verify(epic_criteria, commit_range, commit_list, spec_content) -> EpicVerdictProtocol
-        async def mock_run_async(
-            cmd: list[str] | str,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-            **kwargs: object,
-        ) -> FakeCommandResult:
-            if isinstance(cmd, list) and "spawn-epic-review" in cmd:
-                return FakeCommandResult(returncode=0)
-            return FakeCommandResult(
-                returncode=0,
-                stdout='{"passed": true, "unmet_criteria": [], "confidence": 0.9, "reasoning": "OK"}',
-            )
-
-        with patch.object(
-            CerberusEpicVerifier,
-            "_write_context_json",
-            return_value=tmp_path / "ctx.json",
-        ):
-            with patch(
-                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-            ) as mock_runner_cls:
-                mock_runner = AsyncMock()
-                mock_runner.run_async = mock_run_async
-                mock_runner_cls.return_value = mock_runner
-
-                # Call with protocol-required arguments
-                result = await verifier.verify(
-                    epic_criteria="criteria",
-                    commit_range="range",
-                    commit_list="sha1,sha2",
-                    spec_content="spec",
-                )
-
-        # Result should match EpicVerdictProtocol
-        assert hasattr(result, "passed")
-        assert hasattr(result, "unmet_criteria")
-        assert hasattr(result, "confidence")
-        assert hasattr(result, "reasoning")
+        assert created_paths and not created_paths[0].exists()

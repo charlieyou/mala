@@ -31,7 +31,7 @@ Enable users to choose between Cerberus or Agent SDK for epic verification via c
 1. User configures `epic_verification.reviewer_type: cerberus` in `mala.yaml` (new top-level section)
 2. Mala discovers eligible epics (all children closed)
 3. System validates Cerberus availability before starting verification
-4. System invokes `review-gate spawn-epic-review` command with epic context
+4. System invokes `review-gate spawn-epic-verify` command with epic context
 5. Verification result (pass/fail + unmet criteria) returned and processed
 6. Mala continues with existing downstream behavior (remediation/advisory issue creation), unchanged
 
@@ -103,31 +103,29 @@ Enable users to choose between Cerberus or Agent SDK for epic verification via c
   - Given either reviewer type encounters an error, then error handling follows `failure_mode` configuration
 
 **R4 — Cerberus epic verification command**
-- **Requirement:** The Cerberus implementation MUST invoke `review-gate spawn-epic-review` followed by `review-gate wait` (async spawn-wait pattern, matching code review) to perform epic verification.
+- **Requirement:** The Cerberus implementation MUST invoke `review-gate spawn-epic-verify` followed by `review-gate wait` (async spawn-wait pattern, matching code review) to perform epic verification.
 - **Context passed to Cerberus:**
-  - **Acceptance criteria:** The epic's description field (contains acceptance criteria text)
-  - **Relevant specs:** Spec files explicitly referenced in the epic description (e.g., paths matching `docs/specs/*.md` or `specs/*.md`). If no specs are referenced, pass empty list. Truncate individual specs to 50KB; if total exceeds 200KB, include only the first N specs that fit with a warning in logs.
-    - **Path resolution rules:** Treat referenced spec paths as repo-relative. Ignore absolute paths. Normalize paths and reject any that escape repo root (e.g., `../`). Missing files emit a warning and are skipped (not an error).
-  - **Commit SHAs:** The set of commits associated with the epic's child issues, as already tracked by the existing `EpicVerifier._get_scoped_commits()` method. Fallback: if no child commits exist, pass empty list (verifier evaluates criteria without code context).
+  - **Epic file:** Write the epic description (including acceptance criteria) to a temporary markdown file and pass its path to `spawn-epic-verify`. Review-gate extracts acceptance criteria and spec references from the epic file.
+  - **Commit scope:** Prefer `--commit <sha...>` using the scoped commit list from epic child issues. If no commits are available, fall back to a range argument (if available) or `--uncommitted`.
+  - **Session scoping:** Always set `CLAUDE_SESSION_ID` to a generated value with the epic ID as prefix and a random suffix (e.g., `EPIC-42-1a2b3c4d5e6f`).
 - **Minimal I/O contract (v0):**
-  - **Input:** `spawn-epic-review --context-json <path>` where context file contains:
-    ```json
-    {"epic_id": "string", "acceptance_criteria": "string", "spec_files": ["path1", ...], "commit_shas": ["sha1", ...]}
-    ```
-  - **Output:** `wait` returns JSON to stdout matching `EpicVerdict` schema (R3). Exit code 0 = success (parse output), non-zero = `execution_error`.
-  - **Parse error classification:** If exit code 0 but output is not valid `EpicVerdict` JSON, classify as `parse_error`.
-  - **Deterministic parse error detection:** If JSON parsing fails with the same exception type AND the first 200 bytes of stdout are identical across two consecutive attempts, treat as deterministic and stop retrying early. Log the first 500 bytes of raw output in the error for debugging.
+  - **Input:** `spawn-epic-verify <epic-file> [diff args]`
+  - **Output:** `wait --json` returns review-gate JSON with `status`, `consensus_verdict`, `aggregated_findings`, and `parse_errors`.
+    - `consensus_verdict: PASS` → `EpicVerdict.passed = true`
+    - `consensus_verdict: FAIL|NEEDS_WORK` → `EpicVerdict.passed = false`
+    - `aggregated_findings` map to `unmet_criteria` entries (title/body/priority)
+  - **Error classification:** `status=timeout` or exit code 3 → `timeout`. `status=error|no_reviewers` or `consensus_verdict=ERROR` → `execution_error`. Invalid JSON → `parse_error`.
 - **Verification:**
-  - Given `reviewer_type: cerberus`, when epic verification runs, then `spawn-epic-review` is invoked followed by `wait`
-  - Given Cerberus returns valid JSON, when parsed, then an `EpicVerdict` with pass/fail and unmet criteria is returned
+  - Given `reviewer_type: cerberus`, when epic verification runs, then `spawn-epic-verify` is invoked followed by `wait`
+  - Given Cerberus returns valid wait JSON, when parsed, then an `EpicVerdict` with pass/fail and unmet criteria is returned
 
 **R5 — Availability checking with explicit failure**
 - **Requirement:** When `epic_verification.reviewer_type` is `"cerberus"`, the system MUST validate Cerberus availability before attempting verification and MUST fail immediately with an explicit, actionable error if Cerberus is unavailable. This availability check is a **hard fail** that bypasses `failure_mode`—misconfiguration (requesting Cerberus when unavailable) always aborts.
 - **Availability check mechanism:** Use the existing `find_cerberus_bin_path()` utility (same as code review) to locate the `review-gate` binary via Claude's `installed_plugins.json`. "Unavailable" means either: (a) no Cerberus plugin entry in installed plugins, or (b) the `review-gate` binary path does not exist or is not executable.
-- **Subcommand detection (normative):** Run `<review-gate> spawn-epic-review --help` and require exit code 0. If exit code is non-zero, treat as `cerberus_unavailable`. Include the first 200 chars of stderr in the actionable error message (e.g., "Cerberus plugin does not support epic verification: <stderr snippet>. Update plugin or use reviewer_type: agent_sdk.").
-- **Hard-fail categories:** `config_error` and `cerberus_unavailable` (including missing `spawn-epic-review` subcommand) are hard-fail categories. These abort regardless of `failure_mode`, do not count toward `max_retries`, and do not emit `max_retries_exceeded`.
+- **Subcommand detection (normative):** Run `<review-gate> spawn-epic-verify --help` and require exit code 0. If exit code is non-zero, treat as `cerberus_unavailable`. Include the first 200 chars of stderr in the actionable error message (e.g., "Cerberus plugin does not support epic verification: <stderr snippet>. Update plugin or use reviewer_type: agent_sdk.").
+- **Hard-fail categories:** `config_error` and `cerberus_unavailable` (including missing `spawn-epic-verify` subcommand) are hard-fail categories. These abort regardless of `failure_mode`, do not count toward `max_retries`, and do not emit `max_retries_exceeded`.
 - **Verification:**
-  - Given Cerberus binary is unavailable and `reviewer_type: cerberus` configured, when epic verification attempts to run, then an error is raised before any `spawn-epic-review` invocation
+  - Given Cerberus binary is unavailable and `reviewer_type: cerberus` configured, when epic verification attempts to run, then an error is raised before any `spawn-epic-verify` invocation
   - Given Cerberus binary exists but fails validation, when availability check runs, then an appropriate error is raised indicating Cerberus is required
   - Given `failure_mode: continue` and Cerberus unavailable, when epic verification runs, then the run still aborts (availability failure bypasses failure_mode)
 
@@ -187,15 +185,15 @@ Enable users to choose between Cerberus or Agent SDK for epic verification via c
 **Decisions made**
 - Config lives in new top-level `epic_verification` section (parallel to `per_issue_review`)
 - When Cerberus unavailable but configured: fail with explicit error
-- Cerberus uses new dedicated `review-gate spawn-epic-review` command
+- Cerberus uses new dedicated `review-gate spawn-epic-verify` command
 - Config mirrors code review: `reviewer_type`, `timeout`, `max_retries`, `failure_mode`, cerberus-specific settings
 - Create `EpicVerifierProtocol` with Cerberus and AgentSDK implementations
 - Events include `reviewer_type` for observability
 - `failure_mode` uses existing values: `abort`, `continue`, `remediate` (default: `continue`)
 
 **External dependency**
-- **Cerberus plugin requirement:** This feature requires a Cerberus plugin version that provides `spawn-epic-review`. If the required command is missing (e.g., older plugin version), the availability check MUST treat this as `cerberus_unavailable` with an actionable error message: "Cerberus plugin does not support epic verification. Update to version X+ or use reviewer_type: agent_sdk."
-- **Version detection:** The availability check MAY validate command existence via `review-gate --help` output or by attempting `spawn-epic-review --help`. If version-specific detection is impractical, treat any missing subcommand as `cerberus_unavailable`.
+- **Cerberus plugin requirement:** This feature requires a Cerberus plugin version that provides `spawn-epic-verify`. If the required command is missing (e.g., older plugin version), the availability check MUST treat this as `cerberus_unavailable` with an actionable error message: "Cerberus plugin does not support epic verification. Update to version X+ or use reviewer_type: agent_sdk."
+- **Version detection:** The availability check MAY validate command existence via `review-gate --help` output or by attempting `spawn-epic-verify --help`. If version-specific detection is impractical, treat any missing subcommand as `cerberus_unavailable`.
 
 **Open questions**
 - None. The minimal I/O contract (v0) in R4 provides enough detail for implementation and testing. Full CLI ergonomics may evolve as the Cerberus plugin matures.

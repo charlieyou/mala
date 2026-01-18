@@ -455,7 +455,7 @@ def _check_epic_verifier_availability(
 
     Returns the reason verifier is disabled, or None if available.
     For agent_sdk reviewer, always available (no external dependencies).
-    For cerberus reviewer, probes `spawn-epic-review --help` per R5 spec.
+    For cerberus reviewer, probes `spawn-epic-verify --help` per R5 spec.
 
     Args:
         reviewer_type: Type of epic verifier ('agent_sdk' or 'cerberus').
@@ -473,7 +473,7 @@ def _check_epic_verifier_availability(
     if reviewer_type not in ("cerberus", "agent_sdk"):
         return f"unknown epic verification reviewer_type '{reviewer_type}'"
 
-    # Cerberus reviewer: probe spawn-epic-review --help
+    # Cerberus reviewer: probe spawn-epic-verify --help
     review_gate_path = (
         mala_config.cerberus_bin_path / "review-gate"
         if mala_config and mala_config.cerberus_bin_path
@@ -518,13 +518,13 @@ def _check_epic_verifier_availability(
     else:
         review_gate_cmd = str(review_gate_path)
 
-    # Probe spawn-epic-review --help to verify subcommand support (R5)
+    # Probe spawn-epic-verify --help to verify subcommand support (R5)
     env = dict(os.environ)
     env.update(cerberus_env_dict)
 
     try:
         result = subprocess.run(
-            [review_gate_cmd, "spawn-epic-review", "--help"],
+            [review_gate_cmd, "spawn-epic-verify", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -543,7 +543,7 @@ def _check_epic_verifier_availability(
         logger.info("Epic verifier disabled: reason=%s", reason)
         return reason
     except subprocess.TimeoutExpired:
-        reason = "review-gate spawn-epic-review --help timed out"
+        reason = "review-gate spawn-epic-verify --help timed out"
         logger.info("Epic verifier disabled: reason=%s", reason)
         return reason
     except OSError as e:
@@ -586,12 +586,18 @@ def _create_epic_verification_model(
         if cerberus_config is not None:
             timeout_seconds = cerberus_config.timeout
             env = dict(cerberus_config.env)
+            spawn_args = cerberus_config.spawn_args
+            wait_args = cerberus_config.wait_args
         elif mala_config is not None:
             timeout_seconds = timeout_ms // 1000
             env = dict(mala_config.cerberus_env)
+            spawn_args = ()
+            wait_args = ()
         else:
             timeout_seconds = timeout_ms // 1000
             env = {}
+            spawn_args = ()
+            wait_args = ()
 
         bin_path = mala_config.cerberus_bin_path if mala_config else None
 
@@ -601,6 +607,8 @@ def _create_epic_verification_model(
                 repo_path=repo_path,
                 bin_path=bin_path,
                 timeout=timeout_seconds,
+                spawn_args=spawn_args,
+                wait_args=wait_args,
                 env=env if env else None,
             ),
         )

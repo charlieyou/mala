@@ -28,6 +28,10 @@ Config: Make it actually make sense / be consistent
 * top level validation block that has commands and triggers under it?
 * add config for evidence check, separate validation from code review?
 * Separate mala agent logs from system claude code with CLAUDE_CONFIG_DIR env var
+* add to init
+    * epic verification
+    * validation: fire_on, failure_mode
+* fail if there is no mala.yaml set
 
 * Optimize commands:
     Keep tool output token-efficient (especially tests)

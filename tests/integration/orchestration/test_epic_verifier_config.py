@@ -119,14 +119,14 @@ class TestCheckEpicVerifierAvailability:
     def test_cerberus_unavailable_when_spawn_epic_review_not_supported(
         self, tmp_path: Path
     ) -> None:
-        """cerberus returns unavailable when spawn-epic-review subcommand fails."""
+        """cerberus returns unavailable when spawn-epic-verify subcommand fails."""
         import os
         import stat
 
         from src.infra.io.config import MalaConfig
         from src.orchestration.factory import _check_epic_verifier_availability
 
-        # Create a fake review-gate binary that fails spawn-epic-review --help
+        # Create a fake review-gate binary that fails spawn-epic-verify --help
         bin_path = tmp_path / "bin"
         bin_path.mkdir()
         review_gate = bin_path / "review-gate"
@@ -143,19 +143,19 @@ class TestCheckEpicVerifierAvailability:
     def test_cerberus_available_when_spawn_epic_review_works(
         self, tmp_path: Path
     ) -> None:
-        """cerberus verifier is available when spawn-epic-review --help succeeds."""
+        """cerberus verifier is available when spawn-epic-verify --help succeeds."""
         import os
         import stat
 
         from src.infra.io.config import MalaConfig
         from src.orchestration.factory import _check_epic_verifier_availability
 
-        # Create a fake review-gate binary that supports spawn-epic-review --help
+        # Create a fake review-gate binary that supports spawn-epic-verify --help
         bin_path = tmp_path / "bin"
         bin_path.mkdir()
         review_gate = bin_path / "review-gate"
         review_gate.write_text(
-            '#!/usr/bin/env sh\ncase "$1" in spawn-epic-review) echo "Usage: spawn-epic-review"; exit 0;; *) exit 1;; esac\n'
+            '#!/usr/bin/env sh\ncase "$1" in spawn-epic-verify) echo "Usage: spawn-epic-verify"; exit 0;; *) exit 1;; esac\n'
         )
         os.chmod(review_gate, stat.S_IRWXU)
 
@@ -222,7 +222,7 @@ class TestCreateEpicVerificationModel:
         assert model.env == {"TEST_VAR": "test_value"}
 
     def test_cerberus_prefers_cerberus_config(self, tmp_path: Path) -> None:
-        """cerberus prefers cerberus_config over mala_config for timeout and env."""
+        """cerberus prefers cerberus_config over mala_config for timeout/env/args."""
         from src.domain.validation.config import CerberusConfig
         from src.infra.clients.cerberus_epic_verifier import CerberusEpicVerifier
         from src.infra.io.config import MalaConfig
@@ -235,6 +235,8 @@ class TestCreateEpicVerificationModel:
         )
         cerberus_config = CerberusConfig(
             timeout=120,
+            spawn_args=("--mode", "fast"),
+            wait_args=("--timeout", "99"),
             env=(("NEW_VAR", "new_value"),),
         )
 
@@ -251,6 +253,8 @@ class TestCreateEpicVerificationModel:
         # timeout and env come from cerberus_config
         assert model.timeout == 120
         assert model.env == {"NEW_VAR": "new_value"}
+        assert model.spawn_args == ("--mode", "fast")
+        assert model.wait_args == ("--timeout", "99")
 
     def test_unknown_reviewer_type_raises_value_error(self, tmp_path: Path) -> None:
         """Unknown reviewer_type raises ValueError."""
@@ -399,7 +403,7 @@ class TestEpicVerifierConfigIntegration:
         bin_path.mkdir()
         review_gate = bin_path / "review-gate"
         review_gate.write_text(
-            '#!/usr/bin/env sh\ncase "$1" in spawn-epic-review) echo "Usage: spawn-epic-review"; exit 0;; *) exit 1;; esac\n'
+            '#!/usr/bin/env sh\ncase "$1" in spawn-epic-verify) echo "Usage: spawn-epic-verify"; exit 0;; *) exit 1;; esac\n'
         )
         os.chmod(review_gate, stat.S_IRWXU)
 
@@ -474,14 +478,14 @@ class TestEpicVerifierTimeoutFallback:
         from src.orchestration.factory import create_orchestrator
         from src.orchestration.types import OrchestratorConfig
 
-        # Create a fake review-gate binary that supports spawn-epic-review --help
+        # Create a fake review-gate binary that supports spawn-epic-verify --help
         # This allows the real _check_epic_verifier_availability to pass
         bin_path = tmp_path / "bin"
         bin_path.mkdir()
         review_gate = bin_path / "review-gate"
         review_gate.write_text(
             "#!/usr/bin/env sh\n"
-            'case "$1" in spawn-epic-review) echo "Usage: spawn-epic-review"; exit 0;; *) exit 1;; esac\n'
+            'case "$1" in spawn-epic-verify) echo "Usage: spawn-epic-verify"; exit 0;; *) exit 1;; esac\n'
         )
         os.chmod(review_gate, stat.S_IRWXU)
 

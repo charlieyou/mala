@@ -203,6 +203,59 @@ class CerberusGateCLI:
 
         return SpawnResult(success=True)
 
+    async def spawn_epic_verify(
+        self,
+        runner: CommandRunnerPort,
+        env: dict[str, str],
+        timeout: int,
+        *,
+        epic_path: Path,
+        diff_args: Sequence[str],
+        spawn_args: tuple[str, ...] = (),
+    ) -> SpawnResult:
+        """Spawn an epic verification subprocess.
+
+        Args:
+            runner: CommandRunnerPort instance for subprocess execution.
+            env: Environment variables for the command.
+            timeout: Timeout in seconds.
+            epic_path: Path to the epic markdown file.
+            diff_args: Diff selector args (e.g., ["--commit", "sha1", "sha2"]).
+            spawn_args: Additional arguments for spawn-epic-verify.
+
+        Returns:
+            SpawnResult with success/failure status and error details.
+        """
+        spawn_cmd = [self._review_gate_bin(), "spawn-epic-verify"]
+        # Disable auto-respawn; mala handles retries explicitly.
+        spawn_cmd.extend(["--max-rounds", "0"])
+        if spawn_args:
+            spawn_cmd.extend(spawn_args)
+        if diff_args:
+            spawn_cmd.extend(diff_args)
+        spawn_cmd.append(str(epic_path))
+
+        result = await runner.run_async(spawn_cmd, env=env, timeout=timeout)
+        if result.timed_out:
+            return SpawnResult(
+                success=False, timed_out=True, error_detail="spawn timeout"
+            )
+
+        if result.returncode != 0:
+            stderr = result.stderr_tail()
+            stdout = result.stdout_tail()
+            detail = stderr or stdout or "spawn failed"
+            combined = f"{stderr or ''} {stdout or ''}".lower()
+            already_active = "already active" in combined
+            return SpawnResult(
+                success=False,
+                timed_out=False,
+                error_detail=detail,
+                already_active=already_active,
+            )
+
+        return SpawnResult(success=True)
+
     async def wait_for_review(
         self,
         session_id: str,
