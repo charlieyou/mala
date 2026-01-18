@@ -463,14 +463,27 @@ class TestEpicVerifierTimeoutFallback:
 
     def test_cerberus_without_config_uses_generic_timeout(self, tmp_path: Path) -> None:
         """When cerberus has no cerberus config, use generic timeout field."""
-        from unittest.mock import patch
+        import os
+        import stat
 
         import yaml
 
         from src.infra.clients.cerberus_epic_verifier import CerberusEpicVerifier
         from src.infra.epic_verifier import EpicVerifier
+        from src.infra.io.config import MalaConfig
         from src.orchestration.factory import create_orchestrator
         from src.orchestration.types import OrchestratorConfig
+
+        # Create a fake review-gate binary that supports spawn-epic-review --help
+        # This allows the real _check_epic_verifier_availability to pass
+        bin_path = tmp_path / "bin"
+        bin_path.mkdir()
+        review_gate = bin_path / "review-gate"
+        review_gate.write_text(
+            "#!/usr/bin/env sh\n"
+            'case "$1" in spawn-epic-review) echo "Usage: spawn-epic-review"; exit 0;; *) exit 1;; esac\n'
+        )
+        os.chmod(review_gate, stat.S_IRWXU)
 
         # Create mala.yaml with cerberus type but no cerberus config
         # and a custom generic timeout
@@ -489,14 +502,8 @@ class TestEpicVerifierTimeoutFallback:
         )
 
         config = OrchestratorConfig(repo_path=tmp_path)
-
-        # Mock _check_epic_verifier_availability to return None (available)
-        # so that the epic verifier is created with the computed timeout
-        with patch(
-            "src.orchestration.factory._check_epic_verifier_availability",
-            return_value=None,
-        ):
-            orchestrator = create_orchestrator(config)
+        mala_config = MalaConfig(cerberus_bin_path=bin_path)
+        orchestrator = create_orchestrator(config, mala_config=mala_config)
 
         # Verify the epic verifier uses generic timeout (120 seconds)
         assert orchestrator.epic_verifier is not None
