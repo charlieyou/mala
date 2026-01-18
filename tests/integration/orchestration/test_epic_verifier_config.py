@@ -463,8 +463,12 @@ class TestEpicVerifierTimeoutFallback:
 
     def test_cerberus_without_config_uses_generic_timeout(self, tmp_path: Path) -> None:
         """When cerberus has no cerberus config, use generic timeout field."""
+        from unittest.mock import patch
+
         import yaml
 
+        from src.infra.clients.cerberus_epic_verifier import CerberusEpicVerifier
+        from src.infra.epic_verifier import EpicVerifier
         from src.orchestration.factory import create_orchestrator
         from src.orchestration.types import OrchestratorConfig
 
@@ -486,18 +490,19 @@ class TestEpicVerifierTimeoutFallback:
 
         config = OrchestratorConfig(repo_path=tmp_path)
 
-        # Note: create_orchestrator will fall back to agent_sdk if cerberus
-        # unavailable, but the timeout computation happens before availability check.
-        # Since cerberus binary likely unavailable in test, it will fall back.
-        # The key fix ensures cerberus path uses generic timeout when cerberus
-        # config absent (instead of erroneously using agent_sdk_timeout).
+        # Mock _check_epic_verifier_availability to return None (available)
+        # so that the epic verifier is created with the computed timeout
+        with patch(
+            "src.orchestration.factory._check_epic_verifier_availability",
+            return_value=None,
+        ):
+            orchestrator = create_orchestrator(config)
 
-        orchestrator = create_orchestrator(config)
-
-        # The orchestrator was created successfully. Due to fallback behavior,
-        # actual verifier type may differ. The key validation is that the code
-        # path doesn't crash and uses correct timeouts.
-        assert orchestrator is not None
+        # Verify the epic verifier uses generic timeout (120 seconds)
+        assert orchestrator.epic_verifier is not None
+        assert isinstance(orchestrator.epic_verifier, EpicVerifier)
+        assert isinstance(orchestrator.epic_verifier.model, CerberusEpicVerifier)
+        assert orchestrator.epic_verifier.model.timeout == 120
 
     def test_agent_sdk_uses_agent_sdk_timeout(self, tmp_path: Path) -> None:
         """agent_sdk reviewer uses agent_sdk_timeout, not generic timeout."""
