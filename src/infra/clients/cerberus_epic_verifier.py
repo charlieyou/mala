@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -117,7 +118,8 @@ class CerberusEpicVerifier:
             suffix=".json", prefix=f"epic-verify-{epic_id}-", dir=self.repo_path
         )
         try:
-            with open(fd, "w", encoding="utf-8") as f:
+            # Use os.fdopen to convert fd to file object (fd is int, not path)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(context, f, indent=2)
         except Exception:
             # Clean up on error
@@ -249,7 +251,10 @@ class CerberusEpicVerifier:
 
         try:
             runner = CommandRunner(cwd=self.repo_path)
-            env = dict(self.env) if self.env else {}
+            # Merge self.env with os.environ to preserve PATH and other required vars
+            env = dict(os.environ)
+            if self.env:
+                env.update(self.env)
 
             # Step 1: Spawn epic review
             spawn_cmd = [

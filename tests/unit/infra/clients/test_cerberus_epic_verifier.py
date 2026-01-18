@@ -206,6 +206,63 @@ class TestCerberusEpicVerifierCommandConstruction:
         timeout_idx = wait_cmd.index("--timeout")
         assert wait_cmd[timeout_idx + 1] == "120"
 
+    @pytest.mark.asyncio
+    async def test_env_merges_with_os_environ(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Env merges self.env with os.environ to preserve PATH."""
+        # Set a known PATH in os.environ
+        monkeypatch.setenv("PATH", "/usr/bin:/bin")
+        monkeypatch.setenv("HOME", "/home/test")
+
+        custom_env = {"CUSTOM_VAR": "custom_value", "CLAUDE_SESSION_ID": "test-session"}
+        verifier = CerberusEpicVerifier(repo_path=tmp_path, env=custom_env)
+        captured_envs: list[dict[str, str]] = []
+
+        async def mock_run_async(
+            cmd: list[str] | str,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+            **kwargs: object,
+        ) -> FakeCommandResult:
+            if env is not None:
+                captured_envs.append(dict(env))
+            if len(captured_envs) == 1:
+                return FakeCommandResult(returncode=0)
+            return FakeCommandResult(
+                returncode=0,
+                stdout='{"passed": true, "unmet_criteria": [], "confidence": 0.9, "reasoning": "OK"}',
+            )
+
+        with patch.object(
+            CerberusEpicVerifier,
+            "_write_context_json",
+            return_value=tmp_path / "ctx.json",
+        ):
+            with patch(
+                "src.infra.clients.cerberus_epic_verifier.CommandRunner"
+            ) as mock_runner_cls:
+                mock_runner = AsyncMock()
+                mock_runner.run_async = mock_run_async
+                mock_runner_cls.return_value = mock_runner
+
+                await verifier.verify(
+                    epic_criteria="Test",
+                    commit_range="a..b",
+                    commit_list="a",
+                    spec_content=None,
+                )
+
+        # Env should contain both os.environ vars and custom vars
+        assert len(captured_envs) >= 1
+        spawn_env = captured_envs[0]
+        # PATH from os.environ must be preserved
+        assert spawn_env.get("PATH") == "/usr/bin:/bin"
+        assert spawn_env.get("HOME") == "/home/test"
+        # Custom env vars must be present
+        assert spawn_env.get("CUSTOM_VAR") == "custom_value"
+        assert spawn_env.get("CLAUDE_SESSION_ID") == "test-session"
+
 
 @pytest.mark.unit
 class TestCerberusEpicVerifierParsing:
