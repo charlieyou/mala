@@ -39,7 +39,7 @@ if TYPE_CHECKING:
         BaseTriggerConfig,
         CerberusConfig,
         CodeReviewConfig,
-        EpicVerificationConfig,
+        EpicVerifierConfig,
     )
 
 
@@ -79,6 +79,7 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "idle_timeout_seconds",
         "max_diff_size_kb",
         "evidence_check",
+        "epic_verification",
         "per_issue_review",
     }
 )
@@ -500,24 +501,24 @@ def _parse_cerberus_config(data: dict[str, Any]) -> CerberusConfig:
 
 def _parse_epic_verification_config(
     data: dict[str, Any] | None,
-) -> EpicVerificationConfig:
+) -> EpicVerifierConfig:
     """Parse epic_verification configuration block.
 
     Args:
         data: The epic_verification config dict from mala.yaml, or None.
 
     Returns:
-        EpicVerificationConfig with parsed settings (defaults if data is None).
+        EpicVerifierConfig with parsed settings (defaults if data is None).
 
     Raises:
         ConfigError: If fields are invalid or unknown fields present.
     """
     from src.domain.validation.config import (
-        EpicVerificationConfig as EpicVerificationConfigClass,
+        EpicVerifierConfig as EpicVerifierConfigClass,
     )
 
     if data is None:
-        return EpicVerificationConfigClass()
+        return EpicVerifierConfigClass()
 
     if not isinstance(data, dict):
         raise ConfigError(
@@ -542,7 +543,7 @@ def _parse_epic_verification_config(
             )
         reviewer_type = val
 
-    return EpicVerificationConfigClass(reviewer_type=reviewer_type)
+    return EpicVerifierConfigClass(reviewer_type=reviewer_type)
 
 
 def _parse_code_review_config(

@@ -1,13 +1,15 @@
-"""Integration tests for EpicVerificationConfig and factory wiring.
+"""Integration tests for EpicVerifierConfig and factory wiring.
 
 This test verifies:
-1. EpicVerificationConfig dataclass is properly defined
+1. EpicVerifierConfig dataclass is properly defined
 2. _parse_epic_verification_config parses config correctly
 3. _create_epic_verification_model returns ClaudeEpicVerificationModel for agent_sdk
 4. _check_epic_verifier_availability returns correct availability status
+5. ValidationConfig.from_dict correctly parses epic_verification block
+6. epic_verification field is in _ALLOWED_TOP_LEVEL_FIELDS
 
 The test exercises: mala.yaml (epic_verification) → _parse_epic_verification_config →
-EpicVerificationConfig → _create_epic_verification_model → EpicVerificationModel
+EpicVerifierConfig → _create_epic_verification_model → EpicVerificationModel
 """
 
 from __future__ import annotations
@@ -20,28 +22,28 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-class TestEpicVerificationConfigDataclass:
-    """Test EpicVerificationConfig dataclass structure."""
+class TestEpicVerifierConfigDataclass:
+    """Test EpicVerifierConfig dataclass structure."""
 
     def test_default_reviewer_type_is_agent_sdk(self) -> None:
-        """EpicVerificationConfig defaults to agent_sdk reviewer."""
-        from src.domain.validation.config import EpicVerificationConfig
+        """EpicVerifierConfig defaults to agent_sdk reviewer."""
+        from src.domain.validation.config import EpicVerifierConfig
 
-        config = EpicVerificationConfig()
+        config = EpicVerifierConfig()
         assert config.reviewer_type == "agent_sdk"
 
     def test_can_create_with_cerberus_reviewer_type(self) -> None:
-        """EpicVerificationConfig accepts cerberus reviewer_type."""
-        from src.domain.validation.config import EpicVerificationConfig
+        """EpicVerifierConfig accepts cerberus reviewer_type."""
+        from src.domain.validation.config import EpicVerifierConfig
 
-        config = EpicVerificationConfig(reviewer_type="cerberus")
+        config = EpicVerifierConfig(reviewer_type="cerberus")
         assert config.reviewer_type == "cerberus"
 
     def test_is_frozen(self) -> None:
-        """EpicVerificationConfig is immutable (frozen)."""
-        from src.domain.validation.config import EpicVerificationConfig
+        """EpicVerifierConfig is immutable (frozen)."""
+        from src.domain.validation.config import EpicVerifierConfig
 
-        config = EpicVerificationConfig()
+        config = EpicVerifierConfig()
         with pytest.raises(AttributeError):
             config.reviewer_type = "cerberus"  # type: ignore[misc]
 
@@ -150,6 +152,68 @@ class TestCreateEpicVerificationModel:
                 timeout_ms=60000,
             )
 
+    def test_unknown_reviewer_type_raises_value_error(self, tmp_path: Path) -> None:
+        """Unknown reviewer_type raises ValueError."""
+        from src.orchestration.factory import _create_epic_verification_model
+
+        with pytest.raises(ValueError, match="Unknown epic verification reviewer_type"):
+            _create_epic_verification_model(
+                reviewer_type="invalid",
+                repo_path=tmp_path,
+                timeout_ms=60000,
+            )
+
+
+class TestValidationConfigEpicVerification:
+    """Test epic_verification field in ValidationConfig."""
+
+    def test_epic_verification_in_allowed_fields(self) -> None:
+        """epic_verification is in _ALLOWED_TOP_LEVEL_FIELDS."""
+        from src.domain.validation.config_loader import _ALLOWED_TOP_LEVEL_FIELDS
+
+        assert "epic_verification" in _ALLOWED_TOP_LEVEL_FIELDS
+
+    def test_validation_config_has_epic_verification_field(self) -> None:
+        """ValidationConfig has epic_verification field with default."""
+        from src.domain.validation.config import EpicVerifierConfig, ValidationConfig
+
+        config = ValidationConfig()
+        assert hasattr(config, "epic_verification")
+        assert isinstance(config.epic_verification, EpicVerifierConfig)
+        assert config.epic_verification.reviewer_type == "agent_sdk"
+
+    def test_validation_config_from_dict_parses_epic_verification(self) -> None:
+        """ValidationConfig.from_dict correctly parses epic_verification block."""
+        from src.domain.validation.config import ValidationConfig
+
+        data = {
+            "epic_verification": {"reviewer_type": "agent_sdk"},
+            "commands": {"test": {"command": "echo test"}},
+        }
+        config = ValidationConfig.from_dict(data)
+        assert config.epic_verification.reviewer_type == "agent_sdk"
+
+    def test_validation_config_from_dict_parses_cerberus_reviewer(self) -> None:
+        """ValidationConfig.from_dict parses cerberus reviewer_type."""
+        from src.domain.validation.config import ValidationConfig
+
+        data = {
+            "epic_verification": {"reviewer_type": "cerberus"},
+            "commands": {"test": {"command": "echo test"}},
+        }
+        config = ValidationConfig.from_dict(data)
+        assert config.epic_verification.reviewer_type == "cerberus"
+
+    def test_validation_config_from_dict_defaults_without_epic_verification(
+        self,
+    ) -> None:
+        """ValidationConfig.from_dict defaults epic_verification when absent."""
+        from src.domain.validation.config import ValidationConfig
+
+        data = {"commands": {"test": {"command": "echo test"}}}
+        config = ValidationConfig.from_dict(data)
+        assert config.epic_verification.reviewer_type == "agent_sdk"
+
 
 @pytest.mark.integration
 class TestEpicVerifierConfigIntegration:
@@ -214,3 +278,33 @@ class TestEpicVerifierConfigIntegration:
                 repo_path=tmp_path,
                 timeout_ms=60000,
             )
+
+    def test_validation_config_to_factory_path(self, tmp_path: Path) -> None:
+        """Integration: ValidationConfig.from_dict → factory functions."""
+        from src.domain.validation.config import ValidationConfig
+        from src.infra.epic_verifier import ClaudeEpicVerificationModel
+        from src.orchestration.factory import (
+            _check_epic_verifier_availability,
+            _create_epic_verification_model,
+        )
+
+        # Step 1: Parse ValidationConfig from dict (as if from mala.yaml)
+        data = {
+            "epic_verification": {"reviewer_type": "agent_sdk"},
+            "commands": {"test": {"command": "echo test"}},
+        }
+        validation_config = ValidationConfig.from_dict(data)
+
+        # Step 2: Extract reviewer_type (mimics create_orchestrator behavior)
+        reviewer_type = validation_config.epic_verification.reviewer_type
+
+        # Step 3: Check availability and create model
+        unavailable_reason = _check_epic_verifier_availability(reviewer_type)
+        assert unavailable_reason is None
+
+        model = _create_epic_verification_model(
+            reviewer_type=reviewer_type,
+            repo_path=tmp_path,
+            timeout_ms=60000,
+        )
+        assert isinstance(model, ClaudeEpicVerificationModel)

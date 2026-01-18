@@ -278,12 +278,16 @@ class CodeReviewConfig:
 
 
 @dataclass(frozen=True)
-class EpicVerificationConfig:
+class EpicVerifierConfig:
     """Configuration for epic verification reviewer choice.
 
     This configuration controls which backend is used for epic verification
     during epic completion triggers. Similar to CodeReviewConfig's reviewer_type,
     this allows selecting between different verification implementations.
+
+    Note: Named EpicVerifierConfig (not EpicVerificationConfig) to avoid collision
+    with src.pipeline.epic_verification_coordinator.EpicVerificationConfig which
+    handles retry configuration.
 
     Attributes:
         reviewer_type: Type of reviewer to use for epic verification.
@@ -819,6 +823,8 @@ class ValidationConfig:
         max_diff_size_kb: Maximum diff size in KB for epic verification.
             None means use default (no limit).
         evidence_check: Evidence check configuration. None means no evidence filtering.
+        epic_verification: Epic verification configuration. Controls which backend
+            (agent_sdk or cerberus) is used for epic verification.
         _fields_set: Set of field names that were explicitly provided in source.
             Used by the merger to distinguish "not set" from "explicitly set".
     """
@@ -836,6 +842,7 @@ class ValidationConfig:
     idle_timeout_seconds: float | None = None
     max_diff_size_kb: int | None = None
     evidence_check: EvidenceCheckConfig | None = None
+    epic_verification: EpicVerifierConfig = field(default_factory=EpicVerifierConfig)
     per_issue_review: CodeReviewConfig = field(
         default_factory=lambda: CodeReviewConfig(enabled=False)
     )
@@ -1071,6 +1078,26 @@ class ValidationConfig:
                     cast("dict[str, object]", ec_data)
                 )
 
+        # Parse epic_verification - use lazy import to avoid circular dependency
+        epic_verification: EpicVerifierConfig | None = None
+        if "epic_verification" in data:
+            fields_set.add("epic_verification")
+            ev_data = data["epic_verification"]
+            if ev_data is not None:
+                if not isinstance(ev_data, dict):
+                    raise ConfigError(
+                        f"epic_verification must be an object, "
+                        f"got {type(ev_data).__name__}"
+                    )
+                # Lazy import to avoid circular dependency with config_loader
+                from src.domain.validation.config_loader import (
+                    _parse_epic_verification_config,
+                )
+
+                epic_verification = _parse_epic_verification_config(
+                    cast("dict[str, object]", ev_data)
+                )
+
         # Parse per_issue_review - use lazy import to avoid circular dependency
         per_issue_review: CodeReviewConfig | None = None
         if "per_issue_review" in data:
@@ -1107,6 +1134,9 @@ class ValidationConfig:
             idle_timeout_seconds=idle_timeout_seconds,
             max_diff_size_kb=max_diff_size_kb,
             evidence_check=evidence_check,
+            epic_verification=epic_verification
+            if epic_verification is not None
+            else EpicVerifierConfig(),
             per_issue_review=per_issue_review
             if per_issue_review is not None
             else CodeReviewConfig(enabled=False),

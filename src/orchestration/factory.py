@@ -493,7 +493,13 @@ def _create_epic_verification_model(
             "Cerberus-based epic verification is not yet implemented"
         )
 
-    # Default: agent_sdk - use existing ClaudeEpicVerificationModel
+    if reviewer_type != "agent_sdk":
+        raise ValueError(
+            f"Unknown epic verification reviewer_type '{reviewer_type}', "
+            f"expected 'agent_sdk' or 'cerberus'"
+        )
+
+    # agent_sdk - use existing ClaudeEpicVerificationModel
     return cast(
         "EpicVerificationModel",
         ClaudeEpicVerificationModel(
@@ -588,6 +594,7 @@ def _build_dependencies(
     derived: _DerivedConfig,
     deps: OrchestratorDependencies | None,
     reviewer_config: _ReviewerConfig,
+    epic_verifier_reviewer_type: str = "agent_sdk",
 ) -> tuple[
     IssueProvider,
     CodeReviewer,
@@ -608,14 +615,14 @@ def _build_dependencies(
         derived: Derived configuration values.
         deps: Optional pre-built dependencies.
         reviewer_config: Pre-loaded reviewer configuration from mala.yaml.
+        epic_verifier_reviewer_type: Type of epic verifier ('agent_sdk' or 'cerberus').
 
     Returns:
         Tuple of all required dependencies.
     """
-    from src.core.models import RetryConfig
     from src.domain.evidence_check import EvidenceCheck
     from src.infra.clients.beads_client import BeadsClient
-    from src.infra.epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
+    from src.infra.epic_verifier import EpicVerifier
     from src.infra.io.console_sink import ConsoleEventSink
     from src.infra.io.session_log_parser import FileSystemLogProvider
     from src.infra.telemetry import NullTelemetryProvider
@@ -688,24 +695,34 @@ def _build_dependencies(
     # Epic verifier (only when using real BeadsClient - either created or injected)
     epic_verifier: EpicVerifierProtocol | None = None
     if isinstance(issue_provider, BeadsClient):
-        verification_model = ClaudeEpicVerificationModel(
-            timeout_ms=derived.timeout_seconds * 1000,
-            retry_config=RetryConfig(),
-            repo_path=repo_path,
+        # Check epic verifier availability based on reviewer_type
+        epic_unavailable_reason = _check_epic_verifier_availability(
+            epic_verifier_reviewer_type
         )
-        epic_verifier = cast(
-            "EpicVerifierProtocol",
-            EpicVerifier(
-                beads=issue_provider,
-                model=cast("EpicVerificationModel", verification_model),
+        if epic_unavailable_reason is None:
+            verification_model = _create_epic_verification_model(
+                reviewer_type=epic_verifier_reviewer_type,
                 repo_path=repo_path,
-                command_runner=command_runner,
-                event_sink=event_sink,
-                lock_manager=lock_manager,
-                max_diff_size_kb=derived.max_diff_size_kb,
-                lock_timeout_seconds=derived.epic_verify_lock_timeout_seconds,
-            ),
-        )
+                timeout_ms=derived.timeout_seconds * 1000,
+            )
+            epic_verifier = cast(
+                "EpicVerifierProtocol",
+                EpicVerifier(
+                    beads=issue_provider,
+                    model=verification_model,
+                    repo_path=repo_path,
+                    command_runner=command_runner,
+                    event_sink=event_sink,
+                    lock_manager=lock_manager,
+                    max_diff_size_kb=derived.max_diff_size_kb,
+                    lock_timeout_seconds=derived.epic_verify_lock_timeout_seconds,
+                ),
+            )
+        else:
+            logger.info(
+                "Epic verifier disabled: reason=%s",
+                epic_unavailable_reason,
+            )
 
     # Code reviewer - select based on reviewer_config.reviewer_type
     code_reviewer: CodeReviewer
@@ -836,6 +853,13 @@ def create_orchestrator(
         derived.disabled_validations.add("review")
         derived.review_disabled_reason = review_disabled_reason
 
+    # Extract epic_verifier_reviewer_type from validation_config
+    epic_verifier_reviewer_type = (
+        validation_config.epic_verification.reviewer_type
+        if validation_config is not None
+        else "agent_sdk"
+    )
+
     # Build dependencies (pass reviewer_config to avoid second config load)
     (
         issue_provider,
@@ -848,7 +872,14 @@ def create_orchestrator(
         command_runner,
         env_config,
         lock_manager,
-    ) = _build_dependencies(config, mala_config, derived, deps, reviewer_config)
+    ) = _build_dependencies(
+        config,
+        mala_config,
+        derived,
+        deps,
+        reviewer_config,
+        epic_verifier_reviewer_type=epic_verifier_reviewer_type,
+    )
 
     # Create orchestrator using internal constructor
     logger.info(
