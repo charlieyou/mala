@@ -277,6 +277,23 @@ class CodeReviewConfig:
     track_review_issues: bool = True
 
 
+@dataclass(frozen=True)
+class EpicVerificationConfig:
+    """Configuration for epic verification reviewer choice.
+
+    This configuration controls which backend is used for epic verification
+    during epic completion triggers. Similar to CodeReviewConfig's reviewer_type,
+    this allows selecting between different verification implementations.
+
+    Attributes:
+        reviewer_type: Type of reviewer to use for epic verification.
+            - "agent_sdk": Use Claude Agent SDK for verification (default).
+            - "cerberus": Use Cerberus-based verification.
+    """
+
+    reviewer_type: Literal["cerberus", "agent_sdk"] = "agent_sdk"
+
+
 @dataclass(frozen=True, kw_only=True)
 class BaseTriggerConfig:
     """Base configuration for validation triggers.

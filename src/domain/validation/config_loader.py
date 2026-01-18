@@ -39,6 +39,7 @@ if TYPE_CHECKING:
         BaseTriggerConfig,
         CerberusConfig,
         CodeReviewConfig,
+        EpicVerificationConfig,
     )
 
 
@@ -495,6 +496,53 @@ def _parse_cerberus_config(data: dict[str, Any]) -> CerberusConfig:
         wait_args=wait_args,
         env=env,
     )
+
+
+def _parse_epic_verification_config(
+    data: dict[str, Any] | None,
+) -> EpicVerificationConfig:
+    """Parse epic_verification configuration block.
+
+    Args:
+        data: The epic_verification config dict from mala.yaml, or None.
+
+    Returns:
+        EpicVerificationConfig with parsed settings (defaults if data is None).
+
+    Raises:
+        ConfigError: If fields are invalid or unknown fields present.
+    """
+    from src.domain.validation.config import (
+        EpicVerificationConfig as EpicVerificationConfigClass,
+    )
+
+    if data is None:
+        return EpicVerificationConfigClass()
+
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"epic_verification must be an object, got {type(data).__name__}"
+        )
+
+    # Validate unknown fields
+    known_fields = {"reviewer_type"}
+    unknown = set(data.keys()) - known_fields
+    if unknown:
+        first = sorted(str(k) for k in unknown)[0]
+        raise ConfigError(f"Unknown field '{first}' in epic_verification")
+
+    # Parse reviewer_type
+    reviewer_type: Literal["cerberus", "agent_sdk"] = "agent_sdk"
+    if "reviewer_type" in data:
+        val = data["reviewer_type"]
+        if val not in ("cerberus", "agent_sdk"):
+            raise ConfigError(
+                f"epic_verification.reviewer_type must be 'cerberus' or 'agent_sdk', "
+                f"got '{val}'"
+            )
+        reviewer_type = val
+
+    return EpicVerificationConfigClass(reviewer_type=reviewer_type)
 
 
 def _parse_code_review_config(

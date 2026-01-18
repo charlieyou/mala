@@ -442,6 +442,68 @@ def _check_review_availability(
     return None
 
 
+def _check_epic_verifier_availability(
+    reviewer_type: str = "agent_sdk",
+) -> str | None:
+    """Check if epic verifier is available for the specified reviewer type.
+
+    Returns the reason verifier is disabled, or None if available.
+    For agent_sdk reviewer, always available (no external dependencies).
+    For cerberus reviewer, stub returns NotImplemented.
+
+    Args:
+        reviewer_type: Type of epic verifier ('agent_sdk' or 'cerberus').
+
+    Returns:
+        Reason verifier is disabled, or None if available.
+    """
+    if reviewer_type == "agent_sdk":
+        return None  # Always available
+
+    if reviewer_type == "cerberus":
+        # Stub: Cerberus epic verifier not yet implemented
+        return "cerberus epic verifier not yet implemented"
+
+    return f"unknown epic verification reviewer_type '{reviewer_type}'"
+
+
+def _create_epic_verification_model(
+    reviewer_type: str,
+    repo_path: Path,
+    timeout_ms: int,
+) -> EpicVerificationModel:
+    """Create the epic verification model based on reviewer type.
+
+    Args:
+        reviewer_type: Type of verifier ('agent_sdk' or 'cerberus').
+        repo_path: Path to the repository.
+        timeout_ms: Timeout in milliseconds for verification.
+
+    Returns:
+        EpicVerificationModel implementation.
+
+    Raises:
+        NotImplementedError: If reviewer_type is 'cerberus' (not yet implemented).
+    """
+    from src.core.models import RetryConfig
+    from src.infra.epic_verifier import ClaudeEpicVerificationModel
+
+    if reviewer_type == "cerberus":
+        raise NotImplementedError(
+            "Cerberus-based epic verification is not yet implemented"
+        )
+
+    # Default: agent_sdk - use existing ClaudeEpicVerificationModel
+    return cast(
+        "EpicVerificationModel",
+        ClaudeEpicVerificationModel(
+            timeout_ms=timeout_ms,
+            retry_config=RetryConfig(),
+            repo_path=repo_path,
+        ),
+    )
+
+
 def _create_code_reviewer(
     repo_path: Path,
     mala_config: MalaConfig,
