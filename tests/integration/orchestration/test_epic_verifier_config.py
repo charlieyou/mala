@@ -130,7 +130,9 @@ class TestCheckEpicVerifierAvailability:
         bin_path = tmp_path / "bin"
         bin_path.mkdir()
         review_gate = bin_path / "review-gate"
-        review_gate.write_text('#!/bin/bash\necho "unknown subcommand" >&2; exit 1\n')
+        review_gate.write_text(
+            '#!/usr/bin/env sh\necho "unknown subcommand" >&2; exit 1\n'
+        )
         os.chmod(review_gate, stat.S_IRWXU)
 
         mala_config = MalaConfig(cerberus_bin_path=bin_path)
@@ -153,7 +155,7 @@ class TestCheckEpicVerifierAvailability:
         bin_path.mkdir()
         review_gate = bin_path / "review-gate"
         review_gate.write_text(
-            '#!/bin/bash\nif [ "$1" = "spawn-epic-review" ]; then echo "Usage: spawn-epic-review"; exit 0; fi; exit 1\n'
+            '#!/usr/bin/env sh\ncase "$1" in spawn-epic-review) echo "Usage: spawn-epic-review"; exit 0;; *) exit 1;; esac\n'
         )
         os.chmod(review_gate, stat.S_IRWXU)
 
@@ -260,6 +262,20 @@ class TestCreateEpicVerificationModel:
                 repo_path=tmp_path,
                 timeout_ms=60000,
             )
+
+    def test_agent_sdk_uses_timeout_ms_parameter(self, tmp_path: Path) -> None:
+        """agent_sdk model uses the timeout_ms parameter correctly."""
+        from src.infra.epic_verifier import ClaudeEpicVerificationModel
+        from src.orchestration.factory import _create_epic_verification_model
+
+        # Pass specific timeout to verify it's used (not some global default)
+        model = _create_epic_verification_model(
+            reviewer_type="agent_sdk",
+            repo_path=tmp_path,
+            timeout_ms=120000,  # 120 seconds
+        )
+        assert isinstance(model, ClaudeEpicVerificationModel)
+        assert model.timeout_ms == 120000
 
 
 class TestValidationConfigEpicVerification:
@@ -383,7 +399,7 @@ class TestEpicVerifierConfigIntegration:
         bin_path.mkdir()
         review_gate = bin_path / "review-gate"
         review_gate.write_text(
-            '#!/bin/bash\nif [ "$1" = "spawn-epic-review" ]; then echo "Usage: spawn-epic-review"; exit 0; fi; exit 1\n'
+            '#!/usr/bin/env sh\ncase "$1" in spawn-epic-review) echo "Usage: spawn-epic-review"; exit 0;; *) exit 1;; esac\n'
         )
         os.chmod(review_gate, stat.S_IRWXU)
 

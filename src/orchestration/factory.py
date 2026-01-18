@@ -445,6 +445,7 @@ def _check_review_availability(
 def _check_epic_verifier_availability(
     reviewer_type: str = "agent_sdk",
     mala_config: MalaConfig | None = None,
+    cerberus_config: CerberusConfig | None = None,
 ) -> str | None:
     """Check if epic verifier is available for the specified reviewer type.
 
@@ -454,7 +455,8 @@ def _check_epic_verifier_availability(
 
     Args:
         reviewer_type: Type of epic verifier ('agent_sdk' or 'cerberus').
-        mala_config: MalaConfig with Cerberus settings (required for cerberus).
+        mala_config: MalaConfig with Cerberus settings (bin_path, env).
+        cerberus_config: CerberusConfig from epic_verification.cerberus (env).
 
     Returns:
         Reason verifier is disabled, or None if available.
@@ -474,10 +476,17 @@ def _check_epic_verifier_availability(
         else None
     )
 
+    # Build effective env: prefer cerberus_config.env, fall back to mala_config.cerberus_env
+    if cerberus_config is not None:
+        cerberus_env_dict = dict(cerberus_config.env)
+    elif mala_config is not None:
+        cerberus_env_dict = dict(mala_config.cerberus_env)
+    else:
+        cerberus_env_dict = {}
+
     # Check if review-gate exists
     if review_gate_path is None:
-        # No explicit bin_path - check PATH (respecting cerberus_env if set)
-        cerberus_env_dict = dict(mala_config.cerberus_env) if mala_config else {}
+        # No explicit bin_path - check PATH (respecting cerberus env if set)
         if "PATH" in cerberus_env_dict:
             effective_path = (
                 cerberus_env_dict["PATH"] + os.pathsep + os.environ.get("PATH", "")
@@ -507,8 +516,7 @@ def _check_epic_verifier_availability(
 
     # Probe spawn-epic-review --help to verify subcommand support (R5)
     env = dict(os.environ)
-    if mala_config:
-        env.update(dict(mala_config.cerberus_env))
+    env.update(cerberus_env_dict)
 
     try:
         result = subprocess.run(
@@ -696,6 +704,7 @@ def _build_dependencies(
     reviewer_config: _ReviewerConfig,
     epic_verifier_reviewer_type: str = "agent_sdk",
     epic_verifier_cerberus_config: CerberusConfig | None = None,
+    epic_verifier_timeout_seconds: int = 600,
 ) -> tuple[
     IssueProvider,
     CodeReviewer,
@@ -718,6 +727,7 @@ def _build_dependencies(
         reviewer_config: Pre-loaded reviewer configuration from mala.yaml.
         epic_verifier_reviewer_type: Type of epic verifier ('agent_sdk' or 'cerberus').
         epic_verifier_cerberus_config: Optional CerberusConfig for epic_verification.cerberus.
+        epic_verifier_timeout_seconds: Timeout for epic verification (from config).
 
     Returns:
         Tuple of all required dependencies.
@@ -801,12 +811,13 @@ def _build_dependencies(
         epic_unavailable_reason = _check_epic_verifier_availability(
             epic_verifier_reviewer_type,
             mala_config=mala_config,
+            cerberus_config=epic_verifier_cerberus_config,
         )
         if epic_unavailable_reason is None:
             verification_model = _create_epic_verification_model(
                 reviewer_type=epic_verifier_reviewer_type,
                 repo_path=repo_path,
-                timeout_ms=derived.timeout_seconds * 1000,
+                timeout_ms=epic_verifier_timeout_seconds * 1000,
                 mala_config=mala_config,
                 cerberus_config=epic_verifier_cerberus_config,
             )
@@ -959,7 +970,7 @@ def create_orchestrator(
         derived.disabled_validations.add("review")
         derived.review_disabled_reason = review_disabled_reason
 
-    # Extract epic_verifier_reviewer_type and cerberus config from validation_config
+    # Extract epic_verifier settings from validation_config
     epic_verifier_reviewer_type = (
         validation_config.epic_verification.reviewer_type
         if validation_config is not None
@@ -970,6 +981,13 @@ def create_orchestrator(
         if validation_config is not None
         else None
     )
+    # Compute timeout: cerberus uses cerberus.timeout, agent_sdk uses agent_sdk_timeout
+    if epic_verifier_reviewer_type == "cerberus" and epic_verifier_cerberus_config:
+        epic_verifier_timeout_seconds = epic_verifier_cerberus_config.timeout
+    elif validation_config is not None:
+        epic_verifier_timeout_seconds = validation_config.epic_verification.agent_sdk_timeout
+    else:
+        epic_verifier_timeout_seconds = 600  # default
 
     # Build dependencies (pass reviewer_config to avoid second config load)
     (
@@ -991,6 +1009,7 @@ def create_orchestrator(
         reviewer_config,
         epic_verifier_reviewer_type=epic_verifier_reviewer_type,
         epic_verifier_cerberus_config=epic_verifier_cerberus_config,
+        epic_verifier_timeout_seconds=epic_verifier_timeout_seconds,
     )
 
     # Create orchestrator using internal constructor
