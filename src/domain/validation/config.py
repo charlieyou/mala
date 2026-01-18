@@ -278,6 +278,26 @@ class CodeReviewConfig:
 
 
 @dataclass(frozen=True)
+class VerificationRetryPolicy:
+    """Per-category retry limits for epic verification failures.
+
+    Different failure categories have different characteristics:
+    - Timeout errors are often transient and worth aggressive retrying
+    - Execution errors may be environmental issues worth moderate retrying
+    - Parse errors are often deterministic and unlikely to succeed on retry
+
+    Attributes:
+        timeout_retries: Max retries for timeout errors (default: 3).
+        execution_retries: Max retries for execution errors (default: 2).
+        parse_retries: Max retries for parse errors (default: 1).
+    """
+
+    timeout_retries: int = 3
+    execution_retries: int = 2
+    parse_retries: int = 1
+
+
+@dataclass(frozen=True)
 class EpicVerifierConfig:
     """Configuration for epic verification reviewer choice.
 
@@ -296,10 +316,12 @@ class EpicVerifierConfig:
             - "cerberus": Use Cerberus-based verification.
         timeout: Top-level timeout in seconds (default: 600).
         max_retries: Maximum retry attempts on failure (default: 3).
+            This is the global fallback; per-category limits in retry_policy take precedence.
         failure_mode: How to handle verification failures.
         cerberus: Cerberus-specific settings (timeout, spawn_args, wait_args, env).
         agent_sdk_timeout: Timeout in seconds for Agent SDK verification.
         agent_sdk_model: Model for Agent SDK verifier ('sonnet', 'opus', 'haiku').
+        retry_policy: Per-category retry limits for different failure types.
     """
 
     enabled: bool = True
@@ -310,6 +332,9 @@ class EpicVerifierConfig:
     cerberus: CerberusConfig | None = None
     agent_sdk_timeout: int = 600
     agent_sdk_model: Literal["sonnet", "opus", "haiku"] = "sonnet"
+    retry_policy: VerificationRetryPolicy = field(
+        default_factory=VerificationRetryPolicy
+    )
 
 
 @dataclass(frozen=True, kw_only=True)

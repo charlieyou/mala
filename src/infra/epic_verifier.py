@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 from contextlib import asynccontextmanager
@@ -41,6 +42,19 @@ if TYPE_CHECKING:
     from src.core.protocols.infra import CommandRunnerPort, LockManagerPort
     from src.core.protocols.validation import EpicVerificationModel
     from src.infra.clients.beads_client import BeadsClient
+
+
+class VerificationRetryPolicyProtocol:
+    """Protocol for retry policy to avoid importing from domain layer.
+
+    Duck typing interface matching VerificationRetryPolicy from domain.validation.config.
+    """
+
+    timeout_retries: int
+    execution_retries: int
+    parse_retries: int
+
+logger = logging.getLogger(__name__)
 
 # Spec path patterns from docs (case-insensitive)
 SPEC_PATH_PATTERNS = [
@@ -391,6 +405,7 @@ class EpicVerifier:
         max_diff_size_kb: int | None = None,
         lock_timeout_seconds: int | None = None,
         reviewer_type: str = "agent_sdk",
+        retry_policy: VerificationRetryPolicyProtocol | None = None,
     ):
         """Initialize EpicVerifier.
 
@@ -410,6 +425,8 @@ class EpicVerifier:
                 lock. None uses the default (300 seconds).
             reviewer_type: Type of reviewer ('agent_sdk' or 'cerberus'). Used for
                 telemetry and event reporting.
+            retry_policy: Per-category retry limits for verification failures.
+                If None, a default policy is used.
         """
         self.beads = beads
         self.model = model
@@ -424,6 +441,7 @@ class EpicVerifier:
         self.max_diff_size_kb = max_diff_size_kb
         self.lock_timeout_seconds = lock_timeout_seconds
         self.reviewer_type = reviewer_type
+        self.retry_policy = retry_policy
 
     async def _get_diff_size_kb(self, commit_range: str) -> int | None:
         """Get approximate diff size in KB for a commit range.
@@ -643,38 +661,136 @@ class EpicVerifier:
             commit_summary=scoped.commit_summary,
         )
 
-        # Invoke verification model with error handling
+        # Invoke verification model with per-category retry policy (R6)
         # Per spec: timeouts/errors should trigger human review, not abort
-        try:
-            result = await self.model.verify(
-                epic_description,
-                scoped.commit_range or "",
-                scoped.commit_summary,
-                spec_content,
-            )
-            verdict = EpicVerdict(
-                passed=result.passed,
-                unmet_criteria=[
-                    UnmetCriterion(
-                        criterion=c.criterion,
-                        evidence=c.evidence,
-                        priority=c.priority,
-                        criterion_hash=c.criterion_hash,
-                    )
-                    for c in result.unmet_criteria
-                ],
-                confidence=result.confidence,
-                reasoning=result.reasoning,
-            )
-        except Exception as e:
-            verdict = EpicVerdict(
-                passed=False,
-                unmet_criteria=[],
-                confidence=0.0,
-                reasoning=f"Model verification failed: {e}",
-            )
+        verdict = await self._verify_with_category_retries(
+            epic_description,
+            scoped.commit_range or "",
+            scoped.commit_summary,
+            spec_content,
+        )
 
         return verdict, context
+
+    async def _verify_with_category_retries(
+        self,
+        epic_description: str,
+        commit_range: str,
+        commit_summary: str,
+        spec_content: str | None,
+    ) -> EpicVerdict:
+        """Verify with per-category retry limits (R6 implementation).
+
+        Different failure categories have different retry characteristics:
+        - Timeout errors are often transient and worth aggressive retrying
+        - Execution errors may be environmental issues worth moderate retrying
+        - Parse errors are often deterministic and unlikely to succeed on retry
+
+        Args:
+            epic_description: The epic's acceptance criteria text.
+            commit_range: Commit range hint covering child issue commits.
+            commit_summary: Authoritative list of commit SHAs to inspect.
+            spec_content: Optional content of linked spec file.
+
+        Returns:
+            EpicVerdict with verification result.
+        """
+        # Import error types from cerberus verifier
+        from src.infra.clients.cerberus_epic_verifier import (
+            VerificationExecutionError,
+            VerificationParseError,
+            VerificationTimeoutError,
+        )
+
+        # Get retry limits from policy or use defaults
+        if self.retry_policy is not None:
+            timeout_retries = self.retry_policy.timeout_retries
+            execution_retries = self.retry_policy.execution_retries
+            parse_retries = self.retry_policy.parse_retries
+        else:
+            # Default policy: aggressive for timeout, moderate for execution, minimal for parse
+            timeout_retries = 3
+            execution_retries = 2
+            parse_retries = 1
+
+        # Track attempts per category
+        timeout_attempts = 0
+        execution_attempts = 0
+        parse_attempts = 0
+        last_error: Exception | None = None
+
+        while True:
+            try:
+                result = await self.model.verify(
+                    epic_description,
+                    commit_range,
+                    commit_summary,
+                    spec_content,
+                )
+                return EpicVerdict(
+                    passed=result.passed,
+                    unmet_criteria=[
+                        UnmetCriterion(
+                            criterion=c.criterion,
+                            evidence=c.evidence,
+                            priority=c.priority,
+                            criterion_hash=c.criterion_hash,
+                        )
+                        for c in result.unmet_criteria
+                    ],
+                    confidence=result.confidence,
+                    reasoning=result.reasoning,
+                )
+            except VerificationTimeoutError as e:
+                timeout_attempts += 1
+                last_error = e
+                if timeout_attempts <= timeout_retries:
+                    logger.warning(
+                        "Verification timeout (attempt %d/%d): %s",
+                        timeout_attempts,
+                        timeout_retries + 1,
+                        e,
+                    )
+                    continue
+                # Exhausted retries for this category
+                break
+            except VerificationExecutionError as e:
+                execution_attempts += 1
+                last_error = e
+                if execution_attempts <= execution_retries:
+                    logger.warning(
+                        "Verification execution error (attempt %d/%d): %s",
+                        execution_attempts,
+                        execution_retries + 1,
+                        e,
+                    )
+                    continue
+                break
+            except VerificationParseError as e:
+                parse_attempts += 1
+                last_error = e
+                if parse_attempts <= parse_retries:
+                    logger.warning(
+                        "Verification parse error (attempt %d/%d): %s",
+                        parse_attempts,
+                        parse_retries + 1,
+                        e,
+                    )
+                    continue
+                break
+            except Exception as e:
+                # Unknown error - don't retry, fail immediately
+                last_error = e
+                break
+
+        # All retries exhausted or unknown error - return failure verdict
+        error_msg = str(last_error) if last_error else "Unknown error"
+        return EpicVerdict(
+            passed=False,
+            unmet_criteria=[],
+            confidence=0.0,
+            reasoning=f"Model verification failed: {error_msg}",
+        )
 
     async def _get_eligible_epics(self) -> list[str]:
         """Get list of epics eligible for closure.

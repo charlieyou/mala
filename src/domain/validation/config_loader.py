@@ -40,6 +40,7 @@ if TYPE_CHECKING:
         CerberusConfig,
         CodeReviewConfig,
         EpicVerifierConfig,
+        VerificationRetryPolicy,
     )
 
 
@@ -509,8 +510,101 @@ _EPIC_VERIFICATION_FIELDS = frozenset(
         "cerberus",
         "agent_sdk_timeout",
         "agent_sdk_model",
+        "retry_policy",
     }
 )
+
+_RETRY_POLICY_FIELDS = frozenset(
+    {"timeout_retries", "execution_retries", "parse_retries"}
+)
+
+
+def _parse_retry_policy(
+    data: dict[str, Any] | None,
+) -> VerificationRetryPolicy:
+    """Parse retry_policy configuration block.
+
+    Args:
+        data: The retry_policy config dict from epic_verification, or None.
+
+    Returns:
+        VerificationRetryPolicy with parsed settings (defaults if data is None).
+
+    Raises:
+        ConfigError: If fields are invalid or unknown fields present.
+    """
+    from src.domain.validation.config import (
+        VerificationRetryPolicy as VerificationRetryPolicyClass,
+    )
+
+    if data is None:
+        return VerificationRetryPolicyClass()
+
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"epic_verification.retry_policy must be an object, "
+            f"got {type(data).__name__}"
+        )
+
+    # Validate unknown fields - fail fast
+    unknown = set(data.keys()) - _RETRY_POLICY_FIELDS
+    if unknown:
+        first = sorted(str(k) for k in unknown)[0]
+        raise ConfigError(f"Unknown field '{first}' in epic_verification.retry_policy")
+
+    # Parse timeout_retries (optional, defaults to 3)
+    timeout_retries = 3
+    if "timeout_retries" in data:
+        val = data["timeout_retries"]
+        if isinstance(val, bool) or not isinstance(val, int):
+            raise ConfigError(
+                f"epic_verification.retry_policy.timeout_retries must be an integer, "
+                f"got {type(val).__name__}"
+            )
+        if val < 0:
+            raise ConfigError(
+                f"epic_verification.retry_policy.timeout_retries must be non-negative, "
+                f"got {val}"
+            )
+        timeout_retries = val
+
+    # Parse execution_retries (optional, defaults to 2)
+    execution_retries = 2
+    if "execution_retries" in data:
+        val = data["execution_retries"]
+        if isinstance(val, bool) or not isinstance(val, int):
+            raise ConfigError(
+                f"epic_verification.retry_policy.execution_retries must be an integer, "
+                f"got {type(val).__name__}"
+            )
+        if val < 0:
+            raise ConfigError(
+                f"epic_verification.retry_policy.execution_retries must be non-negative, "
+                f"got {val}"
+            )
+        execution_retries = val
+
+    # Parse parse_retries (optional, defaults to 1)
+    parse_retries = 1
+    if "parse_retries" in data:
+        val = data["parse_retries"]
+        if isinstance(val, bool) or not isinstance(val, int):
+            raise ConfigError(
+                f"epic_verification.retry_policy.parse_retries must be an integer, "
+                f"got {type(val).__name__}"
+            )
+        if val < 0:
+            raise ConfigError(
+                f"epic_verification.retry_policy.parse_retries must be non-negative, "
+                f"got {val}"
+            )
+        parse_retries = val
+
+    return VerificationRetryPolicyClass(
+        timeout_retries=timeout_retries,
+        execution_retries=execution_retries,
+        parse_retries=parse_retries,
+    )
 
 
 def _parse_epic_verification_config(
@@ -654,6 +748,9 @@ def _parse_epic_verification_config(
             )
         agent_sdk_model = model_val
 
+    # Parse retry_policy (optional nested block for per-category retry limits)
+    retry_policy = _parse_retry_policy(data.get("retry_policy"))
+
     return EpicVerifierConfigClass(
         enabled=enabled,
         reviewer_type=reviewer_type,
@@ -663,6 +760,7 @@ def _parse_epic_verification_config(
         cerberus=cerberus,
         agent_sdk_timeout=agent_sdk_timeout,
         agent_sdk_model=agent_sdk_model,
+        retry_policy=retry_policy,
     )
 
 

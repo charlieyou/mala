@@ -20,8 +20,12 @@ from src.domain.validation.config import (
     ConfigError,
     EpicVerifierConfig,
     FailureMode,
+    VerificationRetryPolicy,
 )
-from src.domain.validation.config_loader import _parse_epic_verification_config
+from src.domain.validation.config_loader import (
+    _parse_epic_verification_config,
+    _parse_retry_policy,
+)
 
 
 class TestParseEpicVerificationConfigDefaults:
@@ -38,6 +42,9 @@ class TestParseEpicVerificationConfigDefaults:
         assert config.cerberus is None
         assert config.agent_sdk_timeout == 600
         assert config.agent_sdk_model == "sonnet"
+        assert config.retry_policy.timeout_retries == 3
+        assert config.retry_policy.execution_retries == 2
+        assert config.retry_policy.parse_retries == 1
 
     def test_returns_defaults_when_data_is_empty_dict(self) -> None:
         """Parser returns defaults for empty dict."""
@@ -50,6 +57,9 @@ class TestParseEpicVerificationConfigDefaults:
         assert config.cerberus is None
         assert config.agent_sdk_timeout == 600
         assert config.agent_sdk_model == "sonnet"
+        assert config.retry_policy.timeout_retries == 3
+        assert config.retry_policy.execution_retries == 2
+        assert config.retry_policy.parse_retries == 1
 
     def test_defaults_when_individual_fields_omitted(self) -> None:
         """Parser applies defaults for omitted individual fields."""
@@ -354,6 +364,7 @@ class TestEpicVerifierConfigDataclass:
         assert hasattr(config, "cerberus")
         assert hasattr(config, "agent_sdk_timeout")
         assert hasattr(config, "agent_sdk_model")
+        assert hasattr(config, "retry_policy")
 
     def test_dataclass_defaults(self) -> None:
         """EpicVerifierConfig has correct defaults."""
@@ -366,6 +377,9 @@ class TestEpicVerifierConfigDataclass:
         assert config.cerberus is None
         assert config.agent_sdk_timeout == 600
         assert config.agent_sdk_model == "sonnet"
+        assert config.retry_policy.timeout_retries == 3
+        assert config.retry_policy.execution_retries == 2
+        assert config.retry_policy.parse_retries == 1
 
     def test_dataclass_is_frozen(self) -> None:
         """EpicVerifierConfig is immutable (frozen)."""
@@ -394,3 +408,178 @@ class TestEpicVerifierConfigDataclass:
         assert config.cerberus is cerberus
         assert config.agent_sdk_timeout == 900
         assert config.agent_sdk_model == "haiku"
+
+
+class TestParseRetryPolicy:
+    """Tests for _parse_retry_policy function (R6: per-category retry limits)."""
+
+    def test_returns_defaults_when_data_is_none(self) -> None:
+        """Parser returns default policy when data is None."""
+        policy = _parse_retry_policy(None)
+        assert policy.timeout_retries == 3
+        assert policy.execution_retries == 2
+        assert policy.parse_retries == 1
+
+    def test_returns_defaults_when_data_is_empty_dict(self) -> None:
+        """Parser returns defaults for empty dict."""
+        policy = _parse_retry_policy({})
+        assert policy.timeout_retries == 3
+        assert policy.execution_retries == 2
+        assert policy.parse_retries == 1
+
+    def test_parses_all_fields(self) -> None:
+        """Parser correctly parses all fields."""
+        policy = _parse_retry_policy(
+            {
+                "timeout_retries": 5,
+                "execution_retries": 4,
+                "parse_retries": 2,
+            }
+        )
+        assert policy.timeout_retries == 5
+        assert policy.execution_retries == 4
+        assert policy.parse_retries == 2
+
+    def test_parses_partial_fields(self) -> None:
+        """Parser correctly handles partial fields with defaults."""
+        policy = _parse_retry_policy({"timeout_retries": 10})
+        assert policy.timeout_retries == 10
+        assert policy.execution_retries == 2  # default
+        assert policy.parse_retries == 1  # default
+
+    def test_parses_zero_values(self) -> None:
+        """Parser accepts zero for disabling retries."""
+        policy = _parse_retry_policy(
+            {
+                "timeout_retries": 0,
+                "execution_retries": 0,
+                "parse_retries": 0,
+            }
+        )
+        assert policy.timeout_retries == 0
+        assert policy.execution_retries == 0
+        assert policy.parse_retries == 0
+
+    def test_rejects_non_dict_data(self) -> None:
+        """Parser raises ConfigError when data is not a dict."""
+        with pytest.raises(ConfigError, match="retry_policy must be an object"):
+            _parse_retry_policy("not a dict")  # type: ignore[arg-type]
+
+    def test_rejects_unknown_fields(self) -> None:
+        """Parser raises ConfigError for unknown fields."""
+        with pytest.raises(ConfigError, match="Unknown field 'unknown'"):
+            _parse_retry_policy({"unknown": "value"})
+
+    def test_rejects_timeout_retries_non_integer(self) -> None:
+        """Parser raises ConfigError when timeout_retries is not integer."""
+        with pytest.raises(ConfigError, match="timeout_retries must be an integer"):
+            _parse_retry_policy({"timeout_retries": "3"})
+
+    def test_rejects_timeout_retries_boolean(self) -> None:
+        """Parser raises ConfigError when timeout_retries is boolean."""
+        with pytest.raises(ConfigError, match="timeout_retries must be an integer"):
+            _parse_retry_policy({"timeout_retries": True})
+
+    def test_rejects_timeout_retries_negative(self) -> None:
+        """Parser raises ConfigError when timeout_retries is negative."""
+        with pytest.raises(ConfigError, match="timeout_retries must be non-negative"):
+            _parse_retry_policy({"timeout_retries": -1})
+
+    def test_rejects_execution_retries_non_integer(self) -> None:
+        """Parser raises ConfigError when execution_retries is not integer."""
+        with pytest.raises(ConfigError, match="execution_retries must be an integer"):
+            _parse_retry_policy({"execution_retries": 2.5})
+
+    def test_rejects_execution_retries_negative(self) -> None:
+        """Parser raises ConfigError when execution_retries is negative."""
+        with pytest.raises(ConfigError, match="execution_retries must be non-negative"):
+            _parse_retry_policy({"execution_retries": -2})
+
+    def test_rejects_parse_retries_non_integer(self) -> None:
+        """Parser raises ConfigError when parse_retries is not integer."""
+        with pytest.raises(ConfigError, match="parse_retries must be an integer"):
+            _parse_retry_policy({"parse_retries": [1]})
+
+    def test_rejects_parse_retries_negative(self) -> None:
+        """Parser raises ConfigError when parse_retries is negative."""
+        with pytest.raises(ConfigError, match="parse_retries must be non-negative"):
+            _parse_retry_policy({"parse_retries": -5})
+
+
+class TestParseEpicVerificationConfigRetryPolicy:
+    """Tests for retry_policy parsing in epic_verification config."""
+
+    def test_default_retry_policy(self) -> None:
+        """Parser provides default retry_policy when omitted."""
+        config = _parse_epic_verification_config({})
+        assert config.retry_policy is not None
+        assert config.retry_policy.timeout_retries == 3
+        assert config.retry_policy.execution_retries == 2
+        assert config.retry_policy.parse_retries == 1
+
+    def test_parses_retry_policy_block(self) -> None:
+        """Parser correctly parses retry_policy nested block."""
+        config = _parse_epic_verification_config(
+            {
+                "retry_policy": {
+                    "timeout_retries": 5,
+                    "execution_retries": 3,
+                    "parse_retries": 0,
+                }
+            }
+        )
+        assert config.retry_policy.timeout_retries == 5
+        assert config.retry_policy.execution_retries == 3
+        assert config.retry_policy.parse_retries == 0
+
+    def test_yaml_with_retry_policy(self) -> None:
+        """Load from YAML with retry_policy block."""
+        yaml_content = textwrap.dedent("""
+            reviewer_type: cerberus
+            retry_policy:
+              timeout_retries: 10
+              execution_retries: 5
+              parse_retries: 2
+        """)
+        data = yaml.safe_load(yaml_content)
+        config = _parse_epic_verification_config(data)
+
+        assert config.reviewer_type == "cerberus"
+        assert config.retry_policy.timeout_retries == 10
+        assert config.retry_policy.execution_retries == 5
+        assert config.retry_policy.parse_retries == 2
+
+
+class TestVerificationRetryPolicyDataclass:
+    """Tests for the VerificationRetryPolicy dataclass itself."""
+
+    def test_dataclass_has_all_expected_fields(self) -> None:
+        """VerificationRetryPolicy has all expected fields."""
+        policy = VerificationRetryPolicy()
+        assert hasattr(policy, "timeout_retries")
+        assert hasattr(policy, "execution_retries")
+        assert hasattr(policy, "parse_retries")
+
+    def test_dataclass_defaults(self) -> None:
+        """VerificationRetryPolicy has correct defaults."""
+        policy = VerificationRetryPolicy()
+        assert policy.timeout_retries == 3
+        assert policy.execution_retries == 2
+        assert policy.parse_retries == 1
+
+    def test_dataclass_is_frozen(self) -> None:
+        """VerificationRetryPolicy is immutable (frozen)."""
+        policy = VerificationRetryPolicy()
+        with pytest.raises(AttributeError):
+            policy.timeout_retries = 5  # type: ignore[misc]
+
+    def test_dataclass_can_be_created_with_all_fields(self) -> None:
+        """VerificationRetryPolicy can be created with all field values."""
+        policy = VerificationRetryPolicy(
+            timeout_retries=10,
+            execution_retries=8,
+            parse_retries=3,
+        )
+        assert policy.timeout_retries == 10
+        assert policy.execution_retries == 8
+        assert policy.parse_retries == 3

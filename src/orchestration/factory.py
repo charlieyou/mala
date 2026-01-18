@@ -70,7 +70,11 @@ if TYPE_CHECKING:
         EpicVerifierProtocol,
         GateChecker,
     )
-    from src.domain.validation.config import CerberusConfig, ValidationConfig
+    from src.domain.validation.config import (
+        CerberusConfig,
+        ValidationConfig,
+        VerificationRetryPolicy,
+    )
     from src.infra.io.config import MalaConfig
     from src.infra.telemetry import TelemetryProvider
 
@@ -705,6 +709,7 @@ def _build_dependencies(
     epic_verifier_reviewer_type: str = "agent_sdk",
     epic_verifier_cerberus_config: CerberusConfig | None = None,
     epic_verifier_timeout_seconds: int = 600,
+    epic_verifier_retry_policy: VerificationRetryPolicy | None = None,
 ) -> tuple[
     IssueProvider,
     CodeReviewer,
@@ -728,6 +733,7 @@ def _build_dependencies(
         epic_verifier_reviewer_type: Type of epic verifier ('agent_sdk' or 'cerberus').
         epic_verifier_cerberus_config: Optional CerberusConfig for epic_verification.cerberus.
         epic_verifier_timeout_seconds: Timeout for epic verification (from config).
+        epic_verifier_retry_policy: Per-category retry limits for verification failures.
 
     Returns:
         Tuple of all required dependencies.
@@ -833,6 +839,7 @@ def _build_dependencies(
                     max_diff_size_kb=derived.max_diff_size_kb,
                     lock_timeout_seconds=derived.epic_verify_lock_timeout_seconds,
                     reviewer_type=epic_verifier_reviewer_type,
+                    retry_policy=epic_verifier_retry_policy,
                 ),
             )
         else:
@@ -998,6 +1005,13 @@ def create_orchestrator(
     else:
         epic_verifier_timeout_seconds = 600  # default
 
+    # Extract retry_policy for per-category retry limits (R6)
+    epic_verifier_retry_policy = (
+        validation_config.epic_verification.retry_policy
+        if validation_config is not None
+        else None
+    )
+
     # Build dependencies (pass reviewer_config to avoid second config load)
     (
         issue_provider,
@@ -1019,6 +1033,7 @@ def create_orchestrator(
         epic_verifier_reviewer_type=epic_verifier_reviewer_type,
         epic_verifier_cerberus_config=epic_verifier_cerberus_config,
         epic_verifier_timeout_seconds=epic_verifier_timeout_seconds,
+        epic_verifier_retry_policy=epic_verifier_retry_policy,
     )
 
     # Create orchestrator using internal constructor
