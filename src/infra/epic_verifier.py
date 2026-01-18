@@ -390,6 +390,7 @@ class EpicVerifier:
         scope_analyzer: EpicScopeAnalyzer | None = None,
         max_diff_size_kb: int | None = None,
         lock_timeout_seconds: int | None = None,
+        reviewer_type: str = "agent_sdk",
     ):
         """Initialize EpicVerifier.
 
@@ -407,6 +408,8 @@ class EpicVerifier:
                 verification is skipped and returns a verdict requiring human review.
             lock_timeout_seconds: Timeout in seconds for acquiring epic verification
                 lock. None uses the default (300 seconds).
+            reviewer_type: Type of reviewer ('agent_sdk' or 'cerberus'). Used for
+                telemetry and event reporting.
         """
         self.beads = beads
         self.model = model
@@ -420,6 +423,7 @@ class EpicVerifier:
         )
         self.max_diff_size_kb = max_diff_size_kb
         self.lock_timeout_seconds = lock_timeout_seconds
+        self.reviewer_type = reviewer_type
 
     async def _get_diff_size_kb(self, commit_range: str) -> int | None:
         """Get approximate diff size in KB for a commit range.
