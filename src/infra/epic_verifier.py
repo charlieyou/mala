@@ -25,7 +25,7 @@ import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from src.core.models import (
     EpicVerdict,
@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from src.infra.clients.beads_client import BeadsClient
 
 
-class VerificationRetryPolicyProtocol:
+class VerificationRetryPolicyProtocol(Protocol):
     """Protocol for retry policy to avoid importing from domain layer.
 
     Duck typing interface matching VerificationRetryPolicy from domain.validation.config.
@@ -53,6 +53,7 @@ class VerificationRetryPolicyProtocol:
     timeout_retries: int
     execution_retries: int
     parse_retries: int
+
 
 logger = logging.getLogger(__name__)
 
@@ -686,6 +687,10 @@ class EpicVerifier:
         - Execution errors may be environmental issues worth moderate retrying
         - Parse errors are often deterministic and unlikely to succeed on retry
 
+        Note: Per-category retries apply to Cerberus-specific exceptions. For
+        Agent SDK, asyncio.TimeoutError is treated as a timeout error. Other
+        SDK failures fall through to generic exception handling (no retry).
+
         Args:
             epic_description: The epic's acceptance criteria text.
             commit_range: Commit range hint covering child issue commits.
@@ -702,11 +707,20 @@ class EpicVerifier:
             VerificationTimeoutError,
         )
 
-        # Get retry limits from policy or use defaults
+        # Get retry limits from policy or use defaults, with validation
+        # Clamp to non-negative integers to prevent infinite loops from invalid input
+        def _safe_int(val: object, default: int) -> int:
+            """Safely convert to non-negative int, clamping invalid values."""
+            try:
+                n = int(val)  # type: ignore[arg-type]
+                return max(0, n)
+            except (TypeError, ValueError):
+                return default
+
         if self.retry_policy is not None:
-            timeout_retries = self.retry_policy.timeout_retries
-            execution_retries = self.retry_policy.execution_retries
-            parse_retries = self.retry_policy.parse_retries
+            timeout_retries = _safe_int(self.retry_policy.timeout_retries, 3)
+            execution_retries = _safe_int(self.retry_policy.execution_retries, 2)
+            parse_retries = _safe_int(self.retry_policy.parse_retries, 1)
         else:
             # Default policy: aggressive for timeout, moderate for execution, minimal for parse
             timeout_retries = 3
@@ -753,6 +767,19 @@ class EpicVerifier:
                     )
                     continue
                 # Exhausted retries for this category
+                break
+            except TimeoutError as e:
+                # Agent SDK may raise asyncio.TimeoutError - treat as timeout category
+                timeout_attempts += 1
+                last_error = e
+                if timeout_attempts <= timeout_retries:
+                    logger.warning(
+                        "Verification timeout (attempt %d/%d): %s",
+                        timeout_attempts,
+                        timeout_retries + 1,
+                        e,
+                    )
+                    continue
                 break
             except VerificationExecutionError as e:
                 execution_attempts += 1
