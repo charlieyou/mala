@@ -15,19 +15,13 @@ class VerificationAttempt:
     """Record of a verification attempt for observable assertions.
 
     Attributes:
-        epic_id: Identifier of the epic being verified (extracted from criteria).
-        epic_criteria: Full criteria string passed to verify().
-        commit_range: Commit range passed to verify().
-        commit_list: Commit list passed to verify().
-        spec_content: Spec content passed to verify().
+        epic_id: Identifier of the epic being verified (extracted from context).
+        epic_context: Full context string passed to verify().
         verdict: The verdict returned for this attempt.
     """
 
     epic_id: str
-    epic_criteria: str
-    commit_range: str
-    commit_list: str
-    spec_content: str | None
+    epic_context: str
     verdict: EpicVerdict
 
 
@@ -43,14 +37,14 @@ class FakeEpicVerificationModel:
         attempts: list of VerificationAttempt recording all verify() calls
 
     Example:
-        >>> failing = EpicVerdict(passed=False, unmet_criteria=[], confidence=0.9, reasoning="failed")
-        >>> passing = EpicVerdict(passed=True, unmet_criteria=[], confidence=0.95, reasoning="ok")
+        >>> failing = EpicVerdict(passed=False, unmet_criteria=[], reasoning="failed")
+        >>> passing = EpicVerdict(passed=True, unmet_criteria=[], reasoning="ok")
         >>> model = FakeEpicVerificationModel(verdicts=[failing, passing])
-        >>> await model.verify("epic-1: ...", "abc..def", "abc,def", None)
+        >>> await model.verify("epic-1: ...", None)
         EpicVerdict(passed=False, ...)
         >>> model.attempts[0].verdict.passed
         False
-        >>> await model.verify("epic-1: ...", "abc..def", "abc,def", None)
+        >>> await model.verify("epic-1: ...", None)
         EpicVerdict(passed=True, ...)
         >>> len(model.attempts)
         2
@@ -63,21 +57,18 @@ class FakeEpicVerificationModel:
 
     async def verify(
         self,
-        epic_criteria: str,
-        commit_range: str,
-        commit_list: str,
-        spec_content: str | None,
+        epic_context: str,
     ) -> EpicVerdict:
-        """Verify if the commit scope satisfies the epic's acceptance criteria.
+        """Verify if the epic's acceptance criteria are met.
 
         Returns the next verdict from the configured sequence, or a default
         passing verdict if the sequence is exhausted.
 
-        The epic_id is extracted from the first line of epic_criteria (before colon)
+        The epic_id is extracted from the first line of epic_context (before colon)
         for recording in attempts.
         """
-        # Extract epic_id from criteria (e.g., "epic-123: Description" -> "epic-123")
-        epic_id = epic_criteria.split(":")[0].strip() if epic_criteria else "unknown"
+        # Extract epic_id from context (e.g., "epic-123: Description" -> "epic-123")
+        epic_id = epic_context.split(":")[0].strip() if epic_context else "unknown"
 
         if self._call_index < len(self.verdicts):
             verdict = self.verdicts[self._call_index]
@@ -87,17 +78,13 @@ class FakeEpicVerificationModel:
             verdict = EpicVerdict(
                 passed=True,
                 unmet_criteria=[],
-                confidence=1.0,
                 reasoning="Default passing verdict (sequence exhausted)",
             )
 
         self.attempts.append(
             VerificationAttempt(
                 epic_id=epic_id,
-                epic_criteria=epic_criteria,
-                commit_range=commit_range,
-                commit_list=commit_list,
-                spec_content=spec_content,
+                epic_context=epic_context,
                 verdict=verdict,
             )
         )
@@ -106,7 +93,6 @@ class FakeEpicVerificationModel:
 
 def make_failing_verdict(
     criteria: list[tuple[str, str, int]] | None = None,
-    confidence: float = 0.9,
     reasoning: str = "Verification failed",
 ) -> EpicVerdict:
     """Factory for creating failing verdicts with unmet criteria.
@@ -114,7 +100,6 @@ def make_failing_verdict(
     Args:
         criteria: List of (criterion, evidence, priority) tuples.
             If None, creates a single generic unmet criterion.
-        confidence: Model confidence (0.0-1.0).
         reasoning: Explanation of failure.
 
     Returns:
@@ -138,19 +123,16 @@ def make_failing_verdict(
     return EpicVerdict(
         passed=False,
         unmet_criteria=unmet,
-        confidence=confidence,
         reasoning=reasoning,
     )
 
 
 def make_passing_verdict(
-    confidence: float = 0.95,
     reasoning: str = "All criteria satisfied",
 ) -> EpicVerdict:
     """Factory for creating passing verdicts.
 
     Args:
-        confidence: Model confidence (0.0-1.0).
         reasoning: Explanation of success.
 
     Returns:
@@ -159,7 +141,6 @@ def make_passing_verdict(
     return EpicVerdict(
         passed=True,
         unmet_criteria=[],
-        confidence=confidence,
         reasoning=reasoning,
     )
 

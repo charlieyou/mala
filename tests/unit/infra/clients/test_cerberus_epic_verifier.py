@@ -117,11 +117,7 @@ class TestCerberusEpicVerifierCommands:
             mock_runner_cls.return_value = mock_runner
 
             await verifier.verify(
-                epic_criteria="## Acceptance Criteria\n- Must work",
-                commit_range="",
-                commit_list="",
-                spec_content=None,
-                epic_id="E-123",
+                epic_context="## Acceptance Criteria\n- Must work",
             )
 
         spawn_cmd = next(cmd for cmd in captured_commands if "spawn-epic-verify" in cmd)
@@ -160,65 +156,10 @@ class TestCerberusEpicVerifierCommands:
             mock_runner.run_async = mock_run_async
             mock_runner_cls.return_value = mock_runner
 
-            await verifier.verify(
-                epic_criteria="criteria",
-                commit_range="abc..def",
-                commit_list="abc1234",
-                spec_content=None,
-            )
+            await verifier.verify(epic_context="criteria")
 
         wait_cmd = next(cmd for cmd in captured_commands if cmd[1] == "wait")
         assert "--session-id" in wait_cmd
-        session_id = wait_cmd[wait_cmd.index("--session-id") + 1]
-        assert session_id.startswith("epic-")
-
-    @pytest.mark.asyncio
-    async def test_generates_session_id_from_epic_id(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        verifier = _make_verifier(tmp_path)
-        monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
-        captured_commands: list[list[str]] = []
-
-        wait_output = {
-            "status": "complete",
-            "consensus_verdict": "PASS",
-            "reviewers": {},
-            "aggregated_findings": [],
-            "parse_errors": [],
-        }
-
-        async def mock_run_async(
-            cmd: list[str] | str,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-            **kwargs: object,
-        ) -> FakeCommandResult:
-            if isinstance(cmd, list):
-                captured_commands.append(cmd)
-                if "spawn-epic-verify" in cmd:
-                    return FakeCommandResult(returncode=0)
-            return FakeCommandResult(returncode=0, stdout=json.dumps(wait_output))
-
-        with patch(
-            "src.infra.clients.cerberus_epic_verifier.CommandRunner"
-        ) as mock_runner_cls:
-            mock_runner = AsyncMock()
-            mock_runner.run_async = mock_run_async
-            mock_runner_cls.return_value = mock_runner
-
-            await verifier.verify(
-                epic_criteria="criteria",
-                commit_range="abc..def",
-                commit_list="abc1234",
-                spec_content=None,
-                epic_id="EPIC-42",
-            )
-
-        wait_cmd = next(cmd for cmd in captured_commands if cmd[1] == "wait")
-        session_id = wait_cmd[wait_cmd.index("--session-id") + 1]
-        assert session_id.startswith("EPIC-42-")
-
 
 @pytest.mark.unit
 class TestCerberusEpicVerifierParsing:
@@ -261,12 +202,7 @@ class TestCerberusEpicVerifierParsing:
             mock_runner.run_async = mock_run_async
             mock_runner_cls.return_value = mock_runner
 
-            verdict = await verifier.verify(
-                epic_criteria="criteria",
-                commit_range="abc..def",
-                commit_list="abc1234",
-                spec_content=None,
-            )
+            verdict = await verifier.verify(epic_context="criteria")
 
         assert isinstance(verdict, EpicVerdict)
         assert verdict.passed is False
@@ -303,12 +239,7 @@ class TestCerberusEpicVerifierParsing:
             mock_runner.run_async = mock_run_async
             mock_runner_cls.return_value = mock_runner
 
-            verdict = await verifier.verify(
-                epic_criteria="criteria",
-                commit_range="abc..def",
-                commit_list="abc1234",
-                spec_content=None,
-            )
+            verdict = await verifier.verify(epic_context="criteria")
 
         assert verdict.passed is True
         assert verdict.unmet_criteria == []
@@ -340,12 +271,7 @@ class TestCerberusEpicVerifierErrors:
             mock_runner_cls.return_value = mock_runner
 
             with pytest.raises(VerificationTimeoutError, match="spawn-epic-verify"):
-                await verifier.verify(
-                    epic_criteria="criteria",
-                    commit_range="abc..def",
-                    commit_list="abc1234",
-                    spec_content=None,
-                )
+                await verifier.verify(epic_context="criteria")
 
     @pytest.mark.asyncio
     async def test_wait_timeout_exit_code_raises_verification_timeout_error(
@@ -374,12 +300,7 @@ class TestCerberusEpicVerifierErrors:
             mock_runner_cls.return_value = mock_runner
 
             with pytest.raises(VerificationTimeoutError, match="wait timed out"):
-                await verifier.verify(
-                    epic_criteria="criteria",
-                    commit_range="abc..def",
-                    commit_list="abc1234",
-                    spec_content=None,
-                )
+                await verifier.verify(epic_context="criteria")
 
     @pytest.mark.asyncio
     async def test_invalid_json_raises_parse_error(self, tmp_path: Path) -> None:
@@ -406,12 +327,7 @@ class TestCerberusEpicVerifierErrors:
             mock_runner_cls.return_value = mock_runner
 
             with pytest.raises(VerificationParseError):
-                await verifier.verify(
-                    epic_criteria="criteria",
-                    commit_range="abc..def",
-                    commit_list="abc1234",
-                    spec_content=None,
-                )
+                await verifier.verify(epic_context="criteria")
 
     @pytest.mark.asyncio
     async def test_cleanup_on_error(self, tmp_path: Path) -> None:
@@ -422,10 +338,9 @@ class TestCerberusEpicVerifierErrors:
 
         def tracking_write(
             self_arg: CerberusEpicVerifier,
-            epic_id: str,
             epic_text: str,
         ) -> Path:
-            path = original_write(self_arg, epic_id, epic_text)
+            path = original_write(self_arg, epic_text)
             created_paths.append(path)
             return path
 
@@ -446,11 +361,6 @@ class TestCerberusEpicVerifierErrors:
                 mock_runner_cls.return_value = mock_runner
 
                 with pytest.raises(VerificationExecutionError):
-                    await verifier.verify(
-                        epic_criteria="criteria",
-                        commit_range="abc..def",
-                        commit_list="abc1234",
-                        spec_content=None,
-                    )
+                    await verifier.verify(epic_context="criteria")
 
         assert created_paths and not created_paths[0].exists()

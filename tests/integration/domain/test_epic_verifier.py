@@ -58,7 +58,6 @@ def mock_model() -> MagicMock:
         return_value=EpicVerdict(
             passed=True,
             unmet_criteria=[],
-            confidence=0.9,
             reasoning="All criteria met",
         )
     )
@@ -198,7 +197,6 @@ class TestRemediationIssueCreation:
                     criterion_hash=_compute_criterion_hash("Must have error handling"),
                 )
             ],
-            confidence=0.8,
             reasoning="Missing error handling",
         )
 
@@ -231,7 +229,6 @@ class TestRemediationIssueCreation:
                     criterion_hash=_compute_criterion_hash("Criterion text"),
                 )
             ],
-            confidence=0.8,
             reasoning="Test",
         )
 
@@ -262,7 +259,6 @@ class TestRemediationIssueCreation:
                     ),
                 )
             ],
-            confidence=0.8,
             reasoning="Test",
         )
 
@@ -272,7 +268,7 @@ class TestRemediationIssueCreation:
         mock_beads.create_issue_async.assert_called_once()
         call_kwargs = mock_beads.create_issue_async.call_args[1]
         assert call_kwargs["title"].startswith("[Remediation]")
-        assert "epic_remediation:" in call_kwargs["tags"][0]
+        assert call_kwargs["tags"][0].startswith("er:")
         assert "auto_generated" in call_kwargs["tags"]
         assert call_kwargs["parent_id"] == "epic-1"
 
@@ -296,7 +292,6 @@ class TestRemediationIssueCreation:
                     ),
                 )
             ],
-            confidence=0.9,
             reasoning="All functional criteria met, only style preference remains",
         )
 
@@ -342,7 +337,6 @@ class TestRemediationIssueCreation:
                     criterion_hash=_compute_criterion_hash("Prefer shorter methods"),
                 ),
             ],
-            confidence=0.85,
             reasoning="Functional issue and style suggestion",
         )
 
@@ -378,31 +372,29 @@ class TestVerifyEpic:
     async def test_returns_verdict_for_missing_criteria(
         self, verifier: EpicVerifier, mock_beads: MagicMock
     ) -> None:
-        """Should return low-confidence verdict when no criteria found."""
+        """Should return failure verdict when no criteria found."""
         mock_beads.get_issue_description_async.return_value = None
 
         verdict = await verifier.verify_epic("epic-1")
 
         assert verdict.passed is False
-        assert verdict.confidence == 0.0
         assert "No acceptance criteria" in verdict.reasoning
 
     @pytest.mark.asyncio
     async def test_returns_verdict_for_no_children(
         self, verifier: EpicVerifier, mock_beads: MagicMock
     ) -> None:
-        """Should return low-confidence verdict when no children found."""
+        """Should return failure verdict when no children found."""
         mock_beads.get_epic_children_async.return_value = set()
 
         verdict = await verifier.verify_epic("epic-1")
 
         assert verdict.passed is False
-        assert verdict.confidence == 0.0
         assert "No child issues" in verdict.reasoning
 
     @pytest.mark.asyncio
     async def test_returns_verdict_for_no_commits(self, verifier: EpicVerifier) -> None:
-        """Should return low-confidence verdict when no commits found."""
+        """Should return failure verdict when no commits found."""
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
             return CommandResult(command=cmd, returncode=0, stdout="")
@@ -412,7 +404,6 @@ class TestVerifyEpic:
         verdict = await verifier.verify_epic("epic-1")
 
         assert verdict.passed is False
-        assert verdict.confidence == 0.0
         assert "No commits found" in verdict.reasoning
 
     @pytest.mark.asyncio
@@ -443,10 +434,11 @@ class TestVerifyEpic:
 
         await verifier.verify_epic("epic-1")
 
-        # Verify model was called with spec content
+        # Verify model was called with epic context containing spec content
         mock_model.verify.assert_called_once()
         call_args = mock_model.verify.call_args
-        assert call_args[0][3] == "# Auth Spec\nDetails here."
+        epic_context = call_args[0][0]  # First positional arg is epic_context
+        assert "# Auth Spec\nDetails here." in epic_context
 
 
 # ============================================================================
@@ -524,7 +516,6 @@ class TestVerifyAndCloseEligible:
                     ),
                 )
             ],
-            confidence=0.85,
             reasoning="Incorrect error handling",
         )
 
@@ -567,15 +558,14 @@ class TestVerifyAndCloseEligible:
         mock_beads.close_async.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_low_confidence_still_passes_if_verdict_passed(
+    async def test_passing_verdict_closes_epic(
         self, verifier: EpicVerifier, mock_beads: MagicMock, mock_model: MagicMock
     ) -> None:
-        """Low confidence verdict with passed=True should still close epic."""
+        """Passing verdict should close epic."""
         mock_model.verify.return_value = EpicVerdict(
             passed=True,
             unmet_criteria=[],
-            confidence=0.3,  # Low confidence no longer triggers special handling
-            reasoning="Uncertain",
+            reasoning="All criteria met",
         )
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
@@ -594,7 +584,6 @@ class TestVerifyAndCloseEligible:
 
         result = await verifier.verify_and_close_eligible()
 
-        # Low confidence no longer triggers human review - just passes/closes
         assert result.passed_count == 1
         mock_beads.close_async.assert_called_with("epic-1")
 
@@ -729,7 +718,6 @@ class TestVerifyAndCloseEpic:
                     ),
                 )
             ],
-            confidence=0.85,
             reasoning="Incorrect error handling",
         )
 
@@ -785,15 +773,13 @@ class TestClaudeEpicVerificationModel:
         model = ClaudeEpicVerificationModel()
         response = json.dumps(
             {
-                "passed": True,
-                "confidence": 0.92,
-                "reasoning": "All criteria met",
-                "unmet_criteria": [],
+                "findings": [],
+                "verdict": "PASS",
+                "summary": "All criteria met",
             }
         )
         verdict = model._parse_verdict(response)
         assert verdict.passed is True
-        assert verdict.confidence == 0.92
 
     def test_parses_json_in_code_block(self) -> None:
         """Should extract JSON from markdown code block."""
@@ -801,30 +787,31 @@ class TestClaudeEpicVerificationModel:
         response = """Here is my analysis:
 ```json
 {
-    "passed": false,
-    "confidence": 0.85,
-    "reasoning": "Missing error handling",
-    "unmet_criteria": [
+    "findings": [
         {
-            "criterion": "Must handle errors",
-            "evidence": "No try/catch",
-            "severity": "major"
+            "title": "[P1] Must handle errors",
+            "body": "No try/catch found in error paths",
+            "priority": 1,
+            "file_path": null,
+            "line_start": null,
+            "line_end": null
         }
-    ]
+    ],
+    "verdict": "FAIL",
+    "summary": "Missing error handling"
 }
 ```
 """
         verdict = model._parse_verdict(response)
         assert verdict.passed is False
         assert len(verdict.unmet_criteria) == 1
-        assert verdict.unmet_criteria[0].criterion == "Must handle errors"
+        assert verdict.unmet_criteria[0].criterion == "[P1] Must handle errors"
 
-    def test_returns_low_confidence_on_parse_failure(self) -> None:
-        """Should return low-confidence failure when parsing fails."""
+    def test_returns_failure_on_parse_failure(self) -> None:
+        """Should return failure verdict when parsing fails."""
         model = ClaudeEpicVerificationModel()
         verdict = model._parse_verdict("Invalid response with no JSON")
         assert verdict.passed is False
-        assert verdict.confidence == 0.0
         assert "Failed to parse" in verdict.reasoning
 
     def test_computes_criterion_hash(self) -> None:
@@ -832,16 +819,18 @@ class TestClaudeEpicVerificationModel:
         model = ClaudeEpicVerificationModel()
         response = json.dumps(
             {
-                "passed": False,
-                "confidence": 0.8,
-                "reasoning": "Test",
-                "unmet_criteria": [
+                "findings": [
                     {
-                        "criterion": "Test criterion",
-                        "evidence": "Evidence",
-                        "severity": "minor",
+                        "title": "Test criterion",
+                        "body": "Evidence",
+                        "priority": 2,
+                        "file_path": None,
+                        "line_start": None,
+                        "line_end": None,
                     }
                 ],
+                "verdict": "NEEDS_WORK",
+                "summary": "Test",
             }
         )
         verdict = model._parse_verdict(response)
@@ -863,10 +852,9 @@ def example():
 Now here is the verdict:
 ```json
 {
-    "passed": true,
-    "confidence": 0.88,
-    "reasoning": "Tests exist",
-    "unmet_criteria": []
+    "findings": [],
+    "verdict": "PASS",
+    "summary": "Tests exist"
 }
 ```
 
@@ -877,7 +865,6 @@ some other content
 """
         verdict = model._parse_verdict(response)
         assert verdict.passed is True
-        assert verdict.confidence == 0.88
 
     def test_parses_json_when_json_block_is_not_first(self) -> None:
         """Should find JSON block even if other code blocks come first."""
@@ -892,18 +879,16 @@ echo "hello world"
 Result:
 ```json
 {
-    "passed": false,
-    "confidence": 0.75,
-    "reasoning": "Missing tests",
-    "unmet_criteria": [
-        {"criterion": "Test coverage", "evidence": "No tests", "severity": "major"}
-    ]
+    "findings": [
+        {"title": "Test coverage", "body": "No tests", "priority": 1, "file_path": null, "line_start": null, "line_end": null}
+    ],
+    "verdict": "FAIL",
+    "summary": "Missing tests"
 }
 ```
 """
         verdict = model._parse_verdict(response)
         assert verdict.passed is False
-        assert verdict.confidence == 0.75
         assert len(verdict.unmet_criteria) == 1
 
 
@@ -962,10 +947,9 @@ code = "not json"
         """Should handle multiline JSON in code blocks."""
         text = """```json
 {
-    "passed": true,
-    "confidence": 0.9,
-    "reasoning": "All good",
-    "unmet_criteria": []
+    "findings": [],
+    "verdict": "PASS",
+    "summary": "All good"
 }
 ```"""
         result = _extract_json_from_code_blocks(text)
@@ -973,8 +957,8 @@ code = "not json"
         import json
 
         data = json.loads(result)
-        assert data["passed"] is True
-        assert data["confidence"] == 0.9
+        assert data["verdict"] == "PASS"
+        assert data["findings"] == []
 
     def test_skips_non_json_blocks_to_find_json(self) -> None:
         """Should skip non-JSON blocks to find one that starts with '{'."""
@@ -1073,7 +1057,6 @@ class TestModelErrorHandling:
         verdict = await verifier.verify_epic("epic-1")
 
         assert verdict.passed is False
-        assert verdict.confidence == 0.0
         assert "Model verification failed" in verdict.reasoning
 
     @pytest.mark.asyncio
@@ -1089,7 +1072,6 @@ class TestModelErrorHandling:
         verdict = await verifier.verify_epic("epic-1")
 
         assert verdict.passed is False
-        assert verdict.confidence == 0.0
         assert "API connection failed" in verdict.reasoning
 
     @pytest.mark.asyncio
@@ -1236,7 +1218,6 @@ class TestEpicVerifierOrchestratorIntegration:
                         ),
                     )
                 ],
-                confidence=0.9,
                 reasoning="Incorrect error handling",
             )
         )
@@ -1292,7 +1273,6 @@ class TestEpicVerifierOrchestratorIntegration:
             return_value=EpicVerdict(
                 passed=True,
                 unmet_criteria=[],
-                confidence=0.95,
                 reasoning="All criteria met",
             )
         )
@@ -1337,41 +1317,30 @@ class TestVerifyWithSDK:
     @pytest.mark.asyncio
     async def test_verify_parses_sdk_response(self) -> None:
         model = ClaudeEpicVerificationModel()
-        model._prompt_template = (
-            "criteria: {epic_criteria}, spec: {spec_content}, "
-            "range: {commit_range}, list: {commit_list}"
-        )
+        model._prompt_template = "context: {epic_context}"
 
         async def fake_verify(_prompt: str) -> str:
-            return (
-                '{"passed": true, "confidence": 0.9, "reasoning": "ok", '
-                '"unmet_criteria": []}'
-            )
+            return '{"findings": [], "verdict": "PASS", "summary": "ok"}'
 
         model._verify_with_agent_sdk = fake_verify  # type: ignore[method-assign]
 
-        verdict = await model.verify("criteria", "range", "- abc123", None)
+        verdict = await model.verify("criteria")
 
         assert verdict.passed is True
-        assert verdict.confidence == 0.9
 
     @pytest.mark.asyncio
     async def test_verify_handles_non_json_response(self) -> None:
         model = ClaudeEpicVerificationModel()
-        model._prompt_template = (
-            "criteria: {epic_criteria}, spec: {spec_content}, "
-            "range: {commit_range}, list: {commit_list}"
-        )
+        model._prompt_template = "context: {epic_context}"
 
         async def fake_verify(_prompt: str) -> str:
             return "not json"
 
         model._verify_with_agent_sdk = fake_verify  # type: ignore[method-assign]
 
-        verdict = await model.verify("criteria", "range", "- abc123", None)
+        verdict = await model.verify("criteria")
 
         assert verdict.passed is False
-        assert verdict.confidence == 0.0
         assert "Failed to parse" in verdict.reasoning
 
 
@@ -1431,7 +1400,6 @@ class TestMaxDiffSizeKb:
         # Verification should be skipped
         mock_model.verify.assert_not_called()
         assert verdict.passed is False
-        assert verdict.confidence == 0.0
         assert "exceeds limit" in verdict.reasoning
         assert "Requires human review" in verdict.reasoning
         # Should have a synthetic unmet criterion for remediation issue creation

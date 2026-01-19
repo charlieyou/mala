@@ -44,38 +44,36 @@ class TestFakeEpicVerificationModelBehavior:
         passing = make_passing_verdict()
         model = FakeEpicVerificationModel(verdicts=[failing, passing])
 
-        result1 = await model.verify("epic-1: Test", "abc..def", "abc,def", None)
+        result1 = await model.verify("epic-1: Test")
         assert result1.passed is False
 
-        result2 = await model.verify("epic-1: Test", "abc..def", "abc,def", None)
+        result2 = await model.verify("epic-1: Test")
         assert result2.passed is True
 
     @pytest.mark.unit
     async def test_verify_returns_default_passing_when_exhausted(self) -> None:
         """verify() returns passing verdict when sequence exhausted."""
         model = FakeEpicVerificationModel(verdicts=[])
-        result = await model.verify("epic-1: Test", "abc..def", "abc,def", None)
+        result = await model.verify("epic-1: Test")
         assert result.passed is True
 
     @pytest.mark.unit
     async def test_verify_records_attempts(self) -> None:
-        """verify() records all attempts with epic_id extracted from criteria."""
+        """verify() records all attempts with epic_id extracted from epic_context."""
         model = FakeEpicVerificationModel(verdicts=[make_passing_verdict()])
-        await model.verify("epic-123: Some description", "abc..def", "abc,def", None)
+        await model.verify("epic-123: Some description")
 
         assert len(model.attempts) == 1
         assert model.attempts[0].epic_id == "epic-123"
+        assert model.attempts[0].epic_context == "epic-123: Some description"
         assert model.attempts[0].verdict.passed is True
 
     @pytest.mark.unit
-    async def test_verify_handles_spec_content(self) -> None:
-        """verify() accepts optional spec_content parameter."""
+    async def test_verify_with_full_context(self) -> None:
+        """verify() accepts epic_context with embedded spec content."""
         model = FakeEpicVerificationModel(verdicts=[make_passing_verdict()])
         result = await model.verify(
-            "epic-1: Test",
-            "abc..def",
-            "abc,def",
-            spec_content="# Spec\n- Must do X",
+            epic_context="epic-1: Test\n\n# Spec\n- Must do X",
         )
         assert result.passed is True
 
@@ -93,7 +91,6 @@ class TestFakeEpicVerificationModelBehavior:
     @pytest.mark.unit
     def test_make_passing_verdict_has_empty_criteria(self) -> None:
         """make_passing_verdict() creates verdict with no unmet criteria."""
-        verdict = make_passing_verdict(confidence=0.99)
+        verdict = make_passing_verdict()
         assert verdict.passed is True
         assert verdict.unmet_criteria == []
-        assert verdict.confidence == 0.99

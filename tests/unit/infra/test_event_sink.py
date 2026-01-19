@@ -140,7 +140,7 @@ class TestBaseEventSink:
 
         # Epic verification lifecycle
         assert sink.on_epic_verification_started("epic-1") is None
-        assert sink.on_epic_verification_passed("epic-1", 0.95) is None
+        assert sink.on_epic_verification_passed("epic-1") is None
         assert (
             sink.on_epic_verification_failed("epic-1", 2, ["issue-1", "issue-2"])
             is None
@@ -267,7 +267,7 @@ class TestNullEventSink:
 
         # Epic verification lifecycle
         assert sink.on_epic_verification_started("epic-1") is None
-        assert sink.on_epic_verification_passed("epic-1", 0.95) is None
+        assert sink.on_epic_verification_passed("epic-1") is None
         assert (
             sink.on_epic_verification_failed("epic-1", 2, ["issue-1", "issue-2"])
             is None
@@ -501,7 +501,7 @@ class TestConsoleEventSink:
 
         # Epic verification lifecycle
         sink.on_epic_verification_started("epic-1")
-        sink.on_epic_verification_passed("epic-1", 0.95)
+        sink.on_epic_verification_passed("epic-1")
         sink.on_epic_verification_failed("epic-1", 2, ["issue-1", "issue-2"])
         sink.on_epic_remediation_created("epic-123", "issue-1", "A" * 100)
         sink.on_epic_remediation_created("epic-123", "issue-2", "Short criterion")

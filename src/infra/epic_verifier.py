@@ -149,8 +149,8 @@ def _load_prompt_template() -> str:
     prompt_path = Path(__file__).parent.parent / "prompts" / "epic_verification.md"
     template = prompt_path.read_text()
     escaped = template.replace("{", "{{").replace("}", "}}")
-    for key in ("epic_criteria", "spec_content", "commit_range", "commit_list"):
-        escaped = escaped.replace(f"{{{{{key}}}}}", f"{{{key}}}")
+    # Replace ${EPIC_CONTEXT} placeholder (cerberus style)
+    escaped = escaped.replace("${{EPIC_CONTEXT}}", "{epic_context}")
     return escaped
 
 
@@ -235,28 +235,24 @@ class ClaudeEpicVerificationModel:
 
     async def verify(
         self,
-        epic_criteria: str,
-        commit_range: str,
-        commit_list: str,
-        spec_content: str | None,
+        epic_context: str,
     ) -> EpicVerdict:
-        """Verify if the commit scope satisfies the epic's acceptance criteria.
+        """Verify if the epic's acceptance criteria are met.
+
+        The agent explores the repository using its tools to find and verify
+        the implementation of each acceptance criterion.
 
         Args:
-            epic_criteria: The epic's acceptance criteria text.
-            commit_range: Commit range hint covering child issue commits.
-            commit_list: Authoritative list of commit SHAs to inspect.
-            spec_content: Optional content of linked spec file.
+            epic_context: Combined epic content including description, plan,
+                and spec file content. This is injected into the prompt's
+                EPIC_CONTEXT section.
 
         Returns:
             Structured verdict with pass/fail and unmet criteria details.
 
         """
         prompt = self._prompt_template.format(
-            epic_criteria=epic_criteria,
-            spec_content=spec_content or "No spec file available.",
-            commit_range=commit_range or "Unavailable.",
-            commit_list=commit_list or "No commits found.",
+            epic_context=epic_context,
         )
 
         response_text = await self._verify_with_agent_sdk(prompt)
@@ -274,13 +270,12 @@ class ClaudeEpicVerificationModel:
         except ImportError as exc:
             return json.dumps(
                 {
-                    "passed": False,
-                    "confidence": 0.0,
-                    "reasoning": (
+                    "findings": [],
+                    "verdict": "FAIL",
+                    "summary": (
                         "claude_agent_sdk is not installed; epic verification "
                         f"requires the agent SDK ({exc})"
                     ),
-                    "unmet_criteria": [],
                 }
             )
 
@@ -350,17 +345,17 @@ class ClaudeEpicVerificationModel:
         try:
             data = json.loads(json_str)
         except json.JSONDecodeError:
-            # If parsing fails, return a low-confidence failure
             return EpicVerdict(
                 passed=False,
                 unmet_criteria=[],
-                confidence=0.0,
                 reasoning=f"Failed to parse model response: {response_text[:500]}",
             )
 
         unmet_criteria = []
-        for item in data.get("unmet_criteria", []):
-            criterion = item.get("criterion", "")
+        for item in data.get("findings", []):
+            title = str(item.get("title", "")).strip()
+            body = str(item.get("body", "")).strip()
+            criterion = title or body or "Unspecified criterion"
             priority = item.get("priority", 1)
             # Accept int, float, or numeric string; cast to int, clamp to valid range 0-3
             if isinstance(priority, (int, float)):
@@ -372,17 +367,19 @@ class ClaudeEpicVerificationModel:
             unmet_criteria.append(
                 UnmetCriterion(
                     criterion=criterion,
-                    evidence=item.get("evidence", ""),
+                    evidence=body,
                     priority=priority,
                     criterion_hash=_compute_criterion_hash(criterion),
                 )
             )
 
+        verdict = data.get("verdict", "FAIL")
+        passed = verdict == "PASS"
+
         return EpicVerdict(
-            passed=data.get("passed", False),
+            passed=passed,
             unmet_criteria=unmet_criteria,
-            confidence=data.get("confidence", 0.5),
-            reasoning=data.get("reasoning", ""),
+            reasoning=data.get("summary", ""),
         )
 
 
@@ -571,7 +568,6 @@ class EpicVerifier:
                 EpicVerdict(
                     passed=False,
                     unmet_criteria=[],
-                    confidence=0.0,
                     reasoning="No acceptance criteria found for epic",
                 ),
                 None,
@@ -584,7 +580,6 @@ class EpicVerifier:
                 EpicVerdict(
                     passed=False,
                     unmet_criteria=[],
-                    confidence=0.0,
                     reasoning="No child issues found for epic",
                 ),
                 None,
@@ -602,7 +597,6 @@ class EpicVerifier:
                 EpicVerdict(
                     passed=False,
                     unmet_criteria=[],
-                    confidence=0.0,
                     reasoning="No commits found for child issues",
                 ),
                 None,
@@ -631,7 +625,6 @@ class EpicVerifier:
                                 criterion_hash=_compute_criterion_hash(criterion),
                             )
                         ],
-                        confidence=0.0,
                         reasoning=(
                             f"Diff size ({diff_size_kb} KB) exceeds limit "
                             f"({self.max_diff_size_kb} KB). Requires human review."
@@ -662,23 +655,38 @@ class EpicVerifier:
             commit_summary=scoped.commit_summary,
         )
 
+        # Build combined epic context for verification
+        epic_context = self._build_epic_context(epic_description, spec_content)
+
         # Invoke verification model with per-category retry policy (R6)
         # Per spec: timeouts/errors should trigger human review, not abort
-        verdict = await self._verify_with_category_retries(
-            epic_description,
-            scoped.commit_range or "",
-            scoped.commit_summary,
-            spec_content,
-        )
+        verdict = await self._verify_with_category_retries(epic_context)
 
         return verdict, context
 
+    def _build_epic_context(
+        self, epic_description: str, spec_content: str | None
+    ) -> str:
+        """Build combined epic context for verification prompt.
+
+        Combines the epic description and spec content into a single context
+        string for the EPIC_CONTEXT placeholder.
+
+        Args:
+            epic_description: The epic's description text (includes acceptance criteria).
+            spec_content: Optional content of linked spec file.
+
+        Returns:
+            Combined context string.
+        """
+        parts = [f"## Epic Description\n\n{epic_description}"]
+        if spec_content:
+            parts.append(f"\n\n## Spec Content\n\n{spec_content}")
+        return "\n".join(parts)
+
     async def _verify_with_category_retries(
         self,
-        epic_description: str,
-        commit_range: str,
-        commit_summary: str,
-        spec_content: str | None,
+        epic_context: str,
     ) -> EpicVerdict:
         """Verify with per-category retry limits (R6 implementation).
 
@@ -692,10 +700,7 @@ class EpicVerifier:
         SDK failures fall through to generic exception handling (no retry).
 
         Args:
-            epic_description: The epic's acceptance criteria text.
-            commit_range: Commit range hint covering child issue commits.
-            commit_summary: Authoritative list of commit SHAs to inspect.
-            spec_content: Optional content of linked spec file.
+            epic_context: Combined epic content for verification.
 
         Returns:
             EpicVerdict with verification result.
@@ -735,12 +740,7 @@ class EpicVerifier:
 
         while True:
             try:
-                result = await self.model.verify(
-                    epic_description,
-                    commit_range,
-                    commit_summary,
-                    spec_content,
-                )
+                result = await self.model.verify(epic_context)
                 return EpicVerdict(
                     passed=result.passed,
                     unmet_criteria=[
@@ -752,7 +752,6 @@ class EpicVerifier:
                         )
                         for c in result.unmet_criteria
                     ],
-                    confidence=result.confidence,
                     reasoning=result.reasoning,
                 )
             except VerificationTimeoutError as e:
@@ -818,7 +817,6 @@ class EpicVerifier:
         return EpicVerdict(
             passed=False,
             unmet_criteria=[],
-            confidence=0.0,
             reasoning=f"Model verification failed: {error_msg}",
         )
 
@@ -980,7 +978,6 @@ class EpicVerifier:
                     verdicts[epic_id] = EpicVerdict(
                         passed=True,
                         unmet_criteria=[],
-                        confidence=1.0,
                         reasoning="Human override - bypassed verification",
                     )
                 else:
@@ -988,7 +985,6 @@ class EpicVerifier:
                     verdicts[epic_id] = EpicVerdict(
                         passed=False,
                         unmet_criteria=[],
-                        confidence=0.0,
                         reasoning="Human override close failed - epic could not be closed",
                     )
                     if self.event_sink is not None:
@@ -1003,7 +999,6 @@ class EpicVerifier:
                 verdicts[epic_id] = EpicVerdict(
                     passed=True,
                     unmet_criteria=[],
-                    confidence=1.0,
                     reasoning="Human override - bypassed verification (no close)",
                 )
                 passed_count = 1
@@ -1079,7 +1074,6 @@ class EpicVerifier:
                         if self.event_sink is not None:
                             self.event_sink.on_epic_verification_passed(
                                 epic_id,
-                                verdict.confidence,
                                 reviewer_type=self.reviewer_type,
                             )
                     else:
@@ -1098,7 +1092,6 @@ class EpicVerifier:
                     if self.event_sink is not None:
                         self.event_sink.on_epic_verification_passed(
                             epic_id,
-                            verdict.confidence,
                             reviewer_type=self.reviewer_type,
                         )
         return EpicVerificationResult(

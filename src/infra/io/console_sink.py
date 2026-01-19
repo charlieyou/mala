@@ -572,11 +572,11 @@ class ConsoleEventSink(BaseEventSink):
         log("→", f"VERIFY Starting verification for {epic_id}", agent_id="epic")
 
     def on_epic_verification_passed(
-        self, epic_id: str, confidence: float, *, reviewer_type: str = "agent_sdk"
+        self, epic_id: str, *, reviewer_type: str = "agent_sdk"
     ) -> None:
         log(
             "✓",
-            f"VERIFY {epic_id} passed (confidence: {confidence:.0%})",
+            f"VERIFY {epic_id} passed",
             agent_id="epic",
         )
 

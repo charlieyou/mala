@@ -895,7 +895,7 @@ class TestEpicCompletionTriggerIntegration:
             failed_count=0,
             verdicts={
                 "epic-1": EpicVerdict(
-                    passed=True, unmet_criteria=[], confidence=1.0, reasoning="passed"
+                    passed=True, unmet_criteria=[], reasoning="passed"
                 )
             },
             remediation_issues_created=[],
@@ -1036,7 +1036,6 @@ class TestEpicCompletionTriggerIntegration:
                     "epic-1": EpicVerdict(
                         passed=False,
                         unmet_criteria=[],
-                        confidence=1.0,
                         reasoning="failed",
                     )
                 },
@@ -1100,7 +1099,6 @@ class TestEpicCompletionTriggerIntegration:
                     "epic-1": EpicVerdict(
                         passed=False,
                         unmet_criteria=[],
-                        confidence=1.0,
                         reasoning="failed",
                     )
                 },
@@ -1167,7 +1165,6 @@ class TestEpicCompletionTriggerIntegration:
                     "epic-1": EpicVerdict(
                         passed=False,
                         unmet_criteria=[],
-                        confidence=1.0,
                         reasoning="failed",
                     )
                 },

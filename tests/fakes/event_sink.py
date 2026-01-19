@@ -430,12 +430,11 @@ class FakeEventSink(MalaEventSink):
         )
 
     def on_epic_verification_passed(
-        self, epic_id: str, confidence: float, *, reviewer_type: str = "agent_sdk"
+        self, epic_id: str, *, reviewer_type: str = "agent_sdk"
     ) -> None:
         self._record(
             "epic_verification_passed",
             epic_id=epic_id,
-            confidence=confidence,
             reviewer_type=reviewer_type,
         )
 

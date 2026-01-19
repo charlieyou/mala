@@ -88,7 +88,6 @@ def make_passing_verification_result(epic_id: str = "epic-1") -> EpicVerificatio
             epic_id: EpicVerdict(
                 passed=True,
                 unmet_criteria=[],
-                confidence=0.95,
                 reasoning="All criteria met",
             )
         },
@@ -109,7 +108,6 @@ def make_failing_verification_result(
             epic_id: EpicVerdict(
                 passed=False,
                 unmet_criteria=[],
-                confidence=0.9,
                 reasoning="Criteria not met",
             )
         },

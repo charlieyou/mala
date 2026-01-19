@@ -18,7 +18,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import secrets
 import tempfile
 from dataclasses import dataclass
@@ -84,42 +83,21 @@ class CerberusEpicVerifier:
         return hashlib.sha256(criterion.encode()).hexdigest()
 
     @staticmethod
-    def _generate_session_id(epic_id: str) -> str:
+    def _generate_session_id() -> str:
         """Generate a CLAUDE_SESSION_ID for epic verification."""
-        cleaned = re.sub(r"[^a-zA-Z0-9]+", "-", epic_id).strip("-")
-        prefix = cleaned or "epic"
-        return f"{prefix}-{secrets.token_hex(6)}"
+        return f"epic-{secrets.token_hex(6)}"
 
-    def _parse_commit_shas(self, commit_list: str) -> list[str]:
-        """Parse commit SHAs from a commit summary string.
-
-        Args:
-            commit_list: Commit list or summary text (may include subjects).
-
-        Returns:
-            Ordered list of unique commit SHAs.
-        """
-        candidates = re.findall(r"\b[0-9a-f]{7,40}\b", commit_list)
-        seen: set[str] = set()
-        result: list[str] = []
-        for sha in candidates:
-            if sha not in seen:
-                seen.add(sha)
-                result.append(sha)
-        return result
-
-    def _write_epic_file(self, epic_id: str, epic_text: str) -> Path:
+    def _write_epic_file(self, epic_text: str) -> Path:
         """Write epic content to a temporary markdown file.
 
         Args:
-            epic_id: Epic identifier (used in filename).
             epic_text: Epic content text (contains acceptance criteria).
 
         Returns:
             Path to the temporary epic markdown file.
         """
         fd, path = tempfile.mkstemp(
-            suffix=".md", prefix=f"epic-verify-{epic_id}-", dir=self.repo_path
+            suffix=".md", prefix="epic-verify-", dir=self.repo_path
         )
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -219,18 +197,12 @@ class CerberusEpicVerifier:
         return EpicVerdict(
             passed=passed,
             unmet_criteria=unmet_criteria,
-            confidence=1.0 if passed else 0.0,
             reasoning=reasoning,
         )
 
     async def verify(
         self,
-        epic_criteria: str,
-        commit_range: str,
-        commit_list: str,
-        spec_content: str | None,
-        *,
-        epic_id: str = "",
+        epic_context: str,
     ) -> EpicVerdict:
         """Verify if the commit scope satisfies the epic's acceptance criteria.
 
@@ -238,11 +210,7 @@ class CerberusEpicVerifier:
         pattern per R4 specification.
 
         Args:
-            epic_criteria: The epic's acceptance criteria text.
-            commit_range: Commit range hint covering child issue commits.
-            commit_list: Comma-separated list of commit SHAs to inspect.
-            spec_content: Optional content of linked spec file.
-            epic_id: Epic identifier for context (optional).
+            epic_context: The epic context text containing acceptance criteria.
 
         Returns:
             EpicVerdict with pass/fail and unmet criteria details.
@@ -252,11 +220,7 @@ class CerberusEpicVerifier:
             VerificationExecutionError: If subprocess returns non-zero exit.
             VerificationParseError: If response JSON cannot be parsed.
         """
-        _ = spec_content  # spec_content is inferred by review-gate from epic file
-        _ = commit_list  # spawn-epic-verify doesn't support diff args
-        _ = commit_range  # spawn-epic-verify doesn't support diff args
-
-        epic_path = self._write_epic_file(epic_id or "epic", epic_criteria)
+        epic_path = self._write_epic_file(epic_context)
 
         try:
             cli = CerberusGateCLI(
@@ -270,7 +234,7 @@ class CerberusEpicVerifier:
                 raise VerificationExecutionError(validation_error)
 
             runner = CommandRunner(cwd=self.repo_path)
-            session_id = self._generate_session_id(epic_id or "epic")
+            session_id = self._generate_session_id()
             env = cli.build_env(claude_session_id=session_id)
 
             # Step 1: Spawn epic verification
@@ -297,7 +261,6 @@ class CerberusEpicVerifier:
                             env=env,
                             timeout=self.timeout,
                             epic_path=epic_path,
-                            diff_args=diff_args,
                             spawn_args=self.spawn_args,
                         )
                         if spawn_result.timed_out:

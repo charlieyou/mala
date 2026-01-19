@@ -63,20 +63,8 @@ async def test_epic_verifier_runs_via_sdk(tmp_path: Path) -> None:
         capture_output=True,
     )
 
-    commit_sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-
-    commit_range = commit_sha
-    commit_list = f"- {commit_sha} Add math utils"
-
-    verdict = await model.verify(criteria, commit_range, commit_list, None)
+    verdict = await model.verify(criteria)
 
     assert isinstance(verdict.passed, bool)
-    assert 0.0 <= verdict.confidence <= 1.0
     assert verdict.reasoning
     assert "Failed to parse" not in verdict.reasoning

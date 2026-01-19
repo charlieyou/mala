@@ -266,9 +266,6 @@ class EpicVerdictProtocol(Protocol):
     unmet_criteria: Sequence[UnmetCriterionProtocol]
     """List of criteria that were not satisfied."""
 
-    confidence: float
-    """Model confidence in the verdict (0.0 to 1.0)."""
-
     reasoning: str
     """Explanation of the verification outcome."""
 
@@ -308,10 +305,9 @@ class EpicVerifierProtocol(Protocol):
 class EpicVerificationModel(Protocol):
     """Protocol for model-agnostic epic verification.
 
-    Provides an interface for verifying whether code changes satisfy
-    an epic's acceptance criteria. The initial implementation uses
-    Claude via SDK, but this protocol allows swapping to other models
-    (Codex, Gemini, local models) without changing the verifier.
+    Provides an interface for verifying whether an epic's acceptance
+    criteria are met. The model explores the repository using its tools
+    to find and verify the implementation of each criterion.
 
     The canonical implementation is ClaudeEpicVerificationModel in
     src/epic_verifier.py. Test implementations can return predetermined
@@ -320,18 +316,17 @@ class EpicVerificationModel(Protocol):
 
     async def verify(
         self,
-        epic_criteria: str,
-        commit_range: str,
-        commit_list: str,
-        spec_content: str | None,
+        epic_context: str,
     ) -> EpicVerdictProtocol:
-        """Verify if the commit scope satisfies the epic's acceptance criteria.
+        """Verify if the epic's acceptance criteria are met.
+
+        The model explores the repository using its tools to find and verify
+        the implementation of each acceptance criterion.
 
         Args:
-            epic_criteria: The epic's acceptance criteria text.
-            commit_range: Commit range hint covering child issue commits.
-            commit_list: Authoritative list of commit SHAs to inspect.
-            spec_content: Optional content of linked spec file.
+            epic_context: Combined epic content including description, plan,
+                and spec file content. This is injected into the prompt's
+                EPIC_CONTEXT section.
 
         Returns:
             Structured verdict with pass/fail and unmet criteria details.

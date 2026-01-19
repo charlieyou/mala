@@ -128,13 +128,12 @@ class DiagnosticsEvents(Protocol):
         ...
 
     def on_epic_verification_passed(
-        self, epic_id: str, confidence: float, *, reviewer_type: str = "agent_sdk"
+        self, epic_id: str, *, reviewer_type: str = "agent_sdk"
     ) -> None:
         """Called when epic verification passes.
 
         Args:
             epic_id: The epic that passed verification.
-            confidence: Confidence score (0.0 to 1.0).
             reviewer_type: Type of reviewer ('agent_sdk' or 'cerberus').
         """
         ...

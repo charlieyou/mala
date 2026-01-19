@@ -56,9 +56,7 @@ class TestRetryPolicyValidation:
         )
 
         # Should fail immediately (0 retries, not infinite loop)
-        verdict = await verifier._verify_with_category_retries(
-            "epic desc", "commit_range", "commit_summary", None
-        )
+        verdict = await verifier._verify_with_category_retries("epic context")
 
         assert not verdict.passed
         assert "timeout" in verdict.reasoning.lower()
@@ -96,9 +94,7 @@ class TestRetryPolicyValidation:
             retry_policy=BadPolicy(),  # type: ignore[arg-type]
         )
 
-        verdict = await verifier._verify_with_category_retries(
-            "epic desc", "commit_range", "commit_summary", None
-        )
+        verdict = await verifier._verify_with_category_retries("epic context")
 
         assert not verdict.passed
         # With default timeout_retries=3, we get 1 initial + 3 retries = 4 calls
@@ -133,9 +129,7 @@ class TestAsyncioTimeoutHandling:
             retry_policy=policy,  # type: ignore[arg-type]
         )
 
-        verdict = await verifier._verify_with_category_retries(
-            "epic desc", "commit_range", "commit_summary", None
-        )
+        verdict = await verifier._verify_with_category_retries("epic context")
 
         assert not verdict.passed
         # 1 initial + 2 retries = 3 attempts
@@ -185,9 +179,7 @@ class TestAsyncioTimeoutHandling:
             retry_policy=policy,  # type: ignore[arg-type]
         )
 
-        verdict = await verifier._verify_with_category_retries(
-            "epic desc", "commit_range", "commit_summary", None
-        )
+        verdict = await verifier._verify_with_category_retries("epic context")
 
         assert verdict.passed
         assert call_count == 3
@@ -221,9 +213,7 @@ class TestPerCategoryRetries:
             retry_policy=policy,  # type: ignore[arg-type]
         )
 
-        verdict = await verifier._verify_with_category_retries(
-            "epic desc", "commit_range", "commit_summary", None
-        )
+        verdict = await verifier._verify_with_category_retries("epic context")
 
         assert not verdict.passed
         # 1 initial + 2 retries = 3 attempts
@@ -254,9 +244,7 @@ class TestPerCategoryRetries:
             retry_policy=policy,  # type: ignore[arg-type]
         )
 
-        verdict = await verifier._verify_with_category_retries(
-            "epic desc", "commit_range", "commit_summary", None
-        )
+        verdict = await verifier._verify_with_category_retries("epic context")
 
         assert not verdict.passed
         # 1 initial + 1 retry = 2 attempts
@@ -287,9 +275,7 @@ class TestPerCategoryRetries:
             retry_policy=policy,  # type: ignore[arg-type]
         )
 
-        verdict = await verifier._verify_with_category_retries(
-            "epic desc", "commit_range", "commit_summary", None
-        )
+        verdict = await verifier._verify_with_category_retries("epic context")
 
         assert not verdict.passed
         # 1 initial + 0 retries = 1 attempt
@@ -320,9 +306,7 @@ class TestPerCategoryRetries:
             retry_policy=policy,  # type: ignore[arg-type]
         )
 
-        verdict = await verifier._verify_with_category_retries(
-            "epic desc", "commit_range", "commit_summary", None
-        )
+        verdict = await verifier._verify_with_category_retries("epic context")
 
         assert not verdict.passed
         assert "unexpected error" in verdict.reasoning

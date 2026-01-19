@@ -139,13 +139,11 @@ class EpicVerdict:
     Attributes:
         passed: Whether all acceptance criteria were met.
         unmet_criteria: List of criteria that were not satisfied.
-        confidence: Model confidence in the verdict (0.0 to 1.0).
         reasoning: Explanation of the verification outcome.
     """
 
     passed: bool
     unmet_criteria: list[UnmetCriterion]
-    confidence: float
     reasoning: str
 
 
