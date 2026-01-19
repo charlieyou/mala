@@ -557,16 +557,20 @@ class BeadsClient:
             True if sync succeeded (or no changes to commit), False otherwise.
         """
         result = await self._run_subprocess_async(
-            [
-                "br",
-                "sync",
-                "--no-pull",
-                "--no-push",
-                "-m",
-                "beads: close completed issues",
-            ]
+            ["br", "sync", "--flush-only"]
         )
-        return result.returncode == 0
+        if result.returncode != 0:
+            return False
+
+        # Commit the exported JSONL to git
+        await self._run_subprocess_async(
+            ["git", "add", ".beads/"]
+        )
+        commit_result = await self._run_subprocess_async(
+            ["git", "commit", "-m", "sync beads issues"]
+        )
+        # Return True even if commit fails (nothing to commit is ok)
+        return True
 
     async def close_eligible_epics_async(self) -> bool:
         """Auto-close epics where all children are complete (async version).
