@@ -1178,8 +1178,9 @@ class EpicVerifier:
         for criterion in verdict.unmet_criteria:
             is_blocking = criterion.priority <= 1  # P0/P1 are blocking
 
-            # Build dedup tag
-            dedup_tag = f"epic_remediation:{epic_id}:{criterion.criterion_hash}"
+            # Build dedup tag (truncate to fit 50-char label limit)
+            # Format: "er:{epic_id_prefix}:{hash_prefix}" = 3 + 16 + 1 + 16 = 36 chars max
+            dedup_tag = f"er:{epic_id[:16]}:{criterion.criterion_hash[:16]}"
 
             # Check for existing issue with this tag
             existing_id = await self.beads.find_issue_by_tag_async(dedup_tag)
