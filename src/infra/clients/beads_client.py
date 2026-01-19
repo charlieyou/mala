@@ -556,17 +556,13 @@ class BeadsClient:
         Returns:
             True if sync succeeded (or no changes to commit), False otherwise.
         """
-        result = await self._run_subprocess_async(
-            ["br", "sync", "--flush-only"]
-        )
+        result = await self._run_subprocess_async(["br", "sync", "--flush-only"])
         if result.returncode != 0:
             return False
 
         # Commit the exported JSONL to git
+        await self._run_subprocess_async(["git", "add", ".beads/"])
         await self._run_subprocess_async(
-            ["git", "add", ".beads/"]
-        )
-        commit_result = await self._run_subprocess_async(
             ["git", "commit", "-m", "sync beads issues"]
         )
         # Return True even if commit fails (nothing to commit is ok)
@@ -680,8 +676,6 @@ class BeadsClient:
         cmd = [
             "br",
             "create",
-            "--title",
-            title,
             "--description",
             description,
             "--priority",
@@ -692,6 +686,7 @@ class BeadsClient:
             cmd.extend(["--parent", parent_id])
         if tags:
             cmd.extend(["--labels", ",".join(tags)])
+        cmd.append(title)
 
         result = await self._run_subprocess_async(cmd)
         if result.returncode != 0:
