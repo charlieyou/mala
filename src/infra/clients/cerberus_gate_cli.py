@@ -210,7 +210,6 @@ class CerberusGateCLI:
         timeout: int,
         *,
         epic_path: Path,
-        diff_args: Sequence[str],
         spawn_args: tuple[str, ...] = (),
     ) -> SpawnResult:
         """Spawn an epic verification subprocess.
@@ -220,7 +219,6 @@ class CerberusGateCLI:
             env: Environment variables for the command.
             timeout: Timeout in seconds.
             epic_path: Path to the epic markdown file.
-            diff_args: Diff selector args (e.g., ["--commit", "sha1", "sha2"]).
             spawn_args: Additional arguments for spawn-epic-verify.
 
         Returns:
@@ -231,8 +229,6 @@ class CerberusGateCLI:
         spawn_cmd.extend(["--max-rounds", "0"])
         if spawn_args:
             spawn_cmd.extend(spawn_args)
-        if diff_args:
-            spawn_cmd.extend(diff_args)
         spawn_cmd.append(str(epic_path))
 
         result = await runner.run_async(spawn_cmd, env=env, timeout=timeout)

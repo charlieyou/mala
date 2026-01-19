@@ -253,14 +253,8 @@ class CerberusEpicVerifier:
             VerificationParseError: If response JSON cannot be parsed.
         """
         _ = spec_content  # spec_content is inferred by review-gate from epic file
-        commit_shas = self._parse_commit_shas(commit_list)
-        diff_args: list[str] = []
-        if commit_shas:
-            diff_args = ["--commit", *commit_shas]
-        elif commit_range:
-            diff_args = [commit_range]
-        else:
-            diff_args = ["--uncommitted"]
+        _ = commit_list  # spawn-epic-verify doesn't support diff args
+        _ = commit_range  # spawn-epic-verify doesn't support diff args
 
         epic_path = self._write_epic_file(epic_id or "epic", epic_criteria)
 
@@ -286,7 +280,6 @@ class CerberusEpicVerifier:
                 env=env,
                 timeout=self.timeout,
                 epic_path=epic_path,
-                diff_args=diff_args,
                 spawn_args=self.spawn_args,
             )
 

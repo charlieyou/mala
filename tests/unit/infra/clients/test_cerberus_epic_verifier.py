@@ -81,9 +81,7 @@ class TestCerberusEpicVerifierCommands:
     """Command construction and env behavior."""
 
     @pytest.mark.asyncio
-    async def test_spawn_includes_epic_file_and_commit_args(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_spawn_includes_epic_file(self, tmp_path: Path) -> None:
         verifier = _make_verifier(tmp_path)
         captured_commands: list[list[str]] = []
         captured_epic_paths: list[Path] = []
@@ -111,8 +109,6 @@ class TestCerberusEpicVerifierCommands:
                     return FakeCommandResult(returncode=0)
             return FakeCommandResult(returncode=0, stdout=json.dumps(wait_output))
 
-        commit_summary = "- abc1234 Fix thing\n- def5678 Add tests"
-
         with patch(
             "src.infra.clients.cerberus_epic_verifier.CommandRunner"
         ) as mock_runner_cls:
@@ -123,15 +119,13 @@ class TestCerberusEpicVerifierCommands:
             await verifier.verify(
                 epic_criteria="## Acceptance Criteria\n- Must work",
                 commit_range="",
-                commit_list=commit_summary,
+                commit_list="",
                 spec_content=None,
                 epic_id="E-123",
             )
 
         spawn_cmd = next(cmd for cmd in captured_commands if "spawn-epic-verify" in cmd)
-        assert "--commit" in spawn_cmd
-        assert "abc1234" in spawn_cmd
-        assert "def5678" in spawn_cmd
+        assert spawn_cmd[-1].endswith(".md")
         assert captured_epic_paths
 
     @pytest.mark.asyncio
