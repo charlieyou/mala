@@ -57,15 +57,6 @@ class VerificationRetryPolicyProtocol(Protocol):
 
 logger = logging.getLogger(__name__)
 
-# Spec path patterns from docs (case-insensitive)
-SPEC_PATH_PATTERNS = [
-    r"[Ss]ee\s+(specs/[\w/-]+\.(?:md|MD))",  # "See specs/foo/bar.md"
-    r"[Ss]pec:\s*(specs/[\w/-]+\.(?:md|MD))",  # "Spec: specs/foo.md"
-    r"\[(specs/[\w/-]+\.(?:md|MD))\]",  # "[specs/foo.md]"
-    r"(?:^|[\s(])(specs/[\w/-]+\.(?:md|MD))(?:\s|[.,;:!?)]|$)",  # Bare "specs/foo.md" or "(specs/foo.md)"
-]
-
-
 # Default lock timeout for epic verification (5 minutes)
 DEFAULT_EPIC_VERIFY_LOCK_TIMEOUT_SECONDS = 300
 
@@ -120,29 +111,6 @@ def _compute_criterion_hash(criterion: str) -> str:
     return hashlib.sha256(criterion.encode()).hexdigest()
 
 
-def extract_spec_paths(text: str) -> list[str]:
-    """Extract spec file paths from text using documented patterns.
-
-    Args:
-        text: The text to search for spec paths.
-
-    Returns:
-        List of unique spec paths found.
-    """
-    paths: list[str] = []
-    for pattern in SPEC_PATH_PATTERNS:
-        matches = re.findall(pattern, text, re.MULTILINE)
-        paths.extend(matches)
-    # Deduplicate while preserving order
-    seen: set[str] = set()
-    result: list[str] = []
-    for path in paths:
-        if path not in seen:
-            seen.add(path)
-            result.append(path)
-    return result
-
-
 def _load_prompt_template() -> str:
     """Load the epic verification prompt template."""
     # Navigate from src/infra/ to src/prompts/
@@ -159,7 +127,6 @@ class EpicVerificationContext:
     """Context captured during verification for richer remediation issues."""
 
     epic_description: str
-    spec_content: str | None
     child_ids: set[str]
     blocker_ids: set[str]
     commit_shas: list[str]
@@ -633,21 +600,8 @@ class EpicVerifier:
                     None,
                 )
 
-        # Extract and load spec content if referenced
-        spec_paths = extract_spec_paths(epic_description)
-        spec_content = None
-        for spec_path in spec_paths:
-            full_path = self.repo_path / spec_path
-            if full_path.exists():
-                try:
-                    spec_content = await asyncio.to_thread(full_path.read_text)
-                    break  # Use first found spec
-                except OSError:
-                    pass
-
         context = EpicVerificationContext(
             epic_description=epic_description,
-            spec_content=spec_content,
             child_ids=child_ids,
             blocker_ids=blocker_ids,
             commit_shas=scoped.commit_shas,
@@ -655,34 +609,11 @@ class EpicVerifier:
             commit_summary=scoped.commit_summary,
         )
 
-        # Build combined epic context for verification
-        epic_context = self._build_epic_context(epic_description, spec_content)
-
         # Invoke verification model with per-category retry policy (R6)
         # Per spec: timeouts/errors should trigger human review, not abort
-        verdict = await self._verify_with_category_retries(epic_context)
+        verdict = await self._verify_with_category_retries(epic_description)
 
         return verdict, context
-
-    def _build_epic_context(
-        self, epic_description: str, spec_content: str | None
-    ) -> str:
-        """Build combined epic context for verification prompt.
-
-        Combines the epic description and spec content into a single context
-        string for the EPIC_CONTEXT placeholder.
-
-        Args:
-            epic_description: The epic's description text (includes acceptance criteria).
-            spec_content: Optional content of linked spec file.
-
-        Returns:
-            Combined context string.
-        """
-        parts = [f"## Epic Description\n\n{epic_description}"]
-        if spec_content:
-            parts.append(f"\n\n## Spec Content\n\n{spec_content}")
-        return "\n".join(parts)
 
     async def _verify_with_category_retries(
         self,
@@ -1120,11 +1051,6 @@ class EpicVerifier:
             "## Epic Description / Acceptance Criteria\n"
             + self._truncate_text(context.epic_description)
         )
-
-        if context.spec_content:
-            sections.append(
-                "## Spec Content\n" + self._truncate_text(context.spec_content)
-            )
 
         commit_range = context.commit_range or "Unavailable"
         commit_list = context.commit_summary or "No commits found."

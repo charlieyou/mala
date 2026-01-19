@@ -26,7 +26,6 @@ from src.infra.epic_verifier import (
     EpicVerifier,
     _compute_criterion_hash,
     _extract_json_from_code_blocks,
-    extract_spec_paths,
 )
 from src.core.models import EpicVerdict, UnmetCriterion
 from src.infra.tools.command_runner import CommandResult
@@ -104,70 +103,6 @@ def _stub_commit_helpers(verifier: EpicVerifier, sha: str = "abc123") -> None:
         )
     )
     verifier.scope_analyzer = mock_scope_analyzer
-
-
-# ============================================================================
-# Test extract_spec_paths
-# ============================================================================
-
-
-class TestExtractSpecPaths:
-    """Tests for spec path extraction from text."""
-
-    def test_extracts_see_pattern(self) -> None:
-        """Should extract 'See specs/...' pattern."""
-        text = "Implements auth. See specs/auth/login.md for details."
-        paths = extract_spec_paths(text)
-        assert paths == ["specs/auth/login.md"]
-
-    def test_extracts_spec_colon_pattern(self) -> None:
-        """Should extract 'Spec: specs/...' pattern."""
-        text = "Spec: specs/api/v2.md"
-        paths = extract_spec_paths(text)
-        assert paths == ["specs/api/v2.md"]
-
-    def test_extracts_bracket_pattern(self) -> None:
-        """Should extract '[specs/...]' pattern."""
-        text = "Reference: [specs/design.md]"
-        paths = extract_spec_paths(text)
-        assert paths == ["specs/design.md"]
-
-    def test_extracts_bare_pattern(self) -> None:
-        """Should extract bare 'specs/...' pattern."""
-        text = "Details in specs/overview.md documentation."
-        paths = extract_spec_paths(text)
-        assert paths == ["specs/overview.md"]
-
-    def test_extracts_nested_directory(self) -> None:
-        """Should handle deeply nested spec paths."""
-        text = "See specs/auth/v2/oauth/login.md"
-        paths = extract_spec_paths(text)
-        assert paths == ["specs/auth/v2/oauth/login.md"]
-
-    def test_handles_case_insensitive_extension(self) -> None:
-        """Should handle .MD extension."""
-        text = "See specs/README.MD for more."
-        paths = extract_spec_paths(text)
-        assert paths == ["specs/README.MD"]
-
-    def test_deduplicates_paths(self) -> None:
-        """Should deduplicate multiple references to same spec."""
-        text = "See specs/foo.md. Also specs/foo.md again."
-        paths = extract_spec_paths(text)
-        assert paths == ["specs/foo.md"]
-
-    def test_returns_empty_for_no_specs(self) -> None:
-        """Should return empty list when no specs found."""
-        text = "No spec references here."
-        paths = extract_spec_paths(text)
-        assert paths == []
-
-    def test_extracts_multiple_specs(self) -> None:
-        """Should extract multiple different spec paths."""
-        text = "See specs/a.md and specs/b.md for details."
-        paths = extract_spec_paths(text)
-        assert "specs/a.md" in paths
-        assert "specs/b.md" in paths
 
 
 # ============================================================================
@@ -405,40 +340,6 @@ class TestVerifyEpic:
 
         assert verdict.passed is False
         assert "No commits found" in verdict.reasoning
-
-    @pytest.mark.asyncio
-    async def test_loads_spec_content_if_found(
-        self,
-        tmp_path: Path,
-        mock_beads: MagicMock,
-        mock_model: MagicMock,
-    ) -> None:
-        """Should load spec content when referenced and file exists."""
-        # Create spec file
-        spec_dir = tmp_path / "specs"
-        spec_dir.mkdir()
-        (spec_dir / "auth.md").write_text("# Auth Spec\nDetails here.")
-
-        mock_beads.get_issue_description_async.return_value = (
-            "Implement auth. See specs/auth.md"
-        )
-
-        verifier = EpicVerifier(
-            beads=mock_beads,
-            model=mock_model,
-            repo_path=tmp_path,
-            command_runner=MagicMock(),
-        )
-
-        _stub_commit_helpers(verifier)
-
-        await verifier.verify_epic("epic-1")
-
-        # Verify model was called with epic context containing spec content
-        mock_model.verify.assert_called_once()
-        call_args = mock_model.verify.call_args
-        epic_context = call_args[0][0]  # First positional arg is epic_context
-        assert "# Auth Spec\nDetails here." in epic_context
 
 
 # ============================================================================
