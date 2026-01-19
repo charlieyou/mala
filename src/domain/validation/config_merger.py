@@ -224,6 +224,9 @@ def merge_configs(
     # per_issue_review: User value always takes precedence (presets don't define this)
     merged_per_issue_review = user.per_issue_review
 
+    # epic_verification: User value always takes precedence (presets don't define this)
+    merged_epic_verification = user.epic_verification
+
     return ValidationConfig(
         preset=user.preset,  # Keep user's preset reference
         commands=merged_commands,
@@ -239,6 +242,7 @@ def merge_configs(
         max_diff_size_kb=merged_max_diff_size_kb,
         evidence_check=merged_evidence_check,
         per_issue_review=merged_per_issue_review,
+        epic_verification=merged_epic_verification,
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 
