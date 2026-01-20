@@ -99,6 +99,7 @@ mala epic-verify EPIC-123 --human-override --close
 | `--order` | `epic-priority` | Issue ordering mode (see [Order Modes](#order-modes)) |
 | `--resume`, `-r` | false | Include in_progress issues and attempt to resume their Claude sessions |
 | `--strict` | false | Fail if `--resume` finds no prior session for an issue (requires `--resume`) |
+| `--fresh/--no-fresh` | false | Start new SDK session instead of resuming (requires `--resume`, conflicts with `--strict`) |
 
 ### Order Modes
 
@@ -126,6 +127,20 @@ mala run --order issue-priority /path/to/repo
 # Process specific issues in exact order
 mala run --scope ids:T-123,T-456,T-789 --order input /path/to/repo
 ```
+
+### Session Handling
+
+When using `--resume`, you can control how sessions are handled:
+
+```bash
+# Resume existing sessions (default behavior)
+mala run --resume /path/to/repo
+
+# Start fresh sessions while keeping WIP scope and review feedback
+mala run --resume --fresh /path/to/repo
+```
+
+The `--fresh` flag starts a new SDK session instead of resuming the previous one. This is useful when you want to clear context/token history while still including in-progress issues and their review feedback in scope.
 
 ### Watch Mode
 
