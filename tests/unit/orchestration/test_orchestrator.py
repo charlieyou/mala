@@ -4780,11 +4780,11 @@ class TestFreshSessionMode:
 
         mock_client.receive_response = mock_receive_response
 
-        # Track arguments passed to SDK client
-        sdk_call_args: dict[str, object] = {}
+        # Track ALL calls to SDK client to verify initial call has resume=None
+        sdk_call_history: list[dict[str, object]] = []
 
         def capture_sdk_client(**kwargs: object) -> AsyncMock:
-            sdk_call_args.update(kwargs)
+            sdk_call_history.append(dict(kwargs))
             return mock_client
 
         with (
@@ -4808,7 +4808,15 @@ class TestFreshSessionMode:
                     session_id="prior-session-id",
                     baseline_timestamp=1700000000,
                     last_review_issues=[
-                        {"type": "code_quality", "message": "Fix typo"}
+                        {
+                            "file": "src/test.py",
+                            "line_start": 10,
+                            "line_end": 12,
+                            "priority": 2,
+                            "title": "Fix typo",
+                            "body": "Found a typo in variable name",
+                            "reviewer": "test-reviewer",
+                        }
                     ],
                     run_id="prior-run-id",
                 ),
@@ -4816,8 +4824,13 @@ class TestFreshSessionMode:
         ):
             result = await orchestrator.run_implementer("test-issue")
 
-            # Verify SDK was called with resume_session_id=None (fresh session)
-            assert sdk_call_args.get("resume_session_id") is None
+            # Verify the FIRST SDK call had resume=None (fresh session)
+            # Note: Subsequent calls may have resume set after receiving session_id
+            # ClaudeSDKClient is called with options=<ClaudeAgentOptions>, not resume_session_id
+            assert len(sdk_call_history) >= 1, "SDK client should have been called"
+            first_call_options = sdk_call_history[0].get("options")
+            assert first_call_options is not None
+            assert getattr(first_call_options, "resume", "NOT_FOUND") is None
 
             # Session ran successfully
             assert result.session_id == "new-session-id"
@@ -4870,11 +4883,11 @@ class TestFreshSessionMode:
 
         mock_client.receive_response = mock_receive_response
 
-        # Track arguments passed to SDK client
-        sdk_call_args: dict[str, object] = {}
+        # Track ALL calls to SDK client to verify initial call has resume=None
+        sdk_call_history: list[dict[str, object]] = []
 
         def capture_sdk_client(**kwargs: object) -> AsyncMock:
-            sdk_call_args.update(kwargs)
+            sdk_call_history.append(dict(kwargs))
             return mock_client
 
         with (
@@ -4899,8 +4912,13 @@ class TestFreshSessionMode:
         ):
             result = await orchestrator.run_implementer("test-issue")
 
-            # Verify SDK was called with resume_session_id=None
-            assert sdk_call_args.get("resume_session_id") is None
+            # Verify the FIRST SDK call had resume=None (no prior session)
+            # Note: Subsequent calls may have resume set after receiving session_id
+            # ClaudeSDKClient is called with options=<ClaudeAgentOptions>, not resume_session_id
+            assert len(sdk_call_history) >= 1, "SDK client should have been called"
+            first_call_options = sdk_call_history[0].get("options")
+            assert first_call_options is not None
+            assert getattr(first_call_options, "resume", "NOT_FOUND") is None
 
             # Session ran successfully - no error due to missing session
             assert result.session_id == "new-session-id"
