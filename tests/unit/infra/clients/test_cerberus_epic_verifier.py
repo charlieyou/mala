@@ -161,6 +161,7 @@ class TestCerberusEpicVerifierCommands:
         wait_cmd = next(cmd for cmd in captured_commands if cmd[1] == "wait")
         assert "--session-id" in wait_cmd
 
+
 @pytest.mark.unit
 class TestCerberusEpicVerifierParsing:
     """Parsing wait output to EpicVerdict."""

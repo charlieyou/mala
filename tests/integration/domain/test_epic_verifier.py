@@ -302,7 +302,9 @@ class TestRemediationIssueCreation:
         """Should add sequential dependencies so remediation issues are not picked up in parallel."""
         issue_ids = iter(["issue-1", "issue-2", "issue-3"])
         mock_beads.find_issue_by_tag_async = AsyncMock(return_value=None)
-        mock_beads.create_issue_async = AsyncMock(side_effect=lambda **_: next(issue_ids))
+        mock_beads.create_issue_async = AsyncMock(
+            side_effect=lambda **_: next(issue_ids)
+        )
         mock_beads.add_dependency_async = AsyncMock(return_value=True)
 
         verdict = EpicVerdict(
@@ -942,7 +944,7 @@ And the result:
         This is a regression test for the case where Claude returns JSON
         containing embedded code examples in fields like "body".
         """
-        text = '''Based on my exploration, here are the findings:
+        text = """Based on my exploration, here are the findings:
 
 ```json
 {
@@ -957,7 +959,7 @@ And the result:
   "summary": "Implementation incomplete"
 }
 ```
-'''
+"""
         result = _extract_json_from_code_blocks(text)
         assert result is not None
         import json

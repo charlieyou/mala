@@ -156,9 +156,9 @@ def format_implementer_prompt(
         typecheck_command=validation_commands.typecheck,
         custom_commands_section=custom_commands_section,
         test_command=validation_commands.test,
-        issue_description=(issue_description or "No description available").replace(
-            "{", "{{"
-        ).replace("}", "}}"),
+        issue_description=(issue_description or "No description available")
+        .replace("{", "{{")
+        .replace("}", "}}"),
     )
 
 

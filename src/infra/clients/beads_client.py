@@ -562,9 +562,7 @@ class BeadsClient:
 
         # Commit the exported JSONL to git
         await self._run_subprocess_async(["git", "add", ".beads/"])
-        await self._run_subprocess_async(
-            ["git", "commit", "-m", "sync beads issues"]
-        )
+        await self._run_subprocess_async(["git", "commit", "-m", "sync beads issues"])
         # Return True even if commit fails (nothing to commit is ok)
         return True
 
