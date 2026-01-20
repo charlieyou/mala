@@ -1,18 +1,14 @@
 Bugs
 * When resuming, have agent verify acceptance criteria
 * Epic verification permissions lock down
-
 * epic depth should not be required in config
 
 New Features
-* Use cerberus for epic verification
-    * Needs to be way more strict
 * Add fixer sessions and cerberus reviews to logs search
 * Worktree mode: each epic runs in a worktree, signals it is done to process in main branch, which merges it in + resolves conflicts
 * CLI flag to control which beads issue types are processed (currently just tasks)
 * Issue retry in same run
 * Clean up uncommitted changes after agent timeout / soft kill?
-* Implementers can use author context to communicate to reviewer
 
 * Use Amp/Codex in the main agent loop (waiting until they have hooks)
   * Replace with new Edit tools
