@@ -337,7 +337,7 @@ class IssueExecutionCoordinator:
                 else:
                     try:
                         ready = await self.beads.get_ready_async(
-                            self.failed_issues,
+                            self.failed_issues | self.completed_ids,
                             epic_id=self.config.epic_id,
                             only_ids=self.config.only_ids,
                             suppress_warn_ids=suppress_warn_ids,

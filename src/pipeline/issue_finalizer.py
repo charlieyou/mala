@@ -161,12 +161,14 @@ class IssueFinalizer:
         # Build gate metadata from stored result or logs
         gate_metadata = self._build_gate_metadata(input)
 
-        # Handle successful issue closure and epic verification
+        # Close issue in beads on success
+        # Failed issues are excluded via failed_issues set and may be retried
         closed = False
-        if result.success and await self.callbacks.close_issue(issue_id):
-            closed = True
-            self.callbacks.on_issue_closed(issue_id, issue_id)
-            await self.callbacks.trigger_epic_closure(issue_id, input.run_metadata)
+        if result.success:
+            closed = await self.callbacks.close_issue(issue_id)
+            if closed:
+                self.callbacks.on_issue_closed(issue_id, issue_id)
+                await self.callbacks.trigger_epic_closure(issue_id, input.run_metadata)
 
             # Create tracking issues for P2/P3 review findings (if enabled)
             if self.config.track_review_issues and result.low_priority_review_issues:
