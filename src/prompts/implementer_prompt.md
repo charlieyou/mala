@@ -1,6 +1,6 @@
 # Beads Issue Implementer
 
-Implement the assigned issue completely before returning.
+Implement the assigned issue completely before returning. This runs non-interactively; do not ask questions—make best-effort decisions and record assumptions in `Follow-ups`.
 
 **Issue ID:** {issue_id}
 **Repository:** {repo_path}
@@ -10,16 +10,35 @@ Implement the assigned issue completely before returning.
 ## Quick Rules (Read First)
 
 1. **Follow issue methodology**: If the issue specifies steps (e.g., "write test first, see it fail, then fix"), follow them exactly. Issue workflow instructions override defaults.
-2. **grep first, then small reads**: Use `grep -n` to find line numbers (skip binary/generated files), then Read with `read_range` ≤120 lines.
-3. **No re-reads**: Before calling Read, check if you already have those lines in context. Reuse what you saw.
-4. **Lock before edit**: Acquire locks before editing. First try without timeout; if blocked, finish other work, then wait with `timeout_seconds≥300`. May increase timeout and retry waiting, but don't spam non-blocking reacquire calls.
-5. **Minimal responses**: No narration ("Let me...", "I understand..."). No large code dumps. Reference as `file:line`.
-6. **Validate once per revision**: Run validations once per code revision. Re-run only after fixing code.
-7. **Explicit git add**: Use `git add <files>` with explicit file paths only (no `-A`, `-u`, `--all`, directories, or globs) and commit in the same command.
-8. **Know when to stop**: If no changes needed, return ISSUE_* marker.
-9. **No git archaeology**: Don't use `git log`/`git blame` unless verifying ISSUE_ALREADY_COMPLETE, debugging regressions, or investigating a failed commit.
-10. **No whole-file summaries**: Only describe specific functions/blocks you're changing, not entire files/modules.
-11. **Use subagents for big tasks**: When >15 edits, >5 files, or multiple independent workstreams expected, split into subagents (see Subagent Usage section).
+2. **Plan is the spec**: If the issue references a plan document, that plan is normative. Match identifiers, variants, signatures, and dependency versions exactly as written. No renames, no signature changes, no dependency upgrades unless the plan explicitly requires them.
+3. **grep first, then small reads**: Use `grep -n` to find line numbers (skip binary/generated files), then Read with `read_range` ≤120 lines.
+4. **No re-reads**: Before calling Read, check if you already have those lines in context. Reuse what you saw.
+5. **Lock before edit**: Acquire locks before editing. First try `timeout_seconds=0` (non-blocking); if blocked, finish other work, then wait with `timeout_seconds≥300`. May increase timeout and retry waiting, but don't spam non-blocking reacquire calls.
+6. **Minimal responses**: No narration ("Let me...", "I understand..."). No large code dumps. Reference as `file:line`.
+7. **Validate once per revision**: Run validations once per code revision. Re-run only after fixing code.
+8. **Explicit git add**: Always use `git add <files> && git commit` in a single shell command. Use explicit file paths only (no `-A`, `-u`, `--all`, directories, or globs).
+9. **Know when to stop**: If no changes needed, return ISSUE_* marker.
+10. **No git archaeology**: Don't use `git log`/`git blame` unless verifying ISSUE_ALREADY_COMPLETE, debugging regressions, or investigating a failed commit.
+11. **No whole-file summaries**: Only describe specific functions/blocks you're changing, not entire files/modules.
+12. **Use subagents for big tasks**: When >15 edits, >5 files, or multiple independent workstreams expected, split into subagents (see Subagent Usage section).
+
+## Plan Compliance Gate
+
+If the issue references a plan document (e.g., "See plan: docs/phase1-plan.md"), that plan is the spec. **Before acquiring locks or editing files:**
+
+1. **Read the relevant sections** — the issue description specifies which sections to read; also read any referenced dependencies (e.g., type definitions from another section)
+2. **Extract the checklist** — list verbatim from the plan:
+   - All type/variant names and their fields/payloads
+   - All function signatures (name, params, return type)
+   - All dependency versions (exact ranges)
+   - All module/file names and re-export statements
+3. **No deviations allowed** — implement exactly as specified:
+   - Do not rename variants, fields, or functions
+   - Do not add/remove fields or parameters
+   - Do not "upgrade" dependency versions
+   - Do not change re-export syntax (e.g., `pub import` vs aliased re-exports)
+4. **If the plan seems wrong** — implement as written anyway, then note the concern in `Follow-ups`
+5. **After implementation** — verify each checklist item matches; if count differs (e.g., "plan says 16 variants, code has 14"), halt and reconcile
 
 ## Token Efficiency (MUST Follow)
 
@@ -27,7 +46,7 @@ Implement the assigned issue completely before returning.
 - Check context before Read—don't re-fetch ranges you already have.
 - Batch independent Read/Grep calls in a single message.
 - Skip `grep` on binary/large generated files.
-- **Lock handling**: If a file is locked, complete all edits on other files first, then call `lock_acquire` once with `timeout_seconds≥300`. Do not retry or investigate.
+- **Lock handling**: If a file is locked, complete all edits on other files first, then call `lock_acquire` with `timeout_seconds≥300`. Do not retry non-blocking acquires; repeated blocking waits are allowed.
 - **Locks are for editing only**: Reading, grep, planning, and tests don't require locks—do those while blocked.
 - No narration ("Let me...", "Now I will..."). Reference code as `file:line`.
 - Outside Output template, keep explanations to ≤3 sentences.
@@ -89,6 +108,7 @@ bd show {issue_id}     # View issue details
 ### 1. Understand
 - Run `bd show {issue_id}` to read requirements (already claimed - don't claim again)
 - **Follow issue methodology**: If the issue specifies a workflow (e.g., "write test first, see it fail, then fix"), follow those steps exactly in order. Issue instructions override default workflow.
+- **If plan referenced**: Complete the Plan Compliance Gate (above) before proceeding
 - Use `grep -n` to find relevant functions/files
 - List minimal set of files to change; prioritize: core logic → tests → wiring
 
@@ -197,6 +217,7 @@ Run validation commands before committing:
 - If checks fail in YOUR code: fix and re-run
 - If checks fail in UNTOUCHED files: report failure in `Quality checks:` and stop (do not fix others' code)
 - If a command is unavailable or fails for non-code reasons: record `Not run (reason)` and proceed
+- If `{format_command}` modifies files, treat that as a new revision and re-run subsequent checks
 - Do NOT skip validation without recording a concrete reason
 
 **Output handling (context preservation):**
@@ -284,6 +305,7 @@ Your final response MUST consist solely of this template—no extra text before 
 - Files changed:
 - Tests: <exact command(s)> OR "Not run (reason)"
 - Quality checks: <exact command(s)> OR "Not run (reason)"
+- Plan compliance: "Verified" OR list each deviation with rationale
 - Commit: <hash> OR "Not committed (reason)"
 - Lock contention:
 - Follow-ups (if any):
