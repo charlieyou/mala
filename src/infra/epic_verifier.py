@@ -1093,6 +1093,7 @@ class EpicVerifier:
         blocking_ids: list[str] = []
         informational_ids: list[str] = []
         context_block = self._format_remediation_context(context)
+        prev_issue_id: str | None = None
 
         for criterion in verdict.unmet_criteria:
             is_blocking = criterion.priority <= 1  # P0/P1 are blocking
@@ -1156,6 +1157,10 @@ This issue was auto-created by epic verification for epic `{epic_id}`.
                 parent_id=parent_id,
             )
             if issue_id:
+                # Add sequential dependency on previous issue
+                if prev_issue_id is not None:
+                    await self.beads.add_dependency_async(issue_id, prev_issue_id)
+                prev_issue_id = issue_id
                 if is_blocking:
                     blocking_ids.append(issue_id)
                 else:

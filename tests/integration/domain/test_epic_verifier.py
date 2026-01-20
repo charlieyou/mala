@@ -255,6 +255,7 @@ class TestRemediationIssueCreation:
         mock_beads.create_issue_async = AsyncMock(
             side_effect=lambda **_: next(issue_ids)
         )
+        mock_beads.add_dependency_async = AsyncMock(return_value=True)
 
         verdict = EpicVerdict(
             passed=False,
@@ -293,6 +294,54 @@ class TestRemediationIssueCreation:
         # Second call (P3) should be advisory without parent
         assert calls[1][1]["title"].startswith("[Advisory]")
         assert calls[1][1]["parent_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_creates_sequential_dependencies_between_remediation_issues(
+        self, verifier: EpicVerifier, mock_beads: MagicMock
+    ) -> None:
+        """Should add sequential dependencies so remediation issues are not picked up in parallel."""
+        issue_ids = iter(["issue-1", "issue-2", "issue-3"])
+        mock_beads.find_issue_by_tag_async = AsyncMock(return_value=None)
+        mock_beads.create_issue_async = AsyncMock(side_effect=lambda **_: next(issue_ids))
+        mock_beads.add_dependency_async = AsyncMock(return_value=True)
+
+        verdict = EpicVerdict(
+            passed=False,
+            unmet_criteria=[
+                UnmetCriterion(
+                    criterion="First criterion",
+                    evidence="Evidence 1",
+                    priority=0,  # blocking
+                    criterion_hash=_compute_criterion_hash("First criterion"),
+                ),
+                UnmetCriterion(
+                    criterion="Second criterion",
+                    evidence="Evidence 2",
+                    priority=3,  # informational
+                    criterion_hash=_compute_criterion_hash("Second criterion"),
+                ),
+                UnmetCriterion(
+                    criterion="Third criterion",
+                    evidence="Evidence 3",
+                    priority=1,  # blocking
+                    criterion_hash=_compute_criterion_hash("Third criterion"),
+                ),
+            ],
+            reasoning="Mixed blocking and informational issues",
+        )
+
+        blocking_ids, informational_ids = await verifier.create_remediation_issues(
+            "epic-1", verdict
+        )
+
+        assert blocking_ids == ["issue-1", "issue-3"]
+        assert informational_ids == ["issue-2"]
+
+        # Verify sequential dependencies across all issues
+        dep_calls = mock_beads.add_dependency_async.call_args_list
+        assert len(dep_calls) == 2
+        assert dep_calls[0].args == ("issue-2", "issue-1")
+        assert dep_calls[1].args == ("issue-3", "issue-2")
 
 
 # ============================================================================
