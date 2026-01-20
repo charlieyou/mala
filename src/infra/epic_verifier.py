@@ -731,9 +731,8 @@ class EpicVerifier:
                 break
             except TimeoutError as e:
                 # Agent SDK may raise asyncio.TimeoutError - treat as timeout category.
-                # Note: Since Python 3.11, asyncio.TimeoutError IS TimeoutError (same class).
-                # In Python 3.8-3.10, it was a subclass. Either way, catching TimeoutError
-                # catches asyncio.TimeoutError.
+                # Since Python 3.11, asyncio.TimeoutError IS TimeoutError (same class),
+                # so catching TimeoutError catches asyncio.TimeoutError.
                 timeout_attempts += 1
                 last_error = e
                 if timeout_attempts <= timeout_retries:
