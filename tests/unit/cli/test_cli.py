@@ -953,6 +953,73 @@ def test_strict_with_resume_passes_to_config(
     assert DummyOrchestrator.last_orch_config.strict_resume is True
 
 
+def test_fresh_without_resume_raises_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --fresh without --resume raises BadParameter error."""
+    from typer.testing import CliRunner
+
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["run", str(tmp_path), "--fresh"])
+
+    assert result.exit_code != 0
+    assert "--fresh requires --resume" in result.output
+
+
+def test_fresh_with_strict_raises_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --fresh with --strict raises BadParameter error."""
+    from typer.testing import CliRunner
+
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app, ["run", str(tmp_path), "--resume", "--fresh", "--strict"]
+    )
+
+    assert result.exit_code != 0
+    assert "--fresh and --strict are mutually exclusive" in result.output
+
+
+def test_fresh_with_resume_passes_to_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --fresh with --resume passes fresh_session=True to config."""
+    from typer.testing import CliRunner
+
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator(),
+    )
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["run", str(tmp_path), "--resume", "--fresh"])
+
+    assert result.exit_code == 0
+    assert DummyOrchestrator.last_orch_config is not None
+    assert DummyOrchestrator.last_orch_config.fresh_session is True
+
+
 def test_run_scope_epic_and_orphans_are_distinct(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -95,6 +95,8 @@ class OrchestratorConfig:
     orphans_only: bool = False
     # Session resume strict mode: fail issue if no prior session found
     strict_resume: bool = False
+    # Fresh session mode: start new SDK session instead of resuming (requires --resume)
+    fresh_session: bool = False
 
 
 @dataclass

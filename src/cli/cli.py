@@ -459,6 +459,14 @@ def run(
             rich_help_panel="Scope & Ordering",
         ),
     ] = False,
+    fresh: Annotated[
+        bool,
+        typer.Option(
+            "--fresh/--no-fresh",
+            help="Start new SDK session instead of resuming (requires --resume)",
+            rich_help_panel="Scope & Ordering",
+        ),
+    ] = False,
     order: Annotated[
         str | None,
         typer.Option(
@@ -516,6 +524,14 @@ def run(
     # Validate --strict requires --resume
     if strict and not resume:
         raise typer.BadParameter("--strict requires --resume flag")
+
+    # Validate --fresh requires --resume
+    if fresh and not resume:
+        raise typer.BadParameter("--fresh requires --resume flag")
+
+    # Validate --fresh conflicts with --strict
+    if fresh and strict:
+        raise typer.BadParameter("--fresh and --strict are mutually exclusive")
 
     repo_path = repo_path.resolve()
 
@@ -607,6 +623,7 @@ def run(
         only_ids=only_ids,
         include_wip=resume,
         strict_resume=strict,
+        fresh_session=fresh,
         focus=focus,
         order_preference=order_preference,
         cli_args=cli_args,
