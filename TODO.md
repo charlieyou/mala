@@ -2,6 +2,8 @@ Bugs
 * When resuming, have agent verify acceptance criteria
 * Epic verification permissions lock down
 
+* epic depth should not be required in config
+
 New Features
 * Use cerberus for epic verification
     * Needs to be way more strict

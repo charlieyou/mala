@@ -36,3 +36,8 @@ coverage:
   format: xml
   file: coverage.xml
   threshold: 85
+
+evidence_check:
+  required:
+  - lint
+  - typecheck
