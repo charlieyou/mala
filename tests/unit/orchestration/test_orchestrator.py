@@ -4807,6 +4807,8 @@ class TestFreshSessionMode:
                 return_value=MagicMock(
                     session_id="prior-session-id",
                     baseline_timestamp=1700000000,
+                    # Fixture schema matches StoredReviewIssue.from_dict contract
+                    # (file, line_start, line_end, priority, title, body, reviewer)
                     last_review_issues=[
                         {
                             "file": "src/test.py",
@@ -4826,7 +4828,8 @@ class TestFreshSessionMode:
 
             # Verify the FIRST SDK call had resume=None (fresh session)
             # Note: Subsequent calls may have resume set after receiving session_id
-            # ClaudeSDKClient is called with options=<ClaudeAgentOptions>, not resume_session_id
+            # ClaudeSDKClient is called with options=<ClaudeAgentOptions> (a dataclass
+            # with a 'resume' field), not as a dict, so getattr is correct here.
             assert len(sdk_call_history) >= 1, "SDK client should have been called"
             first_call_options = sdk_call_history[0].get("options")
             assert first_call_options is not None
