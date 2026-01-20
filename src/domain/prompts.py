@@ -125,6 +125,7 @@ def format_implementer_prompt(
     agent_id: str,
     validation_commands: PromptValidationCommands,
     lock_dir: Path,
+    issue_description: str | None,
 ) -> str:
     """Format the implementer prompt with runtime values.
 
@@ -135,6 +136,7 @@ def format_implementer_prompt(
         agent_id: The agent ID for this session.
         validation_commands: Validation commands for the prompt.
         lock_dir: Directory for lock files (from infra layer).
+        issue_description: Description of the issue being implemented.
 
     Returns:
         Formatted prompt string.
@@ -154,6 +156,9 @@ def format_implementer_prompt(
         typecheck_command=validation_commands.typecheck,
         custom_commands_section=custom_commands_section,
         test_command=validation_commands.test,
+        issue_description=(issue_description or "No description available").replace(
+            "{", "{{"
+        ).replace("}", "}}"),
     )
 
 

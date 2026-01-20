@@ -80,6 +80,7 @@ class TestPromptTemplate:
             "typecheck_command",
             "custom_commands_section",
             "test_command",
+            "issue_description",
         }
 
         assert placeholders == expected_keys, (

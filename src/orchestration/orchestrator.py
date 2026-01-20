@@ -882,6 +882,7 @@ class MalaOrchestrator:
             agent_id=temp_agent_id,
             validation_commands=self._prompt_validation_commands,
             lock_dir=get_lock_dir(),
+            issue_description=issue_description,
         )
 
         # Look up prior session for resumption when include_wip is enabled

@@ -6,6 +6,8 @@ Implement the assigned issue completely before returning. This runs non-interact
 **Repository:** {repo_path}
 **Lock Directory:** {lock_dir}
 **Agent Lock Prefix:** {agent_id}
+**Issue Details:**
+{issue_description}
 
 ## Quick Rules (Read First)
 
@@ -97,16 +99,9 @@ If a file spans multiple shards (shared helper, config):
 
 Subagents must also follow **Parallel Work Rules** for their assigned files.
 
-## Commands
-
-```bash
-bd show {issue_id}     # View issue details
-```
-
 ## Workflow
 
 ### 1. Understand
-- Run `bd show {issue_id}` to read requirements (already claimed - don't claim again)
 - **Follow issue methodology**: If the issue specifies a workflow (e.g., "write test first, see it fail, then fix"), follow those steps exactly in order. Issue instructions override default workflow.
 - **If plan referenced**: Complete the Plan Compliance Gate (above) before proceeding
 - Use `grep -n` to find relevant functions/files

@@ -14,6 +14,7 @@ from src.domain.prompts import (
     build_continuation_prompt,
     build_prompt_validation_commands,
     extract_checkpoint,
+    format_implementer_prompt,
     load_prompt,
     load_prompts,
 )
@@ -372,6 +373,7 @@ class TestPromptTemplateIntegration:
             typecheck_command=cmds.typecheck,
             custom_commands_section="",
             test_command=cmds.test,
+            issue_description="Test issue description",
         )
 
         # Verify Python commands appear in rendered prompt
@@ -403,6 +405,7 @@ class TestPromptTemplateIntegration:
             typecheck_command=cmds.typecheck,
             custom_commands_section="",
             test_command=cmds.test,
+            issue_description="Test issue description",
         )
 
         # Verify Go commands appear in rendered prompt
@@ -437,3 +440,44 @@ class TestPromptTemplateIntegration:
         assert "go test" in prompt
         # Verify no unsubstituted placeholders
         assert "{" not in prompt or "}" not in prompt.split("{")[-1]
+
+
+class TestFormatImplementerPrompt:
+    """Tests for format_implementer_prompt function."""
+
+    def test_escapes_braces_in_issue_description(self, tmp_path: Path) -> None:
+        """Issue descriptions with curly braces are escaped to prevent format errors."""
+        prompts = load_prompts(PROMPTS_DIR)
+        cmds = build_prompt_validation_commands(tmp_path, config_missing=True)
+
+        description_with_braces = 'Config example: {"key": "value"}'
+        prompt = format_implementer_prompt(
+            prompts.implementer_prompt,
+            issue_id="test-123",
+            repo_path=tmp_path,
+            agent_id="test-agent",
+            validation_commands=cmds,
+            lock_dir=tmp_path / "locks",
+            issue_description=description_with_braces,
+        )
+
+        # Braces should be escaped (doubled) in the output
+        assert '{{"key": "value"}}' in prompt
+        # Original unescaped braces should not cause KeyError
+
+    def test_handles_none_issue_description(self, tmp_path: Path) -> None:
+        """None issue_description falls back to default message."""
+        prompts = load_prompts(PROMPTS_DIR)
+        cmds = build_prompt_validation_commands(tmp_path, config_missing=True)
+
+        prompt = format_implementer_prompt(
+            prompts.implementer_prompt,
+            issue_id="test-123",
+            repo_path=tmp_path,
+            agent_id="test-agent",
+            validation_commands=cmds,
+            lock_dir=tmp_path / "locks",
+            issue_description=None,
+        )
+
+        assert "No description available" in prompt

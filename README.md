@@ -80,7 +80,7 @@ mala epic-verify proj-abc /path/to/repo   # Verify and close an epic
 
 ### Agent Workflow
 
-1. **Understand**: Read issue with `bd show <id>`
+1. **Understand**: Read issue details (injected into prompt)
 2. **Lock files**: Acquire filesystem locks before editing
 3. **Implement**: Write code following project conventions
 4. **Quality checks**: Run the required validations for evidence (see `evidence_check` in `mala.yaml`)
