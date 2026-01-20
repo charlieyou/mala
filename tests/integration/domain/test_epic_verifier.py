@@ -936,6 +936,37 @@ And the result:
         result = _extract_json_from_code_blocks(text)
         assert result == '{"valid": true}'
 
+    def test_handles_nested_code_blocks_in_json_strings(self) -> None:
+        """Should handle nested code blocks inside JSON string values.
+
+        This is a regression test for the case where Claude returns JSON
+        containing embedded code examples in fields like "body".
+        """
+        text = '''Based on my exploration, here are the findings:
+
+```json
+{
+  "findings": [
+    {
+      "title": "[P1] Config not wired",
+      "body": "Fix by adding:\\n```go\\ncoreManager.SetConfig(cfg)\\n```\\nThen test with:\\n```yaml\\nrouting:\\n  enabled: true\\n```",
+      "priority": 1
+    }
+  ],
+  "verdict": "FAIL",
+  "summary": "Implementation incomplete"
+}
+```
+'''
+        result = _extract_json_from_code_blocks(text)
+        assert result is not None
+        import json
+
+        parsed = json.loads(result)
+        assert parsed["verdict"] == "FAIL"
+        assert "```go" in parsed["findings"][0]["body"]
+        assert "```yaml" in parsed["findings"][0]["body"]
+
 
 # ============================================================================
 # Test lock usage

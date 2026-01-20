@@ -138,8 +138,10 @@ def _extract_json_from_code_blocks(text: str) -> str | None:
     """Extract JSON content from markdown code blocks.
 
     This function properly handles responses with multiple code blocks by
-    extracting each code block individually and returning the first one
-    that contains valid JSON (i.e., starts with '{').
+    parsing fences line-by-line and using json.JSONDecoder().raw_decode()
+    to extract balanced JSON objects. This approach correctly handles
+    nested code blocks inside JSON string values (e.g., code examples
+    embedded in a "body" field).
 
     Args:
         text: The raw model response text that may contain markdown code blocks.
@@ -148,19 +150,48 @@ def _extract_json_from_code_blocks(text: str) -> str | None:
         The JSON string extracted from the first JSON code block, or None if
         no valid JSON code block is found.
     """
-    # Pattern to match individual code blocks non-greedily
-    # Matches: ```json ... ``` or ``` ... ```
-    # The .*? is non-greedy and DOTALL is NOT used, so we need to handle newlines
-    # Use a pattern that matches until the closing ```
-    code_block_pattern = r"```(?:json)?\s*\n?([\s\S]*?)```"
+    decoder = json.JSONDecoder()
 
-    matches = re.finditer(code_block_pattern, text)
+    def _extract_first_json_object(block: str) -> str | None:
+        """Extract first balanced JSON object from a code block."""
+        s = block.strip()
+        search_from = 0
+        while True:
+            start = s.find("{", search_from)
+            if start == -1:
+                return None
+            try:
+                obj, end = decoder.raw_decode(s[start:])
+            except json.JSONDecodeError:
+                search_from = start + 1
+                continue
+            if isinstance(obj, dict):
+                return s[start : start + end]
+            search_from = start + 1
 
-    for match in matches:
-        content = match.group(1).strip()
-        # Check if this looks like JSON (starts with '{')
-        if content.startswith("{"):
-            return content
+    in_fence = False
+    buf: list[str] = []
+
+    for line in text.splitlines(keepends=True):
+        stripped = line.lstrip()
+        if stripped.startswith("```"):
+            if not in_fence:
+                in_fence = True
+                buf = []
+                continue
+            if stripped.strip() == "```":
+                in_fence = False
+                candidate = _extract_first_json_object("".join(buf))
+                if candidate is not None:
+                    return candidate
+                buf = []
+                continue
+
+        if in_fence:
+            buf.append(line)
+
+    if in_fence and buf:
+        return _extract_first_json_object("".join(buf))
 
     return None
 
@@ -981,12 +1012,12 @@ class EpicVerifier:
                 failed_count = 1
                 if self.event_sink is not None:
                     # If no blocking issues but still failed, include reasoning in log
-                    if not blocking_ids and verdict.reasoning:
+                    if not blocking_ids:
                         self.event_sink.on_epic_verification_failed(
                             epic_id,
                             0,
                             [],
-                            reason=verdict.reasoning,
+                            reason=verdict.reasoning or "Verification failed",
                             reviewer_type=self.reviewer_type,
                         )
                     else:
