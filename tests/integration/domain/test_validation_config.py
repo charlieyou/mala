@@ -77,7 +77,7 @@ preset: go
         assert config.commands.lint is not None
         assert config.commands.lint.command == "golangci-lint run"
         assert config.commands.format is not None
-        assert 'test -z "$(gofmt -l .)"' in config.commands.format.command
+        assert "gofmt" in config.commands.format.command
 
     def test_go_project_code_patterns(self, tmp_path: Path) -> None:
         """Go project has correct code patterns from preset."""

@@ -1,9 +1,11 @@
 # Go project using go modules
 commands:
   setup: "go mod download"
+  build: "go build ./..."
   test: "go test ./..."
   lint: "golangci-lint run"
-  format: 'test -z "$(gofmt -l .)"'
+  typecheck: "go vet ./..."
+  format: 'gofmt -l . | grep . && exit 1 || exit 0'
 
 code_patterns:
   - "**/*.go"
