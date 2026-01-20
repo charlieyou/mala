@@ -4726,3 +4726,182 @@ class TestIsReviewEnabled:
         # _is_review_enabled respects CLI override
         assert orchestrator._is_review_enabled() is False
         assert orchestrator._session_config.review_enabled is False
+
+
+class TestFreshSessionMode:
+    """Tests for fresh_session mode in run_implementer."""
+
+    @pytest.mark.asyncio
+    async def test_fresh_session_clears_resume_id_but_keeps_review_prompt(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """When fresh_session=True and prior session exists with review issues,
+        resume_session_id is None but resume prompt is still built."""
+        fake_issues = FakeIssueProvider(
+            {"test-issue": FakeIssue(id="test-issue", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "test-session.jsonl"
+        log_file.write_text('{"type": "result"}\n')
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+            include_wip=True,
+            fresh_session=True,
+            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
+        )
+
+        # Create mock SDK client
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
+            yield ResultMessage(
+                subtype="result",
+                session_id="new-session-id",
+                result="ISSUE_NO_CHANGE: Done",
+                duration_ms=1000,
+                duration_api_ms=800,
+                is_error=False,
+                num_turns=1,
+                total_cost_usd=0.01,
+                usage=None,
+            )
+
+        mock_client.receive_response = mock_receive_response
+
+        # Track arguments passed to SDK client
+        sdk_call_args: dict[str, object] = {}
+
+        def capture_sdk_client(**kwargs: object) -> AsyncMock:
+            sdk_call_args.update(kwargs)
+            return mock_client
+
+        with (
+            patch("claude_agent_sdk.ClaudeSDKClient", side_effect=capture_sdk_client),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value="abc123",
+            ),
+            patch.object(
+                orchestrator.beads,
+                "get_issue_description_async",
+                return_value="Test issue",
+            ),
+            patch(
+                "src.orchestration.orchestrator.lookup_prior_session_info",
+                return_value=MagicMock(
+                    session_id="prior-session-id",
+                    baseline_timestamp=1700000000,
+                    last_review_issues=[
+                        {"type": "code_quality", "message": "Fix typo"}
+                    ],
+                    run_id="prior-run-id",
+                ),
+            ),
+        ):
+            result = await orchestrator.run_implementer("test-issue")
+
+            # Verify SDK was called with resume_session_id=None (fresh session)
+            assert sdk_call_args.get("resume_session_id") is None
+
+            # Session ran successfully
+            assert result.session_id == "new-session-id"
+
+    @pytest.mark.asyncio
+    async def test_fresh_session_with_no_prior_session(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """When fresh_session=True and no prior session exists, behavior is safe."""
+        fake_issues = FakeIssueProvider(
+            {"test-issue": FakeIssue(id="test-issue", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "test-session.jsonl"
+        log_file.write_text('{"type": "result"}\n')
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+            include_wip=True,
+            fresh_session=True,
+            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
+        )
+
+        # Create mock SDK client
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
+            yield ResultMessage(
+                subtype="result",
+                session_id="new-session-id",
+                result="ISSUE_NO_CHANGE: Done",
+                duration_ms=1000,
+                duration_api_ms=800,
+                is_error=False,
+                num_turns=1,
+                total_cost_usd=0.01,
+                usage=None,
+            )
+
+        mock_client.receive_response = mock_receive_response
+
+        # Track arguments passed to SDK client
+        sdk_call_args: dict[str, object] = {}
+
+        def capture_sdk_client(**kwargs: object) -> AsyncMock:
+            sdk_call_args.update(kwargs)
+            return mock_client
+
+        with (
+            patch("claude_agent_sdk.ClaudeSDKClient", side_effect=capture_sdk_client),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value="abc123",
+            ),
+            patch.object(
+                orchestrator.beads,
+                "get_issue_description_async",
+                return_value="Test issue",
+            ),
+            patch(
+                "src.orchestration.orchestrator.lookup_prior_session_info",
+                return_value=None,  # No prior session
+            ),
+        ):
+            result = await orchestrator.run_implementer("test-issue")
+
+            # Verify SDK was called with resume_session_id=None
+            assert sdk_call_args.get("resume_session_id") is None
+
+            # Session ran successfully - no error due to missing session
+            assert result.session_id == "new-session-id"
+            assert "No prior session found" not in result.summary

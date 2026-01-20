@@ -303,6 +303,7 @@ class MalaOrchestrator:
         self._validation_config_missing = derived.validation_config_missing
         self.include_wip = orch_config.include_wip
         self.strict_resume = orch_config.strict_resume
+        self.fresh_session = orch_config.fresh_session
         self.focus = orch_config.focus
         self.orphans_only = orch_config.orphans_only
         self.order_preference = orch_config.order_preference
@@ -933,6 +934,11 @@ class MalaOrchestrator:
                     resolution=None,
                     session_log_path=None,
                 )
+
+        # Fresh session mode: clear resume_session_id to force new SDK session
+        # while still keeping the resume prompt built above from prior review issues
+        if self.fresh_session:
+            resume_session_id = None
 
         # Register with deadlock monitor (after strict-resume check to avoid leaks)
         self.deadlock_monitor.register_agent(
