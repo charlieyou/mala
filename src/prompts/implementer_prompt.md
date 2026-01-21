@@ -304,3 +304,34 @@ Your final response MUST consist solely of this template—no extra text before 
 - Commit: <hash> OR "Not committed (reason)"
 - Lock contention:
 - Follow-ups (if any):
+- Reviewer context (if any):
+
+### Reviewer Context Field
+
+Your output becomes **Author Context** for the code reviewer on retry. Use `Reviewer context` to dispute prior findings or answer reviewer questions. The reviewer searches for **exact prior finding titles** under these headings:
+
+- **False Positives**: Prior findings that are incorrect (reviewer will skip them)
+- **Resolved**: Prior findings you fixed in this iteration
+- **Questions**: Questions for the reviewer (answered in summary, not converted to findings)
+
+**Evidence types the reviewer trusts** (unless the diff contradicts):
+
+| Evidence Type | Format | Example |
+|---------------|--------|---------|
+| File:line reference | `file.py:120-130` | "Guard exists at parser.py:45-48" |
+| API verification | `<method> accepts <param> per <source>` | "typer.prompt accepts err=True per inspect.signature" |
+| Test output | `<test> passes and covers this` | "test_empty_input passes and covers this case" |
+| Scope reference | `Out of scope per issue: <reason>` | "Out of scope per issue: error handling deferred to #142" |
+
+**When to use**: Only on retry, when disputing a prior reviewer finding or answering a question.
+
+**Format** (use exact prior finding title in quotes):
+```
+- Reviewer context (if any):
+  False Positives:
+    - "[P1] Missing null check in process_result": Guard exists at runner.py:120-125
+  Resolved:
+    - "[P2] Unused variable foo": Removed in this iteration
+  Questions:
+    - Is the retry logic in sync.py intentional? Yes, see issue #142 for rationale.
+```
