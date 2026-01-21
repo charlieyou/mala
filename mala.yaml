@@ -6,7 +6,7 @@ commands:
 per_issue_review:
   enabled: true
   reviewer_type: cerberus
-  max_retries: 5
+  max_retries: 10
   finding_threshold: P1
 
 validation_triggers:
@@ -41,3 +41,7 @@ evidence_check:
   required:
   - lint
   - typecheck
+
+epic_verification:
+  enabled: true
+  reviewer_type: cerberus
