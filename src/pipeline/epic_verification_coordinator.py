@@ -278,17 +278,18 @@ class EpicVerificationCoordinator:
         *,
         interrupt_event: asyncio.Event | None = None,
     ) -> None:
-        """Execute remediation issues and wait for their completion.
+        """Execute remediation issues sequentially, respecting dependency chain.
 
-        Spawns agents for remediation issues, waits for completion, and finalizes
-        results (closes issues, records metadata). This ensures remediation issues
-        are properly tracked even though they bypass the main run_loop.
+        Remediation issues are created with sequential dependencies (each depends
+        on the previous). This method executes them one at a time, waiting for
+        each to complete before starting the next. If an issue fails, the chain
+        stops since downstream issues depend on the failed one.
 
         Args:
-            issue_ids: List of remediation issue IDs to execute.
+            issue_ids: List of remediation issue IDs to execute (in dependency order).
             run_metadata: Run metadata for recording issue results.
             interrupt_event: Optional event to signal interrupt. When set,
-                spawning stops and pending tasks are cancelled.
+                execution stops and the current task is cancelled.
         """
         from src.infra.sigint_guard import InterruptGuard
 
@@ -297,92 +298,44 @@ class EpicVerificationCoordinator:
         if not issue_ids:
             return
 
-        # Track (issue_id, task) pairs for finalization
-        task_pairs: list[tuple[str, asyncio.Task[IssueResult]]] = []
-
-        for issue_id in issue_ids:
-            # Check for interrupt before spawning each remediation task
+        for idx, issue_id in enumerate(issue_ids):
             if guard.is_interrupted():
-                break
+                return
 
-            # Skip if already failed (remediation issues are freshly created, so won't be completed)
+            remaining = issue_ids[idx + 1 :]
+
             if self.callbacks.is_issue_failed(issue_id):
-                continue
+                if remaining:
+                    self.callbacks.on_warning(
+                        f"Stopping remediation chain: {issue_id} already failed; "
+                        f"{len(remaining)} downstream issue(s) remain blocked"
+                    )
+                return
 
-            # Spawn agent for this issue with flow identifier for logging.
-            # The flow="epic_remediation" param propagates via AgentSessionInput.flow
-            # to MALA_SDK_FLOW env var, which sdk_transport.py reads to emit:
-            # logger.info("sdk_subprocess_spawned pid=%s pgid=%s flow=%s", pid, pgid, flow)
-            task = await self.callbacks.spawn_remediation(issue_id, "epic_remediation")
-            if task:
-                task_pairs.append((issue_id, task))
-
-        # Wait for all remediation tasks to complete
-        if not task_pairs:
-            return
-
-        tasks = [pair[1] for pair in task_pairs]
-
-        # If already interrupted, cancel all pending tasks
-        if guard.is_interrupted():
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            # Wait for cancellation to complete
-            await asyncio.gather(*tasks, return_exceptions=True)
-        elif interrupt_event is None:
-            # No interrupt event provided - just wait for all tasks normally
-            await asyncio.gather(*tasks, return_exceptions=True)
-        else:
-            # Race between interrupt event and task completion
-            async def wait_for_interrupt() -> None:
-                await interrupt_event.wait()
-
-            async def gather_tasks() -> list[IssueResult | BaseException]:
-                return await asyncio.gather(*tasks, return_exceptions=True)
-
-            interrupt_task = asyncio.create_task(wait_for_interrupt())
-            gather_task = asyncio.create_task(gather_tasks())
-
-            done, pending = await asyncio.wait(
-                [interrupt_task, gather_task],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-
-            # If interrupt happened first, cancel all pending remediation tasks
-            if interrupt_task in done and gather_task in pending:
-                # Cancel gather_task first to stop it from holding refs
-                gather_task.cancel()
-                # Then cancel all underlying remediation tasks
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
-                # Wait for all tasks to complete cancellation
-                await asyncio.gather(*tasks, return_exceptions=True)
-                # Clean up gather_task
-                try:
-                    await gather_task
-                except asyncio.CancelledError:
-                    pass
-
-            # Clean up interrupt task if it's still pending
-            if interrupt_task in pending:
-                interrupt_task.cancel()
-                try:
-                    await interrupt_task
-                except asyncio.CancelledError:
-                    pass
-
-        # Finalize each task result (close issue, record metadata, emit events)
-        for issue_id, task in task_pairs:
-            result = self._extract_task_result(issue_id, task)
-
-            # Finalize (closes issue, records to run_metadata, emits events)
-            # Wrap in try/except to ensure all issues are finalized even if one fails
             try:
-                await self.callbacks.finalize_remediation(
-                    issue_id, result, run_metadata
+                task = await self.callbacks.spawn_remediation(
+                    issue_id, "epic_remediation"
                 )
+            except Exception as e:
+                if remaining:
+                    self.callbacks.on_warning(
+                        f"Stopping remediation chain: failed to spawn {issue_id}: {e}; "
+                        f"{len(remaining)} downstream issue(s) remain blocked"
+                    )
+                return
+
+            if not task:
+                if remaining:
+                    self.callbacks.on_warning(
+                        f"Stopping remediation chain: no task for {issue_id}; "
+                        f"{len(remaining)} downstream issue(s) remain blocked"
+                    )
+                return
+
+            result = await self._wait_for_task(task, issue_id, interrupt_event)
+
+            try:
+                await self.callbacks.finalize_remediation(issue_id, result, run_metadata)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -391,8 +344,53 @@ class EpicVerificationCoordinator:
                     f"(agent: {result.agent_id}): {e}",
                 )
 
-            # Mark as completed in the coordinator
             self.callbacks.mark_completed(issue_id)
+
+            if not result.success:
+                if remaining:
+                    self.callbacks.on_warning(
+                        f"Stopping remediation chain: {issue_id} failed; "
+                        f"{len(remaining)} downstream issue(s) remain blocked"
+                    )
+                return
+
+    async def _wait_for_task(
+        self,
+        task: asyncio.Task[IssueResult],
+        issue_id: str,
+        interrupt_event: asyncio.Event | None,
+    ) -> IssueResult:
+        """Wait for a single task with interrupt support.
+
+        Args:
+            task: The task to wait for.
+            issue_id: The issue ID for error results.
+            interrupt_event: Optional event to signal interrupt.
+
+        Returns:
+            The task result or an error IssueResult if cancelled/failed.
+        """
+        if interrupt_event is None:
+            await asyncio.wait([task])
+        else:
+            interrupt_task = asyncio.create_task(interrupt_event.wait())
+            done, pending = await asyncio.wait(
+                [task, interrupt_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if interrupt_task in done and task in pending:
+                task.cancel()
+                await asyncio.wait([task])
+
+            if interrupt_task in pending:
+                interrupt_task.cancel()
+                try:
+                    await interrupt_task
+                except asyncio.CancelledError:
+                    pass
+
+        return self._extract_task_result(issue_id, task)
 
     def _extract_task_result(
         self, issue_id: str, task: asyncio.Task[IssueResult]

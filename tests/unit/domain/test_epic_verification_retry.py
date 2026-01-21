@@ -111,8 +111,10 @@ class FakeCallbacks:
     def mark_completed(self, issue_id: str) -> None:
         self.completed_issues.append(issue_id)
 
+    failed_issues: set[str] = field(default_factory=set)
+
     def is_issue_failed(self, issue_id: str) -> bool:
-        return False
+        return issue_id in self.failed_issues
 
     async def close_eligible_epics(self) -> bool:
         self.eligible_epics_closed = True
@@ -451,6 +453,105 @@ class TestRemediationExecution:
         assert issue_id == "rem-1"
         assert not result.success
         assert "Task failed!" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_stops_chain_when_task_fails(self) -> None:
+        """Should stop chain and not spawn downstream issues when a task fails."""
+        fake_verifier = FakeVerificationResults(
+            results=[
+                make_failing_result(remediation_issues=["rem-1", "rem-2", "rem-3"]),
+                make_passing_result(),
+            ]
+        )
+        fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier, task_success=False)
+
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=3),
+            callbacks=fake_callbacks.to_callbacks(),
+        )
+
+        await coordinator.check_epic_closure("child-1", stub_run_metadata())
+
+        # Should only spawn rem-1 (chain stops on failure)
+        assert fake_callbacks.spawned_issues == ["rem-1"]
+        # Should warn about blocked downstream issues
+        assert any("rem-1 failed" in w for w in fake_callbacks.warnings)
+        assert any("2 downstream" in w for w in fake_callbacks.warnings)
+
+    @pytest.mark.asyncio
+    async def test_stops_chain_when_spawn_returns_none(self) -> None:
+        """Should stop chain when spawn_remediation returns None."""
+        fake_verifier = FakeVerificationResults(
+            results=[
+                make_failing_result(remediation_issues=["rem-1", "rem-2"]),
+                make_passing_result(),
+            ]
+        )
+        fake_callbacks = FakeCallbacks(
+            fake_verifier=fake_verifier, spawn_returns_task=False
+        )
+
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=3),
+            callbacks=fake_callbacks.to_callbacks(),
+        )
+
+        await coordinator.check_epic_closure("child-1", stub_run_metadata())
+
+        # Should attempt to spawn rem-1 but not rem-2
+        assert fake_callbacks.spawned_issues == ["rem-1"]
+        # Should warn about no task
+        assert any("no task for rem-1" in w for w in fake_callbacks.warnings)
+
+    @pytest.mark.asyncio
+    async def test_stops_chain_when_spawn_raises(self) -> None:
+        """Should stop chain when spawn_remediation raises exception."""
+        fake_verifier = FakeVerificationResults(
+            results=[
+                make_failing_result(remediation_issues=["rem-1", "rem-2"]),
+                make_passing_result(),
+            ]
+        )
+        fake_callbacks = FakeCallbacks(
+            fake_verifier=fake_verifier, spawn_raises=RuntimeError("Spawn failed!")
+        )
+
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=3),
+            callbacks=fake_callbacks.to_callbacks(),
+        )
+
+        await coordinator.check_epic_closure("child-1", stub_run_metadata())
+
+        # Should attempt to spawn rem-1 but not rem-2
+        assert fake_callbacks.spawned_issues == ["rem-1"]
+        # Should warn about spawn failure
+        assert any("failed to spawn rem-1" in w for w in fake_callbacks.warnings)
+
+    @pytest.mark.asyncio
+    async def test_stops_chain_when_issue_already_failed(self) -> None:
+        """Should stop chain when an issue is already marked as failed."""
+        fake_verifier = FakeVerificationResults(
+            results=[
+                make_failing_result(remediation_issues=["rem-1", "rem-2", "rem-3"]),
+                make_passing_result(),
+            ]
+        )
+        fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
+        fake_callbacks.failed_issues.add("rem-1")
+
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=3),
+            callbacks=fake_callbacks.to_callbacks(),
+        )
+
+        await coordinator.check_epic_closure("child-1", stub_run_metadata())
+
+        # Should not spawn any issues (rem-1 is failed, chain stops)
+        assert fake_callbacks.spawned_issues == []
+        # Should warn about already-failed issue
+        assert any("rem-1 already failed" in w for w in fake_callbacks.warnings)
+        assert any("2 downstream" in w for w in fake_callbacks.warnings)
 
 
 class TestFallbackBehavior:
