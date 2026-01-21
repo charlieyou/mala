@@ -2,6 +2,8 @@ Bugs
 * When resuming, have agent verify acceptance criteria
 * Epic verification permissions lock down
 * epic depth should not be required in config
+* mala locks should clear on deadlock kill
+* All auto-gen tasks should be in a dep chain
 
 New Features
 * Add fixer sessions and cerberus reviews to logs search
