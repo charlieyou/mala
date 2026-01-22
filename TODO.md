@@ -1,10 +1,11 @@
 Bugs
-* When resuming, have agent verify acceptance criteria
 * Epic verification permissions lock down
 * epic depth should not be required in config
 * mala locks should clear on deadlock kill
 
 New Features
+* Separate command/option to run on triggers for amending commit history to ideal, bigger chunks
+* When resuming, have agent verify acceptance criteria
 * Add fixer sessions and cerberus reviews to logs search
 * Worktree mode: each epic runs in a worktree, signals it is done to process in main branch, which merges it in + resolves conflicts
 * CLI flag to control which beads issue types are processed (currently just tasks)
