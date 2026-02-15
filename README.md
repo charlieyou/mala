@@ -1,6 +1,7 @@
 # mala
 
 [![PyPI version](https://img.shields.io/pypi/v/mala-agent.svg)](https://pypi.org/project/mala-agent/)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/charlieyou/mala)
 
 **M**ulti-**A**gent **L**oop **A**rchitecture
 
