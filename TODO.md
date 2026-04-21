@@ -36,8 +36,12 @@ Config: Make it actually make sense / be consistent
 	•	Prefer outputting only failing test cases; otherwise you burn context and lose signal.
 	•	This is directly tied back to “stay in the smart zone.”
 
-# Ideas
+Inspiration from Claude Code Teams
+* Seeing runs in the terminal with tmux and being able to steer is sick
 * Inter-agent communication
+* Orchestration with an agent - "team lead"
+
+# Ideas
 * Separate prompt/loop for bug fixes? red-green TDD
 * Explore subagent - instruct use in the implementer prompt
 * Stricter TDD
