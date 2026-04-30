@@ -14,7 +14,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, cast
 
 from src.core.models import OrderPreference
 from src.infra.issue_manager import IssueManager
@@ -26,6 +27,24 @@ if TYPE_CHECKING:
 
 # Default timeout for bd/git subprocess calls (seconds)
 DEFAULT_COMMAND_TIMEOUT = 30.0
+
+
+def _extract_issue_list(data: object) -> list[dict[str, object]] | None:
+    """Extract an issue list from br JSON output.
+
+    `br ready --json` returns a bare array, while `br list --json` returns an
+    envelope with an `issues` array. Accept both shapes at the CLI boundary.
+    """
+    if isinstance(data, Mapping):
+        data = cast("Mapping[object, object]", data).get("issues")
+    if not isinstance(data, list):
+        return None
+
+    issues: list[dict[str, object]] = []
+    for item in data:
+        if isinstance(item, dict):
+            issues.append({str(key): value for key, value in item.items()})
+    return issues
 
 
 class BeadsClient:
@@ -118,8 +137,10 @@ class BeadsClient:
             self._log_warning(f"br list --parent failed for {epic_id}: {result.stderr}")
             return set()
         try:
-            issues = json.loads(result.stdout)
-            return {item["id"] for item in issues}
+            issues = _extract_issue_list(json.loads(result.stdout))
+            if issues is None:
+                return set()
+            return {str(item["id"]) for item in issues if "id" in item}
         except json.JSONDecodeError:
             return set()
 
@@ -185,8 +206,8 @@ class BeadsClient:
             self._log_warning(f"br ready failed: {result.stderr}")
             return [], False
         try:
-            issues = json.loads(result.stdout)
-            return (list(issues), True) if isinstance(issues, list) else ([], True)
+            issues = _extract_issue_list(json.loads(result.stdout))
+            return (issues, True) if issues is not None else ([], True)
         except json.JSONDecodeError:
             return [], False
 
@@ -208,10 +229,8 @@ class BeadsClient:
         if result.returncode != 0:
             return []
         try:
-            wip = json.loads(result.stdout)
-            if not isinstance(wip, list):
-                return []
-            return list(wip)
+            wip = _extract_issue_list(json.loads(result.stdout))
+            return wip if wip is not None else []
         except json.JSONDecodeError:
             return []
 
@@ -725,8 +744,8 @@ class BeadsClient:
         if result.returncode != 0:
             return None
         try:
-            issues = json.loads(result.stdout)
-            if isinstance(issues, list) and issues:
+            issues = _extract_issue_list(json.loads(result.stdout))
+            if issues:
                 # Return first matching issue (should be only one due to dedup)
                 return str(issues[0].get("id", ""))
             return None
@@ -997,12 +1016,22 @@ class BeadsClient:
             Count of blocked issues, or None on error.
         """
         result = await self._run_subprocess_async(
-            ["br", "list", "--status", "blocked", "--json", "-t", "task"]
+            [
+                "br",
+                "list",
+                "--status",
+                "blocked",
+                "--json",
+                "-t",
+                "task",
+                "--limit",
+                "0",
+            ]
         )
         if result.returncode != 0:
             return None
         try:
-            data = json.loads(result.stdout)
-            return len(data) if isinstance(data, list) else None
+            issues = _extract_issue_list(json.loads(result.stdout))
+            return len(issues) if issues is not None else None
         except json.JSONDecodeError:
             return None

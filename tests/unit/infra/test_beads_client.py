@@ -1180,9 +1180,11 @@ class TestWipFallbackOnReadyFailure:
                 "--limit",
                 "0",
             ]:
-                # Return WIP issues
+                # br list --json returns an envelope with issues inside.
                 return make_command_result(
-                    stdout=json.dumps([{"id": "wip-1", "priority": 1}])
+                    stdout=json.dumps(
+                        {"issues": [{"id": "wip-1", "priority": 1}]}
+                    )
                 )
             # Return empty for other commands (like dep tree)
             return make_command_result(stdout="[]")
@@ -1784,11 +1786,13 @@ class TestGetBlockedCountAsync:
         """Should return the count of blocked issues."""
         beads = BeadsClient(tmp_path)
         blocked_response = json.dumps(
-            [
-                {"id": "blocked-1", "status": "blocked"},
-                {"id": "blocked-2", "status": "blocked"},
-                {"id": "blocked-3", "status": "blocked"},
-            ]
+            {
+                "issues": [
+                    {"id": "blocked-1", "status": "blocked"},
+                    {"id": "blocked-2", "status": "blocked"},
+                    {"id": "blocked-3", "status": "blocked"},
+                ]
+            }
         )
 
         with pytest.MonkeyPatch.context() as mp:
@@ -1865,7 +1869,7 @@ class TestGetBlockedCountAsync:
 
     @pytest.mark.asyncio
     async def test_calls_bd_list_with_correct_args(self, tmp_path: Path) -> None:
-        """Should call bd list with --status blocked --json -t task."""
+        """Should call br list with unlimited blocked task results."""
         beads = BeadsClient(tmp_path)
         captured_cmds: list[list[str]] = []
 
@@ -1886,6 +1890,8 @@ class TestGetBlockedCountAsync:
             "--json",
             "-t",
             "task",
+            "--limit",
+            "0",
         ]
 
 
@@ -2458,6 +2464,30 @@ class TestFetchWipIssuesAsync:
 
         assert len(result) == 2
         assert result[0]["id"] == "wip-1"
+
+    @pytest.mark.asyncio
+    async def test_returns_issues_from_br_list_envelope(self, tmp_path: Path) -> None:
+        """Should read WIP issues from the br list --json envelope."""
+        beads = BeadsClient(tmp_path)
+        issues = json.dumps(
+            {
+                "issues": [{"id": "wip-1"}, {"id": "wip-2"}],
+                "total": 2,
+                "limit": 0,
+                "offset": 0,
+                "has_more": False,
+            }
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=issues)),
+            )
+            result = await beads.fetch_wip_issues_async()
+
+        assert [issue["id"] for issue in result] == ["wip-1", "wip-2"]
 
     @pytest.mark.asyncio
     async def test_returns_empty_list_on_failure(self, tmp_path: Path) -> None:
