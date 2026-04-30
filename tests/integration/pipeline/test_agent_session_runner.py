@@ -3782,9 +3782,7 @@ class TestLocalSettingsIntegration:
             # ``setting_sources=["local"]`` was previously on AgentSessionConfig;
             # after T007 that knob lives on the provider, which threads it into
             # the runtime builder.
-            agent_provider=FakeAgentProvider(
-                hybrid_factory, setting_sources=["local"]
-            ),
+            agent_provider=FakeAgentProvider(hybrid_factory, setting_sources=["local"]),
         )
 
         input_data = AgentSessionInput(

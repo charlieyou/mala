@@ -928,7 +928,9 @@ def _parse_code_review_config(
                 )
                 baseline = None
             else:
-                baseline = cast("Literal['since_run_start', 'since_last_review']", bl_val)
+                baseline = cast(
+                    "Literal['since_run_start', 'since_last_review']", bl_val
+                )
 
     # WARN if baseline missing/null for epic_completion/run_end - default to since_run_start
     # Explicit null counts as missing since baseline is required for these triggers
