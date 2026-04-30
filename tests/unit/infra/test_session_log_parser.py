@@ -475,14 +475,20 @@ class TestFileSystemLogProvider:
         # Mock the Claude config dir to use tmp_path
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
 
+        from src.infra.tools.env import encode_repo_path
+
         provider = FileSystemLogProvider()
         repo_path = Path("/home/cyou/mala")
         session_id = "abc123"
 
         log_path = provider.get_log_path(repo_path, session_id)
 
-        # Should use encoded repo path format
-        assert log_path == tmp_path / "projects" / "-home-cyou-mala" / "abc123.jsonl"
+        # Should use encoded repo path format. Compute the expected encoded
+        # name dynamically so the assertion is portable across platforms
+        # whose Path.resolve() may apply firmlink/symlink redirection
+        # (e.g., macOS rewriting /home/* to /System/Volumes/Data/home/*).
+        encoded = encode_repo_path(repo_path)
+        assert log_path == tmp_path / "projects" / encoded / "abc123.jsonl"
 
     def test_iter_events_delegates_to_parser(self, tmp_path: Path) -> None:
         """iter_events should delegate to SessionLogParser."""

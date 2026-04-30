@@ -276,12 +276,16 @@ def _to_relative_path(file_path: str, base_path: Path | None = None) -> str:
     if not file_path.startswith("/"):
         return file_path
 
-    # Use provided base_path or fall back to cwd
-    base = base_path.resolve() if base_path else Path.cwd()
+    # Use provided base_path or fall back to cwd. Resolve both sides
+    # consistently so symlink/firmlink-redirected paths still match.
     try:
+        base = base_path.resolve() if base_path else Path.cwd()
         abs_path = Path(file_path)
         if abs_path.is_relative_to(base):
             return str(abs_path.relative_to(base))
+        abs_resolved = abs_path.resolve()
+        if abs_resolved.is_relative_to(base):
+            return str(abs_resolved.relative_to(base))
     except (ValueError, OSError):
         pass
 

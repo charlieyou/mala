@@ -23,9 +23,16 @@ is_literal_key() {
 }
 
 if ! is_literal_key "$filepath"; then
-    # Normalize path to absolute (mimics realpath -m behavior)
+    # Normalize path to absolute (mimics realpath -m behavior).
+    # GNU realpath supports -m (no-existence required); BSD realpath (macOS)
+    # does not, so we fall through to a portable abs-prefix when -m fails.
     if command -v realpath >/dev/null 2>&1; then
-        filepath=$(realpath -m "$filepath" 2>/dev/null || echo "$filepath")
+        normalized=$(realpath -m "$filepath" 2>/dev/null) || normalized=""
+        if [[ -n "$normalized" ]]; then
+            filepath="$normalized"
+        elif [[ "$filepath" != /* ]]; then
+            filepath="$(pwd)/$filepath"
+        fi
     elif [[ "$filepath" != /* ]]; then
         filepath="$(pwd)/$filepath"
     fi

@@ -761,11 +761,12 @@ class TestRunMarkers:
         """Test writing and removing a run marker."""
         with tempfile.TemporaryDirectory() as tmpdir:
             lock_dir = Path(tmpdir)
+            repo_path = Path("/home/user/project")
 
             # Write marker using DI
             path = write_run_marker(
                 run_id="test-run-1",
-                repo_path=Path("/home/user/project"),
+                repo_path=repo_path,
                 max_agents=3,
                 lock_dir=lock_dir,
             )
@@ -773,11 +774,15 @@ class TestRunMarkers:
             assert path.exists()
             assert path.name == "run-test-run-1.marker"
 
-            # Verify contents
+            # Verify contents. write_run_marker resolves the path before
+            # serializing; compute the expected value the same way so the
+            # assertion is portable across platforms whose resolve() may
+            # apply firmlink/symlink redirection (e.g., macOS rewriting
+            # /home/* to /System/Volumes/Data/home/*).
             with open(path) as f:
                 data = json.load(f)
             assert data["run_id"] == "test-run-1"
-            assert data["repo_path"] == "/home/user/project"
+            assert data["repo_path"] == str(repo_path.resolve())
             assert data["max_agents"] == 3
             assert "started_at" in data
             assert "pid" in data

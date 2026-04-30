@@ -489,8 +489,12 @@ class TestPathCanonicalization:
     ) -> None:
         """Relative and absolute paths to the same file produce the same lock."""
         cwd = str(tmp_path)
+        # Exclude REPO_NAMESPACE from os.environ; if set in the surrounding
+        # shell, it would route relative-path canonicalization through that
+        # namespace dir instead of cwd, defeating the test.
+        clean_env = {k: v for k, v in os.environ.items() if k != "REPO_NAMESPACE"}
         env = {
-            **os.environ,
+            **clean_env,
             "LOCK_DIR": str(lock_env),
             "AGENT_ID": "agent-1",
             "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
