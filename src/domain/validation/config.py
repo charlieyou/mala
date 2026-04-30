@@ -1159,6 +1159,50 @@ class ValidationConfig:
                     is_per_issue_review=True,
                 )
 
+        # Validate coder (optional, strict enum: claude | amp).
+        # Storage and resolver precedence are handled in src/infra/io/config.py
+        # (see plans/2026-04-29-amp-provider-plan.md L194-L215). This block
+        # only fails fast on invalid YAML before any agent process starts.
+        if "coder" in data:
+            fields_set.add("coder")
+            coder_val = data["coder"]
+            if coder_val is not None and (
+                not isinstance(coder_val, str) or coder_val not in ("claude", "amp")
+            ):
+                raise ConfigError(f"coder must be 'claude' or 'amp', got {coder_val!r}")
+
+        # Validate coder_options (optional). Currently only the 'amp' sub-key
+        # with a strict-enum 'mode' (smart | rush | deep) is recognized.
+        if "coder_options" in data:
+            fields_set.add("coder_options")
+            co_raw = data["coder_options"]
+            if co_raw is not None:
+                if not isinstance(co_raw, dict):
+                    raise ConfigError(
+                        f"coder_options must be an object, got {type(co_raw).__name__}"
+                    )
+                co_val = cast("dict[str, object]", co_raw)
+                if "amp" in co_val:
+                    amp_raw = co_val["amp"]
+                    if amp_raw is not None:
+                        if not isinstance(amp_raw, dict):
+                            raise ConfigError(
+                                f"coder_options.amp must be an object, "
+                                f"got {type(amp_raw).__name__}"
+                            )
+                        amp_val = cast("dict[str, object]", amp_raw)
+                        if "mode" in amp_val:
+                            mode_val = amp_val["mode"]
+                            if mode_val is not None and (
+                                not isinstance(mode_val, str)
+                                or mode_val not in ("smart", "rush", "deep")
+                            ):
+                                raise ConfigError(
+                                    f"coder_options.amp.mode must be "
+                                    f"'smart', 'rush', or 'deep', "
+                                    f"got {mode_val!r}"
+                                )
+
         return cls(
             preset=preset,
             commands=commands,

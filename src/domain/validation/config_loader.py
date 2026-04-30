@@ -82,6 +82,8 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "evidence_check",
         "epic_verification",
         "per_issue_review",
+        "coder",
+        "coder_options",
     }
 )
 
