@@ -26,6 +26,7 @@ from src.infra.clients.amp_plugin_installer import (
     AmpPluginInstaller,
     AmpPluginInstallError,
     InstallResult,
+    _bundled_source_path,
 )
 
 
@@ -65,9 +66,74 @@ def installer(fake_source: Path) -> AmpPluginInstaller:
 
 
 @pytest.mark.unit
-def test_default_source_resolves_to_bundled_plugin() -> None:
+def test_default_source_path_resolves_to_an_existing_file() -> None:
+    """Regression for the wheel-packaging bug: the default ``source_path``
+    must point to a real file in whichever install layout the test runs
+    against. In the source checkout this is ``<repo>/plugins/amp/...``;
+    in an installed wheel, hatch's ``force-include`` ships the file at
+    ``src/infra/clients/_amp_plugin_data/...`` and the resolver picks
+    that path first.
+    """
+    inst = AmpPluginInstaller()
+    assert inst.source_path.is_file(), (
+        f"Bundled plugin not findable at {inst.source_path}; the wheel "
+        "force-include in pyproject.toml may have regressed."
+    )
+
+
+@pytest.mark.unit
+def test_default_source_resolves_to_repo_plugin_in_source_checkout() -> None:
+    """In a source checkout (the layout the test suite runs under), the
+    resolver falls back to the repo-root ``plugins/amp/`` location."""
     inst = AmpPluginInstaller()
     assert inst.source_path == _REAL_BUNDLED_PLUGIN
+
+
+@pytest.mark.unit
+def test_resolver_prefers_wheel_data_dir_when_present(tmp_path: Path) -> None:
+    """Simulate a wheel-installed layout: the installer module sits inside
+    ``site-packages/src/infra/clients/`` and a ``_amp_plugin_data/`` sibling
+    holds the shipped plugin. The resolver must pick that path, not the
+    nonexistent ``parents[3]/plugins/amp/`` fallback (which would resolve
+    to a directory under ``site-packages/`` that does not exist for users
+    who installed via ``uv tool install``).
+    """
+    site_packages = tmp_path / "site-packages"
+    module_dir = site_packages / "src" / "infra" / "clients"
+    module_dir.mkdir(parents=True)
+    fake_module_file = module_dir / "amp_plugin_installer.py"
+    fake_module_file.write_bytes(b"# stub for path resolution\n")
+    wheel_data_dir = module_dir / "_amp_plugin_data"
+    wheel_data_dir.mkdir()
+    wheel_plugin = wheel_data_dir / PLUGIN_FILENAME
+    wheel_plugin.write_bytes(b"// shipped via wheel\n")
+
+    resolved = _bundled_source_path(module_file=fake_module_file)
+
+    assert resolved == wheel_plugin
+    assert resolved.is_file()
+
+
+@pytest.mark.unit
+def test_resolver_falls_back_to_repo_plugins_when_wheel_data_absent(
+    tmp_path: Path,
+) -> None:
+    """In a source/editable checkout the wheel-data sibling doesn't exist,
+    so the resolver returns ``parents[3]/plugins/amp/`` even if that file
+    is also absent (the bare path is needed for the actionable
+    ``Bundled Amp plugin missing`` error message)."""
+    repo_root = tmp_path / "repo"
+    module_dir = repo_root / "src" / "infra" / "clients"
+    module_dir.mkdir(parents=True)
+    fake_module_file = module_dir / "amp_plugin_installer.py"
+    fake_module_file.write_bytes(b"# stub\n")
+    repo_plugin = repo_root / "plugins" / "amp" / PLUGIN_FILENAME
+    repo_plugin.parent.mkdir(parents=True)
+    repo_plugin.write_bytes(b"// shipped via source checkout\n")
+
+    resolved = _bundled_source_path(module_file=fake_module_file)
+
+    assert resolved == repo_plugin
 
 
 @pytest.mark.unit

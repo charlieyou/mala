@@ -42,6 +42,13 @@ packages = ["src"]
 artifacts = ["src/scripts/*.sh"]
 include = ["src/domain/validation/presets/*.yaml"]
 
+[tool.hatch.build.targets.wheel.force-include]
+# Ship the bundled Amp safety plugin inside the wheel next to the installer
+# module so AmpPluginInstaller can resolve it after `uv tool install`.
+# AmpPluginInstaller's resolver prefers this wheel-data path and falls back
+# to the repo-root plugins/amp/ location for source/editable installs.
+"plugins/amp/mala-safety.ts" = "src/infra/clients/_amp_plugin_data/mala-safety.ts"
+
 [tool.ty.src]
 # Exclude test fixtures (standalone test projects with their own structure)
 exclude = ["tests/fixtures/*"]

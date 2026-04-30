@@ -42,6 +42,14 @@ the SHA-256 to 16 hex chars before emitting the marker)."""
 _TEMP_PREFIX = ".mala-safety."
 _TEMP_SUFFIX = ".ts.tmp"
 
+_WHEEL_DATA_DIRNAME = "_amp_plugin_data"
+"""Sibling directory inside the installed wheel that holds the bundled
+plugin file. Populated by ``[tool.hatch.build.targets.wheel.force-include]``
+in ``pyproject.toml`` (key ``plugins/amp/mala-safety.ts`` →
+``src/infra/clients/_amp_plugin_data/mala-safety.ts``). The source-checkout
+layout does not have this directory; the resolver falls back to the
+repository's ``plugins/amp/`` location."""
+
 
 InstallAction = Literal["wrote", "skipped", "replaced"]
 
@@ -68,8 +76,27 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _bundled_source_path() -> Path:
-    return Path(__file__).resolve().parents[3] / "plugins" / "amp" / PLUGIN_FILENAME
+def _bundled_source_path(module_file: Path | None = None) -> Path:
+    """Return the bundled plugin path for the active install layout.
+
+    Wheel install: hatch's ``force-include`` ships the plugin at
+    ``<this-module-dir>/_amp_plugin_data/mala-safety.ts`` so the file is
+    inside the package payload. The resolver checks this location first
+    and returns it when present.
+
+    Source checkout / editable install: the file lives at its original
+    repository path ``<repo-root>/plugins/amp/mala-safety.ts``. The
+    resolver falls back to that location when the wheel-data sibling does
+    not exist.
+
+    ``module_file`` is exposed for unit tests so both branches can be
+    exercised against a synthetic install layout under ``tmp_path``.
+    """
+    here = (module_file if module_file is not None else Path(__file__)).resolve()
+    wheel_data = here.parent / _WHEEL_DATA_DIRNAME / PLUGIN_FILENAME
+    if wheel_data.is_file():
+        return wheel_data
+    return here.parents[3] / "plugins" / "amp" / PLUGIN_FILENAME
 
 
 class AmpPluginInstaller:
