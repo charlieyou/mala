@@ -329,25 +329,68 @@ def _build_cli_args_metadata(
     }
 
 
-def _apply_claude_settings_sources_override(
-    config: MalaConfig, claude_settings_sources: str | None
+def _validate_coder_option(value: str | None) -> str | None:
+    """Typer callback validating --coder at parse time."""
+    from src.infra.io.config import parse_coder
+
+    if value is None:
+        return None
+    try:
+        parsed = parse_coder(value, source="--coder")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+    return parsed
+
+
+def _validate_amp_mode_option(value: str | None) -> str | None:
+    """Typer callback validating --amp-mode at parse time."""
+    from src.infra.io.config import parse_amp_mode
+
+    if value is None:
+        return None
+    try:
+        parsed = parse_amp_mode(value, source="--amp-mode")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+    return parsed
+
+
+def _apply_cli_overrides(
+    config: MalaConfig,
+    *,
+    claude_settings_sources: str | None,
+    coder: str | None,
+    amp_mode: str | None,
 ) -> MalaConfig:
-    """Apply --claude-settings-sources override to MalaConfig."""
-    if claude_settings_sources is None:
+    """Apply CLI overrides to MalaConfig.
+
+    Uses build_resolved_config so CLI > env > yaml > default precedence and
+    cross-coder ignored-flag info logging stay in one place.
+    """
+    if claude_settings_sources is None and coder is None and amp_mode is None:
         return config
 
-    from src.infra.io.config import parse_claude_settings_sources
+    from src.infra.io.config import CLIOverrides, build_resolved_config
 
-    parsed = parse_claude_settings_sources(claude_settings_sources, source="CLI")
-    if parsed is None:
-        return config
+    overrides = CLIOverrides(
+        claude_settings_sources=claude_settings_sources,
+        coder=coder,
+        amp_mode=amp_mode,
+    )
+    resolved = build_resolved_config(config, overrides)
 
     init_kwargs = {
         field.name: getattr(config, field.name)
         for field in fields(config)
-        if field.init and field.name != "claude_settings_sources_init"
+        if field.init
+        and field.name not in {"claude_settings_sources_init", "coder", "coder_options"}
     }
-    return _lazy("MalaConfig")(**init_kwargs, claude_settings_sources_init=parsed)
+    return _lazy("MalaConfig")(
+        **init_kwargs,
+        claude_settings_sources_init=resolved.claude_settings_sources,
+        coder=resolved.coder,
+        coder_options=resolved.coder_options,
+    )
 
 
 def _handle_dry_run(
@@ -511,6 +554,24 @@ def run(
             rich_help_panel="Claude Settings",
         ),
     ] = None,
+    coder: Annotated[
+        str | None,
+        typer.Option(
+            "--coder",
+            help="Coder backend to drive issue execution (claude or amp).",
+            callback=_validate_coder_option,
+            rich_help_panel="Coder",
+        ),
+    ] = None,
+    amp_mode: Annotated[
+        str | None,
+        typer.Option(
+            "--amp-mode",
+            help="Amp execution mode: smart, rush, or deep. Only consulted when coder=amp.",
+            callback=_validate_amp_mode_option,
+            rich_help_panel="Coder",
+        ),
+    ] = None,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
@@ -597,10 +658,13 @@ def run(
     # Build and configure MalaConfig from environment
     config = _lazy("MalaConfig").from_env(validate=False)
 
-    # Apply claude settings sources override
+    # Apply CLI overrides (claude_settings_sources, coder, amp_mode)
     try:
-        config = _apply_claude_settings_sources_override(
-            config, claude_settings_sources
+        config = _apply_cli_overrides(
+            config,
+            claude_settings_sources=claude_settings_sources,
+            coder=coder,
+            amp_mode=amp_mode,
         )
     except ValueError as exc:
         log("✗", str(exc), Colors.RED)
@@ -703,6 +767,24 @@ def epic_verify(
             rich_help_panel="Claude Settings",
         ),
     ] = None,
+    coder: Annotated[
+        str | None,
+        typer.Option(
+            "--coder",
+            help="Coder backend to drive issue execution (claude or amp).",
+            callback=_validate_coder_option,
+            rich_help_panel="Coder",
+        ),
+    ] = None,
+    amp_mode: Annotated[
+        str | None,
+        typer.Option(
+            "--amp-mode",
+            help="Amp execution mode: smart, rush, or deep. Only consulted when coder=amp.",
+            callback=_validate_amp_mode_option,
+            rich_help_panel="Coder",
+        ),
+    ] = None,
 ) -> None:
     """Verify a single epic and optionally close it without running tasks."""
     set_verbose(verbose)
@@ -721,8 +803,11 @@ def epic_verify(
     config = _lazy("MalaConfig").from_env(validate=False)
 
     try:
-        config = _apply_claude_settings_sources_override(
-            config, claude_settings_sources
+        config = _apply_cli_overrides(
+            config,
+            claude_settings_sources=claude_settings_sources,
+            coder=coder,
+            amp_mode=amp_mode,
         )
     except ValueError as exc:
         log("✗", str(exc), Colors.RED)
