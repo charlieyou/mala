@@ -27,14 +27,16 @@ This plugin enforces two invariants and nothing else:
    For `apply_patch` the path list is extracted from direct keys (`path`,
    `filepath`, `file_path`), array keys (`paths`, `files`, `filepaths`), and
    embedded patch bodies (`input`, `patch`, `diff`, `patch_text`) — both
-   Codex-style `*** Update/Add/Delete/Move File: <path>` and unified-diff
-   `+++ [b/]<path>` headers are parsed. If extraction yields zero paths, the
-   call is rejected fail-closed rather than allowed.
+   Codex-style `*** Update/Add/Delete File: <path>` headers (plus the
+   `*** Move to: <new_path>` sub-directive that appears inside an
+   `*** Update File:` block to rename) and unified-diff `+++ [b/]<path>`
+   headers are parsed. If extraction yields zero paths, the call is rejected
+   fail-closed rather than allowed.
 
 Out of scope for MVP (deferred to follow-ups):
 
 - `MALA_DISALLOWED_TOOLS` parity (token-saver tool denylist).
-- File-write surfaces beyond the three tools above.
+- File-write surfaces beyond the four tools above.
 - Read-cache redundancy blocking (the Claude-side `FileReadCache` hook).
 
 ## Plugin API caveat (verbatim)

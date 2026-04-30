@@ -266,19 +266,45 @@ const APPLY_PATCH_BODY_KEYS: readonly string[] = [
 
 function extractPathsFromPatchText(text: string): string[] {
   const out = new Set<string>();
-  // Codex apply_patch envelope: "*** Update File: <path>" / Add / Delete / Move
-  const codexRe = /^\*\*\*\s+(?:Update|Add|Delete|Move)\s+File:\s+(.+?)\s*$/gm;
   let m: RegExpExecArray | null;
-  while ((m = codexRe.exec(text)) !== null) {
+
+  // Codex apply_patch primary directives: every line of the form
+  //   *** Update File: <path>
+  //   *** Add File: <path>
+  //   *** Delete File: <path>
+  // names a file the patch intends to read or write.
+  const codexFileRe = /^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s+(.+?)\s*$/gm;
+  while ((m = codexFileRe.exec(text)) !== null) {
     const p = m[1].trim();
     if (p) out.add(p);
   }
-  // Unified diff "new file" header: "+++ [b/]<path>"
-  const unifiedRe = /^\+\+\+\s+(?:b\/)?([^\t\r\n]+?)(?:\s+\d.*)?$/gm;
+
+  // Codex move sub-directive: "*** Move to: <new>" appears INSIDE an
+  // "*** Update File: <old>" block and renames the file in addition to
+  // editing it. Both <old> and <new> are write targets — leaving <new>
+  // unchecked would let an agent that owns only <old> write to an
+  // unowned <new>, breaking AC#9 for rename/move edits. (Older drafts of
+  // this regex used the non-existent "*** Move File:" directive.)
+  const codexMoveToRe = /^\*\*\*\s+Move\s+to:\s+(.+?)\s*$/gm;
+  while ((m = codexMoveToRe.exec(text)) !== null) {
+    const p = m[1].trim();
+    if (p) out.add(p);
+  }
+
+  // Unified diff "new file" header: "+++ [b/]<path>[\t<timestamp>]".
+  // GNU diff -u separates filename from timestamp with a literal TAB
+  // (POSIX-conformant; widely implemented). Anchoring the boundary on
+  // \t — instead of "any whitespace followed by a digit" — preserves
+  // filenames containing spaces+digits (e.g., "file 1.ts"). A
+  // greedier pattern would clip "file 1.ts" to "file" and lock-check
+  // the wrong path, which is fail-open: if "file" is owned but
+  // "file 1.ts" isn't, the wrong filename returns allow.
+  const unifiedRe = /^\+\+\+\s+(?:b\/)?([^\t\r\n]+?)(?:\t.*)?$/gm;
   while ((m = unifiedRe.exec(text)) !== null) {
     const p = m[1].trim();
     if (p && p !== "/dev/null") out.add(p);
   }
+
   return [...out];
 }
 
