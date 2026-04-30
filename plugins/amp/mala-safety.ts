@@ -507,31 +507,43 @@ function checkBashCommand(command: string): ToolDecision | null {
 // the flag-bundle's `-`, so whole-token-quoted flags like `sed "-i"` or
 // `sed '-Ei'` match. The trailing optional `['"]?` consumes a closing quote
 // before the lookahead checks the post-token boundary.
+//
+// Reorder-tolerance treats each chunk as "non-separator-non-quote chars OR a
+// fully-quoted region" so that quoted shell separators (the literal `;`
+// inside `'s/foo/bar/g;'` or the literal `;` inside `'{print;}'`) are
+// absorbed by a quoted-region alternative instead of breaking the chunk.
+// Without this, common in-place commands such as
+// `sed -e 's/foo/bar/g;' -i file` and `awk '{print;}' -i inplace file`
+// passed through. Real (unquoted) pipeline boundaries `|`/`;`/`&`/newline
+// continue to terminate the gap so the gate cannot fire across pipelines.
 
 const FILE_MODIFYING_SHELL_PATTERNS: readonly { pattern: RegExp; label: string }[] = [
   // sed in-place: any flag bundle containing `i` — `-i`, `-i.bak`, `-i1`,
-  // `-Ei`, `-ni`, `-iE`, `-i''`, `"-i"`, `'-i'` — with reorder-tolerance
-  // for preceding/intervening flags. (?:[^|;&\n]+\s+)* allows leading
-  // arguments before the in-place flag without crossing pipeline stages.
+  // `-Ei`, `-ni`, `-iE`, `-i''`, `"-i"`, `'-i'` — with quote-aware
+  // reorder-tolerance for preceding/intervening flags.
   {
     pattern:
-      /\bsed\s+(?:[^|;&\n]+\s+)*['"]?-[\w.]*i[\w.]*['"]?(?=[\s'"|;&]|$)/,
+      /\bsed\s+(?:(?:[^|;&\n'"]|'[^']*'|"[^"]*")+\s+)*['"]?-[\w.]*i[\w.]*['"]?(?=[\s'"|;&]|$)/,
     label: "sed -i (in-place edit)",
   },
   // sed --in-place long form (with optional whole-token quoting)
   {
-    pattern: /\bsed\s+(?:[^|;&\n]+\s+)*['"]?--in-place\b/,
+    pattern: /\bsed\s+(?:(?:[^|;&\n'"]|'[^']*'|"[^"]*")+\s+)*['"]?--in-place\b/,
     label: "sed --in-place",
   },
   // perl in-place: `-i`, `-pi`, `-i.bak`, `-ipe`, `-0pi`, `-i0`, etc.
   {
     pattern:
-      /\bperl\s+(?:[^|;&\n]+\s+)*['"]?-[\w.]*i[\w.]*['"]?(?=[\s'"|;&]|$)/,
+      /\bperl\s+(?:(?:[^|;&\n'"]|'[^']*'|"[^"]*")+\s+)*['"]?-[\w.]*i[\w.]*['"]?(?=[\s'"|;&]|$)/,
     label: "perl -i (in-place edit)",
   },
-  // gawk/awk: only the literal `-i inplace` extension form modifies files
+  // gawk/awk: literal `-i inplace` extension form (with optional quoting on
+  // `inplace` so that shell-quoted forms like `gawk -i 'inplace' ...` and
+  // `awk -i "inplace" ...` are caught after shell quote-removal yields the
+  // same arg).
   {
-    pattern: /\bg?awk\s+(?:[^|;&\n]+\s+)*-i\s+inplace\b/,
+    pattern:
+      /\bg?awk\s+(?:(?:[^|;&\n'"]|'[^']*'|"[^"]*")+\s+)*-i\s+['"]?inplace['"]?(?=[\s'"|;&]|$)/,
     label: "awk -i inplace",
   },
 ];
@@ -580,13 +592,22 @@ export default function plugin(amp: AmpPluginAPI): void {
         : {};
 
     // Sentinel tool.call fallback for T013's runtime self-test: any Bash
-    // invocation whose command begins with the sentinel prefix is intercepted,
-    // re-emits the load marker on stderr, and synthesizes an OK result so the
-    // self-test does not actually execute the command.
+    // invocation whose command begins with the sentinel prefix re-emits the
+    // load marker on stderr regardless of fail-closed state so the
+    // orchestrator can confirm the plugin loaded. The synthesized OK result
+    // is replaced with reject-and-continue when fail-closed (the plan
+    // requires every tool.call to reject when env is missing); the marker
+    // on stderr still proves the plugin code ran.
     if (BASH_TOOL_NAMES.has(tool)) {
       const cmd = readBashCommand(input);
       if (cmd.startsWith(SENTINEL_TOOL_PREFIX)) {
         emitSentinelMarker();
+        if (cfg.failClosed) {
+          return {
+            action: "reject-and-continue",
+            message: `${cfg.failClosedReason} (sentinel reached: mala-safety v${PLUGIN_VERSION} active, but rejecting fail-closed)`,
+          };
+        }
         return {
           action: "synthesize",
           result: {
@@ -595,7 +616,27 @@ export default function plugin(amp: AmpPluginAPI): void {
           },
         };
       }
+    }
 
+    // Fail-closed: every non-sentinel tool.call rejects when lock-ownership
+    // env is missing. Plan L418-L421: "every tool.call rejected with
+    // explanatory message" so the agent (and the orchestrator) cannot
+    // accidentally run under --dangerously-allow-all without the
+    // lock-ownership gate. The dangerous-command and in-place-editor checks
+    // below would also reject these calls eventually, but anchoring the
+    // fail-closed gate at the top keeps the invariant explicit and covers
+    // tools (e.g. plain `Bash echo x > file`) that neither the
+    // dangerous-pattern nor the in-place-editor regex would otherwise
+    // catch.
+    if (cfg.failClosed) {
+      return {
+        action: "reject-and-continue",
+        message: cfg.failClosedReason,
+      };
+    }
+
+    if (BASH_TOOL_NAMES.has(tool)) {
+      const cmd = readBashCommand(input);
       const decision = checkBashCommand(cmd);
       if (decision) {
         return decision;
@@ -610,13 +651,8 @@ export default function plugin(amp: AmpPluginAPI): void {
     }
 
     if (FILE_WRITE_TOOLS.has(tool)) {
-      if (cfg.failClosed) {
-        return {
-          action: "reject-and-continue",
-          message: cfg.failClosedReason,
-        };
-      }
-
+      // failClosed already handled above. The lock-ownership env is
+      // guaranteed populated at this point.
       const filePaths = extractFileWritePaths(tool, input);
 
       // For apply_patch we MUST be able to enumerate every path the call

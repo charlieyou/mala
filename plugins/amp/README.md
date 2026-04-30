@@ -25,19 +25,26 @@ This plugin enforces three invariants and nothing else:
    (`sed -i*`, `sed --in-place`, `perl -i*`, `awk -i inplace`,
    `gawk -i inplace`) because these modify files without routing through
    Amp's file-write tools, so the lock-ownership gate (3) below would never
-   see the write. Matching is regex-based with reorder-tolerance and a flag-
-   bundle alphabet of `[\w.]` (letters + digits + underscore + dot), and a
-   trailing-boundary lookahead `(?=[\s'"|;&]|$)` that admits whitespace,
-   end-of-string, shell separators, AND either quote — so digit-bearing
-   bundles (`sed -i1`, `perl -0pi`, `perl -i0`), backup-extension forms
-   (`sed -i.bak`), reordered flags (`sed -E -i`, `perl -pi -e`), fused
-   empty extensions (`sed -i''`), and whole-token-quoted flags (`sed "-i"`,
-   `sed '-Ei'`) all match. The reject message redirects the agent to
-   `edit_file` / `create_file` / `apply_patch`, which DO route through the
-   lock-ownership gate. Shell redirects (`>`, `>>`, `tee`), `mv`, `cp`, and
-   similar primitives have too many legitimate uses to block reliably
-   without parsing target paths and are intentionally **not** gated here
-   (known follow-up).
+   see the write. The regex shape (each pattern):
+   - **Flag-bundle alphabet** `[\w.]` (letters, digits, underscore, dot) so
+     digit-bearing bundles (`sed -i1`, `perl -0pi`, `perl -i0`) and
+     backup-extension forms (`sed -i.bak`) match.
+   - **Trailing-boundary lookahead** `(?=[\s'"|;&]|$)` (instead of `\b`) so
+     digits or quotes following `i` (`-i1`, `-i''`) do not cancel the
+     boundary the way `\b` would.
+   - **Optional surrounding `['"]`** so whole-token-quoted flags
+     (`sed "-i"`, `sed '-Ei'`, `gawk -i 'inplace'`) match.
+   - **Quote-aware reorder-tolerance**: each chunk is
+     `(?:[^|;&\n'"]|'[^']*'|"[^"]*")+\s+`, so quoted shell separators
+     (`'s/foo/bar/g;'`, `'{print;}'`, `"\n"`) are absorbed by the
+     quoted-region alternative instead of breaking the chunk. Real
+     (unquoted) `|`/`;`/`&`/newline still terminate the gap so the gate
+     cannot fire across pipelines.
+   The reject message redirects the agent to `edit_file` / `create_file` /
+   `apply_patch`, which DO route through the lock-ownership gate. Shell
+   redirects (`>`, `>>`, `tee`), `mv`, `cp`, and similar primitives have
+   too many legitimate uses to block reliably without parsing target paths
+   and are intentionally **not** gated here (known follow-up).
 3. **Lock-ownership** — mirrors
    `src/infra/hooks/locking.py::make_lock_enforcement_hook`. Rejects file-write
    tool calls (`edit_file`, `create_file`, `undo_edit`, `apply_patch`) unless
@@ -93,19 +100,25 @@ the run aborts with `AmpPluginNotActiveError` rather than silently running
 under `--dangerously-allow-all` with no gating.
 
 There is also a fallback path: any `Bash` `tool.call` whose command begins
-with `__mala_safety_self_test__` re-emits the marker and synthesizes an OK
-result without executing the command. This lets the self-test drive Amp end
-to end (model issues a sentinel bash call) and still observe the marker even
-if `session.start` stderr is buffered or interleaved.
+with `__mala_safety_self_test__` re-emits the marker. The action returned
+depends on whether the plugin is in fail-closed mode: when env is OK, the
+sentinel synthesizes an OK result without executing the command; when env
+is missing, the sentinel rejects (because every tool.call rejects under
+fail-closed) but the marker has already been emitted on stderr, so the
+orchestrator can still confirm the plugin loaded.
 
 ## Fail-closed mode
 
 If any of `MALA_AGENT_ID`, `MALA_LOCK_DIR`, or `MALA_REPO_NAMESPACE` is unset
-when `session.start` fires, the plugin enters fail-closed mode: every
-file-write tool call is rejected with a `"lock-ownership env missing"` message.
-This guarantees that a builder bug or env-stripping change in Amp upstream
-cannot produce a quietly unguarded run. Dangerous-command checks remain
-active in fail-closed mode (they don't depend on the env).
+when `session.start` fires, the plugin enters fail-closed mode: **every
+non-sentinel `tool.call` is rejected** with a `"lock-ownership env missing"`
+message — Bash, shell_command, file-write tools, all of them. This is
+plan-strict closure (plan §API/Interface Design L418-L421) and prevents a
+builder bug or env-stripping change in Amp upstream from producing a quietly
+unguarded run where, e.g., `Bash echo x > src/file.py` would write a file
+without any lock-ownership check. The sentinel tool.call is special-cased
+to emit the marker on stderr first (so the orchestrator self-test can still
+confirm the plugin loaded), then reject like any other call.
 
 ## Cross-language lock-file contract
 
@@ -189,8 +202,10 @@ Before merging changes to this file:
 - [ ] First line is exactly `// @i-know-the-amp-plugin-api-is-wip-and-very-experimental-right-now`.
 - [ ] `session.start` reads the three env vars and emits the sentinel marker
       on stderr in both "config OK" and "fail-closed" paths.
-- [ ] Fail-closed mode rejects every `FILE_WRITE_TOOLS` `tool.call` with a
-      "lock-ownership env missing" message.
+- [ ] Fail-closed mode rejects every non-sentinel `tool.call` (Bash,
+      shell_command, file-write tools) with a "lock-ownership env missing"
+      message — anchored at the top of the `tool.call` handler, AFTER
+      sentinel marker emission but BEFORE any tool-specific branch.
 - [ ] Lock-key derivation matches `src/infra/tools/locking._lock_key` +
       `_canonicalize_path` + `lock_path` byte-for-byte (including the SHA-256
       truncation at 16 hex chars and the namespace-prefixed key).
