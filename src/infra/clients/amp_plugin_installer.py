@@ -218,6 +218,12 @@ class AmpPluginInstaller:
 
     @staticmethod
     def _atomic_write(target_dir: Path, target_path: Path, payload: bytes) -> None:
+        # Track tmp_path immediately after NamedTemporaryFile creates the file
+        # on disk, BEFORE write/flush/fsync run. If any of those I/O calls
+        # raises (ENOSPC, EIO, EDQUOT) the finally block must still find the
+        # temp path so it can unlink the partial file. Assigning after fsync
+        # would leak ``.mala-safety.*.ts.tmp`` files into the Amp plugin
+        # directory on every failure.
         tmp_path: Path | None = None
         try:
             with tempfile.NamedTemporaryFile(
@@ -227,10 +233,10 @@ class AmpPluginInstaller:
                 suffix=_TEMP_SUFFIX,
                 delete=False,
             ) as tmp:
+                tmp_path = Path(tmp.name)
                 tmp.write(payload)
                 tmp.flush()
                 os.fsync(tmp.fileno())
-                tmp_path = Path(tmp.name)
             os.replace(tmp_path, target_path)
             tmp_path = None
         except OSError as exc:

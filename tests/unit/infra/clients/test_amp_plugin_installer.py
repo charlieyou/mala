@@ -250,6 +250,37 @@ def test_no_temp_file_remains_after_replace(
     assert leftovers == []
 
 
+@pytest.mark.unit
+def test_no_temp_file_leaks_when_fsync_fails(
+    installer: AmpPluginInstaller, target_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: an I/O error during ``write/flush/fsync`` (after the
+    NamedTemporaryFile has been created on disk) must still trigger the
+    finally cleanup so the partial temp file does not accumulate in the
+    Amp plugin directory across repeated failed installs.
+
+    Reproduces the codex P2 finding: previously ``tmp_path`` was assigned
+    only after ``os.fsync()`` returned, so an fsync error skipped cleanup.
+    """
+    import src.infra.clients.amp_plugin_installer as installer_mod
+
+    def failing_fsync(fd: int) -> None:
+        del fd
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(installer_mod.os, "fsync", failing_fsync)
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(AmpPluginInstallError):
+        installer.install(target_dir=target_dir)
+
+    leftovers = [p.name for p in target_dir.iterdir()]
+    assert leftovers == [], (
+        f"Failed install left stray temp files behind: {leftovers}. "
+        "tmp_path must be tracked from the moment the temp file is created."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Plan L810: concurrent calls don't corrupt the file.
 # ---------------------------------------------------------------------------
