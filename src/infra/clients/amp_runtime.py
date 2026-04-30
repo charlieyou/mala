@@ -119,8 +119,14 @@ class AmpRuntimeBuilder:
         (``PATH``, ``PLUGINS``, ``MALA_AGENT_ID``, ``MALA_LOCK_DIR``,
         ``MALA_REPO_NAMESPACE``, ``MCP_TIMEOUT``). ``AMP_API_KEY`` is inherited
         from ``os.environ`` (no overlay needed).
+
+        ``McpServerFactory`` returns a server *map* (``{"name": <spec>}``);
+        Amp's ``--mcp-config`` JSON requires a top-level ``{"mcpServers": ...}``
+        envelope, so we wrap here. Without the envelope Amp parses the JSON as
+        having no servers and silently starts without ``locking_mcp``.
         """
-        mcp_config = self._mcp_server_factory(self._agent_id, self._repo_path, None)
+        servers = self._mcp_server_factory(self._agent_id, self._repo_path, None)
+        mcp_config: dict[str, object] = {"mcpServers": servers}
 
         env: dict[str, str] = {
             **os.environ,

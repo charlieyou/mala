@@ -41,9 +41,10 @@ if TYPE_CHECKING:
 def _stdio_locking_factory() -> Callable[..., dict[str, object]]:
     """Fake ``McpServerFactory`` returning a stdio-shaped ``locking_mcp`` spec.
 
-    The Amp ``--mcp-config`` payload is a stdio launch description (command,
-    args, env), unlike the Claude path's SDK-shaped server. The Amp orchestration
-    code wires a stdio factory; here we mimic its output shape.
+    Per :data:`src.core.protocols.sdk.McpServerFactory`, the factory returns a
+    server *map* keyed by server name — not the full Amp ``--mcp-config``
+    payload. ``AmpRuntimeBuilder.build()`` is responsible for wrapping the map
+    under the required ``{"mcpServers": ...}`` envelope.
     """
 
     def factory(
@@ -53,21 +54,19 @@ def _stdio_locking_factory() -> Callable[..., dict[str, object]]:
     ) -> dict[str, object]:
         del emit_lock_event
         return {
-            "mcpServers": {
-                "locking_mcp": {
-                    "command": "uv",
-                    "args": [
-                        "run",
-                        "python",
-                        "-m",
-                        "src.infra.tools.locking_mcp_stdio",
-                        "--agent-id",
-                        agent_id,
-                        "--repo-namespace",
-                        str(repo_path),
-                    ],
-                    "env": {},
-                }
+            "locking_mcp": {
+                "command": "uv",
+                "args": [
+                    "run",
+                    "python",
+                    "-m",
+                    "src.infra.tools.locking_mcp_stdio",
+                    "--agent-id",
+                    agent_id,
+                    "--repo-namespace",
+                    str(repo_path),
+                ],
+                "env": {},
             }
         }
 
@@ -296,12 +295,46 @@ def test_mcp_factory_receives_agent_id_and_repo_path(repo_path: Path) -> None:
         seen["agent_id"] = agent_id
         seen["repo_path"] = rp
         seen["emit_lock_event"] = emit_lock_event
-        return {"mcpServers": {"locking_mcp": {"command": "x", "args": []}}}
+        return {"locking_mcp": {"command": "x", "args": []}}
 
     AmpRuntimeBuilder(repo_path, "agent-77", factory).build()
     assert seen["agent_id"] == "agent-77"
     assert seen["repo_path"] == repo_path
     assert seen["emit_lock_event"] is None
+
+
+@pytest.mark.unit
+def test_mcp_config_wraps_factory_map_in_mcpservers_envelope(
+    repo_path: Path,
+) -> None:
+    """The Amp ``--mcp-config`` JSON requires a top-level ``mcpServers`` key.
+
+    The :data:`McpServerFactory` protocol returns a server *map* (e.g.
+    ``{"mala-locking": <spec>}``), not a complete Amp config. If the builder
+    forwarded the map straight to ``--mcp-config``, Amp would parse JSON with
+    no ``mcpServers`` key and start with no MCP servers — silently dropping
+    ``locking_mcp`` and breaking lock enforcement (fail-open). The builder must
+    wrap the factory result.
+    """
+
+    def server_map_factory(
+        agent_id: str, rp: Path, emit_lock_event: object
+    ) -> dict[str, object]:
+        del agent_id, rp, emit_lock_event
+        return {"locking_mcp": {"command": "x", "args": []}}
+
+    runtime = AmpRuntimeBuilder(repo_path, "a", server_map_factory).build()
+
+    # mcp_config has the envelope.
+    assert "mcpServers" in runtime.mcp_config
+    assert runtime.mcp_config["mcpServers"] == {
+        "locking_mcp": {"command": "x", "args": []}
+    }
+    # The serialized payload Amp actually sees on argv has the envelope too.
+    idx = runtime.argv.index("--mcp-config")
+    parsed = json.loads(runtime.argv[idx + 1])
+    assert "mcpServers" in parsed
+    assert "locking_mcp" in parsed["mcpServers"]
 
 
 # ---------------------------------------------------------------------------
