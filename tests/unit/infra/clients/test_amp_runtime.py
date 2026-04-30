@@ -337,6 +337,42 @@ def test_mcp_config_wraps_factory_map_in_mcpservers_envelope(
     assert "locking_mcp" in parsed["mcpServers"]
 
 
+@pytest.mark.unit
+def test_build_rejects_non_serializable_factory_with_actionable_error(
+    repo_path: Path,
+) -> None:
+    """A Claude-path ``McpServerFactory`` returns server-config dicts containing
+    in-process Claude SDK ``instance`` objects that are not JSON-serializable.
+    If misrouted into ``AmpRuntimeBuilder``, ``json.dumps`` would raise an
+    opaque ``TypeError`` deep inside ``subprocess.Popen``. The builder must
+    surface a contract-explicit error at the seam instead."""
+
+    class _UnSerializable:
+        """Stand-in for the Claude SDK's in-process server instance."""
+
+    def claude_shaped_factory(
+        agent_id: str, rp: Path, emit_lock_event: object
+    ) -> dict[str, object]:
+        del agent_id, rp, emit_lock_event
+        # Mirrors the Claude path's create_locking_mcp_server() return shape:
+        # {"mala-locking": {"type": "sdk", "name": ..., "instance": <SDK obj>}}
+        return {
+            "mala-locking": {
+                "type": "sdk",
+                "name": "mala-locking",
+                "instance": _UnSerializable(),
+            }
+        }
+
+    builder = AmpRuntimeBuilder(repo_path, "agent-1", claude_shaped_factory)
+    with pytest.raises(TypeError) as exc_info:
+        builder.build()
+    msg = str(exc_info.value)
+    assert "Amp" in msg
+    assert "stdio" in msg.lower()
+    assert "Claude" in msg
+
+
 # ---------------------------------------------------------------------------
 # Resume: with_resume(thread_id) flows into argv + runtime field + log_path.
 # ---------------------------------------------------------------------------

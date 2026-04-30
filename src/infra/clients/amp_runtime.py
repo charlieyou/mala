@@ -124,9 +124,28 @@ class AmpRuntimeBuilder:
         Amp's ``--mcp-config`` JSON requires a top-level ``{"mcpServers": ...}``
         envelope, so we wrap here. Without the envelope Amp parses the JSON as
         having no servers and silently starts without ``locking_mcp``.
+
+        The injected factory **must produce stdio launch specs** (JSON-only
+        ``command``/``args``/``env`` dicts). The Claude-path factory packs
+        in-process Claude SDK server instances and is incompatible with Amp's
+        CLI; we serialize the config eagerly here so a misrouted Claude factory
+        surfaces an actionable error at the builder boundary instead of an
+        opaque ``TypeError`` deep inside ``subprocess.Popen``.
         """
         servers = self._mcp_server_factory(self._agent_id, self._repo_path, None)
         mcp_config: dict[str, object] = {"mcpServers": servers}
+        try:
+            mcp_config_json = json.dumps(mcp_config)
+        except TypeError as exc:
+            msg = (
+                "AmpRuntimeBuilder requires an Amp-shaped MCP server factory "
+                "that returns JSON-serializable stdio launch specs (command, "
+                "args, env). The Claude path's create_mcp_server_factory() "
+                "returns in-process Claude SDK server objects and cannot be "
+                "reused for Amp. Wire an Amp-specific factory via "
+                f"AmpAgentProvider. Underlying error: {exc}"
+            )
+            raise TypeError(msg) from exc
 
         env: dict[str, str] = {
             **os.environ,
@@ -144,7 +163,7 @@ class AmpRuntimeBuilder:
             "--stream-json",
             "--dangerously-allow-all",
             "--mcp-config",
-            json.dumps(mcp_config),
+            mcp_config_json,
             "--mode",
             self._mode,
         ]
