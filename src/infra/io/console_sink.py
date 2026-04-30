@@ -6,7 +6,7 @@ using the log helpers from log_output/console.py.
 
 import math
 import re
-from typing import Any
+from typing import Any, Literal
 
 from src.core.protocols.events import EventRunConfig, MalaEventSink
 from src.core.protocols.lifecycle import DeadlockInfoProtocol
@@ -234,8 +234,15 @@ class ConsoleEventSink(BaseEventSink):
     # Agent lifecycle
     # -------------------------------------------------------------------------
 
-    def on_agent_started(self, agent_id: str, issue_id: str) -> None:
-        log("▶", f"Claimed {issue_id}", agent_id=agent_id)
+    def on_agent_started(
+        self,
+        agent_id: str,
+        issue_id: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
+        suffix = f" [coder={coder}]" if coder is not None else ""
+        log("▶", f"Claimed {issue_id}{suffix}", agent_id=agent_id)
 
     def on_agent_completed(
         self,
@@ -244,12 +251,15 @@ class ConsoleEventSink(BaseEventSink):
         success: bool,
         duration_seconds: float,
         summary: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
     ) -> None:
         # Use verbose logging since on_issue_completed provides similar info
         status_icon = "✓" if success else "✗"
+        coder_part = f" [coder={coder}]" if coder is not None else ""
         log_verbose(
             status_icon,
-            f"Agent {agent_id} completed in {duration_seconds:.1f}s: {summary}",
+            f"Agent {agent_id} completed in {duration_seconds:.1f}s{coder_part}: {summary}",
             agent_id=agent_id,
         )
 
@@ -416,20 +426,43 @@ class ConsoleEventSink(BaseEventSink):
         self,
         attempt: int,
         max_attempts: int,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
     ) -> None:
-        log("→", f"FIXER Attempt {attempt}/{max_attempts}", agent_id="fixer")
+        suffix = f" [coder={coder}]" if coder is not None else ""
+        log(
+            "→",
+            f"FIXER Attempt {attempt}/{max_attempts}{suffix}",
+            agent_id="fixer",
+        )
 
-    def on_fixer_completed(self, result: str) -> None:
+    def on_fixer_completed(
+        self,
+        result: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         log("✓", f"FIXER {result}", agent_id="fixer")
 
-    def on_fixer_failed(self, reason: str) -> None:
+    def on_fixer_failed(
+        self,
+        reason: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         log("✗", f"FIXER {Colors.RED}{reason}{Colors.RESET}", agent_id="fixer")
 
     # -------------------------------------------------------------------------
     # Issue lifecycle
     # -------------------------------------------------------------------------
 
-    def on_issue_closed(self, agent_id: str, issue_id: str) -> None:
+    def on_issue_closed(
+        self,
+        agent_id: str,
+        issue_id: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         log("→", f"CLOSE {issue_id}", agent_id=agent_id)
 
     def on_issue_completed(
@@ -439,12 +472,15 @@ class ConsoleEventSink(BaseEventSink):
         success: bool,
         duration_seconds: float,
         summary: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
     ) -> None:
         status_icon = "✓" if success else "✗"
         color = Colors.GREEN if success else Colors.RED
+        coder_part = f" [coder={coder}]" if coder is not None else ""
         log(
             status_icon,
-            f"{color}{issue_id} completed in {duration_seconds:.1f}s: {summary}{Colors.RESET}",
+            f"{color}{issue_id} completed in {duration_seconds:.1f}s{coder_part}: {summary}{Colors.RESET}",
             agent_id=agent_id,
         )
 
@@ -810,21 +846,38 @@ class ConsoleEventSink(BaseEventSink):
     # Session end lifecycle
     # -------------------------------------------------------------------------
 
-    def on_session_end_started(self, issue_id: str) -> None:
+    def on_session_end_started(
+        self,
+        issue_id: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         log(
             "→",
             "[session_end] started",
             issue_id=issue_id,
         )
 
-    def on_session_end_completed(self, issue_id: str, result: str) -> None:
+    def on_session_end_completed(
+        self,
+        issue_id: str,
+        result: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         log(
             "✓",
             f"[session_end] completed: result={Colors.GREEN}{result}{Colors.RESET}",
             issue_id=issue_id,
         )
 
-    def on_session_end_skipped(self, issue_id: str, reason: str) -> None:
+    def on_session_end_skipped(
+        self,
+        issue_id: str,
+        reason: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         log(
             "○",
             f"[session_end] skipped: reason={reason}",

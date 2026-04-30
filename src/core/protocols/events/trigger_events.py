@@ -6,7 +6,7 @@ and session end lifecycle events.
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -193,28 +193,48 @@ class TriggerEvents(Protocol):
     # Session end lifecycle
     # -------------------------------------------------------------------------
 
-    def on_session_end_started(self, issue_id: str) -> None:
+    def on_session_end_started(
+        self,
+        issue_id: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         """Called when session_end processing starts for an issue.
 
         Args:
             issue_id: The issue ID for which session_end processing started.
+            coder: Active coder backend (``claude`` or ``amp``).
         """
         ...
 
-    def on_session_end_completed(self, issue_id: str, result: str) -> None:
+    def on_session_end_completed(
+        self,
+        issue_id: str,
+        result: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         """Called when session_end processing completes for an issue.
 
         Args:
             issue_id: The issue ID for which session_end processing completed.
             result: The result (pass, fail, timeout, interrupted).
+            coder: Active coder backend (``claude`` or ``amp``).
         """
         ...
 
-    def on_session_end_skipped(self, issue_id: str, reason: str) -> None:
+    def on_session_end_skipped(
+        self,
+        issue_id: str,
+        reason: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         """Called when session_end processing is skipped for an issue.
 
         Args:
             issue_id: The issue ID for which session_end processing was skipped.
             reason: The reason for skipping (gate_failed, not_configured).
+            coder: Active coder backend (``claude`` or ``amp``).
         """
         ...

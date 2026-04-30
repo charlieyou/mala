@@ -4,7 +4,7 @@ Provides BaseEventSink with default no-op implementations of all protocol
 methods, and NullEventSink for testing.
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from src.core.protocols.events import EventRunConfig, MalaEventSink
 from src.core.protocols.lifecycle import DeadlockInfoProtocol
@@ -58,7 +58,13 @@ class BaseEventSink:
     # Agent lifecycle
     # -------------------------------------------------------------------------
 
-    def on_agent_started(self, agent_id: str, issue_id: str) -> None:
+    def on_agent_started(
+        self,
+        agent_id: str,
+        issue_id: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         pass
 
     def on_agent_completed(
@@ -68,6 +74,8 @@ class BaseEventSink:
         success: bool,
         duration_seconds: float,
         summary: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
     ) -> None:
         pass
 
@@ -184,20 +192,38 @@ class BaseEventSink:
         self,
         attempt: int,
         max_attempts: int,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
     ) -> None:
         pass
 
-    def on_fixer_completed(self, result: str) -> None:
+    def on_fixer_completed(
+        self,
+        result: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         pass
 
-    def on_fixer_failed(self, reason: str) -> None:
+    def on_fixer_failed(
+        self,
+        reason: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         pass
 
     # -------------------------------------------------------------------------
     # Issue lifecycle
     # -------------------------------------------------------------------------
 
-    def on_issue_closed(self, agent_id: str, issue_id: str) -> None:
+    def on_issue_closed(
+        self,
+        agent_id: str,
+        issue_id: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         pass
 
     def on_issue_completed(
@@ -207,6 +233,8 @@ class BaseEventSink:
         success: bool,
         duration_seconds: float,
         summary: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
     ) -> None:
         pass
 
@@ -450,13 +478,30 @@ class BaseEventSink:
     # Session end lifecycle
     # -------------------------------------------------------------------------
 
-    def on_session_end_started(self, issue_id: str) -> None:
+    def on_session_end_started(
+        self,
+        issue_id: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         pass
 
-    def on_session_end_completed(self, issue_id: str, result: str) -> None:
+    def on_session_end_completed(
+        self,
+        issue_id: str,
+        result: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         pass
 
-    def on_session_end_skipped(self, issue_id: str, reason: str) -> None:
+    def on_session_end_skipped(
+        self,
+        issue_id: str,
+        reason: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         pass
 
 

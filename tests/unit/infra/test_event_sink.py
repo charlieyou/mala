@@ -1,6 +1,7 @@
 """Tests for event_sink module."""
 
 from dataclasses import dataclass
+from typing import Literal
 
 import pytest
 
@@ -672,3 +673,113 @@ class TestConsoleEventSink:
         assert "[issue-789]" in captured.out
         assert "[session_end] skipped" in captured.out
         assert "reason=gate_failed" in captured.out
+
+
+class TestCoderAttribute:
+    """Tests for the ``coder`` span attribute (T015).
+
+    Verifies that issue-, agent-session-, fixer-, and session-end-scoped sink
+    methods accept the optional ``coder`` keyword and that absence of it does
+    not break legacy call sites.
+    """
+
+    @pytest.mark.parametrize("coder", ["claude", "amp"])
+    def test_base_sink_accepts_coder_on_relevant_spans(
+        self, coder: Literal["claude", "amp"]
+    ) -> None:
+        """BaseEventSink methods accept ``coder`` for both supported values."""
+        sink = BaseEventSink()
+
+        # Agent session scope
+        assert sink.on_agent_started("a-1", "i-1", coder=coder) is None
+        assert (
+            sink.on_agent_completed("a-1", "i-1", True, 1.0, "ok", coder=coder) is None
+        )
+
+        # Issue lifecycle scope
+        assert sink.on_issue_closed("a-1", "i-1", coder=coder) is None
+        assert (
+            sink.on_issue_completed("a-1", "i-1", True, 1.0, "ok", coder=coder) is None
+        )
+
+        # Fixer session scope
+        assert sink.on_fixer_started(1, 3, coder=coder) is None
+        assert sink.on_fixer_completed("fixed", coder=coder) is None
+        assert sink.on_fixer_failed("timeout", coder=coder) is None
+
+        # Session end scope
+        assert sink.on_session_end_started("i-1", coder=coder) is None
+        assert sink.on_session_end_completed("i-1", "pass", coder=coder) is None
+        assert sink.on_session_end_skipped("i-1", "gate_failed", coder=coder) is None
+
+    def test_legacy_calls_without_coder_still_work(self) -> None:
+        """Existing call sites that omit ``coder`` continue to work (back-compat)."""
+        sink = BaseEventSink()
+
+        assert sink.on_agent_started("a-1", "i-1") is None
+        assert sink.on_agent_completed("a-1", "i-1", True, 1.0, "ok") is None
+        assert sink.on_issue_closed("a-1", "i-1") is None
+        assert sink.on_issue_completed("a-1", "i-1", True, 1.0, "ok") is None
+        assert sink.on_fixer_started(1, 3) is None
+        assert sink.on_fixer_completed("fixed") is None
+        assert sink.on_fixer_failed("timeout") is None
+        assert sink.on_session_end_started("i-1") is None
+        assert sink.on_session_end_completed("i-1", "pass") is None
+        assert sink.on_session_end_skipped("i-1", "gate_failed") is None
+
+    @pytest.mark.parametrize("coder", ["claude", "amp"])
+    def test_console_sink_renders_coder_on_per_issue_header(
+        self,
+        coder: Literal["claude", "amp"],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Console sink surfaces the active coder on the per-issue claim header."""
+        sink = ConsoleEventSink()
+
+        sink.on_agent_started("agent-1", "issue-42", coder=coder)
+
+        captured = capsys.readouterr()
+        assert "issue-42" in captured.out
+        assert f"coder={coder}" in captured.out
+
+    def test_console_sink_omits_coder_when_not_provided(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Without ``coder``, console output remains byte-equivalent to today."""
+        sink = ConsoleEventSink()
+
+        sink.on_agent_started("agent-1", "issue-42")
+
+        captured = capsys.readouterr()
+        assert "issue-42" in captured.out
+        assert "coder=" not in captured.out
+
+    @pytest.mark.parametrize("coder", ["claude", "amp"])
+    def test_console_sink_renders_coder_on_issue_completed(
+        self,
+        coder: Literal["claude", "amp"],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """on_issue_completed renders the coder so the per-issue summary shows it."""
+        sink = ConsoleEventSink()
+
+        sink.on_issue_completed("agent-1", "issue-42", True, 12.5, "done", coder=coder)
+
+        captured = capsys.readouterr()
+        assert "issue-42" in captured.out
+        assert f"coder={coder}" in captured.out
+
+    @pytest.mark.parametrize("coder", ["claude", "amp"])
+    def test_console_sink_renders_coder_on_fixer_started(
+        self,
+        coder: Literal["claude", "amp"],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """on_fixer_started renders the coder so dashboards can scope by fixer coder."""
+        sink = ConsoleEventSink()
+
+        sink.on_fixer_started(1, 3, coder=coder)
+
+        captured = capsys.readouterr()
+        assert "FIXER" in captured.out
+        assert f"coder={coder}" in captured.out

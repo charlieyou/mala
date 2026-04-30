@@ -147,13 +147,17 @@ class FakeEventSink(MalaEventSink):
         eid = issue_id or agent_id
         self.events.append(f"gate_passed:{eid}")
 
-    def on_session_end_started(self, issue_id: str) -> None:
+    def on_session_end_started(self, issue_id: str, **kwargs: object) -> None:
         self.events.append(f"session_end_started:{issue_id}")
 
-    def on_session_end_completed(self, issue_id: str, result: str) -> None:
+    def on_session_end_completed(
+        self, issue_id: str, result: str, **kwargs: object
+    ) -> None:
         self.events.append(f"session_end_completed:{issue_id}:{result}")
 
-    def on_session_end_skipped(self, issue_id: str, reason: str) -> None:
+    def on_session_end_skipped(
+        self, issue_id: str, reason: str, **kwargs: object
+    ) -> None:
         self.events.append(f"session_end_skipped:{issue_id}:{reason}")
 
     def on_review_started(

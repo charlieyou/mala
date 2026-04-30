@@ -4,7 +4,7 @@ FakeEventSink captures all MalaEventSink events for assertion in tests.
 """
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from src.core.protocols.events import EventRunConfig, MalaEventSink
 from src.core.protocols.lifecycle import DeadlockInfoProtocol
@@ -90,8 +90,14 @@ class FakeEventSink(MalaEventSink):
     # Agent lifecycle
     # -------------------------------------------------------------------------
 
-    def on_agent_started(self, agent_id: str, issue_id: str) -> None:
-        self._record("agent_started", agent_id=agent_id, issue_id=issue_id)
+    def on_agent_started(
+        self,
+        agent_id: str,
+        issue_id: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
+        self._record("agent_started", agent_id=agent_id, issue_id=issue_id, coder=coder)
 
     def on_agent_completed(
         self,
@@ -100,6 +106,8 @@ class FakeEventSink(MalaEventSink):
         success: bool,
         duration_seconds: float,
         summary: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
     ) -> None:
         self._record(
             "agent_completed",
@@ -108,6 +116,7 @@ class FakeEventSink(MalaEventSink):
             success=success,
             duration_seconds=duration_seconds,
             summary=summary,
+            coder=coder,
         )
 
     def on_claim_failed(self, agent_id: str, issue_id: str) -> None:
@@ -272,21 +281,41 @@ class FakeEventSink(MalaEventSink):
         self,
         attempt: int,
         max_attempts: int,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
     ) -> None:
-        self._record("fixer_started", attempt=attempt, max_attempts=max_attempts)
+        self._record(
+            "fixer_started", attempt=attempt, max_attempts=max_attempts, coder=coder
+        )
 
-    def on_fixer_completed(self, result: str) -> None:
-        self._record("fixer_completed", result=result)
+    def on_fixer_completed(
+        self,
+        result: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
+        self._record("fixer_completed", result=result, coder=coder)
 
-    def on_fixer_failed(self, reason: str) -> None:
-        self._record("fixer_failed", reason=reason)
+    def on_fixer_failed(
+        self,
+        reason: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
+        self._record("fixer_failed", reason=reason, coder=coder)
 
     # -------------------------------------------------------------------------
     # Issue lifecycle
     # -------------------------------------------------------------------------
 
-    def on_issue_closed(self, agent_id: str, issue_id: str) -> None:
-        self._record("issue_closed", agent_id=agent_id, issue_id=issue_id)
+    def on_issue_closed(
+        self,
+        agent_id: str,
+        issue_id: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
+        self._record("issue_closed", agent_id=agent_id, issue_id=issue_id, coder=coder)
 
     def on_issue_completed(
         self,
@@ -295,6 +324,8 @@ class FakeEventSink(MalaEventSink):
         success: bool,
         duration_seconds: float,
         summary: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
     ) -> None:
         self._record(
             "issue_completed",
@@ -303,6 +334,7 @@ class FakeEventSink(MalaEventSink):
             success=success,
             duration_seconds=duration_seconds,
             summary=summary,
+            coder=coder,
         )
 
     def on_epic_closed(self, agent_id: str) -> None:
@@ -648,11 +680,38 @@ class FakeEventSink(MalaEventSink):
     # Session end lifecycle
     # -------------------------------------------------------------------------
 
-    def on_session_end_started(self, issue_id: str) -> None:
-        self._record("session_end_started", issue_id=issue_id)
+    def on_session_end_started(
+        self,
+        issue_id: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
+        self._record("session_end_started", issue_id=issue_id, coder=coder)
 
-    def on_session_end_completed(self, issue_id: str, result: str) -> None:
-        self._record("session_end_completed", issue_id=issue_id, result=result)
+    def on_session_end_completed(
+        self,
+        issue_id: str,
+        result: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
+        self._record(
+            "session_end_completed",
+            issue_id=issue_id,
+            result=result,
+            coder=coder,
+        )
 
-    def on_session_end_skipped(self, issue_id: str, reason: str) -> None:
-        self._record("session_end_skipped", issue_id=issue_id, reason=reason)
+    def on_session_end_skipped(
+        self,
+        issue_id: str,
+        reason: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
+        self._record(
+            "session_end_skipped",
+            issue_id=issue_id,
+            reason=reason,
+            coder=coder,
+        )

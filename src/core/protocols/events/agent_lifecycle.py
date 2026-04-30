@@ -5,7 +5,7 @@ This module defines protocols for agent-level events and SDK message streaming.
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -19,12 +19,20 @@ class AgentLifecycleEvents(Protocol):
     # Agent lifecycle
     # -------------------------------------------------------------------------
 
-    def on_agent_started(self, agent_id: str, issue_id: str) -> None:
+    def on_agent_started(
+        self,
+        agent_id: str,
+        issue_id: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         """Called when an agent is spawned for an issue.
 
         Args:
             agent_id: Unique agent identifier.
             issue_id: Issue being worked on.
+            coder: Active coder backend (``claude`` or ``amp``); enables
+                per-coder dashboard breakdowns. Optional for back-compat.
         """
         ...
 
@@ -35,6 +43,8 @@ class AgentLifecycleEvents(Protocol):
         success: bool,
         duration_seconds: float,
         summary: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
     ) -> None:
         """Called when an agent completes (success or failure).
 
@@ -44,6 +54,7 @@ class AgentLifecycleEvents(Protocol):
             success: Whether the agent succeeded.
             duration_seconds: Total execution time.
             summary: Result summary or error message.
+            coder: Active coder backend (``claude`` or ``amp``).
         """
         ...
 

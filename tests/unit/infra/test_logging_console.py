@@ -1,3 +1,5 @@
+from typing import Literal
+
 import pytest
 
 from src.infra.io.log_output import console
@@ -255,3 +257,41 @@ def test_log_with_issue_id_no_agent_id_uses_cyan(
     assert "[ISSUE-789]" in output
     # Should use cyan color (Colors.CYAN = "\033[96m")
     assert "\033[96m" in output
+
+
+@pytest.mark.parametrize("coder", ["claude", "amp"])
+def test_console_sink_per_issue_header_includes_coder(
+    coder: Literal["claude", "amp"],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ConsoleEventSink claim header surfaces the active coder for diagnostics."""
+    from src.infra.io.console_sink import ConsoleEventSink
+
+    monkeypatch.setattr(console, "_agent_color_map", {})
+    monkeypatch.setattr(console, "_agent_color_index", 0)
+
+    sink = ConsoleEventSink()
+    sink.on_agent_started("agent-1", "ISSUE-99", coder=coder)
+
+    output = capsys.readouterr().out
+    assert "Claimed ISSUE-99" in output
+    assert f"coder={coder}" in output
+
+
+def test_console_sink_per_issue_header_omits_coder_when_unset(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When coder is not provided, the claim header stays byte-equivalent to today."""
+    from src.infra.io.console_sink import ConsoleEventSink
+
+    monkeypatch.setattr(console, "_agent_color_map", {})
+    monkeypatch.setattr(console, "_agent_color_index", 0)
+
+    sink = ConsoleEventSink()
+    sink.on_agent_started("agent-1", "ISSUE-99")
+
+    output = capsys.readouterr().out
+    assert "Claimed ISSUE-99" in output
+    assert "coder=" not in output

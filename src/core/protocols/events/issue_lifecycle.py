@@ -6,7 +6,7 @@ and fixer agent events.
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -20,12 +20,19 @@ class IssueLifecycleEvents(Protocol):
     # Issue lifecycle
     # -------------------------------------------------------------------------
 
-    def on_issue_closed(self, agent_id: str, issue_id: str) -> None:
+    def on_issue_closed(
+        self,
+        agent_id: str,
+        issue_id: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         """Called when an issue is closed after successful completion.
 
         Args:
             agent_id: Agent that completed the issue.
             issue_id: Issue that was closed.
+            coder: Active coder backend (``claude`` or ``amp``).
         """
         ...
 
@@ -36,6 +43,8 @@ class IssueLifecycleEvents(Protocol):
         success: bool,
         duration_seconds: float,
         summary: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
     ) -> None:
         """Called when an issue implementation completes (success or failure).
 
@@ -48,6 +57,7 @@ class IssueLifecycleEvents(Protocol):
             success: Whether the issue was successfully implemented.
             duration_seconds: Total time spent on the issue.
             summary: Result summary or error message.
+            coder: Active coder backend (``claude`` or ``amp``).
         """
         ...
 
@@ -153,28 +163,44 @@ class IssueLifecycleEvents(Protocol):
         self,
         attempt: int,
         max_attempts: int,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
     ) -> None:
         """Called when a fixer agent is spawned.
 
         Args:
             attempt: Current fixer attempt number.
             max_attempts: Maximum fixer attempts.
+            coder: Active coder backend (``claude`` or ``amp``); fixers
+                follow the main run's coder.
         """
         ...
 
-    def on_fixer_completed(self, result: str) -> None:
+    def on_fixer_completed(
+        self,
+        result: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         """Called when a fixer agent completes.
 
         Args:
             result: Brief result description.
+            coder: Active coder backend (``claude`` or ``amp``).
         """
         ...
 
-    def on_fixer_failed(self, reason: str) -> None:
+    def on_fixer_failed(
+        self,
+        reason: str,
+        *,
+        coder: Literal["claude", "amp"] | None = None,
+    ) -> None:
         """Called when a fixer agent fails.
 
         Args:
             reason: Failure reason (e.g., "timeout", "error").
+            coder: Active coder backend (``claude`` or ``amp``).
         """
         ...
 
