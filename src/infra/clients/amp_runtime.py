@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -35,8 +36,15 @@ AmpMode = Literal["smart", "rush", "deep"]
 AMP_SESSIONS_DIR: Path = USER_CONFIG_DIR / "amp-sessions"
 """Directory where mala tees Amp's stream-json output, keyed by thread id."""
 
-_PENDING_LOG_NAME = ".pending.jsonl"
-"""Pre-thread-id placeholder; ``AmpClient`` renames to ``{thread_id}.jsonl``."""
+_PENDING_LOG_PREFIX = ".pending-"
+_PENDING_LOG_SUFFIX = ".jsonl"
+"""Pre-thread-id placeholder shape: ``.pending-<uuid4>.jsonl``.
+
+The UUID is required because mala spawns concurrent issue agents into the
+same shared ``amp-sessions/`` directory; every fresh session must own a
+distinct pending file before ``AmpClient`` observes ``system(init)`` and
+renames it to ``{thread_id}.jsonl``. A fixed name would let two simultaneous
+fresh sessions interleave stream-json bytes, corrupting both."""
 
 
 @dataclass(frozen=True)
@@ -140,7 +148,10 @@ class AmpRuntimeBuilder:
         if self._resume_thread_id is not None:
             log_path = AMP_SESSIONS_DIR / f"{self._resume_thread_id}.jsonl"
         else:
-            log_path = AMP_SESSIONS_DIR / _PENDING_LOG_NAME
+            pending_name = (
+                f"{_PENDING_LOG_PREFIX}{uuid.uuid4().hex}{_PENDING_LOG_SUFFIX}"
+            )
+            log_path = AMP_SESSIONS_DIR / pending_name
 
         return AmpRuntime(
             cwd=self._repo_path,

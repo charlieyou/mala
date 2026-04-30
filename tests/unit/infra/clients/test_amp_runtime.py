@@ -347,6 +347,38 @@ def test_resume_log_path_uses_thread_id_filename(
     assert runtime.log_path.name == "T-abc123.jsonl"
 
 
+@pytest.mark.unit
+def test_pending_log_paths_are_unique_per_fresh_session(repo_path: Path) -> None:
+    """Concurrent fresh Amp sessions must not share the same pending tee file.
+
+    Mala spawns multiple issue agents concurrently into the shared
+    ``~/.config/mala/amp-sessions/`` directory. If two ``build()`` calls
+    returned the same pending log path, both AmpClient subprocesses would
+    tee stream-json bytes into the same file, interleaving (and after
+    ``system(init)``, racing on the rename to ``{thread_id}.jsonl``)."""
+    paths = {
+        AmpRuntimeBuilder(repo_path, f"agent-{i}", _stdio_locking_factory())
+        .build()
+        .log_path
+        for i in range(64)
+    }
+    assert len(paths) == 64
+
+
+@pytest.mark.unit
+def test_pending_log_path_shape_is_pending_uuid_jsonl(
+    builder: AmpRuntimeBuilder,
+) -> None:
+    runtime = builder.build()
+    name = runtime.log_path.name
+    assert name.startswith(".pending-")
+    assert name.endswith(".jsonl")
+    # uuid4().hex is 32 hex chars between the prefix and suffix
+    middle = name[len(".pending-") : -len(".jsonl")]
+    assert len(middle) == 32
+    assert all(c in "0123456789abcdef" for c in middle)
+
+
 # ---------------------------------------------------------------------------
 # Config override chain: MalaConfig → AmpOptions.mode → AmpRuntime.argv.
 # Validates T002 → T012 wiring without reaching for the dataclass directly.
