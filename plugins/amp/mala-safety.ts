@@ -51,24 +51,38 @@ function emitSentinelMarker(): void {
 //
 // Mirrors `FILE_WRITE_TOOLS` / `FILE_PATH_KEYS` in
 // `src/infra/hooks/file_cache.py`. Amp's edit_file / create_file / undo_edit
-// all use the `path` input key (confirmed against Amp appendix docs); MVP
-// scope per the plan covers exactly these tools.
+// use the single `path` input key (confirmed against Amp appendix docs).
+// `apply_patch` is also gated: it is the third file-write surface Amp's own
+// `FilesModifiedByToolCall` helper recognizes ("supports edit/create/apply_patch
+// tools"), and any unified-diff/Codex-style patch can edit arbitrary files,
+// so leaving it ungated would defeat the lock-ownership invariant. Path
+// extraction for apply_patch handles direct path keys, array path keys, and
+// embedded patch text (Codex `*** Update File:` and unified `+++ b/...`
+// headers); if no paths can be extracted, the call is rejected fail-closed.
 
 const FILE_WRITE_TOOLS: ReadonlySet<string> = new Set([
   "edit_file",
   "create_file",
   "undo_edit",
+  "apply_patch",
 ]);
 
+// Single-path tools: the literal input key holding the file path. apply_patch
+// is intentionally absent — it routes through `extractApplyPatchPaths` instead
+// because its input shape is multi-path / patch-text rather than `{path: ...}`.
 const FILE_PATH_KEYS: Readonly<Record<string, string>> = {
   edit_file: "path",
   create_file: "path",
   undo_edit: "path",
 };
 
-// Amp's shell tool is named `Bash` and accepts the command in `cmd`
-// (unlike Anthropic's `command`). Confirmed against Amp appendix docs.
-const BASH_TOOL_NAMES: ReadonlySet<string> = new Set(["Bash"]);
+// Shell tool surfaces. Amp's primary shell tool is `Bash` (input field `cmd`),
+// but custom toolboxes / MCP servers / future Amp builds may expose the same
+// capability under `shell_command`. Both names share the dangerous-command
+// gate so a blocked pattern cannot slip through whichever surface the model
+// happens to use. Defensive `command` fallback handles Anthropic-shaped or
+// alternative toolbox payloads.
+const BASH_TOOL_NAMES: ReadonlySet<string> = new Set(["Bash", "shell_command"]);
 const BASH_INPUT_KEYS: readonly string[] = ["cmd", "command"];
 
 // --- Dangerous-command policy --------------------------------------------
@@ -221,6 +235,87 @@ function getLockHolder(lockFile: string): string | null {
   } catch {
     return null;
   }
+}
+
+// --- File-write path extraction ------------------------------------------
+//
+// `apply_patch`'s input shape is unstable across Amp versions / toolboxes: it
+// may carry a single `path`, an array `paths`, or an embedded patch body that
+// names files inline. The lock-ownership invariant requires lock-checking
+// EVERY file the call would write, so we must enumerate them up front. We
+// try, in order: direct keys, array keys, and patch-text body parsing for
+// both Codex (`*** Update File:`) and unified-diff (`+++ b/...`) headers.
+// If extraction yields zero paths, the caller fails closed.
+
+const APPLY_PATCH_DIRECT_PATH_KEYS: readonly string[] = [
+  "path",
+  "filepath",
+  "file_path",
+];
+const APPLY_PATCH_ARRAY_PATH_KEYS: readonly string[] = [
+  "paths",
+  "files",
+  "filepaths",
+];
+const APPLY_PATCH_BODY_KEYS: readonly string[] = [
+  "input",
+  "patch",
+  "diff",
+  "patch_text",
+];
+
+function extractPathsFromPatchText(text: string): string[] {
+  const out = new Set<string>();
+  // Codex apply_patch envelope: "*** Update File: <path>" / Add / Delete / Move
+  const codexRe = /^\*\*\*\s+(?:Update|Add|Delete|Move)\s+File:\s+(.+?)\s*$/gm;
+  let m: RegExpExecArray | null;
+  while ((m = codexRe.exec(text)) !== null) {
+    const p = m[1].trim();
+    if (p) out.add(p);
+  }
+  // Unified diff "new file" header: "+++ [b/]<path>"
+  const unifiedRe = /^\+\+\+\s+(?:b\/)?([^\t\r\n]+?)(?:\s+\d.*)?$/gm;
+  while ((m = unifiedRe.exec(text)) !== null) {
+    const p = m[1].trim();
+    if (p && p !== "/dev/null") out.add(p);
+  }
+  return [...out];
+}
+
+function extractApplyPatchPaths(input: Record<string, unknown>): string[] {
+  const paths = new Set<string>();
+  for (const k of APPLY_PATCH_DIRECT_PATH_KEYS) {
+    const v = input[k];
+    if (typeof v === "string" && v) paths.add(v);
+  }
+  for (const k of APPLY_PATCH_ARRAY_PATH_KEYS) {
+    const v = input[k];
+    if (Array.isArray(v)) {
+      for (const p of v) {
+        if (typeof p === "string" && p) paths.add(p);
+      }
+    }
+  }
+  for (const k of APPLY_PATCH_BODY_KEYS) {
+    const v = input[k];
+    if (typeof v === "string") {
+      for (const p of extractPathsFromPatchText(v)) paths.add(p);
+    }
+  }
+  return [...paths];
+}
+
+function extractFileWritePaths(
+  tool: string,
+  input: Record<string, unknown>,
+): string[] {
+  if (tool === "apply_patch") {
+    return extractApplyPatchPaths(input);
+  }
+  const pathKey = FILE_PATH_KEYS[tool];
+  if (!pathKey) return [];
+  const v = input[pathKey];
+  return typeof v === "string" && v ? [v] : [];
 }
 
 // --- Session state --------------------------------------------------------
@@ -389,42 +484,59 @@ export default function plugin(amp: AmpPluginAPI): void {
           message: cfg.failClosedReason,
         };
       }
-      const pathKey = FILE_PATH_KEYS[tool];
-      const filePathRaw = pathKey ? input[pathKey] : undefined;
-      if (typeof filePathRaw !== "string" || !filePathRaw) {
-        // Path absent or non-string. Mirrors Python hook: allow and let the
-        // tool surface its own error (we can't compute a lock key with no path).
+
+      const filePaths = extractFileWritePaths(tool, input);
+
+      // For apply_patch we MUST be able to enumerate every path the call
+      // would write before allowing it; fail-closed if extraction returns
+      // empty. For single-path tools (edit_file/create_file/undo_edit) we
+      // mirror the Python hook and allow when the path is absent (the tool
+      // will surface its own error and no actual write can happen without
+      // a path).
+      if (filePaths.length === 0) {
+        if (tool === "apply_patch") {
+          return {
+            action: "reject-and-continue",
+            message:
+              "mala-safety: apply_patch input did not expose any file paths " +
+              "to lock-check. Refusing the call to preserve the lock-ownership " +
+              "invariant. If you need apply_patch, ensure the input includes a " +
+              "`path`/`paths` field or a Codex/unified-diff patch body whose " +
+              "headers name the target files.",
+          };
+        }
         return { action: "allow" };
       }
-      const filePath = filePathRaw;
 
-      let lockFile: string;
-      let holder: string | null;
-      try {
-        lockFile = lockFilePath(filePath, cfg.lockDir, cfg.repoNamespace);
-        holder = getLockHolder(lockFile);
-      } catch (err) {
-        // Fail closed on any unexpected error in lock-key derivation.
-        return {
-          action: "reject-and-continue",
-          message: `mala-safety: lock check failed for ${filePath}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        };
+      for (const filePath of filePaths) {
+        let lockFile: string;
+        let holder: string | null;
+        try {
+          lockFile = lockFilePath(filePath, cfg.lockDir, cfg.repoNamespace);
+          holder = getLockHolder(lockFile);
+        } catch (err) {
+          return {
+            action: "reject-and-continue",
+            message: `mala-safety: lock check failed for ${filePath}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          };
+        }
+
+        if (holder === null) {
+          return {
+            action: "reject-and-continue",
+            message: `File ${filePath} is not locked. Use lock_acquire tool with filepaths: ["${filePath}"]`,
+          };
+        }
+        if (holder !== cfg.agentId) {
+          return {
+            action: "reject-and-continue",
+            message: `File ${filePath} is locked by ${holder}. Wait or coordinate to acquire the lock.`,
+          };
+        }
       }
 
-      if (holder === null) {
-        return {
-          action: "reject-and-continue",
-          message: `File ${filePath} is not locked. Use lock_acquire tool with filepaths: ["${filePath}"]`,
-        };
-      }
-      if (holder !== cfg.agentId) {
-        return {
-          action: "reject-and-continue",
-          message: `File ${filePath} is locked by ${holder}. Wait or coordinate to acquire the lock.`,
-        };
-      }
       return { action: "allow" };
     }
 

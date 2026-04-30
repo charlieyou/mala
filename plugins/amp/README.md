@@ -14,13 +14,22 @@ copy under `plugins/amp/` is the source of truth.
 This plugin enforces two invariants and nothing else:
 
 1. **Dangerous-command block** — mirrors `src/infra/hooks/dangerous_commands.py`.
-   Rejects bash/shell commands matching `DANGEROUS_PATTERNS`,
+   Rejects shell commands matching `DANGEROUS_PATTERNS`,
    `DESTRUCTIVE_GIT_PATTERNS`, `git commit -a/--all`, non-atomic
-   add+commit, and force-pushes (without `--force-with-lease`).
+   add+commit, and force-pushes (without `--force-with-lease`). Both `Bash`
+   and `shell_command` tool surfaces are gated; either name routes through
+   the same dangerous-command check so a blocked pattern cannot slip through
+   whichever surface the model uses.
 2. **Lock-ownership** — mirrors
    `src/infra/hooks/locking.py::make_lock_enforcement_hook`. Rejects file-write
-   tool calls (`edit_file`, `create_file`, `undo_edit`) unless this Amp agent
-   holds the lock for the target file.
+   tool calls (`edit_file`, `create_file`, `undo_edit`, `apply_patch`) unless
+   this Amp agent holds the lock for **every** file the call would write.
+   For `apply_patch` the path list is extracted from direct keys (`path`,
+   `filepath`, `file_path`), array keys (`paths`, `files`, `filepaths`), and
+   embedded patch bodies (`input`, `patch`, `diff`, `patch_text`) — both
+   Codex-style `*** Update/Add/Delete/Move File: <path>` and unified-diff
+   `+++ [b/]<path>` headers are parsed. If extraction yields zero paths, the
+   call is rejected fail-closed rather than allowed.
 
 Out of scope for MVP (deferred to follow-ups):
 
@@ -107,15 +116,26 @@ is checked against the Python writer.
 The plugin matches Python's `FILE_WRITE_TOOLS` / `FILE_PATH_KEYS` shape but
 with Amp's tool names and field names (confirmed against Amp appendix docs):
 
-| Amp tool      | Path input key | Notes                      |
-| ------------- | -------------- | -------------------------- |
-| `edit_file`   | `path`         | edit-in-place              |
-| `create_file` | `path`         | create or overwrite        |
-| `undo_edit`   | `path`         | conservative include       |
+| Amp tool      | Path input key       | Notes                                    |
+| ------------- | -------------------- | ---------------------------------------- |
+| `edit_file`   | `path`               | edit-in-place                            |
+| `create_file` | `path`               | create or overwrite                      |
+| `undo_edit`   | `path`               | conservative include                     |
+| `apply_patch` | multi-key extraction | direct/array keys or patch-body parsing  |
 
-The `Bash` tool's command is read from `cmd` (Amp) with a defensive fallback
-to `command` (Anthropic-shaped). Adding a new file-write tool to Amp upstream
-requires updating `FILE_WRITE_TOOLS` / `FILE_PATH_KEYS` in this file in the
+`apply_patch` does not have a single canonical path key; the plugin's
+`extractApplyPatchPaths()` enumerates every file the call would write so the
+lock-ownership check sees the same surface as Amp's own `FilesModifiedByToolCall`
+helper (which "supports edit/create/apply_patch tools"). Each extracted path
+is lock-checked individually; the call is allowed only if every path is
+owned by this agent.
+
+Shell tools: `Bash` and `shell_command` are both checked. Their command is
+read from `cmd` (Amp) with a defensive fallback to `command` (Anthropic-shaped
+or alternative toolbox payloads).
+
+Adding a new file-write or shell tool to Amp upstream requires updating
+`FILE_WRITE_TOOLS` / `FILE_PATH_KEYS` / `BASH_TOOL_NAMES` in this file in the
 same commit as Python's mirrors.
 
 ## Reject-message parity
@@ -154,6 +174,14 @@ Before merging changes to this file:
       `src/infra/hooks/locking.make_lock_enforcement_hook` verbatim.
 - [ ] Dangerous-pattern lists, destructive-git list, and safe-alternative map
       match `src/infra/hooks/dangerous_commands.py` exactly.
+- [ ] `BASH_TOOL_NAMES` covers every shell-execution surface Amp exposes
+      (currently `Bash` and `shell_command`).
+- [ ] `FILE_WRITE_TOOLS` covers every file-modification surface Amp exposes,
+      including `apply_patch`. New file-write tools require a corresponding
+      entry in `FILE_PATH_KEYS` (single-path) or extraction logic in
+      `extractFileWritePaths` (multi-path / patch-text).
+- [ ] `apply_patch` is rejected fail-closed when no paths can be extracted
+      from input.
 - [ ] Plugin never writes lock files (no `try_lock` equivalent here).
 - [ ] No `MALA_DISALLOWED_TOOLS` parity yet (out of MVP).
 
