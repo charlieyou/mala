@@ -25,14 +25,19 @@ This plugin enforces three invariants and nothing else:
    (`sed -i*`, `sed --in-place`, `perl -i*`, `awk -i inplace`,
    `gawk -i inplace`) because these modify files without routing through
    Amp's file-write tools, so the lock-ownership gate (3) below would never
-   see the write. Matching is regex-based and reorder-tolerant: `sed -E -i`,
-   `sed -ni`, `sed -i.bak`, `perl -pi -e`, etc. all match because the
-   patterns capture `i` anywhere inside a `-`-prefixed flag bundle. The
-   reject message redirects the agent to `edit_file` / `create_file` /
-   `apply_patch`, which DO route through the lock-ownership gate. Shell
-   redirects (`>`, `>>`, `tee`), `mv`, `cp`, and similar primitives have too
-   many legitimate uses to block reliably without parsing target paths and
-   are intentionally **not** gated here (known follow-up).
+   see the write. Matching is regex-based with reorder-tolerance and a flag-
+   bundle alphabet of `[\w.]` (letters + digits + underscore + dot), and a
+   trailing-boundary lookahead `(?=[\s'"|;&]|$)` that admits whitespace,
+   end-of-string, shell separators, AND either quote — so digit-bearing
+   bundles (`sed -i1`, `perl -0pi`, `perl -i0`), backup-extension forms
+   (`sed -i.bak`), reordered flags (`sed -E -i`, `perl -pi -e`), fused
+   empty extensions (`sed -i''`), and whole-token-quoted flags (`sed "-i"`,
+   `sed '-Ei'`) all match. The reject message redirects the agent to
+   `edit_file` / `create_file` / `apply_patch`, which DO route through the
+   lock-ownership gate. Shell redirects (`>`, `>>`, `tee`), `mv`, `cp`, and
+   similar primitives have too many legitimate uses to block reliably
+   without parsing target paths and are intentionally **not** gated here
+   (known follow-up).
 3. **Lock-ownership** — mirrors
    `src/infra/hooks/locking.py::make_lock_enforcement_hook`. Rejects file-write
    tool calls (`edit_file`, `create_file`, `undo_edit`, `apply_patch`) unless

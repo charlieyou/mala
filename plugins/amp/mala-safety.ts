@@ -491,26 +491,47 @@ function checkBashCommand(command: string): ToolDecision | null {
 // remain allowed (a known parity gap with the file-write-tool gate
 // tracked as a follow-up).
 
+// Flag-bundle alphabet for sed/perl: letters, digits, underscore, dot. Digits
+// matter because backup-extension forms (`sed -i1`, `perl -i0`) and digit-
+// bearing flag bundles (`perl -0pi`) are real and must not be matched by a
+// letters-only class. Dot covers `-i.bak`. Underscore is harmless and avoids
+// drift between `\w` and `[A-Za-z0-9_]`.
+//
+// Trailing boundary uses a lookahead `(?=[\s'"|;&]|$)` instead of `\b` so
+// that digits or quotes following `i` (e.g. `-i1`, `-i''`) do not cancel the
+// boundary the way `\b` would (digits and `i` are both word chars → no
+// `\b`). The lookahead admits whitespace, end-of-string, shell separators,
+// and either quote — every valid token boundary.
+//
+// Leading `['"]?-` admits a single optional opening quote immediately before
+// the flag-bundle's `-`, so whole-token-quoted flags like `sed "-i"` or
+// `sed '-Ei'` match. The trailing optional `['"]?` consumes a closing quote
+// before the lookahead checks the post-token boundary.
+
 const FILE_MODIFYING_SHELL_PATTERNS: readonly { pattern: RegExp; label: string }[] = [
-  // sed in-place: any flag bundle containing `i` (e.g. `-i`, `-i.bak`, `-Ei`,
-  // `-ni`, `-iE`), with reorder-tolerance for preceding/intervening flags.
+  // sed in-place: any flag bundle containing `i` — `-i`, `-i.bak`, `-i1`,
+  // `-Ei`, `-ni`, `-iE`, `-i''`, `"-i"`, `'-i'` — with reorder-tolerance
+  // for preceding/intervening flags. (?:[^|;&\n]+\s+)* allows leading
+  // arguments before the in-place flag without crossing pipeline stages.
   {
-    pattern: /\bsed\s+(?:[^|;&\n]+\s)*-[A-Za-z]*i[A-Za-z]*\b/,
+    pattern:
+      /\bsed\s+(?:[^|;&\n]+\s+)*['"]?-[\w.]*i[\w.]*['"]?(?=[\s'"|;&]|$)/,
     label: "sed -i (in-place edit)",
   },
-  // sed --in-place long form
+  // sed --in-place long form (with optional whole-token quoting)
   {
-    pattern: /\bsed\s+(?:[^|;&\n]+\s)*--in-place\b/,
+    pattern: /\bsed\s+(?:[^|;&\n]+\s+)*['"]?--in-place\b/,
     label: "sed --in-place",
   },
-  // perl in-place: `-i`, `-pi`, `-i.bak`, `-ipe`, etc.
+  // perl in-place: `-i`, `-pi`, `-i.bak`, `-ipe`, `-0pi`, `-i0`, etc.
   {
-    pattern: /\bperl\s+(?:[^|;&\n]+\s)*-[A-Za-z]*i[A-Za-z]*\b/,
+    pattern:
+      /\bperl\s+(?:[^|;&\n]+\s+)*['"]?-[\w.]*i[\w.]*['"]?(?=[\s'"|;&]|$)/,
     label: "perl -i (in-place edit)",
   },
   // gawk/awk: only the literal `-i inplace` extension form modifies files
   {
-    pattern: /\bg?awk\s+(?:[^|;&\n]+\s)*-i\s+inplace\b/,
+    pattern: /\bg?awk\s+(?:[^|;&\n]+\s+)*-i\s+inplace\b/,
     label: "awk -i inplace",
   },
 ];
