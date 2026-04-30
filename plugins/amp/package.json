@@ -1,0 +1,11 @@
+{
+  "name": "mala-safety",
+  "version": "0.1.0",
+  "description": "Bundled Amp plugin enforcing mala's dangerous-command and lock-ownership invariants. Loaded by Amp via PLUGINS=all under the binary install with a working Bun runtime.",
+  "private": true,
+  "type": "module",
+  "main": "mala-safety.ts",
+  "engines": {
+    "bun": ">=1.0.0"
+  }
+}
