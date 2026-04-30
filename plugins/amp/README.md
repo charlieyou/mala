@@ -22,10 +22,13 @@ This plugin enforces three invariants and nothing else:
    whichever surface the model uses.
 2. **In-place shell editor block** — closes a fail-open in the Bash branch.
    Rejects shell commands matching `FILE_MODIFYING_SHELL_PATTERNS`
-   (`sed -i`, `perl -i`, `awk -i inplace`, `gawk -i inplace`) because these
-   modify files without routing through Amp's file-write tools, so the
-   lock-ownership gate (3) below would never see the write. The reject
-   message redirects the agent to `edit_file` / `create_file` /
+   (`sed -i*`, `sed --in-place`, `perl -i*`, `awk -i inplace`,
+   `gawk -i inplace`) because these modify files without routing through
+   Amp's file-write tools, so the lock-ownership gate (3) below would never
+   see the write. Matching is regex-based and reorder-tolerant: `sed -E -i`,
+   `sed -ni`, `sed -i.bak`, `perl -pi -e`, etc. all match because the
+   patterns capture `i` anywhere inside a `-`-prefixed flag bundle. The
+   reject message redirects the agent to `edit_file` / `create_file` /
    `apply_patch`, which DO route through the lock-ownership gate. Shell
    redirects (`>`, `>>`, `tee`), `mv`, `cp`, and similar primitives have too
    many legitimate uses to block reliably without parsing target paths and
@@ -39,9 +42,13 @@ This plugin enforces three invariants and nothing else:
    embedded patch bodies (`input`, `patch`, `diff`, `patch_text`) — both
    Codex-style `*** Update/Add/Delete File: <path>` headers (plus the
    `*** Move to: <new_path>` sub-directive that appears inside an
-   `*** Update File:` block to rename) and unified-diff `+++ [b/]<path>`
-   headers are parsed. If extraction yields zero paths, the call is rejected
-   fail-closed rather than allowed.
+   `*** Update File:` block to rename) and unified-diff `--- [a/]<path>` /
+   `+++ [b/]<path>` headers (both sides; `/dev/null` filtered) are parsed.
+   Both sides of unified diffs are required because a rename writes to BOTH
+   `--- a/old` and `+++ b/new`, and a deletion writes to the `---` side
+   while `+++` is `/dev/null`; capturing only `+++` would let combined
+   owned-write + unowned-delete patches slip through. If extraction yields
+   zero paths, the call is rejected fail-closed rather than allowed.
 
 Out of scope for MVP (deferred to follow-ups):
 

@@ -299,8 +299,21 @@ function extractPathsFromPatchText(text: string): string[] {
   // greedier pattern would clip "file 1.ts" to "file" and lock-check
   // the wrong path, which is fail-open: if "file" is owned but
   // "file 1.ts" isn't, the wrong filename returns allow.
-  const unifiedRe = /^\+\+\+\s+(?:b\/)?([^\t\r\n]+?)(?:\t.*)?$/gm;
-  while ((m = unifiedRe.exec(text)) !== null) {
+  const unifiedDestRe = /^\+\+\+\s+(?:b\/)?([^\t\r\n]+?)(?:\t.*)?$/gm;
+  while ((m = unifiedDestRe.exec(text)) !== null) {
+    const p = m[1].trim();
+    if (p && p !== "/dev/null") out.add(p);
+  }
+
+  // Unified diff "old file" header: "--- [a/]<path>[\t<timestamp>]". Captured
+  // in addition to "+++" because each side independently names a file the
+  // patch touches: a rename writes to BOTH old and new (`--- a/old` →
+  // `+++ b/new`), and a deletion writes only to the `---` side while `+++`
+  // is `/dev/null`. Without this, an agent that owns only the destination
+  // could rename or delete an unowned source — fail-open. /dev/null is
+  // excluded because it represents "no file" (adds use `--- /dev/null`).
+  const unifiedSourceRe = /^---\s+(?:a\/)?([^\t\r\n]+?)(?:\t.*)?$/gm;
+  while ((m = unifiedSourceRe.exec(text)) !== null) {
     const p = m[1].trim();
     if (p && p !== "/dev/null") out.add(p);
   }
@@ -462,29 +475,53 @@ function checkBashCommand(command: string): ToolDecision | null {
 // would be allowed under --dangerously-allow-all even when this agent does
 // not hold the file's lock.
 //
-// Substring matching mirrors the dangerous-pattern style — the same false-
-// positive trade-off applies (e.g. `git commit -m "fixed sed -i bug"` is
-// blocked; the agent can rephrase). The list is kept narrow on purpose:
-// shell redirects (>, >>, tee), `mv`, `cp`, and similar primitives have too
-// many legitimate uses to block reliably without parsing target paths, so
-// they remain allowed (a known parity gap with the file-write-tool gate
-// tracked as a follow-up). The reject reason redirects the agent to the
-// proper file-write tools, which DO route through the lock-ownership gate.
+// Regex matching (rather than substring) is required because in-place flags
+// can be reordered, combined into a flag bundle, or carry a backup-extension
+// suffix — `sed -E -i ''`, `sed -ni`, `sed -i.bak`, `perl -pi -e`, etc. —
+// and substring `sed -i` only catches one syntactic form. Each pattern
+// captures `i` anywhere inside a `-`-prefixed flag bundle (`[A-Za-z]*i[A-Za-z]*`)
+// preceded by zero or more reorder-tolerant non-pipeline-separator tokens
+// (`(?:[^|;&\n]+\s)*`). Pipe / `;` / `&` / newline are excluded so the
+// match doesn't span across separate pipeline stages.
+//
+// The reject reason redirects the agent to the proper file-write tools,
+// which DO route through the lock-ownership gate. Shell redirects
+// (`>`, `>>`, `tee`), `mv`, `cp`, and similar primitives have too many
+// legitimate uses to block reliably without parsing target paths and
+// remain allowed (a known parity gap with the file-write-tool gate
+// tracked as a follow-up).
 
-const FILE_MODIFYING_SHELL_PATTERNS: readonly string[] = [
-  "sed -i",
-  "perl -i",
-  "awk -i inplace",
-  "gawk -i inplace",
+const FILE_MODIFYING_SHELL_PATTERNS: readonly { pattern: RegExp; label: string }[] = [
+  // sed in-place: any flag bundle containing `i` (e.g. `-i`, `-i.bak`, `-Ei`,
+  // `-ni`, `-iE`), with reorder-tolerance for preceding/intervening flags.
+  {
+    pattern: /\bsed\s+(?:[^|;&\n]+\s)*-[A-Za-z]*i[A-Za-z]*\b/,
+    label: "sed -i (in-place edit)",
+  },
+  // sed --in-place long form
+  {
+    pattern: /\bsed\s+(?:[^|;&\n]+\s)*--in-place\b/,
+    label: "sed --in-place",
+  },
+  // perl in-place: `-i`, `-pi`, `-i.bak`, `-ipe`, etc.
+  {
+    pattern: /\bperl\s+(?:[^|;&\n]+\s)*-[A-Za-z]*i[A-Za-z]*\b/,
+    label: "perl -i (in-place edit)",
+  },
+  // gawk/awk: only the literal `-i inplace` extension form modifies files
+  {
+    pattern: /\bg?awk\s+(?:[^|;&\n]+\s)*-i\s+inplace\b/,
+    label: "awk -i inplace",
+  },
 ];
 
 function checkFileModifyingShell(command: string): ToolDecision | null {
-  for (const pattern of FILE_MODIFYING_SHELL_PATTERNS) {
-    if (command.includes(pattern)) {
+  for (const { pattern, label } of FILE_MODIFYING_SHELL_PATTERNS) {
+    if (pattern.test(command)) {
       return {
         action: "reject-and-continue",
         message:
-          `Blocked file-modifying shell command pattern: ${pattern}. ` +
+          `Blocked file-modifying shell command pattern: ${label}. ` +
           "In-place shell editing bypasses the file-write tool gate and " +
           "would skip the lock-ownership check. Use edit_file / " +
           "create_file / apply_patch instead — these route through the " +
