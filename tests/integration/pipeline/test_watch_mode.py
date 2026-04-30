@@ -655,9 +655,11 @@ asyncio.run(main())
             # Send SIGINT
             proc.send_signal(signal.SIGINT)
 
-            # Wait for exit with timeout
+            # Wait for exit with timeout. Generous timeout because this test
+            # runs in parallel with many other tests and the subprocess can be
+            # starved of CPU under heavy load.
             try:
-                proc.wait(timeout=5.0)
+                proc.wait(timeout=15.0)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()

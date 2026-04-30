@@ -151,8 +151,10 @@ class TestCommandRunner:
         )
         script.chmod(0o755)
 
+        # Use a longer timeout so bash has time to install the trap before
+        # SIGTERM arrives, even under heavy parallel test load.
         runner = CommandRunner(
-            cwd=tmp_path, timeout_seconds=0.1, kill_grace_seconds=2.0
+            cwd=tmp_path, timeout_seconds=0.5, kill_grace_seconds=2.0
         )
         result = runner.run([str(script), str(tmp_path)])
 
@@ -175,15 +177,17 @@ class TestCommandRunner:
         )
         script.chmod(0o755)
 
+        # Use a longer timeout so bash has time to install the trap and write
+        # started.txt before SIGTERM arrives, even under heavy parallel test load.
         runner = CommandRunner(
-            cwd=tmp_path, timeout_seconds=0.1, kill_grace_seconds=0.1
+            cwd=tmp_path, timeout_seconds=0.5, kill_grace_seconds=0.1
         )
         start = time.monotonic()
         result = runner.run([str(script), str(tmp_path)])
         elapsed = time.monotonic() - start
 
         assert result.timed_out is True
-        assert elapsed < 1.0, f"Process hung, took {elapsed}s"
+        assert elapsed < 2.0, f"Process hung, took {elapsed}s"
         assert (tmp_path / "started.txt").exists()
         assert not (tmp_path / "survived.txt").exists()
 
@@ -264,27 +268,28 @@ class TestAsyncCommandRunner:
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
     async def test_async_timeout_kills_process_group(self, tmp_path: Path) -> None:
         """Verify that async timeout kills entire process group."""
-        # Create a script that spawns a child process that writes after delay
-        # We timeout at 0.1s, child tries to write at 0.3s
-        # If child survives the kill, it will write the file
+        # Create a script that spawns a child process that writes after delay.
+        # Timeouts of 0.1s with child-write at 0.3s are too tight under heavy
+        # parallel load — bash startup latency can push the child write before
+        # SIGTERM is delivered. Use 0.5s timeout with 1.5s child write instead.
         script = tmp_path / "spawner.sh"
         script.write_text(
             """#!/bin/bash
             # Spawn a child that writes to a file after delay
-            (sleep 0.3; echo "child survived" > "$1/child_output.txt") &
+            (sleep 1.5; echo "child survived" > "$1/child_output.txt") &
             # Parent sleeps forever
-            sleep 10
+            sleep 30
             """
         )
         script.chmod(0o755)
 
-        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.1)
+        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.5)
         result = await runner.run_async([str(script), str(tmp_path)])
 
         assert result.timed_out is True
 
         # Wait for child to have time to write (if it survived)
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(2.0)
 
         child_output = tmp_path / "child_output.txt"
         assert not child_output.exists(), "Child process should have been killed"
@@ -307,9 +312,10 @@ class TestAsyncCommandRunner:
         )
         script.chmod(0o755)
 
-        # Use short timeout but long grace period to ensure SIGTERM path
+        # Use a longer timeout so bash has time to install the trap before
+        # SIGTERM arrives, even under heavy parallel test load.
         runner = CommandRunner(
-            cwd=tmp_path, timeout_seconds=0.1, kill_grace_seconds=2.0
+            cwd=tmp_path, timeout_seconds=0.5, kill_grace_seconds=2.0
         )
         result = await runner.run_async([str(script), str(tmp_path)])
 
@@ -343,9 +349,10 @@ class TestAsyncCommandRunner:
         )
         script.chmod(0o755)
 
-        # Very short grace period to speed up test
+        # Use a longer timeout so bash has time to install the trap and write
+        # started.txt before SIGTERM arrives, even under heavy parallel load.
         runner = CommandRunner(
-            cwd=tmp_path, timeout_seconds=0.1, kill_grace_seconds=0.1
+            cwd=tmp_path, timeout_seconds=0.5, kill_grace_seconds=0.1
         )
         start = time.monotonic()
         result = await runner.run_async([str(script), str(tmp_path)])
@@ -353,7 +360,7 @@ class TestAsyncCommandRunner:
 
         assert result.timed_out is True
         # Should complete within timeout + grace + small buffer, not hang
-        assert elapsed < 1.0, f"Process hung, took {elapsed}s"
+        assert elapsed < 2.0, f"Process hung, took {elapsed}s"
 
         # Process was started
         assert (tmp_path / "started.txt").exists()
