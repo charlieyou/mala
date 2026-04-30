@@ -30,7 +30,7 @@ def find_cerberus_bin_path(claude_config_dir: Path) -> Path | None:
         if isinstance(data, dict):
             plugins = dict.get(data, "plugins")
             if isinstance(plugins, dict):
-                return list(plugins.items())  # ty:ignore[invalid-return-type]
+                return [(str(key), installs) for key, installs in plugins.items()]
         return []
 
     if plugins_file.exists():

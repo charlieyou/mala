@@ -62,6 +62,9 @@ def _lazy(name: str) -> Any:  # noqa: ANN401
     return getattr(sys.modules[__name__], name)
 
 
+ConfigData = dict[str, Any]
+
+
 def bootstrap() -> None:
     """Initialize environment.
 
@@ -1380,6 +1383,7 @@ def init(
         presets = get_init_presets()
         is_preset = False
         commands: list[str] = []
+        config_data: ConfigData
 
         if preset:
             # Validate preset exists
@@ -1388,7 +1392,7 @@ def init(
                 raise typer.Exit(1)
             is_preset = True
             commands = _get_preset_command_names(preset)
-            config_data: dict[str, object] = {"preset": preset}
+            config_data = {"preset": preset}
         elif is_tty:
             # Interactive preset selection
             selected_preset = _prompt_preset_selection(presets)
@@ -1425,7 +1429,7 @@ def init(
             if evidence_required is not None:
                 config_data["evidence_check"] = _build_evidence_check_dict(
                     evidence_required
-                )  # ty:ignore[invalid-assignment]
+                )
 
             # Per-issue review section (within commands block to avoid prompting
             # when init will fail for empty commands)
@@ -1435,7 +1439,7 @@ def init(
                 if per_issue_review_config is not None:
                     config_data["per_issue_review"] = _build_per_issue_review_dict(
                         per_issue_review_config
-                    )  # ty:ignore[invalid-assignment]
+                    )
             # Validation triggers section
             trigger_commands: list[str] | None = None
             if not skip_triggers:
@@ -1448,13 +1452,13 @@ def init(
             if trigger_commands is not None:
                 config_data["validation_triggers"] = _build_validation_triggers_dict(
                     trigger_commands
-                )  # ty:ignore[invalid-assignment]
+                )
 
         # Validate the generated config (max 3 retry attempts)
         max_retries = 3
         for attempt in range(max_retries + 1):
             try:
-                validate_init_config(config_data)  # type: ignore[arg-type]
+                validate_init_config(config_data)
                 break
             except ConfigError as e:
                 if not is_tty:
@@ -1485,14 +1489,14 @@ def init(
                             raise typer.Exit(1)
                         if custom_commands:
                             commands = list(custom_commands.keys())
-                            config_data["commands"] = custom_commands  # ty:ignore[invalid-assignment]
+                            config_data["commands"] = custom_commands
                     # Re-prompt for evidence, per-issue review, and triggers
                     if not skip_evidence and commands:
                         evidence_required = _prompt_evidence_check(commands, is_preset)
                         if evidence_required is not None:
                             config_data["evidence_check"] = _build_evidence_check_dict(
                                 evidence_required
-                            )  # ty:ignore[invalid-assignment]
+                            )
                         else:
                             config_data.pop("evidence_check", None)
                     # Re-prompt per-issue review (only when commands exist)
@@ -1500,7 +1504,7 @@ def init(
                         per_issue_review_config = _prompt_per_issue_review()
                         if per_issue_review_config is not None:
                             config_data["per_issue_review"] = (
-                                _build_per_issue_review_dict(per_issue_review_config)  # ty:ignore[invalid-assignment]
+                                _build_per_issue_review_dict(per_issue_review_config)
                             )
                         else:
                             config_data.pop("per_issue_review", None)
@@ -1508,7 +1512,7 @@ def init(
                         trigger_commands = _prompt_run_end_trigger(commands, is_preset)
                         if trigger_commands is not None:
                             config_data["validation_triggers"] = (
-                                _build_validation_triggers_dict(trigger_commands)  # ty:ignore[invalid-assignment]
+                                _build_validation_triggers_dict(trigger_commands)
                             )
                         else:
                             config_data.pop("validation_triggers", None)

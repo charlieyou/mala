@@ -7,11 +7,12 @@ These tests verify watch mode loop behavior including:
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock
 
 import pytest
 
-from src.core.models import PeriodicValidationConfig, WatchConfig
+from src.core.models import OrderPreference, PeriodicValidationConfig, WatchConfig
 from src.pipeline.issue_execution_coordinator import (
     AbortResult,
     CoordinatorConfig,
@@ -19,6 +20,65 @@ from src.pipeline.issue_execution_coordinator import (
 )
 from tests.fakes.event_sink import FakeEventSink
 from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
+
+ReadyCallback = Callable[..., Awaitable[list[str]]]
+ReadyResult = list[str] | Exception
+
+
+class ScriptedReadyIssueProvider(FakeIssueProvider):
+    """Fake issue provider with injectable ready-poll behavior."""
+
+    def __init__(
+        self,
+        issues: dict[str, FakeIssue] | None = None,
+        *,
+        ready_results: list[ReadyResult] | None = None,
+    ) -> None:
+        super().__init__(issues)
+        self.ready_callback: ReadyCallback | None = None
+        self.ready_results = ready_results
+
+    async def get_ready_async(
+        self,
+        exclude_ids: set[str] | None = None,
+        epic_id: str | None = None,
+        only_ids: list[str] | None = None,
+        suppress_warn_ids: set[str] | None = None,
+        include_wip: bool = False,
+        focus: bool = True,
+        orphans_only: bool = False,
+        order_preference: OrderPreference = OrderPreference.FOCUS,
+    ) -> list[str]:
+        if self.ready_callback is not None:
+            return await self.ready_callback(
+                exclude_ids,
+                epic_id,
+                only_ids,
+                suppress_warn_ids,
+                include_wip,
+                focus,
+                orphans_only,
+                order_preference,
+            )
+
+        if self.ready_results is not None:
+            if not self.ready_results:
+                return []
+            result = self.ready_results.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        return await super().get_ready_async(
+            exclude_ids,
+            epic_id,
+            only_ids,
+            suppress_warn_ids,
+            include_wip,
+            focus,
+            orphans_only,
+            order_preference,
+        )
 
 
 class TestWatchModeSleeps:
@@ -54,7 +114,7 @@ class TestWatchModeSleeps:
         Expected behavior: sleeps and re-polls when watch mode enabled.
         When no interrupt_event is provided, the sleep_fn is used.
         """
-        provider = FakeIssueProvider()  # No issues
+        provider = ScriptedReadyIssueProvider()  # No issues
         watch_config = WatchConfig(enabled=True, poll_interval_seconds=30.0)
         validation_config = PeriodicValidationConfig(validate_every=10)
 
@@ -104,7 +164,7 @@ class TestWatchModeInterrupt:
         event_sink: FakeEventSink,
     ) -> None:
         """When interrupt_event is set, watch mode should exit gracefully."""
-        provider = FakeIssueProvider()  # No issues
+        provider = ScriptedReadyIssueProvider()  # No issues
         watch_config = WatchConfig(enabled=True, poll_interval_seconds=60.0)
         validation_config = PeriodicValidationConfig(validate_every=10)
         interrupt_event = asyncio.Event()
@@ -144,7 +204,7 @@ class TestWatchModeValidation:
     ) -> None:
         """Validation callback should be called when completed count reaches threshold."""
         # Set up issues that will complete
-        provider = FakeIssueProvider(
+        provider = ScriptedReadyIssueProvider(
             issues={
                 f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
                 for i in range(5)
@@ -186,7 +246,7 @@ class TestWatchModeValidation:
                 interrupt_event.set()
             return remaining
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        provider.ready_callback = get_ready_side_effect
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -210,7 +270,7 @@ class TestWatchModeValidation:
     ) -> None:
         """Validation threshold should advance by validate_every after each trigger."""
         # Set up enough issues to trigger multiple validations
-        provider = FakeIssueProvider(
+        provider = ScriptedReadyIssueProvider(
             issues={
                 f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
                 for i in range(25)
@@ -247,7 +307,7 @@ class TestWatchModeValidation:
                 interrupt_event.set()
             return remaining
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        provider.ready_callback = get_ready_side_effect
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -271,7 +331,7 @@ class TestWatchModeValidation:
     ) -> None:
         """Parallel completions (9→12) should trigger validation only once."""
         # Set up 12 issues that will complete in parallel (max_agents=4)
-        provider = FakeIssueProvider(
+        provider = ScriptedReadyIssueProvider(
             issues={
                 f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
                 for i in range(12)
@@ -308,7 +368,7 @@ class TestWatchModeValidation:
                 interrupt_event.set()
             return remaining
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        provider.ready_callback = get_ready_side_effect
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -331,7 +391,7 @@ class TestWatchModeValidation:
         event_sink: FakeEventSink,
     ) -> None:
         """Validation failure should return exit_code=1."""
-        provider = FakeIssueProvider(
+        provider = ScriptedReadyIssueProvider(
             issues={
                 f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
                 for i in range(5)
@@ -363,7 +423,7 @@ class TestWatchModeValidation:
                 if f"issue-{i}" not in coord.completed_ids
             ]
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        provider.ready_callback = get_ready_side_effect
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -386,7 +446,7 @@ class TestWatchModeValidation:
         event_sink: FakeEventSink,
     ) -> None:
         """Successful completion with passing validation should return exit_code=0."""
-        provider = FakeIssueProvider(
+        provider = ScriptedReadyIssueProvider(
             issues={
                 f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
                 for i in range(3)
@@ -417,7 +477,7 @@ class TestWatchModeValidation:
                 if f"issue-{i}" not in coord.completed_ids
             ]
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        provider.ready_callback = get_ready_side_effect
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -438,7 +498,7 @@ class TestWatchModeValidation:
         event_sink: FakeEventSink,
     ) -> None:
         """SIGINT during active processing should run final validation."""
-        provider = FakeIssueProvider(
+        provider = ScriptedReadyIssueProvider(
             issues={"issue-1": FakeIssue(id="issue-1", status="ready")}
         )
         watch_config = WatchConfig(enabled=True)
@@ -465,7 +525,7 @@ class TestWatchModeValidation:
         async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
             return ["issue-1"] if "issue-1" not in coord.completed_ids else []
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        provider.ready_callback = get_ready_side_effect
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -489,7 +549,7 @@ class TestWatchModeValidation:
     ) -> None:
         """Final validation should be skipped if validation just ran at threshold."""
         # Set up exactly 10 issues with validate_every=10
-        provider = FakeIssueProvider(
+        provider = ScriptedReadyIssueProvider(
             issues={
                 f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
                 for i in range(10)
@@ -525,7 +585,7 @@ class TestWatchModeValidation:
                 interrupt_event.set()
             return remaining
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        provider.ready_callback = get_ready_side_effect
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -548,7 +608,7 @@ class TestWatchModeValidation:
         event_sink: FakeEventSink,
     ) -> None:
         """Final validation should run on normal exit if issues completed since last validation."""
-        provider = FakeIssueProvider(
+        provider = ScriptedReadyIssueProvider(
             issues={
                 f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
                 for i in range(3)
@@ -579,7 +639,7 @@ class TestWatchModeValidation:
                 if f"issue-{i}" not in coord.completed_ids
             ]
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        provider.ready_callback = get_ready_side_effect
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -599,7 +659,7 @@ class TestWatchModeValidation:
         event_sink: FakeEventSink,
     ) -> None:
         """--max-issues should use completed_count, not spawned count."""
-        provider = FakeIssueProvider(
+        provider = ScriptedReadyIssueProvider(
             issues={
                 f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
                 for i in range(10)
@@ -633,7 +693,7 @@ class TestWatchModeValidation:
                 if f"issue-{i}" not in coord.completed_ids
             ]
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        provider.ready_callback = get_ready_side_effect
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -656,7 +716,7 @@ class TestWatchModeValidation:
         event_sink: FakeEventSink,
     ) -> None:
         """--max-issues should exit watch mode when completed_count reaches limit."""
-        provider = FakeIssueProvider(
+        provider = ScriptedReadyIssueProvider(
             issues={
                 f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
                 for i in range(10)
@@ -686,7 +746,7 @@ class TestWatchModeValidation:
                 if f"issue-{i}" not in coord.completed_ids
             ]
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        provider.ready_callback = get_ready_side_effect
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -733,9 +793,8 @@ class TestPollFailureHandling:
         sleep_fn: AsyncMock,
     ) -> None:
         """Poll failure should increment consecutive_poll_failures counter."""
-        provider = FakeIssueProvider()
-        provider.get_ready_async = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-            side_effect=[Exception("Network error"), []]
+        provider = ScriptedReadyIssueProvider(
+            ready_results=[Exception("Network error"), []]
         )
 
         coord = IssueExecutionCoordinator(
@@ -763,10 +822,9 @@ class TestPollFailureHandling:
         sleep_fn: AsyncMock,
     ) -> None:
         """Successful poll should reset consecutive_poll_failures to 0."""
-        provider = FakeIssueProvider()
-        # Fail twice, succeed (should NOT abort - counter reset means 3rd poll not failure #3)
-        provider.get_ready_async = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-            side_effect=[
+        provider = ScriptedReadyIssueProvider(
+            # Fail twice, succeed (should NOT abort - counter reset means 3rd poll not failure #3)
+            ready_results=[
                 Exception("Fail 1"),
                 Exception("Fail 2"),
                 [],  # Success - resets counter, exits (no work)
@@ -799,9 +857,8 @@ class TestPollFailureHandling:
         sleep_fn: AsyncMock,
     ) -> None:
         """Three consecutive poll failures should abort with exit code 3."""
-        provider = FakeIssueProvider()
-        provider.get_ready_async = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-            side_effect=[
+        provider = ScriptedReadyIssueProvider(
+            ready_results=[
                 Exception("Fail 1"),
                 Exception("Fail 2"),
                 Exception("Fail 3"),
@@ -833,9 +890,12 @@ class TestPollFailureHandling:
         sleep_fn: AsyncMock,
     ) -> None:
         """Poll failure abort should return exit_code=3 and exit_reason='poll_failed'."""
-        provider = FakeIssueProvider()
-        provider.get_ready_async = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-            side_effect=Exception("Persistent failure")
+        provider = ScriptedReadyIssueProvider(
+            ready_results=[
+                Exception("Persistent failure"),
+                Exception("Persistent failure"),
+                Exception("Persistent failure"),
+            ]
         )
 
         coord = IssueExecutionCoordinator(
@@ -861,7 +921,7 @@ class TestPollFailureHandling:
         sleep_fn: AsyncMock,
     ) -> None:
         """Poll failure abort should run final validation if issues completed."""
-        provider = FakeIssueProvider(
+        provider = ScriptedReadyIssueProvider(
             issues={"issue-1": FakeIssue(id="issue-1", status="ready")}
         )
 
@@ -875,9 +935,7 @@ class TestPollFailureHandling:
                 return ["issue-1"]
             raise Exception("Poll failed")
 
-        provider.get_ready_async = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-            side_effect=get_ready_side_effect
-        )
+        provider.ready_callback = get_ready_side_effect
 
         coord = IssueExecutionCoordinator(
             beads=provider,
@@ -940,7 +998,7 @@ class TestWatchModeIdleBehavior:
         sleep_fn: AsyncMock,
     ) -> None:
         """Watch mode should continue and process issues that appear after sleep."""
-        provider = FakeIssueProvider()
+        provider = ScriptedReadyIssueProvider()
         watch_config = WatchConfig(enabled=True, poll_interval_seconds=10.0)
 
         coord = IssueExecutionCoordinator(
@@ -960,7 +1018,7 @@ class TestWatchModeIdleBehavior:
                 return ["issue-1"]  # Second poll: issue appears
             return []  # Third poll: no issues
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        provider.ready_callback = get_ready_side_effect
 
         async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
             async def complete_immediately() -> None:
@@ -997,7 +1055,7 @@ class TestWatchModeIdleBehavior:
         sleep_fn: AsyncMock,
     ) -> None:
         """Idle state requires both no ready issues AND no active agents."""
-        provider = FakeIssueProvider(
+        provider = ScriptedReadyIssueProvider(
             issues={"issue-1": FakeIssue(id="issue-1", status="ready")}
         )
         watch_config = WatchConfig(enabled=True, poll_interval_seconds=10.0)
@@ -1018,7 +1076,7 @@ class TestWatchModeIdleBehavior:
                 return ["issue-1"]  # First poll: issue ready
             return []  # Subsequent polls: no issues
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        provider.ready_callback = get_ready_side_effect
 
         async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
             async def complete_immediately() -> None:
@@ -1055,7 +1113,7 @@ class TestWatchModeIdleBehavior:
         event_sink: FakeEventSink,
     ) -> None:
         """SIGINT during idle should run final validation if issues completed."""
-        provider = FakeIssueProvider(
+        provider = ScriptedReadyIssueProvider(
             issues={"issue-1": FakeIssue(id="issue-1", status="ready")}
         )
         watch_config = WatchConfig(enabled=True, poll_interval_seconds=60.0)
@@ -1077,7 +1135,7 @@ class TestWatchModeIdleBehavior:
                 return ["issue-1"]
             return []  # No more issues after first
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        provider.ready_callback = get_ready_side_effect
 
         async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
             async def complete_immediately() -> None:
@@ -1115,7 +1173,7 @@ class TestWatchModeIdleBehavior:
         Verifies that validate_every config controls when validation triggers:
         validation should NOT trigger until the threshold is crossed.
         """
-        provider = FakeIssueProvider(
+        provider = ScriptedReadyIssueProvider(
             issues={
                 f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
                 for i in range(3)
@@ -1141,7 +1199,7 @@ class TestWatchModeIdleBehavior:
                 return ["issue-0", "issue-1", "issue-2"]
             return []
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        provider.ready_callback = get_ready_side_effect
 
         async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
             async def complete_immediately() -> None:
@@ -1183,7 +1241,7 @@ class TestWatchModeIdleBehavior:
         import time
         from unittest.mock import patch
 
-        provider = FakeIssueProvider()
+        provider = ScriptedReadyIssueProvider()
         watch_config = WatchConfig(enabled=True, poll_interval_seconds=1.0)
 
         coord = IssueExecutionCoordinator(

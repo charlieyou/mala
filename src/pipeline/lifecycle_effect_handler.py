@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, TypeVar, cast
 
 from src.domain.lifecycle import Effect
 from src.domain.prompts import (
@@ -24,10 +24,10 @@ from src.pipeline.review_formatter import format_review_issues
 
 if TYPE_CHECKING:
     from src.core.protocols.lifecycle import ISessionLifecycle
-    from src.core.protocols.review import IReviewRunner
+    from src.core.protocols.review import IReviewRunner, ReviewIssueProtocol
     from src.core.protocols.validation import IGateRunner
     import asyncio
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Sequence
     from pathlib import Path
 
     from src.core.protocols.events import MalaEventSink
@@ -237,7 +237,7 @@ def _build_review_retry_prompt(
         Formatted prompt string for the agent to address review issues.
     """
     review_issues_text = format_review_issues(
-        review_result.issues,  # type: ignore[arg-type]  # ReviewIssue ⊂ ReviewIssueProtocol  # ty:ignore[invalid-argument-type]
+        cast("Sequence[ReviewIssueProtocol]", review_result.issues),
         base_path=repo_path,
     )
     custom_commands_section = build_custom_commands_section(

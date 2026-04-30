@@ -373,8 +373,6 @@ class TestNoProgressDetection:
         log_path.write_text("")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Same commit as before, file has no content after offset 0
         is_no_progress = gate.check_no_progress(
             log_path=log_path,
@@ -465,8 +463,6 @@ class TestNoProgressDetection:
         log_path.write_text(log_content + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Set offset to after the evidence
         offset = log_path.stat().st_size
 
@@ -511,8 +507,6 @@ class TestNoProgressDetection:
         log_path.write_text("")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         is_no_progress = gate.check_no_progress(
             log_path=log_path,
             log_offset=0,
@@ -530,8 +524,6 @@ class TestNoProgressDetection:
     ) -> None:
         """Should handle missing log file (no evidence = no progress)."""
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         nonexistent = tmp_path / "nonexistent.jsonl"
 
         is_no_progress = gate.check_no_progress(
@@ -557,24 +549,27 @@ class TestNoProgressDetection:
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("")  # No new evidence
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        dirty_tree_runner = FakeCommandRunner(
+            responses={
+                ("git", "status", "--porcelain"): CommandResult(
+                    command=["git", "status", "--porcelain"],
+                    returncode=0,
+                    stdout=" M src/example.py\n",
+                    stderr="",
+                )
+            }
+        )
+        gate = EvidenceCheck(tmp_path, log_provider, dirty_tree_runner)
 
-        # Mock _has_working_tree_changes to return True
-        original_method = gate._has_working_tree_changes
-        gate._has_working_tree_changes = lambda: True  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        is_no_progress = gate.check_no_progress(
+            log_path=log_path,
+            log_offset=0,
+            previous_commit_hash="abc1234",
+            current_commit_hash="abc1234",  # Same commit
+        )
 
-        try:
-            is_no_progress = gate.check_no_progress(
-                log_path=log_path,
-                log_offset=0,
-                previous_commit_hash="abc1234",
-                current_commit_hash="abc1234",  # Same commit
-            )
-
-            # Working tree changes = progress
-            assert is_no_progress is False
-        finally:
-            gate._has_working_tree_changes = original_method  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        # Working tree changes = progress
+        assert is_no_progress is False
 
 
 class TestGateResultNoProgress:
@@ -1060,8 +1055,6 @@ class TestIssueResolutionMarkerParsing:
     ) -> None:
         """Should return None for missing log file."""
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         nonexistent = tmp_path / "nonexistent.jsonl"
 
         resolution = gate.parse_issue_resolution(nonexistent)
@@ -1105,8 +1098,6 @@ class TestIssueResolutionMarkerParsing:
         log_path.write_text(first_entry + "\n" + second_entry + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         offset = len(first_entry) + 1  # +1 for newline
         resolution, _ = gate.parse_issue_resolution_from_offset(log_path, offset=offset)
 
@@ -1139,8 +1130,6 @@ class TestIssueResolutionMarkerParsing:
         log_path.write_text(entry + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Offset at end of file - marker is before
         offset = log_path.stat().st_size
         resolution, _ = gate.parse_issue_resolution_from_offset(log_path, offset=offset)
@@ -1209,8 +1198,6 @@ class TestScopeAwareEvidence:
         # Create fake command runner for clean working tree
         fake_runner = FakeCommandRunner(allow_unregistered=True)
         gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -1253,8 +1240,6 @@ class TestScopeAwareEvidence:
         # Create fake command runner for clean working tree
         fake_runner = FakeCommandRunner(allow_unregistered=True)
         gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -1333,8 +1318,6 @@ class TestScopeAwareEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         resolution = gate.parse_issue_resolution(log_path)
 
         # Should either return None or have empty rationale (which gate should reject)
@@ -1462,8 +1445,6 @@ class TestClearFailureMessages:
         # Create gate with fake command runner - no commit found
         fake_runner = FakeCommandRunner(allow_unregistered=True)
         gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = gate.check_with_resolution("missing-commit-123", log_path, spec=spec)
 
@@ -1516,8 +1497,6 @@ class TestClearFailureMessages:
             with_timestamp=False,
         )
         gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = gate.check_with_resolution("test-123", log_path, spec=spec)
 
@@ -1551,8 +1530,6 @@ class TestClearFailureMessages:
         # Create fake command runner for clean working tree
         fake_runner = FakeCommandRunner(allow_unregistered=True)
         gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -2150,8 +2127,6 @@ class TestCheckWithResolutionSpec:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
@@ -2198,8 +2173,6 @@ class TestCheckWithResolutionSpec:
         log_path.write_text("{}\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         with pytest_module.raises(ValueError, match="spec is required"):
             gate.check_with_resolution(
@@ -2237,8 +2210,6 @@ class TestUserPromptInjectionPrevention:
         log_path.write_text(user_entry + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         resolution = gate.parse_issue_resolution(log_path)
 
         # Should NOT find resolution from user message
@@ -2269,8 +2240,6 @@ class TestUserPromptInjectionPrevention:
         log_path.write_text(user_entry + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         resolution = gate.parse_issue_resolution(log_path)
 
         assert resolution is None
@@ -2302,8 +2271,6 @@ class TestUserPromptInjectionPrevention:
         log_path.write_text(assistant_entry + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         resolution = gate.parse_issue_resolution(log_path)
 
         assert resolution is not None
@@ -2456,8 +2423,6 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
             with_timestamp=True,
         )
         gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         base_spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -2535,8 +2500,6 @@ class TestByteOffsetConsistency:
         log_path.write_text(content)
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -2596,8 +2559,6 @@ class TestByteOffsetConsistency:
         log_path.write_text(content)
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         resolution, new_offset = gate.parse_issue_resolution_from_offset(log_path, 0)
 
         assert resolution is not None
@@ -2636,8 +2597,6 @@ class TestByteOffsetConsistency:
             f.write((valid_entry + "\n").encode("utf-8"))
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -2674,8 +2633,6 @@ class TestByteOffsetConsistency:
         log_path.write_text(content)
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -2703,8 +2660,6 @@ class TestByteOffsetConsistency:
         log_path.write_text(entry + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -2811,8 +2766,6 @@ class TestSpecDrivenEvidencePatterns:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -2868,8 +2821,6 @@ class TestSpecDrivenEvidencePatterns:
         log_path.write_text(log_content + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Use the custom spec (not build_validation_spec which would overwrite it)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
@@ -2960,8 +2911,6 @@ class TestSpecDrivenEvidencePatterns:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Use the custom spec (not build_validation_spec which would overwrite it)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
@@ -3054,8 +3003,6 @@ class TestSpecDrivenEvidencePatterns:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Use the custom spec (not build_validation_spec which would overwrite it)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
@@ -3116,8 +3063,6 @@ class TestValidationExitCodeParsing:
         log_path.write_text(tool_use_entry + "\n" + tool_result_entry + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3188,8 +3133,6 @@ class TestValidationExitCodeParsing:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3256,8 +3199,6 @@ class TestValidationExitCodeParsing:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3327,8 +3268,6 @@ class TestValidationExitCodeParsing:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3467,8 +3406,6 @@ class TestValidationExitCodeParsing:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3520,7 +3457,6 @@ class TestAlreadyCompleteResolution:
             with_timestamp=False,
         )
         gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3580,7 +3516,6 @@ class TestAlreadyCompleteResolution:
             with_timestamp=False,
         )
         gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3627,7 +3562,6 @@ class TestAlreadyCompleteResolution:
         # Create gate with fake command runner - no commit found
         fake_runner = FakeCommandRunner(allow_unregistered=True)
         gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -4363,8 +4297,6 @@ class TestSpecCommandChangesPropagation:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Use the custom strict spec (not build_validation_spec which would overwrite it)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
@@ -4521,8 +4453,6 @@ class TestLogProviderInjection:
             log_provider=cast("LogProvider", mock_provider),
             command_runner=fake_cmd_runner,
         )
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Verify LogProvider is used
         # Create minimal mala.yaml for test
@@ -4579,8 +4509,6 @@ class TestLogProviderInjection:
             log_provider=cast("LogProvider", mock_provider),
             command_runner=fake_cmd_runner,
         )
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Verify internal provider is FileSystemLogProvider
         assert gate._log_provider is mock_provider
@@ -4755,7 +4683,6 @@ class TestExtractedToolNames:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)

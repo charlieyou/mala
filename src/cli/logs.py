@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import typer
 from tabulate import tabulate
@@ -18,6 +18,9 @@ from src.infra.io.log_output.run_metadata import (
     parse_timestamp,
 )
 from src.infra.tools.env import get_repo_runs_dir, get_runs_dir
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 logs_app = typer.Typer(name="logs", help="Search and inspect mala run logs")
 
@@ -522,10 +525,11 @@ def _print_run_details(run: dict[str, Any]) -> None:
             if not isinstance(issue_data, dict):
                 print(f"  {issue_id}: (invalid data)")
                 continue
+            issue = cast("Mapping[str, object]", issue_data)
 
-            status = issue_data.get("status", "-")  # ty:ignore[no-matching-overload]
-            session_id = issue_data.get("session_id", "-")  # ty:ignore[no-matching-overload]
-            log_path = issue_data.get("log_path", "-")  # ty:ignore[no-matching-overload]
+            status = issue.get("status", "-")
+            session_id = issue.get("session_id", "-")
+            log_path = issue.get("log_path", "-")
 
             print(f"  {issue_id}:")
             print(f"    Status:     {status}")

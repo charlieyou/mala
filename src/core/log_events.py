@@ -41,7 +41,7 @@ Parsing Modes:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 
 @dataclass(frozen=True)
@@ -165,7 +165,7 @@ class LogParseError(Exception):
         super().__init__(f"Log parse error: {reason}\n\n{_SCHEMA_DESCRIPTION}")
 
 
-def _parse_content_block(block: dict[str, Any]) -> ContentBlock | None:
+def _parse_content_block(block: object) -> ContentBlock | None:
     """Parse a content block from raw dict data.
 
     Args:
@@ -177,29 +177,34 @@ def _parse_content_block(block: dict[str, Any]) -> ContentBlock | None:
     """
     if not isinstance(block, dict):
         return None
+    block_data = cast("dict[str, object]", block)
 
-    block_type = block.get("type")
+    block_type = block_data.get("type")
 
     if block_type == "text":
-        text = block.get("text", "")
+        text = block_data.get("text", "")
         if not isinstance(text, str):
             return None
         return TextBlock(text=text)
 
     if block_type == "tool_use":
-        tool_id = block.get("id", "")
-        name = block.get("name", "")
-        tool_input = block.get("input", {})
+        tool_id = block_data.get("id", "")
+        name = block_data.get("name", "")
+        tool_input = block_data.get("input", {})
         if not isinstance(tool_id, str) or not isinstance(name, str):
             return None
         if not isinstance(tool_input, dict):
             tool_input = {}
-        return ToolUseBlock(id=tool_id, name=name, input=tool_input)
+        return ToolUseBlock(
+            id=tool_id,
+            name=name,
+            input=cast("dict[str, Any]", tool_input),
+        )
 
     if block_type == "tool_result":
-        tool_use_id = block.get("tool_use_id", "")
-        content = block.get("content", "")
-        is_error = block.get("is_error", False)
+        tool_use_id = block_data.get("tool_use_id", "")
+        content = block_data.get("content", "")
+        is_error = block_data.get("is_error", False)
         if not isinstance(tool_use_id, str):
             return None
         # Reject non-bool is_error to avoid "false" -> True misclassification
@@ -213,7 +218,7 @@ def _parse_content_block(block: dict[str, Any]) -> ContentBlock | None:
     return None
 
 
-def _parse_content_block_strict(block: dict[str, Any], index: int) -> ContentBlock:
+def _parse_content_block_strict(block: object, index: int) -> ContentBlock:
     """Parse a content block in strict mode, raising on errors.
 
     Args:
@@ -231,8 +236,9 @@ def _parse_content_block_strict(block: dict[str, Any], index: int) -> ContentBlo
             f"Content block at index {index} must be a dict, got {type(block).__name__}",
             data={"block": block, "index": index},
         )
+    block_data = cast("dict[str, object]", block)
 
-    block_type = block.get("type")
+    block_type = block_data.get("type")
     if block_type is None:
         raise LogParseError(
             f"Content block at index {index} missing required 'type' field",
@@ -240,7 +246,7 @@ def _parse_content_block_strict(block: dict[str, Any], index: int) -> ContentBlo
         )
 
     if block_type == "text":
-        text = block.get("text")
+        text = block_data.get("text")
         if text is None:
             raise LogParseError(
                 f"Text block at index {index} missing required 'text' field",
@@ -255,9 +261,9 @@ def _parse_content_block_strict(block: dict[str, Any], index: int) -> ContentBlo
         return TextBlock(text=text)
 
     if block_type == "tool_use":
-        tool_id = block.get("id")
-        name = block.get("name")
-        tool_input = block.get("input", {})
+        tool_id = block_data.get("id")
+        name = block_data.get("name")
+        tool_input = block_data.get("input", {})
         # Require id and name fields in strict mode
         if tool_id is None:
             raise LogParseError(
@@ -287,12 +293,16 @@ def _parse_content_block_strict(block: dict[str, Any], index: int) -> ContentBlo
                 f"expected dict, got {type(tool_input).__name__}",
                 data={"block": block, "index": index},
             )
-        return ToolUseBlock(id=tool_id, name=name, input=tool_input)
+        return ToolUseBlock(
+            id=tool_id,
+            name=name,
+            input=cast("dict[str, Any]", tool_input),
+        )
 
     if block_type == "tool_result":
-        tool_use_id = block.get("tool_use_id")
-        content = block.get("content", "")
-        is_error = block.get("is_error", False)
+        tool_use_id = block_data.get("tool_use_id")
+        content = block_data.get("content", "")
+        is_error = block_data.get("is_error", False)
         # Require tool_use_id field in strict mode
         if tool_use_id is None:
             raise LogParseError(
@@ -472,7 +482,7 @@ def parse_log_entry_strict(data: dict[str, Any]) -> LogEntry:
     # Parse content blocks in strict mode
     content_blocks: list[ContentBlock] = []
     for i, block_data in enumerate(content_data):
-        block = _parse_content_block_strict(block_data, i)  # ty:ignore[invalid-argument-type]
+        block = _parse_content_block_strict(block_data, i)
         content_blocks.append(block)
 
     if entry_type == "assistant":

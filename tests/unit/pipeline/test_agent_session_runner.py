@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -32,6 +33,9 @@ from tests.helpers.protocol_stubs import (
     StubReviewRunner,
     StubSessionLifecycle,
 )
+
+if TYPE_CHECKING:
+    from src.core.protocols.sdk import SDKClientProtocol
 
 
 @dataclass
@@ -377,14 +381,51 @@ class TestBuildSessionOutputFiltering:
 class FakeSDKClientFactory:
     """Fake SDK client factory for testing."""
 
-    def create_client(
-        self,
-        options: object,
-        query: str,
-    ) -> object:
+    def create(self, options: object) -> SDKClientProtocol:
+        del options
         raise NotImplementedError("Should not be called in early interrupt tests")
 
-    def with_resume(self, options: object, session_id: str) -> object:
+    def create_options(
+        self,
+        *,
+        cwd: str,
+        permission_mode: str = "bypassPermissions",
+        model: str = "opus",
+        system_prompt: dict[str, str] | None = None,
+        output_format: object | None = None,
+        settings: str | None = None,
+        setting_sources: list[str] | None = None,
+        mcp_servers: object | None = None,
+        disallowed_tools: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        hooks: dict[str, list[object]] | None = None,
+        resume: str | None = None,
+    ) -> object:
+        del (
+            cwd,
+            permission_mode,
+            model,
+            system_prompt,
+            output_format,
+            settings,
+            setting_sources,
+            mcp_servers,
+            disallowed_tools,
+            env,
+            hooks,
+            resume,
+        )
+        return {}
+
+    def create_hook_matcher(
+        self,
+        matcher: object | None,
+        hooks: list[object],
+    ) -> object:
+        return ("matcher", matcher, hooks)
+
+    def with_resume(self, options: object, resume: str | None) -> object:
+        del options, resume
         raise NotImplementedError("Should not be called in early interrupt tests")
 
 
@@ -416,9 +457,9 @@ class TestEarlyInterruptPath:
         )
         runner = AgentSessionRunner(
             config=config,
-            agent_provider=FakeAgentProvider(FakeSDKClientFactory()),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            agent_provider=FakeAgentProvider(FakeSDKClientFactory()),
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
             session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
         )
 
@@ -451,9 +492,9 @@ class TestEarlyInterruptPath:
         )
         runner = AgentSessionRunner(
             config=config,
-            agent_provider=FakeAgentProvider(FakeSDKClientFactory()),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            agent_provider=FakeAgentProvider(FakeSDKClientFactory()),
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
             session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
         )
 
@@ -486,9 +527,9 @@ class TestEarlyInterruptPath:
         )
         runner = AgentSessionRunner(
             config=config,
-            agent_provider=FakeAgentProvider(FakeSDKClientFactory()),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            agent_provider=FakeAgentProvider(FakeSDKClientFactory()),
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
             session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
         )
 
@@ -587,7 +628,7 @@ class TestProtocolInterfaceAcceptance:
         # Should not raise
         runner = AgentSessionRunner(
             config=config,
-            agent_provider=FakeAgentProvider(FakeSDKClientFactory()),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            agent_provider=FakeAgentProvider(FakeSDKClientFactory()),
             gate_runner=FakeGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             review_runner=FakeReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             session_lifecycle=FakeSessionLifecycle(),  # type: ignore[arg-type]
@@ -677,7 +718,7 @@ class TestProtocolInterfaceAcceptance:
 
         runner = AgentSessionRunner(
             config=config,
-            agent_provider=FakeAgentProvider(FakeSDKClientFactory()),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            agent_provider=FakeAgentProvider(FakeSDKClientFactory()),
             gate_runner=FakeGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             review_runner=FakeReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             session_lifecycle=FakeSessionLifecycle(),

@@ -678,11 +678,14 @@ class EpicVerifier:
         # Clamp to non-negative integers to prevent infinite loops from invalid input
         def _safe_int(val: object, default: int) -> int:
             """Safely convert to non-negative int, clamping invalid values."""
-            try:
-                n = int(val)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-                return max(0, n)
-            except (TypeError, ValueError):
-                return default
+            if isinstance(val, int):
+                return max(0, val)
+            if isinstance(val, str):
+                try:
+                    return max(0, int(val))
+                except ValueError:
+                    return default
+            return default
 
         if self.retry_policy is not None:
             timeout_retries = _safe_int(self.retry_policy.timeout_retries, 3)

@@ -138,6 +138,7 @@ class ReviewInputProtocol(Protocol):
     author_context: str | None
     previous_findings: Sequence[ReviewIssueProtocol] | None
     diff_content: str | None
+    session_end_result: SessionEndResult | None
 
 
 @runtime_checkable

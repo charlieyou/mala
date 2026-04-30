@@ -11,6 +11,7 @@ Tests parsing of the epic_verification section in mala.yaml including:
 from __future__ import annotations
 
 import textwrap
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -186,7 +187,7 @@ class TestParseEpicVerificationConfigInvalidInput:
     def test_rejects_non_dict_data(self) -> None:
         """Parser raises ConfigError when data is not a dict."""
         with pytest.raises(ConfigError, match="must be an object"):
-            _parse_epic_verification_config("not a dict")  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            _parse_epic_verification_config(cast("Any", "not a dict"))
 
     def test_rejects_unknown_fields(self) -> None:
         """Parser raises ConfigError for unknown fields."""
@@ -385,7 +386,7 @@ class TestEpicVerifierConfigDataclass:
         """EpicVerifierConfig is immutable (frozen)."""
         config = EpicVerifierConfig()
         with pytest.raises(AttributeError):
-            config.enabled = False  # type: ignore[misc]  # ty:ignore[invalid-assignment]
+            setattr(config, "enabled", False)
 
     def test_dataclass_can_be_created_with_all_fields(self) -> None:
         """EpicVerifierConfig can be created with all field values."""
@@ -463,7 +464,7 @@ class TestParseRetryPolicy:
     def test_rejects_non_dict_data(self) -> None:
         """Parser raises ConfigError when data is not a dict."""
         with pytest.raises(ConfigError, match="retry_policy must be an object"):
-            _parse_retry_policy("not a dict")  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            _parse_retry_policy(cast("Any", "not a dict"))
 
     def test_rejects_unknown_fields(self) -> None:
         """Parser raises ConfigError for unknown fields."""
@@ -571,7 +572,7 @@ class TestVerificationRetryPolicyDataclass:
         """VerificationRetryPolicy is immutable (frozen)."""
         policy = VerificationRetryPolicy()
         with pytest.raises(AttributeError):
-            policy.timeout_retries = 5  # type: ignore[misc]  # ty:ignore[invalid-assignment]
+            setattr(policy, "timeout_retries", 5)
 
     def test_dataclass_can_be_created_with_all_fields(self) -> None:
         """VerificationRetryPolicy can be created with all field values."""

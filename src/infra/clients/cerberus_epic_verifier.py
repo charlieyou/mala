@@ -22,9 +22,14 @@ import secrets
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
+
 from src.core.models import EpicVerdict, UnmetCriterion
 from src.infra.clients.cerberus_gate_cli import CerberusGateCLI
 from src.infra.tools.command_runner import CommandRunner
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -171,13 +176,17 @@ class CerberusEpicVerifier:
                 raise VerificationParseError(
                     f"aggregated_findings[{i}] must be object, got {type(item).__name__}"
                 )
-            title = str(item.get("title", "")).strip()  # ty:ignore[no-matching-overload]
-            body = str(item.get("body", "")).strip()  # ty:ignore[no-matching-overload]
+            item_data = cast("Mapping[str, object]", item)
+            title = str(item_data.get("title", "")).strip()
+            body = str(item_data.get("body", "")).strip()
             criterion = title or body or "Unspecified criterion"
-            priority_val = item.get("priority", 1)  # ty:ignore[no-matching-overload]
-            try:
-                priority = int(priority_val)
-            except (TypeError, ValueError):
+            priority_val = item_data.get("priority", 1)
+            if isinstance(priority_val, str | int | float):
+                try:
+                    priority = int(priority_val)
+                except (TypeError, ValueError):
+                    priority = 1
+            else:
                 priority = 1
             priority = max(0, min(3, priority))
             unmet_criteria.append(

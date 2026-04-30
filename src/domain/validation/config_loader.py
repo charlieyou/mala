@@ -13,7 +13,7 @@ Key functions:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import yaml
 
@@ -33,6 +33,7 @@ from src.domain.validation.config import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from src.domain.validation.config import (
@@ -218,7 +219,7 @@ _TRIGGER_COMMAND_REF_FIELDS = frozenset({"ref", "command", "timeout"})
 
 
 def _parse_trigger_command_ref(
-    data: dict[str, Any], trigger_name: str, cmd_index: int
+    data: Mapping[object, object], trigger_name: str, cmd_index: int
 ) -> TriggerCommandRef:
     """Parse a single command reference from a trigger's commands list.
 
@@ -311,7 +312,8 @@ def _parse_commands_list(
                 )
             commands.append(TriggerCommandRef(ref=cmd_data))
         elif isinstance(cmd_data, dict):
-            commands.append(_parse_trigger_command_ref(cmd_data, trigger_name, i))  # ty:ignore[invalid-argument-type]
+            command_data = cast("Mapping[object, object]", cmd_data)
+            commands.append(_parse_trigger_command_ref(command_data, trigger_name, i))
         else:
             raise ConfigError(
                 f"Command {i} in trigger {trigger_name} must be a string or object, "
@@ -767,7 +769,7 @@ def _parse_epic_verification_config(
 
 
 def _parse_code_review_config(
-    data: dict[str, Any],
+    data: dict[str, Any] | None,
     trigger_name: str,
     *,
     is_per_issue_review: bool = False,
@@ -838,7 +840,7 @@ def _parse_code_review_config(
                     f"code_review.reviewer_type must be 'cerberus' or 'agent_sdk' "
                     f"for trigger {trigger_name}, got '{rt_val}'"
                 )
-        reviewer_type = rt_val  # type: ignore[assignment]
+        reviewer_type = cast("Literal['cerberus', 'agent_sdk']", rt_val)
 
     # Parse failure_mode (optional, defaults to CONTINUE)
     failure_mode = FailureMode.CONTINUE
@@ -890,7 +892,7 @@ def _parse_code_review_config(
                 f"Invalid code_review.finding_threshold '{ft_val}' for trigger {trigger_name}. "
                 f"Valid values: {', '.join(valid_thresholds)}"
             )
-        finding_threshold = ft_val  # type: ignore[assignment]
+        finding_threshold = cast("Literal['P0', 'P1', 'P2', 'P3', 'none']", ft_val)
 
     # Parse baseline with trigger-specific validation
     baseline: Literal["since_run_start", "since_last_review"] | None = None
@@ -926,7 +928,7 @@ def _parse_code_review_config(
                 )
                 baseline = None
             else:
-                baseline = bl_val  # type: ignore[assignment]
+                baseline = cast("Literal['since_run_start', 'since_last_review']", bl_val)
 
     # WARN if baseline missing/null for epic_completion/run_end - default to since_run_start
     # Explicit null counts as missing since baseline is required for these triggers
@@ -985,7 +987,7 @@ def _parse_code_review_config(
                 f"code_review.agent_sdk_model must be 'sonnet', 'opus', or 'haiku' "
                 f"for trigger {trigger_name}, got '{model_val}'"
             )
-        agent_sdk_model = model_val  # type: ignore[assignment]
+        agent_sdk_model = cast("Literal['sonnet', 'opus', 'haiku']", model_val)
 
     # Parse track_review_issues (optional, defaults to True)
     track_review_issues = True

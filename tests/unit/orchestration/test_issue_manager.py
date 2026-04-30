@@ -15,27 +15,27 @@ class TestMergeWipIssues:
         """Should add WIP issues not already in base list."""
         base = [{"id": "a"}, {"id": "b"}]
         wip = [{"id": "b"}, {"id": "c"}]
-        result = IssueManager.merge_wip_issues(base, wip)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.merge_wip_issues(base, wip)
         assert len(result) == 3
         assert [r["id"] for r in result] == ["a", "b", "c"]
 
     def test_empty_base_returns_all_wip(self) -> None:
         """With empty base, should return all WIP issues."""
         wip = [{"id": "x"}, {"id": "y"}]
-        result = IssueManager.merge_wip_issues([], wip)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.merge_wip_issues([], wip)
         assert [r["id"] for r in result] == ["x", "y"]
 
     def test_empty_wip_returns_base_unchanged(self) -> None:
         """With empty WIP, should return base unchanged."""
         base = [{"id": "a"}]
-        result = IssueManager.merge_wip_issues(base, [])  # ty:ignore[invalid-argument-type]
+        result = IssueManager.merge_wip_issues(base, [])
         assert result == base
 
     def test_preserves_order(self) -> None:
         """Should preserve base order and append new WIP at end."""
         base = [{"id": "c"}, {"id": "a"}]
         wip = [{"id": "b"}, {"id": "d"}]
-        result = IssueManager.merge_wip_issues(base, wip)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.merge_wip_issues(base, wip)
         assert [r["id"] for r in result] == ["c", "a", "b", "d"]
 
 
@@ -45,25 +45,25 @@ class TestApplyFilters:
     def test_excludes_specified_ids(self) -> None:
         """Should exclude issues in exclude_ids."""
         issues = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
-        result = IssueManager.apply_filters(issues, {"b"}, None, None)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.apply_filters(issues, {"b"}, None, None)
         assert [r["id"] for r in result] == ["a", "c"]
 
     def test_excludes_epics(self) -> None:
         """Should exclude issues with issue_type=epic."""
         issues = [{"id": "a"}, {"id": "b", "issue_type": "epic"}]
-        result = IssueManager.apply_filters(issues, set(), None, None)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.apply_filters(issues, set(), None, None)
         assert [r["id"] for r in result] == ["a"]
 
     def test_filters_by_epic_children(self) -> None:
         """Should include only issues in epic_children set."""
         issues = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
-        result = IssueManager.apply_filters(issues, set(), {"a", "c"}, None)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.apply_filters(issues, set(), {"a", "c"}, None)
         assert [r["id"] for r in result] == ["a", "c"]
 
     def test_filters_by_only_ids(self) -> None:
         """Should include only issues in only_ids list."""
         issues = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
-        result = IssueManager.apply_filters(issues, set(), None, ["b"])  # ty:ignore[invalid-argument-type]
+        result = IssueManager.apply_filters(issues, set(), None, ["b"])
         assert [r["id"] for r in result] == ["b"]
 
     def test_combines_all_filters(self) -> None:
@@ -75,7 +75,7 @@ class TestApplyFilters:
             {"id": "d"},
         ]
         # Exclude "d", only allow epic children {"a", "c", "d"}, only_ids ["a", "d"]
-        result = IssueManager.apply_filters(issues, {"d"}, {"a", "c", "d"}, ["a", "d"])  # ty:ignore[invalid-argument-type]
+        result = IssueManager.apply_filters(issues, {"d"}, {"a", "c", "d"}, ["a", "d"])
         # "a" passes all, "b" is epic, "c" not in only_ids, "d" excluded
         assert [r["id"] for r in result] == ["a"]
 
@@ -93,7 +93,7 @@ class TestFilterBlockedWip:
             {"id": "open-1", "status": "open"},
             {"id": "open-2", "status": "open", "blocked_by": ["x"]},
         ]
-        result = IssueManager.filter_blocked_wip(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.filter_blocked_wip(issues)
         assert [i["id"] for i in result] == ["open-1", "open-2"]
 
     def test_excludes_blocked_in_progress(self) -> None:
@@ -101,7 +101,7 @@ class TestFilterBlockedWip:
             {"id": "wip-ok", "status": "in_progress", "blocked_by": None},
             {"id": "wip-blocked", "status": "in_progress", "blocked_by": ["x"]},
         ]
-        result = IssueManager.filter_blocked_wip(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.filter_blocked_wip(issues)
         assert [i["id"] for i in result] == ["wip-ok"]
 
 
@@ -115,7 +115,7 @@ class TestFilterWipIssues:
             {"id": "wip-1", "status": "in_progress"},
             {"id": "open-2", "status": "open"},
         ]
-        result = IssueManager.filter_wip_issues(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.filter_wip_issues(issues)
         assert [i["id"] for i in result] == ["open-1", "open-2"]
 
     def test_keeps_open_issues(self) -> None:
@@ -124,7 +124,7 @@ class TestFilterWipIssues:
             {"id": "open-1", "status": "open"},
             {"id": "open-2", "status": "open"},
         ]
-        result = IssueManager.filter_wip_issues(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.filter_wip_issues(issues)
         assert [i["id"] for i in result] == ["open-1", "open-2"]
 
     def test_empty_list(self) -> None:
@@ -138,7 +138,7 @@ class TestFilterWipIssues:
             {"id": "wip-1", "status": "in_progress"},
             {"id": "wip-2", "status": "in_progress"},
         ]
-        result = IssueManager.filter_wip_issues(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.filter_wip_issues(issues)
         assert result == []
 
 
@@ -150,7 +150,7 @@ class TestFilterBlockedEpics:
             {"id": "a", "parent_epic": "epic-1"},
             {"id": "b", "parent_epic": None},
         ]
-        result = IssueManager.filter_blocked_epics(issues, set())  # ty:ignore[invalid-argument-type]
+        result = IssueManager.filter_blocked_epics(issues, set())
         assert result == issues
 
     def test_excludes_issues_under_blocked_epics(self) -> None:
@@ -159,7 +159,7 @@ class TestFilterBlockedEpics:
             {"id": "b", "parent_epic": "epic-2"},
             {"id": "c", "parent_epic": None},
         ]
-        result = IssueManager.filter_blocked_epics(issues, {"epic-2"})  # ty:ignore[invalid-argument-type]
+        result = IssueManager.filter_blocked_epics(issues, {"epic-2"})
         assert [i["id"] for i in result] == ["a", "c"]
 
 
@@ -226,7 +226,7 @@ class TestSortByEpicGroups:
                 "updated_at": "2025-01-01",
             },
         ]
-        result = IssueManager.sort_by_epic_groups(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.sort_by_epic_groups(issues)
         # Both groups have same priority, so order by max_updated (both same)
         # Epic-1 issues should stay grouped
         epic1_indices = [
@@ -252,7 +252,7 @@ class TestSortByEpicGroups:
                 "updated_at": "2025-01-01",
             },
         ]
-        result = IssueManager.sort_by_epic_groups(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.sort_by_epic_groups(issues)
         # epic-2 has lower epic_priority (1), so comes first even though task has P3
         assert result[0]["id"] == "b"
         assert result[1]["id"] == "a"
@@ -275,7 +275,7 @@ class TestSortByEpicGroups:
                 "updated_at": "2025-01-01",
             },
         ]
-        result = IssueManager.sort_by_epic_groups(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.sort_by_epic_groups(issues)
         # epic-2 has lower epic_priority (P1 -> 1), so comes first
         assert result[0]["id"] == "b"
         assert result[1]["id"] == "a"
@@ -296,7 +296,7 @@ class TestSortByEpicGroups:
                 "updated_at": "2025-01-01",
             },
         ]
-        result = IssueManager.sort_by_epic_groups(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.sort_by_epic_groups(issues)
         # epic-2 has lower min priority (1), so comes first
         assert result[0]["id"] == "b"
         assert result[1]["id"] == "a"
@@ -323,7 +323,7 @@ class TestSortByEpicGroups:
                 "updated_at": "2025-01-01",
             },
         ]
-        result = IssueManager.sort_by_epic_groups(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.sort_by_epic_groups(issues)
         assert [r["id"] for r in result] == ["b", "c", "a"]
 
     def test_sorts_within_group_by_updated_desc_for_same_priority(self) -> None:
@@ -342,7 +342,7 @@ class TestSortByEpicGroups:
                 "updated_at": "2025-01-02T10:00:00Z",
             },
         ]
-        result = IssueManager.sort_by_epic_groups(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.sort_by_epic_groups(issues)
         # "b" has later updated_at, so comes first
         assert result[0]["id"] == "b"
         assert result[1]["id"] == "a"
@@ -353,7 +353,7 @@ class TestSortByEpicGroups:
             {"id": "a", "priority": 1, "parent_epic": None, "updated_at": "2025-01-01"},
             {"id": "b", "priority": 2, "parent_epic": None, "updated_at": "2025-01-01"},
         ]
-        result = IssueManager.sort_by_epic_groups(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.sort_by_epic_groups(issues)
         # Both in same group, sorted by priority
         assert [r["id"] for r in result] == ["a", "b"]
 
@@ -368,7 +368,7 @@ class TestSortByEpicGroups:
                 "updated_at": "2025-01-01",
             },
         ]
-        result = IssueManager.sort_by_epic_groups(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.sort_by_epic_groups(issues)
         # Both have same priority, so order is by negated updated_at (ascending)
         # "a" has no updated_at -> negate returns "\xff" (chr 255)
         # "b" has "2025-01-01" -> negate returns chr(255-ord(c)) for each char
@@ -394,7 +394,7 @@ class TestSortIssues:
             {"id": "b", "priority": 1},
             {"id": "c", "priority": 2},
         ]
-        result = IssueManager.sort_issues(issues, focus=False, include_wip=False)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.sort_issues(issues, focus=False, include_wip=False)
         assert [r["id"] for r in result] == ["b", "c", "a"]
 
     def test_include_wip_when_enabled(self) -> None:
@@ -404,7 +404,7 @@ class TestSortIssues:
             {"id": "b", "priority": 2, "status": "in_progress"},
             {"id": "c", "priority": 3, "status": "open"},
         ]
-        result = IssueManager.sort_issues(issues, focus=False, include_wip=True)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.sort_issues(issues, focus=False, include_wip=True)
         assert [r["id"] for r in result] == ["a", "b", "c"]
 
     def test_uses_epic_groups_when_focus_true(self) -> None:
@@ -429,7 +429,7 @@ class TestSortIssues:
                 "updated_at": "2025-01-01",
             },
         ]
-        result = IssueManager.sort_issues(issues, focus=True, include_wip=False)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.sort_issues(issues, focus=True, include_wip=False)
         # epic-2 has lower min priority, so comes first
         assert result[0]["id"] == "b"
 
@@ -451,7 +451,7 @@ class TestSortIssues:
                 "updated_at": "2025-01-01",
             },
         ]
-        result = IssueManager.sort_issues(issues, focus=True, include_wip=True)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.sort_issues(issues, focus=True, include_wip=True)
         assert [r["id"] for r in result] == ["a", "b"]
 
 
@@ -461,19 +461,19 @@ class TestFindMissingIds:
     def test_returns_missing_ids(self) -> None:
         """Should return IDs from only_ids not found in issues."""
         issues = [{"id": "a"}, {"id": "b"}]
-        result = IssueManager.find_missing_ids(["a", "c", "d"], issues, set())  # ty:ignore[invalid-argument-type]
+        result = IssueManager.find_missing_ids(["a", "c", "d"], issues, set())
         assert result == {"c", "d"}
 
     def test_respects_suppress_ids(self) -> None:
         """Should not include suppressed IDs in result."""
         issues = [{"id": "a"}]
-        result = IssueManager.find_missing_ids(["a", "b", "c"], issues, {"b"})  # ty:ignore[invalid-argument-type]
+        result = IssueManager.find_missing_ids(["a", "b", "c"], issues, {"b"})
         assert result == {"c"}
 
     def test_returns_empty_when_all_found(self) -> None:
         """Should return empty set when all IDs are found."""
         issues = [{"id": "a"}, {"id": "b"}]
-        result = IssueManager.find_missing_ids(["a", "b"], issues, set())  # ty:ignore[invalid-argument-type]
+        result = IssueManager.find_missing_ids(["a", "b"], issues, set())
         assert result == set()
 
     def test_returns_empty_when_only_ids_none(self) -> None:
@@ -497,7 +497,7 @@ class TestFilterOrphansOnly:
             {"id": "b", "parent_epic": None},
             {"id": "c", "parent_epic": "epic-2"},
         ]
-        result = IssueManager.filter_orphans_only(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.filter_orphans_only(issues)
         assert [r["id"] for r in result] == ["b"]
 
     def test_returns_empty_when_all_have_parent(self) -> None:
@@ -506,7 +506,7 @@ class TestFilterOrphansOnly:
             {"id": "a", "parent_epic": "epic-1"},
             {"id": "b", "parent_epic": "epic-2"},
         ]
-        result = IssueManager.filter_orphans_only(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.filter_orphans_only(issues)
         assert result == []
 
     def test_returns_all_when_none_have_parent(self) -> None:
@@ -515,7 +515,7 @@ class TestFilterOrphansOnly:
             {"id": "a", "parent_epic": None},
             {"id": "b", "parent_epic": None},
         ]
-        result = IssueManager.filter_orphans_only(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.filter_orphans_only(issues)
         assert [r["id"] for r in result] == ["a", "b"]
 
     def test_empty_list_returns_empty(self) -> None:
@@ -529,7 +529,7 @@ class TestFilterOrphansOnly:
             {"id": "a", "parent_epic": ""},
             {"id": "b", "parent_epic": "epic-1"},
         ]
-        result = IssueManager.filter_orphans_only(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.filter_orphans_only(issues)
         assert [r["id"] for r in result] == ["a"]
 
     def test_handles_missing_parent_epic_field(self) -> None:
@@ -538,5 +538,5 @@ class TestFilterOrphansOnly:
             {"id": "a"},
             {"id": "b", "parent_epic": "epic-1"},
         ]
-        result = IssueManager.filter_orphans_only(issues)  # ty:ignore[invalid-argument-type]
+        result = IssueManager.filter_orphans_only(issues)
         assert [r["id"] for r in result] == ["a"]

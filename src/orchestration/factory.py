@@ -156,7 +156,7 @@ def create_issue_provider(
     """
     from src.infra.clients.beads_client import BeadsClient
 
-    return BeadsClient(repo_path, log_warning=log_warning)  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
+    return BeadsClient(repo_path, log_warning=log_warning)
 
 
 def _derive_config(
@@ -862,7 +862,7 @@ def _build_dependencies(
 
         beads_client = BeadsClient(repo_path, log_warning=log_warning)
         # BeadsClient implements IssueProvider protocol
-        issue_provider = beads_client  # type: ignore[assignment]  # ty:ignore[invalid-assignment]
+        issue_provider = beads_client
 
     # Epic verifier (only when using real BeadsClient - either created or injected)
     epic_verifier: EpicVerifierProtocol | None = None

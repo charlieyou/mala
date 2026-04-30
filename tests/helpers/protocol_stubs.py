@@ -6,27 +6,50 @@ and ISessionLifecycle protocols for use in unit and integration tests.
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 if TYPE_CHECKING:
     import asyncio
     from collections.abc import Awaitable, Callable, Sequence
     from pathlib import Path
 
-    from src.core.protocols.review import ReviewIssueProtocol
+    from src.core.protocols.review import ReviewIssueProtocol, ReviewOutcomeProtocol
+    from src.core.protocols.validation import GateOutcomeProtocol, RetryStateProtocol
     from src.core.session_end_result import SessionEndResult, SessionEndRetryState
-    from src.domain.lifecycle import GateOutcome, RetryState, ReviewOutcome
 
     # Callback types that accept both sync and async functions
     GateCheckCallback = Callable[
-        [str, Path, RetryState],
-        tuple[GateOutcome, int] | Awaitable[tuple[GateOutcome, int]],
+        [str, Path, Any],
+        tuple[GateOutcomeProtocol, int] | Awaitable[tuple[GateOutcomeProtocol, int]],
     ]
     SessionEndCheckCallback = Callable[
         [str, Path, SessionEndRetryState],
         SessionEndResult | Awaitable[SessionEndResult],
     ]
+    ReviewCheckCallback = Callable[
+        [
+            str,
+            str | None,
+            str | None,
+            Any,
+            str | None,
+            Sequence[ReviewIssueProtocol] | None,
+            SessionEndResult | None,
+        ],
+        ReviewOutcomeProtocol | Awaitable[ReviewOutcomeProtocol],
+    ]
+
+
+_T = TypeVar("_T")
+
+
+async def _resolve_callback(result: _T | Awaitable[_T]) -> _T:
+    """Resolve a sync or async callback result."""
+    if inspect.isawaitable(result):
+        return await cast("Awaitable[_T]", result)
+    return result
 
 
 @dataclass
@@ -60,7 +83,7 @@ class StubGateRunner:
     after construction.
     """
 
-    gate_result: StubGateOutcome = field(default_factory=StubGateOutcome)
+    gate_result: GateOutcomeProtocol = field(default_factory=StubGateOutcome)
     gate_offset: int = 0
     session_end_result: SessionEndResult | None = None
     on_gate_check: GateCheckCallback | None = None
@@ -70,21 +93,16 @@ class StubGateRunner:
         self,
         issue_id: str,
         log_path: Path,
-        retry_state: RetryState,
-    ) -> tuple[GateOutcome, int]:
+        retry_state: RetryStateProtocol,
+    ) -> tuple[GateOutcomeProtocol, int]:
         """Run gate check - returns configured result or passes by default.
 
         The on_gate_check callback can be sync or async - both are supported.
         """
-        import asyncio
-
         if self.on_gate_check is not None:
             result = self.on_gate_check(issue_id, log_path, retry_state)
-            # Handle both sync and async callbacks
-            if asyncio.iscoroutine(result):
-                return await result  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
-            return result  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
-        return self.gate_result, self.gate_offset  # type: ignore[return-value]
+            return await _resolve_callback(result)
+        return self.gate_result, self.gate_offset
 
     async def run_session_end_check(
         self,
@@ -96,14 +114,9 @@ class StubGateRunner:
 
         The on_session_end_check callback can be sync or async - both are supported.
         """
-        import asyncio
-
         if self.on_session_end_check is not None:
             result = self.on_session_end_check(issue_id, log_path, retry_state)
-            # Handle both sync and async callbacks
-            if asyncio.iscoroutine(result):
-                return await result  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
-            return result  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
+            return await _resolve_callback(result)
         if self.session_end_result is not None:
             return self.session_end_result
         # Import here to avoid import issues in tests
@@ -121,23 +134,9 @@ class StubReviewRunner:
     after construction.
     """
 
-    review_result: StubReviewOutcome = field(default_factory=StubReviewOutcome)
+    review_result: ReviewOutcomeProtocol = field(default_factory=StubReviewOutcome)
     no_progress_result: bool = False
-    on_review: (
-        Callable[
-            [
-                str,
-                str | None,
-                str | None,
-                RetryState,
-                str | None,
-                Sequence[ReviewIssueProtocol] | None,
-                SessionEndResult | None,
-            ],
-            ReviewOutcome,
-        ]
-        | None
-    ) = None
+    on_review: ReviewCheckCallback | None = None
     on_check_no_progress: Callable[[Path, int, str | None, str | None], bool] | None = (
         None
     )
@@ -147,17 +146,15 @@ class StubReviewRunner:
         issue_id: str,
         description: str | None,
         session_id: str | None,
-        retry_state: RetryState,
+        retry_state: RetryStateProtocol,
         author_context: str | None,
         previous_findings: Sequence[ReviewIssueProtocol] | None,
         session_end_result: SessionEndResult | None,
-    ) -> ReviewOutcome:
+    ) -> ReviewOutcomeProtocol:
         """Run review - returns configured result or passes by default.
 
         The on_review callback can be sync or async - both are supported.
         """
-        import asyncio
-
         if self.on_review is not None:
             result = self.on_review(
                 issue_id,
@@ -168,11 +165,8 @@ class StubReviewRunner:
                 previous_findings,
                 session_end_result,
             )
-            # Handle both sync and async callbacks
-            if asyncio.iscoroutine(result):
-                return await result  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
-            return result  # type: ignore[return-value]
-        return self.review_result  # type: ignore[return-value]
+            return await _resolve_callback(result)
+        return self.review_result
 
     def check_no_progress(
         self,

@@ -20,19 +20,17 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from src.domain.validation.config import FailureMode
 
 if TYPE_CHECKING:
     import asyncio
+    from collections.abc import MutableMapping, Sequence
     from pathlib import Path
 
-    from src.core.protocols.issue import IssueProvider
     from src.core.protocols.review import ReviewRunnerProtocol
-    from src.domain.validation.config import CodeReviewConfig, TriggerType
-    from src.infra.git_utils import GitUtils
-    from src.infra.io.log_output.run_metadata import RunMetadata
+    from src.domain.validation.config import TriggerType
 
 
 logger = logging.getLogger(__name__)
@@ -101,6 +99,103 @@ class CumulativeReviewResult:
     skip_reason: str | None = None
 
 
+class CumulativeDiffStat(Protocol):
+    """Diff statistics required by cumulative review."""
+
+    @property
+    def total_lines(self) -> int:
+        """Total changed lines in the diff."""
+        ...
+
+    @property
+    def files_changed(self) -> Sequence[str]:
+        """Files changed in the diff."""
+        ...
+
+
+class CumulativeGit(Protocol):
+    """Git operations required by cumulative review."""
+
+    async def get_baseline_for_issue(self, issue_id: str) -> str | None:
+        """Return the baseline commit for an issue, if one exists."""
+        ...
+
+    async def get_head_commit(self) -> str:
+        """Return the current HEAD commit."""
+        ...
+
+    async def is_commit_reachable(self, commit: str) -> bool:
+        """Return whether commit is reachable in the local clone."""
+        ...
+
+    async def get_diff_stat(
+        self, from_commit: str, to_commit: str = "HEAD"
+    ) -> CumulativeDiffStat:
+        """Return diff statistics for a commit range."""
+        ...
+
+    async def get_diff_content(self, from_commit: str, to_commit: str = "HEAD") -> str:
+        """Return diff content for a commit range."""
+        ...
+
+
+class CumulativeReviewConfig(Protocol):
+    """Code review configuration fields used by cumulative review."""
+
+    @property
+    def baseline(self) -> str | None:
+        """Baseline mode for cumulative review."""
+        ...
+
+    @property
+    def failure_mode(self) -> FailureMode:
+        """Failure handling mode for review execution errors."""
+        ...
+
+    @property
+    def track_review_issues(self) -> bool:
+        """Whether findings should be tracked as issues."""
+        ...
+
+
+class CumulativeRunMetadata(Protocol):
+    """Run metadata fields used by cumulative review."""
+
+    @property
+    def run_id(self) -> str:
+        """Run identifier used for review session IDs."""
+        ...
+
+    @property
+    def run_start_commit(self) -> str | None:
+        """Commit captured at run start."""
+        ...
+
+    @property
+    def last_cumulative_review_commits(self) -> MutableMapping[str, str]:
+        """Mutable baseline map keyed by trigger context."""
+        ...
+
+
+class CumulativeIssueTracker(Protocol):
+    """Issue tracker operations required for review finding tracking."""
+
+    async def find_issue_by_tag_async(self, tag: str) -> str | None:
+        """Find an existing issue by tag."""
+        ...
+
+    async def create_issue_async(
+        self,
+        title: str,
+        description: str,
+        priority: str,
+        tags: list[str] | None = None,
+        parent_id: str | None = None,
+    ) -> str | None:
+        """Create a tracking issue."""
+        ...
+
+
 class CumulativeReviewRunner:
     """Orchestrates cumulative code review execution.
 
@@ -132,8 +227,8 @@ class CumulativeReviewRunner:
     def __init__(
         self,
         review_runner: ReviewRunnerProtocol,
-        git_utils: GitUtils,
-        beads_client: IssueProvider,
+        git_utils: CumulativeGit,
+        beads_client: CumulativeIssueTracker,
         logger: logging.Logger,
     ) -> None:
         """Initialize CumulativeReviewRunner.
@@ -152,8 +247,8 @@ class CumulativeReviewRunner:
     async def run_review(
         self,
         trigger_type: TriggerType,
-        config: CodeReviewConfig,
-        run_metadata: RunMetadata,
+        config: CumulativeReviewConfig,
+        run_metadata: CumulativeRunMetadata,
         repo_path: Path,
         interrupt_event: asyncio.Event,
         *,
@@ -383,8 +478,8 @@ class CumulativeReviewRunner:
     async def _get_baseline_commit(
         self,
         trigger_type: TriggerType,
-        config: CodeReviewConfig,
-        run_metadata: RunMetadata,
+        config: CumulativeReviewConfig,
+        run_metadata: CumulativeRunMetadata,
         *,
         issue_id: str | None = None,
         epic_id: str | None = None,

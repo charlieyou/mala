@@ -22,8 +22,10 @@ from src.infra.issue_manager import IssueManager
 from src.infra.tools.command_runner import CommandResult, CommandRunner
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
     from pathlib import Path
-    from collections.abc import Callable
+
+    from src.infra.issue_manager import IssueRecord, IssueRecordT
 
 # Default timeout for bd/git subprocess calls (seconds)
 DEFAULT_COMMAND_TIMEOUT = 30.0
@@ -145,7 +147,7 @@ class BeadsClient:
             return set()
 
     async def _sort_by_epic_groups(
-        self, issues: list[dict[str, object]]
+        self, issues: Sequence[IssueRecord]
     ) -> list[dict[str, object]]:
         """Sort issues by epic groups for focus mode.
 
@@ -166,7 +168,7 @@ class BeadsClient:
             Sorted list of issue dicts.
         """
         if not issues:
-            return issues
+            return []
 
         # Enrich issues with parent_epic and epic_priority
         enriched = await self.enrich_with_epics_async(issues)
@@ -235,7 +237,7 @@ class BeadsClient:
             return []
 
     async def enrich_with_epics_async(
-        self, issues: list[dict[str, object]]
+        self, issues: Sequence[IssueRecord]
     ) -> list[dict[str, object]]:
         """Add parent_epic and epic_priority info (I/O step).
 
@@ -245,7 +247,7 @@ class BeadsClient:
         - epic_priority: The priority of the parent epic (or None for orphans)
         """
         if not issues:
-            return issues
+            return []
         ids = [str(i["id"]) for i in issues]
         epics = await self.get_parent_epics_async(ids)
         result = []
@@ -268,8 +270,8 @@ class BeadsClient:
 
     @staticmethod
     def _merge_wip_issues(
-        base_issues: list[dict[str, object]], wip_issues: list[dict[str, object]]
-    ) -> list[dict[str, object]]:
+        base_issues: Sequence[IssueRecordT], wip_issues: Sequence[IssueRecordT]
+    ) -> list[IssueRecordT]:
         """Merge WIP issues into base list (pipeline step 2, pure function).
 
         Delegates to IssueManager.merge_wip_issues for actual logic.
@@ -278,11 +280,11 @@ class BeadsClient:
 
     @staticmethod
     def _apply_filters(
-        issues: list[dict[str, object]],
+        issues: Sequence[IssueRecordT],
         exclude_ids: set[str],
         epic_children: set[str] | None,
         only_ids: list[str] | None,
-    ) -> list[dict[str, object]]:
+    ) -> list[IssueRecordT]:
         """Apply only_ids and epic filters (pipeline step 3, pure function).
 
         Delegates to IssueManager.apply_filters for actual logic.
@@ -290,7 +292,7 @@ class BeadsClient:
         return IssueManager.apply_filters(issues, exclude_ids, epic_children, only_ids)
 
     async def _enrich_with_epics(
-        self, issues: list[dict[str, object]]
+        self, issues: Sequence[IssueRecord]
     ) -> list[dict[str, object]]:
         """Add parent_epic info and filter blocked epics (pipeline step 4).
 
@@ -305,12 +307,12 @@ class BeadsClient:
 
     def _sort_issues(
         self,
-        issues: list[dict[str, object]],
+        issues: Sequence[IssueRecordT],
         focus: bool,
         include_wip: bool,
         only_ids: list[str] | None = None,
         order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
-    ) -> list[dict[str, object]]:
+    ) -> list[IssueRecordT]:
         """Sort issues by focus mode vs priority (pipeline step 5, pure function).
 
         Delegates to IssueManager.sort_issues for actual logic.
@@ -320,8 +322,8 @@ class BeadsClient:
         )
 
     def _sort_by_epic_groups_sync(
-        self, issues: list[dict[str, object]]
-    ) -> list[dict[str, object]]:
+        self, issues: Sequence[IssueRecordT]
+    ) -> list[IssueRecordT]:
         """Sort issues by epic groups for focus mode.
 
         Delegates to IssueManager.sort_by_epic_groups for actual logic.
@@ -493,14 +495,17 @@ class BeadsClient:
         return result.returncode == 0
 
     async def reset_async(
-        self, issue_id: str, log_path: Path | None = None, error: str = ""
-    ) -> None:
+        self, issue_id: str, log_path: Path | None = None, error: str | None = None
+    ) -> bool:
         """Reset failed issue to ready status with failure context (async version).
 
         Args:
             issue_id: The issue ID to reset.
             log_path: Optional path to the JSONL log file from the failed attempt.
             error: Optional error summary describing the failure.
+
+        Returns:
+            True if successfully reset, False otherwise.
         """
         args = ["br", "update", issue_id, "--status", "ready"]
         if log_path or error:
@@ -510,7 +515,8 @@ class BeadsClient:
             if log_path:
                 notes_parts.append(f"Log: {log_path}")
             args.extend(["--notes", "\n".join(notes_parts)])
-        await self._run_subprocess_async(args)
+        result = await self._run_subprocess_async(args)
+        return result.returncode == 0
 
     async def get_issue_status_async(self, issue_id: str) -> str | None:
         """Get the current status of an issue (async version).

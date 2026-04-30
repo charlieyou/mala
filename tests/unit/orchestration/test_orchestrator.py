@@ -116,7 +116,10 @@ class TestSpawnAgent:
 
     @pytest.mark.asyncio
     async def test_creates_task_when_claim_succeeds(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When claim succeeds, a task should be created."""
         fake_issues = FakeIssueProvider(
@@ -145,7 +148,7 @@ class TestSpawnAgent:
             )
 
         original_run_implementer = orchestrator.run_implementer
-        orchestrator.run_implementer = fake_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", fake_run_implementer)
         try:
             task = await orchestrator.spawn_agent("claimable-issue")
             # spawn_agent returns the Task on success (caller is responsible for registration)
@@ -156,7 +159,9 @@ class TestSpawnAgent:
             # Await the task to ensure it completes before restoring run_implementer
             await task
         finally:
-            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            monkeypatch.setattr(
+                orchestrator, "run_implementer", original_run_implementer
+            )
 
 
 class TestRunOrchestrationLoop:
@@ -188,7 +193,10 @@ class TestRunOrchestrationLoop:
 
     @pytest.mark.asyncio
     async def test_respects_max_issues_limit(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should stop after processing max_issues."""
         fake_issues = FakeIssueProvider(
@@ -230,12 +238,12 @@ class TestRunOrchestrationLoop:
 
             return asyncio.create_task(work())
 
-        # Replace method directly (not using patch)
-        orchestrator.spawn_agent = tracking_spawn  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        # Patch spawn_agent for this test
+        monkeypatch.setattr(orchestrator, "spawn_agent", tracking_spawn)
         try:
             await orchestrator.run()
         finally:
-            orchestrator.spawn_agent = original_spawn  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            monkeypatch.setattr(orchestrator, "spawn_agent", original_spawn)
 
         # Should have only spawned 2 issues (max_issues limit)
         assert len(spawned) == 2
@@ -246,7 +254,10 @@ class TestFailedTaskResetsIssue:
 
     @pytest.mark.asyncio
     async def test_resets_issue_on_task_failure(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When a task fails, the issue should be marked needs-followup."""
         fake_issues = FakeIssueProvider(
@@ -275,11 +286,13 @@ class TestFailedTaskResetsIssue:
             )
 
         original_run_implementer = orchestrator.run_implementer
-        orchestrator.run_implementer = fake_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", fake_run_implementer)
         try:
             await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            monkeypatch.setattr(
+                orchestrator, "run_implementer", original_run_implementer
+            )
 
         # The failed issue should have been marked needs-followup
         assert len(fake_issues.followup_calls) == 1
@@ -289,7 +302,10 @@ class TestFailedTaskResetsIssue:
 
     @pytest.mark.asyncio
     async def test_does_not_reset_successful_issue(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Successful issues should not be reset."""
         fake_issues = FakeIssueProvider(
@@ -318,11 +334,13 @@ class TestFailedTaskResetsIssue:
             )
 
         original_run_implementer = orchestrator.run_implementer
-        orchestrator.run_implementer = fake_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", fake_run_implementer)
         try:
             await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            monkeypatch.setattr(
+                orchestrator, "run_implementer", original_run_implementer
+            )
 
         # Issue should be closed, not reset
         assert "success-issue" in fake_issues.closed
@@ -428,7 +446,10 @@ class TestOrchestratorEvidenceCheckIntegration:
 
     @pytest.mark.asyncio
     async def test_marks_needs_followup_on_gate_failure(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When run_implementer returns success=False, issue should be marked needs-followup."""
         fake_issues = FakeIssueProvider(
@@ -460,13 +481,15 @@ class TestOrchestratorEvidenceCheckIntegration:
                 session_log_path=log_path,
             )
 
-        # Direct method replacement instead of patch.object
+        # Patch run_implementer for this test
         original_run_implementer = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", mock_run_implementer)
         try:
             await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            monkeypatch.setattr(
+                orchestrator, "run_implementer", original_run_implementer
+            )
 
         # Should have been marked as needs-followup via FakeIssueProvider
         assert len(fake_issues.followup_calls) == 1
@@ -474,7 +497,10 @@ class TestOrchestratorEvidenceCheckIntegration:
 
     @pytest.mark.asyncio
     async def test_success_only_when_gate_passes(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When run_implementer returns success=True, issue should count as success."""
         fake_issues = FakeIssueProvider(
@@ -506,13 +532,15 @@ class TestOrchestratorEvidenceCheckIntegration:
                 session_log_path=log_path,
             )
 
-        # Direct method replacement instead of patch.object
+        # Patch run_implementer for this test
         original_run_implementer = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", mock_run_implementer)
         try:
             success_count, _total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            monkeypatch.setattr(
+                orchestrator, "run_implementer", original_run_implementer
+            )
 
         assert success_count == 1
         assert any(r.issue_id == "issue-pass" for r in orchestrator._state.completed)
@@ -821,7 +849,10 @@ class TestGateFlowSequencing:
 
     @pytest.mark.asyncio
     async def test_no_op_resolution_skips_per_session_validation(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """No-op resolution should skip Gate 2/3 (commit + validation evidence)."""
         fake_issues = FakeIssueProvider(
@@ -853,13 +884,13 @@ class TestGateFlowSequencing:
                 session_log_path=log_path,
             )
 
-        # Direct method replacement
+        # Patch run_implementer for this test
         original = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", mock_run_implementer)
         try:
             success_count, _total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            monkeypatch.setattr(orchestrator, "run_implementer", original)
 
         # Assert on FakeIssueProvider state
         assert success_count == 1
@@ -867,7 +898,10 @@ class TestGateFlowSequencing:
 
     @pytest.mark.asyncio
     async def test_obsolete_resolution_skips_per_session_validation(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Obsolete resolution should skip Gate 2/3 (commit + validation evidence)."""
         fake_issues = FakeIssueProvider(
@@ -899,13 +933,13 @@ class TestGateFlowSequencing:
                 session_log_path=log_path,
             )
 
-        # Direct method replacement
+        # Patch run_implementer for this test
         original = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", mock_run_implementer)
         try:
             success_count, _total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            monkeypatch.setattr(orchestrator, "run_implementer", original)
 
         # Assert on FakeIssueProvider state
         assert success_count == 1
@@ -920,7 +954,10 @@ class TestRetryExhaustion:
 
     @pytest.mark.asyncio
     async def test_gate_retry_exhaustion_marks_failed(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When gate retries are exhausted, issue should be marked failed."""
         fake_issues = FakeIssueProvider(
@@ -954,13 +991,13 @@ class TestRetryExhaustion:
                 session_log_path=log_path,
             )
 
-        # Direct method replacement
+        # Patch run_implementer for this test
         original = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", mock_run_implementer)
         try:
             success_count, _total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            monkeypatch.setattr(orchestrator, "run_implementer", original)
 
         assert success_count == 0
         # Assert on FakeIssueProvider state
@@ -970,7 +1007,10 @@ class TestRetryExhaustion:
 
     @pytest.mark.asyncio
     async def test_no_progress_stops_retries_early(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When no progress is detected, retries should stop early."""
         fake_issues = FakeIssueProvider(
@@ -1004,13 +1044,13 @@ class TestRetryExhaustion:
                 session_log_path=log_path,
             )
 
-        # Direct method replacement
+        # Patch run_implementer for this test
         original = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", mock_run_implementer)
         try:
             await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            monkeypatch.setattr(orchestrator, "run_implementer", original)
 
         # Should have failed due to no progress
         assert "issue-no-progress" in orchestrator.failed_issues
@@ -1046,7 +1086,10 @@ class TestGlobalValidation:
 
     @pytest.mark.asyncio
     async def test_run_returns_non_zero_exit_on_failure(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Run should indicate failure when issues fail."""
         fake_issues = FakeIssueProvider(
@@ -1074,20 +1117,23 @@ class TestGlobalValidation:
                 summary="Implementation failed",
             )
 
-        # Direct method replacement
+        # Patch run_implementer for this test
         original = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", mock_run_implementer)
         try:
             success_count, _total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            monkeypatch.setattr(orchestrator, "run_implementer", original)
 
         assert success_count == 0
         assert _total == 1
 
     @pytest.mark.asyncio
     async def test_issues_closed_only_after_gate_passes(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Issues should only be closed when quality gate passes."""
         fake_issues = FakeIssueProvider(
@@ -1119,13 +1165,13 @@ class TestGlobalValidation:
                 session_log_path=log_path,
             )
 
-        # Direct method replacement
+        # Patch run_implementer for this test
         original = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", mock_run_implementer)
         try:
             success_count, _total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            monkeypatch.setattr(orchestrator, "run_implementer", original)
 
         assert success_count == 1
         # Assert on FakeIssueProvider state
@@ -1133,7 +1179,10 @@ class TestGlobalValidation:
 
     @pytest.mark.asyncio
     async def test_failed_issue_not_closed(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Failed issues should not be closed, only marked needs-followup."""
         fake_issues = FakeIssueProvider(
@@ -1165,13 +1214,13 @@ class TestGlobalValidation:
                 session_log_path=log_path,
             )
 
-        # Direct method replacement
+        # Patch run_implementer for this test
         original = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", mock_run_implementer)
         try:
             await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            monkeypatch.setattr(orchestrator, "run_implementer", original)
 
         # Issue should NOT be closed - assert on FakeIssueProvider state
         assert "issue-fail" not in fake_issues.closed
@@ -1189,7 +1238,10 @@ class TestValidationResultMetadata:
 
     @pytest.mark.asyncio
     async def test_validation_result_populated_from_gate_evidence(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Validation metadata should be derived from gate result's validation_evidence."""
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
@@ -1248,15 +1300,15 @@ class TestValidationResultMetadata:
                 summary="Completed successfully",
             )
 
-        # Direct method replacements
+        # Patch collaborators for this test
         original_run = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", mock_run_implementer)
+        monkeypatch.setattr(RunMetadata, "record_issue", capture_record)
         try:
             await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-            RunMetadata.record_issue = original_record  # type: ignore[method-assign]
+            monkeypatch.setattr(orchestrator, "run_implementer", original_run)
+            monkeypatch.setattr(RunMetadata, "record_issue", original_record)
 
         # Verify an issue was recorded
         assert len(recorded_issues) == 1
@@ -1276,7 +1328,10 @@ class TestValidationResultMetadata:
 
     @pytest.mark.asyncio
     async def test_gate_and_metadata_share_same_validation_evidence(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Gate decisions and metadata should derive from the same validation result."""
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
@@ -1339,15 +1394,15 @@ class TestValidationResultMetadata:
                 summary="Quality gate failed: Validation commands failed",
             )
 
-        # Direct method replacements
+        # Patch collaborators for this test
         original_run = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", mock_run_implementer)
+        monkeypatch.setattr(RunMetadata, "record_issue", capture_record)
         try:
             await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-            RunMetadata.record_issue = original_record  # type: ignore[method-assign]
+            monkeypatch.setattr(orchestrator, "run_implementer", original_run)
+            monkeypatch.setattr(RunMetadata, "record_issue", original_record)
 
         # Verify an issue was recorded
         assert len(recorded_issues) == 1
@@ -1383,7 +1438,10 @@ class TestResolutionRecordingInMetadata:
 
     @pytest.mark.asyncio
     async def test_no_change_resolution_recorded_in_issue_run(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """ISSUE_NO_CHANGE resolution should be recorded in IssueRun metadata."""
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
@@ -1433,15 +1491,15 @@ class TestResolutionRecordingInMetadata:
                 session_log_path=log_path,
             )
 
-        # Direct method replacements
+        # Patch collaborators for this test
         original_run = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", mock_run_implementer)
+        monkeypatch.setattr(RunMetadata, "record_issue", capture_record)
         try:
             success_count, total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-            RunMetadata.record_issue = original_record  # type: ignore[method-assign]
+            monkeypatch.setattr(orchestrator, "run_implementer", original_run)
+            monkeypatch.setattr(RunMetadata, "record_issue", original_record)
 
         # Verify issue was successful
         assert success_count == 1
@@ -1457,7 +1515,10 @@ class TestResolutionRecordingInMetadata:
 
     @pytest.mark.asyncio
     async def test_obsolete_resolution_recorded_in_issue_run(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """ISSUE_OBSOLETE resolution should be recorded in IssueRun metadata."""
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
@@ -1507,15 +1568,15 @@ class TestResolutionRecordingInMetadata:
                 session_log_path=log_path,
             )
 
-        # Direct method replacements
+        # Patch collaborators for this test
         original_run = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", mock_run_implementer)
+        monkeypatch.setattr(RunMetadata, "record_issue", capture_record)
         try:
             success_count, total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-            RunMetadata.record_issue = original_record  # type: ignore[method-assign]
+            monkeypatch.setattr(orchestrator, "run_implementer", original_run)
+            monkeypatch.setattr(RunMetadata, "record_issue", original_record)
 
         # Verify issue was successful
         assert success_count == 1
@@ -1531,7 +1592,10 @@ class TestResolutionRecordingInMetadata:
 
     @pytest.mark.asyncio
     async def test_normal_success_has_no_resolution(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Normal success (with commit) should have no resolution marker."""
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
@@ -1574,15 +1638,15 @@ class TestResolutionRecordingInMetadata:
                 session_log_path=log_path,
             )
 
-        # Direct method replacements
+        # Patch collaborators for this test
         original_run = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", mock_run_implementer)
+        monkeypatch.setattr(RunMetadata, "record_issue", capture_record)
         try:
             success_count, total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-            RunMetadata.record_issue = original_record  # type: ignore[method-assign]
+            monkeypatch.setattr(orchestrator, "run_implementer", original_run)
+            monkeypatch.setattr(RunMetadata, "record_issue", original_record)
 
         # Verify issue was successful
         assert success_count == 1
@@ -1705,7 +1769,10 @@ class TestEpicClosureAfterChildCompletion:
 
     @pytest.mark.asyncio
     async def test_epic_closure_not_called_when_issue_fails(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """close_eligible_epics_async should NOT be called when issue fails."""
         # This test uses FakeIssueProvider since it doesn't need epic_verifier
@@ -1744,16 +1811,22 @@ class TestEpicClosureAfterChildCompletion:
                 session_log_path=log_path,
             )
 
-        # Direct method replacements
+        # Patch collaborators for this test
         original_run = orchestrator.run_implementer
         original_close = orchestrator.beads.close_eligible_epics_async
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-        orchestrator.beads.close_eligible_epics_async = mock_close_eligible_epics_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(orchestrator, "run_implementer", mock_run_implementer)
+        monkeypatch.setattr(
+            orchestrator.beads,
+            "close_eligible_epics_async",
+            mock_close_eligible_epics_async,
+        )
         try:
             await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-            orchestrator.beads.close_eligible_epics_async = original_close  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            monkeypatch.setattr(orchestrator, "run_implementer", original_run)
+            monkeypatch.setattr(
+                orchestrator.beads, "close_eligible_epics_async", original_close
+            )
 
         # Epic closure should NOT have been called since issue failed
         assert len(epic_closure_calls) == 0
@@ -3229,7 +3302,10 @@ class TestSigintEscalation:
         assert orchestrator._lifecycle.run_task is None
 
     def test_handle_sigint_on_drain_started_receives_active_count(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """on_drain_started receives correct active task count via lifecycle."""
         orchestrator = make_orchestrator(repo_path=tmp_path)
@@ -3242,7 +3318,9 @@ class TestSigintEscalation:
 
         # Mock on_drain_started to capture the count
         mock_on_drain_started = MagicMock()
-        orchestrator.event_sink.on_drain_started = mock_on_drain_started  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        monkeypatch.setattr(
+            orchestrator.event_sink, "on_drain_started", mock_on_drain_started
+        )
 
         # Configure lifecycle callbacks (use the mocked on_drain_started)
         orchestrator._lifecycle.configure_callbacks(
@@ -3850,7 +3928,10 @@ class TestFireRunEndTrigger:
 
     @pytest.mark.asyncio
     async def test_queues_trigger_on_success_when_fire_on_success(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Queues trigger when fire_on=SUCCESS and all issues succeeded."""
         from src.domain.validation.config import (
@@ -3879,20 +3960,28 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        # Mock queue_trigger_validation
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        # Patch queue_trigger_validation
+        queue_trigger_validation = MagicMock()
+        monkeypatch.setattr(
+            orchestrator.run_coordinator,
+            "queue_trigger_validation",
+            queue_trigger_validation,
+        )
 
         # All success: 3 success out of 3 total
         await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once_with(  # ty:ignore[unresolved-attribute]
+        queue_trigger_validation.assert_called_once_with(
             TriggerType.RUN_END,
             {"success_count": 3, "total_count": 3},
         )
 
     @pytest.mark.asyncio
     async def test_fires_trigger_on_mixed_when_fire_on_success(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Fires trigger when fire_on=SUCCESS and some issues succeeded (mixed).
 
@@ -3924,22 +4013,33 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-        orchestrator.run_coordinator.run_trigger_validation = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-            return_value=MagicMock(status="passed")
+        queue_trigger_validation = MagicMock()
+        run_trigger_validation = AsyncMock(return_value=MagicMock(status="passed"))
+        monkeypatch.setattr(
+            orchestrator.run_coordinator,
+            "queue_trigger_validation",
+            queue_trigger_validation,
+        )
+        monkeypatch.setattr(
+            orchestrator.run_coordinator,
+            "run_trigger_validation",
+            run_trigger_validation,
         )
 
         # Mixed: 2 success out of 3 total - fires per spec R7 (success_count > 0)
         await orchestrator._fire_run_end_trigger(success_count=2, total_count=3)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once_with(  # ty:ignore[unresolved-attribute]
+        queue_trigger_validation.assert_called_once_with(
             TriggerType.RUN_END,
             {"success_count": 2, "total_count": 3},
         )
 
     @pytest.mark.asyncio
     async def test_queues_trigger_on_failure_when_fire_on_failure(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Queues trigger when fire_on=FAILURE and some issues failed."""
         from src.domain.validation.config import (
@@ -3968,19 +4068,27 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        queue_trigger_validation = MagicMock()
+        monkeypatch.setattr(
+            orchestrator.run_coordinator,
+            "queue_trigger_validation",
+            queue_trigger_validation,
+        )
 
         # Some failure: 2 success out of 3 total
         await orchestrator._fire_run_end_trigger(success_count=2, total_count=3)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once_with(  # ty:ignore[unresolved-attribute]
+        queue_trigger_validation.assert_called_once_with(
             TriggerType.RUN_END,
             {"success_count": 2, "total_count": 3},
         )
 
     @pytest.mark.asyncio
     async def test_skips_trigger_on_success_when_fire_on_failure(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Skips trigger when fire_on=FAILURE but all issues succeeded."""
         from src.domain.validation.config import (
@@ -4008,16 +4116,24 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        queue_trigger_validation = MagicMock()
+        monkeypatch.setattr(
+            orchestrator.run_coordinator,
+            "queue_trigger_validation",
+            queue_trigger_validation,
+        )
 
         # All success: 3 success out of 3 total
         await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()  # ty:ignore[unresolved-attribute]
+        queue_trigger_validation.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_queues_trigger_always_when_fire_on_both(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Queues trigger on both success and failure when fire_on=BOTH."""
         from src.domain.validation.config import (
@@ -4045,20 +4161,28 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        queue_trigger_validation = MagicMock()
+        monkeypatch.setattr(
+            orchestrator.run_coordinator,
+            "queue_trigger_validation",
+            queue_trigger_validation,
+        )
 
         # Test with all success
         await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
-        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once()  # ty:ignore[unresolved-attribute]
-        orchestrator.run_coordinator.queue_trigger_validation.reset_mock()  # ty:ignore[unresolved-attribute]
+        queue_trigger_validation.assert_called_once()
+        queue_trigger_validation.reset_mock()
 
         # Test with some failure
         await orchestrator._fire_run_end_trigger(success_count=2, total_count=3)
-        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once()  # ty:ignore[unresolved-attribute]
+        queue_trigger_validation.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_skips_when_abort_run_set(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Skips trigger when abort_run is True."""
         from src.domain.validation.config import (
@@ -4089,15 +4213,23 @@ class TestFireRunEndTrigger:
         # Set abort
         orchestrator.issue_coordinator.request_abort(reason="test")
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        queue_trigger_validation = MagicMock()
+        monkeypatch.setattr(
+            orchestrator.run_coordinator,
+            "queue_trigger_validation",
+            queue_trigger_validation,
+        )
 
         await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()  # ty:ignore[unresolved-attribute]
+        queue_trigger_validation.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_skips_when_no_issues_processed(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Skips trigger when total_count is 0 (no issues processed)."""
         from src.domain.validation.config import (
@@ -4125,15 +4257,23 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        queue_trigger_validation = MagicMock()
+        monkeypatch.setattr(
+            orchestrator.run_coordinator,
+            "queue_trigger_validation",
+            queue_trigger_validation,
+        )
 
         await orchestrator._fire_run_end_trigger(success_count=0, total_count=0)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()  # ty:ignore[unresolved-attribute]
+        queue_trigger_validation.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_fires_on_total_failure_when_fire_on_failure(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Fires trigger when fire_on=FAILURE and all issues failed (0 success)."""
         from src.domain.validation.config import (
@@ -4162,19 +4302,27 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        queue_trigger_validation = MagicMock()
+        monkeypatch.setattr(
+            orchestrator.run_coordinator,
+            "queue_trigger_validation",
+            queue_trigger_validation,
+        )
 
         # Total failure: 0 success out of 3 total
         await orchestrator._fire_run_end_trigger(success_count=0, total_count=3)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once_with(  # ty:ignore[unresolved-attribute]
+        queue_trigger_validation.assert_called_once_with(
             TriggerType.RUN_END,
             {"success_count": 0, "total_count": 3},
         )
 
     @pytest.mark.asyncio
     async def test_skips_when_run_end_not_configured(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Skips trigger when run_end trigger is not configured."""
         orchestrator = make_orchestrator(
@@ -4184,11 +4332,16 @@ class TestFireRunEndTrigger:
             max_issues=1,
         )
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        queue_trigger_validation = MagicMock()
+        monkeypatch.setattr(
+            orchestrator.run_coordinator,
+            "queue_trigger_validation",
+            queue_trigger_validation,
+        )
 
         await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()  # ty:ignore[unresolved-attribute]
+        queue_trigger_validation.assert_not_called()
 
 
 class TestBaseShaCapture:

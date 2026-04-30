@@ -11,7 +11,16 @@ without mutating inputs.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, TypeAlias, TypeVar
+
 from src.core.models import OrderPreference
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+IssueRecord: TypeAlias = Mapping[str, object]
+IssueRecordT = TypeVar("IssueRecordT", bound=IssueRecord)
 
 
 class IssueManager:
@@ -26,8 +35,8 @@ class IssueManager:
 
     @staticmethod
     def merge_wip_issues(
-        base_issues: list[dict[str, object]], wip_issues: list[dict[str, object]]
-    ) -> list[dict[str, object]]:
+        base_issues: Sequence[IssueRecordT], wip_issues: Sequence[IssueRecordT]
+    ) -> list[IssueRecordT]:
         """Merge WIP issues into base list, avoiding duplicates.
 
         Args:
@@ -38,10 +47,12 @@ class IssueManager:
             Combined list with WIP issues appended if not already in base.
         """
         ready_ids: set[str] = {str(i["id"]) for i in base_issues}
-        return base_issues + [w for w in wip_issues if str(w["id"]) not in ready_ids]
+        merged = list(base_issues)
+        merged.extend(w for w in wip_issues if str(w["id"]) not in ready_ids)
+        return merged
 
     @staticmethod
-    def filter_blocked_wip(issues: list[dict[str, object]]) -> list[dict[str, object]]:
+    def filter_blocked_wip(issues: Sequence[IssueRecordT]) -> list[IssueRecordT]:
         """Filter out blocked in_progress issues.
 
         A WIP issue is considered blocked when it has a truthy blocked_by value.
@@ -59,7 +70,7 @@ class IssueManager:
         ]
 
     @staticmethod
-    def filter_wip_issues(issues: list[dict[str, object]]) -> list[dict[str, object]]:
+    def filter_wip_issues(issues: Sequence[IssueRecordT]) -> list[IssueRecordT]:
         """Filter out in_progress issues.
 
         Used when include_wip=False to exclude WIP issues from the result set.
@@ -76,8 +87,8 @@ class IssueManager:
 
     @staticmethod
     def filter_blocked_epics(
-        issues: list[dict[str, object]], blocked_epics: set[str]
-    ) -> list[dict[str, object]]:
+        issues: Sequence[IssueRecordT], blocked_epics: set[str]
+    ) -> list[IssueRecordT]:
         """Filter out issues whose parent epic is blocked.
 
         Args:
@@ -88,7 +99,7 @@ class IssueManager:
             List with issues under blocked epics removed.
         """
         if not blocked_epics:
-            return issues
+            return list(issues)
         return [
             issue
             for issue in issues
@@ -97,11 +108,11 @@ class IssueManager:
 
     @staticmethod
     def apply_filters(
-        issues: list[dict[str, object]],
+        issues: Sequence[IssueRecordT],
         exclude_ids: set[str],
         epic_children: set[str] | None,
         only_ids: list[str] | None,
-    ) -> list[dict[str, object]]:
+    ) -> list[IssueRecordT]:
         """Apply filtering rules to issues.
 
         Filters out:
@@ -174,8 +185,8 @@ class IssueManager:
 
     @staticmethod
     def sort_by_epic_groups(
-        issues: list[dict[str, object]],
-    ) -> list[dict[str, object]]:
+        issues: Sequence[IssueRecordT],
+    ) -> list[IssueRecordT]:
         """Sort issues by epic groups for focus mode.
 
         Groups issues by parent_epic field, then sorts:
@@ -196,21 +207,21 @@ class IssueManager:
             Sorted list of issue dicts.
         """
         if not issues:
-            return issues
+            return []
 
         # Group issues by parent epic (None for orphans)
-        groups: dict[str | None, list[dict[str, object]]] = {}
+        groups: dict[str | None, list[IssueRecordT]] = {}
         for issue in issues:
             key: str | None = (
                 str(issue.get("parent_epic")) if issue.get("parent_epic") else None
             )
             groups.setdefault(key, []).append(issue)
 
-        def get_priority(issue: dict[str, object]) -> int:
+        def get_priority(issue: IssueRecord) -> int:
             """Extract priority as int, defaulting to 0."""
             return IssueManager.parse_priority(issue.get("priority"))
 
-        def get_updated_at(issue: dict[str, object]) -> str:
+        def get_updated_at(issue: IssueRecord) -> str:
             """Extract updated_at as string, defaulting to empty."""
             val = issue.get("updated_at")
             return str(val) if val is not None else ""
@@ -224,7 +235,7 @@ class IssueManager:
                 )
             )
 
-        def get_epic_priority(issue: dict[str, object]) -> int | None:
+        def get_epic_priority(issue: IssueRecord) -> int | None:
             """Extract epic_priority as int if available, or None."""
             prio = issue.get("epic_priority")
             if prio is None:
@@ -266,12 +277,12 @@ class IssueManager:
 
     @staticmethod
     def sort_issues(
-        issues: list[dict[str, object]],
+        issues: Sequence[IssueRecordT],
         focus: bool,
         include_wip: bool,
         only_ids: list[str] | None = None,
         order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
-    ) -> list[dict[str, object]]:
+    ) -> list[IssueRecordT]:
         """Sort issues by order_preference (authoritative over focus flag).
 
         Args:
@@ -287,7 +298,7 @@ class IssueManager:
             Sorted list of issue dicts.
         """
         if not issues:
-            return issues
+            return []
 
         # INPUT order: preserve user-specified order from only_ids
         # Note: include_wip is ignored for ordering to preserve exact user order
@@ -322,7 +333,7 @@ class IssueManager:
     @staticmethod
     def find_missing_ids(
         only_ids: list[str] | None,
-        issues: list[dict[str, object]],
+        issues: Sequence[IssueRecord],
         suppress_ids: set[str],
     ) -> set[str]:
         """Find IDs from only_ids that are not in issues.
@@ -341,8 +352,8 @@ class IssueManager:
 
     @staticmethod
     def filter_orphans_only(
-        issues: list[dict[str, object]],
-    ) -> list[dict[str, object]]:
+        issues: Sequence[IssueRecordT],
+    ) -> list[IssueRecordT]:
         """Filter to only issues with no parent epic.
 
         Args:

@@ -22,7 +22,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from src.core.session_end_result import (
     CodeReviewResult,
@@ -917,7 +917,7 @@ class SessionCallbackFactory:
             )
 
             # Convert findings to dict format for SessionEndResult
-            findings = [
+            findings: list[dict[str, object]] = [
                 {
                     "file": f.file,
                     "line_start": f.line_start,
@@ -933,7 +933,7 @@ class SessionCallbackFactory:
             # passed=False means review found issues (findings) that may need remediation
             # "skipped" status (e.g., empty diff) is treated as passed since there's nothing to review
             passed = result.status in ("success", "skipped") and len(findings) == 0
-            return CodeReviewResult(ran=True, passed=passed, findings=findings)  # ty:ignore[invalid-argument-type]
+            return CodeReviewResult(ran=True, passed=passed, findings=findings)
 
         except Exception as e:
             logger.error("session_end code_review failed: %s", e)
@@ -1019,10 +1019,10 @@ class _GateRunnerAdapter:
         result, offset = await self._factory._gate_async_runner.run_gate_async(
             issue_id,
             log_path,
-            retry_state,  # type: ignore[arg-type] # Protocol → concrete type  # ty:ignore[invalid-argument-type]
+            cast("RetryState", retry_state),
             self._factory._context.interrupt_event_getter(),
         )
-        return result, offset  # type: ignore[return-value] # concrete → Protocol
+        return result, offset
 
     async def run_session_end_check(
         self,

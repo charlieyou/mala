@@ -100,7 +100,12 @@ if TYPE_CHECKING:
     from src.pipeline.issue_finalizer import IssueFinalizer
     from src.pipeline.session_callback_factory import SessionRunnerAdapters
 
-    from src.core.models import PeriodicValidationConfig, RunResult, WatchConfig
+    from src.core.models import (
+        EpicVerificationResult,
+        PeriodicValidationConfig,
+        RunResult,
+        WatchConfig,
+    )
 
     from .types import OrchestratorConfig, _DerivedConfig
 
@@ -136,10 +141,14 @@ class StoredReviewIssue:
         def to_int(val: object, default: int) -> int:
             if val is None:
                 return default
-            try:
-                return int(val)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            except (ValueError, TypeError):
-                return default
+            if isinstance(val, int):
+                return val
+            if isinstance(val, str):
+                try:
+                    return int(val)
+                except ValueError:
+                    return default
+            return default
 
         line_start = to_int(d.get("line_start"), 0)
         return cls(
@@ -527,6 +536,15 @@ class MalaOrchestrator:
             EpicVerificationConfig,
         )
 
+        async def verify_epic(
+            epic_id: str, human_override: bool
+        ) -> EpicVerificationResult:
+            if self.epic_verifier is None:
+                raise RuntimeError("Epic verifier is not available")
+            return await self.epic_verifier.verify_and_close_epic(
+                epic_id, human_override=human_override
+            )
+
         # Prefer derived.max_epic_verification_retries from mala.yaml epic_completion config,
         # otherwise fall back to MalaConfig (env var or default of 3)
         max_epic_verification_retries = (
@@ -542,11 +560,7 @@ class MalaOrchestrator:
                 get_parent_epic=lambda issue_id: self.beads.get_parent_epic_async(
                     issue_id
                 ),
-                verify_epic=lambda epic_id, human_override: (
-                    self.epic_verifier.verify_and_close_epic(  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
-                        epic_id, human_override=human_override
-                    )
-                ),
+                verify_epic=verify_epic,
                 spawn_remediation=lambda issue_id, flow="implementer": self.spawn_agent(
                     issue_id, flow=flow
                 ),
@@ -628,11 +642,11 @@ class MalaOrchestrator:
     # Delegate state to issue_coordinator (single source of truth)
     # These properties return empty containers if accessed before coordinator init
     @property
-    def active_tasks(self) -> dict[str, asyncio.Task[IssueResult]]:
+    def active_tasks(self) -> dict[str, asyncio.Task[Any]]:
         """Active agent tasks, delegated to issue_coordinator."""
         if not hasattr(self, "issue_coordinator"):
             return {}
-        return self.issue_coordinator.active_tasks  # type: ignore[return-value]
+        return self.issue_coordinator.active_tasks
 
     @property
     def failed_issues(self) -> set[str]:
@@ -1036,7 +1050,7 @@ class MalaOrchestrator:
 
     async def spawn_agent(
         self, issue_id: str, flow: str = "implementer"
-    ) -> asyncio.Task | None:  # type: ignore[type-arg]
+    ) -> asyncio.Task[IssueResult] | None:
         """Spawn a new agent task for an issue. Returns the Task if spawned, None otherwise."""
         if not await self.beads.claim_async(issue_id):
             self.issue_coordinator.mark_failed(issue_id)
@@ -1075,7 +1089,7 @@ class MalaOrchestrator:
 
         async def finalize_callback(
             issue_id: str,
-            task: asyncio.Task,  # type: ignore[type-arg]
+            task: asyncio.Task[Any],
         ) -> None:
             """Finalize a completed task."""
             try:

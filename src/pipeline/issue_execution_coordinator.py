@@ -15,7 +15,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from src.core.models import OrderPreference, RunResult, WatchState
 
@@ -36,7 +36,7 @@ class SpawnCallback(Protocol):
     The coordinator automatically registers the returned task.
     """
 
-    async def __call__(self, issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
+    async def __call__(self, issue_id: str) -> asyncio.Task[Any] | None:
         """Spawn an agent for the given issue."""
         ...
 
@@ -47,7 +47,7 @@ class FinalizeCallback(Protocol):
     Takes the issue_id and the task that completed.
     """
 
-    async def __call__(self, issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
+    async def __call__(self, issue_id: str, task: asyncio.Task[Any]) -> None:
         """Finalize the result of a completed task."""
         ...
 
@@ -150,7 +150,7 @@ class IssueExecutionCoordinator:
         self.config = config
 
         # Runtime state
-        self.active_tasks: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
+        self.active_tasks: dict[str, asyncio.Task[Any]] = {}
         self.completed_ids: set[str] = set()
         self.failed_issues: set[str] = set()
         self.abort_run: bool = False
@@ -647,7 +647,7 @@ class IssueExecutionCoordinator:
             issues_spawned=issues_spawned, exit_code=0, exit_reason="success"
         )
 
-    def register_task(self, issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
+    def register_task(self, issue_id: str, task: asyncio.Task[Any]) -> None:
         """Register an active task for an issue.
 
         Called by spawn_callback after successfully creating a task.

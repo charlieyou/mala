@@ -1064,44 +1064,44 @@ class TestPipelineSteps:
         """_merge_wip_issues adds WIP issues not in base list."""
         base = [{"id": "a"}, {"id": "b"}]
         wip = [{"id": "b"}, {"id": "c"}]
-        result = BeadsClient._merge_wip_issues(base, wip)  # ty:ignore[invalid-argument-type]
+        result = BeadsClient._merge_wip_issues(base, wip)
         assert len(result) == 3
         assert [r["id"] for r in result] == ["a", "b", "c"]
 
     def test_merge_wip_issues_empty_base(self) -> None:
         """_merge_wip_issues with empty base returns all WIP."""
         wip = [{"id": "x"}, {"id": "y"}]
-        result = BeadsClient._merge_wip_issues([], wip)  # ty:ignore[invalid-argument-type]
+        result = BeadsClient._merge_wip_issues([], wip)
         assert [r["id"] for r in result] == ["x", "y"]
 
     def test_merge_wip_issues_empty_wip(self) -> None:
         """_merge_wip_issues with empty WIP returns base unchanged."""
         base = [{"id": "a"}]
-        result = BeadsClient._merge_wip_issues(base, [])  # ty:ignore[invalid-argument-type]
+        result = BeadsClient._merge_wip_issues(base, [])
         assert result == base
 
     def test_apply_filters_excludes_ids(self) -> None:
         """_apply_filters excludes specified IDs."""
         issues = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
-        result = BeadsClient._apply_filters(issues, {"b"}, None, None)  # ty:ignore[invalid-argument-type]
+        result = BeadsClient._apply_filters(issues, {"b"}, None, None)
         assert [r["id"] for r in result] == ["a", "c"]
 
     def test_apply_filters_excludes_epics(self) -> None:
         """_apply_filters excludes issue_type=epic."""
         issues = [{"id": "a"}, {"id": "b", "issue_type": "epic"}]
-        result = BeadsClient._apply_filters(issues, set(), None, None)  # ty:ignore[invalid-argument-type]
+        result = BeadsClient._apply_filters(issues, set(), None, None)
         assert [r["id"] for r in result] == ["a"]
 
     def test_apply_filters_by_epic_children(self) -> None:
         """_apply_filters includes only epic children when specified."""
         issues = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
-        result = BeadsClient._apply_filters(issues, set(), {"a", "c"}, None)  # ty:ignore[invalid-argument-type]
+        result = BeadsClient._apply_filters(issues, set(), {"a", "c"}, None)
         assert [r["id"] for r in result] == ["a", "c"]
 
     def test_apply_filters_by_only_ids(self) -> None:
         """_apply_filters includes only specified IDs."""
         issues = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
-        result = BeadsClient._apply_filters(issues, set(), None, ["b"])  # ty:ignore[invalid-argument-type]
+        result = BeadsClient._apply_filters(issues, set(), None, ["b"])
         assert [r["id"] for r in result] == ["b"]
 
     def test_sort_issues_by_priority(self, tmp_path: Path) -> None:
@@ -1112,7 +1112,7 @@ class TestPipelineSteps:
             {"id": "b", "priority": 1},
             {"id": "c", "priority": 2},
         ]
-        result = beads._sort_issues(issues, focus=False, include_wip=False)  # ty:ignore[invalid-argument-type]
+        result = beads._sort_issues(issues, focus=False, include_wip=False)
         assert [r["id"] for r in result] == ["b", "c", "a"]
 
     def test_sort_issues_include_wip(self, tmp_path: Path) -> None:
@@ -1123,7 +1123,7 @@ class TestPipelineSteps:
             {"id": "b", "priority": 2, "status": "in_progress"},
             {"id": "c", "priority": 3, "status": "open"},
         ]
-        result = beads._sort_issues(issues, focus=False, include_wip=True)  # ty:ignore[invalid-argument-type]
+        result = beads._sort_issues(issues, focus=False, include_wip=True)
         assert [r["id"] for r in result] == ["a", "b", "c"]
 
     def test_sort_issues_by_epic_groups(self, tmp_path: Path) -> None:
@@ -1149,7 +1149,7 @@ class TestPipelineSteps:
                 "updated_at": "2025-01-01",
             },
         ]
-        result = beads._sort_issues(issues, focus=True, include_wip=False)  # ty:ignore[invalid-argument-type]
+        result = beads._sort_issues(issues, focus=True, include_wip=False)
         # epic-2 has lower min priority (1), so it comes first
         assert result[0]["id"] == "b"
         # epic-1 issues grouped together

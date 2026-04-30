@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from src.core.protocols.sdk import McpServerFactory, SDKClientProtocol
     from src.core.session_end_result import SessionEndResult
     from src.domain.lifecycle import RetryState
+    from src.infra.telemetry import TelemetrySpan
     from src.pipeline.agent_session_runner import (
         SessionConfig,
         SessionExecutionState,
@@ -175,8 +176,8 @@ class SequencedSDKClientFactory:
     client on the first call and a successful client on the second call.
     """
 
-    def __init__(self, clients: list[FakeSDKClient]):
-        self.clients = clients
+    def __init__(self, clients: Sequence[FakeSDKClient]):
+        self.clients = list(clients)
         self.create_calls: list[Any] = []
         self.with_resume_calls: list[tuple[object, str | None]] = []
         self._index = 0
@@ -192,12 +193,7 @@ class SequencedSDKClientFactory:
         self.with_resume_calls.append((options, resume))
         if isinstance(options, dict):
             return {**options, "resume": resume}
-        # For real ClaudeAgentOptions, use dataclass fields
-        from dataclasses import fields
-
-        kwargs = {f.name: getattr(options, f.name) for f in fields(options)}  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-        kwargs["resume"] = resume
-        return type(options)(**kwargs)  # type: ignore[return-value]
+        return options
 
     def create_options(
         self,
@@ -294,9 +290,9 @@ class TestAgentSessionRunnerBasics:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
         )
 
         input = AgentSessionInput(
@@ -336,9 +332,9 @@ class TestAgentSessionRunnerBasics:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
         )
 
         input = AgentSessionInput(
@@ -371,9 +367,9 @@ class TestAgentSessionRunnerBasics:
 
         runner = AgentSessionRunner(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(),
             agent_provider=FakeAgentProvider(fake_factory),
         )
 
@@ -419,9 +415,9 @@ class TestAgentSessionRunnerBasics:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
         )
 
         input = AgentSessionInput(
@@ -465,9 +461,9 @@ class TestAgentSessionRunnerBasics:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
         )
 
         input = AgentSessionInput(
@@ -530,9 +526,9 @@ class TestAgentSessionRunnerGateHandling:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
         )
 
         input = AgentSessionInput(
@@ -584,9 +580,9 @@ class TestAgentSessionRunnerGateHandling:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
         )
 
         input = AgentSessionInput(
@@ -641,9 +637,9 @@ class TestAgentSessionRunnerCallbacks:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(log_path=log_path),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(log_path=log_path),
         )
 
         input = AgentSessionInput(
@@ -717,11 +713,11 @@ class TestAgentSessionRunnerStreamingCallbacks:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
             session_lifecycle=StubSessionLifecycle(
                 on_get_log_path=get_log_path, on_tool_use_callback=on_tool_use
-            ),  # type: ignore[arg-type]
+            ),
         )
 
         input = AgentSessionInput(
@@ -769,11 +765,11 @@ class TestAgentSessionRunnerStreamingCallbacks:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
             session_lifecycle=StubSessionLifecycle(
                 on_get_log_path=get_log_path, on_agent_text_callback=on_agent_text
-            ),  # type: ignore[arg-type]
+            ),
         )
 
         input = AgentSessionInput(
@@ -820,9 +816,9 @@ class TestAgentSessionRunnerStreamingCallbacks:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
         )
 
         input = AgentSessionInput(
@@ -1027,10 +1023,10 @@ class TestAgentSessionRunnerEventSink:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
-            event_sink=fake_sink,  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
+            event_sink=fake_sink,
         )
 
         input = AgentSessionInput(
@@ -1111,10 +1107,10 @@ class TestAgentSessionRunnerEventSink:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
-            event_sink=fake_sink,  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
+            event_sink=fake_sink,
         )
 
         input = AgentSessionInput(
@@ -1204,10 +1200,10 @@ class TestAgentSessionRunnerEventSink:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
-            event_sink=fake_sink,  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
+            event_sink=fake_sink,
         )
 
         input = AgentSessionInput(
@@ -1254,9 +1250,9 @@ class TestAgentSessionRunnerEventSink:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
             event_sink=None,  # No event sink
         )
 
@@ -1317,7 +1313,7 @@ class TestAgentSessionRunnerEventSink:
         ) -> ReviewResult:
             nonlocal captured_session_id, captured_previous_findings
             captured_session_id = session_id
-            captured_previous_findings = previous_findings  # type: ignore[assignment]
+            captured_previous_findings = previous_findings
             # Verify previous_findings is None on first review attempt
             assert previous_findings is None
             return ReviewResult(passed=True, issues=[], parse_error=None)
@@ -1325,10 +1321,10 @@ class TestAgentSessionRunnerEventSink:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(on_review=on_review_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
-            event_sink=fake_sink,  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(on_review=on_review_check),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
+            event_sink=fake_sink,
         )
 
         input = AgentSessionInput(
@@ -1420,7 +1416,7 @@ class TestAgentSessionRunnerEventSink:
             nonlocal review_check_count
             review_check_count += 1
             # Capture previous_findings to verify wiring
-            captured_previous_findings.append(previous_findings)  # type: ignore[arg-type]
+            captured_previous_findings.append(previous_findings)
             if review_check_count == 1:
                 # First check: previous_findings should be None
                 assert previous_findings is None, (
@@ -1456,10 +1452,10 @@ class TestAgentSessionRunnerEventSink:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(on_review=on_review_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
-            event_sink=fake_sink,  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(on_review=on_review_check),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
+            event_sink=fake_sink,
         )
 
         input = AgentSessionInput(
@@ -1538,9 +1534,9 @@ class TestIdleTimeoutRetry:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
         )
 
         input_data = AgentSessionInput(
@@ -1585,13 +1581,13 @@ class TestIdleTimeoutRetry:
             mcp_server_factory=make_noop_mcp_factory(),
         )
 
-        factory = SequencedSDKClientFactory(clients)  # ty:ignore[invalid-argument-type]
+        factory = SequencedSDKClientFactory(clients)
 
         runner = AgentSessionRunner(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(),
             agent_provider=FakeAgentProvider(factory),
         )
 
@@ -1634,9 +1630,9 @@ class TestIdleTimeoutRetry:
 
         runner = AgentSessionRunner(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(),
             agent_provider=FakeAgentProvider(factory),
         )
 
@@ -1694,9 +1690,9 @@ class TestIdleTimeoutRetry:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
         )
 
         input_data = AgentSessionInput(
@@ -1748,9 +1744,9 @@ class TestIdleTimeoutRetry:
 
         runner = AgentSessionRunner(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(),
             agent_provider=FakeAgentProvider(factory),
         )
 
@@ -1808,9 +1804,9 @@ class TestIdleTimeoutRetry:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
         )
 
         input_data = AgentSessionInput(
@@ -1872,9 +1868,9 @@ class TestIdleTimeoutRetry:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
         )
 
         input_data = AgentSessionInput(
@@ -2030,10 +2026,10 @@ class TestIdleTimeoutRetry:
 
         runner = AgentSessionRunner(
             config=session_config,
-            agent_provider=FakeAgentProvider(fake_factory),  # type: ignore[arg-type]
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
+            agent_provider=FakeAgentProvider(fake_factory),
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
         )
 
         input_data = AgentSessionInput(
@@ -2083,9 +2079,9 @@ class TestInitializeSession:
         fake_client = FakeSDKClient(result_message=make_result_message())
         return AgentSessionRunner(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(),
             agent_provider=FakeAgentProvider(FakeSDKClientFactory(fake_client)),
         )
 
@@ -2185,9 +2181,9 @@ class TestInitializeSession:
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(),
             agent_provider=FakeAgentProvider(FakeSDKClientFactory(fake_client)),
         )
 
@@ -2213,9 +2209,9 @@ class TestInitializeSession:
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(),
             agent_provider=FakeAgentProvider(FakeSDKClientFactory(fake_client)),
         )
 
@@ -2241,9 +2237,9 @@ class TestInitializeSession:
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(),
             agent_provider=FakeAgentProvider(FakeSDKClientFactory(fake_client)),
         )
 
@@ -2269,9 +2265,9 @@ class TestInitializeSession:
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(),
             agent_provider=FakeAgentProvider(FakeSDKClientFactory(fake_client)),
         )
 
@@ -2297,9 +2293,9 @@ class TestInitializeSession:
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(),
             agent_provider=FakeAgentProvider(FakeSDKClientFactory(fake_client)),
         )
 
@@ -2341,9 +2337,9 @@ class TestBuildSessionOutput:
         return AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(mock_sdk_client_factory),
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(),
         )
 
     @pytest.mark.unit
@@ -2704,7 +2700,7 @@ class TestEmitReviewResultEvents:
         lifecycle_ctx.retry_state.review_attempt = 1
 
         _emit_review_result_events(
-            fake_sink,  # type: ignore[arg-type]
+            fake_sink,
             input_data,
             result,
             review_result,
@@ -2737,7 +2733,7 @@ class TestEmitReviewResultEvents:
         lifecycle_ctx.retry_state.review_attempt = 1
 
         _emit_review_result_events(
-            fake_sink,  # type: ignore[arg-type]
+            fake_sink,
             input_data,
             result,
             review_result,
@@ -2801,7 +2797,7 @@ class TestEmitReviewResultEvents:
         lifecycle_ctx.retry_state.review_attempt = 2
 
         _emit_review_result_events(
-            fake_sink,  # type: ignore[arg-type]
+            fake_sink,
             input_data,
             result,
             review_result,
@@ -2852,7 +2848,7 @@ class TestEmitReviewResultEvents:
         lifecycle_ctx = MagicMock()
 
         _emit_review_result_events(
-            fake_sink,  # type: ignore[arg-type]
+            fake_sink,
             input_data,
             result,
             review_result,
@@ -2882,7 +2878,7 @@ class TestEmitGatePassedEvents:
         """Events should be emitted when review_attempt is 1."""
         from src.pipeline.lifecycle_effect_handler import _emit_gate_passed_events
 
-        _emit_gate_passed_events(fake_sink, "test-123", review_attempt=1)  # type: ignore[arg-type]
+        _emit_gate_passed_events(fake_sink, "test-123", review_attempt=1)
 
         event_names = [e[0] for e in fake_sink.events]
         assert "on_gate_passed" in event_names
@@ -2901,7 +2897,7 @@ class TestEmitGatePassedEvents:
         """No events should be emitted when review_attempt > 1."""
         from src.pipeline.lifecycle_effect_handler import _emit_gate_passed_events
 
-        _emit_gate_passed_events(fake_sink, "test-123", review_attempt=2)  # type: ignore[arg-type]
+        _emit_gate_passed_events(fake_sink, "test-123", review_attempt=2)
 
         assert len(fake_sink.events) == 0
 
@@ -2964,9 +2960,9 @@ class TestCheckReviewNoProgress:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(mock_sdk_client_factory),
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(on_check_no_progress=on_review_no_progress),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(on_check_no_progress=on_review_no_progress),
+            session_lifecycle=StubSessionLifecycle(),
         )
 
         lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=True))
@@ -2996,9 +2992,9 @@ class TestCheckReviewNoProgress:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(mock_sdk_client_factory),
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(),
         )
 
         lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=True))
@@ -3034,9 +3030,9 @@ class TestCheckReviewNoProgress:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(mock_sdk_client_factory),
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(on_check_no_progress=on_review_no_progress),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(on_check_no_progress=on_review_no_progress),
+            session_lifecycle=StubSessionLifecycle(),
         )
 
         lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=True))
@@ -3080,10 +3076,10 @@ class TestCheckReviewNoProgress:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(mock_sdk_client_factory),
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(on_check_no_progress=on_review_no_progress),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
-            event_sink=fake_sink,  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(on_check_no_progress=on_review_no_progress),
+            session_lifecycle=StubSessionLifecycle(),
+            event_sink=fake_sink,
         )
 
         lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=True))
@@ -3174,10 +3170,10 @@ class TestRunLifecycleLoop:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
-            event_sink=fake_sink,  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
+            event_sink=fake_sink,
         )
 
         session_cfg = SessionConfig(
@@ -3225,14 +3221,14 @@ class TestRunLifecycleLoop:
             LifecycleState,
         )
 
-        # Client that returns no session_id
+        # Client that returns no session_id-equivalent value
         no_session_result = ResultMessage(
             subtype="result",
             duration_ms=100,
             duration_api_ms=50,
             is_error=False,
             num_turns=1,
-            session_id=None,  # type: ignore[arg-type]  # No session ID!  # ty:ignore[invalid-argument-type]
+            session_id="",
             result="Done",
         )
         fake_client = FakeSDKClient(result_message=no_session_result)
@@ -3241,9 +3237,9 @@ class TestRunLifecycleLoop:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(),
         )
 
         session_cfg = SessionConfig(
@@ -3309,10 +3305,10 @@ class TestRunLifecycleLoop:
         runner = AgentSessionRunner(
             config=session_config,
             agent_provider=FakeAgentProvider(fake_factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
-            event_sink=fake_sink,  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
+            event_sink=fake_sink,
         )
 
         session_cfg = SessionConfig(
@@ -3463,9 +3459,9 @@ class TestResumeSessionId:
         runner = AgentSessionRunner(
             config=config,
             agent_provider=FakeAgentProvider(factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
         )
 
         # Create input with resume_session_id
@@ -3527,9 +3523,9 @@ class TestResumeSessionId:
         runner = AgentSessionRunner(
             config=config,
             agent_provider=FakeAgentProvider(factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
         )
 
         # Save original methods
@@ -3545,13 +3541,13 @@ class TestResumeSessionId:
             input: AgentSessionInput,
             session_cfg: SessionConfig,
             state: SessionExecutionState,
-            tracer: object,
+            tracer: TelemetrySpan | None,
         ) -> None:
             # First call with resume - raise stale session error
             if input.resume_session_id:
                 raise Exception("Session stale-session-id not found (404)")
             # Second call (without resume) - call original
-            await original_lifecycle(input, session_cfg, state, tracer)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            await original_lifecycle(input, session_cfg, state, tracer)
 
         with (
             patch.object(runner, "_initialize_session", mock_init),
@@ -3614,9 +3610,9 @@ class TestResumeSessionId:
         runner = AgentSessionRunner(
             config=config,
             agent_provider=FakeAgentProvider(factory),
-            gate_runner=StubGateRunner(on_gate_check=on_gate_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),
         )
 
         original_init = runner._initialize_session
@@ -3748,22 +3744,25 @@ class TestLocalSettingsIntegration:
                 hooks: dict[str, list[object]] | None = None,
                 resume: str | None = None,
             ) -> ClaudeAgentOptions:
-                opts = real_factory.create_options(
-                    cwd=cwd,
-                    permission_mode=permission_mode,
-                    model=model,
-                    system_prompt=system_prompt,
-                    output_format=output_format,
-                    settings=settings,
-                    setting_sources=setting_sources,
-                    mcp_servers=mcp_servers,
-                    disallowed_tools=disallowed_tools,
-                    env=env,
-                    hooks=hooks,
-                    resume=resume,
+                opts = cast(
+                    "ClaudeAgentOptions",
+                    real_factory.create_options(
+                        cwd=cwd,
+                        permission_mode=permission_mode,
+                        model=model,
+                        system_prompt=system_prompt,
+                        output_format=output_format,
+                        settings=settings,
+                        setting_sources=setting_sources,
+                        mcp_servers=mcp_servers,
+                        disallowed_tools=disallowed_tools,
+                        env=env,
+                        hooks=hooks,
+                        resume=resume,
+                    ),
                 )
-                created_options.append(opts)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-                return opts  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
+                created_options.append(opts)
+                return opts
 
             def create_hook_matcher(
                 self, matcher: object | None, hooks: list[object]
@@ -3777,13 +3776,13 @@ class TestLocalSettingsIntegration:
 
         runner = AgentSessionRunner(
             config=session_config_with_local_settings,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(),
             # ``setting_sources=["local"]`` was previously on AgentSessionConfig;
             # after T007 that knob lives on the provider, which threads it into
             # the runtime builder.
-            agent_provider=FakeAgentProvider(  # type: ignore[arg-type]
+            agent_provider=FakeAgentProvider(
                 hybrid_factory, setting_sources=["local"]
             ),
         )

@@ -30,8 +30,11 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     import asyncio
 
-    from src.core.models import ReviewInput
-    from src.core.protocols.review import CodeReviewer, ReviewResultProtocol
+    from src.core.protocols.review import (
+        CodeReviewer,
+        ReviewInputProtocol,
+        ReviewResultProtocol,
+    )
     from src.core.protocols.validation import GateChecker, ValidationSpecProtocol
     from src.core.session_end_result import SessionEndResult
     from src.domain.validation.spec import ValidationSpec
@@ -209,7 +212,7 @@ class ReviewRunner:
 
     async def run_review(
         self,
-        input: ReviewInput,
+        input: ReviewInputProtocol,
         interrupt_event: asyncio.Event | None = None,
     ) -> ReviewOutput:
         """Run code review on the given commit.

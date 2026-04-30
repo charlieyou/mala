@@ -103,10 +103,13 @@ class LintCacheEntry:
     @classmethod
     def from_dict(cls, data: dict[str, str | bool | None]) -> LintCacheEntry:
         """Create from a dict."""
+        files_hash = data.get("files_hash")
+        if files_hash is not None and not isinstance(files_hash, str):
+            files_hash = None
         return cls(
             head_sha=str(data["head_sha"]),
             has_uncommitted=bool(data["has_uncommitted"]),
-            files_hash=data.get("files_hash"),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            files_hash=files_hash,
         )
 
 

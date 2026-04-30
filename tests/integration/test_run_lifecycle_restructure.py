@@ -218,8 +218,8 @@ async def test_session_end_invoked_after_gate_passes(
         agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
-        ),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-        review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        ),
+        review_runner=StubReviewRunner(),
         session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
@@ -292,8 +292,8 @@ async def test_session_end_completed_event_on_pass(
         agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
-        ),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-        review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        ),
+        review_runner=StubReviewRunner(),
         session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
@@ -359,8 +359,8 @@ async def test_session_end_not_invoked_when_gate_fails(
         agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
-        ),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-        review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        ),
+        review_runner=StubReviewRunner(),
         session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
@@ -429,8 +429,8 @@ async def test_session_end_timeout_scenario(
         agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
-        ),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-        review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        ),
+        review_runner=StubReviewRunner(),
         session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
@@ -510,8 +510,8 @@ async def test_session_end_interrupt_scenario(
         agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
-        ),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-        review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        ),
+        review_runner=StubReviewRunner(),
         session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
@@ -637,8 +637,8 @@ async def test_session_end_timeout_proceeds_to_review_with_correct_result(
         agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
-        ),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-        review_runner=StubReviewRunner(on_review=on_review_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        ),
+        review_runner=StubReviewRunner(on_review=on_review_check),
         session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
@@ -777,8 +777,8 @@ async def test_mixed_outcomes_both_proceed_to_review(
         agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
-        ),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-        review_runner=StubReviewRunner(on_review=on_review_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        ),
+        review_runner=StubReviewRunner(on_review=on_review_check),
         session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )

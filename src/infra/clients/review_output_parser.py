@@ -17,9 +17,11 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path  # noqa: TC003 (runtime import for get_type_hints compatibility)
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from src.core.protocols.events import MalaEventSink
 
 
@@ -107,40 +109,41 @@ class ReviewOutputParser:
         for i, item in enumerate(raw_issues):
             if not isinstance(item, dict):
                 return False, [], f"Issue {i} is not an object"
+            item_data = cast("Mapping[str, object]", item)
 
-            reviewer = item.get("reviewer", "")  # ty:ignore[no-matching-overload]
+            reviewer = item_data.get("reviewer", "")
             if not isinstance(reviewer, str):
                 return False, [], f"Issue {i}: 'reviewer' must be a string"
 
             # Cerberus uses file_path (can be null for non-file-specific findings)
-            file_path = item.get("file_path")  # ty:ignore[invalid-argument-type]
+            file_path = item_data.get("file_path")
             if file_path is None:
                 file_path = ""
             elif not isinstance(file_path, str):
                 return False, [], f"Issue {i}: 'file_path' must be a string or null"
 
             # line_start and line_end can be null
-            line_start = item.get("line_start")  # ty:ignore[invalid-argument-type]
+            line_start = item_data.get("line_start")
             if line_start is None:
                 line_start = 0
             elif not isinstance(line_start, int):
                 return False, [], f"Issue {i}: 'line_start' must be an integer or null"
 
-            line_end = item.get("line_end")  # ty:ignore[invalid-argument-type]
+            line_end = item_data.get("line_end")
             if line_end is None:
                 line_end = 0
             elif not isinstance(line_end, int):
                 return False, [], f"Issue {i}: 'line_end' must be an integer or null"
 
-            priority = item.get("priority")  # ty:ignore[invalid-argument-type]
+            priority = item_data.get("priority")
             if priority is not None and not isinstance(priority, int):
                 return False, [], f"Issue {i}: 'priority' must be an integer or null"
 
-            title = item.get("title", "")  # ty:ignore[no-matching-overload]
+            title = item_data.get("title", "")
             if not isinstance(title, str):
                 return False, [], f"Issue {i}: 'title' must be a string"
 
-            body = item.get("body", "")  # ty:ignore[no-matching-overload]
+            body = item_data.get("body", "")
             if not isinstance(body, str):
                 return False, [], f"Issue {i}: 'body' must be a string"
 

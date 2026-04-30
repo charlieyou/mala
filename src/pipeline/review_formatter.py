@@ -11,12 +11,22 @@ from src.core.protocols.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from src.core.protocols.review import ReviewIssueProtocol
+
+class ReviewIssueLike(Protocol):
+    """Shape needed to format review issues."""
+
+    file: str
+    line_start: int
+    line_end: int
+    priority: int | None
+    title: str
+    body: str
+    reviewer: str
 
 
 def _to_relative_path(file_path: str, resolved_base: Path) -> str:
@@ -48,7 +58,7 @@ def _to_relative_path(file_path: str, resolved_base: Path) -> str:
 
 
 def format_review_issues(
-    issues: Sequence[ReviewIssueProtocol], base_path: Path | None = None
+    issues: Sequence[ReviewIssueLike], base_path: Path | None = None
 ) -> str:
     """Format review issues as a human-readable string for follow-up prompts.
 

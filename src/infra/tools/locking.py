@@ -614,17 +614,26 @@ class CliContext:
     poll_ms: int
 
 
+def _require_filepath(ctx: CliContext) -> str:
+    """Return the parsed filepath for commands that require one."""
+    if ctx.filepath is None:
+        raise ValueError(f"Command {ctx.command!r} requires a filepath")
+    return ctx.filepath
+
+
 def _cmd_try(ctx: CliContext) -> int:
     """Handle 'try' command: attempt to acquire lock."""
-    if try_lock(ctx.filepath, ctx.agent_id, ctx.repo_namespace):  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+    filepath = _require_filepath(ctx)
+    if try_lock(filepath, ctx.agent_id, ctx.repo_namespace):
         return 0
     return 1
 
 
 def _cmd_wait(ctx: CliContext) -> int:
     """Handle 'wait' command: wait for lock with timeout."""
+    filepath = _require_filepath(ctx)
     if wait_for_lock(
-        ctx.filepath,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        filepath,
         ctx.agent_id,
         ctx.repo_namespace,
         ctx.timeout,
@@ -636,7 +645,8 @@ def _cmd_wait(ctx: CliContext) -> int:
 
 def _cmd_check(ctx: CliContext) -> int:
     """Handle 'check' command: check if we hold the lock."""
-    holder = get_lock_holder(ctx.filepath, ctx.repo_namespace)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+    filepath = _require_filepath(ctx)
+    holder = get_lock_holder(filepath, ctx.repo_namespace)
     if holder == ctx.agent_id:
         return 0
     return 1
@@ -644,7 +654,8 @@ def _cmd_check(ctx: CliContext) -> int:
 
 def _cmd_holder(ctx: CliContext) -> int:
     """Handle 'holder' command: print lock holder."""
-    holder = get_lock_holder(ctx.filepath, ctx.repo_namespace)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+    filepath = _require_filepath(ctx)
+    holder = get_lock_holder(filepath, ctx.repo_namespace)
     if holder:
         print(holder)
     return 0
@@ -652,9 +663,10 @@ def _cmd_holder(ctx: CliContext) -> int:
 
 def _cmd_release(ctx: CliContext) -> int:
     """Handle 'release' command: release lock if we hold it."""
-    holder = get_lock_holder(ctx.filepath, ctx.repo_namespace)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+    filepath = _require_filepath(ctx)
+    holder = get_lock_holder(filepath, ctx.repo_namespace)
     if holder == ctx.agent_id:
-        lp = lock_path(ctx.filepath, ctx.repo_namespace)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        lp = lock_path(filepath, ctx.repo_namespace)
         lp.with_suffix(".meta").unlink(missing_ok=True)
         lp.unlink(missing_ok=True)
     return 0
