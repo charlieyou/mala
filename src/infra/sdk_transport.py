@@ -42,6 +42,9 @@ def ensure_sigint_isolated_cli_transport() -> None:
             if self._process:
                 return
 
+            if self._cli_path is None:
+                self._cli_path = self._find_cli()
+
             if not os.environ.get("CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK"):
                 await self._check_claude_version()
 

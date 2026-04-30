@@ -64,6 +64,38 @@ async def test_cli_transport_registers_sigint_pgid(
 
 @unix_only
 @pytest.mark.asyncio
+async def test_cli_transport_resolves_default_cli_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLI transport resolves cli_path before building the subprocess command."""
+    monkeypatch.setenv("CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK", "1")
+    command_runner._SIGINT_FORWARD_PGIDS.clear()
+    ensure_sigint_isolated_cli_transport()
+
+    captured: dict[str, object] = {}
+
+    async def fake_open_process(*args: object, **kwargs: object) -> FakeProcess:
+        captured["cmd"] = args[0]
+        return FakeProcess(pid=9003)
+
+    monkeypatch.setattr(anyio, "open_process", fake_open_process)
+
+    from claude_agent_sdk._internal.transport import subprocess_cli
+
+    options = ClaudeAgentOptions()
+    transport = subprocess_cli.SubprocessCLITransport(prompt="hi", options=options)
+    monkeypatch.setattr(transport, "_find_cli", lambda: "/bin/echo")
+
+    await transport.connect()
+    cmd = captured["cmd"]
+    assert isinstance(cmd, list)
+    assert cmd[0] == "/bin/echo"
+
+    await transport.close()
+
+
+@unix_only
+@pytest.mark.asyncio
 async def test_cli_transport_logs_sdk_subprocess_spawned_with_flow(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
