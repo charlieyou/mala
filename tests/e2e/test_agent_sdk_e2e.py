@@ -110,6 +110,7 @@ def test_repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.mark.flaky_sdk
 @pytest.mark.asyncio
 async def test_real_agent_review_flow(test_repo: Path) -> None:
     """Test AgentSDKReviewer with real SDK client.

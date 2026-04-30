@@ -30,7 +30,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.events import MalaEventSink
-    from src.core.protocols.sdk import SDKClientFactoryProtocol
+    from src.core.protocols.sdk import SDKClientFactoryProtocol, SDKClientProtocol
+    from src.infra.sigint_guard import InterruptGuard
 
 
 class StructuredOutputError(RuntimeError):
@@ -203,7 +204,7 @@ class AgentSDKReviewer:
                 review_log_path=None,
             )
         except Exception as e:
-            error_msg = f"SDK error: {e}"
+            error_msg = f"SDK error: {type(e).__name__}: {e}"
             if self.event_sink is not None:
                 self.event_sink.on_review_warning(error_msg)
             return ReviewResult(
@@ -299,7 +300,7 @@ class AgentSDKReviewer:
         query: str,
         timeout: int,
         session_id: str | None,
-        guard: object,
+        guard: InterruptGuard,
     ) -> tuple[str, Path | None, bool]:
         """Run agent session and collect final output.
 
@@ -340,10 +341,10 @@ class AgentSDKReviewer:
 
     async def _execute_agent_session(
         self,
-        client: object,
+        client: SDKClientProtocol,
         query: str,
         session_id: str | None,
-        guard: object,
+        guard: InterruptGuard,
     ) -> tuple[str, Path | None, bool]:
         """Execute the agent session and collect output.
 
@@ -366,14 +367,14 @@ class AgentSDKReviewer:
         was_interrupted = False
 
         response_iter = None
-        async with client:  # type: ignore[union-attr]  # ty:ignore[invalid-context-manager]
-            await client.query(query, session_id=session_id)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+        async with client:
+            await client.query(query, session_id=session_id)
 
-            response_iter = client.receive_response()  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+            response_iter = client.receive_response()
             try:
                 async for msg in response_iter:
                     # Check for interrupt during iteration (Finding 4)
-                    if guard.is_interrupted():  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+                    if guard.is_interrupted():
                         logger.info("Review interrupted during SDK session iteration")
                         was_interrupted = True
                         break
@@ -441,7 +442,7 @@ class AgentSDKReviewer:
                                 )
 
         try:
-            await client.disconnect()  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+            await client.disconnect()
         except Exception as e:  # pragma: no cover - best effort cleanup
             logger.debug(f"Failed to disconnect SDK client: {e}")
 
