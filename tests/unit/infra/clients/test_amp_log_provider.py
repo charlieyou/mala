@@ -348,6 +348,61 @@ def test_iter_events_reads_across_two_invocations(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_iter_events_ignores_caller_offset_so_resume_evidence_persists(
+    tmp_path: Path,
+) -> None:
+    """Regression for cross-resume offset skip (P1 finding).
+
+    The gate retry path advances ``retry_state.log_offset`` to the end of
+    the previous attempt and passes it back into ``iter_events``. For
+    Claude that scopes correctly to the current session because each
+    session has its own log file. For Amp, all invocations of one thread
+    append to the same file, so honoring the offset would silently drop
+    invocation 1's lint/test/typecheck Bash events on resume — exactly
+    what AC#7a requires to remain visible. ``AmpLogProvider.iter_events``
+    therefore ignores the caller-supplied offset and reads from byte 0.
+    """
+    log_path = tmp_path / "T-offset-skip.jsonl"
+
+    invocation_1 = [
+        _system_init("T-offset-skip"),
+        _assistant_bash("v1", "uv run pytest -q"),
+        _user_tool_result("v1", "1 passed"),
+        _assistant_bash("v2", "uvx ruff check ."),
+        _user_tool_result("v2", "ok"),
+        _assistant_bash("v3", "uvx ty check"),
+        _user_tool_result("v3", "Success"),
+        _result("T-offset-skip"),
+    ]
+    _write_jsonl(log_path, invocation_1)
+
+    # Caller advances offset to end of invocation 1 (the realistic
+    # post-attempt-1 retry_state.log_offset).
+    end_of_invocation_1 = log_path.stat().st_size
+
+    invocation_2 = [
+        _assistant_bash("w1", "echo continuing"),
+        _user_tool_result("w1", "continuing"),
+        _result("T-offset-skip"),
+    ]
+    _append_jsonl(log_path, invocation_2)
+
+    provider = AmpLogProvider(native_dir=tmp_path)
+
+    # Caller passes the stale offset; provider must still surface
+    # invocation 1 events.
+    entries = list(provider.iter_events(log_path, offset=end_of_invocation_1))
+    commands = [
+        cmd for e in entries for (_id, cmd) in provider.extract_bash_commands(e)
+    ]
+
+    assert "uv run pytest -q" in commands
+    assert "uvx ruff check ." in commands
+    assert "uvx ty check" in commands
+    assert "echo continuing" in commands
+
+
+@pytest.mark.unit
 def test_cross_resume_validation_evidence_persists(tmp_path: Path) -> None:
     """Regression for log-stitching finding: invocation 1 evidence persists.
 

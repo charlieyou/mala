@@ -185,10 +185,23 @@ class AmpLogProvider:
           * Malformed JSON line → skip with warn-level log; do not raise.
           * Bad UTF-8 → skip silently (matches FileSystemLogProvider).
 
-        Reads the full file from ``offset`` so events from every Amp
-        invocation appended to the thread file (initial run + any
-        resumes) are observed in file order.
+        Always reads from byte 0 — the caller-supplied ``offset`` is
+        intentionally ignored on the Amp path. Rationale (AC#7a): unlike
+        the Claude path where each session has its own log file (so an
+        offset advanced past the previous attempt scopes correctly to
+        the current session), Amp tees every invocation of the same
+        thread (initial run + resumes) into one append-only file. A
+        caller that advances ``offset`` after a gate failure and replays
+        the read on resume would silently drop invocation 1's lint /
+        test / typecheck Bash ``tool_use`` events, even though they are
+        still on disk. AmpLogProvider therefore treats the per-thread
+        tee as the source of truth for the entire thread's history and
+        re-parses from the beginning on every call. Validation gates
+        match evidence by presence, so re-emitting earlier events is
+        idempotent for them.
         """
+        del offset  # see docstring rationale.
+
         if not log_path.exists():
             return
 
@@ -199,8 +212,7 @@ class AmpLogProvider:
             return
 
         with f:
-            f.seek(offset)
-            current_offset = offset
+            current_offset = 0
             for line_bytes in f:
                 line_len = len(line_bytes)
                 line_offset = current_offset
