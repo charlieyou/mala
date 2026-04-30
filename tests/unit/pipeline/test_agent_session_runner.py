@@ -26,6 +26,7 @@ from src.pipeline.agent_session_runner import (
     SessionExecutionState,
     SessionPrompts,
 )
+from tests.fakes.agent_provider import FakeAgentProvider
 from tests.helpers.protocol_stubs import (
     StubGateRunner,
     StubReviewRunner,
@@ -76,7 +77,7 @@ def make_session_config() -> SessionConfig:
     return SessionConfig(
         agent_id="test-agent",
         options=FakeOptions(),
-        lint_cache=FakeLintCache(),  # type: ignore[arg-type]
+        lint_cache=FakeLintCache(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         log_file_wait_timeout=10.0,
         log_file_poll_interval=0.5,
         idle_timeout_seconds=None,
@@ -415,9 +416,9 @@ class TestEarlyInterruptPath:
         )
         runner = AgentSessionRunner(
             config=config,
-            sdk_client_factory=FakeSDKClientFactory(),  # type: ignore[arg-type]
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            agent_provider=FakeAgentProvider(FakeSDKClientFactory()),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
         )
 
@@ -450,9 +451,9 @@ class TestEarlyInterruptPath:
         )
         runner = AgentSessionRunner(
             config=config,
-            sdk_client_factory=FakeSDKClientFactory(),  # type: ignore[arg-type]
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            agent_provider=FakeAgentProvider(FakeSDKClientFactory()),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
         )
 
@@ -485,9 +486,9 @@ class TestEarlyInterruptPath:
         )
         runner = AgentSessionRunner(
             config=config,
-            sdk_client_factory=FakeSDKClientFactory(),  # type: ignore[arg-type]
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            agent_provider=FakeAgentProvider(FakeSDKClientFactory()),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
         )
 
@@ -586,9 +587,9 @@ class TestProtocolInterfaceAcceptance:
         # Should not raise
         runner = AgentSessionRunner(
             config=config,
-            sdk_client_factory=FakeSDKClientFactory(),  # type: ignore[arg-type]
-            gate_runner=FakeGateRunner(),  # type: ignore[arg-type]
-            review_runner=FakeReviewRunner(),  # type: ignore[arg-type]
+            agent_provider=FakeAgentProvider(FakeSDKClientFactory()),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            gate_runner=FakeGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            review_runner=FakeReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             session_lifecycle=FakeSessionLifecycle(),  # type: ignore[arg-type]
         )
 
@@ -612,7 +613,7 @@ class TestProtocolInterfaceAcceptance:
                 return Path("/tmp/protocol-log.jsonl")
 
             def get_log_offset(self, log_path: object, start_offset: int) -> int:
-                log_offset_calls.append((log_path, start_offset))  # type: ignore[arg-type]
+                log_offset_calls.append((log_path, start_offset))  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
                 return 42
 
             def on_abort(self, reason: str) -> None:
@@ -676,9 +677,9 @@ class TestProtocolInterfaceAcceptance:
 
         runner = AgentSessionRunner(
             config=config,
-            sdk_client_factory=FakeSDKClientFactory(),  # type: ignore[arg-type]
-            gate_runner=FakeGateRunner(),  # type: ignore[arg-type]
-            review_runner=FakeReviewRunner(),  # type: ignore[arg-type]
+            agent_provider=FakeAgentProvider(FakeSDKClientFactory()),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            gate_runner=FakeGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            review_runner=FakeReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             session_lifecycle=FakeSessionLifecycle(),
         )
 

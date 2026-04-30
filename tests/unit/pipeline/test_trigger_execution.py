@@ -43,6 +43,7 @@ from src.pipeline.run_coordinator import (
 from src.pipeline.fixer_service import FixerService
 from src.pipeline.trigger_engine import TriggerEngine
 from tests.fakes import FakeEnvConfig
+from tests.fakes.agent_provider import FakeAgentProvider
 from tests.fakes.command_runner import FakeCommandRunner
 from tests.fakes.lock_manager import FakeLockManager
 
@@ -74,7 +75,7 @@ def make_coordinator(
         command_runner=command_runner or FakeCommandRunner(allow_unregistered=True),
         env_config=FakeEnvConfig(),
         lock_manager=FakeLockManager(),
-        sdk_client_factory=MagicMock(),
+        agent_provider=FakeAgentProvider(MagicMock()),
         trigger_engine=trigger_engine,
         fixer_service=mock_fixer_service,
     )
@@ -669,8 +670,8 @@ class TestFailureModeRemediate:
             return FixerResult(success=True)
 
         coordinator = make_coordinator(tmp_path, validation_config=config)
-        coordinator.command_runner = stateful_runner  # type: ignore[assignment]
-        coordinator.fixer_service.run_fixer = mock_fixer  # type: ignore[method-assign]
+        coordinator.command_runner = stateful_runner  # type: ignore[assignment]  # ty:ignore[invalid-assignment]
+        coordinator.fixer_service.run_fixer = mock_fixer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         coordinator.queue_trigger_validation(
             TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
         )
@@ -723,7 +724,7 @@ class TestFailureModeRemediate:
         coordinator = make_coordinator(
             tmp_path, validation_config=config, command_runner=runner
         )
-        coordinator.fixer_service.run_fixer = mock_fixer  # type: ignore[method-assign]
+        coordinator.fixer_service.run_fixer = mock_fixer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         coordinator.queue_trigger_validation(
             TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
         )
@@ -774,7 +775,7 @@ class TestFailureModeRemediate:
         coordinator = make_coordinator(
             tmp_path, validation_config=config, command_runner=runner
         )
-        coordinator.fixer_service.run_fixer = mock_fixer  # type: ignore[method-assign]
+        coordinator.fixer_service.run_fixer = mock_fixer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         coordinator.queue_trigger_validation(
             TriggerType.EPIC_COMPLETION, {"epic_id": "epic-1"}
         )
@@ -909,11 +910,11 @@ class TestEpicCompletionTriggerIntegration:
         callbacks = EpicVerificationCallbacks(
             get_parent_epic=get_parent_epic,
             verify_epic=verify_epic,
-            spawn_remediation=lambda issue_id, flow: None,  # type: ignore[return-value, arg-type]
-            finalize_remediation=lambda issue_id, result, metadata: None,  # type: ignore[return-value, arg-type]
+            spawn_remediation=lambda issue_id, flow: None,  # type: ignore[return-value, arg-type]  # ty:ignore[invalid-argument-type]
+            finalize_remediation=lambda issue_id, result, metadata: None,  # type: ignore[return-value, arg-type]  # ty:ignore[invalid-argument-type]
             mark_completed=lambda issue_id: None,
             is_issue_failed=lambda issue_id: False,
-            close_eligible_epics=lambda: None,  # type: ignore[return-value, arg-type]
+            close_eligible_epics=lambda: None,  # type: ignore[return-value, arg-type]  # ty:ignore[invalid-argument-type]
             on_epic_closed=lambda issue_id: None,
             on_warning=lambda msg: None,
             has_epic_verifier=lambda: True,
@@ -1281,7 +1282,7 @@ class TestPeriodicTriggerIntegration:
         bound_method = MalaOrchestrator._check_and_queue_periodic_trigger.__get__(
             mock_orch, MockOrchestrator
         )
-        mock_orch._check_and_queue_periodic_trigger = bound_method  # type: ignore[attr-defined]
+        mock_orch._check_and_queue_periodic_trigger = bound_method  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
 
         return mock_orch, mock_orch.run_coordinator._trigger_queue
 
@@ -1409,7 +1410,7 @@ class TestPeriodicTriggerIntegration:
         bound_method = MalaOrchestrator._check_and_queue_periodic_trigger.__get__(
             mock_orch, MockOrchestrator
         )
-        mock_orch._check_and_queue_periodic_trigger = bound_method  # type: ignore[attr-defined]
+        mock_orch._check_and_queue_periodic_trigger = bound_method  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
 
         # Complete 5 issues
         for i in range(5):
@@ -1419,7 +1420,7 @@ class TestPeriodicTriggerIntegration:
                 success=True,
                 summary="done",
             )
-            mock_orch._check_and_queue_periodic_trigger(result)  # type: ignore[arg-type]
+            mock_orch._check_and_queue_periodic_trigger(result)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type, unresolved-attribute]
 
         # Counter should increment
         assert mock_orch._non_epic_completed_count == 5
@@ -1470,7 +1471,7 @@ class TestEpicFilteringForPeriodicTrigger:
         bound_method = MalaOrchestrator._check_and_queue_periodic_trigger.__get__(
             mock_orch, MockOrchestrator
         )
-        mock_orch._check_and_queue_periodic_trigger = bound_method  # type: ignore[attr-defined]
+        mock_orch._check_and_queue_periodic_trigger = bound_method  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
         return mock_orch, mock_orch.run_coordinator._trigger_queue
 
     def test_epic_issue_does_not_increment_counter(self, tmp_path: Path) -> None:

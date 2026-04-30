@@ -563,7 +563,7 @@ class TestCommandResolution:
         )
         engine = TriggerEngine(config)
 
-        trigger_config = config.validation_triggers.session_end  # type: ignore[union-attr]
+        trigger_config = config.validation_triggers.session_end  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
         assert trigger_config is not None
         resolved = engine.resolve_commands(trigger_config, TriggerType.SESSION_END)
 
@@ -584,7 +584,7 @@ class TestTriggerActionsDataclass:
         )
 
         with pytest.raises(AttributeError):
-            actions.should_run = False  # type: ignore[misc]
+            actions.should_run = False  # type: ignore[misc]  # ty:ignore[invalid-assignment]
 
     def test_trigger_actions_defaults(self) -> None:
         """TriggerActions has sensible defaults."""

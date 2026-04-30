@@ -91,7 +91,7 @@ class TestRetryPolicyValidation:
             model=mock_model,
             repo_path=Path("/tmp"),
             command_runner=MagicMock(),
-            retry_policy=BadPolicy(),  # type: ignore[arg-type]
+            retry_policy=BadPolicy(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         verdict = await verifier._verify_with_category_retries("epic context")

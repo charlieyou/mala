@@ -218,7 +218,7 @@ def _create_factory(
         on_review_log_path=lambda issue_id, path: None,
         interrupt_event_getter=lambda: interrupt_event,
         get_base_sha=lambda issue_id: (base_sha_map or {}).get(issue_id),
-        get_run_metadata=lambda: run_metadata or FakeRunMetadata(),  # type: ignore[return-value]
+        get_run_metadata=lambda: run_metadata or FakeRunMetadata(),  # type: ignore[return-value]  # ty:ignore[invalid-argument-type]
         on_abort=on_abort or (lambda reason: None),
         abort_event_getter=lambda: None,
     )
@@ -231,9 +231,9 @@ def _create_factory(
         get_per_session_spec=MagicMock(return_value=None),
         is_verbose=MagicMock(return_value=False),
         get_validation_config=lambda: validation_config,
-        command_runner=command_runner,  # type: ignore[arg-type]
+        command_runner=command_runner,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         fixer_interface=fixer_interface,  # type: ignore[arg-type]
-        cumulative_review_runner=cumulative_review_runner,  # type: ignore[arg-type]
+        cumulative_review_runner=cumulative_review_runner,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         session_end_timeout=session_end_timeout,
     )
 

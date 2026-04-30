@@ -389,7 +389,7 @@ class TestEdgeCases:
 
     def test_non_dict_returns_none(self) -> None:
         """Non-dict input returns None."""
-        entry = parse_log_entry("not a dict")  # type: ignore[arg-type]
+        entry = parse_log_entry("not a dict")  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
         assert entry is None
 
@@ -704,7 +704,7 @@ class TestStrictParsing:
     def test_strict_non_dict_input_raises_error(self) -> None:
         """Non-dict entry should raise LogParseError."""
         with pytest.raises(LogParseError) as exc_info:
-            parse_log_entry_strict("not a dict")  # type: ignore[arg-type]
+            parse_log_entry_strict("not a dict")  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
         assert "dict" in exc_info.value.reason.lower()
 

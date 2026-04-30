@@ -931,7 +931,7 @@ class TestBuildDependenciesRuntimeDeps:
             config, mala_config, derived, None, reviewer_config
         )
 
-        # Unpack result (10 elements)
+        # Unpack result (11 elements: agent_provider added in T007)
         (
             _issue_provider,
             _code_reviewer,
@@ -943,6 +943,7 @@ class TestBuildDependenciesRuntimeDeps:
             command_runner,
             env_config,
             lock_manager,
+            _agent_provider,
         ) = result
 
         # Verify types are concrete implementations

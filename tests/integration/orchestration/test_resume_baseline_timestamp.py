@@ -14,6 +14,7 @@ import pytest
 from src.infra.clients.review_output_parser import ReviewResult
 from src.infra.io.log_output.run_metadata import parse_timestamp
 from src.infra.tools.env import encode_repo_path, get_claude_log_path
+from tests.fakes.agent_provider import FakeAgentProvider
 from tests.fakes.gate_checker import FakeGateChecker
 from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 from tests.fakes.sdk_client import FakeSDKClientFactory
@@ -82,7 +83,9 @@ async def test_resume_reuses_persisted_baseline_timestamp(
         runs_dir=runs_dir,
         disable_validations={"global-validate"},
     )
-    orchestrator_run1._sdk_client_factory = sdk_factory_run1  # test-only override
+    orchestrator_run1._agent_provider = FakeAgentProvider(  # test-only override
+        sdk_factory_run1
+    )
 
     await _run_with_fake_git(orchestrator_run1)
 
@@ -152,7 +155,9 @@ async def test_resume_reuses_persisted_baseline_timestamp(
         include_wip=True,
         disable_validations={"global-validate"},
     )
-    orchestrator_run2._sdk_client_factory = sdk_factory_run2  # test-only override
+    orchestrator_run2._agent_provider = FakeAgentProvider(  # test-only override
+        sdk_factory_run2
+    )
 
     await _run_with_fake_git(
         orchestrator_run2, get_issue_commits=fake_get_issue_commits_async

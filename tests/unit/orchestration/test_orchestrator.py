@@ -13,6 +13,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, Callable, Generator, Sequence
 from pathlib import Path
+from typing import Self
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -144,7 +145,7 @@ class TestSpawnAgent:
             )
 
         original_run_implementer = orchestrator.run_implementer
-        orchestrator.run_implementer = fake_run_implementer  # type: ignore[method-assign]
+        orchestrator.run_implementer = fake_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             task = await orchestrator.spawn_agent("claimable-issue")
             # spawn_agent returns the Task on success (caller is responsible for registration)
@@ -155,7 +156,7 @@ class TestSpawnAgent:
             # Await the task to ensure it completes before restoring run_implementer
             await task
         finally:
-            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]
+            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
 
 class TestRunOrchestrationLoop:
@@ -230,11 +231,11 @@ class TestRunOrchestrationLoop:
             return asyncio.create_task(work())
 
         # Replace method directly (not using patch)
-        orchestrator.spawn_agent = tracking_spawn  # type: ignore[method-assign]
+        orchestrator.spawn_agent = tracking_spawn  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             await orchestrator.run()
         finally:
-            orchestrator.spawn_agent = original_spawn  # type: ignore[method-assign]
+            orchestrator.spawn_agent = original_spawn  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Should have only spawned 2 issues (max_issues limit)
         assert len(spawned) == 2
@@ -274,11 +275,11 @@ class TestFailedTaskResetsIssue:
             )
 
         original_run_implementer = orchestrator.run_implementer
-        orchestrator.run_implementer = fake_run_implementer  # type: ignore[method-assign]
+        orchestrator.run_implementer = fake_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]
+            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # The failed issue should have been marked needs-followup
         assert len(fake_issues.followup_calls) == 1
@@ -317,11 +318,11 @@ class TestFailedTaskResetsIssue:
             )
 
         original_run_implementer = orchestrator.run_implementer
-        orchestrator.run_implementer = fake_run_implementer  # type: ignore[method-assign]
+        orchestrator.run_implementer = fake_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]
+            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Issue should be closed, not reset
         assert "success-issue" in fake_issues.closed
@@ -461,11 +462,11 @@ class TestOrchestratorEvidenceCheckIntegration:
 
         # Direct method replacement instead of patch.object
         original_run_implementer = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]
+            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Should have been marked as needs-followup via FakeIssueProvider
         assert len(fake_issues.followup_calls) == 1
@@ -507,11 +508,11 @@ class TestOrchestratorEvidenceCheckIntegration:
 
         # Direct method replacement instead of patch.object
         original_run_implementer = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             success_count, _total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]
+            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         assert success_count == 1
         assert any(r.issue_id == "issue-pass" for r in orchestrator._state.completed)
@@ -536,7 +537,7 @@ class TestMissingLogFile:
             # Set short timeout default if not explicitly provided
             if "log_file_wait_timeout" not in kwargs:
                 kwargs["log_file_wait_timeout"] = 0.5
-            original_init(self, *args, **kwargs)  # type: ignore[arg-type]
+            original_init(self, *args, **kwargs)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
         with patch.object(AgentSessionConfig, "__init__", patched_init):
             yield
@@ -677,7 +678,7 @@ class TestAgentEnvInheritance:
             # Set short timeout default if not explicitly provided
             if "log_file_wait_timeout" not in kwargs:
                 kwargs["log_file_wait_timeout"] = 0.5
-            original_init(self, *args, **kwargs)  # type: ignore[arg-type]
+            original_init(self, *args, **kwargs)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
         with patch.object(AgentSessionConfig, "__init__", patched_init):
             yield
@@ -700,7 +701,7 @@ class TestAgentEnvInheritance:
                 # Capture the env from options
                 captured_env = getattr(options, "env", None)
 
-            async def __aenter__(self) -> "MockClient":
+            async def __aenter__(self) -> Self:
                 return self
 
             async def __aexit__(self, *args: object) -> None:
@@ -854,11 +855,11 @@ class TestGateFlowSequencing:
 
         # Direct method replacement
         original = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             success_count, _total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original  # type: ignore[method-assign]
+            orchestrator.run_implementer = original  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Assert on FakeIssueProvider state
         assert success_count == 1
@@ -900,11 +901,11 @@ class TestGateFlowSequencing:
 
         # Direct method replacement
         original = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             success_count, _total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original  # type: ignore[method-assign]
+            orchestrator.run_implementer = original  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Assert on FakeIssueProvider state
         assert success_count == 1
@@ -955,11 +956,11 @@ class TestRetryExhaustion:
 
         # Direct method replacement
         original = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             success_count, _total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original  # type: ignore[method-assign]
+            orchestrator.run_implementer = original  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         assert success_count == 0
         # Assert on FakeIssueProvider state
@@ -1005,11 +1006,11 @@ class TestRetryExhaustion:
 
         # Direct method replacement
         original = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original  # type: ignore[method-assign]
+            orchestrator.run_implementer = original  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Should have failed due to no progress
         assert "issue-no-progress" in orchestrator.failed_issues
@@ -1075,11 +1076,11 @@ class TestGlobalValidation:
 
         # Direct method replacement
         original = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             success_count, _total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original  # type: ignore[method-assign]
+            orchestrator.run_implementer = original  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         assert success_count == 0
         assert _total == 1
@@ -1120,11 +1121,11 @@ class TestGlobalValidation:
 
         # Direct method replacement
         original = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             success_count, _total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original  # type: ignore[method-assign]
+            orchestrator.run_implementer = original  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         assert success_count == 1
         # Assert on FakeIssueProvider state
@@ -1166,11 +1167,11 @@ class TestGlobalValidation:
 
         # Direct method replacement
         original = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original  # type: ignore[method-assign]
+            orchestrator.run_implementer = original  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Issue should NOT be closed - assert on FakeIssueProvider state
         assert "issue-fail" not in fake_issues.closed
@@ -1249,12 +1250,12 @@ class TestValidationResultMetadata:
 
         # Direct method replacements
         original_run = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
-        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run  # type: ignore[method-assign]
+            orchestrator.run_implementer = original_run  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             RunMetadata.record_issue = original_record  # type: ignore[method-assign]
 
         # Verify an issue was recorded
@@ -1340,12 +1341,12 @@ class TestValidationResultMetadata:
 
         # Direct method replacements
         original_run = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
-        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run  # type: ignore[method-assign]
+            orchestrator.run_implementer = original_run  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             RunMetadata.record_issue = original_record  # type: ignore[method-assign]
 
         # Verify an issue was recorded
@@ -1434,12 +1435,12 @@ class TestResolutionRecordingInMetadata:
 
         # Direct method replacements
         original_run = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
-        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             success_count, total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run  # type: ignore[method-assign]
+            orchestrator.run_implementer = original_run  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             RunMetadata.record_issue = original_record  # type: ignore[method-assign]
 
         # Verify issue was successful
@@ -1508,12 +1509,12 @@ class TestResolutionRecordingInMetadata:
 
         # Direct method replacements
         original_run = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
-        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             success_count, total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run  # type: ignore[method-assign]
+            orchestrator.run_implementer = original_run  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             RunMetadata.record_issue = original_record  # type: ignore[method-assign]
 
         # Verify issue was successful
@@ -1575,12 +1576,12 @@ class TestResolutionRecordingInMetadata:
 
         # Direct method replacements
         original_run = orchestrator.run_implementer
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
-        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             success_count, total = await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run  # type: ignore[method-assign]
+            orchestrator.run_implementer = original_run  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             RunMetadata.record_issue = original_record  # type: ignore[method-assign]
 
         # Verify issue was successful
@@ -1746,13 +1747,13 @@ class TestEpicClosureAfterChildCompletion:
         # Direct method replacements
         original_run = orchestrator.run_implementer
         original_close = orchestrator.beads.close_eligible_epics_async
-        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
-        orchestrator.beads.close_eligible_epics_async = mock_close_eligible_epics_async  # type: ignore[method-assign]
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        orchestrator.beads.close_eligible_epics_async = mock_close_eligible_epics_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         try:
             await orchestrator.run()
         finally:
-            orchestrator.run_implementer = original_run  # type: ignore[method-assign]
-            orchestrator.beads.close_eligible_epics_async = original_close  # type: ignore[method-assign]
+            orchestrator.run_implementer = original_run  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            orchestrator.beads.close_eligible_epics_async = original_close  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Epic closure should NOT have been called since issue failed
         assert len(epic_closure_calls) == 0
@@ -3241,7 +3242,7 @@ class TestSigintEscalation:
 
         # Mock on_drain_started to capture the count
         mock_on_drain_started = MagicMock()
-        orchestrator.event_sink.on_drain_started = mock_on_drain_started  # type: ignore[method-assign]
+        orchestrator.event_sink.on_drain_started = mock_on_drain_started  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Configure lifecycle callbacks (use the mocked on_drain_started)
         orchestrator._lifecycle.configure_callbacks(
@@ -3879,12 +3880,12 @@ class TestFireRunEndTrigger:
         orchestrator._validation_config = validation_config
 
         # Mock queue_trigger_validation
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # All success: 3 success out of 3 total
         await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once_with(
+        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once_with(  # ty:ignore[unresolved-attribute]
             TriggerType.RUN_END,
             {"success_count": 3, "total_count": 3},
         )
@@ -3923,15 +3924,15 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
-        orchestrator.run_coordinator.run_trigger_validation = AsyncMock(  # type: ignore[method-assign]
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        orchestrator.run_coordinator.run_trigger_validation = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             return_value=MagicMock(status="passed")
         )
 
         # Mixed: 2 success out of 3 total - fires per spec R7 (success_count > 0)
         await orchestrator._fire_run_end_trigger(success_count=2, total_count=3)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once_with(
+        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once_with(  # ty:ignore[unresolved-attribute]
             TriggerType.RUN_END,
             {"success_count": 2, "total_count": 3},
         )
@@ -3967,12 +3968,12 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Some failure: 2 success out of 3 total
         await orchestrator._fire_run_end_trigger(success_count=2, total_count=3)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once_with(
+        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once_with(  # ty:ignore[unresolved-attribute]
             TriggerType.RUN_END,
             {"success_count": 2, "total_count": 3},
         )
@@ -4007,12 +4008,12 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # All success: 3 success out of 3 total
         await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()
+        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()  # ty:ignore[unresolved-attribute]
 
     @pytest.mark.asyncio
     async def test_queues_trigger_always_when_fire_on_both(
@@ -4044,16 +4045,16 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Test with all success
         await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
-        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once()
-        orchestrator.run_coordinator.queue_trigger_validation.reset_mock()
+        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once()  # ty:ignore[unresolved-attribute]
+        orchestrator.run_coordinator.queue_trigger_validation.reset_mock()  # ty:ignore[unresolved-attribute]
 
         # Test with some failure
         await orchestrator._fire_run_end_trigger(success_count=2, total_count=3)
-        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once()
+        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once()  # ty:ignore[unresolved-attribute]
 
     @pytest.mark.asyncio
     async def test_skips_when_abort_run_set(
@@ -4088,11 +4089,11 @@ class TestFireRunEndTrigger:
         # Set abort
         orchestrator.issue_coordinator.request_abort(reason="test")
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()
+        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()  # ty:ignore[unresolved-attribute]
 
     @pytest.mark.asyncio
     async def test_skips_when_no_issues_processed(
@@ -4124,11 +4125,11 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         await orchestrator._fire_run_end_trigger(success_count=0, total_count=0)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()
+        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()  # ty:ignore[unresolved-attribute]
 
     @pytest.mark.asyncio
     async def test_fires_on_total_failure_when_fire_on_failure(
@@ -4161,12 +4162,12 @@ class TestFireRunEndTrigger:
         )
         orchestrator._validation_config = validation_config
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Total failure: 0 success out of 3 total
         await orchestrator._fire_run_end_trigger(success_count=0, total_count=3)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once_with(
+        orchestrator.run_coordinator.queue_trigger_validation.assert_called_once_with(  # ty:ignore[unresolved-attribute]
             TriggerType.RUN_END,
             {"success_count": 0, "total_count": 3},
         )
@@ -4183,11 +4184,11 @@ class TestFireRunEndTrigger:
             max_issues=1,
         )
 
-        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]
+        orchestrator.run_coordinator.queue_trigger_validation = MagicMock()  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         await orchestrator._fire_run_end_trigger(success_count=3, total_count=3)
 
-        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()
+        orchestrator.run_coordinator.queue_trigger_validation.assert_not_called()  # ty:ignore[unresolved-attribute]
 
 
 class TestBaseShaCapture:

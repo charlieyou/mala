@@ -227,6 +227,10 @@ def merge_configs(
     # epic_verification: User value always takes precedence (presets don't define this)
     merged_epic_verification = user.epic_verification
 
+    # coder / amp_mode: User value always takes precedence (presets don't define these)
+    merged_coder = user.coder
+    merged_amp_mode = user.amp_mode
+
     return ValidationConfig(
         preset=user.preset,  # Keep user's preset reference
         commands=merged_commands,
@@ -243,6 +247,8 @@ def merge_configs(
         evidence_check=merged_evidence_check,
         per_issue_review=merged_per_issue_review,
         epic_verification=merged_epic_verification,
+        coder=merged_coder,
+        amp_mode=merged_amp_mode,
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 

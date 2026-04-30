@@ -84,7 +84,7 @@ def _agent_options(
         options_kwargs["hooks"] = hooks
     if mcp_servers is not None:
         options_kwargs["mcp_servers"] = mcp_servers
-    return ClaudeAgentOptions(**options_kwargs)  # type: ignore[arg-type]
+    return ClaudeAgentOptions(**options_kwargs)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
 
 def _canonicalize_path(filepath: str, cwd: str) -> str:
@@ -424,7 +424,7 @@ class TestStopHookWithSDK:
             cwd=tmp_path,
             env=env,
             hooks={
-                "Stop": [HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])],  # type: ignore[arg-type]
+                "Stop": [HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])],  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             },
         )
 
@@ -691,7 +691,7 @@ class TestMCPLockingToolsSchemaValidation:
             emit_lock_event=lambda e: None,
         )
         # create_locking_mcp_server returns McpSdkServerConfig when _return_handlers=False
-        mcp_config: McpSdkServerConfig = result  # type: ignore[assignment]
+        mcp_config: McpSdkServerConfig = result  # type: ignore[assignment]  # ty:ignore[invalid-assignment]
 
         # Create agent options with MCP server
         options = _agent_options(

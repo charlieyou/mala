@@ -18,6 +18,7 @@ from src.pipeline.fixer_service import (
     FixerService,
     FixerServiceConfig,
 )
+from tests.fakes.agent_provider import FakeAgentProvider
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -75,6 +76,28 @@ def make_mock_runtime() -> MagicMock:
     runtime.lint_cache = MagicMock()
     runtime.lint_cache.detect_lint_command.return_value = None
     return runtime
+
+
+def install_mock_runtime_builder(
+    provider: FakeAgentProvider, runtime: MagicMock | None = None
+) -> MagicMock:
+    """Override ``provider.runtime_builder`` with a fluent mock chain.
+
+    Returns the ``mock_builder`` whose ``.build()`` yields ``runtime`` (or a
+    fresh ``make_mock_runtime()`` if not provided). Tests that previously
+    patched ``src.pipeline.fixer_service.AgentRuntimeBuilder`` should call
+    this instead — the production code now goes through
+    ``agent_provider.runtime_builder(...)``.
+    """
+    mock_builder = MagicMock()
+    mock_builder.with_hooks.return_value = mock_builder
+    mock_builder.with_env.return_value = mock_builder
+    mock_builder.with_mcp.return_value = mock_builder
+    mock_builder.with_disallowed_tools.return_value = mock_builder
+    mock_builder.with_lint_tools.return_value = mock_builder
+    mock_builder.build.return_value = runtime or make_mock_runtime()
+    provider.runtime_builder = MagicMock(return_value=mock_builder)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+    return mock_builder
 
 
 def make_config(
@@ -150,7 +173,7 @@ class TestFailureContext:
             max_attempts=3,
         )
         with pytest.raises(AttributeError):
-            ctx.attempt = 2  # type: ignore[misc]
+            ctx.attempt = 2  # type: ignore[misc]  # ty:ignore[invalid-assignment]
 
 
 class TestFixerServiceConfig:
@@ -189,27 +212,15 @@ class TestFixerServiceSuccess:
         client = MockSDKClient()
         factory = make_mock_sdk_client_factory(client)
         config = make_config()
-        service = FixerService(config, factory)
+        provider = FakeAgentProvider(factory)
+        install_mock_runtime_builder(provider)
+        service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch(
-            "src.pipeline.fixer_service.AgentRuntimeBuilder"
-        ) as mock_builder_cls:
-            mock_builder = MagicMock()
-            mock_builder.with_hooks.return_value = mock_builder
-            mock_builder.with_env.return_value = mock_builder
-            mock_builder.with_mcp.return_value = mock_builder
-            mock_builder.with_disallowed_tools.return_value = mock_builder
-            mock_builder.with_lint_tools.return_value = mock_builder
-            mock_builder.build.return_value = make_mock_runtime()
-            mock_builder_cls.return_value = mock_builder
+        with patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path:
+            mock_log_path.return_value = Path("/tmp/fixer.log")
 
-            with patch(
-                "src.pipeline.fixer_service.get_claude_log_path"
-            ) as mock_log_path:
-                mock_log_path.return_value = Path("/tmp/fixer.log")
-
-                result = await service.run_fixer(ctx)
+            result = await service.run_fixer(ctx)
 
         assert result.success is True
         assert result.interrupted is False
@@ -223,27 +234,17 @@ class TestFixerServiceSuccess:
         config = make_config(
             fixer_prompt="Attempt {attempt}/{max_attempts}: {failure_output}"
         )
-        service = FixerService(config, factory)
+        provider = FakeAgentProvider(factory)
+        install_mock_runtime_builder(provider)
+        service = FixerService(config, provider)
         ctx = make_failure_context(
             failure_output="Lint error",
             attempt=2,
             max_attempts=5,
         )
 
-        with patch(
-            "src.pipeline.fixer_service.AgentRuntimeBuilder"
-        ) as mock_builder_cls:
-            mock_builder = MagicMock()
-            mock_builder.with_hooks.return_value = mock_builder
-            mock_builder.with_env.return_value = mock_builder
-            mock_builder.with_mcp.return_value = mock_builder
-            mock_builder.with_disallowed_tools.return_value = mock_builder
-            mock_builder.with_lint_tools.return_value = mock_builder
-            mock_builder.build.return_value = make_mock_runtime()
-            mock_builder_cls.return_value = mock_builder
-
-            with patch("src.pipeline.fixer_service.get_claude_log_path"):
-                await service.run_fixer(ctx)
+        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+            await service.run_fixer(ctx)
 
         assert len(client.query_calls) == 1
         prompt, _ = client.query_calls[0]
@@ -264,31 +265,19 @@ class TestFixerServiceFailure:
 
         client = MockSDKClient()
         # Override receive_response to be slow
-        client.receive_response = slow_receive  # type: ignore[method-assign]
+        client.receive_response = slow_receive  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         factory = make_mock_sdk_client_factory(client)
         config = make_config(timeout_seconds=0)  # Immediate timeout
         event_sink = MagicMock()
-        service = FixerService(config, factory, event_sink=event_sink)
+        provider = FakeAgentProvider(factory)
+        install_mock_runtime_builder(provider)
+        service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context()
 
-        with patch(
-            "src.pipeline.fixer_service.AgentRuntimeBuilder"
-        ) as mock_builder_cls:
-            mock_builder = MagicMock()
-            mock_builder.with_hooks.return_value = mock_builder
-            mock_builder.with_env.return_value = mock_builder
-            mock_builder.with_mcp.return_value = mock_builder
-            mock_builder.with_disallowed_tools.return_value = mock_builder
-            mock_builder.with_lint_tools.return_value = mock_builder
-            mock_builder.build.return_value = make_mock_runtime()
-            mock_builder_cls.return_value = mock_builder
+        with patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path:
+            mock_log_path.return_value = Path("/tmp/fixer.log")
 
-            with patch(
-                "src.pipeline.fixer_service.get_claude_log_path"
-            ) as mock_log_path:
-                mock_log_path.return_value = Path("/tmp/fixer.log")
-
-                result = await service.run_fixer(ctx)
+            result = await service.run_fixer(ctx)
 
         assert result.success is False
         assert result.interrupted is False
@@ -302,27 +291,15 @@ class TestFixerServiceFailure:
         factory = make_mock_sdk_client_factory(client)
         config = make_config()
         event_sink = MagicMock()
-        service = FixerService(config, factory, event_sink=event_sink)
+        provider = FakeAgentProvider(factory)
+        install_mock_runtime_builder(provider)
+        service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context()
 
-        with patch(
-            "src.pipeline.fixer_service.AgentRuntimeBuilder"
-        ) as mock_builder_cls:
-            mock_builder = MagicMock()
-            mock_builder.with_hooks.return_value = mock_builder
-            mock_builder.with_env.return_value = mock_builder
-            mock_builder.with_mcp.return_value = mock_builder
-            mock_builder.with_disallowed_tools.return_value = mock_builder
-            mock_builder.with_lint_tools.return_value = mock_builder
-            mock_builder.build.return_value = make_mock_runtime()
-            mock_builder_cls.return_value = mock_builder
+        with patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path:
+            mock_log_path.return_value = Path("/tmp/fixer.log")
 
-            with patch(
-                "src.pipeline.fixer_service.get_claude_log_path"
-            ) as mock_log_path:
-                mock_log_path.return_value = Path("/tmp/fixer.log")
-
-                result = await service.run_fixer(ctx)
+            result = await service.run_fixer(ctx)
 
         assert result.success is False
         assert result.log_path == "/tmp/fixer.log"
@@ -337,7 +314,7 @@ class TestFixerServiceInterrupt:
         """Verify run_fixer returns interrupted when event is set before start."""
         factory = make_mock_sdk_client_factory()
         config = make_config()
-        service = FixerService(config, factory)
+        service = FixerService(config, FakeAgentProvider(factory))
         ctx = make_failure_context()
 
         interrupt_event = asyncio.Event()
@@ -362,38 +339,22 @@ class TestFixerServiceInterrupt:
         client = MockSDKClient(messages=[mock_msg])
         factory = make_mock_sdk_client_factory(client)
         config = make_config()
-        service = FixerService(config, factory)
+        provider = FakeAgentProvider(factory)
+        install_mock_runtime_builder(provider)
+        service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch(
-            "src.pipeline.fixer_service.AgentRuntimeBuilder"
-        ) as mock_builder_cls:
-            mock_builder = MagicMock()
-            mock_builder.with_hooks.return_value = mock_builder
-            mock_builder.with_env.return_value = mock_builder
-            mock_builder.with_mcp.return_value = mock_builder
-            mock_builder.with_disallowed_tools.return_value = mock_builder
-            mock_builder.with_lint_tools.return_value = mock_builder
-            mock_builder.build.return_value = make_mock_runtime()
-            mock_builder_cls.return_value = mock_builder
+        with patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path:
+            mock_log_path.return_value = Path("/tmp/fixer.log")
 
-            with patch(
-                "src.pipeline.fixer_service.get_claude_log_path"
-            ) as mock_log_path:
-                mock_log_path.return_value = Path("/tmp/fixer.log")
+            # Patch InterruptGuard to return interrupted after first check
+            with patch("src.pipeline.fixer_service.InterruptGuard") as mock_guard_cls:
+                mock_guard = MagicMock()
+                # First call returns False (not interrupted), second returns True
+                mock_guard.is_interrupted.side_effect = [False, True]
+                mock_guard_cls.return_value = mock_guard
 
-                # Patch InterruptGuard to return interrupted after first check
-                with patch(
-                    "src.pipeline.fixer_service.InterruptGuard"
-                ) as mock_guard_cls:
-                    mock_guard = MagicMock()
-                    # First call returns False (not interrupted), second returns True
-                    mock_guard.is_interrupted.side_effect = [False, True]
-                    mock_guard_cls.return_value = mock_guard
-
-                    result = await service.run_fixer(
-                        ctx, interrupt_event=interrupt_event
-                    )
+                result = await service.run_fixer(ctx, interrupt_event=interrupt_event)
 
         assert result.success is None
         assert result.interrupted is True
@@ -419,23 +380,13 @@ class TestFixerServiceEvents:
         factory = make_mock_sdk_client_factory(client)
         config = make_config()
         event_sink = MagicMock()
-        service = FixerService(config, factory, event_sink=event_sink)
+        provider = FakeAgentProvider(factory)
+        install_mock_runtime_builder(provider)
+        service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context(attempt=2)
 
-        with patch(
-            "src.pipeline.fixer_service.AgentRuntimeBuilder"
-        ) as mock_builder_cls:
-            mock_builder = MagicMock()
-            mock_builder.with_hooks.return_value = mock_builder
-            mock_builder.with_env.return_value = mock_builder
-            mock_builder.with_mcp.return_value = mock_builder
-            mock_builder.with_disallowed_tools.return_value = mock_builder
-            mock_builder.with_lint_tools.return_value = mock_builder
-            mock_builder.build.return_value = make_mock_runtime()
-            mock_builder_cls.return_value = mock_builder
-
-            with patch("src.pipeline.fixer_service.get_claude_log_path"):
-                await service.run_fixer(ctx)
+        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+            await service.run_fixer(ctx)
 
         event_sink.on_fixer_text.assert_called_once_with(2, "Fixing the issue...")
 
@@ -456,23 +407,13 @@ class TestFixerServiceEvents:
         factory = make_mock_sdk_client_factory(client)
         config = make_config()
         event_sink = MagicMock()
-        service = FixerService(config, factory, event_sink=event_sink)
+        provider = FakeAgentProvider(factory)
+        install_mock_runtime_builder(provider)
+        service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context(attempt=1)
 
-        with patch(
-            "src.pipeline.fixer_service.AgentRuntimeBuilder"
-        ) as mock_builder_cls:
-            mock_builder = MagicMock()
-            mock_builder.with_hooks.return_value = mock_builder
-            mock_builder.with_env.return_value = mock_builder
-            mock_builder.with_mcp.return_value = mock_builder
-            mock_builder.with_disallowed_tools.return_value = mock_builder
-            mock_builder.with_lint_tools.return_value = mock_builder
-            mock_builder.build.return_value = make_mock_runtime()
-            mock_builder_cls.return_value = mock_builder
-
-            with patch("src.pipeline.fixer_service.get_claude_log_path"):
-                await service.run_fixer(ctx)
+        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+            await service.run_fixer(ctx)
 
         event_sink.on_fixer_tool_use.assert_called_once_with(
             1, "Bash", {"command": "pytest"}
@@ -490,23 +431,13 @@ class TestFixerServiceEvents:
         factory = make_mock_sdk_client_factory(client)
         config = make_config()
         event_sink = MagicMock()
-        service = FixerService(config, factory, event_sink=event_sink)
+        provider = FakeAgentProvider(factory)
+        install_mock_runtime_builder(provider)
+        service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context()
 
-        with patch(
-            "src.pipeline.fixer_service.AgentRuntimeBuilder"
-        ) as mock_builder_cls:
-            mock_builder = MagicMock()
-            mock_builder.with_hooks.return_value = mock_builder
-            mock_builder.with_env.return_value = mock_builder
-            mock_builder.with_mcp.return_value = mock_builder
-            mock_builder.with_disallowed_tools.return_value = mock_builder
-            mock_builder.with_lint_tools.return_value = mock_builder
-            mock_builder.build.return_value = make_mock_runtime()
-            mock_builder_cls.return_value = mock_builder
-
-            with patch("src.pipeline.fixer_service.get_claude_log_path"):
-                await service.run_fixer(ctx)
+        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+            await service.run_fixer(ctx)
 
         event_sink.on_fixer_completed.assert_called_once_with(
             "All fixes applied successfully"
@@ -520,7 +451,7 @@ class TestFixerServiceCleanup:
         """Verify cleanup_locks clears the active fixer IDs list."""
         factory = make_mock_sdk_client_factory()
         config = make_config()
-        service = FixerService(config, factory)
+        service = FixerService(config, FakeAgentProvider(factory))
 
         # Simulate active fixer IDs
         service._active_fixer_ids = ["fixer-abc", "fixer-def"]
@@ -540,7 +471,7 @@ class TestFixerServiceCleanup:
         """Verify cleanup_locks handles empty list gracefully."""
         factory = make_mock_sdk_client_factory()
         config = make_config()
-        service = FixerService(config, factory)
+        service = FixerService(config, FakeAgentProvider(factory))
 
         with patch("src.pipeline.fixer_service.cleanup_agent_locks") as mock_cleanup:
             service.cleanup_locks()
@@ -558,25 +489,15 @@ class TestFixerServiceValidationCommands:
         client = MockSDKClient()
         factory = make_mock_sdk_client_factory(client)
         config = make_config(fixer_prompt="Commands: {validation_commands}")
-        service = FixerService(config, factory)
+        provider = FakeAgentProvider(factory)
+        install_mock_runtime_builder(provider)
+        service = FixerService(config, provider)
         ctx = make_failure_context(
             validation_commands="   - `ruff check .`\n   - `pytest`"
         )
 
-        with patch(
-            "src.pipeline.fixer_service.AgentRuntimeBuilder"
-        ) as mock_builder_cls:
-            mock_builder = MagicMock()
-            mock_builder.with_hooks.return_value = mock_builder
-            mock_builder.with_env.return_value = mock_builder
-            mock_builder.with_mcp.return_value = mock_builder
-            mock_builder.with_disallowed_tools.return_value = mock_builder
-            mock_builder.with_lint_tools.return_value = mock_builder
-            mock_builder.build.return_value = make_mock_runtime()
-            mock_builder_cls.return_value = mock_builder
-
-            with patch("src.pipeline.fixer_service.get_claude_log_path"):
-                await service.run_fixer(ctx)
+        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+            await service.run_fixer(ctx)
 
         prompt, _ = client.query_calls[0]
         assert "`ruff check .`" in prompt
@@ -588,7 +509,9 @@ class TestFixerServiceValidationCommands:
         client = MockSDKClient()
         factory = make_mock_sdk_client_factory(client)
         config = make_config(fixer_prompt="Commands: {validation_commands}")
-        service = FixerService(config, factory)
+        provider = FakeAgentProvider(factory)
+        install_mock_runtime_builder(provider)
+        service = FixerService(config, provider)
 
         # Create a spec with commands
         spec = MagicMock()
@@ -605,20 +528,8 @@ class TestFixerServiceValidationCommands:
             spec=spec,
         )
 
-        with patch(
-            "src.pipeline.fixer_service.AgentRuntimeBuilder"
-        ) as mock_builder_cls:
-            mock_builder = MagicMock()
-            mock_builder.with_hooks.return_value = mock_builder
-            mock_builder.with_env.return_value = mock_builder
-            mock_builder.with_mcp.return_value = mock_builder
-            mock_builder.with_disallowed_tools.return_value = mock_builder
-            mock_builder.with_lint_tools.return_value = mock_builder
-            mock_builder.build.return_value = make_mock_runtime()
-            mock_builder_cls.return_value = mock_builder
-
-            with patch("src.pipeline.fixer_service.get_claude_log_path"):
-                await service.run_fixer(ctx)
+        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+            await service.run_fixer(ctx)
 
         prompt, _ = client.query_calls[0]
         assert "`ruff check .`" in prompt
@@ -630,23 +541,13 @@ class TestFixerServiceValidationCommands:
         client = MockSDKClient()
         factory = make_mock_sdk_client_factory(client)
         config = make_config(fixer_prompt="Commands: {validation_commands}")
-        service = FixerService(config, factory)
+        provider = FakeAgentProvider(factory)
+        install_mock_runtime_builder(provider)
+        service = FixerService(config, provider)
         ctx = make_failure_context()  # No spec, no validation_commands
 
-        with patch(
-            "src.pipeline.fixer_service.AgentRuntimeBuilder"
-        ) as mock_builder_cls:
-            mock_builder = MagicMock()
-            mock_builder.with_hooks.return_value = mock_builder
-            mock_builder.with_env.return_value = mock_builder
-            mock_builder.with_mcp.return_value = mock_builder
-            mock_builder.with_disallowed_tools.return_value = mock_builder
-            mock_builder.with_lint_tools.return_value = mock_builder
-            mock_builder.build.return_value = make_mock_runtime()
-            mock_builder_cls.return_value = mock_builder
-
-            with patch("src.pipeline.fixer_service.get_claude_log_path"):
-                await service.run_fixer(ctx)
+        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+            await service.run_fixer(ctx)
 
         prompt, _ = client.query_calls[0]
         assert "Run the appropriate validation commands" in prompt
@@ -682,26 +583,15 @@ class TestFixerServiceLintCache:
         client = MockSDKClient(messages=[mock_msg1, mock_msg2])
         factory = make_mock_sdk_client_factory(client)
         config = make_config()
-        service = FixerService(config, factory)
+        provider = FakeAgentProvider(factory)
+        mock_runtime = make_mock_runtime()
+        mock_runtime.lint_cache.detect_lint_command.return_value = "ruff"
+        install_mock_runtime_builder(provider, runtime=mock_runtime)
+        service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch(
-            "src.pipeline.fixer_service.AgentRuntimeBuilder"
-        ) as mock_builder_cls:
-            mock_runtime = make_mock_runtime()
-            mock_runtime.lint_cache.detect_lint_command.return_value = "ruff"
-
-            mock_builder = MagicMock()
-            mock_builder.with_hooks.return_value = mock_builder
-            mock_builder.with_env.return_value = mock_builder
-            mock_builder.with_mcp.return_value = mock_builder
-            mock_builder.with_disallowed_tools.return_value = mock_builder
-            mock_builder.with_lint_tools.return_value = mock_builder
-            mock_builder.build.return_value = mock_runtime
-            mock_builder_cls.return_value = mock_builder
-
-            with patch("src.pipeline.fixer_service.get_claude_log_path"):
-                await service.run_fixer(ctx)
+        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+            await service.run_fixer(ctx)
 
         # Verify lint cache was updated
         mock_runtime.lint_cache.mark_success.assert_called_once_with(

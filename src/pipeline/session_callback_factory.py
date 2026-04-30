@@ -933,7 +933,7 @@ class SessionCallbackFactory:
             # passed=False means review found issues (findings) that may need remediation
             # "skipped" status (e.g., empty diff) is treated as passed since there's nothing to review
             passed = result.status in ("success", "skipped") and len(findings) == 0
-            return CodeReviewResult(ran=True, passed=passed, findings=findings)
+            return CodeReviewResult(ran=True, passed=passed, findings=findings)  # ty:ignore[invalid-argument-type]
 
         except Exception as e:
             logger.error("session_end code_review failed: %s", e)
@@ -981,7 +981,7 @@ class SessionRunnerAdapters:
         adapters = factory.build_adapters(issue_id)
         runner = AgentSessionRunner(
             config=config,
-            sdk_client_factory=sdk_factory,
+            agent_provider=agent_provider,
             gate_runner=adapters.gate_runner,
             review_runner=adapters.review_runner,
             session_lifecycle=adapters.session_lifecycle,
@@ -1019,7 +1019,7 @@ class _GateRunnerAdapter:
         result, offset = await self._factory._gate_async_runner.run_gate_async(
             issue_id,
             log_path,
-            retry_state,  # type: ignore[arg-type] # Protocol → concrete type
+            retry_state,  # type: ignore[arg-type] # Protocol → concrete type  # ty:ignore[invalid-argument-type]
             self._factory._context.interrupt_event_getter(),
         )
         return result, offset  # type: ignore[return-value] # concrete → Protocol

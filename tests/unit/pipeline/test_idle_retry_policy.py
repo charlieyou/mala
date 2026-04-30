@@ -182,7 +182,7 @@ class TestExecuteIterationSuccess:
         config = RetryConfig(max_idle_retries=0)
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: processor,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
             config=config,
         )
 
@@ -230,7 +230,7 @@ class TestExecuteIterationTimeout:
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: processor,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
             config=config,
         )
 
@@ -284,7 +284,7 @@ class TestExecuteIterationTimeout:
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: processor,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
             config=config,
         )
 
@@ -327,7 +327,7 @@ class TestRetryConfigZeroMaxRetries:
         config = RetryConfig(max_idle_retries=0)
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: processor,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
             config=config,
         )
 
@@ -380,7 +380,7 @@ class TestBackoffTiming:
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: processor,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
             config=config,
         )
 
@@ -433,7 +433,7 @@ class TestBackoffTiming:
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: processor,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
             config=config,
         )
 
@@ -487,7 +487,7 @@ class TestRetryWithoutSessionId:
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: processor,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
             config=config,
         )
 
@@ -542,7 +542,7 @@ class TestRetryWithoutSessionId:
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: processor,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
             config=config,
         )
 
@@ -581,7 +581,7 @@ class TestDisconnectBehavior:
         config = RetryConfig(max_idle_retries=0)
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: processor,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
             config=config,
         )
 
@@ -620,7 +620,7 @@ class TestStateManagement:
         config = RetryConfig(max_idle_retries=0)
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: tracker,
+            stream_processor_factory=lambda: tracker,  # ty:ignore[invalid-argument-type]
             config=config,
         )
 
@@ -697,7 +697,7 @@ class TestStateManagement:
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: processor,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
             config=config,
         )
 

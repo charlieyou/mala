@@ -311,7 +311,7 @@ def _parse_commands_list(
                 )
             commands.append(TriggerCommandRef(ref=cmd_data))
         elif isinstance(cmd_data, dict):
-            commands.append(_parse_trigger_command_ref(cmd_data, trigger_name, i))
+            commands.append(_parse_trigger_command_ref(cmd_data, trigger_name, i))  # ty:ignore[invalid-argument-type]
         else:
             raise ConfigError(
                 f"Command {i} in trigger {trigger_name} must be a string or object, "

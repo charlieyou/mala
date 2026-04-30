@@ -29,7 +29,6 @@ from typing import (
     cast,
 )
 
-from src.infra.agent_runtime import AgentRuntimeBuilder
 from src.infra.sigint_guard import FlowInterruptedError, InterruptGuard
 from src.domain.lifecycle import (
     Effect,
@@ -58,13 +57,15 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    from src.core.protocols.agent_provider import AgentProvider
+    from src.infra.agent_runtime import AgentRuntimeBuilder
     from src.core.protocols.lifecycle import ISessionLifecycle
     from src.core.protocols.review import IReviewRunner
     from src.core.protocols.validation import IGateRunner
     from src.core.models import IssueResolution
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.review import ReviewIssueProtocol
-    from src.core.protocols.sdk import McpServerFactory, SDKClientFactoryProtocol
+    from src.core.protocols.sdk import McpServerFactory
     from src.domain.deadlock import DeadlockMonitor
     from src.domain.lifecycle import (
         GateOutcome,
@@ -80,6 +81,20 @@ if TYPE_CHECKING:
 
 # Module-level logger for idle retry messages
 logger = logging.getLogger(__name__)
+
+
+def _noop_mcp_server_factory(
+    agent_id: str, repo_path: Path, emit_lock_event: object
+) -> dict[str, object]:
+    """Fallback MCP server factory used when none is configured.
+
+    The :class:`AgentProvider` protocol requires ``mcp_server_factory`` at
+    runtime-builder construction; ``AgentSessionConfig.mcp_server_factory``
+    is optional for tests that don't need MCP servers. Bridging the two
+    requires a callable that returns an empty server map.
+    """
+    del agent_id, repo_path, emit_lock_event
+    return {}
 
 
 def _is_stale_session_error(exc: Exception) -> bool:
@@ -205,8 +220,6 @@ class AgentSessionConfig:
             If None, uses default Python/uv commands.
         strict_resume: When True and session resumption fails (stale session),
             fail the session instead of retrying with a fresh session.
-        setting_sources: Optional list of Claude settings sources to use.
-            When None, uses SDK defaults (["local", "project"]).
     """
 
     repo_path: Path
@@ -224,7 +237,6 @@ class AgentSessionConfig:
     deadlock_monitor: DeadlockMonitor | None = None
     mcp_server_factory: McpServerFactory | None = None
     strict_resume: bool = False
-    setting_sources: list[str] | None = None
 
 
 @dataclass
@@ -309,7 +321,7 @@ class AgentSessionRunner:
     Usage:
         runner = AgentSessionRunner(
             config=AgentSessionConfig(repo_path=repo_path, ...),
-            sdk_client_factory=SDKClientFactory(),
+            agent_provider=ClaudeAgentProvider(),
             gate_runner=gate_runner_impl,
             review_runner=review_runner_impl,
             session_lifecycle=session_lifecycle_impl,
@@ -318,7 +330,11 @@ class AgentSessionRunner:
 
     Attributes:
         config: Session configuration.
-        sdk_client_factory: Factory for creating SDK clients (required).
+        agent_provider: Bundles ``client_factory`` (for SDK-style streaming),
+            ``runtime_builder()`` (for per-session env/options assembly), and
+            ``log_provider`` (for evidence parsing). One ``AgentProvider`` is
+            chosen per run by the orchestration factory; the pipeline never
+            branches on which coder is active.
         event_sink: Optional event sink for structured logging.
         gate_runner: Protocol for gate checking operations (required).
         review_runner: Protocol for review operations (required).
@@ -326,7 +342,7 @@ class AgentSessionRunner:
     """
 
     config: AgentSessionConfig
-    sdk_client_factory: SDKClientFactoryProtocol
+    agent_provider: AgentProvider
     gate_runner: IGateRunner
     review_runner: IReviewRunner
     session_lifecycle: ISessionLifecycle
@@ -343,7 +359,7 @@ class AgentSessionRunner:
             idle_resume_prompt=self.config.prompts.idle_resume,
         )
         self._retry_policy = IdleTimeoutRetryPolicy(
-            sdk_client_factory=self.sdk_client_factory,
+            sdk_client_factory=self.agent_provider.client_factory,
             stream_processor_factory=self._get_stream_processor,
             config=retry_config,
         )
@@ -390,16 +406,25 @@ class AgentSessionRunner:
             baseline_timestamp = int(time.time())
         lifecycle_ctx.retry_state.baseline_timestamp = baseline_timestamp
 
-        # Build session components using AgentRuntimeBuilder
-        runtime = (
-            AgentRuntimeBuilder(
+        # Build session components via the AgentProvider's runtime builder.
+        # The fluent ``with_*`` calls below are Claude-specific - the Amp
+        # provider's builder will eventually expose the same surface, but
+        # that path is not exercised here in T007 (the stub Amp provider
+        # raises before we ever reach the client.create() call). We cast
+        # to AgentRuntimeBuilder for type-checking the fluent chain; at
+        # runtime the call only succeeds when the active provider's
+        # builder structurally supports it.
+        mcp_factory = self.config.mcp_server_factory or _noop_mcp_server_factory
+        builder = cast(
+            "AgentRuntimeBuilder",
+            self.agent_provider.runtime_builder(
                 self.config.repo_path,
                 agent_id,
-                self.sdk_client_factory,
-                mcp_server_factory=self.config.mcp_server_factory,
-                setting_sources=self.config.setting_sources,
-            )
-            .with_hooks(deadlock_monitor=self.config.deadlock_monitor)
+                mcp_server_factory=mcp_factory,
+            ),
+        )
+        runtime = (
+            builder.with_hooks(deadlock_monitor=self.config.deadlock_monitor)
             .with_env(extra={"MALA_SDK_FLOW": input.flow})
             .with_mcp()
             .with_disallowed_tools()
@@ -418,7 +443,7 @@ class AgentSessionRunner:
         # Apply session resumption if resume_session_id is set
         options = runtime.options
         if input.resume_session_id:
-            options = self.sdk_client_factory.with_resume(
+            options = self.agent_provider.client_factory.with_resume(
                 options, input.resume_session_id
             )
 

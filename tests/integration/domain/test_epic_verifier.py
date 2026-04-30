@@ -385,7 +385,7 @@ class TestVerifyEpic:
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         verdict = await verifier.verify_epic("epic-1")
 
@@ -417,7 +417,7 @@ class TestVerifyAndCloseEligible:
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         _stub_commit_helpers(verifier)
 
         result = await verifier.verify_and_close_eligible()
@@ -440,7 +440,7 @@ class TestVerifyAndCloseEligible:
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await verifier.verify_and_close_eligible(
             human_override_epic_ids={"epic-1"}
@@ -499,7 +499,7 @@ class TestVerifyAndCloseEligible:
                 return CommandResult(command=cmd, returncode=0, stdout="")
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         _stub_commit_helpers(verifier)
 
         result = await verifier.verify_and_close_eligible()
@@ -531,7 +531,7 @@ class TestVerifyAndCloseEligible:
                 return CommandResult(command=cmd, returncode=0, stdout="")
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         _stub_commit_helpers(verifier)
 
         result = await verifier.verify_and_close_eligible()
@@ -563,7 +563,7 @@ class TestVerifyAndCloseEpic:
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         _stub_commit_helpers(verifier)
 
         result = await verifier.verify_and_close_epic("epic-1")
@@ -588,7 +588,7 @@ class TestVerifyAndCloseEpic:
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await verifier.verify_and_close_epic("epic-1")
 
@@ -623,7 +623,7 @@ class TestVerifyAndCloseEpic:
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await verifier.verify_and_close_epic("epic-1")
 
@@ -645,7 +645,7 @@ class TestVerifyAndCloseEpic:
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await verifier.verify_and_close_epic("epic-1", human_override=True)
 
@@ -701,7 +701,7 @@ class TestVerifyAndCloseEpic:
                 return CommandResult(command=cmd, returncode=0, stdout="")
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         _stub_commit_helpers(verifier)
 
         result = await verifier.verify_and_close_epic("epic-1")
@@ -1001,7 +1001,7 @@ class TestLockUsage:
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         _stub_commit_helpers(verifier)
 
         await verifier.verify_and_close_eligible()
@@ -1075,7 +1075,7 @@ class TestModelErrorHandling:
                 return CommandResult(command=cmd, returncode=0, stdout="")
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         _stub_commit_helpers(verifier)
 
         result = await verifier.verify_and_close_eligible()
@@ -1305,7 +1305,7 @@ class TestVerifyWithSDK:
         async def fake_verify(_prompt: str) -> str:
             return '{"findings": [], "verdict": "PASS", "summary": "ok"}'
 
-        model._verify_with_agent_sdk = fake_verify  # type: ignore[method-assign]
+        model._verify_with_agent_sdk = fake_verify  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         verdict = await model.verify("criteria")
 
@@ -1319,7 +1319,7 @@ class TestVerifyWithSDK:
         async def fake_verify(_prompt: str) -> str:
             return "not json"
 
-        model._verify_with_agent_sdk = fake_verify  # type: ignore[method-assign]
+        model._verify_with_agent_sdk = fake_verify  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         verdict = await model.verify("criteria")
 

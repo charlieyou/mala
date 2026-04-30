@@ -186,7 +186,7 @@ class TestWatchModeValidation:
                 interrupt_event.set()
             return remaining
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -247,7 +247,7 @@ class TestWatchModeValidation:
                 interrupt_event.set()
             return remaining
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -308,7 +308,7 @@ class TestWatchModeValidation:
                 interrupt_event.set()
             return remaining
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -363,7 +363,7 @@ class TestWatchModeValidation:
                 if f"issue-{i}" not in coord.completed_ids
             ]
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -417,7 +417,7 @@ class TestWatchModeValidation:
                 if f"issue-{i}" not in coord.completed_ids
             ]
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -465,7 +465,7 @@ class TestWatchModeValidation:
         async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
             return ["issue-1"] if "issue-1" not in coord.completed_ids else []
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -525,7 +525,7 @@ class TestWatchModeValidation:
                 interrupt_event.set()
             return remaining
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -579,7 +579,7 @@ class TestWatchModeValidation:
                 if f"issue-{i}" not in coord.completed_ids
             ]
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -633,7 +633,7 @@ class TestWatchModeValidation:
                 if f"issue-{i}" not in coord.completed_ids
             ]
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -686,7 +686,7 @@ class TestWatchModeValidation:
                 if f"issue-{i}" not in coord.completed_ids
             ]
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -734,7 +734,7 @@ class TestPollFailureHandling:
     ) -> None:
         """Poll failure should increment consecutive_poll_failures counter."""
         provider = FakeIssueProvider()
-        provider.get_ready_async = AsyncMock(  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             side_effect=[Exception("Network error"), []]
         )
 
@@ -765,7 +765,7 @@ class TestPollFailureHandling:
         """Successful poll should reset consecutive_poll_failures to 0."""
         provider = FakeIssueProvider()
         # Fail twice, succeed (should NOT abort - counter reset means 3rd poll not failure #3)
-        provider.get_ready_async = AsyncMock(  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             side_effect=[
                 Exception("Fail 1"),
                 Exception("Fail 2"),
@@ -800,7 +800,7 @@ class TestPollFailureHandling:
     ) -> None:
         """Three consecutive poll failures should abort with exit code 3."""
         provider = FakeIssueProvider()
-        provider.get_ready_async = AsyncMock(  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             side_effect=[
                 Exception("Fail 1"),
                 Exception("Fail 2"),
@@ -834,7 +834,7 @@ class TestPollFailureHandling:
     ) -> None:
         """Poll failure abort should return exit_code=3 and exit_reason='poll_failed'."""
         provider = FakeIssueProvider()
-        provider.get_ready_async = AsyncMock(  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             side_effect=Exception("Persistent failure")
         )
 
@@ -875,7 +875,7 @@ class TestPollFailureHandling:
                 return ["issue-1"]
             raise Exception("Poll failed")
 
-        provider.get_ready_async = AsyncMock(  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             side_effect=get_ready_side_effect
         )
 
@@ -960,7 +960,7 @@ class TestWatchModeIdleBehavior:
                 return ["issue-1"]  # Second poll: issue appears
             return []  # Third poll: no issues
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
             async def complete_immediately() -> None:
@@ -1018,7 +1018,7 @@ class TestWatchModeIdleBehavior:
                 return ["issue-1"]  # First poll: issue ready
             return []  # Subsequent polls: no issues
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
             async def complete_immediately() -> None:
@@ -1077,7 +1077,7 @@ class TestWatchModeIdleBehavior:
                 return ["issue-1"]
             return []  # No more issues after first
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
             async def complete_immediately() -> None:
@@ -1141,7 +1141,7 @@ class TestWatchModeIdleBehavior:
                 return ["issue-0", "issue-1", "issue-2"]
             return []
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
             async def complete_immediately() -> None:

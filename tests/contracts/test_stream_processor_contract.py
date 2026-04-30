@@ -47,8 +47,8 @@ class TestFakeStreamProcessorBehavior:
             stream=_empty_stream(),
             issue_id="issue-1",
             state=MessageIterationState(),
-            lifecycle_ctx=None,  # type: ignore[arg-type]
-            lint_cache=None,  # type: ignore[arg-type]
+            lifecycle_ctx=None,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            lint_cache=None,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             query_start=0.0,
             tracer=None,
         )
@@ -66,8 +66,8 @@ class TestFakeStreamProcessorBehavior:
             stream=_empty_stream(),
             issue_id="issue-1",
             state=MessageIterationState(),
-            lifecycle_ctx=None,  # type: ignore[arg-type]
-            lint_cache=None,  # type: ignore[arg-type]
+            lifecycle_ctx=None,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            lint_cache=None,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             query_start=0.0,
             tracer=None,
         )
@@ -84,8 +84,8 @@ class TestFakeStreamProcessorBehavior:
             stream=_empty_stream(),
             issue_id="test-issue",
             state=state,
-            lifecycle_ctx=None,  # type: ignore[arg-type]
-            lint_cache=None,  # type: ignore[arg-type]
+            lifecycle_ctx=None,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            lint_cache=None,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             query_start=123.0,
             tracer=None,
         )
@@ -110,8 +110,8 @@ class TestFakeStreamProcessorBehavior:
                 stream=_empty_stream(),
                 issue_id="issue-1",
                 state=MessageIterationState(),
-                lifecycle_ctx=None,  # type: ignore[arg-type]
-                lint_cache=None,  # type: ignore[arg-type]
+                lifecycle_ctx=None,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+                lint_cache=None,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
                 query_start=0.0,
                 tracer=None,
             )
@@ -121,8 +121,8 @@ class TestFakeStreamProcessorBehavior:
                 stream=_empty_stream(),
                 issue_id="issue-1",
                 state=MessageIterationState(),
-                lifecycle_ctx=None,  # type: ignore[arg-type]
-                lint_cache=None,  # type: ignore[arg-type]
+                lifecycle_ctx=None,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+                lint_cache=None,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
                 query_start=0.0,
                 tracer=None,
             )
@@ -132,8 +132,8 @@ class TestFakeStreamProcessorBehavior:
             stream=_empty_stream(),
             issue_id="issue-1",
             state=MessageIterationState(),
-            lifecycle_ctx=None,  # type: ignore[arg-type]
-            lint_cache=None,  # type: ignore[arg-type]
+            lifecycle_ctx=None,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            lint_cache=None,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             query_start=0.0,
             tracer=None,
         )
@@ -150,8 +150,8 @@ class TestFakeStreamProcessorBehavior:
                 stream=_empty_stream(),
                 issue_id="issue-1",
                 state=MessageIterationState(),
-                lifecycle_ctx=None,  # type: ignore[arg-type]
-                lint_cache=None,  # type: ignore[arg-type]
+                lifecycle_ctx=None,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+                lint_cache=None,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
                 query_start=0.0,
                 tracer=None,
             )

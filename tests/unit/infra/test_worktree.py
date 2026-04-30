@@ -611,7 +611,7 @@ class TestRemoveWorktreeFailurePropagation:
         import shutil
 
         # Create the directory so exists() returns True
-        created_ctx._path.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
+        created_ctx._path.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
 
         runner = FakeCommandRunner(allow_unregistered=True)
 

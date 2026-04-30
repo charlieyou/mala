@@ -366,14 +366,14 @@ class AgentSDKReviewer:
         was_interrupted = False
 
         response_iter = None
-        async with client:  # type: ignore[union-attr]
-            await client.query(query, session_id=session_id)  # type: ignore[union-attr]
+        async with client:  # type: ignore[union-attr]  # ty:ignore[invalid-context-manager]
+            await client.query(query, session_id=session_id)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
 
-            response_iter = client.receive_response()  # type: ignore[union-attr]
+            response_iter = client.receive_response()  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
             try:
                 async for msg in response_iter:
                     # Check for interrupt during iteration (Finding 4)
-                    if guard.is_interrupted():  # type: ignore[union-attr]
+                    if guard.is_interrupted():  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
                         logger.info("Review interrupted during SDK session iteration")
                         was_interrupted = True
                         break
@@ -441,7 +441,7 @@ class AgentSDKReviewer:
                                 )
 
         try:
-            await client.disconnect()  # type: ignore[union-attr]
+            await client.disconnect()  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
         except Exception as e:  # pragma: no cover - best effort cleanup
             logger.debug(f"Failed to disconnect SDK client: {e}")
 

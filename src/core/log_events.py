@@ -472,7 +472,7 @@ def parse_log_entry_strict(data: dict[str, Any]) -> LogEntry:
     # Parse content blocks in strict mode
     content_blocks: list[ContentBlock] = []
     for i, block_data in enumerate(content_data):
-        block = _parse_content_block_strict(block_data, i)
+        block = _parse_content_block_strict(block_data, i)  # ty:ignore[invalid-argument-type]
         content_blocks.append(block)
 
     if entry_type == "assistant":

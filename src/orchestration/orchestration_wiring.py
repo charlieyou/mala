@@ -55,7 +55,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.review import ReviewIssueProtocol
-    from src.core.protocols.sdk import SDKClientFactoryProtocol
     from src.core.models import EpicVerificationResult
     from src.domain.validation.config import EpicCompletionTriggerConfig, TriggerType
     from src.infra.io.log_output.run_metadata import RunMetadata
@@ -121,7 +120,7 @@ def build_cumulative_review_runner(
     git_utils = GitUtils(repo_path=pipeline.repo_path)
 
     return CumulativeReviewRunner(
-        review_runner=review_runner,  # type: ignore[arg-type]  # ReviewRunner ⊂ ReviewRunnerProtocol
+        review_runner=review_runner,  # type: ignore[arg-type]  # ReviewRunner ⊂ ReviewRunnerProtocol  # ty:ignore[invalid-argument-type]
         git_utils=git_utils,
         beads_client=runtime.beads,
         logger=logging.getLogger("mala.cumulative_review"),
@@ -131,10 +130,16 @@ def build_cumulative_review_runner(
 def build_run_coordinator(
     runtime: RuntimeDeps,
     pipeline: PipelineConfig,
-    sdk_client_factory: SDKClientFactoryProtocol,
     mcp_server_factory: Callable | None = None,
 ) -> RunCoordinator:
-    """Build RunCoordinator."""
+    """Build RunCoordinator.
+
+    The :class:`RunCoordinator` and the :class:`FixerService` it spawns both
+    consume the run's :class:`AgentProvider` (carried on ``runtime``). This is
+    the wiring point that makes fixer agents follow the main coder: when
+    ``coder=amp``, ``runtime.agent_provider`` is the ``AmpAgentProvider``, so
+    fixer subprocesses are also spawned via Amp (per plan L165, AC#5).
+    """
     config = RunCoordinatorConfig(
         repo_path=pipeline.repo_path,
         timeout_seconds=pipeline.timeout_seconds,
@@ -149,7 +154,8 @@ def build_run_coordinator(
     # Build TriggerEngine for trigger policy evaluation
     trigger_engine = TriggerEngine(pipeline.validation_config)
 
-    # Build FixerService for spawning fixer agents
+    # Build FixerService for spawning fixer agents - same provider as main run
+    # so fixers spawn whichever coder the main run uses (plan L165, AC#5).
     fixer_config = FixerServiceConfig(
         repo_path=pipeline.repo_path,
         timeout_seconds=pipeline.timeout_seconds,
@@ -158,7 +164,7 @@ def build_run_coordinator(
     )
     fixer_service = FixerService(
         config=fixer_config,
-        sdk_client_factory=sdk_client_factory,
+        agent_provider=runtime.agent_provider,
         event_sink=runtime.event_sink,
     )
 
@@ -171,7 +177,7 @@ def build_run_coordinator(
         command_runner=runtime.command_runner,
         env_config=runtime.env_config,
         lock_manager=runtime.lock_manager,
-        sdk_client_factory=sdk_client_factory,
+        agent_provider=runtime.agent_provider,
         trigger_engine=trigger_engine,
         fixer_service=fixer_service,
         event_sink=runtime.event_sink,

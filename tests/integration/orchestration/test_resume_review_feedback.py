@@ -21,6 +21,7 @@ from src.infra.tools.env import encode_repo_path, get_claude_log_path
 from src.orchestration.orchestrator import StoredReviewIssue, _build_resume_prompt
 from src.pipeline.agent_session_runner import AgentSessionOutput
 from src.pipeline.issue_result import IssueResult
+from tests.fakes.agent_provider import FakeAgentProvider
 from tests.fakes.gate_checker import FakeGateChecker
 from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 from tests.fakes.sdk_client import FakeSDKClientFactory
@@ -442,7 +443,7 @@ async def test_resume_with_review_feedback_uses_review_followup_prompt(
         runs_dir=runs_dir,
         disable_validations={"global-validate"},
     )
-    orchestrator_run1._sdk_client_factory = sdk_factory_run1
+    orchestrator_run1._agent_provider = FakeAgentProvider(sdk_factory_run1)
 
     await _run_with_fake_git(orchestrator_run1)
 
@@ -510,7 +511,7 @@ async def test_resume_with_review_feedback_uses_review_followup_prompt(
         include_wip=True,  # Enable resume
         disable_validations={"global-validate"},
     )
-    orchestrator_run2._sdk_client_factory = sdk_factory_run2
+    orchestrator_run2._agent_provider = FakeAgentProvider(sdk_factory_run2)
 
     # Check if _build_resume_prompt is called with the right data
     import src.orchestration.orchestrator as orch_module
@@ -546,11 +547,11 @@ async def test_resume_with_review_feedback_uses_review_followup_prompt(
                 max_review_retries,
                 repo_path,
                 prior_run_id,
-            )  # type: ignore[arg-type]
+            )  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
         return original_build_resume(
             review_issues,
-            prompts,  # type: ignore[arg-type]
+            prompts,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             validation_commands,
             issue_id,
             max_review_retries,

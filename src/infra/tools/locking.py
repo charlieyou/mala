@@ -616,7 +616,7 @@ class CliContext:
 
 def _cmd_try(ctx: CliContext) -> int:
     """Handle 'try' command: attempt to acquire lock."""
-    if try_lock(ctx.filepath, ctx.agent_id, ctx.repo_namespace):  # type: ignore[arg-type]
+    if try_lock(ctx.filepath, ctx.agent_id, ctx.repo_namespace):  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         return 0
     return 1
 
@@ -624,7 +624,7 @@ def _cmd_try(ctx: CliContext) -> int:
 def _cmd_wait(ctx: CliContext) -> int:
     """Handle 'wait' command: wait for lock with timeout."""
     if wait_for_lock(
-        ctx.filepath,  # type: ignore[arg-type]
+        ctx.filepath,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         ctx.agent_id,
         ctx.repo_namespace,
         ctx.timeout,
@@ -636,7 +636,7 @@ def _cmd_wait(ctx: CliContext) -> int:
 
 def _cmd_check(ctx: CliContext) -> int:
     """Handle 'check' command: check if we hold the lock."""
-    holder = get_lock_holder(ctx.filepath, ctx.repo_namespace)  # type: ignore[arg-type]
+    holder = get_lock_holder(ctx.filepath, ctx.repo_namespace)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
     if holder == ctx.agent_id:
         return 0
     return 1
@@ -644,7 +644,7 @@ def _cmd_check(ctx: CliContext) -> int:
 
 def _cmd_holder(ctx: CliContext) -> int:
     """Handle 'holder' command: print lock holder."""
-    holder = get_lock_holder(ctx.filepath, ctx.repo_namespace)  # type: ignore[arg-type]
+    holder = get_lock_holder(ctx.filepath, ctx.repo_namespace)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
     if holder:
         print(holder)
     return 0
@@ -652,9 +652,9 @@ def _cmd_holder(ctx: CliContext) -> int:
 
 def _cmd_release(ctx: CliContext) -> int:
     """Handle 'release' command: release lock if we hold it."""
-    holder = get_lock_holder(ctx.filepath, ctx.repo_namespace)  # type: ignore[arg-type]
+    holder = get_lock_holder(ctx.filepath, ctx.repo_namespace)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
     if holder == ctx.agent_id:
-        lp = lock_path(ctx.filepath, ctx.repo_namespace)  # type: ignore[arg-type]
+        lp = lock_path(ctx.filepath, ctx.repo_namespace)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         lp.with_suffix(".meta").unlink(missing_ok=True)
         lp.unlink(missing_ok=True)
     return 0

@@ -171,10 +171,10 @@ class CerberusEpicVerifier:
                 raise VerificationParseError(
                     f"aggregated_findings[{i}] must be object, got {type(item).__name__}"
                 )
-            title = str(item.get("title", "")).strip()
-            body = str(item.get("body", "")).strip()
+            title = str(item.get("title", "")).strip()  # ty:ignore[no-matching-overload]
+            body = str(item.get("body", "")).strip()  # ty:ignore[no-matching-overload]
             criterion = title or body or "Unspecified criterion"
-            priority_val = item.get("priority", 1)
+            priority_val = item.get("priority", 1)  # ty:ignore[no-matching-overload]
             try:
                 priority = int(priority_val)
             except (TypeError, ValueError):

@@ -72,7 +72,7 @@ async def test_run_end_trigger_queued_on_success(
         trigger_queued_events.append((trigger_type, context))
         original_on_trigger(trigger_type, context)
 
-    orchestrator.event_sink.on_trigger_validation_queued = track_trigger  # type: ignore[method-assign]
+    orchestrator.event_sink.on_trigger_validation_queued = track_trigger  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
     # Mock spawn_agent to complete immediately with success
     async def mock_spawn(issue_id: str) -> asyncio.Task[IssueResult] | None:
@@ -86,7 +86,7 @@ async def test_run_end_trigger_queued_on_success(
 
         return asyncio.create_task(work())
 
-    orchestrator.spawn_agent = mock_spawn  # type: ignore[method-assign]
+    orchestrator.spawn_agent = mock_spawn  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
     # Run should complete without error
     success_count, total_count = await orchestrator.run()
@@ -151,7 +151,7 @@ async def test_no_error_when_run_end_trigger_not_configured(
 
         return asyncio.create_task(work())
 
-    orchestrator.spawn_agent = mock_spawn  # type: ignore[method-assign]
+    orchestrator.spawn_agent = mock_spawn  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
     # Should complete without NotImplementedError
     success_count, total_count = await orchestrator.run()
@@ -216,7 +216,7 @@ async def test_stale_trigger_queue_cleared_at_run_start(
         trigger_skipped_events.append((trigger_type, reason))
         original_on_skipped(trigger_type, reason)
 
-    orchestrator.event_sink.on_trigger_validation_skipped = track_skipped  # type: ignore[method-assign]
+    orchestrator.event_sink.on_trigger_validation_skipped = track_skipped  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
     # Track trigger queued events
     trigger_queued_events: list[tuple[str, str]] = []
@@ -226,7 +226,7 @@ async def test_stale_trigger_queue_cleared_at_run_start(
         trigger_queued_events.append((trigger_type, context))
         original_on_queued(trigger_type, context)
 
-    orchestrator.event_sink.on_trigger_validation_queued = track_queued  # type: ignore[method-assign]
+    orchestrator.event_sink.on_trigger_validation_queued = track_queued  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
     # Mock spawn_agent to complete immediately with success
     async def mock_spawn(issue_id: str) -> asyncio.Task[IssueResult] | None:
@@ -240,7 +240,7 @@ async def test_stale_trigger_queue_cleared_at_run_start(
 
         return asyncio.create_task(work())
 
-    orchestrator.spawn_agent = mock_spawn  # type: ignore[method-assign]
+    orchestrator.spawn_agent = mock_spawn  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
     # Run should complete without error
     success_count, total_count = await orchestrator.run()

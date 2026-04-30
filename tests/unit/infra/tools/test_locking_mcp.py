@@ -555,7 +555,7 @@ class TestMCPServerConfiguration:
         )
 
         # Without _return_handlers, returns just the server config
-        server: McpSdkServerConfig = result  # type: ignore[assignment]
+        server: McpSdkServerConfig = result  # type: ignore[assignment]  # ty:ignore[invalid-assignment]
         assert server["name"] == "mala-locking"
 
     def test_server_has_instance(self) -> None:
@@ -566,7 +566,7 @@ class TestMCPServerConfiguration:
             "test", None, lambda e: None, locking_backend=FakeLockingBackend()
         )
 
-        server: McpSdkServerConfig = result  # type: ignore[assignment]
+        server: McpSdkServerConfig = result  # type: ignore[assignment]  # ty:ignore[invalid-assignment]
         assert "instance" in server
         assert server["type"] == "sdk"
 

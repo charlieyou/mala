@@ -1659,7 +1659,7 @@ class TestParseTimestamp:
     def test_handles_none_gracefully(self) -> None:
         """Test that None input returns 0.0 (via TypeError)."""
         # The function catches TypeError for this case
-        assert parse_timestamp(None) == 0.0  # type: ignore[arg-type]
+        assert parse_timestamp(None) == 0.0  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
 
 class TestExtractSessionFromRun:

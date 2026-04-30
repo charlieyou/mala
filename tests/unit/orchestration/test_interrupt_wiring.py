@@ -110,7 +110,7 @@ class TestInterruptWiring:
             nonlocal captured_interrupt_event
             captured_interrupt_event = interrupt_event
 
-        orchestrator.epic_verification_coordinator.check_epic_closure = (  # type: ignore[method-assign]
+        orchestrator.epic_verification_coordinator.check_epic_closure = (  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             mock_check_epic_closure
         )
 
@@ -174,7 +174,7 @@ class TestInterruptWiring:
 
             return RunResult(issues_spawned=0, exit_code=0, exit_reason="completed")
 
-        orchestrator.issue_coordinator.run_loop = mock_run_loop  # type: ignore[method-assign]
+        orchestrator.issue_coordinator.run_loop = mock_run_loop  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         watch_config = WatchConfig(enabled=False)
 
@@ -297,7 +297,7 @@ class TestInterruptWiring:
             captured_interrupt_event = interrupt_event
             return GateResult(passed=True, failure_reasons=[], commit_hash=None), 0
 
-        orchestrator.async_gate_runner.run_gate_async = mock_run_gate_async  # type: ignore[method-assign]
+        orchestrator.async_gate_runner.run_gate_async = mock_run_gate_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Build adapters and invoke the gate check via adapter
         adapters = orchestrator.session_callback_factory.build_adapters("test-issue")
@@ -367,7 +367,7 @@ class TestInterruptWiring:
             mock_result.review_log_path = None
             return ReviewOutput(result=mock_result)
 
-        orchestrator.review_runner.run_review = mock_run_review  # type: ignore[method-assign]
+        orchestrator.review_runner.run_review = mock_run_review  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Build adapters and invoke the review check via adapter
         adapters = orchestrator.session_callback_factory.build_adapters("test-issue")

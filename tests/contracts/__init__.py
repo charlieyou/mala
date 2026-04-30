@@ -21,7 +21,7 @@ def get_protocol_members(protocol_cls: type) -> frozenset[str]:
         Frozenset of member names declared by the protocol.
     """
     try:
-        from typing import get_protocol_members as _get_members  # type: ignore[attr-defined]
+        from typing import get_protocol_members as _get_members  # type: ignore[attr-defined]  # ty:ignore[unresolved-import]
     except ImportError:
         from typing_extensions import get_protocol_members as _get_members
 

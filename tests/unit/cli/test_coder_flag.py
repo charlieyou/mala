@@ -24,7 +24,7 @@ def _reload_cli(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     """Reload src.cli.cli so each test starts with a fresh lazy-module cache."""
     if "src.cli.cli" in sys.modules:
         cli_mod = sys.modules["src.cli.cli"]
-        cli_mod._bootstrapped = False  # type: ignore[attr-defined]
+        cli_mod._bootstrapped = False  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
         cli_mod._lazy_modules.clear()  # type: ignore[attr-defined]
         return importlib.reload(cli_mod)
     return importlib.import_module("src.cli.cli")

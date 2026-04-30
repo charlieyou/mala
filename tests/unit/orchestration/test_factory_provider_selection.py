@@ -1,0 +1,211 @@
+"""Factory-level AgentProvider selection (T007).
+
+These tests are the unit-level evidence for AC#1: ``mala run --coder amp``
+constructs an :class:`AmpAgentProvider`, while the default ``coder=claude``
+selects :class:`ClaudeAgentProvider`. The integration evidence lives in
+``tests/integration/test_amp_provider.py``.
+
+The factory pulls ``coder`` and ``coder_options.amp.mode`` from
+:class:`MalaConfig`; CLI/env precedence is verified separately in
+``tests/unit/infra/io/test_coder_config.py``. These tests pin the *wiring*:
+once ``mala_config.coder`` is set, the right provider lands in
+``OrchestratorDependencies.agent_provider`` and ``install_prerequisites``
+runs once before any session.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from src.infra.clients.amp_provider import AmpAgentProvider
+from src.infra.clients.claude_provider import ClaudeAgentProvider
+from src.infra.io.config import AmpOptions, CoderOptions, MalaConfig
+from src.orchestration.factory import (
+    OrchestratorConfig,
+    OrchestratorDependencies,
+    _create_agent_provider,
+    create_orchestrator,
+)
+from tests.fakes.issue_provider import FakeIssueProvider
+
+
+# ---------------------------------------------------------------------------
+# _create_agent_provider: pure selection given MalaConfig.coder
+# ---------------------------------------------------------------------------
+
+
+def test_create_agent_provider_picks_claude_by_default() -> None:
+    config = MalaConfig.from_env(validate=False)
+    assert config.coder == "claude"
+    provider = _create_agent_provider(config)
+    assert isinstance(provider, ClaudeAgentProvider)
+    assert provider.name == "claude"
+
+
+def test_create_agent_provider_picks_amp_when_configured() -> None:
+    config = MalaConfig(
+        runs_dir=Path("/tmp/runs"),
+        lock_dir=Path("/tmp/locks"),
+        coder="amp",
+    )
+    provider = _create_agent_provider(config)
+    assert isinstance(provider, AmpAgentProvider)
+    assert provider.name == "amp"
+
+
+def test_create_agent_provider_threads_amp_mode() -> None:
+    """``coder_options.amp.mode`` reaches the AmpAgentProvider's runtime
+    builder, so ``--mode <smart|rush|deep>`` lands on the spawned argv."""
+    config = MalaConfig(
+        runs_dir=Path("/tmp/runs"),
+        lock_dir=Path("/tmp/locks"),
+        coder="amp",
+        coder_options=CoderOptions(amp=AmpOptions(mode="rush")),
+    )
+    provider = _create_agent_provider(config)
+    assert isinstance(provider, AmpAgentProvider)
+
+    def _factory(
+        agent_id: str, repo_path: Path, emit_lock_event: object
+    ) -> dict[str, object]:
+        del agent_id, repo_path, emit_lock_event
+        return {}
+
+    builder = provider.runtime_builder(
+        Path("/tmp/repo"),
+        "agent-x",
+        mcp_server_factory=_factory,
+    )
+    runtime = builder.build()  # type: ignore[attr-defined]
+    assert runtime.mode == "rush"  # ty:ignore[unresolved-attribute]
+    assert "--mode" in runtime.argv  # ty:ignore[unresolved-attribute]
+    assert "rush" in runtime.argv  # ty:ignore[unresolved-attribute]
+
+
+def test_create_agent_provider_threads_claude_settings_sources() -> None:
+    """Claude provider receives the configured settings sources so the run's
+    ``claude_settings_sources`` precedence (env > yaml > default) is honored."""
+    config = MalaConfig.from_env(
+        validate=False, yaml_claude_settings_sources=("local", "user")
+    )
+    provider = _create_agent_provider(config)
+    assert isinstance(provider, ClaudeAgentProvider)
+    assert provider._setting_sources == ["local", "user"]
+
+
+# ---------------------------------------------------------------------------
+# create_orchestrator wires the chosen provider into deps + invokes
+# install_prerequisites exactly once. AC#1 wiring evidence.
+# ---------------------------------------------------------------------------
+
+
+def test_orchestrator_uses_claude_provider_by_default(tmp_path: Path) -> None:
+    config = OrchestratorConfig(repo_path=tmp_path, max_agents=1)
+    deps = OrchestratorDependencies(
+        issue_provider=FakeIssueProvider(),
+    )
+    mala_config = MalaConfig.from_env(validate=False)
+    orchestrator = create_orchestrator(config, mala_config=mala_config, deps=deps)
+
+    # The provider stored on the orchestrator is the Claude one.
+    assert isinstance(orchestrator._agent_provider, ClaudeAgentProvider)
+    # And the same instance is threaded through to the run coordinator's
+    # FixerService — fixers therefore follow the main coder.
+    assert (
+        orchestrator.run_coordinator.fixer_service._agent_provider
+        is orchestrator._agent_provider
+    )
+
+
+def test_orchestrator_uses_amp_provider_when_coder_amp(tmp_path: Path) -> None:
+    config = OrchestratorConfig(repo_path=tmp_path, max_agents=1)
+    deps = OrchestratorDependencies(
+        issue_provider=FakeIssueProvider(),
+    )
+    mala_config = MalaConfig(
+        runs_dir=tmp_path / "runs",
+        lock_dir=tmp_path / "locks",
+        coder="amp",
+    )
+    orchestrator = create_orchestrator(config, mala_config=mala_config, deps=deps)
+
+    assert isinstance(orchestrator._agent_provider, AmpAgentProvider)
+    # FixerService spawned with the same provider — AC#5 wiring evidence.
+    # The full Amp impl is pending; the assertion here is structural so the
+    # symmetry is checked even before T013 turns the integration test green.
+    assert (
+        orchestrator.run_coordinator.fixer_service._agent_provider
+        is orchestrator._agent_provider
+    )
+
+
+def test_install_prerequisites_invoked_once_per_run(tmp_path: Path) -> None:
+    """``AgentProvider.install_prerequisites`` runs exactly once during
+    ``create_orchestrator`` so the Amp self-test (T013) does not pay LLM
+    cost per session, and Claude's no-op stays a no-op."""
+    from tests.fakes.agent_provider import FakeAgentProvider
+    from tests.fakes.sdk_client import FakeSDKClientFactory
+
+    factory = FakeSDKClientFactory()
+    provider = FakeAgentProvider(factory)
+    assert provider.install_prerequisites_count == 0
+
+    config = OrchestratorConfig(repo_path=tmp_path, max_agents=1)
+    deps = OrchestratorDependencies(
+        issue_provider=FakeIssueProvider(),
+        agent_provider=provider,
+    )
+    mala_config = MalaConfig.from_env(validate=False)
+    create_orchestrator(config, mala_config=mala_config, deps=deps)
+
+    assert provider.install_prerequisites_count == 1
+
+
+def test_dependencies_agent_provider_overrides_factory_selection(
+    tmp_path: Path,
+) -> None:
+    """If a test explicitly injects an ``agent_provider`` into
+    ``OrchestratorDependencies``, the factory does NOT also pick its own
+    based on ``mala_config.coder`` — the injected one wins. This is the
+    standard DI override pattern used by every other dep."""
+    from tests.fakes.agent_provider import FakeAgentProvider
+    from tests.fakes.sdk_client import FakeSDKClientFactory
+
+    factory = FakeSDKClientFactory()
+    injected = FakeAgentProvider(factory, name="claude")
+
+    # Even with coder=amp in MalaConfig, the injected provider wins.
+    mala_config = MalaConfig(
+        runs_dir=tmp_path / "runs",
+        lock_dir=tmp_path / "locks",
+        coder="amp",
+    )
+    config = OrchestratorConfig(repo_path=tmp_path, max_agents=1)
+    deps = OrchestratorDependencies(
+        issue_provider=FakeIssueProvider(),
+        agent_provider=injected,
+    )
+    orchestrator = create_orchestrator(config, mala_config=mala_config, deps=deps)
+    assert orchestrator._agent_provider is injected
+
+
+@pytest.mark.parametrize("mode", ["smart", "rush", "deep"])
+def test_amp_modes_propagate_through_factory(tmp_path: Path, mode: str) -> None:
+    """All three Amp modes flow through factory selection into the
+    AmpAgentProvider's runtime builder."""
+    config = OrchestratorConfig(repo_path=tmp_path, max_agents=1)
+    deps = OrchestratorDependencies(
+        issue_provider=FakeIssueProvider(),
+    )
+    mala_config = MalaConfig(
+        runs_dir=tmp_path / "runs",
+        lock_dir=tmp_path / "locks",
+        coder="amp",
+        coder_options=CoderOptions(amp=AmpOptions(mode=mode)),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+    )
+    orchestrator = create_orchestrator(config, mala_config=mala_config, deps=deps)
+    provider = orchestrator._agent_provider
+    assert isinstance(provider, AmpAgentProvider)
+    assert provider._mode == mode

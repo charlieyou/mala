@@ -156,6 +156,7 @@ def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None
     from src.pipeline.fixer_service import FixerService
     from src.pipeline.trigger_engine import TriggerEngine
     from tests.fakes import FakeEnvConfig
+    from tests.fakes.agent_provider import FakeAgentProvider
     from tests.fakes.command_runner import FakeCommandRunner
     from tests.fakes.lock_manager import FakeLockManager
 
@@ -193,7 +194,7 @@ def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None
         command_runner=command_runner,
         env_config=FakeEnvConfig(),
         lock_manager=FakeLockManager(),
-        sdk_client_factory=MagicMock(),
+        agent_provider=FakeAgentProvider(MagicMock()),
         trigger_engine=trigger_engine,
         fixer_service=mock_fixer_service,
     )
@@ -302,13 +303,13 @@ async def test_orchestrator_fires_periodic_trigger_at_interval(
 
         return asyncio.create_task(work())
 
-    orchestrator.spawn_agent = tracking_spawn  # type: ignore[method-assign]
+    orchestrator.spawn_agent = tracking_spawn  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
     try:
         # Run the full orchestrator loop - this exercises the integration path
         await orchestrator.run()
     finally:
-        orchestrator.spawn_agent = original_spawn  # type: ignore[method-assign]
+        orchestrator.spawn_agent = original_spawn  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
     # Verify both issues were processed through the main loop
     assert len(spawned) == 2, f"Expected 2 issues spawned, got {len(spawned)}"
@@ -351,6 +352,7 @@ def test_trigger_code_review_emits_lifecycle_events(tmp_path: Path) -> None:
     from src.pipeline.fixer_service import FixerService
     from src.pipeline.trigger_engine import TriggerEngine
     from tests.fakes import FakeEnvConfig
+    from tests.fakes.agent_provider import FakeAgentProvider
     from tests.fakes.command_runner import FakeCommandRunner
     from tests.fakes.event_sink import FakeEventSink
     from tests.fakes.lock_manager import FakeLockManager
@@ -392,7 +394,7 @@ def test_trigger_code_review_emits_lifecycle_events(tmp_path: Path) -> None:
         command_runner=command_runner,
         env_config=FakeEnvConfig(),
         lock_manager=FakeLockManager(),
-        sdk_client_factory=MagicMock(),
+        agent_provider=FakeAgentProvider(MagicMock()),
         trigger_engine=trigger_engine,
         fixer_service=mock_fixer_service,
         event_sink=event_sink,

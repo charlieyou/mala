@@ -32,6 +32,7 @@ from tests.fakes.epic_verification import (
     make_not_eligible_verification_result,
     make_passing_verification_result,
 )
+from tests.fakes.agent_provider import FakeAgentProvider
 from tests.fakes.event_sink import FakeEventSink, RecordedEvent
 from tests.fakes.gate_checker import FakeGateChecker
 from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
@@ -43,6 +44,7 @@ from tests.fakes.stream_processor import FakeStreamProcessor
 __all__ = [
     "CoordinatorVerificationAttempt",
     "FakeAbortCallback",
+    "FakeAgentProvider",
     "FakeCommandRunner",
     "FakeDeadlockMonitor",
     "FakeEnvConfig",

@@ -22,7 +22,7 @@ def _reload_cli(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     if "src.cli.cli" in sys.modules:
         cli_mod = sys.modules["src.cli.cli"]
         # Reset internal state so bootstrap can run again
-        cli_mod._bootstrapped = False  # type: ignore[attr-defined]
+        cli_mod._bootstrapped = False  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
         # Clear lazy-loaded modules cache so env changes take effect
         cli_mod._lazy_modules.clear()  # type: ignore[attr-defined]
         return importlib.reload(cli_mod)

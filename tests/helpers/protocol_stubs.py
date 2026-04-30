@@ -82,8 +82,8 @@ class StubGateRunner:
             result = self.on_gate_check(issue_id, log_path, retry_state)
             # Handle both sync and async callbacks
             if asyncio.iscoroutine(result):
-                return await result  # type: ignore[return-value]
-            return result  # type: ignore[return-value]
+                return await result  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
+            return result  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
         return self.gate_result, self.gate_offset  # type: ignore[return-value]
 
     async def run_session_end_check(
@@ -102,8 +102,8 @@ class StubGateRunner:
             result = self.on_session_end_check(issue_id, log_path, retry_state)
             # Handle both sync and async callbacks
             if asyncio.iscoroutine(result):
-                return await result  # type: ignore[return-value]
-            return result  # type: ignore[return-value]
+                return await result  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
+            return result  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
         if self.session_end_result is not None:
             return self.session_end_result
         # Import here to avoid import issues in tests
@@ -170,7 +170,7 @@ class StubReviewRunner:
             )
             # Handle both sync and async callbacks
             if asyncio.iscoroutine(result):
-                return await result  # type: ignore[return-value]
+                return await result  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
             return result  # type: ignore[return-value]
         return self.review_result  # type: ignore[return-value]
 

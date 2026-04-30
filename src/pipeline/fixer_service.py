@@ -15,9 +15,8 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from src.infra.agent_runtime import AgentRuntimeBuilder
 from src.infra.sigint_guard import InterruptGuard
 from src.infra.tools.env import get_claude_log_path
 from src.infra.tools.locking import cleanup_agent_locks
@@ -27,9 +26,24 @@ from src.pipeline.fixer_interface import FixerResult
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from src.core.protocols.agent_provider import AgentProvider
     from src.core.protocols.events import MalaEventSink
-    from src.core.protocols.sdk import McpServerFactory, SDKClientFactoryProtocol
+    from src.core.protocols.sdk import McpServerFactory
     from src.domain.validation.spec import ValidationSpec
+    from src.infra.agent_runtime import AgentRuntimeBuilder
+
+
+def _noop_mcp_server_factory(
+    agent_id: str, repo_path: Path, emit_lock_event: object
+) -> dict[str, object]:
+    """Fallback MCP server factory used when none is configured.
+
+    See :func:`src.pipeline.agent_session_runner._noop_mcp_server_factory`
+    for context. Duplicated here to avoid a cross-module dependency for a
+    one-line helper.
+    """
+    del agent_id, repo_path, emit_lock_event
+    return {}
 
 
 @dataclass(frozen=True)
@@ -95,18 +109,20 @@ class FixerService:
     def __init__(
         self,
         config: FixerServiceConfig,
-        sdk_client_factory: SDKClientFactoryProtocol,
+        agent_provider: AgentProvider,
         event_sink: MalaEventSink | None = None,
     ) -> None:
         """Initialize the fixer service.
 
         Args:
             config: Service configuration.
-            sdk_client_factory: Factory for creating SDK clients.
+            agent_provider: AgentProvider for the run's chosen coder backend.
+                Fixers spawn through the same provider as the main run, so
+                ``coder=amp`` runs spawn Amp fixers (per plan L165, AC#5).
             event_sink: Optional event sink for fixer progress events.
         """
         self._config = config
-        self._sdk_client_factory = sdk_client_factory
+        self._agent_provider = agent_provider
         self._event_sink = event_sink
         self._active_fixer_ids: list[str] = []
 
@@ -149,15 +165,20 @@ class FixerService:
 
         fixer_cwd = self._config.repo_path
 
-        # Build runtime using AgentRuntimeBuilder
+        # Build runtime via the AgentProvider's runtime builder so fixers
+        # follow the main coder. The fluent ``with_*`` calls are the Claude
+        # builder's surface; the Amp builder will expose equivalent shaping
+        # in T009. In T007, the stub Amp client_factory raises before this
+        # runtime is consumed, so fixer-on-Amp surfaces NotImplementedError.
         lint_tools = extract_lint_tools_from_spec(failure_context.spec)
+        mcp_factory = self._config.mcp_server_factory or _noop_mcp_server_factory
+        raw_builder = self._agent_provider.runtime_builder(
+            fixer_cwd,
+            agent_id,
+            mcp_server_factory=mcp_factory,
+        )
         builder = (
-            AgentRuntimeBuilder(
-                fixer_cwd,
-                agent_id,
-                self._sdk_client_factory,
-                mcp_server_factory=self._config.mcp_server_factory,
-            )
+            cast("AgentRuntimeBuilder", raw_builder)
             .with_hooks(
                 deadlock_monitor=None,
                 include_stop_hook=True,
@@ -178,7 +199,7 @@ class FixerService:
         if lint_tools is not None:
             builder = builder.with_lint_tools(lint_tools)
         runtime = builder.build()
-        client = self._sdk_client_factory.create(runtime.options)
+        client = self._agent_provider.client_factory.create(runtime.options)
 
         pending_lint_commands: dict[str, tuple[str, str]] = {}
         log_path: str = str(get_claude_log_path(self._config.repo_path, agent_id))

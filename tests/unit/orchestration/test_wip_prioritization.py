@@ -30,7 +30,7 @@ class TestMergeWipIssues:
         base = [{"id": "open-1", "status": "open"}]
         wip = [{"id": "wip-1", "status": "in_progress"}]
 
-        result = IssueManager.merge_wip_issues(base, wip)
+        result = IssueManager.merge_wip_issues(base, wip)  # ty:ignore[invalid-argument-type]
 
         assert len(result) == 2
         result_ids = [r["id"] for r in result]
@@ -44,7 +44,7 @@ class TestMergeWipIssues:
         ]
         wip = [{"id": "wip-1", "status": "in_progress"}]
 
-        result = IssueManager.merge_wip_issues(base, wip)
+        result = IssueManager.merge_wip_issues(base, wip)  # ty:ignore[invalid-argument-type]
 
         assert len(result) == 2
         result_ids = [r["id"] for r in result]
@@ -58,7 +58,7 @@ class TestMergeWipIssues:
             {"id": "wip-2", "status": "in_progress"},
         ]
 
-        result = IssueManager.merge_wip_issues(base, wip)
+        result = IssueManager.merge_wip_issues(base, wip)  # ty:ignore[invalid-argument-type]
 
         assert len(result) == 3
         result_ids = [r["id"] for r in result]
@@ -69,7 +69,7 @@ class TestMergeWipIssues:
         base: list[dict[str, object]] = []
         wip = [{"id": "wip-1", "status": "in_progress"}]
 
-        result = IssueManager.merge_wip_issues(base, wip)
+        result = IssueManager.merge_wip_issues(base, wip)  # ty:ignore[invalid-argument-type]
 
         assert len(result) == 1
         assert result[0]["id"] == "wip-1"
@@ -79,7 +79,7 @@ class TestMergeWipIssues:
         base = [{"id": "open-1", "status": "open"}]
         wip: list[dict[str, object]] = []
 
-        result = IssueManager.merge_wip_issues(base, wip)
+        result = IssueManager.merge_wip_issues(base, wip)  # ty:ignore[invalid-argument-type]
 
         assert len(result) == 1
         assert result[0]["id"] == "open-1"
@@ -100,7 +100,7 @@ class TestFilterBlockedWip:
             {"id": "wip-ready", "status": "in_progress"},
         ]
 
-        result = IssueManager.filter_blocked_wip(issues)
+        result = IssueManager.filter_blocked_wip(issues)  # ty:ignore[invalid-argument-type]
 
         result_ids = [r["id"] for r in result]
         assert "wip-blocked" not in result_ids
@@ -114,7 +114,7 @@ class TestFilterBlockedWip:
             {"id": "wip-blocked", "status": "in_progress", "blocked_by": "other-issue"},
         ]
 
-        result = IssueManager.filter_blocked_wip(issues)
+        result = IssueManager.filter_blocked_wip(issues)  # ty:ignore[invalid-argument-type]
 
         result_ids = [r["id"] for r in result]
         # Open issues are kept even if blocked (they're handled by bd ready)
@@ -129,7 +129,7 @@ class TestFilterBlockedWip:
             {"id": "wip-2", "status": "in_progress", "blocked_by": None},
         ]
 
-        result = IssueManager.filter_blocked_wip(issues)
+        result = IssueManager.filter_blocked_wip(issues)  # ty:ignore[invalid-argument-type]
 
         # Empty/None blocked_by is falsy, so issues are kept
         assert len(result) == 2
@@ -150,7 +150,7 @@ class TestIncludeWipFlag:
             {"id": "open-2", "priority": 3, "status": "open"},
         ]
 
-        result = IssueManager.sort_issues(issues, focus=False, include_wip=True)
+        result = IssueManager.sort_issues(issues, focus=False, include_wip=True)  # ty:ignore[invalid-argument-type]
 
         # Ordering remains by priority, regardless of status
         result_ids = [r["id"] for r in result]
@@ -164,7 +164,7 @@ class TestIncludeWipFlag:
             {"id": "open-2", "priority": 2, "status": "open"},
         ]
 
-        result = IssueManager.sort_issues(issues, focus=False, include_wip=False)
+        result = IssueManager.sort_issues(issues, focus=False, include_wip=False)  # ty:ignore[invalid-argument-type]
 
         # Without include_wip, sort purely by priority (all issues remain)
         result_ids = [r["id"] for r in result]
@@ -179,8 +179,8 @@ class TestIncludeWipFlag:
             {"id": "open-high", "priority": 1, "status": "open"},
         ]
 
-        result_true = IssueManager.sort_issues(issues, focus=False, include_wip=True)
-        result_false = IssueManager.sort_issues(issues, focus=False, include_wip=False)
+        result_true = IssueManager.sort_issues(issues, focus=False, include_wip=True)  # ty:ignore[invalid-argument-type]
+        result_false = IssueManager.sort_issues(issues, focus=False, include_wip=False)  # ty:ignore[invalid-argument-type]
 
         assert [r["id"] for r in result_true] == [r["id"] for r in result_false]
 
@@ -191,7 +191,7 @@ class TestIncludeWipFlag:
             {"id": "open-1", "priority": 1, "status": "open"},
         ]
 
-        result = IssueManager.sort_issues(issues, focus=False, include_wip=False)
+        result = IssueManager.sort_issues(issues, focus=False, include_wip=False)  # ty:ignore[invalid-argument-type]
 
         # Without include_wip, just sort by priority - all issues included
         result_ids = [r["id"] for r in result]
@@ -230,7 +230,7 @@ class TestEpicPriorityModeGrouping:
             },
         ]
 
-        result = IssueManager.sort_issues(issues, focus=True, include_wip=False)
+        result = IssueManager.sort_issues(issues, focus=True, include_wip=False)  # ty:ignore[invalid-argument-type]
 
         # epic-a has min_priority=1 (task-a2), epic-b has min_priority=1 (task-b1)
         # Within epic-a: task-a2 (P1) before task-a1 (P2)
@@ -263,7 +263,7 @@ class TestEpicPriorityModeGrouping:
             },
         ]
 
-        result = IssueManager.sort_issues(issues, focus=False, include_wip=False)
+        result = IssueManager.sort_issues(issues, focus=False, include_wip=False)  # ty:ignore[invalid-argument-type]
 
         # Should sort by priority only: P1, P2, P3
         result_ids = [r["id"] for r in result]
@@ -295,7 +295,7 @@ class TestEpicPriorityModeGrouping:
             },
         ]
 
-        result = IssueManager.sort_issues(issues, focus=True, include_wip=False)
+        result = IssueManager.sort_issues(issues, focus=True, include_wip=False)  # ty:ignore[invalid-argument-type]
 
         # Orphan group has min_priority=1 (orphan-2), epic-a has min_priority=2
         # Orphan group comes first, sorted by priority: orphan-2 (P1), orphan-1 (P3)
@@ -322,7 +322,7 @@ class TestEpicPriorityModeGrouping:
             },
         ]
 
-        result = IssueManager.sort_issues(issues, focus=True, include_wip=False)
+        result = IssueManager.sort_issues(issues, focus=True, include_wip=False)  # ty:ignore[invalid-argument-type]
 
         # Both epics have P1, but epic-b updated more recently (2025-01-02)
         # So epic-b should come first
@@ -355,7 +355,7 @@ class TestEpicPriorityModeGrouping:
             },
         ]
 
-        result = IssueManager.sort_issues(issues, focus=True, include_wip=True)
+        result = IssueManager.sort_issues(issues, focus=True, include_wip=True)  # ty:ignore[invalid-argument-type]
 
         result_ids = [r["id"] for r in result]
         assert result_ids == ["task-a1", "task-b1", "task-b2"]
@@ -386,7 +386,7 @@ class TestEpicPriorityModeGrouping:
             },
         ]
 
-        result = IssueManager.sort_issues(issues, focus=True, include_wip=False)
+        result = IssueManager.sort_issues(issues, focus=True, include_wip=False)  # ty:ignore[invalid-argument-type]
 
         # All in same epic, sorted by (priority, updated DESC)
         # P1 tasks first: task-a2 (2025-01-02) before task-a1 (2025-01-01)
@@ -430,7 +430,7 @@ class TestFocusModeOrderPreference:
         ]
 
         result = IssueManager.sort_issues(
-            issues,
+            issues,  # ty:ignore[invalid-argument-type]
             focus=True,
             include_wip=False,
             order_preference=OrderPreference.FOCUS,
@@ -464,7 +464,7 @@ class TestFocusModeOrderPreference:
         ]
 
         result = IssueManager.sort_issues(
-            issues,
+            issues,  # ty:ignore[invalid-argument-type]
             focus=True,
             include_wip=False,
             order_preference=OrderPreference.FOCUS,
@@ -502,7 +502,7 @@ class TestFocusModeOrderPreference:
         ]
 
         result = IssueManager.sort_issues(
-            issues,
+            issues,  # ty:ignore[invalid-argument-type]
             focus=True,
             include_wip=True,
             order_preference=OrderPreference.FOCUS,
@@ -544,7 +544,7 @@ class TestIssePriorityModeOrderPreference:
         ]
 
         result = IssueManager.sort_issues(
-            issues,
+            issues,  # ty:ignore[invalid-argument-type]
             focus=False,
             include_wip=False,
             order_preference=OrderPreference.ISSUE_PRIORITY,

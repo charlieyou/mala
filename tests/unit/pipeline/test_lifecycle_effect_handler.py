@@ -230,8 +230,8 @@ class TestProcessGateCheck:
         fake_sink = FakeEventSink()
         handler = LifecycleEffectHandler(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
@@ -274,8 +274,8 @@ class TestProcessGateEffect:
         fake_sink = FakeEventSink()
         handler = LifecycleEffectHandler(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
@@ -308,8 +308,8 @@ class TestProcessGateEffect:
         fake_sink = FakeEventSink()
         handler = LifecycleEffectHandler(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
@@ -361,8 +361,8 @@ class TestProcessReviewCheck:
         fake_sink = FakeEventSink()
         handler = LifecycleEffectHandler(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
@@ -403,8 +403,8 @@ class TestProcessReviewEffect:
         fake_sink = FakeEventSink()
         handler = LifecycleEffectHandler(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
@@ -437,8 +437,8 @@ class TestProcessReviewEffect:
         fake_sink = FakeEventSink()
         handler = LifecycleEffectHandler(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
-            review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
@@ -513,8 +513,8 @@ class TestCheckReviewNoProgress:
 
         handler = LifecycleEffectHandler(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
-            review_runner=review_runner,  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            review_runner=review_runner,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
@@ -553,8 +553,8 @@ class TestCheckReviewNoProgress:
 
         handler = LifecycleEffectHandler(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
-            review_runner=review_runner,  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            review_runner=review_runner,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=None,
         )
@@ -586,8 +586,8 @@ class TestCheckReviewNoProgress:
 
         handler = LifecycleEffectHandler(
             config=session_config,
-            gate_runner=StubGateRunner(),  # type: ignore[arg-type]
-            review_runner=review_runner,  # type: ignore[arg-type]
+            gate_runner=StubGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            review_runner=review_runner,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             session_lifecycle=StubSessionLifecycle(),  # type: ignore[arg-type]
             event_sink=None,
         )

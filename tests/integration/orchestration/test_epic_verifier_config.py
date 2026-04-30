@@ -45,7 +45,7 @@ class TestEpicVerifierConfigDataclass:
 
         config = EpicVerifierConfig()
         with pytest.raises(AttributeError):
-            config.reviewer_type = "cerberus"  # type: ignore[misc]
+            config.reviewer_type = "cerberus"  # type: ignore[misc]  # ty:ignore[invalid-assignment]
 
 
 class TestParseEpicVerificationConfig:
@@ -94,7 +94,7 @@ class TestParseEpicVerificationConfig:
         from src.domain.validation.config_loader import _parse_epic_verification_config
 
         with pytest.raises(ConfigError, match="must be an object"):
-            _parse_epic_verification_config("not a dict")  # type: ignore[arg-type]
+            _parse_epic_verification_config("not a dict")  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
 
 class TestCheckEpicVerifierAvailability:
@@ -308,7 +308,7 @@ class TestValidationConfigEpicVerification:
             "epic_verification": {"reviewer_type": "agent_sdk"},
             "commands": {"test": {"command": "echo test"}},
         }
-        config = ValidationConfig.from_dict(data)
+        config = ValidationConfig.from_dict(data)  # ty:ignore[invalid-argument-type]
         assert config.epic_verification.reviewer_type == "agent_sdk"
 
     def test_validation_config_from_dict_parses_cerberus_reviewer(self) -> None:
@@ -319,7 +319,7 @@ class TestValidationConfigEpicVerification:
             "epic_verification": {"reviewer_type": "cerberus"},
             "commands": {"test": {"command": "echo test"}},
         }
-        config = ValidationConfig.from_dict(data)
+        config = ValidationConfig.from_dict(data)  # ty:ignore[invalid-argument-type]
         assert config.epic_verification.reviewer_type == "cerberus"
 
     def test_validation_config_from_dict_defaults_without_epic_verification(
@@ -329,7 +329,7 @@ class TestValidationConfigEpicVerification:
         from src.domain.validation.config import ValidationConfig
 
         data = {"commands": {"test": {"command": "echo test"}}}
-        config = ValidationConfig.from_dict(data)
+        config = ValidationConfig.from_dict(data)  # ty:ignore[invalid-argument-type]
         assert config.epic_verification.reviewer_type == "agent_sdk"
 
 
@@ -442,7 +442,7 @@ class TestEpicVerifierConfigIntegration:
             "epic_verification": {"reviewer_type": "agent_sdk"},
             "commands": {"test": {"command": "echo test"}},
         }
-        validation_config = ValidationConfig.from_dict(data)
+        validation_config = ValidationConfig.from_dict(data)  # ty:ignore[invalid-argument-type]
 
         # Step 2: Extract reviewer_type (mimics create_orchestrator behavior)
         reviewer_type = validation_config.epic_verification.reviewer_type

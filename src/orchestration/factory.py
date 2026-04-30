@@ -31,7 +31,7 @@ import logging
 import os
 import shutil
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 
 # Import shared types from types module (breaks circular import)
@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from src.core.protocols.agent_provider import AgentProvider
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.infra import (
         CommandRunnerPort,
@@ -101,6 +102,42 @@ class _ReviewerConfig:
     cerberus_config: CerberusConfig | None = None
 
 
+def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
+    """Construct the :class:`AgentProvider` for this run.
+
+    Selection happens once here (per plan
+    ``plans/2026-04-29-amp-provider-plan.md#L100``); the chosen provider is
+    injected into ``OrchestratorDependencies`` and threaded into
+    ``AgentSessionRunner``, ``FixerService``, and ``RunCoordinator`` - the
+    pipeline never branches on ``mala_config.coder``.
+
+    Lazy imports preserve the Amp/Claude isolation boundary: importing the
+    Claude path must not pull in any ``src.infra.clients.amp_*`` module
+    (and vice versa). Each branch imports only the provider it needs.
+
+    Args:
+        mala_config: Configuration carrying ``coder`` and ``coder_options``.
+            ``coder`` is one of ``"claude"`` (default) or ``"amp"``.
+
+    Returns:
+        An :class:`AgentProvider` for the selected backend. The Amp provider
+        is currently a stub (T007) - real impl arrives in T008 - T013.
+    """
+    if mala_config.coder == "amp":
+        from src.infra.clients.amp_provider import AmpAgentProvider
+
+        return cast(
+            "AgentProvider", AmpAgentProvider(mode=mala_config.coder_options.amp.mode)
+        )
+
+    from src.infra.clients.claude_provider import ClaudeAgentProvider
+
+    return cast(
+        "AgentProvider",
+        ClaudeAgentProvider(setting_sources=list(mala_config.claude_settings_sources)),
+    )
+
+
 def create_issue_provider(
     repo_path: Path,
     log_warning: Callable[[str], None] | None = None,
@@ -119,7 +156,7 @@ def create_issue_provider(
     """
     from src.infra.clients.beads_client import BeadsClient
 
-    return BeadsClient(repo_path, log_warning=log_warning)  # type: ignore[return-value]
+    return BeadsClient(repo_path, log_warning=log_warning)  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
 
 
 def _derive_config(
@@ -729,6 +766,7 @@ def _build_dependencies(
     CommandRunnerPort,
     EnvConfigPort,
     LockManagerPort,
+    AgentProvider,
 ]:
     """Build all dependencies, using provided ones or creating defaults.
 
@@ -750,7 +788,6 @@ def _build_dependencies(
     from src.infra.clients.beads_client import BeadsClient
     from src.infra.epic_verifier import EpicVerifier
     from src.infra.io.console_sink import ConsoleEventSink
-    from src.infra.io.session_log_parser import FileSystemLogProvider
     from src.infra.telemetry import NullTelemetryProvider
     from src.infra.tools.command_runner import CommandRunner
     from src.infra.tools.env import EnvConfig
@@ -786,12 +823,21 @@ def _build_dependencies(
     else:
         event_sink = ConsoleEventSink()
 
+    # Agent provider - select the coder backend now so its log_provider can
+    # be reused for evidence parsing below. Per plan L100, selection happens
+    # exactly once per run; later pipeline construction reuses this instance.
+    agent_provider: AgentProvider
+    if deps is not None and deps.agent_provider is not None:
+        agent_provider = deps.agent_provider
+    else:
+        agent_provider = _create_agent_provider(mala_config)
+
     # Log provider
     log_provider: LogProvider
     if deps is not None and deps.log_provider is not None:
         log_provider = deps.log_provider
     else:
-        log_provider = cast("LogProvider", FileSystemLogProvider())
+        log_provider = agent_provider.log_provider
 
     # Gate checker (needs log_provider and command_runner)
     gate_checker: GateChecker
@@ -816,7 +862,7 @@ def _build_dependencies(
 
         beads_client = BeadsClient(repo_path, log_warning=log_warning)
         # BeadsClient implements IssueProvider protocol
-        issue_provider = beads_client  # type: ignore[assignment]
+        issue_provider = beads_client  # type: ignore[assignment]  # ty:ignore[invalid-assignment]
 
     # Epic verifier (only when using real BeadsClient - either created or injected)
     epic_verifier: EpicVerifierProtocol | None = None
@@ -886,6 +932,7 @@ def _build_dependencies(
         command_runner,
         env_config,
         lock_manager,
+        agent_provider,
     )
 
 
@@ -941,6 +988,8 @@ def create_orchestrator(
     # Load ValidationConfig once from mala.yaml for all settings that need to flow
     # to MalaConfig and reviewer configuration (avoids redundant I/O and parsing)
     yaml_claude_settings_sources: tuple[str, ...] | None = None
+    yaml_coder: Literal["claude", "amp"] | None = None
+    yaml_amp_mode: Literal["smart", "rush", "deep"] | None = None
     reviewer_config = _ReviewerConfig()  # Default
     validation_config = None
     validation_config_missing = False
@@ -954,6 +1003,8 @@ def create_orchestrator(
         else:
             validation_config = user_config
         yaml_claude_settings_sources = validation_config.claude_settings_sources
+        yaml_coder = validation_config.coder
+        yaml_amp_mode = validation_config.amp_mode
         reviewer_config = _extract_reviewer_config(validation_config)
     except ConfigMissingError:
         # mala.yaml not present - use defaults
@@ -967,6 +1018,8 @@ def create_orchestrator(
         mala_config = MalaConfig.from_env(
             validate=False,
             yaml_claude_settings_sources=yaml_claude_settings_sources,
+            yaml_coder=yaml_coder,
+            yaml_amp_mode=yaml_amp_mode,
         )
 
     # Derive computed configuration
@@ -1032,6 +1085,7 @@ def create_orchestrator(
         command_runner,
         env_config,
         lock_manager,
+        agent_provider,
     ) = _build_dependencies(
         config,
         mala_config,
@@ -1044,11 +1098,24 @@ def create_orchestrator(
         epic_verifier_retry_policy=epic_verifier_retry_policy,
     )
 
+    # Install per-coder prerequisites once before the first session of the run
+    # (per plan L168). For Claude this is a no-op; for Amp this performs the
+    # plugin-load self-test (currently a no-op stub - real impl in T013).
+    # The orchestrator constructs an MCP server factory matching the one
+    # real sessions use so the self-test exercises the real spawn path.
+    from src.orchestration.orchestration_wiring import create_mcp_server_factory
+
+    agent_provider.install_prerequisites(
+        config.repo_path.resolve(),
+        mcp_server_factory=create_mcp_server_factory(),
+    )
+
     # Create orchestrator using internal constructor
     logger.info(
-        "Orchestrator created: max_agents=%d timeout=%ds",
+        "Orchestrator created: max_agents=%d timeout=%ds coder=%s",
         config.max_agents or 0,
         derived.timeout_seconds,
+        agent_provider.name,
     )
     return MalaOrchestrator(
         _config=config,
@@ -1064,6 +1131,7 @@ def create_orchestrator(
         _command_runner=command_runner,
         _env_config=env_config,
         _lock_manager=lock_manager,
+        _agent_provider=agent_provider,
         runs_dir=deps.runs_dir if deps else None,
         lock_releaser=deps.lock_releaser if deps else None,
     )

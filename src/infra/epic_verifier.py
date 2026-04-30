@@ -679,7 +679,7 @@ class EpicVerifier:
         def _safe_int(val: object, default: int) -> int:
             """Safely convert to non-negative int, clamping invalid values."""
             try:
-                n = int(val)  # type: ignore[arg-type]
+                n = int(val)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
                 return max(0, n)
             except (TypeError, ValueError):
                 return default

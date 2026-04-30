@@ -90,7 +90,7 @@ class TestCommandConfig:
     def test_from_invalid_type(self) -> None:
         """Non-string, non-dict value raises ConfigError."""
         with pytest.raises(ConfigError, match="must be a string or object"):
-            CommandConfig.from_value(123)  # type: ignore[arg-type]
+            CommandConfig.from_value(123)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
 
 class TestYamlCoverageConfig:
@@ -310,7 +310,7 @@ class TestCommandsConfig:
     def test_from_dict_non_string_key_raises_error(self) -> None:
         """Non-string command key raises ConfigError."""
         with pytest.raises(ConfigError, match="Command key must be a string"):
-            CommandsConfig.from_dict({1: "some command"})  # type: ignore[dict-item]
+            CommandsConfig.from_dict({1: "some command"})  # type: ignore[dict-item]  # ty:ignore[invalid-argument-type]
 
 
 class TestValidationConfig:
@@ -451,7 +451,7 @@ class TestValidationConfig:
                 }
             },
         }
-        config = ValidationConfig.from_dict(data)
+        config = ValidationConfig.from_dict(data)  # ty:ignore[invalid-argument-type]
         assert config.validation_triggers is not None
         assert config.validation_triggers.periodic is not None
         assert config.validation_triggers.periodic.interval == 3600
@@ -466,14 +466,14 @@ class TestValidationConfig:
     def test_from_dict_validation_triggers_explicit_null(self) -> None:
         """validation_triggers: null is tracked in _fields_set but value is None."""
         data = {"preset": "python-uv", "validation_triggers": None}
-        config = ValidationConfig.from_dict(data)
+        config = ValidationConfig.from_dict(data)  # ty:ignore[invalid-argument-type]
         assert config.validation_triggers is None
         assert "validation_triggers" in config._fields_set
 
     def test_from_dict_validation_triggers_empty_dict(self) -> None:
         """validation_triggers: {} creates empty config with all triggers None."""
         data = {"preset": "python-uv", "validation_triggers": {}}
-        config = ValidationConfig.from_dict(data)
+        config = ValidationConfig.from_dict(data)  # ty:ignore[invalid-argument-type]
         assert config.validation_triggers is not None
         assert config.validation_triggers.epic_completion is None
         assert config.validation_triggers.session_end is None
@@ -1096,7 +1096,7 @@ class TestCustomCommandConfig:
     def test_invalid_value_type(self) -> None:
         """Non-string, non-dict value raises ConfigError."""
         with pytest.raises(ConfigError, match="must be a string or object"):
-            CustomCommandConfig.from_value("my_cmd", 123)  # type: ignore[arg-type]
+            CustomCommandConfig.from_value("my_cmd", 123)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
 
 class TestBaseTriggerConfig:
@@ -1119,7 +1119,7 @@ class TestBaseTriggerConfig:
         # Pass a list instead of tuple - should be coerced
         config = SessionEndTriggerConfig(
             failure_mode=FailureMode.CONTINUE,
-            commands=[cmd_ref],  # type: ignore[arg-type]
+            commands=[cmd_ref],  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
         assert config.commands == (cmd_ref,)
         assert isinstance(config.commands, tuple)
@@ -1128,7 +1128,7 @@ class TestBaseTriggerConfig:
         """Empty list is coerced to empty tuple."""
         config = SessionEndTriggerConfig(
             failure_mode=FailureMode.ABORT,
-            commands=[],  # type: ignore[arg-type]
+            commands=[],  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
         assert config.commands == ()
         assert isinstance(config.commands, tuple)
@@ -1195,7 +1195,7 @@ class TestEpicCompletionTriggerConfig:
         cmd_ref = TriggerCommandRef(ref="lint")
         config = EpicCompletionTriggerConfig(
             failure_mode=FailureMode.ABORT,
-            commands=[cmd_ref],  # type: ignore[arg-type]
+            commands=[cmd_ref],  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             epic_depth=EpicDepth.ALL,
             fire_on=FireOn.BOTH,
         )
@@ -1224,7 +1224,7 @@ class TestSessionEndTriggerConfig:
             commands=(),
         )
         with pytest.raises(AttributeError):
-            config.failure_mode = FailureMode.CONTINUE  # type: ignore[misc]
+            config.failure_mode = FailureMode.CONTINUE  # type: ignore[misc]  # ty:ignore[invalid-assignment]
 
 
 class TestPeriodicTriggerConfig:
@@ -1247,7 +1247,7 @@ class TestPeriodicTriggerConfig:
         cmd_ref = TriggerCommandRef(ref="typecheck")
         config = PeriodicTriggerConfig(
             failure_mode=FailureMode.CONTINUE,
-            commands=[cmd_ref],  # type: ignore[arg-type]
+            commands=[cmd_ref],  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             interval=1800,
         )
         assert isinstance(config.commands, tuple)
@@ -1291,7 +1291,7 @@ class TestRunEndTriggerConfig:
         cmd_ref = TriggerCommandRef(ref="test")
         config = RunEndTriggerConfig(
             failure_mode=FailureMode.ABORT,
-            commands=[cmd_ref],  # type: ignore[arg-type]
+            commands=[cmd_ref],  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
         assert isinstance(config.commands, tuple)
         assert config.commands == (cmd_ref,)
@@ -1303,7 +1303,7 @@ class TestRunEndTriggerConfig:
             commands=(),
         )
         with pytest.raises(AttributeError):
-            config.fire_on = FireOn.FAILURE  # type: ignore[misc]
+            config.fire_on = FireOn.FAILURE  # type: ignore[misc]  # ty:ignore[invalid-assignment]
 
 
 class TestCerberusConfig:
@@ -1334,7 +1334,7 @@ class TestCerberusConfig:
         """CerberusConfig is immutable."""
         config = CerberusConfig()
         with pytest.raises(AttributeError):
-            config.timeout = 600  # type: ignore[misc]
+            config.timeout = 600  # type: ignore[misc]  # ty:ignore[invalid-assignment]
 
 
 class TestCodeReviewConfig:
@@ -1391,7 +1391,7 @@ class TestCodeReviewConfig:
         """CodeReviewConfig is immutable."""
         config = CodeReviewConfig()
         with pytest.raises(AttributeError):
-            config.enabled = True  # type: ignore[misc]
+            config.enabled = True  # type: ignore[misc]  # ty:ignore[invalid-assignment]
 
 
 class TestTriggerType:
@@ -1519,7 +1519,7 @@ class TestValidationTriggersConfig:
         """ValidationTriggersConfig is immutable."""
         config = ValidationTriggersConfig()
         with pytest.raises(AttributeError):
-            config.epic_completion = None  # type: ignore[misc]
+            config.epic_completion = None  # type: ignore[misc]  # ty:ignore[invalid-assignment]
 
 
 class TestTriggerCommandRef:
@@ -1543,7 +1543,7 @@ class TestTriggerCommandRef:
         """TriggerCommandRef is immutable."""
         cmd_ref = TriggerCommandRef(ref="test")
         with pytest.raises(AttributeError):
-            cmd_ref.ref = "other"  # type: ignore[misc]
+            cmd_ref.ref = "other"  # type: ignore[misc]  # ty:ignore[invalid-assignment]
 
 
 class TestValidationTriggersConfigParsing:
@@ -2016,10 +2016,10 @@ class TestValidationTriggersConfigParsing:
         from src.domain.validation.config_loader import _parse_validation_triggers
 
         with pytest.raises(ConfigError, match="validation_triggers must be an object"):
-            _parse_validation_triggers([])  # type: ignore[arg-type]
+            _parse_validation_triggers([])  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
         with pytest.raises(ConfigError, match="validation_triggers must be an object"):
-            _parse_validation_triggers("not a dict")  # type: ignore[arg-type]
+            _parse_validation_triggers("not a dict")  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
     def test_parse_unknown_trigger_key_raises_error(self) -> None:
         """Unknown keys under validation_triggers raise ConfigError."""

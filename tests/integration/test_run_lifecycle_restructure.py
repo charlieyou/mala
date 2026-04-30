@@ -30,6 +30,7 @@ from tests.helpers.protocol_stubs import (
 )
 from src.core.protocols.events import MalaEventSink
 from src.core.session_end_result import SessionEndResult
+from tests.fakes.agent_provider import FakeAgentProvider
 from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 
 if TYPE_CHECKING:
@@ -127,6 +128,12 @@ def fake_factory(fake_client: FakeSDKClient) -> FakeSDKClientFactory:
     return FakeSDKClientFactory(fake_client)
 
 
+@pytest.fixture
+def fake_agent_provider(fake_factory: FakeSDKClientFactory) -> FakeAgentProvider:
+    """Wrap fake_factory in a FakeAgentProvider for AgentSessionRunner."""
+    return FakeAgentProvider(fake_factory)
+
+
 class FakeEventSink(MalaEventSink):
     """Fake event sink that tracks lifecycle events in order."""
 
@@ -173,7 +180,7 @@ class FakeEventSink(MalaEventSink):
 @pytest.mark.integration
 async def test_session_end_invoked_after_gate_passes(
     session_config: AgentSessionConfig,
-    fake_factory: FakeSDKClientFactory,
+    fake_agent_provider: FakeAgentProvider,
     tmp_log_path: Path,
 ) -> None:
     """Integration: session_end callback is invoked after gate passes.
@@ -208,11 +215,11 @@ async def test_session_end_invoked_after_gate_passes(
 
     runner = AgentSessionRunner(
         config=session_config,
-        sdk_client_factory=fake_factory,
+        agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
-        ),  # type: ignore[arg-type]
-        review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+        ),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
@@ -254,7 +261,7 @@ async def test_session_end_invoked_after_gate_passes(
 @pytest.mark.integration
 async def test_session_end_completed_event_on_pass(
     session_config: AgentSessionConfig,
-    fake_factory: FakeSDKClientFactory,
+    fake_agent_provider: FakeAgentProvider,
     tmp_log_path: Path,
 ) -> None:
     """Integration: session_end_completed event is emitted when session_end passes.
@@ -282,11 +289,11 @@ async def test_session_end_completed_event_on_pass(
 
     runner = AgentSessionRunner(
         config=session_config,
-        sdk_client_factory=fake_factory,
+        agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
-        ),  # type: ignore[arg-type]
-        review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+        ),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
@@ -306,7 +313,7 @@ async def test_session_end_completed_event_on_pass(
 @pytest.mark.integration
 async def test_session_end_not_invoked_when_gate_fails(
     session_config: AgentSessionConfig,
-    fake_factory: FakeSDKClientFactory,
+    fake_agent_provider: FakeAgentProvider,
     tmp_log_path: Path,
 ) -> None:
     """Integration: session_end is not invoked when gate fails.
@@ -349,11 +356,11 @@ async def test_session_end_not_invoked_when_gate_fails(
 
     runner = AgentSessionRunner(
         config=config_no_retries,
-        sdk_client_factory=fake_factory,
+        agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
-        ),  # type: ignore[arg-type]
-        review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+        ),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
@@ -379,7 +386,7 @@ async def test_session_end_not_invoked_when_gate_fails(
 @pytest.mark.integration
 async def test_session_end_timeout_scenario(
     session_config: AgentSessionConfig,
-    fake_factory: FakeSDKClientFactory,
+    fake_agent_provider: FakeAgentProvider,
     tmp_log_path: Path,
 ) -> None:
     """Scenario: lifecycle handles session_end timeout result correctly.
@@ -419,11 +426,11 @@ async def test_session_end_timeout_scenario(
 
     runner = AgentSessionRunner(
         config=session_config,
-        sdk_client_factory=fake_factory,
+        agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
-        ),  # type: ignore[arg-type]
-        review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+        ),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
@@ -461,7 +468,7 @@ async def test_session_end_timeout_scenario(
 @pytest.mark.integration
 async def test_session_end_interrupt_scenario(
     session_config: AgentSessionConfig,
-    fake_factory: FakeSDKClientFactory,
+    fake_agent_provider: FakeAgentProvider,
     tmp_log_path: Path,
 ) -> None:
     """Scenario: SIGINT during session_end command execution.
@@ -500,11 +507,11 @@ async def test_session_end_interrupt_scenario(
 
     runner = AgentSessionRunner(
         config=session_config,
-        sdk_client_factory=fake_factory,
+        agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
-        ),  # type: ignore[arg-type]
-        review_runner=StubReviewRunner(),  # type: ignore[arg-type]
+        ),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        review_runner=StubReviewRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
@@ -541,7 +548,7 @@ async def test_session_end_interrupt_scenario(
 @pytest.mark.integration
 async def test_session_end_timeout_proceeds_to_review_with_correct_result(
     tmp_path: Path,
-    fake_factory: FakeSDKClientFactory,
+    fake_agent_provider: FakeAgentProvider,
     tmp_log_path: Path,
 ) -> None:
     """Verify timeout scenario proceeds to review with explicit status.
@@ -566,7 +573,7 @@ async def test_session_end_timeout_proceeds_to_review_with_correct_result(
         passed: bool = True
         parse_error: str | None = None
         fatal_error: bool = False
-        issues: list[object] = None  # type: ignore[assignment]
+        issues: list[object] = None  # type: ignore[assignment]  # ty:ignore[invalid-assignment]
         interrupted: bool = False
 
         def __post_init__(self) -> None:
@@ -627,11 +634,11 @@ async def test_session_end_timeout_proceeds_to_review_with_correct_result(
 
     runner = AgentSessionRunner(
         config=config_with_review,
-        sdk_client_factory=fake_factory,
+        agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
-        ),  # type: ignore[arg-type]
-        review_runner=StubReviewRunner(on_review=on_review_check),  # type: ignore[arg-type]
+        ),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        review_runner=StubReviewRunner(on_review=on_review_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
@@ -685,7 +692,7 @@ class FakeEventSinkWithRunEnd(FakeEventSink):
 @pytest.mark.integration
 async def test_mixed_outcomes_both_proceed_to_review(
     tmp_path: Path,
-    fake_factory: FakeSDKClientFactory,
+    fake_agent_provider: FakeAgentProvider,
     tmp_log_path: Path,
 ) -> None:
     """Scenario: issues with pass/fail session_end both proceed to review.
@@ -709,7 +716,7 @@ async def test_mixed_outcomes_both_proceed_to_review(
         passed: bool = True
         parse_error: str | None = None
         fatal_error: bool = False
-        issues: list[object] = None  # type: ignore[assignment]
+        issues: list[object] = None  # type: ignore[assignment]  # ty:ignore[invalid-assignment]
         interrupted: bool = False
 
         def __post_init__(self) -> None:
@@ -767,11 +774,11 @@ async def test_mixed_outcomes_both_proceed_to_review(
 
     runner = AgentSessionRunner(
         config=config_with_review,
-        sdk_client_factory=fake_factory,
+        agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
-        ),  # type: ignore[arg-type]
-        review_runner=StubReviewRunner(on_review=on_review_check),  # type: ignore[arg-type]
+        ),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        review_runner=StubReviewRunner(on_review=on_review_check),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         session_lifecycle=StubSessionLifecycle(on_get_log_path=get_log_path),  # type: ignore[arg-type]
         event_sink=cast("Any", event_sink),
     )
@@ -857,7 +864,7 @@ class TestFireOnTruthTable:
                 run_end=RunEndTriggerConfig(
                     failure_mode=FailureMode.CONTINUE,
                     commands=(),
-                    fire_on=fire_on,  # type: ignore[arg-type]
+                    fire_on=fire_on,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
                 )
             )
             return ValidationConfig(validation_triggers=triggers)

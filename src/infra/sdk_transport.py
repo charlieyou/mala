@@ -164,5 +164,5 @@ def ensure_sigint_isolated_cli_transport() -> None:
             finally:
                 self._clear_sigint_pgid()
 
-    subprocess_cli.SubprocessCLITransport = MalaSubprocessCLITransport  # type: ignore[invalid-assignment]
-    subprocess_cli._MALA_SIGINT_PATCHED = True  # type: ignore[unresolved-attribute]
+    subprocess_cli.SubprocessCLITransport = MalaSubprocessCLITransport  # type: ignore[invalid-assignment]  # ty:ignore[invalid-assignment]
+    subprocess_cli._MALA_SIGINT_PATCHED = True  # type: ignore[unresolved-attribute]  # ty:ignore[unresolved-attribute]

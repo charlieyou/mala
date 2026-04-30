@@ -381,7 +381,7 @@ class TestReentryGuard:
         async def raise_error(epic_id: str, force: bool) -> EpicVerificationResult:
             raise RuntimeError("Test error")
 
-        fake_callbacks.verify_epic = raise_error  # type: ignore[method-assign]
+        fake_callbacks.verify_epic = raise_error  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         coordinator = EpicVerificationCoordinator(
             config=EpicVerificationConfig(max_retries=3),

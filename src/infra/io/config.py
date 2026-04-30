@@ -134,7 +134,9 @@ def parse_coder(raw: str | None, *, source: str) -> Literal["claude", "amp"] | N
     """Parse a coder selection string.
 
     Args:
-        raw: Raw value like "claude" or "amp" (case-insensitive after strip).
+        raw: Raw value, "claude" or "amp" (after strip; case-sensitive to
+            match the strict-enum YAML schema in
+            src/domain/validation/config.py).
         source: Source name for error messages (e.g., "MALA_CODER", "CLI").
 
     Returns:

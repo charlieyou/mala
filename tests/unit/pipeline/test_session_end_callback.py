@@ -167,7 +167,7 @@ def _create_factory(
         on_review_log_path=lambda issue_id, path: None,
         interrupt_event_getter=lambda: interrupt_event,
         get_base_sha=lambda issue_id: (base_sha_map or {}).get(issue_id),
-        get_run_metadata=lambda: run_metadata or FakeRunMetadata(),  # type: ignore[return-value]
+        get_run_metadata=lambda: run_metadata or FakeRunMetadata(),  # type: ignore[return-value]  # ty:ignore[invalid-argument-type]
         on_abort=on_abort or (lambda reason: None),
         abort_event_getter=lambda: None,
     )
@@ -180,8 +180,8 @@ def _create_factory(
         get_per_session_spec=MagicMock(return_value=None),
         is_verbose=MagicMock(return_value=False),
         get_validation_config=lambda: validation_config,
-        command_runner=command_runner,  # type: ignore[arg-type]
-        cumulative_review_runner=cumulative_review_runner,  # type: ignore[arg-type]
+        command_runner=command_runner,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        cumulative_review_runner=cumulative_review_runner,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         session_end_timeout=session_end_timeout,
     )
 
@@ -396,7 +396,7 @@ class TestTimeoutBehavior:
             await asyncio.sleep(10)
             return FakeCommandResult(command="slow", returncode=0)
 
-        runner.run_async = slow_run  # type: ignore[method-assign]
+        runner.run_async = slow_run  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         config = _make_validation_config(
             commands=(TriggerCommandRef(ref="lint"),),
@@ -468,7 +468,7 @@ class TestInterruptBehavior:
             interrupt_event.set()  # Set interrupt after command completes
             return result
 
-        runner.run_async = run_then_interrupt  # type: ignore[method-assign]
+        runner.run_async = run_then_interrupt  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         config = _make_validation_config(
             commands=(
@@ -527,7 +527,7 @@ class TestInterruptBehavior:
         )
         factory = _create_factory(
             validation_config=config,
-            command_runner=runner,  # type: ignore[arg-type]
+            command_runner=runner,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             interrupt_event=interrupt_event,
         )
         adapters = factory.build_adapters("test-issue")

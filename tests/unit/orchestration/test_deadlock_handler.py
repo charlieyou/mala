@@ -303,7 +303,7 @@ class TestHandleDeadlock:
                 current = asyncio.current_task()
                 assert current is not None
                 # Use info.victim_issue_id as key to ensure consistency
-                active_tasks[info.victim_issue_id] = current  # type: ignore[assignment]
+                active_tasks[info.victim_issue_id] = current  # type: ignore[assignment]  # ty:ignore[invalid-assignment]
 
                 await handler.handle_deadlock(info, state, active_tasks)
                 resolution_completed = True
@@ -452,7 +452,7 @@ class TestAbortActiveTasks:
             active_tasks,
             "Test abort",
             state,
-            fake_run_metadata,  # type: ignore[arg-type]
+            fake_run_metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         # Await task with timeout to avoid hanging if cancellation fails
@@ -496,7 +496,7 @@ class TestAbortActiveTasks:
             active_tasks,
             "Test abort",
             state,
-            fake_run_metadata,  # type: ignore[arg-type]
+            fake_run_metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         # Should use the real result, not an aborted result
@@ -529,7 +529,7 @@ class TestAbortActiveTasks:
             active_tasks,
             "Test abort",
             state,
-            fake_run_metadata,  # type: ignore[arg-type]
+            fake_run_metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         # Result should indicate failure with exception message
@@ -562,7 +562,7 @@ class TestAbortActiveTasks:
             active_tasks,
             None,
             state,
-            fake_run_metadata,  # type: ignore[arg-type]
+            fake_run_metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         # Default reason should be "Unrecoverable error"
@@ -586,7 +586,7 @@ class TestAbortActiveTasks:
             active_tasks,
             "Test abort",
             state,
-            fake_run_metadata,  # type: ignore[arg-type]
+            fake_run_metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         # No callbacks should be invoked for empty active_tasks
@@ -621,7 +621,7 @@ class TestAbortActiveTasks:
             active_tasks,
             "Test abort",
             state,
-            fake_run_metadata,  # type: ignore[arg-type]
+            fake_run_metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         # Result should include the session log path
@@ -672,7 +672,7 @@ class TestAbortActiveTasks:
             active_tasks,
             "Test abort",
             state,
-            fake_run_metadata,  # type: ignore[arg-type]
+            fake_run_metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         # Task should still be running (unresponsive)

@@ -885,6 +885,11 @@ class ValidationConfig:
     per_issue_review: CodeReviewConfig = field(
         default_factory=lambda: CodeReviewConfig(enabled=False)
     )
+    # Coder selection (validated above as strict enum). Stored here so the
+    # orchestrator can flow yaml values through to MalaConfig.from_env's
+    # yaml_coder / yaml_amp_mode parameters (CLI > env > yaml > default).
+    coder: Literal["claude", "amp"] | None = None
+    amp_mode: Literal["smart", "rush", "deep"] | None = None
     _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
@@ -1159,20 +1164,29 @@ class ValidationConfig:
                     is_per_issue_review=True,
                 )
 
-        # Validate coder (optional, strict enum: claude | amp).
-        # Storage and resolver precedence are handled in src/infra/io/config.py
-        # (see plans/2026-04-29-amp-provider-plan.md L194-L215). This block
-        # only fails fast on invalid YAML before any agent process starts.
+        # Validate coder (optional, strict enum: claude | amp). Resolver
+        # precedence is handled in src/infra/io/config.py (see
+        # plans/2026-04-29-amp-provider-plan.md L194-L215); this block
+        # fails fast on invalid YAML and stores the parsed value so the
+        # orchestrator can flow it into MalaConfig.from_env.
+        coder: Literal["claude", "amp"] | None = None
         if "coder" in data:
             fields_set.add("coder")
             coder_val = data["coder"]
-            if coder_val is not None and (
-                not isinstance(coder_val, str) or coder_val not in ("claude", "amp")
-            ):
-                raise ConfigError(f"coder must be 'claude' or 'amp', got {coder_val!r}")
+            if coder_val is not None:
+                if not isinstance(coder_val, str) or coder_val not in (
+                    "claude",
+                    "amp",
+                ):
+                    raise ConfigError(
+                        f"coder must be 'claude' or 'amp', got {coder_val!r}"
+                    )
+                # Narrow Literal type for the type checker.
+                coder = "amp" if coder_val == "amp" else "claude"
 
         # Validate coder_options (optional). Currently only the 'amp' sub-key
         # with a strict-enum 'mode' (smart | rush | deep) is recognized.
+        amp_mode: Literal["smart", "rush", "deep"] | None = None
         if "coder_options" in data:
             fields_set.add("coder_options")
             co_raw = data["coder_options"]
@@ -1193,15 +1207,24 @@ class ValidationConfig:
                         amp_val = cast("dict[str, object]", amp_raw)
                         if "mode" in amp_val:
                             mode_val = amp_val["mode"]
-                            if mode_val is not None and (
-                                not isinstance(mode_val, str)
-                                or mode_val not in ("smart", "rush", "deep")
-                            ):
-                                raise ConfigError(
-                                    f"coder_options.amp.mode must be "
-                                    f"'smart', 'rush', or 'deep', "
-                                    f"got {mode_val!r}"
-                                )
+                            if mode_val is not None:
+                                if not isinstance(mode_val, str) or mode_val not in (
+                                    "smart",
+                                    "rush",
+                                    "deep",
+                                ):
+                                    raise ConfigError(
+                                        f"coder_options.amp.mode must be "
+                                        f"'smart', 'rush', or 'deep', "
+                                        f"got {mode_val!r}"
+                                    )
+                                # Narrow Literal type for the type checker.
+                                if mode_val == "rush":
+                                    amp_mode = "rush"
+                                elif mode_val == "deep":
+                                    amp_mode = "deep"
+                                else:
+                                    amp_mode = "smart"
 
         return cls(
             preset=preset,
@@ -1223,6 +1246,8 @@ class ValidationConfig:
             per_issue_review=per_issue_review
             if per_issue_review is not None
             else CodeReviewConfig(enabled=False),
+            coder=coder,
+            amp_mode=amp_mode,
             _fields_set=frozenset(fields_set),
         )
 

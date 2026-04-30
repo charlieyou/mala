@@ -24,6 +24,7 @@ from src.pipeline.fixer_interface import FixerResult
 from src.pipeline.fixer_service import FixerService, FixerServiceConfig
 from src.pipeline.trigger_engine import TriggerEngine
 from tests.fakes import FakeEnvConfig
+from tests.fakes.agent_provider import FakeAgentProvider
 from tests.fakes.command_runner import FakeCommandRunner
 from tests.fakes.lock_manager import FakeLockManager
 
@@ -34,7 +35,7 @@ def _make_coordinator(
     command_runner: Any,  # noqa: ANN401
     env_config: Any,  # noqa: ANN401
     lock_manager: Any,  # noqa: ANN401
-    sdk_client_factory: Any,  # noqa: ANN401
+    agent_provider: Any,  # noqa: ANN401
     event_sink: Any = None,  # noqa: ANN401
     cumulative_review_runner: Any = None,  # noqa: ANN401
     run_metadata: Any = None,  # noqa: ANN401
@@ -54,7 +55,7 @@ def _make_coordinator(
         command_runner=command_runner,
         env_config=env_config,
         lock_manager=lock_manager,
-        sdk_client_factory=sdk_client_factory,
+        agent_provider=agent_provider,
         trigger_engine=trigger_engine,
         fixer_service=fixer_service,
         event_sink=event_sink,
@@ -105,10 +106,23 @@ class TestFixerInterruptHandling:
     """Test fixer agent interrupt behavior via FixerService."""
 
     @pytest.fixture
+    def fake_agent_provider(
+        self, mock_sdk_client_factory: MagicMock
+    ) -> FakeAgentProvider:
+        """Create a FakeAgentProvider that tests can mutate (e.g. override
+        ``runtime_builder``).
+
+        After T007 the FixerService consumes ``agent_provider.runtime_builder()``
+        instead of importing ``AgentRuntimeBuilder`` directly, so tests that
+        need a controllable runtime builder must monkey-patch the provider.
+        """
+        return FakeAgentProvider(mock_sdk_client_factory)
+
+    @pytest.fixture
     def fixer_service(
         self,
         tmp_path: Path,
-        mock_sdk_client_factory: MagicMock,
+        fake_agent_provider: FakeAgentProvider,
     ) -> FixerService:
         """Create a FixerService with test dependencies."""
         config = FixerServiceConfig(
@@ -118,7 +132,7 @@ class TestFixerInterruptHandling:
         )
         return FixerService(
             config=config,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=fake_agent_provider,
         )
 
     @pytest.fixture
@@ -145,10 +159,31 @@ class TestFixerInterruptHandling:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             trigger_engine=trigger_engine,
             fixer_service=fixer_service,
         )
+
+    @staticmethod
+    def _install_mock_runtime_builder(
+        provider: FakeAgentProvider, runtime: MagicMock
+    ) -> MagicMock:
+        """Override ``provider.runtime_builder`` with a fluent mock chain.
+
+        Replaces the previous ``patch("src.pipeline.fixer_service.AgentRuntimeBuilder")``
+        pattern: production code now goes through
+        ``agent_provider.runtime_builder(...)`` instead of importing the
+        builder class directly.
+        """
+        mock_builder = MagicMock()
+        mock_builder.with_hooks.return_value = mock_builder
+        mock_builder.with_env.return_value = mock_builder
+        mock_builder.with_mcp.return_value = mock_builder
+        mock_builder.with_disallowed_tools.return_value = mock_builder
+        mock_builder.with_lint_tools.return_value = mock_builder
+        mock_builder.build.return_value = runtime
+        provider.runtime_builder = MagicMock(return_value=mock_builder)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        return mock_builder
 
     @pytest.mark.asyncio
     async def test_fixer_returns_interrupted_when_event_set_before_start(
@@ -199,6 +234,7 @@ class TestFixerInterruptHandling:
     async def test_fixer_returns_success_when_not_interrupted(
         self,
         fixer_service: FixerService,
+        fake_agent_provider: FakeAgentProvider,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Fixer should return success=True when completing without interrupt."""
@@ -224,29 +260,19 @@ class TestFixerInterruptHandling:
         mock_client.receive_response = mock_receive
         mock_sdk_client_factory.create.return_value = mock_client
 
-        # Mock AgentRuntimeBuilder to avoid MCP server factory dependency
+        # Override provider.runtime_builder to avoid MCP server factory
+        # dependency (the production path goes through agent_provider).
         mock_runtime = MagicMock()
         mock_runtime.options = {}
         mock_runtime.lint_cache = MagicMock()
+        self._install_mock_runtime_builder(fake_agent_provider, mock_runtime)
 
-        with patch(
-            "src.pipeline.fixer_service.AgentRuntimeBuilder"
-        ) as mock_builder_class:
-            mock_builder = MagicMock()
-            mock_builder_class.return_value = mock_builder
-            mock_builder.with_hooks.return_value = mock_builder
-            mock_builder.with_env.return_value = mock_builder
-            mock_builder.with_mcp.return_value = mock_builder
-            mock_builder.with_disallowed_tools.return_value = mock_builder
-            mock_builder.with_lint_tools.return_value = mock_builder
-            mock_builder.build.return_value = mock_runtime
-
-            context = FailureContext(
-                failure_output="Test failure",
-                attempt=1,
-                max_attempts=3,
-            )
-            result = await fixer_service.run_fixer(context, interrupt_event=None)
+        context = FailureContext(
+            failure_output="Test failure",
+            attempt=1,
+            max_attempts=3,
+        )
+        result = await fixer_service.run_fixer(context, interrupt_event=None)
 
         assert isinstance(result, FixerResult)
         assert result.success is True
@@ -256,6 +282,7 @@ class TestFixerInterruptHandling:
     async def test_fixer_captures_log_path(
         self,
         fixer_service: FixerService,
+        fake_agent_provider: FakeAgentProvider,
         mock_sdk_client_factory: MagicMock,
         tmp_path: Path,
     ) -> None:
@@ -279,31 +306,21 @@ class TestFixerInterruptHandling:
         mock_client.receive_response = mock_receive
         mock_sdk_client_factory.create.return_value = mock_client
 
-        # Mock AgentRuntimeBuilder to avoid MCP server factory dependency
+        # Override provider.runtime_builder to avoid MCP server factory
+        # dependency.
         mock_runtime = MagicMock()
         mock_runtime.options = {}
         mock_runtime.lint_cache = MagicMock()
+        self._install_mock_runtime_builder(fake_agent_provider, mock_runtime)
 
         # Create a mock UUID for predictable agent_id (fixer-{uuid.hex[:8]})
         mock_uuid = MagicMock()
         mock_uuid.hex = "abcd1234efgh5678"
 
         with (
-            patch(
-                "src.pipeline.fixer_service.AgentRuntimeBuilder"
-            ) as mock_builder_class,
             patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path,
             patch("src.pipeline.fixer_service.uuid.uuid4", return_value=mock_uuid),
         ):
-            mock_builder = MagicMock()
-            mock_builder_class.return_value = mock_builder
-            mock_builder.with_hooks.return_value = mock_builder
-            mock_builder.with_env.return_value = mock_builder
-            mock_builder.with_mcp.return_value = mock_builder
-            mock_builder.with_disallowed_tools.return_value = mock_builder
-            mock_builder.with_lint_tools.return_value = mock_builder
-            mock_builder.build.return_value = mock_runtime
-
             mock_log_path.return_value = Path("/mock/log/path/session.jsonl")
 
             context = FailureContext(
@@ -326,6 +343,7 @@ class TestFixerInterruptHandling:
     async def test_fixer_returns_interrupted_during_message_loop(
         self,
         fixer_service: FixerService,
+        fake_agent_provider: FakeAgentProvider,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Fixer should check interrupt between messages and exit early."""
@@ -354,29 +372,19 @@ class TestFixerInterruptHandling:
         mock_client.receive_response = mock_receive
         mock_sdk_client_factory.create.return_value = mock_client
 
-        # Mock AgentRuntimeBuilder to avoid MCP server factory dependency
+        # Override provider.runtime_builder to avoid MCP server factory
+        # dependency.
         mock_runtime = MagicMock()
         mock_runtime.options = {}
         mock_runtime.lint_cache = MagicMock()
+        self._install_mock_runtime_builder(fake_agent_provider, mock_runtime)
 
-        with patch(
-            "src.pipeline.fixer_service.AgentRuntimeBuilder"
-        ) as mock_builder_class:
-            mock_builder = MagicMock()
-            mock_builder_class.return_value = mock_builder
-            mock_builder.with_hooks.return_value = mock_builder
-            mock_builder.with_env.return_value = mock_builder
-            mock_builder.with_mcp.return_value = mock_builder
-            mock_builder.with_disallowed_tools.return_value = mock_builder
-            mock_builder.with_lint_tools.return_value = mock_builder
-            mock_builder.build.return_value = mock_runtime
-
-            context = FailureContext(
-                failure_output="Test failure",
-                attempt=1,
-                max_attempts=3,
-            )
-            result = await fixer_service.run_fixer(context, interrupt_event)
+        context = FailureContext(
+            failure_output="Test failure",
+            attempt=1,
+            max_attempts=3,
+        )
+        result = await fixer_service.run_fixer(context, interrupt_event)
 
         assert result.interrupted is True
         assert result.success is None
@@ -385,6 +393,7 @@ class TestFixerInterruptHandling:
     async def test_fixer_captures_log_path_on_interrupt_during_loop(
         self,
         fixer_service: FixerService,
+        fake_agent_provider: FakeAgentProvider,
         mock_sdk_client_factory: MagicMock,
         tmp_path: Path,
     ) -> None:
@@ -416,27 +425,16 @@ class TestFixerInterruptHandling:
         mock_runtime = MagicMock()
         mock_runtime.options = {}
         mock_runtime.lint_cache = MagicMock()
+        self._install_mock_runtime_builder(fake_agent_provider, mock_runtime)
 
         # Create a mock UUID for predictable agent_id (fixer-{uuid.hex[:8]})
         mock_uuid = MagicMock()
         mock_uuid.hex = "deadbeef12345678"
 
         with (
-            patch(
-                "src.pipeline.fixer_service.AgentRuntimeBuilder"
-            ) as mock_builder_class,
             patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path,
             patch("src.pipeline.fixer_service.uuid.uuid4", return_value=mock_uuid),
         ):
-            mock_builder = MagicMock()
-            mock_builder_class.return_value = mock_builder
-            mock_builder.with_hooks.return_value = mock_builder
-            mock_builder.with_env.return_value = mock_builder
-            mock_builder.with_mcp.return_value = mock_builder
-            mock_builder.with_disallowed_tools.return_value = mock_builder
-            mock_builder.with_lint_tools.return_value = mock_builder
-            mock_builder.build.return_value = mock_runtime
-
             mock_log_path.return_value = Path("/mock/log/path/interrupted.jsonl")
 
             context = FailureContext(
@@ -481,7 +479,7 @@ class TestGetTriggerConfig:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             trigger_engine=mock_trigger_engine,
             fixer_service=mock_fixer_service,
         )
@@ -628,7 +626,7 @@ class TestRunTriggerCodeReview:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             trigger_engine=mock_trigger_engine,
             fixer_service=mock_fixer_service,
             cumulative_review_runner=mock_review_runner,
@@ -757,7 +755,7 @@ class TestRunTriggerCodeReview:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             event_sink=mock_event_sink,
             # No cumulative_review_runner wired
         )
@@ -827,7 +825,7 @@ class TestRunTriggerCodeReview:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             event_sink=mock_event_sink,
             cumulative_review_runner=mock_review_runner,
             # No run_metadata wired
@@ -926,7 +924,7 @@ class TestFindingsExceedThreshold:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             trigger_engine=mock_trigger_engine,
             fixer_service=mock_fixer_service,
         )
@@ -1116,7 +1114,7 @@ class TestCodeReviewRemediateFailureMode:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             cumulative_review_runner=mock_review_runner,
             run_metadata=mock_run_metadata,
             event_sink=mock_event_sink,
@@ -1206,7 +1204,7 @@ class TestRunEndRunMetadata:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             run_metadata=mock_run_metadata,
         )
 
@@ -1278,7 +1276,7 @@ class TestRunEndRunMetadata:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             cumulative_review_runner=mock_review_runner,
             run_metadata=mock_run_metadata,
             event_sink=mock_event_sink,
@@ -1367,7 +1365,7 @@ class TestFindingThresholdEnforcement:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             cumulative_review_runner=mock_review_runner,
             run_metadata=mock_run_metadata,
             event_sink=mock_event_sink,
@@ -1455,7 +1453,7 @@ class TestFindingThresholdEnforcement:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             cumulative_review_runner=mock_review_runner,
             run_metadata=mock_run_metadata,
             event_sink=mock_event_sink,
@@ -1545,7 +1543,7 @@ class TestFindingThresholdEnforcement:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             cumulative_review_runner=mock_review_runner,
             run_metadata=mock_run_metadata,
             event_sink=mock_event_sink,
@@ -1631,7 +1629,7 @@ class TestFindingThresholdEnforcement:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             cumulative_review_runner=mock_review_runner,
             run_metadata=mock_run_metadata,
             event_sink=mock_event_sink,
@@ -1728,7 +1726,7 @@ class TestFindingThresholdEnforcement:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             cumulative_review_runner=mock_review_runner,
             run_metadata=mock_run_metadata,
             event_sink=mock_event_sink,
@@ -1764,7 +1762,7 @@ class TestFindingThresholdEnforcement:
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
         # Configure mock fixer_service.run_fixer to avoid MCP setup
-        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             return_value=FixerResult(success=True, interrupted=False)
         )
 
@@ -1832,7 +1830,7 @@ class TestFindingThresholdEnforcement:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             cumulative_review_runner=mock_review_runner,
             run_metadata=mock_run_metadata,
             event_sink=mock_event_sink,
@@ -1860,7 +1858,7 @@ class TestFindingThresholdEnforcement:
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
         # Configure mock fixer_service.run_fixer to avoid MCP setup
-        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             return_value=FixerResult(success=True, interrupted=False)
         )
 
@@ -1940,7 +1938,7 @@ class TestFindingThresholdEnforcement:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             cumulative_review_runner=mock_review_runner,
             run_metadata=mock_run_metadata,
             event_sink=mock_event_sink,
@@ -1977,7 +1975,7 @@ class TestFindingThresholdEnforcement:
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
         # Configure mock fixer_service.run_fixer to avoid MCP setup
-        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             return_value=FixerResult(success=True, interrupted=False)
         )
 
@@ -2061,7 +2059,7 @@ class TestR12CodeReviewGating:
             command_runner=failing_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             cumulative_review_runner=mock_review_runner,
             run_metadata=mock_run_metadata,
             event_sink=mock_event_sink,
@@ -2137,7 +2135,7 @@ class TestR12CodeReviewGating:
             command_runner=failing_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             cumulative_review_runner=mock_review_runner,
             run_metadata=mock_run_metadata,
             event_sink=mock_event_sink,
@@ -2239,7 +2237,7 @@ class TestR12CodeReviewGating:
             command_runner=smart_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             cumulative_review_runner=mock_review_runner,
             run_metadata=mock_run_metadata,
             event_sink=mock_event_sink,
@@ -2255,7 +2253,7 @@ class TestR12CodeReviewGating:
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
         # Configure mock fixer_service.run_fixer to succeed
-        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             return_value=FixerResult(success=True, interrupted=False)
         )
 
@@ -2346,11 +2344,11 @@ class TestR12CodeReviewGating:
             command_runner=smart_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             run_metadata=mock_run_metadata,
         )
 
-        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             return_value=FixerResult(success=True, interrupted=False)
         )
 
@@ -2445,7 +2443,7 @@ class TestR12CodeReviewGating:
             command_runner=failing_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             cumulative_review_runner=mock_review_runner,
             run_metadata=mock_run_metadata,
             event_sink=mock_event_sink,
@@ -2481,7 +2479,7 @@ class TestR12CodeReviewGating:
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
         # Configure mock fixer_service.run_fixer to succeed
-        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             return_value=FixerResult(success=True, interrupted=False)
         )
 
@@ -2540,7 +2538,7 @@ class TestTriggerCodeReviewEvents:
             command_runner=fake_command_runner,
             env_config=mock_env_config,
             lock_manager=fake_lock_manager,
-            sdk_client_factory=mock_sdk_client_factory,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             cumulative_review_runner=mock_review_runner,
             run_metadata=mock_run_metadata,
             event_sink=event_sink,
@@ -2973,7 +2971,7 @@ class TestTriggerCodeReviewEvents:
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
         # Configure mock fixer_service.run_fixer to avoid MCP setup
-        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             return_value=FixerResult(success=True, interrupted=False)
         )
 
@@ -3060,7 +3058,7 @@ class TestTriggerCodeReviewEvents:
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 
         # Configure mock fixer_service.run_fixer
-        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
             return_value=FixerResult(success=True, interrupted=False)
         )
 

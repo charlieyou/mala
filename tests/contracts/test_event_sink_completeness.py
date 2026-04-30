@@ -34,7 +34,7 @@ def test_fake_event_sink_has_event_helper() -> None:
 
     assert not sink.has_event("run_started")
 
-    sink.on_run_started(config=None)  # type: ignore[arg-type]
+    sink.on_run_started(config=None)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
     assert sink.has_event("run_started")
     assert not sink.has_event("run_completed")
 
@@ -61,7 +61,7 @@ def test_fake_event_sink_clear() -> None:
     """clear() removes all recorded events."""
     sink = FakeEventSink()
 
-    sink.on_run_started(config=None)  # type: ignore[arg-type]
+    sink.on_run_started(config=None)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
     sink.on_warning(message="test")
     assert len(sink.events) == 2
 

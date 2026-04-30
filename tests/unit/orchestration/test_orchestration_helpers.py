@@ -467,7 +467,7 @@ class TestCreateReviewTrackingIssues:
             beads=cast("IssueProvider", beads),
             event_sink=cast("MalaEventSink", event_sink),
             source_issue_id="bd-test-1",
-            review_issues=review_issues,
+            review_issues=review_issues,  # ty:ignore[invalid-argument-type]
         )
 
         # Should create exactly one consolidated issue
@@ -509,7 +509,7 @@ class TestCreateReviewTrackingIssues:
             beads=cast("IssueProvider", beads),
             event_sink=cast("MalaEventSink", event_sink),
             source_issue_id="bd-test-2",
-            review_issues=review_issues,
+            review_issues=review_issues,  # ty:ignore[invalid-argument-type]
         )
 
         assert len(beads.created_issues) == 1
@@ -562,7 +562,7 @@ class TestCreateReviewTrackingIssues:
             beads=cast("IssueProvider", beads),
             event_sink=cast("MalaEventSink", event_sink),
             source_issue_id="bd-test-3",
-            review_issues=review_issues,
+            review_issues=review_issues,  # ty:ignore[invalid-argument-type]
         )
 
         # Should not create any issues or update (findings already exist)
@@ -621,7 +621,7 @@ This issue consolidates 1 non-blocking finding from code review.
             beads=cast("IssueProvider", beads),
             event_sink=cast("MalaEventSink", event_sink),
             source_issue_id="bd-test-6",
-            review_issues=new_issues,
+            review_issues=new_issues,  # ty:ignore[invalid-argument-type]
         )
 
         # Should update, not create
@@ -662,7 +662,7 @@ This issue consolidates 1 non-blocking finding from code review.
             beads=cast("IssueProvider", beads),
             event_sink=cast("MalaEventSink", event_sink),
             source_issue_id="bd-test-4",
-            review_issues=review_issues,
+            review_issues=review_issues,  # ty:ignore[invalid-argument-type]
         )
 
         assert len(beads.created_issues) == 1
@@ -706,7 +706,7 @@ This issue consolidates 1 non-blocking finding from code review.
             beads=cast("IssueProvider", beads),
             event_sink=cast("MalaEventSink", event_sink),
             source_issue_id="bd-test-parent",
-            review_issues=review_issues,
+            review_issues=review_issues,  # ty:ignore[invalid-argument-type]
             parent_epic_id="bd-epic-123",
         )
 
@@ -735,7 +735,7 @@ This issue consolidates 1 non-blocking finding from code review.
             beads=cast("IssueProvider", beads),
             event_sink=cast("MalaEventSink", event_sink),
             source_issue_id="bd-test-no-parent",
-            review_issues=review_issues,
+            review_issues=review_issues,  # ty:ignore[invalid-argument-type]
         )
 
         assert len(beads.created_issues) == 1

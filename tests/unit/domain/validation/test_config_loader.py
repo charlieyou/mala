@@ -150,7 +150,7 @@ class TestParseEvidenceCheckConfig:
     def test_string_section_rejected(self) -> None:
         """Reject evidence_check: 'string' → ConfigError."""
         with pytest.raises(ConfigError, match="evidence_check must be an object"):
-            _parse_evidence_check_config("string")  # type: ignore[arg-type]
+            _parse_evidence_check_config("string")  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
     def test_required_not_list_rejected(self) -> None:
         """Reject evidence_check.required: 'not-a-list' → ConfigError."""
@@ -185,13 +185,13 @@ class TestParseCodeReviewConfig:
 
     def test_none_returns_none(self) -> None:
         """None data returns None."""
-        result = _parse_code_review_config(None, "session_end")  # type: ignore[arg-type]
+        result = _parse_code_review_config(None, "session_end")  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         assert result is None
 
     def test_not_dict_rejected(self) -> None:
         """Non-dict code_review raises ConfigError."""
         with pytest.raises(ConfigError, match="code_review must be an object"):
-            _parse_code_review_config("invalid", "session_end")  # type: ignore[arg-type]
+            _parse_code_review_config("invalid", "session_end")  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
     def test_defaults(self) -> None:
         """Empty dict returns defaults for session_end."""

@@ -219,7 +219,7 @@ class TestParseCoverageXml:
         assert result.passed is False
         assert result.status == CoverageStatus.ERROR
         assert result.report_path == report
-        assert "not found" in result.failure_reason  # type: ignore[operator]
+        assert "not found" in result.failure_reason  # type: ignore[operator]  # ty:ignore[unsupported-operator]
 
     def test_parse_directory_path(self, tmp_path: Path) -> None:
         """Test that parsing a directory returns an error (OSError case)."""
@@ -229,7 +229,7 @@ class TestParseCoverageXml:
         assert result.passed is False
         assert result.status == CoverageStatus.ERROR
         assert result.report_path == tmp_path
-        assert "Cannot read coverage report" in result.failure_reason  # type: ignore[operator]
+        assert "Cannot read coverage report" in result.failure_reason  # type: ignore[operator]  # ty:ignore[unsupported-operator]
 
     def test_parse_invalid_xml_syntax(self, tmp_path: Path) -> None:
         report = tmp_path / "coverage.xml"
@@ -240,7 +240,7 @@ class TestParseCoverageXml:
         assert result.percent is None
         assert result.passed is False
         assert result.status == CoverageStatus.ERROR
-        assert "Invalid coverage XML" in result.failure_reason  # type: ignore[operator]
+        assert "Invalid coverage XML" in result.failure_reason  # type: ignore[operator]  # ty:ignore[unsupported-operator]
 
     def test_parse_wrong_root_element(self, tmp_path: Path) -> None:
         report = tmp_path / "coverage.xml"
@@ -251,7 +251,7 @@ class TestParseCoverageXml:
         assert result.percent is None
         assert result.passed is False
         assert result.status == CoverageStatus.ERROR
-        assert "expected <coverage> root" in result.failure_reason  # type: ignore[operator]
+        assert "expected <coverage> root" in result.failure_reason  # type: ignore[operator]  # ty:ignore[unsupported-operator]
 
     def test_parse_missing_line_rate(self, tmp_path: Path) -> None:
         report = tmp_path / "coverage.xml"
@@ -262,7 +262,7 @@ class TestParseCoverageXml:
         assert result.percent is None
         assert result.passed is False
         assert result.status == CoverageStatus.ERROR
-        assert "missing line-rate" in result.failure_reason  # type: ignore[operator]
+        assert "missing line-rate" in result.failure_reason  # type: ignore[operator]  # ty:ignore[unsupported-operator]
 
     def test_parse_bad_line_rate_value(self, tmp_path: Path) -> None:
         report = tmp_path / "coverage.xml"
@@ -273,7 +273,7 @@ class TestParseCoverageXml:
         assert result.percent is None
         assert result.passed is False
         assert result.status == CoverageStatus.ERROR
-        assert "not a number" in result.failure_reason  # type: ignore[operator]
+        assert "not a number" in result.failure_reason  # type: ignore[operator]  # ty:ignore[unsupported-operator]
 
 
 class TestCheckCoverageThreshold:
@@ -436,7 +436,7 @@ class TestParseAndCheckCoverage:
         assert result.passed is False
         assert result.status == CoverageStatus.FAILED
         assert result.percent == 50.0
-        assert "below threshold" in result.failure_reason  # type: ignore[operator]
+        assert "below threshold" in result.failure_reason  # type: ignore[operator]  # ty:ignore[unsupported-operator]
 
     def test_parse_and_check_missing_file(self, tmp_path: Path) -> None:
         report = tmp_path / "nonexistent.xml"
@@ -445,7 +445,7 @@ class TestParseAndCheckCoverage:
 
         assert result.passed is False
         assert result.status == CoverageStatus.ERROR
-        assert "not found" in result.failure_reason  # type: ignore[operator]
+        assert "not found" in result.failure_reason  # type: ignore[operator]  # ty:ignore[unsupported-operator]
 
     def test_parse_and_check_invalid_xml(self, tmp_path: Path) -> None:
         report = tmp_path / "coverage.xml"
@@ -564,7 +564,7 @@ class TestIsBaselineStale:
         report = tmp_path / "nonexistent.xml"
 
         # Missing file doesn't need command runner, but function requires it
-        mock_runner = make_mock_runner(lambda *args, **kwargs: None)
+        mock_runner = make_mock_runner(lambda *args, **kwargs: None)  # ty:ignore[invalid-argument-type]
         result = is_baseline_stale(report, tmp_path, command_runner=mock_runner)
 
         assert result is True
@@ -993,7 +993,7 @@ class TestBaselineCoverageService:
         service = BaselineCoverageService(
             repo_path=tmp_path,
             env_config=make_mock_env_config(),
-            command_runner=make_mock_runner(lambda *a, **kw: None),
+            command_runner=make_mock_runner(lambda *a, **kw: None),  # ty:ignore[invalid-argument-type]
             lock_manager=FakeLockManager(),
             coverage_config=None,
         )
@@ -1021,7 +1021,7 @@ class TestBaselineCoverageService:
         service = BaselineCoverageService(
             repo_path=tmp_path,
             env_config=make_mock_env_config(),
-            command_runner=make_mock_runner(lambda *a, **kw: None),
+            command_runner=make_mock_runner(lambda *a, **kw: None),  # ty:ignore[invalid-argument-type]
             lock_manager=FakeLockManager(),
             coverage_config=config,
         )
@@ -1048,7 +1048,7 @@ class TestBaselineCoverageService:
         service = BaselineCoverageService(
             repo_path=tmp_path,
             env_config=make_mock_env_config(),
-            command_runner=make_mock_runner(lambda *a, **kw: None),
+            command_runner=make_mock_runner(lambda *a, **kw: None),  # ty:ignore[invalid-argument-type]
             lock_manager=FakeLockManager(),
             coverage_config=config,
             step_timeout_seconds=120.0,  # This should be ignored
@@ -1072,7 +1072,7 @@ class TestBaselineCoverageService:
         service = BaselineCoverageService(
             repo_path=tmp_path,
             env_config=make_mock_env_config(),
-            command_runner=make_mock_runner(lambda *a, **kw: None),
+            command_runner=make_mock_runner(lambda *a, **kw: None),  # ty:ignore[invalid-argument-type]
             lock_manager=FakeLockManager(),
             coverage_config=config,
             step_timeout_seconds=180.0,

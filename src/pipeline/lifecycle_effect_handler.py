@@ -237,7 +237,7 @@ def _build_review_retry_prompt(
         Formatted prompt string for the agent to address review issues.
     """
     review_issues_text = format_review_issues(
-        review_result.issues,  # type: ignore[arg-type]  # ReviewIssue ⊂ ReviewIssueProtocol
+        review_result.issues,  # type: ignore[arg-type]  # ReviewIssue ⊂ ReviewIssueProtocol  # ty:ignore[invalid-argument-type]
         base_path=repo_path,
     )
     custom_commands_section = build_custom_commands_section(

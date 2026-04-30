@@ -317,7 +317,7 @@ class TestMalaConfigImmutability:
         """MalaConfig is immutable after creation."""
         config = MalaConfig()
         with pytest.raises(AttributeError):
-            config.runs_dir = Path("/new/path")  # type: ignore[misc]
+            config.runs_dir = Path("/new/path")  # type: ignore[misc]  # ty:ignore[invalid-assignment]
 
     def test_config_is_hashable(self) -> None:
         """Frozen MalaConfig is hashable and can be used in sets."""
@@ -539,7 +539,7 @@ class TestResolvedConfigImmutability:
         resolved = build_resolved_config(base, None)
 
         with pytest.raises(AttributeError):
-            resolved.runs_dir = Path("/new")  # type: ignore[misc]
+            resolved.runs_dir = Path("/new")  # type: ignore[misc]  # ty:ignore[invalid-assignment]
 
     def test_resolved_config_is_hashable(self) -> None:
         """ResolvedConfig can be used in sets."""

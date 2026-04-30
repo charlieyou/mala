@@ -66,7 +66,7 @@ def create_anthropic_client(
         )
     """
     try:
-        from anthropic import Anthropic  # type: ignore[import-untyped]
+        from anthropic import Anthropic  # type: ignore[import-untyped]  # ty:ignore[unresolved-import]
     except ImportError as e:
         raise RuntimeError(
             "anthropic package is required. Install with: uv add anthropic"

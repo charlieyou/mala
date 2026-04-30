@@ -74,11 +74,14 @@ def mock_runtime_deps() -> RuntimeDeps:
         claude_config_dir=Path("/tmp/claude"),
         review_timeout=300,
     )
+    from tests.fakes.agent_provider import FakeAgentProvider
+
     return RuntimeDeps(
         evidence_check=MagicMock(),
         code_reviewer=MagicMock(),
         beads=MagicMock(),
         event_sink=FakeEventSink(),
+        agent_provider=FakeAgentProvider(FakeSDKClientFactory()),  # type: ignore[arg-type]
         command_runner=FakeCommandRunner(allow_unregistered=True),
         env_config=MagicMock(),
         lock_manager=FakeLockManager(),
@@ -185,10 +188,7 @@ class TestBuildRunCoordinator:
         mock_pipeline_config: PipelineConfig,
     ) -> None:
         """build_run_coordinator returns a RunCoordinator instance."""
-        sdk_factory = FakeSDKClientFactory()
-        run_coordinator = build_run_coordinator(
-            mock_runtime_deps, mock_pipeline_config, sdk_factory
-        )
+        run_coordinator = build_run_coordinator(mock_runtime_deps, mock_pipeline_config)
         assert isinstance(run_coordinator, RunCoordinator)
 
     def test_run_coordinator_uses_config_values(
@@ -198,10 +198,7 @@ class TestBuildRunCoordinator:
         tmp_path: Path,
     ) -> None:
         """RunCoordinator is configured with values from deps and config."""
-        sdk_factory = FakeSDKClientFactory()
-        run_coordinator = build_run_coordinator(
-            mock_runtime_deps, mock_pipeline_config, sdk_factory
-        )
+        run_coordinator = build_run_coordinator(mock_runtime_deps, mock_pipeline_config)
         assert run_coordinator.config.repo_path == tmp_path
         assert run_coordinator.config.timeout_seconds == 3600
         assert run_coordinator.config.max_gate_retries == 3

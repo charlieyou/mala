@@ -103,16 +103,16 @@ class SDKClientFactory:
         )
         return ClaudeAgentOptions(
             cwd=cwd,
-            permission_mode=permission_mode,  # type: ignore[arg-type]
+            permission_mode=permission_mode,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             model=model,
-            system_prompt=system_prompt or {"type": "preset", "preset": "claude_code"},  # type: ignore[arg-type]
-            output_format=output_format,  # type: ignore[arg-type]
+            system_prompt=system_prompt or {"type": "preset", "preset": "claude_code"},  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            output_format=output_format,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             settings=settings,  # type: ignore[arg-type]
-            setting_sources=effective_sources,  # type: ignore[arg-type]
-            mcp_servers=mcp_servers,  # type: ignore[arg-type]
-            disallowed_tools=disallowed_tools,  # type: ignore[arg-type]
+            setting_sources=effective_sources,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            mcp_servers=mcp_servers,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            disallowed_tools=disallowed_tools,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             env=effective_env,  # type: ignore[arg-type]
-            hooks=hooks,  # type: ignore[arg-type]
+            hooks=hooks,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             resume=resume,  # type: ignore[arg-type]
         )
 
@@ -132,7 +132,7 @@ class SDKClientFactory:
         """
         from claude_agent_sdk.types import HookMatcher
 
-        return HookMatcher(matcher=matcher, hooks=hooks)  # type: ignore[arg-type]
+        return HookMatcher(matcher=matcher, hooks=hooks)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
     def with_resume(self, options: object, resume: str | None) -> object:
         """Create a copy of options with a different resume session ID.

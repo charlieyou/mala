@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 from unittest.mock import MagicMock
 
 from src.infra.clients.agent_sdk_review import AgentSDKReviewer
@@ -788,7 +788,7 @@ class TestInterruptHandling:
                 self._interrupt_event = interrupt_event
                 self.queries: list[tuple[str, str | None]] = []
 
-            async def __aenter__(self) -> "InterruptingFakeClient":  # noqa: UP037
+            async def __aenter__(self) -> Self:
                 return self
 
             async def __aexit__(self, *args: object) -> None:

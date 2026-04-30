@@ -86,8 +86,8 @@ class TestIssueExecutionCoordinator:
         """Create coordinator with default config."""
         beads = MockIssueProvider()
         return IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(),
         )
 
@@ -138,8 +138,8 @@ class TestRunLoop:
         """Loop exits immediately when no issues are ready."""
         beads = MockIssueProvider(ready_issues=[[]])
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(),
         )
 
@@ -160,8 +160,8 @@ class TestRunLoop:
         """Loop spawns and completes a single issue."""
         beads = MockIssueProvider(ready_issues=[["issue-1"], []])
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(),
         )
 
@@ -195,8 +195,8 @@ class TestRunLoop:
             ]
         )
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(max_agents=2),
         )
 
@@ -260,8 +260,8 @@ class TestRunLoop:
             ]
         )
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(max_issues=2, max_agents=1),
         )
 
@@ -292,8 +292,8 @@ class TestRunLoop:
         """Failed spawn marks issue as failed."""
         beads = MockIssueProvider(ready_issues=[["issue-1"], []])
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(),
         )
 
@@ -311,8 +311,8 @@ class TestRunLoop:
         """Abort during loop triggers abort callback."""
         beads = MockIssueProvider(ready_issues=[["issue-1"], []])
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(),
         )
 
@@ -393,8 +393,8 @@ class TestOnlyIdsFiltering:
         beads = CapturingIssueProvider()
 
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(only_ids=["issue-1", "issue-2"]),
         )
 
@@ -416,8 +416,8 @@ class TestEpicIdFiltering:
         beads = CapturingIssueProvider()
 
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(epic_id="epic-123"),
         )
 
@@ -440,8 +440,8 @@ class TestDrainMode:
         """Drain mode with no active tasks returns immediately with drained reason."""
         beads = MockIssueProvider(ready_issues=[["issue-1"]])
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(),
         )
 
@@ -468,8 +468,8 @@ class TestDrainMode:
             ready_issues=[["issue-1", "issue-2"], ["issue-2"], []]
         )
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(max_agents=1),  # Limit to 1 concurrent
         )
 
@@ -524,8 +524,8 @@ class TestDrainMode:
         """Drain mode waits for active tasks to complete (no cancellation)."""
         beads = MockIssueProvider(ready_issues=[["issue-1"], []])
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(),
         )
 
@@ -573,8 +573,8 @@ class TestDrainMode:
         """Drain completion triggers validation callback when provided."""
         beads = MockIssueProvider(ready_issues=[["issue-1"], []])
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(),
         )
 
@@ -630,8 +630,8 @@ class TestDrainMode:
         """Drain validation failure returns exit_code=1."""
         beads = MockIssueProvider(ready_issues=[["issue-1"], []])
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(),
         )
 
@@ -682,8 +682,8 @@ class TestDrainMode:
         """interrupt_event takes precedence over drain_event."""
         beads = MockIssueProvider(ready_issues=[["issue-1"], []])
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(),
         )
 
@@ -739,8 +739,8 @@ class TestDrainMode:
         """Existing behavior unchanged when drain_event is None."""
         beads = MockIssueProvider(ready_issues=[["issue-1"], []])
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(),
         )
 
@@ -771,8 +771,8 @@ class TestDrainMode:
         """on_validation_failed callback is invoked when validation fails."""
         beads = MockIssueProvider(ready_issues=[["issue-1"], []])
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(),
         )
 
@@ -822,8 +822,8 @@ class TestInterruptWithUnresponsiveTasks:
         """Validation is skipped when abort reports unresponsive tasks."""
         beads = MockIssueProvider(ready_issues=[["issue-1"], []])
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(),
         )
 
@@ -887,8 +887,8 @@ class TestInterruptWithUnresponsiveTasks:
         """
         beads = MockIssueProvider(ready_issues=[["issue-1"], []])
         coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             config=CoordinatorConfig(),
         )
 

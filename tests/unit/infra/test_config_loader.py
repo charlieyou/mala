@@ -353,7 +353,7 @@ class TestValidateSchema:
         # YAML allows non-string keys like null and integers
         # Cast to dict[str, Any] to match function signature - this simulates
         # what yaml.safe_load returns for malformed YAML with non-string keys
-        data: dict[str, Any] = {None: "foo", 1: "bar", "commands": {"test": "pytest"}}  # type: ignore[dict-item]
+        data: dict[str, Any] = {None: "foo", 1: "bar", "commands": {"test": "pytest"}}  # type: ignore[dict-item]  # ty:ignore[invalid-assignment]
 
         with pytest.raises(ConfigError) as exc_info:
             _validate_schema(data)

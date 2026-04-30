@@ -186,7 +186,7 @@ class TestParseEpicVerificationConfigInvalidInput:
     def test_rejects_non_dict_data(self) -> None:
         """Parser raises ConfigError when data is not a dict."""
         with pytest.raises(ConfigError, match="must be an object"):
-            _parse_epic_verification_config("not a dict")  # type: ignore[arg-type]
+            _parse_epic_verification_config("not a dict")  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
     def test_rejects_unknown_fields(self) -> None:
         """Parser raises ConfigError for unknown fields."""
@@ -385,7 +385,7 @@ class TestEpicVerifierConfigDataclass:
         """EpicVerifierConfig is immutable (frozen)."""
         config = EpicVerifierConfig()
         with pytest.raises(AttributeError):
-            config.enabled = False  # type: ignore[misc]
+            config.enabled = False  # type: ignore[misc]  # ty:ignore[invalid-assignment]
 
     def test_dataclass_can_be_created_with_all_fields(self) -> None:
         """EpicVerifierConfig can be created with all field values."""
@@ -463,7 +463,7 @@ class TestParseRetryPolicy:
     def test_rejects_non_dict_data(self) -> None:
         """Parser raises ConfigError when data is not a dict."""
         with pytest.raises(ConfigError, match="retry_policy must be an object"):
-            _parse_retry_policy("not a dict")  # type: ignore[arg-type]
+            _parse_retry_policy("not a dict")  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
     def test_rejects_unknown_fields(self) -> None:
         """Parser raises ConfigError for unknown fields."""
@@ -571,7 +571,7 @@ class TestVerificationRetryPolicyDataclass:
         """VerificationRetryPolicy is immutable (frozen)."""
         policy = VerificationRetryPolicy()
         with pytest.raises(AttributeError):
-            policy.timeout_retries = 5  # type: ignore[misc]
+            policy.timeout_retries = 5  # type: ignore[misc]  # ty:ignore[invalid-assignment]
 
     def test_dataclass_can_be_created_with_all_fields(self) -> None:
         """VerificationRetryPolicy can be created with all field values."""

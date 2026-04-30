@@ -239,7 +239,7 @@ class TestFakeSDKClientFactoryBehavior:
         factory = FakeSDKClientFactory()
         matcher = {"pattern": "test"}
         hooks = [lambda x: x]
-        result = factory.create_hook_matcher(matcher, hooks)
+        result = factory.create_hook_matcher(matcher, hooks)  # ty:ignore[invalid-argument-type]
 
         assert result == ("matcher", matcher, hooks)
         assert len(factory.created_matchers) == 1

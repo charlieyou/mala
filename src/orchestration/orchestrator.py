@@ -44,7 +44,6 @@ from src.infra.tools.locking import (
     cleanup_agent_locks,
     release_run_locks,
 )
-from src.infra.sdk_adapter import SDKClientFactory
 from src.pipeline.agent_session_runner import (
     AgentSessionInput,
     AgentSessionRunner,
@@ -81,6 +80,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.pipeline.issue_execution_coordinator import AbortResult
+    from src.core.protocols.agent_provider import AgentProvider
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.infra import (
         CommandRunnerPort,
@@ -137,7 +137,7 @@ class StoredReviewIssue:
             if val is None:
                 return default
             try:
-                return int(val)  # type: ignore[arg-type]
+                return int(val)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             except (ValueError, TypeError):
                 return default
 
@@ -231,6 +231,7 @@ class MalaOrchestrator:
         _command_runner: CommandRunnerPort,
         _env_config: EnvConfigPort,
         _lock_manager: LockManagerPort,
+        _agent_provider: AgentProvider,
         runs_dir: Path | None = None,
         lock_releaser: Callable[[list[str]], int] | None = None,
     ):
@@ -248,6 +249,7 @@ class MalaOrchestrator:
             _command_runner=_command_runner,
             _env_config=_env_config,
             _lock_manager=_lock_manager,
+            _agent_provider=_agent_provider,
             runs_dir=runs_dir,
             lock_releaser=lock_releaser,
         )
@@ -268,6 +270,7 @@ class MalaOrchestrator:
         _command_runner: CommandRunnerPort,
         _env_config: EnvConfigPort,
         _lock_manager: LockManagerPort,
+        _agent_provider: AgentProvider,
         runs_dir: Path | None = None,
         lock_releaser: Callable[[list[str]], int] | None = None,
     ) -> None:
@@ -325,7 +328,10 @@ class MalaOrchestrator:
         self._command_runner = _command_runner
         self._env_config = _env_config
         self._lock_manager = _lock_manager
-        self._sdk_client_factory = SDKClientFactory()
+        # AgentProvider bundles client_factory + runtime_builder + log_provider
+        # for the chosen coder backend (Claude or Amp). Selected by the factory
+        # so the pipeline never branches on coder identity.
+        self._agent_provider = _agent_provider
         self._init_pipeline_runners()
 
     def _init_runtime_state(self) -> None:
@@ -368,6 +374,7 @@ class MalaOrchestrator:
             code_reviewer=self.code_reviewer,
             beads=self.beads,
             event_sink=self.event_sink,
+            agent_provider=self._agent_provider,
             command_runner=self._command_runner,
             env_config=self._env_config,
             lock_manager=self._lock_manager,
@@ -380,7 +387,7 @@ class MalaOrchestrator:
         self.gate_runner, self.async_gate_runner = build_gate_runner(runtime, pipeline)
         self.review_runner = build_review_runner(runtime, pipeline)
         self.run_coordinator = build_run_coordinator(
-            runtime, pipeline, self._sdk_client_factory, create_mcp_server_factory()
+            runtime, pipeline, create_mcp_server_factory()
         )
         self.issue_coordinator = build_issue_coordinator(filters, runtime)
 
@@ -417,10 +424,8 @@ class MalaOrchestrator:
 
         # Wire deadlock handler now that all dependencies are available
         self._deadlock_handler = self._build_deadlock_handler()
-        self.deadlock_monitor.on_deadlock = (
-            lambda info: self._deadlock_handler.handle_deadlock(
-                info, self._state, self.active_tasks
-            )
+        self.deadlock_monitor.on_deadlock = lambda info: (
+            self._deadlock_handler.handle_deadlock(info, self._state, self.active_tasks)
         )
 
     def _build_pipeline_config(self) -> PipelineConfig:
@@ -495,11 +500,7 @@ class MalaOrchestrator:
                 on_issue_closed=lambda agent_id, issue_id: (
                     self.event_sink.on_issue_closed(agent_id, issue_id)
                 ),
-                on_issue_completed=lambda agent_id,
-                issue_id,
-                success,
-                duration,
-                summary: (
+                on_issue_completed=lambda agent_id, issue_id, success, duration, summary: (
                     self.event_sink.on_issue_completed(
                         agent_id, issue_id, success, duration, summary
                     )
@@ -542,7 +543,7 @@ class MalaOrchestrator:
                     issue_id
                 ),
                 verify_epic=lambda epic_id, human_override: (
-                    self.epic_verifier.verify_and_close_epic(  # type: ignore[union-attr]
+                    self.epic_verifier.verify_and_close_epic(  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
                         epic_id, human_override=human_override
                     )
                 ),
@@ -566,9 +567,10 @@ class MalaOrchestrator:
                     issue_id, "unknown"
                 ),
                 queue_trigger_validation=(
-                    lambda trigger_type,
-                    context: self.run_coordinator.queue_trigger_validation(
-                        trigger_type, context
+                    lambda trigger_type, context: (
+                        self.run_coordinator.queue_trigger_validation(
+                            trigger_type, context
+                        )
                     )
                 ),
                 get_epic_completion_trigger=lambda: (
@@ -967,7 +969,7 @@ class MalaOrchestrator:
         adapters = self._build_session_adapters(issue_id)
         runner = AgentSessionRunner(
             config=self._session_config,
-            sdk_client_factory=self._sdk_client_factory,
+            agent_provider=self._agent_provider,
             gate_runner=adapters.gate_runner,
             review_runner=adapters.review_runner,
             session_lifecycle=adapters.session_lifecycle,

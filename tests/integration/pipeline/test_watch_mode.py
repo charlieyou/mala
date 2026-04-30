@@ -642,7 +642,7 @@ asyncio.run(main())
                     pytest.fail(f"Subprocess exited early with code {proc.returncode}")
                 # Non-blocking read
                 if select.select([proc.stdout], [], [], 0.1)[0]:
-                    line = proc.stdout.readline()  # type: ignore[union-attr]
+                    line = proc.stdout.readline()  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
                     if "READY" in line:
                         ready_received = True
                         break
@@ -729,7 +729,7 @@ class TestPeriodicValidationWithoutWatch:
                 if f"issue-{i}" not in coord.completed_ids
             ]
 
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await asyncio.wait_for(
             coord.run_loop(

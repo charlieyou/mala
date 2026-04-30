@@ -236,7 +236,7 @@ class TestCodeReviewResult:
             {"file": "a.py", "issue": "bug"},
             {"file": "b.py", "issue": "style"},
         ]
-        result = CodeReviewResult(ran=True, passed=False, findings=findings)
+        result = CodeReviewResult(ran=True, passed=False, findings=findings)  # ty:ignore[invalid-argument-type]
         assert result.ran
         assert result.passed is False
         assert len(result.findings) == 2

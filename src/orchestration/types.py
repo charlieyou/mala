@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from src.core.models import OrderPreference
+    from src.core.protocols.agent_provider import AgentProvider
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.infra import (
         CommandRunnerPort,
@@ -116,6 +117,11 @@ class OrchestratorDependencies:
         log_provider: LogProvider for session log access.
         telemetry_provider: TelemetryProvider for tracing.
         event_sink: MalaEventSink for run lifecycle logging.
+        agent_provider: AgentProvider bundling client_factory + runtime_builder
+            + log_provider for the chosen coder backend (Claude or Amp).
+            Selected once at orchestrator construction in
+            ``src/orchestration/factory.py`` and threaded into
+            AgentSessionRunner / FixerService / RunCoordinator.
         command_runner: CommandRunnerPort for executing shell commands.
         env_config: EnvConfigPort for environment configuration.
         lock_manager: LockManagerPort for file locking coordination.
@@ -129,6 +135,7 @@ class OrchestratorDependencies:
     log_provider: LogProvider | None = None
     telemetry_provider: TelemetryProvider | None = None
     event_sink: MalaEventSink | None = None
+    agent_provider: AgentProvider | None = None
     command_runner: CommandRunnerPort | None = None
     env_config: EnvConfigPort | None = None
     lock_manager: LockManagerPort | None = None
@@ -169,6 +176,9 @@ class RuntimeDeps:
         code_reviewer: CodeReviewer for post-commit code reviews.
         beads: IssueProvider for issue tracking operations.
         event_sink: MalaEventSink for run lifecycle logging.
+        agent_provider: AgentProvider for the chosen coder backend; threaded
+            into AgentSessionRunner and FixerService so all SDK-style calls
+            go through one selection point.
         command_runner: CommandRunnerPort for executing shell commands.
         env_config: EnvConfigPort for environment configuration.
         lock_manager: LockManagerPort for file locking coordination.
@@ -179,6 +189,7 @@ class RuntimeDeps:
     code_reviewer: CodeReviewer
     beads: IssueProvider
     event_sink: MalaEventSink
+    agent_provider: AgentProvider
     command_runner: CommandRunnerPort
     env_config: EnvConfigPort
     lock_manager: LockManagerPort

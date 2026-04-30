@@ -129,7 +129,7 @@ def test_runtime_builder_uses_provider_client_factory(tmp_path: Path) -> None:
     # The builder stores the factory in a private attribute; we don't depend
     # on the private name, but we do assert that it behaves the same as the
     # provider's factory by checking the hook matcher round-trips.
-    assert builder._sdk_client_factory is provider.client_factory
+    assert builder._sdk_client_factory is provider.client_factory  # ty:ignore[unresolved-attribute]
 
 
 def test_runtime_builder_threads_setting_sources(tmp_path: Path) -> None:
@@ -137,7 +137,7 @@ def test_runtime_builder_threads_setting_sources(tmp_path: Path) -> None:
     builder = provider.runtime_builder(
         tmp_path, "agent-3", mcp_server_factory=_mcp_server_factory()
     )
-    assert builder._setting_sources == ["local", "project"]
+    assert builder._setting_sources == ["local", "project"]  # ty:ignore[unresolved-attribute]
 
 
 def test_runtime_builder_default_setting_sources_is_none(tmp_path: Path) -> None:
@@ -145,7 +145,7 @@ def test_runtime_builder_default_setting_sources_is_none(tmp_path: Path) -> None
     builder = provider.runtime_builder(
         tmp_path, "agent-4", mcp_server_factory=_mcp_server_factory()
     )
-    assert builder._setting_sources is None
+    assert builder._setting_sources is None  # ty:ignore[unresolved-attribute]
 
 
 # ---------------------------------------------------------------------------

@@ -106,7 +106,7 @@ class LintCacheEntry:
         return cls(
             head_sha=str(data["head_sha"]),
             has_uncommitted=bool(data["has_uncommitted"]),
-            files_hash=data.get("files_hash"),  # type: ignore[arg-type]
+            files_hash=data.get("files_hash"),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
 

@@ -1541,7 +1541,7 @@ class TestSpecRunnerBaselineRefresh:
                 tmp_path,
                 coverage_config=coverage_config,
                 env_config=env_config,
-                command_runner=command_runner,  # type: ignore[arg-type]
+                command_runner=command_runner,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
                 lock_manager=lock_manager,
             )
             result = service.refresh_if_stale(spec)

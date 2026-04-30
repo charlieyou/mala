@@ -523,9 +523,9 @@ def _print_run_details(run: dict[str, Any]) -> None:
                 print(f"  {issue_id}: (invalid data)")
                 continue
 
-            status = issue_data.get("status", "-")
-            session_id = issue_data.get("session_id", "-")
-            log_path = issue_data.get("log_path", "-")
+            status = issue_data.get("status", "-")  # ty:ignore[no-matching-overload]
+            session_id = issue_data.get("session_id", "-")  # ty:ignore[no-matching-overload]
+            log_path = issue_data.get("log_path", "-")  # ty:ignore[no-matching-overload]
 
             print(f"  {issue_id}:")
             print(f"    Status:     {status}")

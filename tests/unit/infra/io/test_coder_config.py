@@ -51,10 +51,10 @@ class TestDefaults:
     def test_amp_options_and_coder_options_are_frozen(self) -> None:
         amp = AmpOptions()
         with pytest.raises(Exception):
-            amp.mode = "deep"  # type: ignore[misc]
+            amp.mode = "deep"  # type: ignore[misc]  # ty:ignore[invalid-assignment]
         opts = CoderOptions()
         with pytest.raises(Exception):
-            opts.amp = AmpOptions(mode="rush")  # type: ignore[misc]
+            opts.amp = AmpOptions(mode="rush")  # type: ignore[misc]  # ty:ignore[invalid-assignment]
 
 
 class TestEnvLayer:
@@ -121,6 +121,60 @@ class TestRegressionLegacyYaml:
         # yaml_coder=None simulates a yaml file without the `coder:` field.
         config = MalaConfig.from_env(
             validate=False, yaml_coder=None, yaml_amp_mode=None
+        )
+        assert config.coder == "claude"
+        assert config.coder_options.amp.mode == "smart"
+
+
+class TestYamlEndToEnd:
+    """End-to-end yaml-to-MalaConfig flow (loads a real mala.yaml on disk)."""
+
+    def test_real_yaml_with_coder_amp_reaches_malaconfig(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Loading a real mala.yaml with `coder: amp` flows into MalaConfig.
+
+        Regression for the gap where ValidationConfig validated `coder:` but
+        did not store it, leaving the yaml resolver layer dead in production
+        (factory.create_orchestrator had nothing to forward to from_env).
+        """
+        from src.domain.validation.config_loader import load_config
+
+        yaml_path = tmp_path / "mala.yaml"
+        yaml_path.write_text(
+            "preset: python-uv\ncoder: amp\ncoder_options:\n  amp:\n    mode: deep\n"
+        )
+        validation_config = load_config(tmp_path)
+        assert validation_config.coder == "amp"
+        assert validation_config.amp_mode == "deep"
+
+        # Ensure env vars don't pre-empt the yaml layer.
+        monkeypatch.delenv("MALA_CODER", raising=False)
+        monkeypatch.delenv("MALA_AMP_MODE", raising=False)
+        config = MalaConfig.from_env(
+            validate=False,
+            yaml_coder=validation_config.coder,
+            yaml_amp_mode=validation_config.amp_mode,
+        )
+        assert config.coder == "amp"
+        assert config.coder_options.amp.mode == "deep"
+
+    def test_real_yaml_without_coder_falls_through_to_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Real mala.yaml without `coder:` still loads and defaults to claude."""
+        from src.domain.validation.config_loader import load_config
+
+        yaml_path = tmp_path / "mala.yaml"
+        yaml_path.write_text("preset: python-uv\n")
+        validation_config = load_config(tmp_path)
+        assert validation_config.coder is None
+        assert validation_config.amp_mode is None
+
+        config = MalaConfig.from_env(
+            validate=False,
+            yaml_coder=validation_config.coder,
+            yaml_amp_mode=validation_config.amp_mode,
         )
         assert config.coder == "claude"
         assert config.coder_options.amp.mode == "smart"

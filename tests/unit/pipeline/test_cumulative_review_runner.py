@@ -196,9 +196,9 @@ def make_runner(
     reviewer = review_runner or FakeReviewRunner()
     beads = beads_client or FakeBeadsClient()
     runner = CumulativeReviewRunner(
-        review_runner=reviewer,  # type: ignore[arg-type]
-        git_utils=git,  # type: ignore[arg-type]
-        beads_client=beads,  # type: ignore[arg-type]
+        review_runner=reviewer,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        git_utils=git,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        beads_client=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         logger=logging.getLogger("test"),
     )
     return runner, git, reviewer, beads
@@ -223,8 +223,8 @@ class TestGetBaselineCommitSessionEnd:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.SESSION_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=FakeRunMetadata(),  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=FakeRunMetadata(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             issue_id="mala-123",
         )
 
@@ -240,8 +240,8 @@ class TestGetBaselineCommitSessionEnd:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.SESSION_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=FakeRunMetadata(),  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=FakeRunMetadata(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             issue_id="mala-456",
         )
 
@@ -259,8 +259,8 @@ class TestGetBaselineCommitSessionEnd:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.SESSION_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=FakeRunMetadata(),  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=FakeRunMetadata(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         assert result.commit is None
@@ -279,8 +279,8 @@ class TestGetBaselineCommitSinceRunStart:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         assert result.commit == "run-start-sha"
@@ -296,8 +296,8 @@ class TestGetBaselineCommitSinceRunStart:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.EPIC_COMPLETION,
-            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             epic_id="epic-001",
         )
 
@@ -312,8 +312,8 @@ class TestGetBaselineCommitSinceRunStart:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(baseline=None),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(baseline=None),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         assert result.commit == "default-start-sha"
@@ -334,8 +334,8 @@ class TestGetBaselineCommitSinceLastReview:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         assert result.commit == "last-review-sha"
@@ -356,8 +356,8 @@ class TestGetBaselineCommitSinceLastReview:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.EPIC_COMPLETION,
-            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             epic_id="epic-001",
         )
 
@@ -375,8 +375,8 @@ class TestGetBaselineCommitSinceLastReview:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         assert result.commit == "fallback-sha"
@@ -395,8 +395,8 @@ class TestGetBaselineCommitSinceLastReview:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.EPIC_COMPLETION,
-            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             # No epic_id provided
         )
 
@@ -416,8 +416,8 @@ class TestGetBaselineCommitFallbacks:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         assert result.commit == "current-head-sha"
@@ -435,8 +435,8 @@ class TestGetBaselineCommitFallbacks:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         assert result.commit is None
@@ -454,8 +454,8 @@ class TestGetBaselineCommitFallbacks:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         assert result.commit == "head-fallback-sha"
@@ -477,8 +477,8 @@ class TestGetBaselineCommitReachability:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         assert result.commit is None
@@ -499,8 +499,8 @@ class TestGetBaselineCommitReachability:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(baseline="since_run_start"),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         assert result.commit == "run-start-sha"
@@ -518,8 +518,8 @@ class TestGetBaselineCommitReachability:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.SESSION_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=FakeRunMetadata(),  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=FakeRunMetadata(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             issue_id="mala-123",
         )
 
@@ -543,8 +543,8 @@ class TestGetBaselineCommitReachability:
 
         result = await runner._get_baseline_commit(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(baseline="since_last_review"),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
         assert result.commit is None
@@ -568,8 +568,8 @@ class TestRunReviewEmptyDiff:
 
         result = await runner.run_review(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
         )
@@ -600,8 +600,8 @@ class TestRunReviewLargeDiff:
         with caplog.at_level(logging.WARNING):
             result = await runner.run_review(
                 trigger_type=TriggerType.RUN_END,
-                config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-                run_metadata=metadata,  # type: ignore[arg-type]
+                config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+                run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
                 repo_path=tmp_path,
                 interrupt_event=asyncio.Event(),
             )
@@ -625,8 +625,8 @@ class TestRunReviewExecution:
 
         result = await runner.run_review(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
         )
@@ -648,8 +648,8 @@ class TestRunReviewExecution:
 
         await runner.run_review(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
         )
@@ -663,7 +663,7 @@ class TestRunReviewExecution:
         review_input = reviewer.run_review_calls[0]
         assert hasattr(review_input, "diff_content")
         assert review_input.diff_content == expected_diff  # type: ignore[union-attr]
-        assert review_input.claude_session_id == "cumulative-run_end-run-123"  # type: ignore[union-attr]
+        assert review_input.claude_session_id == "cumulative-run_end-run-123"  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
 
     @pytest.mark.asyncio
     async def test_execution_error_returns_failed_no_baseline_update(
@@ -680,8 +680,8 @@ class TestRunReviewExecution:
 
         result = await runner.run_review(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
         )
@@ -707,8 +707,8 @@ class TestRunReviewExecution:
 
         result = await runner.run_review(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(failure_mode=FailureMode.CONTINUE),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(failure_mode=FailureMode.CONTINUE),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
         )
@@ -735,8 +735,8 @@ class TestRunReviewBaselineUpdate:
 
         result = await runner.run_review(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
         )
@@ -759,8 +759,8 @@ class TestRunReviewBaselineUpdate:
 
         result = await runner.run_review(
             trigger_type=TriggerType.EPIC_COMPLETION,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
             epic_id="epic-001",
@@ -788,8 +788,8 @@ class TestRunReviewBaselineUpdate:
 
         result = await runner.run_review(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
         )
@@ -825,8 +825,8 @@ class TestRunReviewFindings:
 
         result = await runner.run_review(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
         )
@@ -861,8 +861,8 @@ class TestRunReviewFindings:
 
         await runner.run_review(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
         )
@@ -910,8 +910,8 @@ class TestRunReviewFindings:
 
         result = await runner.run_review(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
         )
@@ -947,8 +947,8 @@ class TestRunReviewFindings:
 
         result = await runner.run_review(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(track_review_issues=False),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(track_review_issues=False),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
         )
@@ -977,8 +977,8 @@ class TestLargeDiffThreshold:
         with caplog.at_level(logging.WARNING):
             await runner.run_review(
                 trigger_type=TriggerType.RUN_END,
-                config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-                run_metadata=metadata,  # type: ignore[arg-type]
+                config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+                run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
                 repo_path=tmp_path,
                 interrupt_event=asyncio.Event(),
             )
@@ -1001,8 +1001,8 @@ class TestLargeDiffThreshold:
         with caplog.at_level(logging.WARNING):
             await runner.run_review(
                 trigger_type=TriggerType.RUN_END,
-                config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-                run_metadata=metadata,  # type: ignore[arg-type]
+                config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+                run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
                 repo_path=tmp_path,
                 interrupt_event=asyncio.Event(),
             )
@@ -1061,8 +1061,8 @@ class TestFindingDedup:
 
         await runner.run_review(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
         )
@@ -1102,8 +1102,8 @@ class TestFindingDedup:
 
         await runner.run_review(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
         )
@@ -1144,8 +1144,8 @@ class TestFindingMetadata:
 
         await runner.run_review(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
         )
@@ -1183,8 +1183,8 @@ class TestFindingMetadata:
 
         await runner.run_review(
             trigger_type=TriggerType.EPIC_COMPLETION,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
             epic_id="epic-001",
@@ -1229,8 +1229,8 @@ class TestFindingMetadata:
 
         await runner.run_review(
             trigger_type=TriggerType.RUN_END,
-            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]
-            run_metadata=metadata,  # type: ignore[arg-type]
+            config=FakeCodeReviewConfig(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            run_metadata=metadata,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             repo_path=tmp_path,
             interrupt_event=asyncio.Event(),
         )

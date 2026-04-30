@@ -1425,7 +1425,7 @@ def init(
             if evidence_required is not None:
                 config_data["evidence_check"] = _build_evidence_check_dict(
                     evidence_required
-                )
+                )  # ty:ignore[invalid-assignment]
 
             # Per-issue review section (within commands block to avoid prompting
             # when init will fail for empty commands)
@@ -1435,7 +1435,7 @@ def init(
                 if per_issue_review_config is not None:
                     config_data["per_issue_review"] = _build_per_issue_review_dict(
                         per_issue_review_config
-                    )
+                    )  # ty:ignore[invalid-assignment]
             # Validation triggers section
             trigger_commands: list[str] | None = None
             if not skip_triggers:
@@ -1448,7 +1448,7 @@ def init(
             if trigger_commands is not None:
                 config_data["validation_triggers"] = _build_validation_triggers_dict(
                     trigger_commands
-                )
+                )  # ty:ignore[invalid-assignment]
 
         # Validate the generated config (max 3 retry attempts)
         max_retries = 3
@@ -1485,14 +1485,14 @@ def init(
                             raise typer.Exit(1)
                         if custom_commands:
                             commands = list(custom_commands.keys())
-                            config_data["commands"] = custom_commands
+                            config_data["commands"] = custom_commands  # ty:ignore[invalid-assignment]
                     # Re-prompt for evidence, per-issue review, and triggers
                     if not skip_evidence and commands:
                         evidence_required = _prompt_evidence_check(commands, is_preset)
                         if evidence_required is not None:
                             config_data["evidence_check"] = _build_evidence_check_dict(
                                 evidence_required
-                            )
+                            )  # ty:ignore[invalid-assignment]
                         else:
                             config_data.pop("evidence_check", None)
                     # Re-prompt per-issue review (only when commands exist)
@@ -1500,7 +1500,7 @@ def init(
                         per_issue_review_config = _prompt_per_issue_review()
                         if per_issue_review_config is not None:
                             config_data["per_issue_review"] = (
-                                _build_per_issue_review_dict(per_issue_review_config)
+                                _build_per_issue_review_dict(per_issue_review_config)  # ty:ignore[invalid-assignment]
                             )
                         else:
                             config_data.pop("per_issue_review", None)
@@ -1508,7 +1508,7 @@ def init(
                         trigger_commands = _prompt_run_end_trigger(commands, is_preset)
                         if trigger_commands is not None:
                             config_data["validation_triggers"] = (
-                                _build_validation_triggers_dict(trigger_commands)
+                                _build_validation_triggers_dict(trigger_commands)  # ty:ignore[invalid-assignment]
                             )
                         else:
                             config_data.pop("validation_triggers", None)

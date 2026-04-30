@@ -53,7 +53,7 @@ class TestComputeCommitList:
             commands_run.append(cmd)
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         await analyzer._compute_commit_list({"child-1"})
 
@@ -71,7 +71,7 @@ class TestComputeCommitList:
             commands_run.append(cmd)
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         await analyzer._compute_commit_list({"child-1"})
 
@@ -89,7 +89,7 @@ class TestComputeCommitList:
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         commits = await analyzer._compute_commit_list({"child-1"})
         assert commits == []
@@ -109,7 +109,7 @@ class TestComputeCommitList:
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         commits = await analyzer._compute_commit_list({"child-1"})
         assert commits == ["commit1", "commit2", "commit3"]
@@ -128,7 +128,7 @@ class TestComputeCommitList:
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         commits = await analyzer._compute_commit_list({"child-1", "child-2"})
         # Should have 3 unique commits, not 4
@@ -149,7 +149,7 @@ class TestComputeCommitList:
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         commits = await analyzer._compute_commit_list(
             {"child-1"}, blocker_ids={"blocker-1"}
@@ -190,7 +190,7 @@ class TestSummarizeCommitRange:
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await analyzer._summarize_commit_range(["abc123"])
         assert result == "abc123"
@@ -213,7 +213,7 @@ class TestSummarizeCommitRange:
                 return CommandResult(command=cmd, returncode=0, stdout="parent-sha")
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await analyzer._summarize_commit_range(["abc123", "def456", "ghi789"])
         # abc123 is oldest (1000), def456 is newest (2000)
@@ -236,7 +236,7 @@ class TestSummarizeCommitRange:
                 return CommandResult(command=cmd, returncode=1, stdout="", stderr="")
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await analyzer._summarize_commit_range(["root123", "child456"])
         # Should use base..tip format for root commit
@@ -256,7 +256,7 @@ class TestSummarizeCommitRange:
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await analyzer._summarize_commit_range(["abc123", "def456"])
         assert result is None
@@ -294,7 +294,7 @@ class TestFormatCommitSummary:
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await analyzer._format_commit_summary(["abc123", "def456"])
         assert "- abc123 Fix bug in parser" in result
@@ -309,7 +309,7 @@ class TestFormatCommitSummary:
                 return CommandResult(command=cmd, returncode=0, stdout="sha subject")
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         # Create 10 commits, limit to 5
         commits = [f"commit{i}" for i in range(10)]
@@ -329,7 +329,7 @@ class TestFormatCommitSummary:
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await analyzer._format_commit_summary(["abc123"])
         assert "- abc123" in result
@@ -368,7 +368,7 @@ class TestComputeScopedCommits:
                 return CommandResult(command=cmd, returncode=0, stdout="parent")
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await analyzer.compute_scoped_commits({"child-1"})
 
@@ -385,7 +385,7 @@ class TestComputeScopedCommits:
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
         result = await analyzer.compute_scoped_commits({"child-1"})
 

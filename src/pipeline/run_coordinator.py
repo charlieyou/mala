@@ -32,13 +32,14 @@ if TYPE_CHECKING:
     from pathlib import Path
     from types import FrameType
 
+    from src.core.protocols.agent_provider import AgentProvider
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.infra import (
         CommandRunnerPort,
         EnvConfigPort,
         LockManagerPort,
     )
-    from src.core.protocols.sdk import McpServerFactory, SDKClientFactoryProtocol
+    from src.core.protocols.sdk import McpServerFactory
     from src.core.protocols.validation import GateChecker
     from src.domain.validation.result import ValidationResult
     from src.domain.validation.config import (
@@ -208,7 +209,11 @@ class RunCoordinator:
         command_runner: CommandRunner for executing validation commands.
         env_config: Environment configuration for paths.
         lock_manager: Lock manager for file locking.
-        sdk_client_factory: Factory for creating SDK clients (required).
+        agent_provider: AgentProvider for the run's chosen coder backend.
+            Carried here even though RunCoordinator does not itself spawn
+            agents directly - the field documents the wiring contract and
+            keeps the coordinator aligned with FixerService, which is
+            constructed with the same provider.
         trigger_engine: TriggerEngine for trigger policy evaluation.
         fixer_service: FixerService for spawning fixer agents.
         event_sink: Optional event sink for structured logging.
@@ -219,7 +224,7 @@ class RunCoordinator:
     command_runner: CommandRunnerPort
     env_config: EnvConfigPort
     lock_manager: LockManagerPort
-    sdk_client_factory: SDKClientFactoryProtocol
+    agent_provider: AgentProvider
     trigger_engine: TriggerEngine
     fixer_service: FixerService
     event_sink: MalaEventSink | None = None

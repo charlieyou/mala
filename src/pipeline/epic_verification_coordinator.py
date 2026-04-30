@@ -335,7 +335,9 @@ class EpicVerificationCoordinator:
             result = await self._wait_for_task(task, issue_id, interrupt_event)
 
             try:
-                await self.callbacks.finalize_remediation(issue_id, result, run_metadata)
+                await self.callbacks.finalize_remediation(
+                    issue_id, result, run_metadata
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as e:
