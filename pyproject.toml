@@ -214,6 +214,7 @@ forbidden_modules = ["src.infra.io", "src.infra.hooks", "src.infra.telemetry"]
 allow_indirect_imports = true
 ignore_imports = [
     "src.infra.clients.claude_provider -> src.infra.io.session_log_parser",
+    "src.infra.clients.amp_log_provider -> src.infra.io.session_log_parser",
 ]
 
 # -----------------------------------------------------------------------------
@@ -400,6 +401,7 @@ forbidden_modules = ["src.core.log_events"]
 allow_indirect_imports = true
 ignore_imports = [
     "src.infra.io.session_log_parser -> src.core.log_events",
+    "src.infra.clients.amp_log_provider -> src.core.log_events",
 ]
 
 [[tool.importlinter.contracts]]
@@ -414,6 +416,7 @@ forbidden_modules = [
 allow_indirect_imports = true
 ignore_imports = [
     "src.infra.clients.claude_provider -> src.infra.io.session_log_parser",
+    "src.infra.clients.amp_log_provider -> src.infra.io.session_log_parser",
 ]
 
 [[tool.importlinter.contracts]]
