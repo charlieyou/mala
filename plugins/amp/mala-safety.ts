@@ -453,6 +453,48 @@ function checkBashCommand(command: string): ToolDecision | null {
   return null;
 }
 
+// --- File-modifying shell policy -----------------------------------------
+//
+// Closes a fail-open in the Bash branch: in-place shell editors modify files
+// without routing through Amp's file-write tools (`edit_file`/`create_file`/
+// `apply_patch`), so the FILE_WRITE_TOOLS lock-ownership gate never sees the
+// write. Without this list, a command like `sed -i '' 's/foo/bar/' src/file.py`
+// would be allowed under --dangerously-allow-all even when this agent does
+// not hold the file's lock.
+//
+// Substring matching mirrors the dangerous-pattern style — the same false-
+// positive trade-off applies (e.g. `git commit -m "fixed sed -i bug"` is
+// blocked; the agent can rephrase). The list is kept narrow on purpose:
+// shell redirects (>, >>, tee), `mv`, `cp`, and similar primitives have too
+// many legitimate uses to block reliably without parsing target paths, so
+// they remain allowed (a known parity gap with the file-write-tool gate
+// tracked as a follow-up). The reject reason redirects the agent to the
+// proper file-write tools, which DO route through the lock-ownership gate.
+
+const FILE_MODIFYING_SHELL_PATTERNS: readonly string[] = [
+  "sed -i",
+  "perl -i",
+  "awk -i inplace",
+  "gawk -i inplace",
+];
+
+function checkFileModifyingShell(command: string): ToolDecision | null {
+  for (const pattern of FILE_MODIFYING_SHELL_PATTERNS) {
+    if (command.includes(pattern)) {
+      return {
+        action: "reject-and-continue",
+        message:
+          `Blocked file-modifying shell command pattern: ${pattern}. ` +
+          "In-place shell editing bypasses the file-write tool gate and " +
+          "would skip the lock-ownership check. Use edit_file / " +
+          "create_file / apply_patch instead — these route through the " +
+          "plugin's lock-check.",
+      };
+    }
+  }
+  return null;
+}
+
 // --- Plugin entrypoint ----------------------------------------------------
 
 // `amp` is typed as `unknown` here because `@ampcode/plugin` types are not
@@ -500,6 +542,12 @@ export default function plugin(amp: AmpPluginAPI): void {
       if (decision) {
         return decision;
       }
+
+      const fileModDecision = checkFileModifyingShell(cmd);
+      if (fileModDecision) {
+        return fileModDecision;
+      }
+
       return { action: "allow" };
     }
 

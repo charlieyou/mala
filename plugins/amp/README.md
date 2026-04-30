@@ -11,7 +11,7 @@ copy under `plugins/amp/` is the source of truth.
 
 ## Scope (MVP)
 
-This plugin enforces two invariants and nothing else:
+This plugin enforces three invariants and nothing else:
 
 1. **Dangerous-command block** — mirrors `src/infra/hooks/dangerous_commands.py`.
    Rejects shell commands matching `DANGEROUS_PATTERNS`,
@@ -20,7 +20,17 @@ This plugin enforces two invariants and nothing else:
    and `shell_command` tool surfaces are gated; either name routes through
    the same dangerous-command check so a blocked pattern cannot slip through
    whichever surface the model uses.
-2. **Lock-ownership** — mirrors
+2. **In-place shell editor block** — closes a fail-open in the Bash branch.
+   Rejects shell commands matching `FILE_MODIFYING_SHELL_PATTERNS`
+   (`sed -i`, `perl -i`, `awk -i inplace`, `gawk -i inplace`) because these
+   modify files without routing through Amp's file-write tools, so the
+   lock-ownership gate (3) below would never see the write. The reject
+   message redirects the agent to `edit_file` / `create_file` /
+   `apply_patch`, which DO route through the lock-ownership gate. Shell
+   redirects (`>`, `>>`, `tee`), `mv`, `cp`, and similar primitives have too
+   many legitimate uses to block reliably without parsing target paths and
+   are intentionally **not** gated here (known follow-up).
+3. **Lock-ownership** — mirrors
    `src/infra/hooks/locking.py::make_lock_enforcement_hook`. Rejects file-write
    tool calls (`edit_file`, `create_file`, `undo_edit`, `apply_patch`) unless
    this Amp agent holds the lock for **every** file the call would write.
@@ -176,6 +186,11 @@ Before merging changes to this file:
       `src/infra/hooks/locking.make_lock_enforcement_hook` verbatim.
 - [ ] Dangerous-pattern lists, destructive-git list, and safe-alternative map
       match `src/infra/hooks/dangerous_commands.py` exactly.
+- [ ] `FILE_MODIFYING_SHELL_PATTERNS` covers in-place editors that bypass
+      the file-write-tool path (`sed -i`, `perl -i`, `awk -i inplace`,
+      `gawk -i inplace`). New in-place editors must be added here when
+      discovered; shell redirects / `mv` / `cp` are intentionally NOT in
+      this list.
 - [ ] `BASH_TOOL_NAMES` covers every shell-execution surface Amp exposes
       (currently `Bash` and `shell_command`).
 - [ ] `FILE_WRITE_TOOLS` covers every file-modification surface Amp exposes,
