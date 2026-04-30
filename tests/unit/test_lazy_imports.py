@@ -92,6 +92,74 @@ print('PASS')
     assert "PASS" in result.stdout
 
 
+def test_import_claude_provider_does_not_load_sdk() -> None:
+    """Verify importing :class:`ClaudeAgentProvider` does NOT trigger
+    ``claude_agent_sdk`` import.
+
+    The provider bundles existing Claude pieces but their SDK imports are
+    inside method bodies. A future refactor that hoists them to module top
+    level would break the Amp-only run case (Amp users do not have the SDK
+    installed) - this test rejects that.
+    """
+    code = """
+import sys
+for mod in list(sys.modules):
+    if mod.startswith('claude_agent_sdk'):
+        del sys.modules[mod]
+
+from src.infra.clients.claude_provider import ClaudeAgentProvider
+provider = ClaudeAgentProvider()
+if any(mod.startswith('claude_agent_sdk') for mod in sys.modules):
+    print('FAIL: claude_agent_sdk was imported')
+    sys.exit(1)
+print('PASS')
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+    )
+    assert result.returncode == 0, f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+    assert "PASS" in result.stdout
+
+
+def test_import_claude_provider_does_not_load_amp_adapters() -> None:
+    """Verify importing :class:`ClaudeAgentProvider` does NOT pull in any
+    ``src.infra.clients.amp_*`` adapter module.
+
+    This is the Amp/Claude isolation invariant: importing the Claude provider
+    on a machine without Amp installed must succeed; in particular it must
+    not eagerly load Amp adapter code that may import an Amp-only
+    dependency in the future.
+    """
+    code = """
+import sys
+for mod in list(sys.modules):
+    if mod.startswith('src.infra.clients.amp'):
+        del sys.modules[mod]
+
+from src.infra.clients.claude_provider import ClaudeAgentProvider
+ClaudeAgentProvider()
+amp_loaded = sorted(
+    mod for mod in sys.modules
+    if mod.startswith('src.infra.clients.amp')
+)
+if amp_loaded:
+    print('FAIL: ' + ','.join(amp_loaded))
+    sys.exit(1)
+print('PASS')
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+    )
+    assert result.returncode == 0, f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+    assert "PASS" in result.stdout
+
+
 def test_orchestrator_lazy_export_via_getattr() -> None:
     """Verify that src.__getattr__ lazily loads MalaOrchestrator on first access."""
     code = """

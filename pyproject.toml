@@ -201,12 +201,20 @@ modules = [
 # Contract 12: Infra clients isolated
 # -----------------------------------------------------------------------------
 # Client wrappers should not depend on IO, hooks, or telemetry abstractions.
+# Coder-backend providers (claude_provider, future amp_provider) are the
+# documented exception: they bundle SDK + runtime + log-provider for a coder
+# and necessarily reach into agent_runtime / session_log_parser. The
+# whitelist is intentionally narrow so simple HTTP clients stay isolated.
 
 [[tool.importlinter.contracts]]
 name = "Infra clients isolated"
 type = "forbidden"
 source_modules = ["src.infra.clients"]
 forbidden_modules = ["src.infra.io", "src.infra.hooks", "src.infra.telemetry"]
+allow_indirect_imports = true
+ignore_imports = [
+    "src.infra.clients.claude_provider -> src.infra.io.session_log_parser",
+]
 
 # -----------------------------------------------------------------------------
 # Contract 13: Agent runtime pure
@@ -402,6 +410,10 @@ forbidden_modules = [
     "src.infra.io",
     "src.infra.hooks",
     "src.infra.telemetry",
+]
+allow_indirect_imports = true
+ignore_imports = [
+    "src.infra.clients.claude_provider -> src.infra.io.session_log_parser",
 ]
 
 [[tool.importlinter.contracts]]
