@@ -25,16 +25,25 @@ Configure these in mala.yaml instead:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
 import warnings
 from dataclasses import InitVar, dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from src.core.constants import (
     DEFAULT_CLAUDE_SETTINGS_SOURCES,
     VALID_CLAUDE_SETTINGS_SOURCES,
 )
+
+_logger = logging.getLogger(__name__)
+
+VALID_CODERS: frozenset[str] = frozenset({"claude", "amp"})
+VALID_AMP_MODES: frozenset[str] = frozenset({"smart", "rush", "deep"})
+DEFAULT_CODER: Literal["claude", "amp"] = "claude"
+DEFAULT_AMP_MODE: Literal["smart", "rush", "deep"] = "smart"
 
 
 def parse_cerberus_args(raw: str | None, *, source: str) -> list[str]:
@@ -121,6 +130,65 @@ def parse_claude_settings_sources(
     return tuple(sources)
 
 
+def parse_coder(raw: str | None, *, source: str) -> Literal["claude", "amp"] | None:
+    """Parse a coder selection string.
+
+    Args:
+        raw: Raw value like "claude" or "amp" (case-insensitive after strip).
+        source: Source name for error messages (e.g., "MALA_CODER", "CLI").
+
+    Returns:
+        Validated coder string, or None if raw is empty/None.
+
+    Raises:
+        ValueError: If raw is not in VALID_CODERS.
+    """
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    if stripped not in VALID_CODERS:
+        valid = ", ".join(sorted(VALID_CODERS))
+        raise ValueError(f"{source}: Invalid coder '{stripped}'. Valid coders: {valid}")
+    # Narrow Literal type for the type checker.
+    if stripped == "amp":
+        return "amp"
+    return "claude"
+
+
+def parse_amp_mode(
+    raw: str | None, *, source: str
+) -> Literal["smart", "rush", "deep"] | None:
+    """Parse an Amp mode string.
+
+    Args:
+        raw: Raw value like "smart", "rush", or "deep" (after strip).
+        source: Source name for error messages (e.g., "MALA_AMP_MODE", "CLI").
+
+    Returns:
+        Validated mode string, or None if raw is empty/None.
+
+    Raises:
+        ValueError: If raw is not in VALID_AMP_MODES.
+    """
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    if stripped not in VALID_AMP_MODES:
+        valid = ", ".join(sorted(VALID_AMP_MODES))
+        raise ValueError(
+            f"{source}: Invalid amp mode '{stripped}'. Valid modes: {valid}"
+        )
+    if stripped == "rush":
+        return "rush"
+    if stripped == "deep":
+        return "deep"
+    return "smart"
+
+
 class ConfigurationError(Exception):
     """Raised when configuration validation fails."""
 
@@ -153,6 +221,28 @@ def _warn_deprecated_env_vars() -> None:
                 DeprecationWarning,
                 stacklevel=3,
             )
+
+
+@dataclass(frozen=True)
+class AmpOptions:
+    """Amp-coder specific options.
+
+    Attributes:
+        mode: Amp execution mode. One of "smart" (default), "rush", or "deep".
+            Only consulted when MalaConfig.coder == "amp".
+    """
+
+    mode: Literal["smart", "rush", "deep"] = DEFAULT_AMP_MODE
+
+
+@dataclass(frozen=True)
+class CoderOptions:
+    """Per-coder option container.
+
+    Currently only houses Amp options; new coders extend this dataclass.
+    """
+
+    amp: AmpOptions = field(default_factory=AmpOptions)
 
 
 @dataclass(frozen=True)
@@ -235,6 +325,12 @@ class MalaConfig:
     # Stored field is always non-None after __post_init__
     _claude_settings_sources: tuple[str, ...] = field(init=False)
 
+    # Coder selection (which agent backend to drive issue execution)
+    # Mirrors claude_settings_sources resolver pattern: env > yaml > default here;
+    # CLI override is layered on top in build_resolved_config().
+    coder: Literal["claude", "amp"] = DEFAULT_CODER
+    coder_options: CoderOptions = field(default_factory=CoderOptions)
+
     def __post_init__(
         self, claude_settings_sources_init: tuple[str, ...] | None
     ) -> None:
@@ -283,6 +379,8 @@ class MalaConfig:
         *,
         validate: bool = True,
         yaml_claude_settings_sources: tuple[str, ...] | None = None,
+        yaml_coder: Literal["claude", "amp"] | None = None,
+        yaml_amp_mode: Literal["smart", "rush", "deep"] | None = None,
     ) -> MalaConfig:
         """Create MalaConfig by loading from environment variables with validation.
 
@@ -292,6 +390,8 @@ class MalaConfig:
             - CLAUDE_CONFIG_DIR: Claude SDK config directory (optional)
             - MALA_TRACK_REVIEW_ISSUES: Create beads issues for P2/P3 findings (deprecated)
             - MALA_CLAUDE_SETTINGS_SOURCES: Comma-separated Claude settings sources (optional)
+            - MALA_CODER: Coder selection ("claude" or "amp") (optional)
+            - MALA_AMP_MODE: Amp execution mode ("smart", "rush", "deep") (optional)
             - LLM_API_KEY: API key for LLM calls (optional)
             - LLM_BASE_URL: Base URL for LLM API (optional)
 
@@ -309,6 +409,11 @@ class MalaConfig:
             yaml_claude_settings_sources: Claude settings sources from mala.yaml.
                 Used as fallback when env var is not set.
                 Precedence: env var > yaml > default.
+            yaml_coder: Coder selection from mala.yaml. Used as fallback when
+                MALA_CODER is not set. Precedence: env > yaml > default.
+            yaml_amp_mode: Amp mode from mala.yaml (coder_options.amp.mode).
+                Used as fallback when MALA_AMP_MODE is not set.
+                Precedence: env > yaml > default.
 
         Returns:
             MalaConfig instance with values from environment or defaults.
@@ -368,6 +473,32 @@ class MalaConfig:
             parse_errors.append(str(exc))
             claude_settings_sources = None
 
+        # Parse MALA_CODER (env > yaml > default)
+        try:
+            env_coder = parse_coder(os.environ.get("MALA_CODER"), source="MALA_CODER")
+        except ValueError as exc:
+            parse_errors.append(str(exc))
+            env_coder = None
+        resolved_coder: Literal["claude", "amp"] = (
+            env_coder
+            if env_coder is not None
+            else (yaml_coder if yaml_coder is not None else DEFAULT_CODER)
+        )
+
+        # Parse MALA_AMP_MODE (env > yaml > default)
+        try:
+            env_amp_mode = parse_amp_mode(
+                os.environ.get("MALA_AMP_MODE"), source="MALA_AMP_MODE"
+            )
+        except ValueError as exc:
+            parse_errors.append(str(exc))
+            env_amp_mode = None
+        resolved_amp_mode: Literal["smart", "rush", "deep"] = (
+            env_amp_mode
+            if env_amp_mode is not None
+            else (yaml_amp_mode if yaml_amp_mode is not None else DEFAULT_AMP_MODE)
+        )
+
         config = cls(
             runs_dir=runs_dir,
             lock_dir=lock_dir,
@@ -391,6 +522,8 @@ class MalaConfig:
                     else DEFAULT_CLAUDE_SETTINGS_SOURCES
                 )
             ),
+            coder=resolved_coder,
+            coder_options=CoderOptions(amp=AmpOptions(mode=resolved_amp_mode)),
         )
 
         if validate:
@@ -460,6 +593,8 @@ class CLIOverrides:
         max_epic_verification_retries: Override for max epic verification retries.
         disable_review: Whether review is disabled via overrides.
         claude_settings_sources: Raw comma-separated list of settings sources.
+        coder: Raw coder selection ("claude" or "amp").
+        amp_mode: Raw Amp mode ("smart", "rush", or "deep").
     """
 
     cerberus_spawn_args: str | None = None
@@ -469,6 +604,8 @@ class CLIOverrides:
     max_epic_verification_retries: int | None = None
     disable_review: bool = False
     claude_settings_sources: str | None = None
+    coder: str | None = None
+    amp_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -494,6 +631,8 @@ class ResolvedConfig:
         llm_base_url: Base URL for LLM API.
         max_epic_verification_retries: Maximum retries for epic verification loop.
         claude_settings_sources: Tuple of settings sources for Claude SDK.
+        coder: Selected coder backend ("claude" or "amp").
+        coder_options: Per-coder options container.
     """
 
     # Paths
@@ -519,6 +658,10 @@ class ResolvedConfig:
 
     # Claude SDK settings
     claude_settings_sources: tuple[str, ...]
+
+    # Coder selection
+    coder: Literal["claude", "amp"]
+    coder_options: CoderOptions
 
 
 def build_resolved_config(
@@ -600,6 +743,38 @@ def build_resolved_config(
     else:
         claude_settings = base_config.claude_settings_sources
 
+    # Apply coder override (CLI > env > yaml > default)
+    # base_config already has env > yaml > default applied
+    cli_coder = parse_coder(overrides.coder, source="CLI")
+    coder: Literal["claude", "amp"] = (
+        cli_coder if cli_coder is not None else base_config.coder
+    )
+
+    # Apply amp mode override (CLI > env > yaml > default)
+    cli_amp_mode = parse_amp_mode(overrides.amp_mode, source="CLI")
+    amp_mode: Literal["smart", "rush", "deep"] = (
+        cli_amp_mode if cli_amp_mode is not None else base_config.coder_options.amp.mode
+    )
+    coder_options = CoderOptions(amp=AmpOptions(mode=amp_mode))
+
+    # Info-level log when options are set against the inactive coder.
+    # Heuristic: explicit CLI override OR resolved value differs from default.
+    amp_mode_explicit = overrides.amp_mode is not None or amp_mode != DEFAULT_AMP_MODE
+    claude_sources_explicit = (
+        overrides.claude_settings_sources is not None
+        or claude_settings != DEFAULT_CLAUDE_SETTINGS_SOURCES
+    )
+    if coder == "claude" and amp_mode_explicit:
+        _logger.info(
+            "amp mode '%s' ignored — coder is claude",
+            amp_mode,
+        )
+    if coder == "amp" and claude_sources_explicit:
+        _logger.info(
+            "claude_settings_sources %s ignored — coder is amp",
+            claude_settings,
+        )
+
     return ResolvedConfig(
         runs_dir=base_config.runs_dir,
         lock_dir=base_config.lock_dir,
@@ -615,4 +790,6 @@ def build_resolved_config(
         llm_base_url=base_config.llm_base_url,
         max_epic_verification_retries=max_epic_verification_retries,
         claude_settings_sources=claude_settings,
+        coder=coder,
+        coder_options=coder_options,
     )
