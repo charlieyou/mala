@@ -1182,9 +1182,7 @@ class TestWipFallbackOnReadyFailure:
             ]:
                 # br list --json returns an envelope with issues inside.
                 return make_command_result(
-                    stdout=json.dumps(
-                        {"issues": [{"id": "wip-1", "priority": 1}]}
-                    )
+                    stdout=json.dumps({"issues": [{"id": "wip-1", "priority": 1}]})
                 )
             # Return empty for other commands (like dep tree)
             return make_command_result(stdout="[]")
