@@ -29,6 +29,24 @@ if TYPE_CHECKING:
 
 # Default timeout for bd/git subprocess calls (seconds)
 DEFAULT_COMMAND_TIMEOUT = 30.0
+_BR_LABEL_INVALID_CHARS = re.compile(r"[^A-Za-z0-9_:-]+")
+
+
+def _normalize_br_label(label: str) -> str:
+    """Normalize a label for br's current label character restrictions."""
+    return _BR_LABEL_INVALID_CHARS.sub("-", label).strip("-")
+
+
+def _normalize_br_labels(labels: list[str]) -> list[str]:
+    normalized_labels: list[str] = []
+    seen: set[str] = set()
+    for label in labels:
+        normalized = _normalize_br_label(label)
+        if not normalized or normalized in seen:
+            continue
+        normalized_labels.append(normalized)
+        seen.add(normalized)
+    return normalized_labels
 
 
 def _extract_issue_list(data: object) -> list[dict[str, object]] | None:
@@ -708,12 +726,14 @@ class BeadsClient:
         if parent_id:
             cmd.extend(["--parent", parent_id])
         if tags:
-            cmd.extend(["--labels", ",".join(tags)])
+            normalized_tags = _normalize_br_labels(tags)
+            if normalized_tags:
+                cmd.extend(["--labels", ",".join(normalized_tags)])
         cmd.append(title)
 
         result = await self._run_subprocess_async(cmd)
         if result.returncode != 0:
-            self._log_warning(f"bd create failed: {result.stderr}")
+            self._log_warning(f"br create failed: {result.stderr}")
             return None
 
         # Parse issue ID from output (typically "Created issue: <id>" or silent id)
@@ -744,19 +764,28 @@ class BeadsClient:
         Returns:
             Issue ID if found, None otherwise.
         """
-        result = await self._run_subprocess_async(
-            ["br", "list", "--label", tag, "--json"]
-        )
-        if result.returncode != 0:
-            return None
-        try:
-            issues = _extract_issue_list(json.loads(result.stdout))
-            if issues:
-                # Return first matching issue (should be only one due to dedup)
-                return str(issues[0].get("id", ""))
-            return None
-        except json.JSONDecodeError:
-            return None
+        normalized_tag = _normalize_br_label(tag)
+        search_tags = [normalized_tag]
+        if normalized_tag != tag:
+            search_tags.append(tag)
+
+        for search_tag in search_tags:
+            if not search_tag:
+                continue
+            result = await self._run_subprocess_async(
+                ["br", "list", "--label", search_tag, "--json"]
+            )
+            if result.returncode != 0:
+                continue
+            try:
+                issues = _extract_issue_list(json.loads(result.stdout))
+                if issues:
+                    # Return first matching issue (should be only one due to dedup)
+                    return str(issues[0].get("id", ""))
+            except json.JSONDecodeError:
+                continue
+
+        return None
 
     async def update_issue_description_async(
         self, issue_id: str, description: str

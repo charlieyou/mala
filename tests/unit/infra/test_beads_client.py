@@ -2260,6 +2260,29 @@ class TestCreateIssueAsync:
         assert "--labels" in cmd
         assert "bug,urgent" in cmd
 
+    @pytest.mark.asyncio
+    async def test_normalizes_labels_for_br_validation(self, tmp_path: Path) -> None:
+        """Should normalize labels before passing them to br create."""
+        beads = BeadsClient(tmp_path)
+        captured_cmds: list[list[str]] = []
+
+        async def capturing_run(cmd: list[str]) -> CommandResult:
+            captured_cmds.append(cmd)
+            return make_command_result(stdout="Created issue: new-1")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", capturing_run)
+            await beads.create_issue_async(
+                title="Test",
+                description="Desc",
+                priority="P1",
+                tags=["source:mala-99bh.1", "domain,lifecycle", "source:mala-99bh.1"],
+            )
+
+        cmd = captured_cmds[0]
+        assert "--labels" in cmd
+        assert "source:mala-99bh-1,domain-lifecycle" in cmd
+
 
 class TestFindIssueByTagAsync:
     """Test find_issue_by_tag_async method."""
@@ -2279,6 +2302,52 @@ class TestFindIssueByTagAsync:
             result = await beads.find_issue_by_tag_async("my-tag")
 
         assert result == "issue-1"
+
+    @pytest.mark.asyncio
+    async def test_searches_normalized_tag(self, tmp_path: Path) -> None:
+        """Should normalize tags before searching br labels."""
+        beads = BeadsClient(tmp_path)
+        captured_cmds: list[list[str]] = []
+        issues = json.dumps([{"id": "issue-1"}])
+
+        async def capturing_run(cmd: list[str]) -> CommandResult:
+            captured_cmds.append(cmd)
+            return make_command_result(stdout=issues)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", capturing_run)
+            result = await beads.find_issue_by_tag_async("source:mala-99bh.1")
+
+        assert result == "issue-1"
+        assert captured_cmds == [
+            ["br", "list", "--label", "source:mala-99bh-1", "--json"]
+        ]
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_raw_tag_for_existing_labels(
+        self, tmp_path: Path
+    ) -> None:
+        """Should still find pre-existing labels that contain now-invalid chars."""
+        beads = BeadsClient(tmp_path)
+        captured_cmds: list[list[str]] = []
+        issues = json.dumps([{"id": "issue-1"}])
+
+        async def capturing_run(cmd: list[str]) -> CommandResult:
+            captured_cmds.append(cmd)
+            label = cmd[3]
+            if label == "source:mala-99bh-1":
+                return make_command_result(stdout="[]")
+            return make_command_result(stdout=issues)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", capturing_run)
+            result = await beads.find_issue_by_tag_async("source:mala-99bh.1")
+
+        assert result == "issue-1"
+        assert captured_cmds == [
+            ["br", "list", "--label", "source:mala-99bh-1", "--json"],
+            ["br", "list", "--label", "source:mala-99bh.1", "--json"],
+        ]
 
     @pytest.mark.asyncio
     async def test_returns_none_when_no_matches(self, tmp_path: Path) -> None:
