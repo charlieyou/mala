@@ -12,9 +12,11 @@ Schema fields asserted (the minimum surface mala depends on):
 * ``assistant`` events carry ``message.content[].type``
 
 The test deliberately uses a trivial prompt to bound cost — the goal is
-schema validation, not behavior validation. It is skipped (rather than
-failed) when the gating preconditions are not met, so the CI job stays
-green when ``AMP_API_KEY`` is absent (e.g. on PRs from forks).
+schema validation, not behavior validation. The real-CLI test is skipped
+(rather than failed) when the gating preconditions are not met, so the
+CI job stays green when ``AMP_API_KEY`` is absent (e.g. on PRs from
+forks). A unit-marked regression test for the parser helper runs in the
+default test suite so the parsing contract is exercised on every PR.
 """
 
 from __future__ import annotations
@@ -27,8 +29,6 @@ import sys
 from typing import Any, cast
 
 import pytest
-
-pytestmark = pytest.mark.smoke
 
 
 _SMOKE_PROMPT = "Reply with the single word: ok\n"
@@ -70,13 +70,62 @@ def _run_amp_version() -> str:
     return out or "<version-unavailable: empty output>"
 
 
+class StreamJsonParseError(AssertionError):
+    """Raised when stdout contains a line that is not valid stream-json.
+
+    Mirrors :class:`~src.infra.clients.amp_client.AmpClientError` raised at
+    ``src/infra/clients/amp_client.py:435-442``: a banner, progress line,
+    or any other non-JSON stdout content crashes a real Amp session, so
+    the smoke test must fail on the same input. This is the schema-drift
+    signal AC#12 needs to surface before merge.
+    """
+
+
+def _parse_stream_lines(stdout_text: str) -> list[dict[str, Any]]:
+    """Parse Amp ``--stream-json`` stdout, mirroring ``AmpClient``'s contract.
+
+    Behavior matches ``src/infra/clients/amp_client.py:432-448`` exactly:
+
+    * Empty lines (after ``strip()``) are skipped.
+    * Lines that fail JSON decoding raise :class:`StreamJsonParseError`.
+      ``AmpClient`` raises ``AmpClientError`` on the same input, so a
+      banner / progress line on stdout would crash a real session. The
+      smoke test must reject it instead of silently skipping.
+    * Non-dict JSON values are warn-only (matching ``AmpClient``'s
+      ``logger.warning`` path) and skipped — they cannot satisfy mala's
+      schema and the schema assertions will fail later if they were the
+      only content on stdout.
+    """
+    events: list[dict[str, Any]] = []
+    for raw_line in stdout_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise StreamJsonParseError(
+                "amp stdout contained a non-JSON line — likely upstream "
+                "stream-json drift (banner/progress emitted on stdout). "
+                "AmpClient raises AmpClientError on this same input at "
+                f"src/infra/clients/amp_client.py:435-442. Offending "
+                f"line: {line!r}; json error: {exc}"
+            ) from exc
+        if not isinstance(obj, dict):
+            print(
+                f"[amp-smoke] warn: stream-json line is not an object: {obj!r}",
+                file=sys.stderr,
+            )
+            continue
+        events.append(obj)
+    return events
+
+
 def _run_amp_stream_json(prompt: str) -> list[dict[str, Any]]:
     """Spawn real ``amp --execute --stream-json`` and collect parsed events.
 
-    Returns the list of JSON objects emitted on stdout in order. Lines
-    that fail to parse as JSON or are not objects are skipped (with a
-    ``print`` for the CI log) — the schema assertions operate on the
-    parsed list and will fail if no recognisable events arrived.
+    Delegates parsing to :func:`_parse_stream_lines` so the smoke test's
+    line-acceptance contract is identical to the production parser.
     """
     completed = subprocess.run(
         ["amp", "--execute", "--stream-json"],
@@ -89,30 +138,10 @@ def _run_amp_stream_json(prompt: str) -> list[dict[str, Any]]:
     print(f"[amp-smoke] exit_code={completed.returncode}", file=sys.stderr)
     if completed.stderr:
         print(f"[amp-smoke] stderr:\n{completed.stderr}", file=sys.stderr)
-
-    events: list[dict[str, Any]] = []
-    for raw_line in (completed.stdout or "").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError as exc:
-            print(
-                f"[amp-smoke] skipping non-JSON line ({exc}): {line!r}",
-                file=sys.stderr,
-            )
-            continue
-        if not isinstance(obj, dict):
-            print(
-                f"[amp-smoke] skipping non-object event: {obj!r}",
-                file=sys.stderr,
-            )
-            continue
-        events.append(obj)
-    return events
+    return _parse_stream_lines(completed.stdout or "")
 
 
+@pytest.mark.smoke
 def test_amp_real_cli_stream_json_schema() -> None:
     """Assert the stream-json schema fields mala depends on are present.
 
@@ -190,3 +219,78 @@ def test_amp_real_cli_stream_json_schema() -> None:
             )
             saw_typed_block = True
     assert saw_typed_block, "no typed content blocks observed in any assistant event"
+
+
+# ---------------------------------------------------------------------------
+# Parser regression tests — run in the default suite so the smoke parser's
+# schema-drift contract is exercised on every PR (not just when AMP_API_KEY
+# is configured). Marked ``unit`` explicitly so they bypass the path-based
+# ``smoke`` auto-marker applied by ``tests/conftest.py``.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_parse_stream_lines_fails_on_non_json_stdout() -> None:
+    """Banner / progress lines on stdout must fail the smoke test.
+
+    AmpClient raises AmpClientError on a JSONDecodeError
+    (``src/infra/clients/amp_client.py:435-442``); the smoke parser must
+    do the same so AC#12 actually catches this kind of upstream drift.
+    """
+    drifted = (
+        "Starting amp v9.9.9...\n"
+        + json.dumps({"type": "system", "subtype": "init", "session_id": "abc"})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "ok"}]},
+            }
+        )
+        + "\n"
+    )
+    with pytest.raises(StreamJsonParseError, match="non-JSON"):
+        _parse_stream_lines(drifted)
+
+
+@pytest.mark.unit
+def test_parse_stream_lines_accepts_clean_stream() -> None:
+    """Sanity check: a well-formed stream parses without raising."""
+    clean = (
+        "\n"
+        + json.dumps({"type": "system", "subtype": "init", "session_id": "abc"})
+        + "\n"
+        + "\n"
+        + json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "ok"}]},
+            }
+        )
+        + "\n"
+    )
+    events = _parse_stream_lines(clean)
+    assert [e["type"] for e in events] == ["system", "assistant"]
+
+
+@pytest.mark.unit
+def test_parse_stream_lines_warns_on_non_object_json(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Non-dict JSON values match AmpClient's warn-and-skip behavior.
+
+    AmpClient logs a warning for non-object stream-json events at
+    ``src/infra/clients/amp_client.py:443-448`` and continues; the smoke
+    parser mirrors that so the schema assertions, not the parser, are
+    what reject malformed streams.
+    """
+    mixed = (
+        "[1, 2, 3]\n"
+        + json.dumps({"type": "system", "subtype": "init", "session_id": "abc"})
+        + "\n"
+    )
+    events = _parse_stream_lines(mixed)
+    assert len(events) == 1
+    assert events[0]["type"] == "system"
+    captured = capsys.readouterr()
+    assert "not an object" in captured.err
