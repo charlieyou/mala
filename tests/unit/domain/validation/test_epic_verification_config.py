@@ -42,7 +42,7 @@ class TestParseEpicVerificationConfigDefaults:
         assert config.failure_mode == FailureMode.CONTINUE
         assert config.cerberus is None
         assert config.agent_sdk_timeout == 600
-        assert config.agent_sdk_model == "sonnet"
+        assert config.agent_sdk_model == "opus"
         assert config.retry_policy.timeout_retries == 3
         assert config.retry_policy.execution_retries == 2
         assert config.retry_policy.parse_retries == 1
@@ -57,7 +57,7 @@ class TestParseEpicVerificationConfigDefaults:
         assert config.failure_mode == FailureMode.CONTINUE
         assert config.cerberus is None
         assert config.agent_sdk_timeout == 600
-        assert config.agent_sdk_model == "sonnet"
+        assert config.agent_sdk_model == "opus"
         assert config.retry_policy.timeout_retries == 3
         assert config.retry_policy.execution_retries == 2
         assert config.retry_policy.parse_retries == 1
@@ -72,7 +72,7 @@ class TestParseEpicVerificationConfigDefaults:
         assert config.failure_mode == FailureMode.CONTINUE
         assert config.cerberus is None
         assert config.agent_sdk_timeout == 600
-        assert config.agent_sdk_model == "sonnet"
+        assert config.agent_sdk_model == "opus"
 
 
 class TestParseEpicVerificationConfigValidInput:
@@ -377,7 +377,7 @@ class TestEpicVerifierConfigDataclass:
         assert config.failure_mode == FailureMode.CONTINUE
         assert config.cerberus is None
         assert config.agent_sdk_timeout == 600
-        assert config.agent_sdk_model == "sonnet"
+        assert config.agent_sdk_model == "opus"
         assert config.retry_policy.timeout_retries == 3
         assert config.retry_policy.execution_retries == 2
         assert config.retry_policy.parse_retries == 1

@@ -88,7 +88,7 @@ epic_verification:               # Optional. Epic verification backend selection
   failure_mode: string           # continue | abort | remediate (default: continue)
   cerberus: object               # Cerberus-specific settings
   agent_sdk_timeout: int         # Agent SDK timeout in seconds (default: 600)
-  agent_sdk_model: string        # sonnet | opus | haiku (default: sonnet)
+  agent_sdk_model: string        # sonnet | opus | haiku (default: opus)
   retry_policy: object           # Per-category retry limits
 
 per_issue_review:                # Optional. Per-issue code review (disabled by default)
@@ -100,7 +100,7 @@ per_issue_review:                # Optional. Per-issue code review (disabled by 
   failure_mode: string           # continue | abort | remediate (default: continue)
   cerberus: object               # Cerberus-specific settings
   agent_sdk_timeout: int         # Agent SDK timeout in seconds (default: 600)
-  agent_sdk_model: string        # sonnet | opus | haiku (default: sonnet)
+  agent_sdk_model: string        # sonnet | opus | haiku (default: opus)
 
 validation_triggers:             # Optional. See validation-triggers.md
   epic_completion: object        # Run validation when epics complete
@@ -145,7 +145,7 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `epic_verification.cerberus.wait_args` | list | No | Additional arguments for wait command |
 | `epic_verification.cerberus.env` | object | No | Environment variables as key-value pairs |
 | `epic_verification.agent_sdk_timeout` | integer | No | Agent SDK timeout in seconds (default: 600) |
-| `epic_verification.agent_sdk_model` | string | No | Agent SDK model: `sonnet`, `opus`, `haiku` (default: `sonnet`) |
+| `epic_verification.agent_sdk_model` | string | No | Agent SDK model: `sonnet`, `opus`, `haiku` (default: `opus`) |
 | `epic_verification.retry_policy` | object | No | Per-category retry limits |
 | `epic_verification.retry_policy.timeout_retries` | integer | No | Retry limit for timeouts (default: 3) |
 | `epic_verification.retry_policy.execution_retries` | integer | No | Retry limit for execution errors (default: 2) |
@@ -166,7 +166,7 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `per_issue_review.cerberus.wait_args` | list | No | Additional arguments for wait command |
 | `per_issue_review.cerberus.env` | object | No | Environment variables as key-value pairs |
 | `per_issue_review.agent_sdk_timeout` | integer | No | Agent SDK timeout in seconds (default: 600) |
-| `per_issue_review.agent_sdk_model` | string | No | Agent SDK model: `sonnet`, `opus`, `haiku` (default: `sonnet`) |
+| `per_issue_review.agent_sdk_model` | string | No | Agent SDK model: `sonnet`, `opus`, `haiku` (default: `opus`) |
 
 *Required when `coverage` section is present.
 
@@ -663,7 +663,7 @@ per_issue_review:
 
   # Agent SDK settings (when reviewer_type: agent_sdk)
   agent_sdk_timeout: 600
-  agent_sdk_model: sonnet        # sonnet | opus | haiku
+  agent_sdk_model: opus          # sonnet | opus | haiku
 ```
 
 ### Reviewer Selection Priority

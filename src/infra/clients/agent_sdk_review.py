@@ -101,7 +101,7 @@ class AgentSDKReviewer:
         review_agent_prompt: Agent-friendly prompt with tool usage guidance.
         sdk_client_factory: Factory for creating SDK clients (injected for testability).
         event_sink: Optional event sink for telemetry and warnings.
-        model: Model short name (sonnet, opus, haiku). Default: sonnet.
+        model: Model short name (sonnet, opus, haiku). Default: opus.
         default_timeout: Default timeout in seconds. Default: 600.
     """
 
@@ -109,7 +109,7 @@ class AgentSDKReviewer:
     review_agent_prompt: str
     sdk_client_factory: SDKClientFactoryProtocol
     event_sink: MalaEventSink | None = None
-    model: str = "sonnet"
+    model: str = "opus"
     default_timeout: int = 600
 
     def overrides_disabled_setting(self) -> bool:

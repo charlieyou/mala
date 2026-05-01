@@ -98,7 +98,7 @@ class _ReviewerConfig:
 
     reviewer_type: str = "agent_sdk"
     agent_sdk_review_timeout: int = 600
-    agent_sdk_reviewer_model: str = "sonnet"
+    agent_sdk_reviewer_model: str = "opus"
     cerberus_config: CerberusConfig | None = None
 
 
@@ -347,7 +347,7 @@ def _extract_reviewer_config(
     Priority order (only when enabled=True):
     1. per_issue_review - highest priority
     2. First enabled trigger code_review config
-    3. Defaults (agent_sdk with timeout=600, model=sonnet)
+    3. Defaults (agent_sdk with timeout=600, model=opus)
 
     When reviewer_type='cerberus', also extracts code_review.cerberus config.
 
@@ -367,7 +367,7 @@ def _extract_reviewer_config(
                     per_issue_review, "agent_sdk_timeout", 600
                 ),
                 agent_sdk_reviewer_model=getattr(
-                    per_issue_review, "agent_sdk_model", "sonnet"
+                    per_issue_review, "agent_sdk_model", "opus"
                 ),
                 cerberus_config=getattr(per_issue_review, "cerberus", None),
             )
@@ -381,7 +381,7 @@ def _extract_reviewer_config(
     return _ReviewerConfig(
         reviewer_type=getattr(code_review, "reviewer_type", "agent_sdk"),
         agent_sdk_review_timeout=getattr(code_review, "agent_sdk_timeout", 600),
-        agent_sdk_reviewer_model=getattr(code_review, "agent_sdk_model", "sonnet"),
+        agent_sdk_reviewer_model=getattr(code_review, "agent_sdk_model", "opus"),
         cerberus_config=getattr(code_review, "cerberus", None),
     )
 

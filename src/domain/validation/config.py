@@ -273,7 +273,7 @@ class CodeReviewConfig:
     baseline: Literal["since_run_start", "since_last_review"] | None = None
     cerberus: CerberusConfig | None = None
     agent_sdk_timeout: int = 600
-    agent_sdk_model: Literal["sonnet", "opus", "haiku"] = "sonnet"
+    agent_sdk_model: Literal["sonnet", "opus", "haiku"] = "opus"
     track_review_issues: bool = True
 
 
@@ -331,7 +331,7 @@ class EpicVerifierConfig:
     failure_mode: FailureMode = FailureMode.CONTINUE
     cerberus: CerberusConfig | None = None
     agent_sdk_timeout: int = 600
-    agent_sdk_model: Literal["sonnet", "opus", "haiku"] = "sonnet"
+    agent_sdk_model: Literal["sonnet", "opus", "haiku"] = "opus"
     retry_policy: VerificationRetryPolicy = field(
         default_factory=VerificationRetryPolicy
     )

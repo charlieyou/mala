@@ -204,7 +204,7 @@ class ClaudeEpicVerificationModel:
     """
 
     # Default model for epic verification
-    DEFAULT_MODEL = "claude-sonnet-4-20250514"
+    DEFAULT_MODEL = "opus"
 
     def __init__(
         self,

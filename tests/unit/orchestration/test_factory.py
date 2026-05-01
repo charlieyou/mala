@@ -895,7 +895,7 @@ class TestExtractReviewerConfig:
         # Falls back to defaults
         assert result.reviewer_type == "agent_sdk"
         assert result.agent_sdk_review_timeout == 600
-        assert result.agent_sdk_reviewer_model == "sonnet"
+        assert result.agent_sdk_reviewer_model == "opus"
 
     def test_defaults_when_no_validation_config(self) -> None:
         """Returns defaults when validation_config is None."""
@@ -903,7 +903,7 @@ class TestExtractReviewerConfig:
 
         assert result.reviewer_type == "agent_sdk"
         assert result.agent_sdk_review_timeout == 600
-        assert result.agent_sdk_reviewer_model == "sonnet"
+        assert result.agent_sdk_reviewer_model == "opus"
 
 
 class TestBuildDependenciesRuntimeDeps:

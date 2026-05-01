@@ -741,8 +741,8 @@ def _parse_epic_verification_config(
             )
         agent_sdk_timeout = timeout_val
 
-    # Parse agent_sdk_model (optional, defaults to "sonnet")
-    agent_sdk_model: Literal["sonnet", "opus", "haiku"] = "sonnet"
+    # Parse agent_sdk_model (optional, defaults to "opus")
+    agent_sdk_model: Literal["sonnet", "opus", "haiku"] = "opus"
     if "agent_sdk_model" in data:
         model_val = data["agent_sdk_model"]
         if model_val not in ("sonnet", "opus", "haiku"):
@@ -975,8 +975,8 @@ def _parse_code_review_config(
             )
         agent_sdk_timeout = timeout_val
 
-    # Parse agent_sdk_model (optional, defaults to "sonnet")
-    agent_sdk_model: Literal["sonnet", "opus", "haiku"] = "sonnet"
+    # Parse agent_sdk_model (optional, defaults to "opus")
+    agent_sdk_model: Literal["sonnet", "opus", "haiku"] = "opus"
     if "agent_sdk_model" in data:
         model_val = data["agent_sdk_model"]
         if not isinstance(model_val, str):
