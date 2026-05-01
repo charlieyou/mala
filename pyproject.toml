@@ -222,6 +222,13 @@ allow_indirect_imports = true
 ignore_imports = [
     "src.infra.clients.claude_provider -> src.infra.io.session_log_parser",
     "src.infra.clients.amp_log_provider -> src.infra.io.session_log_parser",
+    # AmpRuntime carries a LintCache for protocol parity with the Claude
+    # runtime so AgentSessionRunner._build_session can read
+    # ``runtime.lint_cache`` without branching on the active coder
+    # (plan ``L165``: pipeline is coder-agnostic). Mirrors the Claude
+    # path's AgentRuntimeBuilder, which lives outside src.infra.clients
+    # and so does not need an exception.
+    "src.infra.clients.amp_runtime -> src.infra.hooks.lint_cache",
 ]
 
 # -----------------------------------------------------------------------------
@@ -424,6 +431,13 @@ allow_indirect_imports = true
 ignore_imports = [
     "src.infra.clients.claude_provider -> src.infra.io.session_log_parser",
     "src.infra.clients.amp_log_provider -> src.infra.io.session_log_parser",
+    # AmpRuntime carries a LintCache for protocol parity with the Claude
+    # runtime so AgentSessionRunner._build_session can read
+    # ``runtime.lint_cache`` without branching on the active coder
+    # (plan ``L165``: pipeline is coder-agnostic). Mirrors the Claude
+    # path's AgentRuntimeBuilder, which lives outside src.infra.clients
+    # and so does not need an exception.
+    "src.infra.clients.amp_runtime -> src.infra.hooks.lint_cache",
 ]
 
 [[tool.importlinter.contracts]]

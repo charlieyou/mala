@@ -63,6 +63,7 @@ from src.orchestration.orchestration_wiring import (
     build_epic_callbacks,
     build_session_callback_factory,
     build_session_config,
+    create_amp_mcp_server_factory,
     create_mcp_server_factory,
 )
 from src.orchestration.types import (
@@ -392,11 +393,20 @@ class MalaOrchestrator:
         pipeline = self._build_pipeline_config()
         filters = self._build_issue_filter_config()
 
-        # Build core runners
+        # Build core runners. The MCP factory must match the active coder
+        # (Claude consumes in-process SDK Server objects; Amp consumes
+        # JSON stdio launch specs). Dispatching here keeps the pipeline's
+        # ``--mcp-config`` shape correct for the runtime the
+        # ``client_factory.create()`` call will actually spawn.
+        coder_mcp_factory = (
+            create_amp_mcp_server_factory()
+            if self._agent_provider.name == "amp"
+            else create_mcp_server_factory()
+        )
         self.gate_runner, self.async_gate_runner = build_gate_runner(runtime, pipeline)
         self.review_runner = build_review_runner(runtime, pipeline)
         self.run_coordinator = build_run_coordinator(
-            runtime, pipeline, create_mcp_server_factory()
+            runtime, pipeline, coder_mcp_factory
         )
         self.issue_coordinator = build_issue_coordinator(filters, runtime)
 
@@ -427,7 +437,7 @@ class MalaOrchestrator:
         self._session_config = build_session_config(
             pipeline,
             review_enabled=self._is_review_enabled(),
-            mcp_server_factory=create_mcp_server_factory(),
+            mcp_server_factory=coder_mcp_factory,
             strict_resume=self.strict_resume,
         )
 

@@ -24,10 +24,12 @@ from typing import TYPE_CHECKING, Literal
 from src.infra.tools.env import SCRIPTS_DIR, USER_CONFIG_DIR, get_lock_dir
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Set as AbstractSet
     from pathlib import Path
 
     from src.core.protocols.sdk import McpServerFactory
+    from src.infra.clients.amp_client import AmpClientOptions
+    from src.infra.hooks.lint_cache import LintCache
 
 
 AmpMode = Literal["smart", "rush", "deep"]
@@ -51,8 +53,10 @@ fresh sessions interleave stream-json bytes, corrupting both."""
 class AmpRuntime:
     """Complete spawn description for one ``amp --execute --stream-json`` invocation.
 
-    Returned by :meth:`AmpRuntimeBuilder.build`. Consumed only by the matching
-    ``AmpClient`` (T008); the pipeline treats it as opaque.
+    Returned by :meth:`AmpRuntimeBuilder.build`. Consumed by the matching
+    ``AmpClient`` (T008) and read by :class:`AgentSessionRunner` for the
+    ``options`` / ``lint_cache`` fields the pipeline expects on every
+    coder-shaped runtime.
     """
 
     cwd: Path
@@ -61,6 +65,17 @@ class AmpRuntime:
     mcp_config: dict[str, object]
     mode: AmpMode
     log_path: Path
+    options: AmpClientOptions
+    """Pre-built :class:`AmpClientOptions` consumed by
+    :meth:`AmpAgentProvider.client_factory.create`. The pipeline reads
+    ``runtime.options`` after ``builder.build()`` exactly the same way it
+    reads ``ClaudeRuntime.options``, so the ``AgentSessionRunner`` path is
+    coder-agnostic."""
+    lint_cache: LintCache
+    """In-memory :class:`LintCache` used by the session runner to dedupe
+    lint commands across attempts. Amp does not consume the cache itself —
+    the synthetic message dataclasses do not interact with it — but the
+    runtime carries one for protocol parity with the Claude path."""
     resume_thread_id: str | None = None
 
 
@@ -99,6 +114,99 @@ class AmpRuntimeBuilder:
         self._mcp_server_factory = mcp_server_factory
         self._mode: AmpMode = mode
         self._resume_thread_id: str | None = None
+        # Fluent-API state collected by the with_* helpers below. The Amp
+        # pipeline does not act on most of these (Amp enforces
+        # dangerous-cmd / lock-ownership via the ``mala-safety.ts`` plugin,
+        # not via SDK-level hooks or the disallowed-tools env contract),
+        # but they are recorded faithfully so the cross-coder pipeline can
+        # build an Amp runtime via the same fluent chain it uses for the
+        # Claude runtime — and so future Amp features (cross-thread
+        # lint caching, custom MCP overlays) have an explicit hook.
+        self._env_extra: dict[str, str] = {}
+        self._mcp_servers_override: dict[str, object] | None = None
+        self._lint_tools: AbstractSet[str] | None = None
+
+    def with_hooks(
+        self,
+        deadlock_monitor: object | None = None,
+        *,
+        include_stop_hook: bool = True,
+        include_mala_disallowed_tools_hook: bool = True,
+        include_lock_enforcement_hook: bool = True,
+    ) -> AmpRuntimeBuilder:
+        """No-op fluent-API parity with :class:`AgentRuntimeBuilder.with_hooks`.
+
+        Amp does not honor SDK hooks; the safety enforcement lives in the
+        bundled ``mala-safety.ts`` plugin loaded under ``PLUGINS=all``
+        (plan ``L412-L450``). The arguments are accepted for parity with
+        the Claude builder so the shared pipeline call site can chain
+        identically against either runtime; they are otherwise ignored.
+
+        Returns:
+            ``self`` for fluent chaining.
+        """
+        del (
+            deadlock_monitor,
+            include_stop_hook,
+            include_mala_disallowed_tools_hook,
+            include_lock_enforcement_hook,
+        )
+        return self
+
+    def with_env(self, *, extra: Mapping[str, str] | None = None) -> AmpRuntimeBuilder:
+        """Overlay extra env vars on top of the env composed in :meth:`build`.
+
+        Mirrors :meth:`AgentRuntimeBuilder.with_env`'s ``extra=`` shape
+        (``src/infra/agent_runtime.py:180-202``). The extras are layered
+        on **after** the plan's mandatory overlays (PATH, PLUGINS,
+        MALA_*), so a caller cannot accidentally clobber the lock-ownership
+        env vars consumed by the safety plugin.
+        """
+        if extra:
+            self._env_extra.update(extra)
+        return self
+
+    def with_mcp(
+        self, *, servers: Mapping[str, object] | None = None
+    ) -> AmpRuntimeBuilder:
+        """Configure MCP servers; default uses the injected factory.
+
+        ``servers`` is provided for parity with the Claude builder's
+        explicit override (used by :class:`FixerService` to short-circuit
+        MCP wiring when no factory is available). When omitted, the
+        runtime's ``--mcp-config`` is built from ``mcp_server_factory``
+        in :meth:`build` exactly as before.
+        """
+        if servers is not None:
+            self._mcp_servers_override = dict(servers)
+        return self
+
+    def with_disallowed_tools(
+        self, tools: AbstractSet[str] | None = None
+    ) -> AmpRuntimeBuilder:
+        """No-op fluent-API parity for ``disallowed_tools``.
+
+        ``MALA_DISALLOWED_TOOLS`` has no effect on Amp in MVP (plan
+        ``L690``); the warn-once log is emitted by
+        ``AmpAgentProvider.install_prerequisites``. The argument is
+        accepted so the pipeline's chained call works against either
+        runtime.
+        """
+        del tools
+        return self
+
+    def with_lint_tools(
+        self, tools: AbstractSet[str] | None = None
+    ) -> AmpRuntimeBuilder:
+        """Record the lint-tool set used to construct :attr:`AmpRuntime.lint_cache`.
+
+        The Amp message-stream does not currently interact with the
+        cache, but the pipeline's :class:`SessionConfig` reads
+        ``runtime.lint_cache`` unconditionally — providing one keeps
+        the per-issue lifecycle path coder-agnostic.
+        """
+        self._lint_tools = tools
+        return self
 
     def with_resume(self, thread_id: str) -> AmpRuntimeBuilder:
         """Configure the next ``build()`` to continue an existing Amp thread.
@@ -132,7 +240,12 @@ class AmpRuntimeBuilder:
         surfaces an actionable error at the builder boundary instead of an
         opaque ``TypeError`` deep inside ``subprocess.Popen``.
         """
-        servers = self._mcp_server_factory(self._agent_id, self._repo_path, None)
+        if self._mcp_servers_override is not None:
+            servers: dict[str, object] = dict(self._mcp_servers_override)
+        else:
+            servers = dict(
+                self._mcp_server_factory(self._agent_id, self._repo_path, None)
+            )
         mcp_config: dict[str, object] = {"mcpServers": servers}
         try:
             mcp_config_json = json.dumps(mcp_config)
@@ -155,6 +268,7 @@ class AmpRuntimeBuilder:
             "MALA_LOCK_DIR": str(get_lock_dir()),
             "MALA_REPO_NAMESPACE": str(self._repo_path),
             "MCP_TIMEOUT": "300000",
+            **self._env_extra,
         }
 
         argv: list[str] = [
@@ -178,6 +292,32 @@ class AmpRuntimeBuilder:
             )
             log_path = AMP_SESSIONS_DIR / pending_name
 
+        # Construct AmpClientOptions eagerly so AgentSessionRunner sees a
+        # ``runtime.options`` value with the same role ClaudeRuntime.options
+        # plays — the pipeline forwards it verbatim to
+        # ``client_factory.create(options)``.
+        from src.infra.clients.amp_client import AmpClientOptions
+
+        options = AmpClientOptions(
+            cwd=self._repo_path,
+            env=env,
+            argv=tuple(argv),
+            log_path=log_path,
+            thread_id=self._resume_thread_id,
+        )
+
+        # LintCache parity with the Claude path. Even though the synthetic
+        # Amp message dataclasses do not currently interact with the
+        # cache, ``SessionConfig`` reads ``runtime.lint_cache`` and
+        # forwards it into the lifecycle layer, so it must be a real
+        # instance, not None.
+        from src.infra.hooks.lint_cache import LintCache
+
+        lint_cache = LintCache(
+            repo_path=self._repo_path,
+            lint_tools=self._lint_tools,
+        )
+
         return AmpRuntime(
             cwd=self._repo_path,
             env=env,
@@ -185,5 +325,7 @@ class AmpRuntimeBuilder:
             mcp_config=mcp_config,
             mode=self._mode,
             log_path=log_path,
+            options=options,
+            lint_cache=lint_cache,
             resume_thread_id=self._resume_thread_id,
         )

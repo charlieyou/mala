@@ -476,3 +476,101 @@ def test_malaconfig_amp_mode_deep_flows_into_argv(
     idx = runtime.argv.index("--mode")
     assert runtime.argv[idx + 1] == "deep"
     assert runtime.mode == "deep"
+
+
+# ---------------------------------------------------------------------------
+# Fluent-API regression: pipeline calls
+# builder.with_hooks().with_env().with_mcp().with_disallowed_tools()
+# .with_lint_tools().build() and reads runtime.options + runtime.lint_cache.
+# Without these, AgentSessionRunner._build_session raises AttributeError
+# on the first Amp issue session (AC#6 break documented at
+# plans/2026-04-29-amp-provider-plan.md#L165).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_fluent_chain_used_by_agent_session_runner_returns_runtime(
+    builder: AmpRuntimeBuilder,
+) -> None:
+    """The exact chain ``AgentSessionRunner._build_session`` calls must
+    produce an :class:`AmpRuntime`.
+
+    Mirrors ``src/pipeline/agent_session_runner.py:426-433``. A regression
+    that drops one of these methods would re-introduce the AttributeError
+    the reviewer flagged.
+    """
+    runtime = (
+        builder.with_hooks(deadlock_monitor=None)
+        .with_env(extra={"MALA_SDK_FLOW": "implementer"})
+        .with_mcp()
+        .with_disallowed_tools()
+        .with_lint_tools(frozenset({"ruff"}))
+        .build()
+    )
+    assert isinstance(runtime, AmpRuntime)
+
+
+@pytest.mark.unit
+def test_fluent_chain_used_by_fixer_service_returns_runtime(
+    builder: AmpRuntimeBuilder,
+) -> None:
+    """Mirrors :meth:`FixerService._spawn_fixer`'s shaping (with explicit
+    ``include_*`` flags + a manual ``servers={}`` override)."""
+    runtime = (
+        builder.with_hooks(
+            deadlock_monitor=None,
+            include_stop_hook=True,
+            include_mala_disallowed_tools_hook=False,
+        )
+        .with_env(extra={"MALA_SDK_FLOW": "fixer"})
+        .with_disallowed_tools()
+        .with_mcp(servers={})
+        .with_hooks(include_lock_enforcement_hook=False)
+        .with_lint_tools(frozenset({"ruff"}))
+        .build()
+    )
+    assert isinstance(runtime, AmpRuntime)
+    # ``with_mcp(servers={})`` must clear the factory output so the fixer
+    # path does not spawn locking-MCP under the empty-tools shape.
+    assert runtime.mcp_config["mcpServers"] == {}
+
+
+@pytest.mark.unit
+def test_with_env_extras_are_layered_on_top_of_mandatory_overlays(
+    builder: AmpRuntimeBuilder,
+) -> None:
+    """Caller extras (``MALA_SDK_FLOW`` etc.) reach the spawn env."""
+    runtime = builder.with_env(extra={"MALA_SDK_FLOW": "implementer"}).build()
+    assert runtime.env["MALA_SDK_FLOW"] == "implementer"
+    # Mandatory overlays still in place — extras must not have clobbered them.
+    assert runtime.env["PLUGINS"] == "all"
+    assert runtime.env["MALA_AGENT_ID"] == "agent-42"
+
+
+@pytest.mark.unit
+def test_runtime_exposes_options_consumed_by_client_factory(
+    builder: AmpRuntimeBuilder,
+) -> None:
+    """``runtime.options`` is what the pipeline forwards to
+    ``client_factory.create``. Must be an :class:`AmpClientOptions` whose
+    cwd / env / argv / log_path mirror the runtime's top-level fields."""
+    from src.infra.clients.amp_client import AmpClientOptions
+
+    runtime = builder.build()
+    assert isinstance(runtime.options, AmpClientOptions)
+    assert runtime.options.cwd == runtime.cwd
+    assert dict(runtime.options.env) == dict(runtime.env)
+    assert tuple(runtime.options.argv) == runtime.argv
+    assert runtime.options.log_path == runtime.log_path
+    assert runtime.options.thread_id == runtime.resume_thread_id
+
+
+@pytest.mark.unit
+def test_runtime_exposes_lint_cache_for_session_config(
+    builder: AmpRuntimeBuilder,
+) -> None:
+    """``SessionConfig`` reads ``runtime.lint_cache`` unconditionally."""
+    from src.infra.hooks import LintCache
+
+    runtime = builder.with_lint_tools(frozenset({"ruff", "ty"})).build()
+    assert isinstance(runtime.lint_cache, LintCache)

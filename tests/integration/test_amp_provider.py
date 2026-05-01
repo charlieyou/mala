@@ -1,29 +1,29 @@
-"""End-to-end integration test for the Amp provider's install gate (T013).
+"""End-to-end integration test for the Amp provider (T013).
 
-The orchestrator's ``install_prerequisites`` hook is the safety-critical
-gate documented at ``plans/2026-04-29-amp-provider-plan.md#L168-L171,
-L271-L321``. This test wires :class:`AmpAgentProvider` through
-``create_orchestrator`` (the same path real ``mala run --coder amp``
-takes) and asserts:
+Exercises three safety-critical / AC-level paths through
+``create_orchestrator`` and ``run_implementer`` against a fake ``amp``
+binary on PATH:
 
-  * **Pass case** — fake ``amp`` on PATH emits the sentinel marker on
-    stderr; ``create_orchestrator`` returns successfully and the
-    orchestrator carries an :class:`AmpAgentProvider`.
-  * **Fail-closed case** — fake ``amp`` emits nothing;
-    ``create_orchestrator`` raises :class:`AmpPluginNotActiveError`
-    (``PLUGIN_MARKER_MISSING``) before any issue agent is spawned. This
-    is the AC#17 safety contract under ``--dangerously-allow-all``.
-
-The full per-issue lifecycle (``run_implementer`` end-to-end through the
-fake amp's stream-json transcript) is deferred to a follow-up: the
-:class:`AgentSessionRunner` pipeline still relies on Claude-specific
-fluent runtime methods (``with_hooks``, ``with_env``, ``with_mcp``,
-``with_disallowed_tools``, ``with_lint_tools``) that
-:class:`AmpRuntimeBuilder` does not expose, so a coder-agnostic pipeline
-refactor is required before ``run_implementer`` can drive an Amp session
-end-to-end. Tracked as a follow-up; T013 ships the install_prerequisites
-self-test gate (AC#16, AC#17) which is the unique safety-critical
-addition over the T007 stub.
+  * **Pass case (install_prerequisites)** — fake ``amp`` emits the
+    sentinel marker on stderr; ``create_orchestrator`` returns
+    successfully and the orchestrator carries an :class:`AmpAgentProvider`
+    (plan ``L168-L171, L271-L321``).
+  * **Fail-closed case (install_prerequisites)** — fake ``amp`` emits
+    nothing; ``create_orchestrator`` raises
+    :class:`AmpPluginNotActiveError` (``PLUGIN_MARKER_MISSING``) before
+    any issue agent is spawned. AC#17 safety contract under
+    ``--dangerously-allow-all``.
+  * **Per-issue lifecycle (AC#6)** — fake ``amp`` emits the sentinel
+    marker on stderr **and** a canned stream-json transcript on stdout;
+    ``run_implementer`` drives ``AgentSessionRunner._build_session`` →
+    ``client_factory.create(runtime.options)`` → ``query`` → message
+    parsing → lifecycle → ``IssueResult`` end-to-end. Until T013 grew
+    the fluent surface on :class:`AmpRuntimeBuilder` and added
+    ``options``/``lint_cache`` on :class:`AmpRuntime`, this path raised
+    ``AttributeError: 'AmpRuntimeBuilder' object has no attribute
+    'with_hooks'`` before any Amp client could run. The test pins that
+    regression: a passing assertion here means the Claude pipeline can
+    consume the Amp runtime through the same fluent chain.
 """
 
 from __future__ import annotations
@@ -88,6 +88,38 @@ _FAKE_AMP_NO_PLUGIN = (
     "# Fake amp emitting nothing (plugin appears not to be loaded).\n"
     "exit 0\n"
 )
+
+
+def _fake_amp_dual_role(plugin_hash: str, thread_id: str) -> str:
+    """Fake amp serving both ``install_prerequisites`` and a real session.
+
+    The same binary handles both roles because the orchestrator spawns
+    the same ``amp --execute`` argv each time:
+
+      * ``install_prerequisites`` only inspects stderr for the sentinel
+        marker and terminates ``amp`` on detection (plan ``L309-L312``);
+        anything we emit on stdout is ignored.
+      * ``run_implementer`` (the real session) reads the canned
+        stream-json from stdout to drive the message-stream processor
+        through to a ``result(success)`` event.
+
+    By emitting *both* the sentinel on stderr and a complete stream-json
+    transcript on stdout, the same script is correct for both paths.
+    """
+    return (
+        "#!/usr/bin/env bash\n"
+        "# Sentinel marker — drives install_prerequisites' self-test.\n"
+        f'echo \'{{"mala_plugin":"loaded","version":"{plugin_hash}"}}\' >&2\n'
+        "# Drain stdin so the orchestrator's prompt write doesn't EPIPE.\n"
+        "cat >/dev/null &\n"
+        "# Canned stream-json transcript — drives the session pipeline.\n"
+        f'echo \'{{"type":"system","subtype":"init","session_id":"{thread_id}"}}\'\n'
+        'echo \'{"type":"assistant","message":{"content":[{"type":"text",'
+        '"text":"Implementation complete."}]}}\'\n'
+        f'echo \'{{"type":"result","subtype":"success","session_id":"{thread_id}",'
+        '"result":"success"}}\'\n'
+        "wait\n"
+    )
 
 
 @pytest.fixture
@@ -173,6 +205,74 @@ def test_create_orchestrator_amp_with_active_plugin(
 
     assert isinstance(orchestrator._agent_provider, AmpAgentProvider)
     assert orchestrator._agent_provider.name == "amp"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_run_implementer_drives_per_issue_lifecycle_through_amp_pipeline(
+    amp_environment: tuple[Path, Path],
+) -> None:
+    """AC#6 regression: ``run_implementer`` can drive an Amp session.
+
+    Until T013 grew :class:`AmpRuntimeBuilder` the same fluent surface
+    the pipeline calls (``with_hooks`` / ``with_env`` / ``with_mcp`` /
+    ``with_disallowed_tools`` / ``with_lint_tools``) and exposed
+    ``options``/``lint_cache`` on :class:`AmpRuntime`,
+    ``AgentSessionRunner._build_session`` raised ``AttributeError`` on
+    the very first Amp issue session — AC#6 (per-issue lifecycle works
+    for both Claude and Amp) was structurally broken.
+
+    This test exercises the full pipeline against a fake ``amp`` that
+    emits a complete stream-json transcript so the lifecycle reaches an
+    :class:`IssueResult`. The exact ``IssueResult.success`` value depends
+    on the gate / review configuration, which is incidental here; the
+    contract this test pins is:
+
+      1. The fluent chain on :class:`AmpRuntimeBuilder` succeeds.
+      2. ``client_factory.create(runtime.options)`` produces a working
+         :class:`AmpClient` that consumes the Amp stream-json shape.
+      3. The lifecycle returns a real :class:`IssueResult` rather than
+         crashing with an ``AttributeError`` deep in the pipeline.
+    """
+    from src.pipeline.issue_result import IssueResult
+
+    bin_dir, repo_path = amp_environment
+    plugin_hash = AmpPluginInstaller().installed_plugin_hash()
+    thread_id = "T-fake-thread-amp-001"
+    _install_fake_amp(bin_dir, body=_fake_amp_dual_role(plugin_hash, thread_id))
+
+    issue = FakeIssue(
+        id="bd-amp-fake.6",
+        title="Fake-amp per-issue lifecycle",
+        description="Drive the full pipeline against a canned stream-json.",
+    )
+    issue_provider = FakeIssueProvider(issues={issue.id: issue})
+
+    config = OrchestratorConfig(
+        repo_path=repo_path,
+        max_agents=1,
+        max_issues=1,
+        timeout_minutes=1,
+        # Disable code review so the lifecycle does not need an Anthropic
+        # reviewer or a configured cerberus model. The pipeline still
+        # exercises the implementer path, which is what AC#6 cares about.
+        disable_validations={"review"},
+    )
+    mala_config = MalaConfig(
+        runs_dir=repo_path / "runs",
+        lock_dir=repo_path / "locks",
+        coder="amp",
+    )
+    deps = OrchestratorDependencies(issue_provider=issue_provider)
+    orchestrator = create_orchestrator(config, mala_config=mala_config, deps=deps)
+
+    result = await orchestrator.run_implementer(issue.id)
+    # Regression-only assertion: the pipeline returned a real IssueResult,
+    # not crashed with AttributeError on the Amp runtime. The exact
+    # success/failure depends on whether the gate could find validation
+    # evidence in the canned transcript, which is environmental.
+    assert isinstance(result, IssueResult)
+    assert result.issue_id == issue.id
 
 
 @pytest.mark.integration
