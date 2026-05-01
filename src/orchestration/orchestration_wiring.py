@@ -370,3 +370,47 @@ def create_mcp_server_factory() -> Callable[
         }
 
     return factory
+
+
+def create_amp_mcp_server_factory() -> Callable[
+    [str, Path, Callable | None], dict[str, object]
+]:
+    """Amp-shaped MCP server factory returning **stdio launch specs**.
+
+    The Amp ``--mcp-config`` payload is plain JSON (see
+    ``src/infra/clients/amp_runtime.py::AmpRuntimeBuilder.build``); it
+    cannot consume the in-process Claude SDK server objects produced by
+    :func:`create_mcp_server_factory` (they contain a ``Server`` instance
+    and fail ``json.dumps``).
+
+    The MVP locking MCP server has no standalone stdio entry point yet
+    (plan ``L702`` tracks that as part of the real-Amp lock-enforcement
+    work). For T013 the factory returns a structurally valid stdio spec
+    pointing at a placeholder ``mala-amp-mcp-locking`` command so the
+    orchestration boundary is exercised end-to-end without forcing the
+    self-test to launch a real MCP child. The plugin self-test only
+    needs ``--mcp-config`` JSON to parse cleanly inside Amp; it does not
+    require the MCP server itself to be reachable, because the self-test
+    terminates ``amp`` before any tool call (plan ``L309-L312``).
+    """
+
+    def factory(
+        agent_id: str,
+        repo_path: Path,
+        emit_lock_event: Callable | None,
+    ) -> dict[str, object]:
+        del emit_lock_event
+        return {
+            "mala-locking": {
+                "command": "mala-amp-mcp-locking",
+                "args": [
+                    "--agent-id",
+                    agent_id,
+                    "--repo-namespace",
+                    str(repo_path),
+                ],
+                "env": {},
+            }
+        }
+
+    return factory

@@ -31,6 +31,42 @@ from src.orchestration.factory import (
 from tests.fakes.issue_provider import FakeIssueProvider
 
 
+def _wire_fake_amp_self_test(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provision a fake ``amp`` binary that satisfies the T013 self-test.
+
+    The post-T013 ``AmpAgentProvider.install_prerequisites`` runs the
+    plugin-load self-test (spawns ``amp`` and waits for the sentinel
+    marker on stderr). For factory-selection unit tests we need a fake
+    binary on PATH that emits the matching sentinel so the orchestrator
+    can be constructed; the *behavior* of the self-test is covered in
+    ``tests/unit/infra/clients/test_amp_plugin_self_test.py``.
+    """
+    from src.infra.clients import amp_plugin_installer
+    from src.infra.clients.amp_plugin_installer import AmpPluginInstaller
+
+    fake_home = tmp_path / "_amp_home"
+    fake_home.mkdir(exist_ok=True)
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    monkeypatch.setattr(
+        amp_plugin_installer,
+        "DEFAULT_PLUGIN_DIR",
+        fake_home / ".config" / "amp" / "plugins",
+    )
+
+    bin_dir = tmp_path / "_amp_bin"
+    bin_dir.mkdir(exist_ok=True)
+    plugin_hash = AmpPluginInstaller().installed_plugin_hash()
+    fake_amp = bin_dir / "amp"
+    fake_amp.write_text(
+        "#!/usr/bin/env bash\n"
+        f'echo \'{{"mala_plugin":"loaded","version":"{plugin_hash}"}}\' >&2\n'
+        "sleep 5\n"
+    )
+    fake_amp.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    monkeypatch.setenv("AMP_API_KEY", "fake-test-key")
+
+
 # ---------------------------------------------------------------------------
 # _create_agent_provider: pure selection given MalaConfig.coder
 # ---------------------------------------------------------------------------
@@ -119,7 +155,10 @@ def test_orchestrator_uses_claude_provider_by_default(tmp_path: Path) -> None:
     )
 
 
-def test_orchestrator_uses_amp_provider_when_coder_amp(tmp_path: Path) -> None:
+def test_orchestrator_uses_amp_provider_when_coder_amp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _wire_fake_amp_self_test(tmp_path, monkeypatch)
     config = OrchestratorConfig(repo_path=tmp_path, max_agents=1)
     deps = OrchestratorDependencies(
         issue_provider=FakeIssueProvider(),
@@ -192,9 +231,12 @@ def test_dependencies_agent_provider_overrides_factory_selection(
 
 
 @pytest.mark.parametrize("mode", ["smart", "rush", "deep"])
-def test_amp_modes_propagate_through_factory(tmp_path: Path, mode: str) -> None:
+def test_amp_modes_propagate_through_factory(
+    tmp_path: Path, mode: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """All three Amp modes flow through factory selection into the
     AmpAgentProvider's runtime builder."""
+    _wire_fake_amp_self_test(tmp_path, monkeypatch)
     config = OrchestratorConfig(repo_path=tmp_path, max_agents=1)
     deps = OrchestratorDependencies(
         issue_provider=FakeIssueProvider(),

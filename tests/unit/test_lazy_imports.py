@@ -160,6 +160,43 @@ print('PASS')
     assert "PASS" in result.stdout
 
 
+def test_import_amp_provider_does_not_load_sdk() -> None:
+    """Verify importing :class:`AmpAgentProvider` does NOT trigger
+    ``claude_agent_sdk`` import.
+
+    The Amp provider must be importable on machines without the Claude
+    SDK installed. A regression that hoists ``claude_agent_sdk`` to a
+    top-level import inside ``amp_provider`` (or any of its compile-time
+    deps) would break the Amp-only run case; this test rejects that.
+    """
+    code = """
+import sys
+for mod in list(sys.modules):
+    if mod.startswith('claude_agent_sdk'):
+        del sys.modules[mod]
+
+from src.infra.clients.amp_provider import AmpAgentProvider
+provider = AmpAgentProvider()
+# Touching the lazy-init properties must NOT pull in the Claude SDK
+# either; only an accidental top-level import would.
+provider.client_factory  # noqa: B018
+provider.log_provider  # noqa: B018
+loaded = sorted(m for m in sys.modules if m.startswith('claude_agent_sdk'))
+if loaded:
+    print('FAIL: ' + ','.join(loaded))
+    sys.exit(1)
+print('PASS')
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+    )
+    assert result.returncode == 0, f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+    assert "PASS" in result.stdout
+
+
 def test_orchestrator_lazy_export_via_getattr() -> None:
     """Verify that src.__getattr__ lazily loads MalaOrchestrator on first access."""
     code = """
