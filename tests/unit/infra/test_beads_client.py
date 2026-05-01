@@ -2473,29 +2473,111 @@ class TestGetEpicChildrenAsync:
 
     @pytest.mark.asyncio
     async def test_returns_child_ids(self, tmp_path: Path) -> None:
-        """Should return child IDs from bd list --parent response."""
+        """Should return child IDs from parent-child dependents."""
         beads = BeadsClient(tmp_path)
-        # bd list --parent returns only children, not the parent epic itself
         children = json.dumps(
             [
-                {"id": "task-1"},
-                {"id": "task-2"},
+                {"id": "task-1", "type": "parent-child"},
+                {"issue_id": "task-2", "type": "parent-child"},
             ]
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mock_run = AsyncMock(
+                side_effect=[
+                    make_command_result(stdout=children),
+                    make_command_result(stdout="[]"),
+                    make_command_result(stdout="[]"),
+                ]
+            )
+            mp.setattr(beads, "_run_subprocess_async", mock_run)
+            result = await beads.get_epic_children_async("epic-1")
+
+        assert result == {"task-1", "task-2"}
+        commands = [call.args[0] for call in mock_run.await_args_list]
+        assert ["br", "list", "--parent", "epic-1", "--all", "--json"] not in commands
+        assert commands[0] == [
+            "br",
+            "dep",
+            "list",
+            "epic-1",
+            "--direction",
+            "up",
+            "--type",
+            "parent-child",
+            "--json",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_returns_nested_child_ids(self, tmp_path: Path) -> None:
+        """Should walk parent-child descendants recursively."""
+        beads = BeadsClient(tmp_path)
+
+        async def mock_run(cmd: list[str]) -> CommandResult:
+            parent_id = cmd[3]
+            if parent_id == "epic-1":
+                return make_command_result(
+                    stdout=json.dumps([{"id": "child-epic"}])
+                )
+            if parent_id == "child-epic":
+                return make_command_result(stdout=json.dumps([{"id": "task-1"}]))
+            return make_command_result(stdout="[]")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", mock_run)
+            result = await beads.get_epic_children_async("epic-1")
+
+        assert result == {"child-epic", "task-1"}
+
+    @pytest.mark.asyncio
+    async def test_does_not_include_epic_from_cycle(self, tmp_path: Path) -> None:
+        """Should not include the queried epic if a cycle points back to it."""
+        beads = BeadsClient(tmp_path)
+
+        async def mock_run(cmd: list[str]) -> CommandResult:
+            parent_id = cmd[3]
+            if parent_id == "epic-1":
+                return make_command_result(stdout=json.dumps([{"id": "child-epic"}]))
+            if parent_id == "child-epic":
+                return make_command_result(stdout=json.dumps([{"id": "epic-1"}]))
+            return make_command_result(stdout="[]")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", mock_run)
+            result = await beads.get_epic_children_async("epic-1")
+
+        assert result == {"child-epic"}
+
+    @pytest.mark.asyncio
+    async def test_returns_child_ids_from_issue_envelope(self, tmp_path: Path) -> None:
+        """Should accept br JSON envelopes with an issues list."""
+        beads = BeadsClient(tmp_path)
+        children = json.dumps(
+            {
+                "issues": [
+                    {"id": "task-1"},
+                ]
+            }
         )
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_command_result(stdout=children)),
+                AsyncMock(
+                    side_effect=[
+                        make_command_result(stdout=children),
+                        make_command_result(stdout="[]"),
+                    ]
+                ),
             )
             result = await beads.get_epic_children_async("epic-1")
 
-        assert result == {"task-1", "task-2"}
+        assert result == {"task-1"}
 
     @pytest.mark.asyncio
     async def test_returns_empty_set_on_failure(self, tmp_path: Path) -> None:
-        """Should return empty set when bd list --parent fails."""
+        """Should return empty set when br dep list fails."""
         beads = BeadsClient(tmp_path)
         warnings: list[str] = []
         beads._log_warning = lambda msg: warnings.append(msg)  # type: ignore[method-assign]

@@ -150,19 +150,55 @@ class BeadsClient:
         Returns:
             Set of issue IDs that are children of the epic.
         """
-        result = await self._run_subprocess_async(
-            ["br", "list", "--parent", epic_id, "--all", "--json"]
-        )
-        if result.returncode != 0:
-            self._log_warning(f"br list --parent failed for {epic_id}: {result.stderr}")
-            return set()
-        try:
-            issues = _extract_issue_list(json.loads(result.stdout))
+        children: set[str] = set()
+        to_visit = [epic_id]
+        visited_parents: set[str] = set()
+
+        while to_visit:
+            parent_id = to_visit.pop()
+            if parent_id in visited_parents:
+                continue
+            visited_parents.add(parent_id)
+
+            result = await self._run_subprocess_async(
+                [
+                    "br",
+                    "dep",
+                    "list",
+                    parent_id,
+                    "--direction",
+                    "up",
+                    "--type",
+                    "parent-child",
+                    "--json",
+                ]
+            )
+            if result.returncode != 0:
+                self._log_warning(
+                    f"br dep list --direction up failed for {parent_id}: "
+                    f"{result.stderr}"
+                )
+                return set()
+            try:
+                issues = _extract_issue_list(json.loads(result.stdout))
+            except json.JSONDecodeError:
+                return set()
             if issues is None:
                 return set()
-            return {str(item["id"]) for item in issues if "id" in item}
-        except json.JSONDecodeError:
-            return set()
+
+            for item in issues:
+                child_id = item.get("issue_id") or item.get("id")
+                if child_id is None:
+                    continue
+                child_id_str = str(child_id)
+                if child_id_str == epic_id:
+                    continue
+                if child_id_str in children:
+                    continue
+                children.add(child_id_str)
+                to_visit.append(child_id_str)
+
+        return children
 
     async def _sort_by_epic_groups(
         self, issues: Sequence[IssueRecord]
@@ -893,7 +929,7 @@ class BeadsClient:
 
                 # Cache for this issue only
                 # Note: We don't cache all children of the epic here because
-                # get_epic_children_async returns all descendants under --parent,
+                # get_epic_children_async returns descendants recursively,
                 # which would incorrectly cache nested epic children as belonging
                 # to the top-level epic.
                 self._parent_epic_cache[issue_id] = parent_epic
