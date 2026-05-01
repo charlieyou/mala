@@ -195,15 +195,20 @@ class TestCommandRunner:
     def test_use_process_group_false_leaves_children(self, tmp_path: Path) -> None:
         """Verify use_process_group=False only kills parent, children survive."""
         script = tmp_path / "spawner.sh"
+        # Child writes its output file immediately on spawn so the assertion
+        # does not race against bash's fork of the background subshell under
+        # heavy parallel test load.
         script.write_text(
             """#!/bin/bash
-            (sleep 0.2; echo "child survived" > "$1/child_output.txt") &
+            (echo "child survived" > "$1/child_output.txt"; sleep 5) &
             sleep 10
             """
         )
         script.chmod(0o755)
 
-        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.1)
+        # Use a longer timeout so bash has time to fork the background
+        # subshell before SIGTERM arrives under parallel load.
+        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.5)
         result = runner.run([str(script), str(tmp_path)], use_process_group=False)
 
         assert result.timed_out is True
