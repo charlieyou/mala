@@ -64,15 +64,13 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from src.infra.clients.amp_plugin_installer import AmpPluginInstaller
 from src.infra.tools.locking import lock_path, try_lock
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
@@ -384,14 +382,30 @@ def _edit_prompt(target: Path, body: str = "edited") -> str:
     minimum information to call ``edit_file`` directly without preamble.
     Phrased as a tool-call instruction (path, contents, terminate) to
     minimize the probability of routing through Bash/heredoc.
+
+    The path-shape label (``absolute path`` vs ``relative path``) is
+    derived from ``target`` so the path-canonicalization-parity test can
+    feed a genuinely relative ``Path`` and have the prompt instruct the
+    model to keep the relative form. Hard-coding ``absolute path`` would
+    nudge the model to convert relative inputs to absolute and defeat
+    the parity coverage.
     """
+    if target.is_absolute():
+        path_label = "absolute path"
+        path_note = ""
+    else:
+        path_label = "relative path"
+        path_note = (
+            " Pass exactly the relative string above to edit_file's path "
+            "argument; do not convert it to an absolute path."
+        )
     return (
-        f"Use the edit_file tool to overwrite the file at the absolute path "
+        f"Use the edit_file tool to overwrite the file at the {path_label} "
         f"{target} so that its entire contents become the single line:\n"
         f"{body}\n"
-        "Make exactly one edit_file tool call. Do not run any other tools "
-        "(no Bash, no read_file, no grep). After the tool call returns, "
-        "reply with the single word done and stop."
+        f"Make exactly one edit_file tool call.{path_note} Do not run any "
+        "other tools (no Bash, no read_file, no grep). After the tool call "
+        "returns, reply with the single word done and stop."
     )
 
 
@@ -687,12 +701,15 @@ def test_path_canonicalization_parity(
         str(amp_env.repo_path),
     )
 
-    # The directive prompt always uses an absolute path because rush-mode
-    # models route relative paths inconsistently. The parity property we
-    # test is: the plugin canonicalizes the tool.call path the same way
-    # Python canonicalized the lock argument. Whether the prompt phrasing
-    # is relative or absolute, the canonical form is the same.
-    tool_target = abs_path if tool_via == "absolute" else amp_env.repo_path / rel_name
+    # The tool path shape must be genuinely relative for the relative
+    # branch — passing ``amp_env.repo_path / rel_name`` would yield an
+    # absolute Path (because ``repo_path`` is absolute) and collapse the
+    # parametrize axis. With ``Path(rel_name)`` plus ``cwd=repo_path`` on
+    # the spawned amp, the LLM forwards a relative string to
+    # ``edit_file``; the plugin then takes the relative-path branch in
+    # ``canonicalizePath`` (joins with ``MALA_REPO_NAMESPACE`` and
+    # realpaths) which is the parity surface this test guards.
+    tool_target = abs_path if tool_via == "absolute" else Path(rel_name)
 
     spawned_env = _build_amp_env(amp_env, agent_id=_DEFAULT_AGENT_ID)
     result = _run_amp(_edit_prompt(tool_target), spawned_env, amp_env.repo_path)
