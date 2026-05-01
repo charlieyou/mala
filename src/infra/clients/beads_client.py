@@ -97,6 +97,8 @@ class BeadsClient:
         self._blocked_epic_locks: dict[str, asyncio.Lock] = {}
         # Cache for epic priority lookups (epic_id -> priority)
         self._epic_priority_cache: dict[str, int] = {}
+        # Cache for br show lookups used while resolving parent epics
+        self._issue_metadata_cache: dict[str, dict[str, object] | None] = {}
 
     async def _run_subprocess_async(
         self,
@@ -140,6 +142,40 @@ class BeadsClient:
         return result
 
     # --- Async methods (non-blocking, use in async context) ---
+
+    async def _get_issue_metadata_async(
+        self, issue_id: str
+    ) -> dict[str, object] | None:
+        """Fetch issue metadata from br show with per-client caching."""
+        if issue_id in self._issue_metadata_cache:
+            return self._issue_metadata_cache[issue_id]
+
+        result = await self._run_subprocess_async(["br", "show", issue_id, "--json"])
+        if result.returncode != 0:
+            self._issue_metadata_cache[issue_id] = None
+            return None
+
+        try:
+            issue_data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            self._issue_metadata_cache[issue_id] = None
+            return None
+
+        if isinstance(issue_data, list) and issue_data:
+            issue_data = issue_data[0]
+        if not isinstance(issue_data, dict):
+            self._issue_metadata_cache[issue_id] = None
+            return None
+
+        metadata = {str(key): value for key, value in issue_data.items()}
+        self._issue_metadata_cache[issue_id] = metadata
+        return metadata
+
+    def _cache_epic_priority(self, epic_id: str, priority: object) -> None:
+        """Cache a parsed epic priority when br metadata provides one."""
+        if priority is None:
+            return
+        self._epic_priority_cache[epic_id] = IssueManager.parse_priority(priority)
 
     async def get_epic_children_async(self, epic_id: str) -> set[str]:
         """Get IDs of all children of an epic (async version).
@@ -872,8 +908,8 @@ class BeadsClient:
     async def get_parent_epic_async(self, issue_id: str) -> str | None:
         """Get the parent epic ID for an issue.
 
-        Uses `br dep tree <id>` to get the ancestor chain.
-        The parent epic is the first ancestor with issue_type == "epic".
+        Uses `br dep list <id> --direction down --type parent-child` to get the
+        issue's parent and walks upward until it finds an epic.
         Results are cached to avoid repeated subprocess calls.
 
         Args:
@@ -896,48 +932,71 @@ class BeadsClient:
             if issue_id in self._parent_epic_cache:
                 return self._parent_epic_cache[issue_id]
 
-            result = await self._run_subprocess_async(
-                ["br", "dep", "tree", issue_id, "--json"]
+            parent_epic = await self._resolve_parent_epic_async(issue_id, set())
+            self._parent_epic_cache[issue_id] = parent_epic
+            return parent_epic
+
+    async def _resolve_parent_epic_async(
+        self, issue_id: str, seen: set[str]
+    ) -> str | None:
+        """Resolve the nearest parent epic for an issue, guarding cycles."""
+        if issue_id in seen:
+            return None
+        seen.add(issue_id)
+
+        result = await self._run_subprocess_async(
+            [
+                "br",
+                "dep",
+                "list",
+                issue_id,
+                "--direction",
+                "down",
+                "--type",
+                "parent-child",
+                "--json",
+            ]
+        )
+        if result.returncode != 0:
+            self._log_warning(
+                f"br dep list --type parent-child failed for {issue_id}: {result.stderr}"
             )
-            if result.returncode != 0:
-                self._log_warning(f"br dep tree failed for {issue_id}: {result.stderr}")
-                self._parent_epic_cache[issue_id] = None
-                return None
-            try:
-                tree = json.loads(result.stdout)
-                # Find the first ancestor (depth > 0) with issue_type == "epic"
-                parent_epic: str | None = None
-                for item in tree:
-                    if item.get("depth", 0) > 0 and item.get("issue_type") == "epic":
-                        epic_id = item.get("id")
-                        if epic_id is None:
-                            continue  # Skip malformed item
-                        parent_epic = str(epic_id)
-                        # Cache epic priority for focus mode ordering
-                        # Priority may be int or "P1" string format
-                        epic_priority = item.get("priority")
-                        if epic_priority is not None:
-                            try:
-                                prio_str = str(epic_priority)
-                                # Handle "P1" format by stripping leading P
-                                if prio_str.upper().startswith("P"):
-                                    prio_str = prio_str[1:]
-                                self._epic_priority_cache[parent_epic] = int(prio_str)
-                            except (ValueError, IndexError):
-                                pass  # Skip if priority is unparseable
-                        break
+            return None
 
-                # Cache for this issue only
-                # Note: We don't cache all children of the epic here because
-                # get_epic_children_async returns descendants recursively,
-                # which would incorrectly cache nested epic children as belonging
-                # to the top-level epic.
-                self._parent_epic_cache[issue_id] = parent_epic
+        try:
+            dependencies = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(dependencies, list):
+            return None
 
-                return parent_epic
-            except json.JSONDecodeError:
-                self._parent_epic_cache[issue_id] = None
-                return None
+        for item in dependencies:
+            if not isinstance(item, dict):
+                continue
+
+            if item.get("type") == "parent-child":
+                parent_id = item.get("depends_on_id")
+                if parent_id is None:
+                    continue
+                parent_id = str(parent_id)
+                metadata = await self._get_issue_metadata_async(parent_id)
+                if metadata is None:
+                    return None
+                if metadata.get("issue_type") == "epic":
+                    self._cache_epic_priority(parent_id, metadata.get("priority"))
+                    return parent_id
+                return await self._resolve_parent_epic_async(parent_id, seen)
+
+            if item.get("depth", 0) > 0 and item.get("issue_type") == "epic":
+                # Accept the older dep-tree shape used by existing tests.
+                epic_id = item.get("id")
+                if epic_id is None:
+                    continue
+                epic_id = str(epic_id)
+                self._cache_epic_priority(epic_id, item.get("priority"))
+                return epic_id
+
+        return None
 
     async def get_parent_epics_async(
         self, issue_ids: list[str]

@@ -71,7 +71,7 @@ class TestGetParentEpicAsync:
 
     @pytest.mark.asyncio
     async def test_returns_none_on_bd_failure(self, tmp_path: Path) -> None:
-        """Should return None when bd dep tree fails."""
+        """Should return None when br dep list fails."""
         warnings: list[str] = []
         beads = BeadsClient(tmp_path, log_warning=warnings.append)
         with pytest.MonkeyPatch.context() as mp:
@@ -83,11 +83,11 @@ class TestGetParentEpicAsync:
 
         assert result is None
         assert len(warnings) == 1
-        assert "br dep tree failed" in warnings[0]
+        assert "br dep list --type parent-child failed" in warnings[0]
 
     @pytest.mark.asyncio
     async def test_returns_none_on_invalid_json(self, tmp_path: Path) -> None:
-        """Should return None when bd returns invalid JSON."""
+        """Should return None when br returns invalid JSON."""
         beads = BeadsClient(tmp_path)
         with pytest.MonkeyPatch.context() as mp:
             mock_run = AsyncMock(
@@ -123,6 +123,131 @@ class TestGetParentEpicAsync:
         )
         with pytest.MonkeyPatch.context() as mp:
             mock_run = AsyncMock(return_value=make_command_result(stdout=tree_json))
+            mp.setattr(beads, "_run_subprocess_async", mock_run)
+            result = await beads.get_parent_epic_async("task-1")
+
+        assert result == "epic-1"
+
+    @pytest.mark.asyncio
+    async def test_parent_lookup_uses_explicit_down_direction(
+        self, tmp_path: Path
+    ) -> None:
+        """Parent lookup should not depend on br's default dependency direction."""
+        beads = BeadsClient(tmp_path)
+        parent_deps = json.dumps(
+            [
+                {
+                    "issue_id": "task-1",
+                    "depends_on_id": "epic-1",
+                    "type": "parent-child",
+                },
+            ]
+        )
+        epic_metadata = json.dumps([{"id": "epic-1", "issue_type": "epic"}])
+
+        async def mock_run(cmd: list[str]) -> CommandResult:
+            if cmd == ["br", "show", "epic-1", "--json"]:
+                return make_command_result(stdout=epic_metadata)
+            return make_command_result(stdout=parent_deps)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mock_run_async = AsyncMock(side_effect=mock_run)
+            mp.setattr(beads, "_run_subprocess_async", mock_run_async)
+            result = await beads.get_parent_epic_async("task-1")
+
+        assert result == "epic-1"
+        commands = [call.args[0] for call in mock_run_async.await_args_list]
+        assert [
+            "br",
+            "dep",
+            "list",
+            "task-1",
+            "--direction",
+            "down",
+            "--type",
+            "parent-child",
+            "--json",
+        ] in commands
+
+    @pytest.mark.asyncio
+    async def test_uses_parent_metadata_for_epic_priority(
+        self, tmp_path: Path
+    ) -> None:
+        """Dependency rows expose child priority; epic priority comes from br show."""
+        beads = BeadsClient(tmp_path)
+        parent_deps = json.dumps(
+            [
+                {
+                    "issue_id": "task-1",
+                    "depends_on_id": "epic-1",
+                    "type": "parent-child",
+                    "priority": 4,
+                },
+            ]
+        )
+        epic_metadata = json.dumps(
+            [{"id": "epic-1", "issue_type": "epic", "priority": 1}]
+        )
+
+        async def mock_run(cmd: list[str]) -> CommandResult:
+            if cmd == ["br", "show", "epic-1", "--json"]:
+                return make_command_result(stdout=epic_metadata)
+            return make_command_result(stdout=parent_deps)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", mock_run)
+            result = await beads.get_parent_epic_async("task-1")
+
+        assert result == "epic-1"
+        assert beads._epic_priority_cache["epic-1"] == 1
+
+    @pytest.mark.asyncio
+    async def test_recurses_past_non_epic_parent_with_dep_list_shape(
+        self, tmp_path: Path
+    ) -> None:
+        """A non-epic parent-child parent should not be reported as the epic."""
+        beads = BeadsClient(tmp_path)
+
+        async def mock_run(cmd: list[str]) -> CommandResult:
+            if cmd[:4] == ["br", "dep", "list", "task-1"]:
+                return make_command_result(
+                    stdout=json.dumps(
+                        [
+                            {
+                                "issue_id": "task-1",
+                                "depends_on_id": "task-parent",
+                                "type": "parent-child",
+                            }
+                        ]
+                    )
+                )
+            if cmd == ["br", "show", "task-parent", "--json"]:
+                return make_command_result(
+                    stdout=json.dumps(
+                        [{"id": "task-parent", "issue_type": "task", "priority": 2}]
+                    )
+                )
+            if cmd[:4] == ["br", "dep", "list", "task-parent"]:
+                return make_command_result(
+                    stdout=json.dumps(
+                        [
+                            {
+                                "issue_id": "task-parent",
+                                "depends_on_id": "epic-1",
+                                "type": "parent-child",
+                            }
+                        ]
+                    )
+                )
+            if cmd == ["br", "show", "epic-1", "--json"]:
+                return make_command_result(
+                    stdout=json.dumps(
+                        [{"id": "epic-1", "issue_type": "epic", "priority": 1}]
+                    )
+                )
+            return make_command_result(stdout="[]")
+
+        with pytest.MonkeyPatch.context() as mp:
             mp.setattr(beads, "_run_subprocess_async", mock_run)
             result = await beads.get_parent_epic_async("task-1")
 
