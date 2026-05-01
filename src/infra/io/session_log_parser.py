@@ -439,6 +439,22 @@ class FileSystemLogProvider:
             self._parser.iter_jsonl_entries(log_path, offset),
         )
 
+    def iter_thread_events(
+        self, log_path: Path, offset: int = 0
+    ) -> Iterator[JsonlEntryProtocol]:
+        """Cross-attempt evidence-presence read for the Claude path.
+
+        Claude SDK writes a fresh log file per session, so per-attempt
+        offset scoping (the existing :meth:`iter_events` semantic) is
+        correct for evidence parsing too — there is no cross-invocation
+        log file to stitch. Delegates to :meth:`iter_events` unchanged.
+
+        See :class:`src.core.protocols.log.LogProvider.iter_thread_events`
+        for the protocol-level rationale and the contrast with the Amp
+        path's per-thread log file.
+        """
+        return self.iter_events(log_path, offset)
+
     def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
         """Get the byte offset at the end of a log file.
 

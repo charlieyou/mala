@@ -348,50 +348,90 @@ def test_iter_events_reads_across_two_invocations(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_iter_events_ignores_caller_offset_so_resume_evidence_persists(
+def test_iter_events_honors_caller_offset_for_resolution_scoping(
     tmp_path: Path,
 ) -> None:
-    """Regression for cross-resume offset skip (P1 finding).
+    """``iter_events`` honors caller offset (resolution-marker scoping).
 
-    The gate retry path advances ``retry_state.log_offset`` to the end of
-    the previous attempt and passes it back into ``iter_events``. For
-    Claude that scopes correctly to the current session because each
-    session has its own log file. For Amp, all invocations of one thread
-    append to the same file, so honoring the offset would silently drop
-    invocation 1's lint/test/typecheck Bash events on resume — exactly
-    what AC#7a requires to remain visible. ``AmpLogProvider.iter_events``
-    therefore ignores the caller-supplied offset and reads from byte 0.
+    The gate's resolution-marker parser passes
+    ``retry_state.log_offset`` so that a stale ``ISSUE_*`` marker
+    emitted in invocation 1 (and rejected by the gate) does not
+    override the latest invocation's decision on retry. This is the
+    standard ``LogProvider.iter_events`` contract; AmpLogProvider
+    matches FileSystemLogProvider here.
+
+    For cross-invocation evidence-persistence reads the caller must
+    use :meth:`AmpLogProvider.iter_thread_events`; that case is
+    covered separately in
+    ``test_iter_thread_events_ignores_caller_offset_for_evidence``.
     """
-    log_path = tmp_path / "T-offset-skip.jsonl"
+    log_path = tmp_path / "T-offset-honor.jsonl"
 
     invocation_1 = [
-        _system_init("T-offset-skip"),
+        _system_init("T-offset-honor"),
+        _assistant_bash("v1", "uv run pytest -q"),
+        _user_tool_result("v1", "1 passed"),
+        _result("T-offset-honor"),
+    ]
+    _write_jsonl(log_path, invocation_1)
+    end_of_invocation_1 = log_path.stat().st_size
+
+    invocation_2 = [
+        _assistant_bash("w1", "echo continuing"),
+        _user_tool_result("w1", "continuing"),
+        _result("T-offset-honor"),
+    ]
+    _append_jsonl(log_path, invocation_2)
+
+    provider = AmpLogProvider(native_dir=tmp_path)
+
+    entries = list(provider.iter_events(log_path, offset=end_of_invocation_1))
+    commands = [
+        cmd for e in entries for (_id, cmd) in provider.extract_bash_commands(e)
+    ]
+
+    assert "uv run pytest -q" not in commands
+    assert "echo continuing" in commands
+
+
+@pytest.mark.unit
+def test_iter_thread_events_ignores_caller_offset_for_evidence(
+    tmp_path: Path,
+) -> None:
+    """Regression for cross-resume evidence persistence (AC#7a).
+
+    Validation-evidence parsing calls
+    :meth:`LogProvider.iter_thread_events`, which on Amp ignores the
+    caller-supplied offset and reads from byte 0. Without this, the
+    gate retry path's advanced ``retry_state.log_offset`` would skip
+    invocation 1's lint/test/typecheck Bash events when invocation 2
+    appends to the same per-thread file.
+    """
+    log_path = tmp_path / "T-thread-evidence.jsonl"
+
+    invocation_1 = [
+        _system_init("T-thread-evidence"),
         _assistant_bash("v1", "uv run pytest -q"),
         _user_tool_result("v1", "1 passed"),
         _assistant_bash("v2", "uvx ruff check ."),
         _user_tool_result("v2", "ok"),
         _assistant_bash("v3", "uvx ty check"),
         _user_tool_result("v3", "Success"),
-        _result("T-offset-skip"),
+        _result("T-thread-evidence"),
     ]
     _write_jsonl(log_path, invocation_1)
-
-    # Caller advances offset to end of invocation 1 (the realistic
-    # post-attempt-1 retry_state.log_offset).
     end_of_invocation_1 = log_path.stat().st_size
 
     invocation_2 = [
         _assistant_bash("w1", "echo continuing"),
         _user_tool_result("w1", "continuing"),
-        _result("T-offset-skip"),
+        _result("T-thread-evidence"),
     ]
     _append_jsonl(log_path, invocation_2)
 
     provider = AmpLogProvider(native_dir=tmp_path)
 
-    # Caller passes the stale offset; provider must still surface
-    # invocation 1 events.
-    entries = list(provider.iter_events(log_path, offset=end_of_invocation_1))
+    entries = list(provider.iter_thread_events(log_path, offset=end_of_invocation_1))
     commands = [
         cmd for e in entries for (_id, cmd) in provider.extract_bash_commands(e)
     ]

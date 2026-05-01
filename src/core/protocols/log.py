@@ -93,6 +93,42 @@ class LogProvider(Protocol):
         """
         ...
 
+    def iter_thread_events(
+        self, log_path: Path, offset: int = 0
+    ) -> Iterator[JsonlEntryProtocol]:
+        """Iterate entries for cross-attempt evidence-presence reads.
+
+        Behaves like :meth:`iter_events` for providers whose log files are
+        per-session (e.g., :class:`FileSystemLogProvider`): the supplied
+        ``offset`` scopes the read to the current attempt window.
+
+        Providers whose log files span multiple invocations of the same
+        thread (e.g., :class:`AmpLogProvider`, where every resume appends
+        to the same ``{thread_id}.jsonl``) MUST ignore ``offset`` and read
+        from byte 0 so cross-invocation validation evidence (Bash
+        ``tool_use`` events for lint / test / typecheck) remains
+        observable to validation gates after a resume — even when the
+        caller has advanced ``retry_state.log_offset`` past invocation 1.
+
+        This method is intentionally distinct from :meth:`iter_events`
+        because resolution-marker parsing on the same log file *does*
+        need offset scoping (so a stale resolution from an earlier
+        invocation does not override the current attempt's decision).
+        Validation-evidence parsing uses this method; resolution-marker
+        parsing uses :meth:`iter_events`.
+
+        Args:
+            log_path: Path to the JSONL log file.
+            offset: Byte offset to start reading from. Honored on
+                providers with per-session log files; ignored on
+                providers with per-thread (multi-invocation) log files.
+
+        Yields:
+            JsonlEntryProtocol objects for each successfully parsed JSON
+            line.
+        """
+        ...
+
     def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
         """Get the byte offset at the end of a log file.
 

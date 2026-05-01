@@ -178,30 +178,26 @@ class AmpLogProvider:
     def iter_events(
         self, log_path: Path, offset: int = 0
     ) -> Iterator[JsonlEntryProtocol]:
-        """Yield parsed JSONL entries from ``log_path``.
+        """Yield parsed JSONL entries from ``log_path`` starting at ``offset``.
+
+        Honors the caller-supplied ``offset`` — this is the protocol
+        contract (matches :class:`FileSystemLogProvider`) and is what
+        resolution-marker parsing depends on: when invocation 1 emitted
+        a stale ``ISSUE_*`` marker that the gate rejected, the next gate
+        replay must be scoped to events after that point so the new
+        invocation's decision wins.
+
+        For cross-invocation validation-evidence reads (AC#7a — Bash
+        ``tool_use`` events from invocation 1 must remain visible after
+        invocation 2 appends to the same thread file) callers must use
+        :meth:`iter_thread_events`, which ignores offset on this
+        provider and re-reads the full thread file.
 
         Tolerance contract (plan ``L675-L676``):
           * Missing file → empty iterator (no raise).
           * Malformed JSON line → skip with warn-level log; do not raise.
           * Bad UTF-8 → skip silently (matches FileSystemLogProvider).
-
-        Always reads from byte 0 — the caller-supplied ``offset`` is
-        intentionally ignored on the Amp path. Rationale (AC#7a): unlike
-        the Claude path where each session has its own log file (so an
-        offset advanced past the previous attempt scopes correctly to
-        the current session), Amp tees every invocation of the same
-        thread (initial run + resumes) into one append-only file. A
-        caller that advances ``offset`` after a gate failure and replays
-        the read on resume would silently drop invocation 1's lint /
-        test / typecheck Bash ``tool_use`` events, even though they are
-        still on disk. AmpLogProvider therefore treats the per-thread
-        tee as the source of truth for the entire thread's history and
-        re-parses from the beginning on every call. Validation gates
-        match evidence by presence, so re-emitting earlier events is
-        idempotent for them.
         """
-        del offset  # see docstring rationale.
-
         if not log_path.exists():
             return
 
@@ -212,7 +208,8 @@ class AmpLogProvider:
             return
 
         with f:
-            current_offset = 0
+            f.seek(offset)
+            current_offset = offset
             for line_bytes in f:
                 line_len = len(line_bytes)
                 line_offset = current_offset
@@ -250,6 +247,28 @@ class AmpLogProvider:
                         offset=line_offset,
                     ),
                 )
+
+    def iter_thread_events(
+        self, log_path: Path, offset: int = 0
+    ) -> Iterator[JsonlEntryProtocol]:
+        """Cross-invocation evidence read; ignores ``offset`` on Amp.
+
+        AC#7a contract: when validation-evidence parsing replays the
+        thread file after an Amp resume, Bash ``tool_use`` events from
+        invocation 1 (lint / test / typecheck) MUST remain visible —
+        the gate path advances ``retry_state.log_offset`` to EOF after
+        each attempt, but the per-thread tee is append-only across
+        every ``amp --execute`` for the same thread, so honoring that
+        offset would silently drop invocation 1's evidence.
+
+        This method ignores ``offset`` and re-reads from byte 0. The
+        caller (:meth:`EvidenceCheck.parse_validation_evidence_with_spec`)
+        uses this for validation-evidence presence detection;
+        resolution-marker parsing keeps using :meth:`iter_events` so the
+        offset still scopes resolution decisions to the latest attempt.
+        """
+        del offset  # see docstring rationale.
+        return self.iter_events(log_path, 0)
 
     def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
         """Return the byte offset at the end of ``log_path``.

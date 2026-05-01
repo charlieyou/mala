@@ -554,7 +554,7 @@ class EvidenceCheck:
         # None means no terminal marker seen yet
         custom_marker_state: dict[str, tuple[bool, str | None]] = {}
 
-        for entry in self._iter_jsonl_entries(log_path, offset):
+        for entry in self._log_provider.iter_thread_events(log_path, offset):
             for tool_id, command in self._log_provider.extract_bash_commands(entry):
                 matched_kinds = self._match_spec_pattern_with_kinds(
                     command, evidence, kind_patterns

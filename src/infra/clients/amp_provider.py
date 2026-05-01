@@ -146,6 +146,11 @@ class _StubAmpLogProvider:
             "AmpLogProvider.iter_events() is not implemented yet (see T010)."
         )
 
+    def iter_thread_events(self, session_id: str) -> object:
+        raise NotImplementedError(
+            "AmpLogProvider.iter_thread_events() is not implemented yet (see T010)."
+        )
+
 
 class AmpAgentProvider:
     """Stub :class:`AgentProvider` for Amp.

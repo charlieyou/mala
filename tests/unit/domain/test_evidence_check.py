@@ -4381,6 +4381,11 @@ class TestLogProviderInjection:
             ) -> Iterator[JsonlEntry]:
                 yield from self._entries
 
+            def iter_thread_events(
+                self, log_path: Path, offset: int = 0
+            ) -> Iterator[JsonlEntry]:
+                yield from self._entries
+
             def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
                 return 100  # Synthetic offset
 
@@ -4481,6 +4486,11 @@ class TestLogProviderInjection:
                 return repo_path / f"{session_id}.jsonl"
 
             def iter_events(
+                self, log_path: Path, offset: int = 0
+            ) -> Iterator[JsonlEntry]:
+                return iter([])
+
+            def iter_thread_events(
                 self, log_path: Path, offset: int = 0
             ) -> Iterator[JsonlEntry]:
                 return iter([])

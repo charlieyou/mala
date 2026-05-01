@@ -2234,6 +2234,11 @@ def _make_mock_log_provider(log_file: Path) -> object:
         def iter_events(self, log_path: Path, offset: int = 0) -> Iterator[JsonlEntry]:
             return iter([])
 
+        def iter_thread_events(
+            self, log_path: Path, offset: int = 0
+        ) -> Iterator[JsonlEntry]:
+            return iter([])
+
         def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
             return log_path.stat().st_size if log_path.exists() else start_offset
 

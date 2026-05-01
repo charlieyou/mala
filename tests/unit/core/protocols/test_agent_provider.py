@@ -70,6 +70,11 @@ class _StubLogProvider:
     ) -> Iterator[JsonlEntryProtocol]:
         return iter(())
 
+    def iter_thread_events(
+        self, log_path: Path, offset: int = 0
+    ) -> Iterator[JsonlEntryProtocol]:
+        return iter(())
+
     def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
         return start_offset
 
