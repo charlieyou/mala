@@ -26,7 +26,7 @@ Tests require 72% minimum coverage (enforced via `--cov-fail-under=72`):
 uv run pytest                              # Unit + integration tests (default, excludes e2e, no coverage)
 uv run pytest -m unit                      # Unit tests only
 uv run pytest -m integration -n auto       # Integration tests in parallel
-uv run pytest -m e2e                       # End-to-end tests (requires CLI auth)
+uv run pytest -m e2e                       # End-to-end tests (requires real CLI prerequisites)
 uv run pytest -m "unit or integration or e2e"  # All tests
 uv run pytest --reruns 2                   # Auto-retry flaky tests (2 retries)
 uv run pytest -m integration -n auto --reruns 2   # Parallel + auto-retry
@@ -110,7 +110,7 @@ return early if no setup is needed.
 **Tests:** add unit tests for the client, runtime builder, and log provider
 (see `tests/unit/infra/clients/test_amp_*`). Add a fake-binary integration
 test on `PATH` (`tests/integration/test_amp_provider.py` is the template).
-A real-CLI smoke job is recommended for any provider whose stream format is
+A real-CLI e2e test is recommended for any provider whose stream format is
 upstream and may drift.
 
 ## Amp Plugin Development
@@ -134,8 +134,7 @@ changes"). Plugin files must start with the verbatim acknowledgment header:
 This line **must be preserved character-for-character** through any installer
 or packaging step. The installer (`AmpPluginInstaller`) ships the `.ts` file
 unchanged; tests assert the header in
-`tests/unit/infra/clients/test_amp_plugin_installer.py` and in the CI smoke
-job.
+`tests/unit/infra/clients/test_amp_plugin_installer.py`.
 
 The plugin API only loads under:
 
@@ -161,13 +160,13 @@ from `~/.config/amp/plugins/mala-safety/`.
 
 ### Spiking Upstream Changes
 
-When the upstream Amp plugin API changes (it will), the path-gated CI smoke
-job (`tests/smoke/test_amp_real_cli.py`) catches drift on a real Amp install.
-To spike a fix locally:
+When the upstream Amp plugin API changes (it will), the real-Amp e2e test
+(`tests/e2e/test_amp_real_cli.py`) catches stream-json drift on a real Amp
+install. To spike a fix locally:
 
 1. Bump the pinned Amp CLI version in your local install.
-2. Run the smoke job locally with `AMP_API_KEY` set:
-   `uv run pytest -m smoke tests/smoke/test_amp_real_cli.py`.
+2. Run the e2e check locally:
+   `uv run pytest -m e2e tests/e2e/test_amp_real_cli.py`.
 3. Update `mala-safety.ts` and adjust the matching Python mirrors in
    `src/infra/hooks/dangerous_commands.py` /
    `src/infra/hooks/file_cache.py` in the **same commit**. The lock-file

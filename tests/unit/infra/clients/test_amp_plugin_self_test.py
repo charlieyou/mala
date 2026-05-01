@@ -69,7 +69,7 @@ def repo_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def amp_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Redirect plugin install dir + AMP_API_KEY for the duration of a test.
+    """Redirect plugin install dir for the duration of a test.
 
     Returns the ``bin/`` directory the test should drop a fake ``amp``
     into; PATH is updated to include it.
@@ -87,7 +87,6 @@ def amp_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
-    monkeypatch.setenv("AMP_API_KEY", "fake-key")
     monkeypatch.delenv("MALA_DISALLOWED_TOOLS", raising=False)
     return bin_dir
 
@@ -127,6 +126,37 @@ def test_pass_case_fake_amp_emits_matching_sentinel(
     )
     provider = AmpAgentProvider()
     # No exception means pass.
+    provider.install_prerequisites(repo_path, mcp_server_factory=fake_mcp_factory)
+
+
+@pytest.mark.unit
+def test_pass_case_fake_amp_emits_matching_sentinel_in_debug_log(
+    amp_env: Path,
+    repo_path: Path,
+    fake_mcp_factory: Callable[..., dict[str, object]],
+) -> None:
+    """Current Amp routes plugin stderr through the CLI debug log."""
+    plugin_hash = _expected_plugin_hash()
+    body = (
+        "#!/usr/bin/env bash\n"
+        "log_file=''\n"
+        "while [ $# -gt 0 ]; do\n"
+        '  case "$1" in\n'
+        '    --log-file) log_file="$2"; shift 2 ;;\n'
+        "    *) shift ;;\n"
+        "  esac\n"
+        "done\n"
+        'if [ -n "$log_file" ]; then\n'
+        '  mkdir -p "$(dirname "$log_file")"\n'
+        "  cat > \"$log_file\" <<'LOG'\n"
+        f'{{"message":"Plugin stderr","data":"{{\\"mala_plugin\\":\\"loaded\\",\\"version\\":\\"{plugin_hash}\\"}}\\n"}}\n'
+        "LOG\n"
+        "fi\n"
+        "sleep 5\n"
+    )
+    _write_fake_amp(amp_env, body)
+
+    provider = AmpAgentProvider()
     provider.install_prerequisites(repo_path, mcp_server_factory=fake_mcp_factory)
 
 
@@ -260,7 +290,6 @@ def test_fail_closed_amp_binary_missing(
     empty = tmp_path / "empty-bin"
     empty.mkdir()
     monkeypatch.setenv("PATH", str(empty))
-    monkeypatch.setenv("AMP_API_KEY", "fake-key")
 
     provider = AmpAgentProvider()
     with pytest.raises(AmpPluginNotActiveError) as excinfo:

@@ -209,8 +209,8 @@ mala run --coder amp --amp-mode rush /path/to/repo
 MALA_CODER=amp MALA_AMP_MODE=deep mala run /path/to/repo
 ```
 
-**Amp prerequisites:** binary install (npm install is unsupported), `AMP_API_KEY`,
-Bun runtime via the Amp binary, writable `~/.config/amp/plugins/`. See the
+**Amp prerequisites:** binary install (npm install is unsupported), Bun runtime
+via the Amp binary, writable `~/.config/amp/plugins/`. See the
 [Amp prerequisites in README](../README.md#amp-optional-for-coder-amp).
 
 ## Global Configuration
@@ -239,7 +239,6 @@ Precedence: CLI flags override global config, which overrides program defaults.
 | `MALA_CLAUDE_SETTINGS_SOURCES` | `local,project` | Comma-separated Claude settings sources |
 | `MALA_CODER` | `claude` | Coder backend: `claude` or `amp`. Overridden by `--coder`; falls back to `coder:` in `mala.yaml`. |
 | `MALA_AMP_MODE` | `smart` | Amp execution mode: `smart`, `rush`, or `deep`. Overridden by `--amp-mode`; falls back to `coder_options.amp.mode`. Only consulted when coder is `amp`. |
-| `AMP_API_KEY` | - | Required when `coder=amp`. Passed through to the spawned `amp` subprocess. |
 
 ### Epic Verification
 

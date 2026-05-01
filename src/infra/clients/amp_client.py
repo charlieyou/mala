@@ -69,7 +69,6 @@ _DEFAULT_KILL_GRACE_SECONDS = 2.0
 """Seconds between SIGTERM and SIGKILL during ``__aexit__`` cleanup."""
 
 _AUTH_ERROR_MARKERS: tuple[str, ...] = (
-    "AMP_API_KEY",
     "unauthorized",
     "401",
     "forbidden",

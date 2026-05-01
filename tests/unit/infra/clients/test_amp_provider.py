@@ -233,7 +233,6 @@ def test_install_prerequisites_is_idempotent_within_a_run(
     plugin_hash = AmpPluginInstaller().installed_plugin_hash()
     bin_dir = tmp_path / "bin"
     _install_fake_amp_emitting_sentinel(bin_dir, monkeypatch, plugin_hash=plugin_hash)
-    monkeypatch.setenv("AMP_API_KEY", "fake-key")
 
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
@@ -283,7 +282,6 @@ def test_install_prerequisites_raises_when_sentinel_absent(
     fake_amp.write_text("#!/usr/bin/env bash\nexit 0\n")
     fake_amp.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin")
-    monkeypatch.setenv("AMP_API_KEY", "fake-key")
 
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
@@ -328,7 +326,6 @@ def test_mala_disallowed_tools_emits_warning_when_set(
     plugin_hash = AmpPluginInstaller().installed_plugin_hash()
     bin_dir = tmp_path / "bin"
     _install_fake_amp_emitting_sentinel(bin_dir, monkeypatch, plugin_hash=plugin_hash)
-    monkeypatch.setenv("AMP_API_KEY", "fake-key")
     monkeypatch.setenv("MALA_DISALLOWED_TOOLS", "Bash,Edit")
 
     repo_path = tmp_path / "repo"
@@ -381,7 +378,6 @@ def test_mala_disallowed_tools_warning_not_repeated_on_second_call(
     plugin_hash = AmpPluginInstaller().installed_plugin_hash()
     bin_dir = tmp_path / "bin"
     _install_fake_amp_emitting_sentinel(bin_dir, monkeypatch, plugin_hash=plugin_hash)
-    monkeypatch.setenv("AMP_API_KEY", "fake-key")
     monkeypatch.setenv("MALA_DISALLOWED_TOOLS", "Bash")
 
     repo_path = tmp_path / "repo"
@@ -425,7 +421,6 @@ def test_mala_disallowed_tools_no_warning_when_unset(
     plugin_hash = AmpPluginInstaller().installed_plugin_hash()
     bin_dir = tmp_path / "bin"
     _install_fake_amp_emitting_sentinel(bin_dir, monkeypatch, plugin_hash=plugin_hash)
-    monkeypatch.setenv("AMP_API_KEY", "fake-key")
     monkeypatch.delenv("MALA_DISALLOWED_TOOLS", raising=False)
 
     repo_path = tmp_path / "repo"

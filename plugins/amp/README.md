@@ -82,7 +82,7 @@ the exact verbatim acknowledgment header:
 This line is the first line of `mala-safety.ts` and **must be preserved
 character-for-character** through any installer / packaging step. Tests
 asserting this header live in `tests/unit/infra/clients/test_amp_plugin_installer.py`
-(T010) and in the CI smoke job.
+(T010).
 
 ## Sentinel marker (loaded-proof)
 

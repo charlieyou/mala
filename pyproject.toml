@@ -1,6 +1,6 @@
 [project]
 name = "mala-agent"
-version = "1.1.6"
+version = "1.2.0"
 description = "Agent SDK orchestrator for parallel issue processing"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -126,8 +126,8 @@ addopts = "--strict-markers -m 'unit or integration' -q --tb=short --no-header -
 markers = [
     "unit: fast, isolated tests (default)",
     "integration: tests that exercise multiple components or real tools locally",
-    "e2e: end-to-end tests that require real CLI/API auth",
-    "smoke: path-gated CI smoke tests that call real upstream CLIs (gated on credentials)",
+    "e2e: end-to-end tests that require real CLI prerequisites",
+    "smoke: path-gated CI smoke tests that call real upstream CLIs",
     "flaky_sdk: SDK tests that depend on LLM behavior and may be flaky (reruns up to 2 times)",
 ]
 

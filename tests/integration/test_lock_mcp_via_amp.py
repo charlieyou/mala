@@ -18,15 +18,15 @@ end-to-end leg of AC#9a.
 
 Gating
 ------
-Identical AMP_API_KEY + ``amp``-on-PATH gates as
-``test_amp_lock_enforcement.py``. Additionally, the test requires a
-real **stdio** locking MCP launcher reachable via ``amp --mcp-config``.
-The MVP locking server (``src/infra/tools/locking_mcp.py``) is built on
-the Claude Agent SDK's in-process server and has no standalone stdio
-entry point yet — plan L702 tracks that work as part of the real-Amp
-lock-enforcement effort. Until a stdio launcher exists, this test skips
-with a clear reference to the missing piece. The skip ensures the test
-remains a regression guard the moment the launcher lands.
+Identical ``amp``-on-PATH gate to ``test_amp_lock_enforcement.py``.
+Additionally, the test requires a real **stdio** locking MCP launcher
+reachable via ``amp --mcp-config``. The MVP locking server
+(``src/infra/tools/locking_mcp.py``) is built on the Claude Agent SDK's
+in-process server and has no standalone stdio entry point yet — plan
+L702 tracks that work as part of the real-Amp lock-enforcement effort.
+Until a stdio launcher exists, this test skips with a clear reference to
+the missing piece. The skip ensures the test remains a regression guard
+the moment the launcher lands.
 
 Why a placeholder factory is not enough
 ---------------------------------------
@@ -46,14 +46,12 @@ import shutil
 import subprocess
 import sys
 import dataclasses
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from src.infra.clients.amp_plugin_installer import AmpPluginInstaller
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
@@ -62,11 +60,8 @@ if TYPE_CHECKING:
 
 _AMP_BINARY_REASON = (
     "amp binary not on PATH; coder=amp requires the official binary install. "
-    "Plan L763-L770 gates this module on the same conditions as the smoke job."
-)
-_AMP_API_KEY_REASON = (
-    "AMP_API_KEY not set; plan L763-L770 gates this module on the same "
-    "AMP_API_KEY secret as the smoke job."
+    "This real-Amp integration module is skipped unless local prerequisites "
+    "are present."
 )
 
 
@@ -101,10 +96,6 @@ _STDIO_LAUNCHER_REASON = (
 pytestmark = [
     pytest.mark.skipif(shutil.which("amp") is None, reason=_AMP_BINARY_REASON),
     pytest.mark.skipif(
-        not os.environ.get("AMP_API_KEY"),
-        reason=_AMP_API_KEY_REASON,
-    ),
-    pytest.mark.skipif(
         not _has_stdio_locking_launcher(),
         reason=_STDIO_LAUNCHER_REASON,
     ),
@@ -132,6 +123,30 @@ class AmpMcpEnv:
     repo_path: Path
 
 
+def _copy_amp_login_state(home: Path) -> None:
+    """Copy the current Amp CLI login state into a synthetic ``HOME``.
+
+    The tests redirect ``HOME`` so Amp loads the test-installed plugin from a
+    temp directory. Current Amp stores login state under ``~/.local/share/amp``;
+    without copying that state, real Amp prompts for login before plugins load.
+    """
+    real_home = Path.home()
+
+    real_settings = real_home / ".config" / "amp" / "settings.json"
+    if real_settings.exists():
+        target_settings = home / ".config" / "amp" / "settings.json"
+        target_settings.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(real_settings, target_settings)
+
+    real_data_dir = real_home / ".local" / "share" / "amp"
+    target_data_dir = home / ".local" / "share" / "amp"
+    target_data_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("session.json", "secrets.json", "device-id.json"):
+        source = real_data_dir / name
+        if source.exists():
+            shutil.copy2(source, target_data_dir / name)
+
+
 @pytest.fixture
 def amp_mcp_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AmpMcpEnv:
     """Fresh per-test plugin install + lock dir + repo namespace.
@@ -141,6 +156,7 @@ def amp_mcp_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AmpMcpEnv:
     fixtures tie the test files together.
     """
     home = tmp_path / "home"
+    _copy_amp_login_state(home)
     plugin_dir = home / ".config" / "amp" / "plugins"
     AmpPluginInstaller().install(target_dir=plugin_dir)
 
@@ -183,9 +199,9 @@ def _resolve_stdio_launcher() -> str:
 def _build_mcp_config(env: AmpMcpEnv) -> str:
     """Construct the ``--mcp-config`` JSON payload for Amp.
 
-    Uses the same envelope shape Amp expects (``{"mcpServers": {...}}``)
-    that :class:`src.infra.clients.amp_runtime.AmpRuntimeBuilder` builds
-    in production — see ``amp_runtime.py:243-249`` for the reference.
+    Uses the same direct server-map shape Amp expects on the CLI and that
+    :class:`src.infra.clients.amp_runtime.AmpRuntimeBuilder` builds in
+    production.
 
     The launcher is invoked with the agent id and repo namespace it
     needs to compute lock keys identically to the in-test Python
@@ -193,21 +209,19 @@ def _build_mcp_config(env: AmpMcpEnv) -> str:
     """
     launcher = _resolve_stdio_launcher()
     payload = {
-        "mcpServers": {
-            "mala-locking": {
-                "command": launcher,
-                "args": [
-                    "--agent-id",
-                    _AGENT_ID,
-                    "--repo-namespace",
-                    str(env.repo_path),
-                ],
-                "env": {
-                    "MALA_LOCK_DIR": str(env.lock_dir),
-                    "MALA_AGENT_ID": _AGENT_ID,
-                    "MALA_REPO_NAMESPACE": str(env.repo_path),
-                },
-            }
+        "mala-locking": {
+            "command": launcher,
+            "args": [
+                "--agent-id",
+                _AGENT_ID,
+                "--repo-namespace",
+                str(env.repo_path),
+            ],
+            "env": {
+                "MALA_LOCK_DIR": str(env.lock_dir),
+                "MALA_AGENT_ID": _AGENT_ID,
+                "MALA_REPO_NAMESPACE": str(env.repo_path),
+            },
         }
     }
     return json.dumps(payload)
@@ -221,8 +235,14 @@ class AmpResult:
 
     @property
     def sentinel_loaded(self) -> bool:
-        return ('"mala_plugin":"loaded"' in self.stderr_text) or (
-            '"mala_plugin": "loaded"' in self.stderr_text
+        return any(
+            marker in self.stderr_text
+            for marker in (
+                '"mala_plugin":"loaded"',
+                '"mala_plugin": "loaded"',
+                '\\"mala_plugin\\":\\"loaded\\"',
+                '\\"mala_plugin\\": \\"loaded\\"',
+            )
         )
 
 
@@ -245,11 +265,20 @@ def _run_amp_with_mcp(
     *,
     timeout: float = _AMP_TIMEOUT_SECONDS,
 ) -> AmpResult:
+    log_path = cwd.parent / "amp-mcp-cli.log"
+    try:
+        log_path.unlink(missing_ok=True)
+    except OSError:
+        pass
     argv = [
         "amp",
         "--execute",
         "--stream-json",
         "--dangerously-allow-all",
+        "--log-level",
+        "debug",
+        "--log-file",
+        str(log_path),
         "--mcp-config",
         mcp_config_json,
         "--mode",
@@ -270,6 +299,10 @@ def _run_amp_with_mcp(
         print(
             f"[amp-mcp] stderr (truncated):\n{completed.stderr[:2048]}", file=sys.stderr
         )
+    try:
+        plugin_log_text = log_path.read_text(errors="replace")
+    except OSError:
+        plugin_log_text = ""
 
     events: list[dict[str, Any]] = []
     for raw_line in (completed.stdout or "").splitlines():
@@ -285,7 +318,9 @@ def _run_amp_with_mcp(
     return AmpResult(
         returncode=completed.returncode,
         events=events,
-        stderr_text=completed.stderr or "",
+        stderr_text="\n".join(
+            part for part in (completed.stderr or "", plugin_log_text) if part
+        ),
     )
 
 

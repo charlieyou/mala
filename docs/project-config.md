@@ -579,11 +579,10 @@ starts:
 ### Amp Prerequisites
 
 Selecting `coder: amp` requires the official Amp **binary** install, a working
-Bun runtime, `AMP_API_KEY` in env, and a writable `~/.config/amp/plugins/`. The
-npm-distributed Amp is **unsupported** and will fail mala's runtime plugin
-self-test before any issue agent runs. See the
-[Amp prerequisites in README](../README.md#amp-optional-for-coder-amp) for the
-full list.
+Bun runtime, and a writable `~/.config/amp/plugins/`. The npm-distributed Amp
+is **unsupported** and will fail mala's runtime plugin self-test before any
+issue agent runs. See the [Amp prerequisites in README](../README.md#amp-optional-for-coder-amp)
+for the full list.
 
 ### Example
 

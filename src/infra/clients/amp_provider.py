@@ -18,9 +18,10 @@ On every Amp run it:
      "amp-selftest", mcp_server_factory=...)`` so the same env / ``PLUGINS=all``
      / ``--mcp-config`` real sessions use is exercised. The self-test passes
      when the plugin's ``session.start`` sentinel marker arrives on stderr
-     within a bounded timeout AND the version hash matches the installed
-     plugin's hash; the runtime terminates ``amp`` immediately on detection
-     before any LLM call to bound self-test latency to plugin-load time.
+     or in Amp's debug log within a bounded timeout AND the version hash
+     matches the installed plugin's hash; the runtime terminates ``amp``
+     immediately on detection before any LLM call to bound self-test
+     latency to plugin-load time.
   4. Caches the result in-memory keyed on ``(amp_version, plugin_hash)``
      for the duration of the run; not persisted across runs.
 
@@ -46,6 +47,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import replace
 from enum import StrEnum
 from typing import IO, TYPE_CHECKING, Any, Literal, cast
@@ -171,6 +173,45 @@ def _classify_no_marker(stderr_text: str) -> AmpPluginNotActiveReason:
     return AmpPluginNotActiveReason.PLUGIN_MARKER_MISSING
 
 
+def _extract_sentinel_marker(text: str) -> dict[str, Any] | None:
+    """Return the first ``mala_plugin=loaded`` marker found in ``text``.
+
+    Current Amp writes plugin stderr into its structured debug log as a JSON
+    line with a nested ``data`` string. Older versions forwarded the plugin's
+    raw JSON line directly to process stderr. Support both shapes.
+    """
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        try:
+            obj = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and obj.get("mala_plugin") == "loaded":
+            return obj
+        if not isinstance(obj, dict):
+            continue
+        data = obj.get("data")
+        if not isinstance(data, str):
+            continue
+        try:
+            nested = json.loads(data.strip())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(nested, dict) and nested.get("mala_plugin") == "loaded":
+            return nested
+    return None
+
+
+def _read_text_if_exists(path: Path) -> str:
+    """Best-effort text read for optional diagnostics files."""
+    try:
+        return path.read_text(errors="replace")
+    except OSError:
+        return ""
+
+
 def _stderr_reader(
     stream: IO[bytes],
     state: dict[str, Any],
@@ -196,12 +237,9 @@ def _stderr_reader(
             stripped = text.strip()
             if not stripped:
                 continue
-            try:
-                obj = json.loads(stripped)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(obj, dict) and obj.get("mala_plugin") == "loaded":
-                state["marker"] = obj
+            marker = _extract_sentinel_marker(stripped)
+            if marker is not None:
+                state["marker"] = marker
                 return
     finally:
         done.set()
@@ -260,8 +298,10 @@ def _run_selftest_subprocess(
     1. ``shutil.which("amp")`` / ``Popen`` resolves the binary against the
        runtime's PATH; missing binary is the first signal.
     2. The plugin emits ``{"mala_plugin": "loaded", "version": "<hash>"}``
-       on stderr at ``session.start`` (before any LLM call). We block until
-       the marker arrives or the bounded timeout elapses.
+       at ``session.start`` (before any LLM call). Current Amp routes plugin
+       stderr into the CLI debug log, while older builds forwarded it to
+       process stderr. We block until either marker source appears or the
+       bounded timeout elapses.
     3. We terminate ``amp`` as soon as the marker is seen so latency is
        capped at plugin-load time and no LLM cost is incurred per run.
     4. If the marker arrives but the version hash does not match the
@@ -289,9 +329,23 @@ def _run_selftest_subprocess(
             reason=AmpPluginNotActiveReason.AMP_BINARY_MISSING,
         )
 
+    plugin_log_path = runtime.log_path.with_suffix(".plugin-selftest.log")
+    try:
+        plugin_log_path.parent.mkdir(parents=True, exist_ok=True)
+        plugin_log_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+    selftest_argv = [
+        *runtime.argv,
+        "--log-level",
+        "debug",
+        "--log-file",
+        str(plugin_log_path),
+    ]
+
     try:
         proc = subprocess.Popen(
-            list(runtime.argv),
+            selftest_argv,
             cwd=str(runtime.cwd),
             env=env,
             stdin=subprocess.PIPE,
@@ -335,9 +389,23 @@ def _run_selftest_subprocess(
                 # amp may already have exited (e.g. immediate auth failure).
                 pass
 
-        # Wait for the marker, or for the reader to hit EOF (process exit),
-        # or for the bounded timeout to elapse.
-        done.wait(timeout=timeout_seconds)
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            if state["marker"] is not None:
+                break
+            marker = _extract_sentinel_marker(_read_text_if_exists(plugin_log_path))
+            if marker is not None:
+                state["marker"] = marker
+                done.set()
+                break
+            if proc.poll() is not None:
+                done.wait(timeout=0.05)
+                marker = _extract_sentinel_marker(_read_text_if_exists(plugin_log_path))
+                if marker is not None:
+                    state["marker"] = marker
+                    done.set()
+                break
+            time.sleep(0.05)
     finally:
         _terminate_process(proc)
         # The reader thread captured every line via readline(); after
@@ -359,6 +427,9 @@ def _run_selftest_subprocess(
                 pass
 
     stderr_text = "".join(state["lines"])
+    plugin_log_text = _read_text_if_exists(plugin_log_path)
+    if plugin_log_text:
+        stderr_text = f"{stderr_text}\n{plugin_log_text}"
     marker = state["marker"]
 
     if marker is not None:
@@ -640,8 +711,8 @@ class AmpAgentProvider:
             return
 
         # 4. Build the self-test runtime via the same runtime_builder real
-        # sessions use, so PLUGINS=all + AMP_API_KEY + MALA_* env + the
-        # --mcp-config envelope all hit the same code path (plan L302-L312).
+        # sessions use, so PLUGINS=all + MALA_* env + the --mcp-config
+        # payload all hit the same code path (plan L302-L312).
         builder = self.runtime_builder(
             repo_path,
             _SELFTEST_AGENT_ID,

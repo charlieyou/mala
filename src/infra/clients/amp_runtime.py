@@ -6,11 +6,11 @@ directory, log path, and optional resume thread id.
 
 Env composition mirrors :class:`src.infra.agent_runtime.AgentRuntimeBuilder.with_env`
 (``{**os.environ, ...overlays}``) so the spawned ``amp`` subprocess inherits
-``PATH``, ``HOME``, ``TMPDIR``, locale vars, and ``AMP_API_KEY`` from the parent
-process. The overlays carry the ``MALA_*`` lock-ownership vars (``MALA_AGENT_ID``,
-``MALA_LOCK_DIR``, ``MALA_REPO_NAMESPACE``) consumed by ``plugins/amp/mala-safety.ts``;
-the ``MALA_*`` prefix disambiguates from the Claude-path's unprefixed names so
-both paths can co-exist in the same shell.
+``PATH``, ``HOME``, ``TMPDIR``, locale vars, and other parent environment keys.
+The overlays carry the ``MALA_*`` lock-ownership vars (``MALA_AGENT_ID``,
+``MALA_LOCK_DIR``, ``MALA_REPO_NAMESPACE``) consumed by
+``plugins/amp/mala-safety.ts``; the ``MALA_*`` prefix disambiguates from the
+Claude-path's unprefixed names so both paths can co-exist in the same shell.
 """
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ class AmpRuntimeBuilder:
         Args:
             repo_path: Repository root; becomes ``cwd`` and ``MALA_REPO_NAMESPACE``.
             agent_id: Per-issue agent identifier; becomes ``MALA_AGENT_ID``.
-            mcp_server_factory: Produces the MCP server config dict for
+            mcp_server_factory: Produces the MCP server map for
                 ``--mcp-config``. The factory is invoked with
                 ``(agent_id, repo_path, None)``; the third arg is the
                 deadlock-monitor callback hook used by the Claude path
@@ -225,13 +225,12 @@ class AmpRuntimeBuilder:
 
         Composes env from ``os.environ`` plus the overlays in the plan
         (``PATH``, ``PLUGINS``, ``MALA_AGENT_ID``, ``MALA_LOCK_DIR``,
-        ``MALA_REPO_NAMESPACE``, ``MCP_TIMEOUT``). ``AMP_API_KEY`` is inherited
-        from ``os.environ`` (no overlay needed).
+        ``MALA_REPO_NAMESPACE``, ``MCP_TIMEOUT``). Other parent env keys are
+        inherited without special handling.
 
-        ``McpServerFactory`` returns a server *map* (``{"name": <spec>}``);
-        Amp's ``--mcp-config`` JSON requires a top-level ``{"mcpServers": ...}``
-        envelope, so we wrap here. Without the envelope Amp parses the JSON as
-        having no servers and silently starts without ``locking_mcp``.
+        ``McpServerFactory`` returns the same server *map* Amp expects for
+        ``--mcp-config`` (``{"name": <spec>}``); Amp rejects the settings-file
+        shape with a top-level ``{"mcpServers": ...}`` envelope on the CLI.
 
         The injected factory **must produce stdio launch specs** (JSON-only
         ``command``/``args``/``env`` dicts). The Claude-path factory packs
@@ -241,12 +240,11 @@ class AmpRuntimeBuilder:
         opaque ``TypeError`` deep inside ``subprocess.Popen``.
         """
         if self._mcp_servers_override is not None:
-            servers: dict[str, object] = dict(self._mcp_servers_override)
+            mcp_config: dict[str, object] = dict(self._mcp_servers_override)
         else:
-            servers = dict(
+            mcp_config = dict(
                 self._mcp_server_factory(self._agent_id, self._repo_path, None)
             )
-        mcp_config: dict[str, object] = {"mcpServers": servers}
         try:
             mcp_config_json = json.dumps(mcp_config)
         except TypeError as exc:

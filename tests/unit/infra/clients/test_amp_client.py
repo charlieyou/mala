@@ -12,7 +12,7 @@ Covers the test cases from the plan's Testing & Validation section
     to a synthetic :class:`ResultMessage` with the right ``session_id``
     and ``result``.
   * Stderr ring buffer is bounded; auth-error classification fires on
-    ``unauthorized`` / ``401`` / ``AMP_API_KEY``.
+    ``unauthorized`` / ``401`` / ``forbidden``.
   * Subprocess lifecycle: spawn → write prompt to stdin → terminate on
     ``__aexit__`` (SIGTERM → grace → SIGKILL).
   * Resume: ``with_resume(thread_id)`` produces argv stable across the
@@ -616,7 +616,7 @@ async def test_stderr_ring_buffer_is_bounded(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "marker",
-    ["unauthorized", "401", "AMP_API_KEY", "forbidden"],
+    ["unauthorized", "401", "forbidden"],
 )
 async def test_auth_error_classification(tmp_path: Path, marker: str) -> None:
     script = _write_fake_amp(

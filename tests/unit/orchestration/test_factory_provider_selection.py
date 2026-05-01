@@ -64,7 +64,6 @@ def _wire_fake_amp_self_test(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     )
     fake_amp.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
-    monkeypatch.setenv("AMP_API_KEY", "fake-test-key")
 
 
 # ---------------------------------------------------------------------------

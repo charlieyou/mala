@@ -37,7 +37,7 @@
 ## Assumptions & Constraints
 
 ### Assumptions
-- Amp is invoked as a CLI subprocess: `amp --execute --stream-json --dangerously-allow-all --mcp-config '{...}' [-x | --stream-json-input]` with `AMP_API_KEY` in env.
+- Amp is invoked as a CLI subprocess: `amp --execute --stream-json --dangerously-allow-all --mcp-config '{...}' [-x | --stream-json-input]` with the parent process environment inherited.
   - `--dangerously-allow-all` matches Claude's `permission_mode=bypassPermissions`; safety relies entirely on the bundled mala-safety plugin (loaded via `PLUGINS=all`). Because the safety surface collapses to the plugin under this flag, **the plugin must actually load** — this is the safety-critical invariant.
   - Per the [Amp plugin API docs](https://ampcode.com/manual/plugin-api), plugins **only load under the official binary install**, **only with `PLUGINS=all` set**, and require a working Bun runtime. npm-installed Amp will silently never load the plugin. The orchestrator therefore performs a runtime plugin-load self-test before spawning real issue agents and fails closed if the plugin is not active.
 - Amp's stream-json output emits `system | user | assistant | result` events whose content blocks (`text`, `tool_use`, `tool_result`, `thinking`) are structurally close to the Anthropic message schema. The existing `MessageStreamProcessor` already keys off duck-typed class names (`AssistantMessage`, `ResultMessage`, `TextBlock`, `ToolUseBlock`, `ToolResultBlock`) and `getattr` field reads (`text`, `id`, `name`, `input`, `tool_use_id`, `is_error`, `content`, `session_id`, `result`), so synthetic dataclasses with the same names work without touching the processor.
@@ -64,7 +64,7 @@
 
 ### Testing Constraints
 - New code includes unit tests; `tests/CLAUDE.md` rules apply (no over-mocking integration paths).
-- **Path-gated CI smoke job** required: a CI job that calls real `amp --execute --stream-json` against a one-line prompt to catch upstream stream-json schema drift. Job is path-gated on `src/infra/clients/amp_*`, `plugins/amp/`, and this plan path; gated on `AMP_API_KEY` repository secret.
+- **Real-Amp e2e coverage** required: an e2e test that calls real `amp --execute --stream-json` against a one-line prompt to catch upstream stream-json schema drift. The test is gated only on the `amp` binary being present on `PATH`.
 - **Regression coverage for Claude path**: after the `ClaudeAgentProvider` refactor, the existing Claude-path test suite must continue to pass with no behavior changes. Existing Claude integration tests are **not rewritten** — they are run in CI as the regression guard.
 - **Fake-Amp integration suite**: a Python stand-in `amp` binary on `PATH` that emits canned stream-json. Drives the full per-issue lifecycle without real network/cost.
 
@@ -103,12 +103,10 @@ Selection happens once at orchestrator construction (`src/orchestration/factory.
 
 - [ ] `amp` CLI installed via the **official binary install** documented at <https://ampcode.com/manual> (the install path that ships the plugin runtime). The npm package `@sourcegraph/amp` is **not supported** for `coder=amp` because the [Amp plugin API](https://ampcode.com/manual/plugin-api) only loads plugins under the binary install. Documented in `README.md` Prerequisites; **no devcontainer changes** in this scope.
 - [ ] **Hard prerequisite for `coder=amp`**: the binary install path. `AmpAgentProvider.install_prerequisites()` performs a runtime self-test (see Technical Design) that fails closed with an actionable error if the binary install is missing — npm-installed Amp users get an explicit error, not a silent unguarded run.
-- [ ] `AMP_API_KEY` exported in the user's shell / CI secrets.
 - [ ] Bun runtime present for plugin execution (provided by the Amp binary install; mala does not install Bun separately). The self-test surfaces a Bun-missing failure as a fail-closed prerequisite error.
 - [ ] `PLUGINS=all` is set on every `amp` invocation by `AmpRuntimeBuilder` (not user-managed), and the self-test verifies the plugin actually loaded under that env.
 - [ ] Minimum Amp version pinned in `README.md` (documentation-level pin chosen at impl time against the schema we validate). No automatic version check unless a one-line `amp --version` parse is trivially reliable.
 - [ ] `~/.config/amp/plugins/` writable (Amp's standard global plugin dir).
-- [ ] CI: `AMP_API_KEY` added as a repository secret for the path-gated smoke job.
 - [ ] Existing Claude test suite green before the refactor lands, so provider-abstraction regressions are easy to isolate.
 
 ## High-Level Approach
@@ -121,7 +119,7 @@ Selection happens once at orchestrator construction (`src/orchestration/factory.
 6. **Plugin self-test (fail-closed, safety-critical)**: `AmpAgentProvider.install_prerequisites(repo_path, mcp_server_factory)` is invoked by the orchestrator after the `runtime_builder(...)` is available, so the self-test can spawn Amp using **the same runtime configuration real sessions use** — the same `--mcp-config`, the same `MALA_*` env injection, the same `PLUGINS=all`. The self-test passes the moment the `session.start` sentinel marker arrives on stderr (with version hash matching the installed plugin); the runtime then terminates the `amp` process before any model call, bounding self-test latency to plugin-load time and avoiding LLM cost on every `mala run --coder amp`. The `tool.call` observation path is fallback-only (kept for robustness if `session.start` stderr is buffered or suppressed in some Amp version). The result is cached in-memory keyed on `(amp_version, plugin_hash)` for the duration of the run; mala does not persist the cache across runs since the cost of a fresh self-test is bounded. If the marker is missing, the version mismatches, Bun is unavailable, `PLUGINS=all` failed to take effect, or the binary install isn't present, **the orchestrator refuses to spawn any issue agent** and exits with a clear actionable error pointing at the binary-install docs. This is the hard safety invariant under `--dangerously-allow-all`.
 7. **Native-log spike during impl**: probe `~/.config/amp/` and `~/.local/share/amp/` for stable JSONL. If found, `AmpLogProvider` reads native; otherwise tee stream-json to a **per-thread, append-only** path at `~/.config/mala/amp-sessions/{thread_id}.jsonl`. The tee path is the safe default and is implemented first. Each `amp --execute --stream-json` invocation for a given thread (initial run or any resume) **appends** to the same thread-scoped file, so `AmpLogProvider.iter_events()` always sees the full event history regardless of whether Amp's resume mode emits delta-only or full-history events. Because the thread ID is not known until the first `system(init)` event arrives, the tee initially writes to a temp file and is renamed to `{thread_id}.jsonl` once the ID is captured.
 8. **Resume via thread-id**: `AmpClient.with_resume(thread_id)` stores the ID; the next `query()` invokes the appropriate Amp continue mechanism (flag on `--execute` or `amp threads continue` subcommand, decided at impl time). The resumed invocation tees into the existing `{thread_id}.jsonl` file in append mode so evidence from earlier invocations remains observable to validation gates.
-9. **Tests**: unit tests with mocked subprocess; integration tests with a fake `amp` binary on `PATH`; path-gated CI smoke job calling real `amp` against a one-line prompt; self-test fail-closed cases (plugin missing, version mismatch, Bun missing, `PLUGINS=all` unset, binary install absent).
+9. **Tests**: unit tests with mocked subprocess; integration tests with a fake `amp` binary on `PATH`; real-Amp e2e coverage calling `amp` against a one-line prompt; self-test fail-closed cases (plugin missing, version mismatch, Bun missing, `PLUGINS=all` unset, binary install absent).
 
 ## Technical Design
 
@@ -153,7 +151,7 @@ Selection happens once at orchestrator construction (`src/orchestration/factory.
        ├ hooks dict                                     ├ amp --execute --stream-json
        ├ MCP servers                                    ├ --dangerously-allow-all
        └ ~/.claude/projects/...                         ├ --mcp-config '{...}'
-                                                        ├ env: PLUGINS=all, AMP_API_KEY,
+                                                        ├ env: PLUGINS=all,
                                                         │      MALA_AGENT_ID,
                                                         │      MALA_LOCK_DIR,
                                                         │      MALA_REPO_NAMESPACE
@@ -219,7 +217,7 @@ coder_options:
 @dataclass(frozen=True)
 class AmpRuntime:
     cwd: Path
-    env: Mapping[str, str]                    # PLUGINS=all, AMP_API_KEY passthrough,
+    env: Mapping[str, str]                    # PLUGINS=all,
                                               # MALA_AGENT_ID, MALA_LOCK_DIR,
                                               # MALA_REPO_NAMESPACE (consumed by
                                               # mala-safety.ts for lock-ownership check)
@@ -302,8 +300,8 @@ class AgentProvider(Protocol):
              build a self-test AmpRuntime using runtime_builder(repo_path,
              "amp-selftest", mcp_server_factory=...). Spawn `amp --execute
              --stream-json --dangerously-allow-all` with that runtime's env
-             (PLUGINS=all + AMP_API_KEY + MALA_* lock vars + os.environ
-             passthrough — see AmpRuntimeBuilder env composition) and the
+             (PLUGINS=all + MALA_* lock vars + os.environ passthrough — see
+             AmpRuntimeBuilder env composition) and the
              runtime's --mcp-config. Pass when the session.start sentinel
              marker `{"mala_plugin":"loaded","version":"<hash>"}` arrives on
              stderr within a bounded timeout AND the version matches the
@@ -335,7 +333,6 @@ itself does `{**os.environ, ...overlays}`) and overlays:
 |---|---|---|
 | `PATH` | `f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}"` (same prepend the Claude path uses) | Amp CLI to find `bun`, plus mala-shipped scripts |
 | `PLUGINS` | `all` | Amp CLI (loads bundled plugin) |
-| `AMP_API_KEY` | passthrough from `os.environ` (already inherited; called out for emphasis) | Amp CLI auth |
 | `MALA_AGENT_ID` | the per-issue `agent_id` (same value the Claude path passes as `AGENT_ID`) | `mala-safety.ts` lock-ownership check |
 | `MALA_LOCK_DIR` | `str(get_lock_dir())` (same accessor the Claude path uses for `LOCK_DIR`) | `mala-safety.ts` lock-file lookup |
 | `MALA_REPO_NAMESPACE` | `str(repo_path)` (same value the Claude path passes as `REPO_NAMESPACE`) | `mala-safety.ts` lock-key computation |
@@ -583,7 +580,7 @@ tests/integration/test_coder_selection.py                 New     CLI > env > ya
 tests/integration/test_fixer_follows_coder.py             New     Fixer spawns Amp when coder=amp
 tests/integration/test_lock_mcp_via_amp.py                New     locking_mcp round-trip through Amp's --mcp-config
 tests/integration/test_amp_lock_enforcement.py            New     mala-safety.ts lock-ownership check: allow/no-lock/wrong-agent/wrong-namespace/env-missing/format-drift/canonicalization parity
-tests/smoke/test_amp_real_cli.py                          New     CI smoke job (path-gated, AMP_API_KEY-gated)
+tests/e2e/test_amp_real_cli.py                            New     Real-Amp e2e stream-json schema coverage (gated on `amp` on PATH)
 
 # Docs
 README.md                                                 Exists  Prerequisites: add Amp subsection; Usage: --coder examples
@@ -601,7 +598,7 @@ docs/development.md                                       Exists  How to develop
 
 - **Plugin API is officially WIP** ("expect many breaking changes"). Mitigations:
   - Pin Amp version in `README.md`; document the tested-against version range.
-  - Path-gated CI smoke job runs against a real Amp install to catch breakage early.
+  - Real-Amp e2e coverage runs against a real Amp install to catch breakage early.
   - Required acknowledgment header (`// @i-know-the-amp-plugin-api-is-wip-...`) included verbatim and pinned in `plugins/amp/README.md`.
   - Plugin scope deliberately small (only dangerous-cmd + lock-enforce) so it is easier to maintain across upstream changes.
   - On startup, `AmpAgentProvider.install_prerequisites()` checks plugin file presence + content hash; if mismatch, refresh.
@@ -647,7 +644,7 @@ docs/development.md                                       Exists  How to develop
 
 - **Stream-json schema drift**. Mitigations:
   - Tests assert exact field paths (`event.type`, `event.message.content[].type`, `event.session_id`, etc.) so failures are loud.
-  - CI smoke job catches drift on a real Amp install.
+  - Real-Amp e2e coverage catches drift on a real Amp install.
   - `AmpClient` logs unrecognized event types at warn-level rather than crashing on unknown `type:`.
 
 - **Native log undocumented**. Implementation commits to *probe-then-tee*: probe at install time; if no stable JSONL emerges, tee stream-json to `~/.config/mala/amp-sessions/{thread_id}.jsonl`. Tee path is the safe default and is implemented first.
@@ -689,7 +686,7 @@ docs/development.md                                       Exists  How to develop
 
 - **`MALA_DISALLOWED_TOOLS` set when `coder=amp`**. Has no effect on Amp in MVP. Logged once at warn-level on run start so users know. Tracked as a follow-up.
 
-- **Auth errors**. `AmpClient` inspects stderr for `AMP_API_KEY`, `unauthorized`, `401`, `forbidden`. Maps to existing fatal-vs-per-issue policy: missing key → fatal exit; transient → fail issue and continue.
+- **Auth errors**. `AmpClient` inspects stderr for `unauthorized`, `401`, and `forbidden`. Maps auth failures to the existing fatal-vs-per-issue policy.
 
 - **Amp CLI missing from `PATH`**. Fail before starting issue execution with a clear prerequisite error that names `amp` and points to docs.
 
@@ -707,7 +704,7 @@ docs/development.md                                       Exists  How to develop
 
 - **Stderr unbounded growth**. Capture into a bounded ring buffer for diagnostics rather than letting memory grow without limit.
 
-- **Cost / rate limits**. Amp's smart=Opus, rush=Haiku, deep=GPT-5.4. Documented in `README.md`. CI smoke job uses a one-line prompt to bound cost.
+- **Cost / rate limits**. Amp's smart=Opus, rush=Haiku, deep=GPT-5.4. Documented in `README.md`. The real-Amp schema e2e test uses a one-line prompt to bound cost.
 
 ### Breaking Changes & Compatibility
 
@@ -726,7 +723,7 @@ docs/development.md                                       Exists  How to develop
 - **Mitigations**:
   - Feature-flag-style default (`coder: claude`) is the safe-by-default behavior.
   - Comprehensive Claude-path regression coverage (existing test suite untouched).
-  - Path-gated CI smoke catches Amp drift without affecting Claude-path PRs.
+  - Real-Amp e2e coverage catches Amp drift without affecting Claude-path defaults.
   - Document Claude-only and Amp-only options clearly in `docs/cli-reference.md` and `docs/project-config.md`.
 
 ## Testing & Validation Strategy
@@ -736,7 +733,7 @@ docs/development.md                                       Exists  How to develop
   - `assistant` events with `text` / `tool_use` / `thinking` → emits synthetic `AssistantMessage` (thinking stripped in MVP).
   - `user` events with `tool_result` → emits synthetic `AssistantMessage` containing `ToolResultBlock`.
   - `result(success | error_during_execution | error_max_turns)` → emits synthetic `ResultMessage` with right `session_id` + `result`.
-  - Stderr capture and auth-error classification (`unauthorized`, `401`, `AMP_API_KEY`).
+  - Stderr capture and auth-error classification (`unauthorized`, `401`, `forbidden`).
   - Subprocess lifecycle: spawn, write prompt to stdin, terminate on `__aexit__` (SIGTERM → grace → SIGKILL).
   - Resume: `with_resume(thread_id)` produces the expected argv (assertion stable across the two candidate shapes via parametrization).
   - Tee'd log produced exactly once per session, idempotent on retry.
@@ -750,7 +747,7 @@ docs/development.md                                       Exists  How to develop
 
 - **Unit tests (runtime builder)** — `test_amp_runtime.py`:
   - CLI args include `--execute --stream-json --dangerously-allow-all --mcp-config <json>`.
-  - Env includes `PLUGINS=all` and `AMP_API_KEY` passthrough.
+  - Env includes `PLUGINS=all` and inherits parent `os.environ` keys.
   - **Env includes `MALA_AGENT_ID`, `MALA_LOCK_DIR`, `MALA_REPO_NAMESPACE`** with
     values matching what the Claude path's `AgentRuntimeBuilder.with_env()` would
     inject for `AGENT_ID`, `LOCK_DIR`, `REPO_NAMESPACE` for the same `agent_id`
@@ -766,10 +763,9 @@ docs/development.md                                       Exists  How to develop
   `mala-safety.ts` plugin **via real Amp** (which provides Bun) against a real
   `MALA_LOCK_DIR` populated by the real Python `try_lock`, so the plugin's
   reader and the Python writer share the same on-disk fixture. **Bun is not a
-  separate CI prerequisite**: this test file is gated on the same conditions
-  as the smoke job (`AMP_API_KEY` secret + path-gated trigger on
-  `src/infra/clients/amp_*` and `plugins/amp/`), and Bun arrives transitively
-  with the binary Amp install. A small, optional pure-TypeScript unit test
+  separate CI prerequisite**: this test file is gated only on the `amp` binary
+  being present on `PATH`, and Bun arrives transitively with the binary Amp
+  install. A small, optional pure-TypeScript unit test
   (`tests/unit/plugins/test_lock_check.ts`) that exercises only the lock-key
   hashing/parsing helper functions (no Amp dependency, runs under whatever
   Bun/Deno/Node is locally available) is **out of MVP scope** and tracked as a
@@ -868,9 +864,8 @@ docs/development.md                                       Exists  How to develop
   - Existing locking behavior remains enforced for Claude and is mirrored for Amp through plugin + MCP.
   - Existing idle timeout policy behavior unchanged for Claude.
 
-- **CI smoke job** — `tests/smoke/test_amp_real_cli.py`:
-  - Path-gated on `src/infra/clients/amp_*`, `plugins/amp/`, `tests/smoke/test_amp_real_cli.py`, and this plan path.
-  - Gated on `AMP_API_KEY` repository secret.
+- **Real-Amp e2e test** — `tests/e2e/test_amp_real_cli.py`:
+  - Gated only on the `amp` binary being present on `PATH`.
   - Calls real `amp --execute --stream-json` with a one-line prompt; asserts the schema fields we depend on are present (`event.type`, `event.message.content[].type`, `session_id`).
   - Reports observed Amp version and minimal schema fields.
   - Catches upstream stream-json schema drift early.
@@ -908,9 +903,9 @@ docs/development.md                                       Exists  How to develop
 | AC #8: Idle / review retries work for Amp via thread continuation (or documented fallback) | `AmpClient.with_resume(thread_id)` continues the thread. Test: `test_amp_client.py::test_resume`. |
 | AC #9: Critical safety controls (dangerous-cmd, lock-enforce) hold for Amp | Bundled `mala-safety.ts` plugin loaded via `PLUGINS=all`. Tests: plugin installer unit tests + manual verification of dangerous prompt + integration lock test. |
 | AC #9a: An Amp file-write is allowed only when the current Amp agent holds the lock for that file in this repo namespace (parity with the Claude `make_lock_enforcement_hook`) | `mala-safety.ts` reads `MALA_AGENT_ID` / `MALA_LOCK_DIR` / `MALA_REPO_NAMESPACE` injected by `AmpRuntimeBuilder`, derives the same SHA-256-prefix lock-file path as `src/infra/tools/locking.lock_path`, and rejects any file-write `tool.call` whose target lacks a `<hash>.lock` whose body equals `MALA_AGENT_ID`. Tests: `test_amp_lock_enforcement.py` (allow / no-lock / wrong-agent / wrong-namespace / env-missing / format-drift / canonicalization-parity) plus the real-Amp `test_lock_mcp_via_amp.py` round-trip. |
-| AC #10: `--coder claude` runs unchanged | Regression suite passes; CI smoke unchanged. Tests: existing Claude integration suite + lazy-import guard. |
+| AC #10: `--coder claude` runs unchanged | Regression suite passes; Amp e2e coverage is isolated from the Claude default. Tests: existing Claude integration suite + lazy-import guard. |
 | AC #11: Amp prerequisites and limitations are documented | `README.md`, `docs/cli-reference.md`, `docs/project-config.md`, `docs/architecture.md`, `docs/development.md`. |
-| AC #12: Real Amp schema drift is detectable before merge for Amp changes | `tests/smoke/test_amp_real_cli.py`, path-filtered CI job, `AMP_API_KEY` gating. |
+| AC #12: Real Amp schema drift is detectable before merge for Amp changes | `tests/e2e/test_amp_real_cli.py`, gated only on the `amp` binary being present on `PATH`. |
 | AC #13: `mala.yaml` validation rejects unknown `coder` / `mode` values before any process starts | Strict-enum schema validation in `src/domain/validation/config.py`. Test: `test_coder_schema.py`. |
 | AC #14: Plugin install is idempotent and concurrent-safe; absent plugin aborts the Amp run | `AmpPluginInstaller` write-temp-then-rename + content-hash invariant check at startup. Tests: `test_amp_plugin_installer.py`. |
 | AC #15: `AmpLogProvider` uses native log if discovered at install time, otherwise tees stream-json | Probe-then-tee strategy; tee is the safe default. Tests: `test_amp_log_provider.py`. |
@@ -943,7 +938,7 @@ These are deferred to implementation-time spikes, **not blockers** for the plan:
 - **Plugin acknowledgment header drift**: track upstream changes to the WIP-API string. Pinned in `plugins/amp/README.md`.
 - **Exact Amp tool names and payload shapes for file edits and shell commands**: affects plugin enforcement coverage *and* the lock-ownership tool-name → path-key mapping in `mala-safety.ts` (parity with `FILE_WRITE_TOOLS` / `FILE_PATH_KEYS` in `src/infra/hooks/file_cache.py`); verified during plugin spike.
 - **Lock-file format spec extraction**: should the `<hash>.lock` filename hashing + body format be lifted out of Python and into a tiny shared format spec (e.g., a JSON description under `docs/`) that both `src/infra/tools/locking.py` and `plugins/amp/mala-safety.ts` cite? Deferred — for MVP, the contract is documented in the plan and asserted by `test_amp_lock_enforcement.py`'s format-drift test.
-- **Amp version pin range**: chosen at impl time after the smoke job is green; documented in `README.md`.
+- **Amp version pin range**: chosen at impl time after the real-Amp e2e coverage is green; documented in `README.md`.
 
 ## Next Steps
 
@@ -965,6 +960,6 @@ A reasonable task ordering (dependencies in parens):
 9. **`FixerService` consumes `AgentProvider`** (depends on 8)
 10. **Resume via thread continuation + tests** (depends on 5; spike)
 11. **Integration tests with fake `amp` binary on PATH** (depends on 8, 9)
-12. **CI smoke job + path filter config** (depends on 11)
+12. **Real-Amp e2e coverage** (depends on 11)
 13. **Telemetry: add `coder` span attribute** (independent, low-risk)
 14. **Docs** (`README.md`, `docs/cli-reference.md`, `docs/project-config.md`, `docs/architecture.md`, `docs/development.md`)

@@ -5,7 +5,7 @@ Covers the runtime-builder slice of plan section "Testing & Validation"
 
 - CLI args include ``--execute --stream-json --dangerously-allow-all
   --mcp-config <json>``.
-- Env includes ``PLUGINS=all`` and ``AMP_API_KEY`` passthrough.
+- Env includes ``PLUGINS=all`` and inherits parent ``os.environ`` keys.
 - **Regression guard**: env includes ``MALA_AGENT_ID``, ``MALA_LOCK_DIR``,
   ``MALA_REPO_NAMESPACE`` with values matching what the Claude path's
   ``AgentRuntimeBuilder.with_env()`` would inject for ``AGENT_ID``,
@@ -42,9 +42,8 @@ def _stdio_locking_factory() -> Callable[..., dict[str, object]]:
     """Fake ``McpServerFactory`` returning a stdio-shaped ``locking_mcp`` spec.
 
     Per :data:`src.core.protocols.sdk.McpServerFactory`, the factory returns a
-    server *map* keyed by server name — not the full Amp ``--mcp-config``
-    payload. ``AmpRuntimeBuilder.build()`` is responsible for wrapping the map
-    under the required ``{"mcpServers": ...}`` envelope.
+    server *map* keyed by server name. Current Amp CLI ``--mcp-config`` expects
+    this map directly (settings-file ``{"mcpServers": ...}`` is rejected).
     """
 
     def factory(
@@ -200,12 +199,12 @@ def test_env_includes_plugins_all(builder: AmpRuntimeBuilder) -> None:
 
 
 @pytest.mark.unit
-def test_env_passes_through_amp_api_key(
+def test_env_inherits_custom_parent_env_key(
     builder: AmpRuntimeBuilder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("AMP_API_KEY", "sk-amp-test-12345")
+    monkeypatch.setenv("CUSTOM_PARENT_ENV", "parent-value")
     runtime = builder.build()
-    assert runtime.env["AMP_API_KEY"] == "sk-amp-test-12345"
+    assert runtime.env["CUSTOM_PARENT_ENV"] == "parent-value"
 
 
 @pytest.mark.unit
@@ -275,11 +274,8 @@ def test_mcp_config_contains_locking_mcp_stdio_spec(
     builder: AmpRuntimeBuilder,
 ) -> None:
     runtime = builder.build()
-    raw_servers = runtime.mcp_config["mcpServers"]
-    assert isinstance(raw_servers, dict)
-    servers = cast("dict[str, object]", raw_servers)
-    assert "locking_mcp" in servers
-    raw_spec = servers["locking_mcp"]
+    assert "locking_mcp" in runtime.mcp_config
+    raw_spec = runtime.mcp_config["locking_mcp"]
     assert isinstance(raw_spec, dict)
     spec = cast("dict[str, object]", raw_spec)
     # Stdio shape: command + args (env optional).
@@ -304,17 +300,14 @@ def test_mcp_factory_receives_agent_id_and_repo_path(repo_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_mcp_config_wraps_factory_map_in_mcpservers_envelope(
+def test_mcp_config_forwards_factory_map_directly_to_cli(
     repo_path: Path,
 ) -> None:
-    """The Amp ``--mcp-config`` JSON requires a top-level ``mcpServers`` key.
+    """The Amp CLI ``--mcp-config`` JSON expects a server map directly.
 
-    The :data:`McpServerFactory` protocol returns a server *map* (e.g.
-    ``{"mala-locking": <spec>}``), not a complete Amp config. If the builder
-    forwarded the map straight to ``--mcp-config``, Amp would parse JSON with
-    no ``mcpServers`` key and start with no MCP servers — silently dropping
-    ``locking_mcp`` and breaking lock enforcement (fail-open). The builder must
-    wrap the factory result.
+    Current Amp rejects the settings-file shape ``{"mcpServers": ...}`` on
+    the CLI. The builder must pass the factory's server map through without an
+    envelope so real provider/client e2e runs can start.
     """
 
     def server_map_factory(
@@ -325,16 +318,10 @@ def test_mcp_config_wraps_factory_map_in_mcpservers_envelope(
 
     runtime = AmpRuntimeBuilder(repo_path, "a", server_map_factory).build()
 
-    # mcp_config has the envelope.
-    assert "mcpServers" in runtime.mcp_config
-    assert runtime.mcp_config["mcpServers"] == {
-        "locking_mcp": {"command": "x", "args": []}
-    }
-    # The serialized payload Amp actually sees on argv has the envelope too.
+    assert runtime.mcp_config == {"locking_mcp": {"command": "x", "args": []}}
     idx = runtime.argv.index("--mcp-config")
     parsed = json.loads(runtime.argv[idx + 1])
-    assert "mcpServers" in parsed
-    assert "locking_mcp" in parsed["mcpServers"]
+    assert parsed == {"locking_mcp": {"command": "x", "args": []}}
 
 
 @pytest.mark.unit
@@ -532,7 +519,7 @@ def test_fluent_chain_used_by_fixer_service_returns_runtime(
     assert isinstance(runtime, AmpRuntime)
     # ``with_mcp(servers={})`` must clear the factory output so the fixer
     # path does not spawn locking-MCP under the empty-tools shape.
-    assert runtime.mcp_config["mcpServers"] == {}
+    assert runtime.mcp_config == {}
 
 
 @pytest.mark.unit

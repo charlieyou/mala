@@ -150,7 +150,6 @@ def amp_environment(
     monkeypatch.setenv(
         "PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}"
     )
-    monkeypatch.setenv("AMP_API_KEY", "fake-test-key")
     monkeypatch.delenv("MALA_DISALLOWED_TOOLS", raising=False)
 
     repo_path = tmp_path / "repo"

@@ -104,8 +104,8 @@ class AgentProvider(Protocol):
              runtime_builder(repo_path, "amp-selftest",
              mcp_server_factory=...). Spawn ``amp --execute --stream-json
              --dangerously-allow-all`` with that runtime's env (PLUGINS=all
-             + AMP_API_KEY + MALA_* lock vars + os.environ passthrough)
-             and the runtime's --mcp-config. Pass when the session.start
+             + MALA_* lock vars + os.environ passthrough) and the runtime's
+             --mcp-config. Pass when the session.start
              sentinel marker ``{"mala_plugin":"loaded","version":"<hash>"}``
              arrives on stderr within a bounded timeout AND the version
              matches the installed plugin's hash; the runtime terminates

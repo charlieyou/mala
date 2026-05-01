@@ -55,8 +55,7 @@ with a clear error.
   under the binary install with `PLUGINS=all` set and a working Bun runtime.
   An npm-installed Amp will fail mala's runtime plugin self-test and abort the
   run before any issue agent runs.
-- `AMP_API_KEY` exported in your shell (and added as a CI secret if you use
-  Amp in CI).
+- Amp CLI installed and authenticated/configured in your shell.
 - Bun runtime present — provided by the Amp binary install; mala does not
   install Bun separately.
 - `~/.config/amp/plugins/` writable. Mala installs `mala-safety` to
@@ -64,9 +63,9 @@ with a clear error.
 - Mala always sets `PLUGINS=all` for you — this is not user-managed.
 
 **Tested-against version:** see `plugins/amp/README.md` for the pinned plugin
-acknowledgment header. The Amp CLI version range is documented in the
-release notes once the path-gated CI smoke job is green; run
-`amp --version` to compare.
+acknowledgment header. Run `amp --version` to compare your local install, and
+`uv run pytest -m e2e tests/e2e/test_amp_real_cli.py` to check the real CLI
+stream-json contract.
 
 **Costs / agent modes:** Amp routes to different models based on
 `--amp-mode`:
