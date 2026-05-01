@@ -68,6 +68,11 @@ evidence_check:          # Optional. Gate evidence requirements
 
 claude_settings_sources: list     # Optional. SDK settings sources (default: [local, project])
 
+coder: string                    # Optional. Coder backend: "claude" or "amp" (default: claude)
+coder_options:                   # Optional. Per-coder options
+  amp:
+    mode: string                 # Optional. Amp mode: "smart", "rush", "deep" (default: smart)
+
 timeout_minutes: int             # Optional. Agent timeout in minutes (default: 60)
 
 max_idle_retries: int            # Optional. Maximum idle timeout retries (default: 2)
@@ -122,6 +127,8 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `coverage.file` | string | Yes* | Path to coverage report |
 | `coverage.threshold` | number | Yes* | Minimum coverage % |
 | `claude_settings_sources` | list | No | SDK settings sources: `local`, `project`, `user` (default: `[local, project]`) |
+| `coder` | string | No | Coder backend: `claude` or `amp` (default: `claude`). Overridden by `--coder` / `MALA_CODER`. See [Coder Selection](#coder-selection). |
+| `coder_options.amp.mode` | string | No | Amp execution mode: `smart`, `rush`, or `deep` (default: `smart`). Only consulted when `coder: amp`. |
 | `timeout_minutes` | integer | No | Agent timeout in minutes (default: 60). Can be overridden by CLI `--timeout` |
 | `max_idle_retries` | integer | No | Maximum idle timeout retries before aborting (default: 2). Set to 0 to disable retries. |
 | `idle_timeout_seconds` | float | No | Seconds to wait for SDK activity before triggering idle recovery (default: derived from `timeout_minutes`). Set to 0 to disable idle timeout. |
@@ -519,6 +526,76 @@ For reproducible validation environments, commit `.claude/settings.local.json` t
 ```
 
 This file is typically gitignored for interactive Claude Code use, but committing it ensures consistent validation across CI and all developers.
+
+## Coder Selection
+
+Mala can drive its per-issue implementation agent on Claude (default) or on
+Sourcegraph's Amp. Selection is global to a run — every issue uses the same
+coder, and fixer agents follow the main coder.
+
+### Configuration
+
+```yaml
+# Use Amp instead of Claude (default: claude)
+coder: amp
+
+coder_options:
+  amp:
+    mode: smart   # smart (Opus, default), rush (Haiku), deep (GPT-5 reasoning)
+```
+
+Existing `mala.yaml` files **without `coder:` remain valid** and default to
+`claude`; the field is purely additive.
+
+### Precedence
+
+`coder` and `coder_options.amp.mode` follow the same **CLI > env > yaml > default**
+precedence used by `claude_settings_sources`:
+
+1. CLI flag (`--coder`, `--amp-mode`)
+2. Environment variable (`MALA_CODER`, `MALA_AMP_MODE`)
+3. `mala.yaml` (`coder:`, `coder_options.amp.mode:`)
+4. Default: `claude`, `smart`
+
+### Validation
+
+Invalid values fail validation at config-load time, before any agent process
+starts:
+
+| Field | Allowed values |
+|-------|----------------|
+| `coder` | `claude`, `amp` |
+| `coder_options.amp.mode` | `smart`, `rush`, `deep` |
+
+### Cross-Coder Behavior
+
+- `coder_options.amp.mode` is **only consulted when `coder: amp`**. Set with
+  `coder: claude`, it is logged as ignored (info-level) and does not error.
+- `claude_settings_sources` is logged as ignored (info-level) when
+  `coder: amp`.
+- `MALA_DISALLOWED_TOOLS` is a **no-op under `coder: amp`** in MVP and warns
+  once on run start; tracked as a follow-up.
+
+### Amp Prerequisites
+
+Selecting `coder: amp` requires the official Amp **binary** install, a working
+Bun runtime, `AMP_API_KEY` in env, and a writable `~/.config/amp/plugins/`. The
+npm-distributed Amp is **unsupported** and will fail mala's runtime plugin
+self-test before any issue agent runs. See the
+[Amp prerequisites in README](../README.md#amp-optional-for-coder-amp) for the
+full list.
+
+### Example
+
+```yaml
+preset: python-uv
+coder: amp
+coder_options:
+  amp:
+    mode: rush     # Haiku — cheaper for batch issue work
+evidence_check:
+  required: [test, lint]
+```
 
 ## Code Review Configuration
 

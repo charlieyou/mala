@@ -161,6 +161,58 @@ The `--fresh` flag starts a new SDK session instead of resuming the previous one
 |------|---------|-------------|
 | `--claude-settings-sources` | `local,project` | Comma-separated list of settings sources: `local`, `project`, `user` |
 
+### Coder Selection
+
+Mala can drive its per-issue implementation agent on Claude (default) or on
+Sourcegraph's Amp. The choice is global to a run — every issue in a single run
+uses the same coder, and fixer agents follow the main coder.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--coder` | `claude` | Coder backend: `claude` or `amp`. Validated at parse time. |
+| `--amp-mode` | `smart` | Amp execution mode: `smart`, `rush`, or `deep`. Only consulted when `coder=amp`. |
+
+#### Precedence
+
+Both flags follow the same **CLI > env > yaml > default** precedence as
+`claude_settings_sources`:
+
+| Setting | CLI | Env | YAML | Default |
+|---------|-----|-----|------|---------|
+| Coder | `--coder amp` | `MALA_CODER=amp` | `coder: amp` | `claude` |
+| Amp mode | `--amp-mode deep` | `MALA_AMP_MODE=deep` | `coder_options.amp.mode: deep` | `smart` |
+
+Invalid values fail validation **before** any agent process starts.
+
+#### Cross-Coder Flag Behavior
+
+The CLI never errors when a coder-specific flag is passed against a different
+coder — flags are logged as ignored at info-level so switching `--coder` does
+not require pruning unrelated flags from your invocation:
+
+| Flag/setting | When `coder=claude` | When `coder=amp` |
+|--------------|---------------------|------------------|
+| `--claude-settings-sources` / `MALA_CLAUDE_SETTINGS_SOURCES` | applied | logged as ignored (info) |
+| `--amp-mode` / `MALA_AMP_MODE` / `coder_options.amp.mode` | logged as ignored (info) | applied |
+| `MALA_DISALLOWED_TOOLS` | applied (Claude hooks) | **no-op**, warned once at run start (MVP limitation) |
+
+**Examples:**
+
+```bash
+# Run with Amp (Claude Opus via smart mode)
+mala run --coder amp /path/to/repo
+
+# Run with Amp in rush mode (Haiku) for cheaper iteration
+mala run --coder amp --amp-mode rush /path/to/repo
+
+# Same via env (CI-friendly)
+MALA_CODER=amp MALA_AMP_MODE=deep mala run /path/to/repo
+```
+
+**Amp prerequisites:** binary install (npm install is unsupported), `AMP_API_KEY`,
+Bun runtime via the Amp binary, writable `~/.config/amp/plugins/`. See the
+[Amp prerequisites in README](../README.md#amp-optional-for-coder-amp).
+
 ## Global Configuration
 
 mala uses a global config directory at `~/.config/mala/`:
@@ -185,6 +237,9 @@ Precedence: CLI flags override global config, which overrides program defaults.
 | `MALA_DISABLE_DEBUG_LOG` | - | Set to `1` to disable debug file logging (for performance or disk space) |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Claude SDK config directory (plugins, sessions) |
 | `MALA_CLAUDE_SETTINGS_SOURCES` | `local,project` | Comma-separated Claude settings sources |
+| `MALA_CODER` | `claude` | Coder backend: `claude` or `amp`. Overridden by `--coder`; falls back to `coder:` in `mala.yaml`. |
+| `MALA_AMP_MODE` | `smart` | Amp execution mode: `smart`, `rush`, or `deep`. Overridden by `--amp-mode`; falls back to `coder_options.amp.mode`. Only consulted when coder is `amp`. |
+| `AMP_API_KEY` | - | Required when `coder=amp`. Passed through to the spawned `amp` subprocess. |
 
 ### Epic Verification
 

@@ -585,7 +585,147 @@ Prevents edit conflicts between concurrent agents:
 - Per-run ownership tracking for clean shutdown
 - Deadlock detection via `DeadlockHandler` with event-driven monitoring
 
-### 8) Worktree Validation (Programmatic)
+#### Lock-File Format (Cross-Language Contract)
+
+The `<hash>.lock` file format is a **stable cross-language contract** consumed
+by both the Python locking module (`src/infra/tools/locking.py::try_lock`
+writes; `src/infra/hooks/locking.py::make_lock_enforcement_hook` reads) and the
+TypeScript Amp plugin (`plugins/amp/mala-safety.ts` reads).
+
+```
+lock-key       = f"{MALA_REPO_NAMESPACE}:{canonical_path}"
+canonical_path = realpath(filepath)                              if exists
+                 else first-existing-ancestor + remaining parts  otherwise
+filename       = sha256(lock-key).hexdigest()[:16] + ".lock"
+location       = $MALA_LOCK_DIR/<filename>
+body           = "<agent_id>\n"  (single line; trailing newline)
+companion      = $MALA_LOCK_DIR/<sha256-prefix>.meta  (diagnostics; not authoritative)
+```
+
+**Format-drift policy:** any change to the lock-key derivation, filename
+hashing, body format, or lock-dir layout must be made in lockstep across
+`src/infra/tools/locking.py` AND `plugins/amp/mala-safety.ts` in the same commit.
+Format-drift regression tests (`tests/integration/test_amp_lock_enforcement.py`)
+generate fixtures from the real Python `try_lock` so the TS reader is checked
+against the Python writer.
+
+The TS plugin **never writes** lock files — lock acquisition continues to flow
+through the `lock_acquire` MCP tool, the same path the Claude coder uses.
+
+### 8) Agent Provider Abstraction (Coder Backend Selection)
+
+Mala can drive its per-issue implementation agent on Claude (default) or on
+Sourcegraph's Amp. Selection is global to a run and is done once at orchestrator
+construction; the per-session pipeline (`AgentSessionRunner`, `RunCoordinator`,
+`FixerService`) is coder-agnostic and consumes only the protocol.
+
+The `AgentProvider` protocol (`src/core/protocols/agent_provider.py`) bundles
+three pluggable concerns:
+
+| Concern | Claude impl | Amp impl |
+|---------|-------------|----------|
+| `client_factory` (produces `SDKClientProtocol`-conforming clients) | `ClaudeSDKClient` via Claude Agent SDK | `AmpClient` (subprocess wrapper around `amp --execute --stream-json`) |
+| `runtime_builder(repo_path, agent_id, *, mcp_server_factory)` (produces an opaque coder-shaped runtime) | hooks dict + MCP servers + setting sources (`AgentRuntimeBuilder`) | `AmpRuntime` (CLI args + `--mcp-config` JSON + `MALA_*` env injection + tee log path) |
+| `log_provider` (`LogProvider` for evidence parsing) | `FileSystemLogProvider` over `~/.claude/projects/...` | `AmpLogProvider` over `~/.config/mala/amp-sessions/{thread_id}.jsonl` (per-thread, append-only across resumes) |
+| `install_prerequisites(repo_path, *, mcp_server_factory)` | no-op | install plugin + run **fail-closed runtime self-test** (see below) |
+
+```mermaid
+flowchart TD
+  CFG[MalaConfig.coder + coder_options]
+  CFG --> Factory[orchestration/factory.py picks AgentProvider]
+  Factory -->|coder=claude| CL[ClaudeAgentProvider]
+  Factory -->|coder=amp| AM[AmpAgentProvider]
+  CL --> CLC[ClaudeSDKClient + hooks + ~/.claude/projects/...]
+  AM --> AMC[AmpClient: amp --execute --stream-json --dangerously-allow-all<br/>--mcp-config + PLUGINS=all + MALA_* env<br/>tee → ~/.config/mala/amp-sessions/]
+  CLC --> Pipe[AgentSessionRunner / MessageStreamProcessor / Gate / Review / Fixer]
+  AMC --> Pipe
+```
+
+Both providers feed the same `AgentSessionRunner` / `MessageStreamProcessor` /
+gate / review / lifecycle / `FixerService` pipeline. `FixerService` receives the
+same provider, so fixers spawn whichever coder the main run uses.
+
+**Selection precedence:** CLI > env > yaml > default — mirrors the
+`claude_settings_sources` resolver. See
+[CLI Reference: Coder Selection](cli-reference.md#coder-selection).
+
+**Pipeline isolation:** the runtime object returned by `runtime_builder` is
+opaque to the pipeline. Only the matching `client_factory` knows its shape.
+There are no `if coder == "amp"` branches outside `src/orchestration/factory.py`;
+all coder-specific behavior is hidden behind `AgentProvider`.
+
+**Lazy SDK imports:** `claude_agent_sdk` is only imported by the Claude provider;
+the Amp adapter is only imported when `coder=amp` is selected. An Amp-only run
+does not require the Claude SDK package to be installed, and vice versa.
+
+### 9) Safety-Critical Plugin Self-Test (Amp)
+
+When `coder=amp`, mala invokes `amp` with `--dangerously-allow-all`. The entire
+safety surface — dangerous-command blocking, lock-ownership enforcement —
+collapses to the bundled TypeScript plugin (`plugins/amp/mala-safety.ts`)
+loaded via `PLUGINS=all`. **If the plugin does not load, the run is unguarded.**
+
+Per the [Amp plugin API](https://ampcode.com/manual/plugin-api), plugins only
+load under the **official binary install** with `PLUGINS=all` set and a working
+Bun runtime. An npm-installed Amp, missing Bun, or `PLUGINS=all` ignored will
+silently never load the plugin. A content-hash check on the installed `.ts`
+file is **insufficient** — it does not prove the plugin loaded.
+
+**The fail-closed safety invariant:**
+`AmpAgentProvider.install_prerequisites()` runs a runtime plugin-load self-test
+before any issue agent is spawned:
+
+1. `mkdir -p ~/.config/amp/plugins/`, copy `plugins/amp/mala-safety.ts` via
+   write-temp-then-rename, verify content hash matches the bundled copy.
+2. Build a self-test `AmpRuntime` using the **same runtime path real sessions
+   use** (`--mcp-config`, `MALA_*` env, `PLUGINS=all`).
+3. Spawn `amp --execute --stream-json --dangerously-allow-all` with that
+   runtime. The plugin emits `{"mala_plugin":"loaded","version":"<hash>"}` on
+   `stderr` from `session.start`.
+4. **Pass** when the marker arrives within a bounded timeout AND `version`
+   matches the installed plugin's content hash. Mala terminates the `amp`
+   subprocess immediately on detection — before any LLM call — bounding
+   self-test latency to plugin-load time and avoiding LLM cost on every run.
+5. **Fail closed** otherwise: raise `AmpPluginNotActiveError` naming the most
+   likely cause (npm install, Bun missing, `PLUGINS=all` ignored, version
+   mismatch, `amp` missing from `PATH`) and abort the run before any issue
+   agent runs. The orchestrator refuses to spawn under `--dangerously-allow-all`
+   without a confirmed plugin.
+
+The plugin also enters **fail-closed mode** if any of `MALA_AGENT_ID`,
+`MALA_LOCK_DIR`, `MALA_REPO_NAMESPACE` are unset on `session.start`: every
+non-sentinel `tool.call` is rejected with a `"lock-ownership env missing"`
+message. This protects against builder bugs or upstream env-stripping.
+
+The result is cached in-memory keyed on `(amp_version, plugin_hash)` for the
+duration of the run; not persisted across runs since the cost of a fresh
+self-test is bounded.
+
+### 10) Amp Log Provider — Tee Strategy
+
+Amp's native session/thread log location and on-disk format are undocumented
+as of 2026-04. The reliable evidence source is the stream-json stdout we
+already capture. `AmpLogProvider` uses a **probe-then-tee** strategy with tee
+as the safe default:
+
+- Tee path is **per-thread, append-only**: every `amp --execute --stream-json`
+  invocation for a given thread (initial run + resumes triggered by idle
+  timeout, gate failure, or review-issue retries) appends to
+  `~/.config/mala/amp-sessions/{thread_id}.jsonl`.
+- Because the thread ID is not known until the first `system(init)` event,
+  the tee initially writes to a temp file (`.pending-{pid}.jsonl`) and is
+  atomically renamed to `{thread_id}.jsonl` once the ID is captured. On
+  resume, the pending file's contents are appended to the existing thread
+  file.
+- `AmpLogProvider.iter_events()` reads the whole file regardless of which
+  invocation produced which events, tolerating both possible Amp resume
+  shapes (delta-only vs. full-history-on-resume) — evidence is presence-based,
+  not count-based.
+
+Telemetry: `MalaEventSink` spans carry a `coder=claude|amp` attribute so
+dashboards can split per-coder metrics.
+
+### 11) Worktree Validation (Programmatic)
 
 `SpecValidationRunner` performs clean-room validation in isolated git worktrees:
 ```
@@ -593,7 +733,7 @@ Prevents edit conflicts between concurrent agents:
 ```
 Trigger validation in the orchestrator runs commands in the repository root.
 
-### 9) Telemetry
+### 12) Telemetry
 
 Agent sessions emit spans through a `TelemetryProvider` abstraction:
 - Protocol and `NullTelemetryProvider` in `infra.telemetry`

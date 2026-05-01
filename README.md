@@ -32,6 +32,63 @@ LLM agents become unreliable as their context window fills up. Early in a sessio
 
 [Claude Code](https://code.claude.com/docs/en/setup) CLI is the agent runtime. See the docs for installation instructions.
 
+### Amp (Optional, for `coder: amp`)
+
+Mala can drive its per-issue implementation agent on Sourcegraph's
+[Amp](https://ampcode.com/manual) instead of Claude. Amp is opt-in via
+`--coder amp` / `MALA_CODER=amp` / `coder: amp` in `mala.yaml`; the default
+remains `coder: claude`.
+
+When `coder: amp` is selected, the orchestrator runs `amp --execute --stream-json`
+under `--dangerously-allow-all` and relies on a bundled TypeScript safety plugin
+(`plugins/amp/mala-safety.ts`) for dangerous-command and lock-ownership
+enforcement. Before any issue agent is spawned, mala runs a fail-closed runtime
+self-test that proves the plugin actually loaded; if it doesn't, the run aborts
+with a clear error.
+
+**Prerequisites:**
+
+- **Binary install required.** Install Amp via the **official binary install**
+  documented at <https://ampcode.com/manual>. The npm package
+  `@sourcegraph/amp` is **not supported** for `coder: amp`: per the
+  [Amp plugin API](https://ampcode.com/manual/plugin-api), plugins only load
+  under the binary install with `PLUGINS=all` set and a working Bun runtime.
+  An npm-installed Amp will fail mala's runtime plugin self-test and abort the
+  run before any issue agent runs.
+- `AMP_API_KEY` exported in your shell (and added as a CI secret if you use
+  Amp in CI).
+- Bun runtime present — provided by the Amp binary install; mala does not
+  install Bun separately.
+- `~/.config/amp/plugins/` writable. Mala installs `mala-safety` to
+  `~/.config/amp/plugins/mala-safety/` idempotently on every run.
+- Mala always sets `PLUGINS=all` for you — this is not user-managed.
+
+**Tested-against version:** see `plugins/amp/README.md` for the pinned plugin
+acknowledgment header. The Amp CLI version range is documented in the
+release notes once the path-gated CI smoke job is green; run
+`amp --version` to compare.
+
+**Costs / agent modes:** Amp routes to different models based on
+`--amp-mode`:
+
+| Mode | Model |
+|------|-------|
+| `smart` (default) | Claude Opus |
+| `rush` | Claude Haiku |
+| `deep` | GPT-5 reasoning |
+
+**Known limitations under `coder: amp` (MVP):**
+
+- `MALA_DISALLOWED_TOOLS` is a **no-op** under Amp — the bundled plugin only
+  enforces dangerous-command blocking and lock-ownership. A warning is logged
+  once at run start when the env var is set. Tracked as a follow-up.
+- Cross-coder session resume is not supported (Amp thread IDs are not
+  interchangeable with Claude session IDs).
+- `--claude-settings-sources` is logged as ignored under `coder: amp`;
+  symmetrically, `--amp-mode` is logged as ignored under `coder: claude`.
+- No devcontainer integration: Amp install/auth is a user prerequisite, not
+  baked into mala's DevContainer image.
+
 ### Cerberus Review-Gate (Optional)
 
 [Cerberus](https://github.com/charlieyou/cerberus) provides automated code review when `reviewer_type: cerberus`
@@ -60,6 +117,8 @@ mala run --scope ids:issue-1,issue-2 --order input /path/to/repo  # Specific iss
 mala run --resume /path/to/repo            # Include in_progress issues and resume sessions
 mala run --strict --resume /path/to/repo   # Fail if a resumed issue has no session
 mala run --watch /path/to/repo             # Keep polling for new issues
+mala run --coder amp /path/to/repo         # Use Amp instead of Claude as the per-issue coder
+mala run --coder amp --amp-mode rush /path/to/repo  # Amp in rush mode (Haiku)
 mala status                               # Check locks, config, logs
 mala status --all                          # Show running instances across directories
 mala logs list                            # List recent runs
