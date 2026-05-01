@@ -83,11 +83,25 @@ jobs:
             echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           fi
 
+      - name: Verify amp is on PATH
+        # AC#12 invariant: with AMP_API_KEY configured, this job must
+        # exercise real Amp. Fail loudly here if the installer changed
+        # its install location or otherwise succeeded without putting
+        # `amp` on PATH — silently degrading to a skipped pytest would
+        # let the path-gated CI job pass without checking the schema.
+        run: |
+          set -euo pipefail
+          if ! command -v amp >/dev/null 2>&1; then
+            echo "::error::amp binary is not on PATH after install. The installer may have changed its target directory; update the install step or PATH export."
+            exit 1
+          fi
+          echo "amp resolved to: $(command -v amp)"
+
       - name: Report observed Amp version
         run: |
           set -euo pipefail
           echo "::group::amp --version"
-          amp --version || echo "(amp --version failed; smoke test will skip)"
+          amp --version
           echo "::endgroup::"
 
       - name: Run smoke test

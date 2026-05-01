@@ -40,13 +40,38 @@ _SUBPROCESS_TIMEOUT_SECONDS = 120.0
 complete in <30s; the wider window absorbs cold-start jitter."""
 
 
-def _missing_preconditions() -> str | None:
-    """Return a human-readable skip reason or ``None`` if ready to run."""
+class SmokePreconditionError(AssertionError):
+    """Raised when the smoke environment promises real Amp but cannot run it.
+
+    Specifically: ``AMP_API_KEY`` is set (so the workflow gate has
+    decided to run the smoke job) but ``amp`` is not on ``PATH`` (so
+    there is nothing to exercise the schema against). Subclassing
+    ``AssertionError`` so pytest reports the run as a hard failure
+    rather than a pass — silently skipping here would let the path-gated
+    CI job pass without ever testing real stream-json drift, defeating
+    AC#12.
+    """
+
+
+def _require_amp_environment() -> None:
+    """Skip when ``AMP_API_KEY`` is absent; fail when it is set but amp is missing.
+
+    AC#12 invariant: when the gating secret is configured, the smoke
+    test MUST exercise real ``amp --execute --stream-json``. The skip
+    path is only for fork PRs / unconfigured local dev where the
+    workflow gate has already decided not to run the smoke job — under
+    those conditions we want a green status, not a hard failure.
+    """
     if not os.environ.get("AMP_API_KEY"):
-        return "AMP_API_KEY not set; skipping real-Amp smoke test."
+        pytest.skip("AMP_API_KEY not set; skipping real-Amp smoke test.")
     if shutil.which("amp") is None:
-        return "amp binary not on PATH; skipping real-Amp smoke test."
-    return None
+        raise SmokePreconditionError(
+            "AMP_API_KEY is set but `amp` is not on PATH. The path-gated "
+            "CI smoke job has promised to exercise real Amp on every "
+            "gated PR — install the binary and ensure the install step "
+            "puts `amp` on PATH. Refusing to skip silently because that "
+            "would let upstream stream-json drift slip through."
+        )
 
 
 def _run_amp_version() -> str:
@@ -145,12 +170,12 @@ def _run_amp_stream_json(prompt: str) -> list[dict[str, Any]]:
 def test_amp_real_cli_stream_json_schema() -> None:
     """Assert the stream-json schema fields mala depends on are present.
 
-    Skips when ``AMP_API_KEY`` is absent or ``amp`` is not on PATH so the
-    CI job is green when the secret is unavailable (e.g. fork PRs).
+    Skips when ``AMP_API_KEY`` is absent (fork PRs / unconfigured local
+    dev). Fails — does not skip — when ``AMP_API_KEY`` is set but the
+    ``amp`` binary is not on ``PATH``, so the path-gated CI job cannot
+    pass without actually exercising real Amp.
     """
-    skip_reason = _missing_preconditions()
-    if skip_reason:
-        pytest.skip(skip_reason)
+    _require_amp_environment()
 
     version = _run_amp_version()
     print(f"[amp-smoke] amp --version: {version}", file=sys.stderr)
@@ -294,3 +319,40 @@ def test_parse_stream_lines_warns_on_non_object_json(
     assert events[0]["type"] == "system"
     captured = capsys.readouterr()
     assert "not an object" in captured.err
+
+
+@pytest.mark.unit
+def test_require_amp_environment_fails_when_key_set_but_amp_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: AMP_API_KEY set + amp missing must raise, not skip.
+
+    AC#12 invariant: when the workflow gate has decided to run the smoke
+    job (secret present), the test must exercise real Amp. A silent skip
+    would let the path-gated CI job pass without checking the schema if
+    the installer placed the binary somewhere unexpected.
+    """
+    monkeypatch.setenv("AMP_API_KEY", "test-key-not-used-for-network")
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    with pytest.raises(SmokePreconditionError, match="not on PATH"):
+        _require_amp_environment()
+
+
+@pytest.mark.unit
+def test_require_amp_environment_skips_when_key_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: AMP_API_KEY absent must keep skipping (fork-PR path).
+
+    The workflow gate already decides not to run the smoke job in this
+    case; the test mirrors that decision so the path-gated CI job has
+    a green status when the secret is unavailable.
+    """
+    monkeypatch.delenv("AMP_API_KEY", raising=False)
+    # ``pytest.skip`` raises ``Skipped``; capture it via ``OutcomeException``
+    # to avoid depending on private modules. The message is the contract.
+    with pytest.raises(BaseException) as exc_info:
+        _require_amp_environment()
+    assert "AMP_API_KEY not set" in str(exc_info.value)
+    # Sanity check that this was a Skipped outcome, not an arbitrary error.
+    assert type(exc_info.value).__name__ == "Skipped"
