@@ -433,18 +433,30 @@ def test_lock_acquire_then_edit_allowed_and_unlocked_edit_rejected(
         "should reject edit_file against unlocked.py while allowing it "
         f"against locked.py. tool_result content:\n{text[:2048]}"
     )
-    # Sanity: the locked target should not have a no-lock rejection. We
-    # check that the no-lock message is not paired with the locked target
-    # path in the same tool_result text. A simple containment check is
-    # sufficient because the unlocked target's path is distinct.
+    # Sanity: the locked target should not draw ANY plugin lock rejection.
+    # Both rejection markers are checked because the failure modes are
+    # distinct and load-bearing:
+    #
+    #   * "is not locked" → MCP server's lock-key derivation diverged from
+    #     the plugin's (or the <hash>.lock filename hashing drifted), so
+    #     the plugin sees no lock for the path the MCP just wrote.
+    #   * "is locked by"  → MCP server wrote the lock body with a holder
+    #     other than this Amp agent's MALA_AGENT_ID. The MCP server is
+    #     supposed to record the same agent_id the plugin reads from env;
+    #     a divergence here would let an MCP-written lock pass the plugin's
+    #     existence check while still failing the holder-equality check —
+    #     a subtler regression than the no-lock case but equally fatal.
+    _LOCKED_REJECTION_MARKERS = ("is not locked", "is locked by")
     locked_segments = [
         seg
         for seg in text.split("\n")
-        if str(locked_target) in seg and "is not locked" in seg
+        if str(locked_target) in seg
+        and any(marker in seg for marker in _LOCKED_REJECTION_MARKERS)
     ]
     assert not locked_segments, (
-        "unexpected no-lock rejection for the locked target — the plugin "
-        "did not see the lock written by the MCP server. Either the MCP "
-        "server's lock-key derivation diverged from the plugin's, or the "
-        f"<hash>.lock filename hashing drifted. Bad segments: {locked_segments!r}"
+        "unexpected lock-rejection for the locked target — the MCP-written "
+        "lock was not honored by the same Amp agent. Either the MCP server's "
+        "lock-key derivation diverged from the plugin's, the <hash>.lock "
+        "filename hashing drifted, or the MCP server recorded a different "
+        f"agent_id than MALA_AGENT_ID. Bad segments: {locked_segments!r}"
     )

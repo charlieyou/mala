@@ -409,6 +409,26 @@ def _edit_prompt(target: Path, body: str = "edited") -> str:
     )
 
 
+def _create_prompt(target: Path, body: str = "edited") -> str:
+    """Directive prompt: invoke ``create_file`` exactly once at ``target``.
+
+    Used by the non-existent-target canonicalization parity test, where
+    the file does not exist at lock time **or** at the plugin's
+    ``tool.call`` check (the plugin's ``resolveWithParents`` branch must
+    fire on both Python and TS sides). ``edit_file`` would either fail
+    or create the file ahead of the plugin's check on some Amp versions;
+    ``create_file`` is the documented surface for new files.
+    """
+    return (
+        f"Use the create_file tool to create a new file at the absolute path "
+        f"{target} containing the single line:\n"
+        f"{body}\n"
+        "Make exactly one create_file tool call. Do not run any other tools "
+        "(no Bash, no read_file, no grep, no edit_file). After the tool call "
+        "returns, reply with the single word done and stop."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers for lock-fixture management (always via real Python try_lock)
 # ---------------------------------------------------------------------------
@@ -729,4 +749,112 @@ def test_path_canonicalization_parity(
     assert "is locked by" not in text, (
         f"canonicalization parity broke (wrong-agent reported): "
         f"lock_via={lock_via}, tool_via={tool_via}. tool_result:\n{text[:2048]}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("lock_via", "tool_via"),
+    [
+        ("symlinked", "realpath"),
+        ("realpath", "symlinked"),
+    ],
+    ids=["lock=symlinked,tool=realpath", "lock=realpath,tool=symlinked"],
+)
+def test_symlinked_parent_canonicalization_parity(
+    amp_env: AmpLockEnv, lock_via: str, tool_via: str
+) -> None:
+    """Symlinked-parent canonicalization parity (plan L800-L801).
+
+    Setup: ``repo_path/real/x.py`` exists; ``repo_path/link`` is a
+    directory symlink pointing to ``repo_path/real``. The lock is taken
+    via one path shape (through the symlink, or via the realpath); the
+    Amp ``tool.call`` carries the other. Both sides must canonicalize to
+    the same realpath — the cross-language parity surface is
+    Python's :func:`Path.resolve` / :func:`os.path.realpath` vs the TS
+    plugin's :func:`fs.realpathSync` (called from
+    ``mala-safety.ts::tryRealpath``).
+
+    A divergence here would be a regression in symlink handling on
+    either side: e.g., the TS plugin not realpath'ing through symlinked
+    intermediate dirs would yield ``link/x.py`` as canonical and miss
+    the lock written under ``real/x.py``.
+    """
+    real_dir = amp_env.repo_path / "real"
+    real_dir.mkdir()
+    real_target = real_dir / "x.py"
+    real_target.write_text("# original\n")
+
+    link_dir = amp_env.repo_path / "link"
+    os.symlink(real_dir, link_dir, target_is_directory=True)
+    sym_target = link_dir / "x.py"
+
+    lock_path_arg = str(sym_target) if lock_via == "symlinked" else str(real_target)
+    _create_python_lock(lock_path_arg, _DEFAULT_AGENT_ID, str(amp_env.repo_path))
+
+    tool_target = sym_target if tool_via == "symlinked" else real_target
+
+    spawned_env = _build_amp_env(amp_env, agent_id=_DEFAULT_AGENT_ID)
+    result = _run_amp(_edit_prompt(tool_target), spawned_env, amp_env.repo_path)
+
+    _assert_plugin_loaded(result)
+    _skip_if_no_file_write(
+        result.events,
+        f"symlinked-parent-parity[lock={lock_via},tool={tool_via}]",
+    )
+
+    text = _tool_result_text(result.events)
+    assert "is not locked" not in text, (
+        f"symlinked-parent canonicalization parity broke: "
+        f"lock_via={lock_via}, tool_via={tool_via}. The plugin's "
+        "tryRealpath(symlink) diverged from Python's Path.resolve(). "
+        f"tool_result:\n{text[:2048]}"
+    )
+    assert "is locked by" not in text, (
+        f"symlinked-parent parity broke (wrong-agent reported): "
+        f"lock_via={lock_via}, tool_via={tool_via}. tool_result:\n{text[:2048]}"
+    )
+
+
+def test_nonexistent_target_canonicalization_parity(amp_env: AmpLockEnv) -> None:
+    """Non-existent-target canonicalization parity (plan L800-L801).
+
+    The file does not exist at lock time **or** at the plugin's
+    ``tool.call`` check; both sides must take the parents-walk branch
+    (``_resolve_with_parents`` in Python; ``resolveWithParents`` in the
+    TS plugin) and produce the same canonical path. ``create_file`` is
+    used so the tool fires before the file exists; the plugin's hook
+    runs first and must compute the same SHA-256 hash as the lock
+    fixture.
+
+    Pre-existing parent ``repo_path`` is the existing ancestor both
+    walks reach; missing components ``newdir/missing.py`` are appended
+    in the same order on both sides.
+    """
+    target = amp_env.repo_path / "newdir" / "missing.py"
+    assert not target.exists(), "test setup invariant: file must not exist"
+    assert not target.parent.exists(), (
+        "test setup invariant: parent dir must not exist either, so the "
+        "parents-walk on both sides walks past it up to repo_path"
+    )
+
+    _create_python_lock(str(target), _DEFAULT_AGENT_ID, str(amp_env.repo_path))
+
+    spawned_env = _build_amp_env(amp_env, agent_id=_DEFAULT_AGENT_ID)
+    result = _run_amp(_create_prompt(target), spawned_env, amp_env.repo_path)
+
+    _assert_plugin_loaded(result)
+    # File-write predicate accepts create_file (in FILE_WRITE_TOOLS).
+    _skip_if_no_file_write(result.events, "nonexistent-target-parity")
+
+    text = _tool_result_text(result.events)
+    assert "is not locked" not in text, (
+        "non-existent-target canonicalization parity broke: the plugin's "
+        "resolveWithParents diverged from Python's _resolve_with_parents. "
+        "Both should walk up from missing.py → newdir → repo_path "
+        "(existing) and append missing components in the same order. "
+        f"tool_result:\n{text[:2048]}"
+    )
+    assert "is locked by" not in text, (
+        "non-existent-target parity broke (wrong-agent reported); "
+        f"tool_result:\n{text[:2048]}"
     )
