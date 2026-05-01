@@ -68,7 +68,9 @@ def pytest_collection_modifyitems(
     """Apply markers based on test file path."""
     for item in items:
         # Check if test already has an explicit marker (not just package name in keywords)
-        if any(item.get_closest_marker(m) for m in ("unit", "integration", "e2e")):
+        if any(
+            item.get_closest_marker(m) for m in ("unit", "integration", "e2e", "smoke")
+        ):
             continue
         # Path-based auto-marking (use item.path for pytest 7+ compatibility)
         # Normalize path separators for cross-platform compatibility (Windows uses backslashes)
@@ -79,10 +81,13 @@ def pytest_collection_modifyitems(
             item.add_marker(pytest.mark.integration)
         elif "/unit/" in path:
             item.add_marker(pytest.mark.unit)
+        elif "/smoke/" in path:
+            item.add_marker(pytest.mark.smoke)
         else:
             pytest.fail(
                 f"Test {item.nodeid} is not in a recognized test category "
-                f"(unit/, integration/, e2e/). Move it to the appropriate directory.",
+                f"(unit/, integration/, e2e/, smoke/). "
+                "Move it to the appropriate directory.",
                 pytrace=False,
             )
 
