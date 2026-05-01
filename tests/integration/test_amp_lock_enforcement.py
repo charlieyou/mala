@@ -63,7 +63,7 @@ import os
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+import dataclasses
 from pathlib import Path
 from typing import Any
 
@@ -112,7 +112,7 @@ _OTHER_AGENT_ID = "agent-B"
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclasses.dataclass
 class AmpLockEnv:
     """Per-test scratch environment.
 
@@ -172,7 +172,7 @@ def amp_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AmpLockEnv:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclasses.dataclass
 class AmpResult:
     """Captured output of one ``amp --execute --stream-json`` invocation."""
 

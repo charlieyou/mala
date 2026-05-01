@@ -45,7 +45,7 @@ import os
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+import dataclasses
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -124,7 +124,7 @@ _AGENT_ID = "agent-mcp-A"
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclasses.dataclass
 class AmpMcpEnv:
     home_dir: Path
     plugin_dir: Path
@@ -213,7 +213,7 @@ def _build_mcp_config(env: AmpMcpEnv) -> str:
     return json.dumps(payload)
 
 
-@dataclass
+@dataclasses.dataclass
 class AmpResult:
     returncode: int
     events: list[dict[str, Any]]
