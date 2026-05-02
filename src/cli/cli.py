@@ -471,6 +471,23 @@ app = typer.Typer(
     add_completion=False,
 )
 
+_CODER_HELP = (
+    "Coder backend to drive issue execution (claude or amp). "
+    "Default: claude."
+)
+_AMP_MODE_HELP = (
+    "Amp execution mode: smart, rush, or deep. Only consulted when coder=amp. "
+    "Default: deep."
+)
+_EFFORT_HELP = (
+    "Reasoning effort forwarded to the active coder. Valid: low, medium, high, "
+    "xhigh, max. Default: unset (leave backend default)."
+)
+_RUN_EFFORT_HELP = (
+    f"{_EFFORT_HELP} Forwarded to ClaudeAgentOptions.effort for coder=claude "
+    "and to `amp --effort <value>` for coder=amp (deep mode only)."
+)
+
 
 @app.command()
 def run(
@@ -589,7 +606,7 @@ def run(
         str | None,
         typer.Option(
             "--coder",
-            help="Coder backend to drive issue execution (claude or amp).",
+            help=_CODER_HELP,
             callback=_validate_coder_option,
             rich_help_panel="Coder",
         ),
@@ -598,7 +615,7 @@ def run(
         str | None,
         typer.Option(
             "--amp-mode",
-            help="Amp execution mode: smart, rush, or deep. Only consulted when coder=amp.",
+            help=_AMP_MODE_HELP,
             callback=_validate_amp_mode_option,
             rich_help_panel="Coder",
         ),
@@ -607,12 +624,7 @@ def run(
         str | None,
         typer.Option(
             "--effort",
-            help=(
-                "Reasoning effort forwarded to the active coder. Valid: "
-                "low, medium, high, xhigh, max. Forwarded to "
-                "ClaudeAgentOptions.effort for coder=claude and to "
-                "`amp --effort <value>` for coder=amp (deep mode only)."
-            ),
+            help=_RUN_EFFORT_HELP,
             callback=_validate_effort_option,
             rich_help_panel="Coder",
         ),
@@ -830,7 +842,7 @@ def epic_verify(
         str | None,
         typer.Option(
             "--coder",
-            help="Coder backend to drive issue execution (claude or amp).",
+            help=_CODER_HELP,
             callback=_validate_coder_option,
             rich_help_panel="Coder",
         ),
@@ -839,7 +851,7 @@ def epic_verify(
         str | None,
         typer.Option(
             "--amp-mode",
-            help="Amp execution mode: smart, rush, or deep. Only consulted when coder=amp.",
+            help=_AMP_MODE_HELP,
             callback=_validate_amp_mode_option,
             rich_help_panel="Coder",
         ),
@@ -848,10 +860,7 @@ def epic_verify(
         str | None,
         typer.Option(
             "--effort",
-            help=(
-                "Reasoning effort forwarded to the active coder. Valid: "
-                "low, medium, high, xhigh, max."
-            ),
+            help=_EFFORT_HELP,
             callback=_validate_effort_option,
             rich_help_panel="Coder",
         ),

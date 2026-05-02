@@ -144,6 +144,30 @@ def test_invalid_value_rejected_at_parse_time(
     assert value in result.output
 
 
+@pytest.mark.parametrize("command", [["run"], ["epic-verify", "epic-1"]])
+def test_coder_help_shows_effective_defaults(
+    monkeypatch: pytest.MonkeyPatch, command: list[str]
+) -> None:
+    """Coder help documents the defaults after env/yaml/CLI resolution."""
+    from typer.testing import CliRunner
+
+    _isolate_env(monkeypatch)
+    cli = _reload_cli(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, [*command, "--help"])
+
+    assert result.exit_code == 0
+    output = " ".join(result.output.split())
+    assert "--coder" in output
+    assert "Default: claude" in output
+    assert "--amp-mode" in output
+    assert "Default: deep" in output
+    assert "--effort" in output
+    assert "Default: unset" in output
+    assert "leave backend default" in output
+
+
 def test_absence_of_flags_preserves_default_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
