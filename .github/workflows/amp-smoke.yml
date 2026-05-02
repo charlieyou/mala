@@ -65,4 +65,4 @@ jobs:
       - name: Run real Amp stream-json e2e tests
         env:
           AMP_API_KEY: ${{ secrets.AMP_API_KEY }}
-        run: uv run pytest -m e2e tests/e2e/test_amp_real_cli.py
+        run: uv run pytest -o addopts="" -m e2e tests/e2e/test_amp_real_cli.py
