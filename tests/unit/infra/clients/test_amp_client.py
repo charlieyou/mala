@@ -773,8 +773,10 @@ def test_resume_threads_continue_replaces_argv(tmp_path: Path) -> None:
     client = AmpClient(options).with_resume("T-c")
     argv = client._build_argv()
     assert argv[:4] == ["amp", "threads", "continue", "T-c"]
-    # Remaining flags preserved (excluding --execute).
-    assert "--execute" not in argv
+    # All trailing flags preserved — current Amp CLI requires
+    # ``--execute`` to keep ``--stream-json`` even under
+    # ``threads continue``.
+    assert "--execute" in argv
     assert "--stream-json" in argv
     assert "--dangerously-allow-all" in argv
     assert "--mode" in argv

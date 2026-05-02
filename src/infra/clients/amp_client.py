@@ -79,16 +79,17 @@ _AUTH_ERROR_MARKERS: tuple[str, ...] = (
 ResumeStrategy = Literal["thread-id-flag", "threads-continue", "fallback"]
 """Which resume argv shape :meth:`AmpClient.with_resume` produces.
 
-  * ``"thread-id-flag"`` (default): adds (or updates) ``--thread-id <id>``
-    on the existing ``amp --execute`` argv.
-  * ``"threads-continue"``: replaces the leading argv with
-    ``[amp, threads, continue, <id>, ...]`` keeping subsequent flags.
+  * ``"threads-continue"`` (default): replaces the leading argv with
+    ``[amp, threads, continue, <id>, ...]`` keeping all subsequent
+    flags (including ``--execute`` and ``--stream-json``). This is the
+    only shape the current Amp CLI accepts together with
+    ``--stream-json``.
+  * ``"thread-id-flag"``: adds (or updates) ``--thread-id <id>`` on the
+    existing ``amp --execute`` argv. Retained for compatibility but no
+    longer accepted by recent Amp CLI builds (returns ``unknown option
+    '--thread-id'``).
   * ``"fallback"``: leaves argv untouched; logs a warning. Caller is
     responsible for preserving context via prompt accumulation.
-
-The plan (``plans/2026-04-29-amp-provider-plan.md#L679-L682``) calls for
-a spike to confirm which shape Amp actually supports; until then we
-parametrize unit tests across both candidate shapes plus the fallback.
 """
 
 
@@ -110,7 +111,7 @@ class AmpClientOptions:
     log_path: Path
     thread_id: str | None = None
     extra_cli_args: tuple[str, ...] = ("--dangerously-allow-all",)
-    resume_strategy: ResumeStrategy = "thread-id-flag"
+    resume_strategy: ResumeStrategy = "threads-continue"
     kill_grace_seconds: float = _DEFAULT_KILL_GRACE_SECONDS
 
 
@@ -326,8 +327,12 @@ class AmpClient:
                     base[0] if base else None,
                 )
                 return base
-            tail = [a for a in base[1:] if a != "--execute"]
-            return ["amp", "threads", "continue", self._resume_thread_id, *tail]
+            # Keep ``--execute`` and ``--stream-json`` on the tail: the
+            # current Amp CLI requires ``--execute`` to accept
+            # ``--stream-json`` even under the ``threads continue``
+            # subcommand, and dropping it produced an immediate
+            # subprocess exit on every gate retry.
+            return ["amp", "threads", "continue", self._resume_thread_id, *base[1:]]
         # "fallback": preserve argv; caller carries context via prompt.
         logger.warning(
             "AmpClient: resume_strategy='fallback' for thread_id=%s — "
