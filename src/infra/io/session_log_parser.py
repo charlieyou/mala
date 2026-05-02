@@ -174,12 +174,21 @@ class SessionLogParser:
             commands = []
             for block in entry.entry.message.content:
                 if isinstance(block, ToolUseBlock) and block.name.lower() == "bash":
-                    command = block.input.get("command", "")
+                    command = self._extract_command_from_tool_input(block.input)
                     commands.append((block.id, command))
             return commands
 
         # Fallback to raw data parsing for backward compatibility
         return self._extract_bash_commands_from_data(entry.data)
+
+    def _extract_command_from_tool_input(self, tool_input: dict[str, Any]) -> str:
+        """Extract a shell command from Claude- or Amp-shaped Bash input."""
+        command = tool_input.get("command")
+        if command is None:
+            command = tool_input.get("cmd")
+        if not isinstance(command, str):
+            return ""
+        return command
 
     def _extract_bash_commands_from_data(
         self, data: dict[str, Any]
@@ -202,7 +211,12 @@ class SessionLogParser:
                 tool_name = block.get("name", "")
                 if tool_name.lower() == "bash":
                     tool_id = block.get("id", "")
-                    command = block.get("input", {}).get("command", "")
+                    tool_input = block.get("input", {})
+                    if not isinstance(tool_input, dict):
+                        tool_input = {}
+                    command = self._extract_command_from_tool_input(
+                        cast("dict[str, Any]", tool_input)
+                    )
                     commands.append((tool_id, command))
         return commands
 
