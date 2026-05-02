@@ -4,6 +4,7 @@ Tests for parent epic lookup functionality including
 get_parent_epic_async and get_parent_epics_async.
 """
 
+import asyncio
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -542,6 +543,53 @@ class TestParentEpicCaching:
 
         assert result == {"task-1": "epic-1"}
         assert call_count == 1  # Only 1 call due to deduplication
+
+    @pytest.mark.asyncio
+    async def test_concurrent_shared_parent_metadata_fetch_is_deduped(
+        self, tmp_path: Path
+    ) -> None:
+        """Shared parent metadata should only be fetched once under concurrency."""
+        beads = BeadsClient(tmp_path)
+        parent_dep = json.dumps(
+            [{"dependency_type": "parent-child", "depends_on_id": "epic-1"}]
+        )
+        epic_metadata = json.dumps(
+            {"id": "epic-1", "issue_type": "epic", "priority": 1}
+        )
+        dep_calls = 0
+        show_calls = 0
+        both_dep_lists_returned = asyncio.Event()
+        second_show_started = asyncio.Event()
+
+        async def mock_run(cmd: list[str]) -> CommandResult:
+            nonlocal dep_calls, show_calls
+            if cmd[:3] == ["br", "dep", "list"]:
+                dep_calls += 1
+                if dep_calls == 2:
+                    both_dep_lists_returned.set()
+                await both_dep_lists_returned.wait()
+                return make_command_result(stdout=parent_dep)
+
+            if cmd == ["br", "show", "epic-1", "--json"]:
+                show_calls += 1
+                if show_calls == 2:
+                    second_show_started.set()
+                if show_calls == 1:
+                    try:
+                        await asyncio.wait_for(second_show_started.wait(), timeout=0.05)
+                    except TimeoutError:
+                        pass
+                return make_command_result(stdout=epic_metadata)
+
+            return make_command_result(returncode=1, stderr="unexpected command")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", mock_run)
+
+            result = await beads.get_parent_epics_async(["task-1", "task-2"])
+
+        assert result == {"task-1": "epic-1", "task-2": "epic-1"}
+        assert show_calls == 1
 
     @pytest.mark.asyncio
     async def test_nested_epics_preserve_immediate_parent(self, tmp_path: Path) -> None:

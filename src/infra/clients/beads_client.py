@@ -99,6 +99,8 @@ class BeadsClient:
         self._epic_priority_cache: dict[str, int] = {}
         # Cache for br show lookups used while resolving parent epics
         self._issue_metadata_cache: dict[str, dict[str, object] | None] = {}
+        # Locks for in-flight br show lookups to prevent duplicate concurrent calls
+        self._issue_metadata_locks: dict[str, asyncio.Lock] = {}
 
     async def _run_subprocess_async(
         self,
@@ -150,26 +152,36 @@ class BeadsClient:
         if issue_id in self._issue_metadata_cache:
             return self._issue_metadata_cache[issue_id]
 
-        result = await self._run_subprocess_async(["br", "show", issue_id, "--json"])
-        if result.returncode != 0:
-            self._issue_metadata_cache[issue_id] = None
-            return None
+        if issue_id not in self._issue_metadata_locks:
+            self._issue_metadata_locks[issue_id] = asyncio.Lock()
+        lock = self._issue_metadata_locks[issue_id]
 
-        try:
-            issue_data = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            self._issue_metadata_cache[issue_id] = None
-            return None
+        async with lock:
+            if issue_id in self._issue_metadata_cache:
+                return self._issue_metadata_cache[issue_id]
 
-        if isinstance(issue_data, list) and issue_data:
-            issue_data = issue_data[0]
-        if not isinstance(issue_data, dict):
-            self._issue_metadata_cache[issue_id] = None
-            return None
+            result = await self._run_subprocess_async(
+                ["br", "show", issue_id, "--json"]
+            )
+            if result.returncode != 0:
+                self._issue_metadata_cache[issue_id] = None
+                return None
 
-        metadata = {str(key): value for key, value in issue_data.items()}
-        self._issue_metadata_cache[issue_id] = metadata
-        return metadata
+            try:
+                issue_data = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                self._issue_metadata_cache[issue_id] = None
+                return None
+
+            if isinstance(issue_data, list) and issue_data:
+                issue_data = issue_data[0]
+            if not isinstance(issue_data, dict):
+                self._issue_metadata_cache[issue_id] = None
+                return None
+
+            metadata = {str(key): value for key, value in issue_data.items()}
+            self._issue_metadata_cache[issue_id] = metadata
+            return metadata
 
     def _cache_epic_priority(self, epic_id: str, priority: object) -> None:
         """Cache a parsed epic priority when br metadata provides one."""
