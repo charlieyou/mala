@@ -34,6 +34,7 @@ called.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -51,7 +52,7 @@ from src.infra.clients.amp_messages import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Mapping, Sequence
+    from collections.abc import AsyncIterator, Callable, Mapping, Sequence
     from pathlib import Path
     from types import TracebackType
     from typing import Self
@@ -64,6 +65,9 @@ _STDERR_BUFFER_LIMIT = 4096
 
 _STDOUT_TAIL_LIMIT = 4096
 """Cap stdout-tail buffer at 4 KiB for diagnostic attachment to errors."""
+
+_STREAM_JSON_READER_LIMIT = 16 * 1024 * 1024
+"""Allow large single-line stream-json events such as verbose tool results."""
 
 _DEFAULT_KILL_GRACE_SECONDS = 2.0
 """Seconds between SIGTERM and SIGKILL during ``__aexit__`` cleanup."""
@@ -110,6 +114,8 @@ class AmpClientOptions:
     argv: Sequence[str]
     log_path: Path
     thread_id: str | None = None
+    lock_event_log_path: Path | None = None
+    lock_event_callback: Callable[[object], object] | None = None
     extra_cli_args: tuple[str, ...] = ("--dangerously-allow-all",)
     resume_strategy: ResumeStrategy = "threads-continue"
     kill_grace_seconds: float = _DEFAULT_KILL_GRACE_SECONDS
@@ -169,6 +175,8 @@ class _ClientState:
     stderr_buf: bytearray = field(default_factory=bytearray)
     stdout_tail: bytearray = field(default_factory=bytearray)
     stderr_task: asyncio.Task[None] | None = None
+    lock_event_task: asyncio.Task[None] | None = None
+    lock_event_offset: int = 0
     tee_path: Path | None = None
     tee_file: Any = None  # binary file handle; typed Any to avoid IO[...] noise
 
@@ -238,6 +246,14 @@ class AmpClient:
     async def __aenter__(self) -> Self:
         log_path = self._options.log_path
         log_path.parent.mkdir(parents=True, exist_ok=True)
+        if self._options.lock_event_log_path is not None:
+            self._options.lock_event_log_path.parent.mkdir(parents=True, exist_ok=True)
+            if self._state.lock_event_offset == 0:
+                self._options.lock_event_log_path.unlink(missing_ok=True)
+                self._options.lock_event_log_path.touch()
+            self._state.lock_event_task = asyncio.create_task(
+                self._tail_lock_events(self._options.lock_event_log_path)
+            )
         # Append-mode is correct for both pending (new file) and resume
         # (existing thread file) — the cross-invocation evidence guarantee
         # depends on this being append-only.
@@ -283,6 +299,7 @@ class AmpClient:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=_STREAM_JSON_READER_LIMIT,
             cwd=str(self._options.cwd),
             env=dict(self._options.env),
             start_new_session=sys.platform != "win32",
@@ -361,6 +378,17 @@ class AmpClient:
                 pass
             except Exception as exc:
                 logger.debug("AmpClient stderr collector raised on shutdown: %s", exc)
+
+        lock_event_task = self._state.lock_event_task
+        if lock_event_task is not None and not lock_event_task.done():
+            lock_event_task.cancel()
+            try:
+                await lock_event_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                logger.debug("AmpClient lock-event tailer raised on shutdown: %s", exc)
+        await self._drain_configured_lock_events()
 
         tee_file = self._state.tee_file
         if tee_file is not None:
@@ -456,6 +484,7 @@ class AmpClient:
             # Don't block the iterator on subprocess wait; __aexit__ owns
             # full cleanup. We only opportunistically reap if exit is
             # already imminent so the returncode is observable to callers.
+            await self._drain_configured_lock_events()
             await self._reap_if_done()
 
     async def _dispatch(self, event: dict[str, Any]) -> AsyncIterator[object]:
@@ -476,6 +505,7 @@ class AmpClient:
             if msg is not None:
                 yield msg
         elif event_type == "result":
+            await self._drain_configured_lock_events()
             yield self._build_result(event)
         else:
             # Unknown event types are warn-level only (plan L651): they
@@ -669,6 +699,69 @@ class AmpClient:
             raise
         except Exception as exc:
             logger.debug("AmpClient stderr collector ended with %s", exc)
+
+    async def _tail_lock_events(self, path: Path) -> None:
+        """Tail Amp MCP lock-event JSONL and feed the deadlock monitor."""
+        try:
+            while True:
+                await self._drain_lock_events(path)
+                await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            raise
+
+    async def _drain_configured_lock_events(self) -> None:
+        if self._options.lock_event_log_path is not None:
+            await self._drain_lock_events(self._options.lock_event_log_path)
+
+    async def _drain_lock_events(self, path: Path) -> None:
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                fh.seek(self._state.lock_event_offset)
+                while line := fh.readline():
+                    if not line.endswith("\n"):
+                        break
+                    self._state.lock_event_offset = fh.tell()
+                    await self._handle_lock_event_line(line)
+        except FileNotFoundError:
+            pass
+
+    async def _handle_lock_event_line(self, line: str) -> None:
+        stripped = line.strip()
+        if not stripped:
+            return
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError:
+            logger.warning("AmpClient: invalid lock-event JSONL line: %s", stripped[:200])
+            return
+        if not isinstance(data, dict):
+            return
+        try:
+            from src.core.models import LockEvent, LockEventType
+
+            event = LockEvent(
+                event_type=LockEventType(str(data["event_type"])),
+                agent_id=str(data["agent_id"]),
+                lock_path=str(data["lock_path"]),
+                timestamp=float(data["timestamp"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning("AmpClient: malformed lock-event payload %r: %s", data, exc)
+            return
+
+        callback = self._options.lock_event_callback
+        if callback is None:
+            return
+        try:
+            result = callback(event)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.exception(
+                "AmpClient: lock-event callback failed for agent=%s path=%s",
+                event.agent_id,
+                event.lock_path,
+            )
 
     def _record_stdout_tail(self, line: bytes) -> None:
         self._state.stdout_tail.extend(line)

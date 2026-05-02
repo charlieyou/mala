@@ -403,10 +403,10 @@ def create_amp_mcp_server_factory() -> Callable[
     falls back to the default in :func:`src.infra.tools.env.get_lock_dir`,
     matching Claude-side behavior.
 
-    The ``emit_lock_event`` parameter is intentionally unused: a stdio
-    subprocess cannot directly call back into the orchestrator's event
-    sink, and the WAITING-event channel is a Claude-only deadlock
-    observability feature in MVP.
+    The ``emit_lock_event`` parameter is interpreted by
+    :class:`AmpRuntimeBuilder`: when present it injects ``MALA_LOCK_EVENT_LOG``
+    into this stdio spec, and ``AmpClient`` tails that JSONL side channel back
+    into the orchestrator's deadlock monitor.
     """
 
     import os

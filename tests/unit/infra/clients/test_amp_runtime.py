@@ -300,6 +300,30 @@ def test_mcp_factory_receives_agent_id_and_repo_path(repo_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_deadlock_monitor_enables_amp_lock_event_side_channel(repo_path: Path) -> None:
+    class Monitor:
+        async def handle_event(self, event: object) -> None:
+            del event
+
+    runtime = (
+        AmpRuntimeBuilder(repo_path, "agent-77", _stdio_locking_factory())
+        .with_hooks(deadlock_monitor=Monitor())
+        .build()
+    )
+
+    event_log = runtime.options.lock_event_log_path
+    assert event_log is not None
+    assert runtime.env["MALA_LOCK_EVENT_LOG"] == str(event_log)
+    assert runtime.options.lock_event_callback is not None
+
+    raw_spec = runtime.mcp_config["locking_mcp"]
+    assert isinstance(raw_spec, dict)
+    env = raw_spec.get("env")
+    assert isinstance(env, dict)
+    assert env["MALA_LOCK_EVENT_LOG"] == str(event_log)
+
+
+@pytest.mark.unit
 def test_mcp_config_forwards_factory_map_directly_to_cli(
     repo_path: Path,
 ) -> None:

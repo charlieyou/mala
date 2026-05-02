@@ -22,10 +22,9 @@ Tools exposed (parity with ``locking_mcp.py``'s in-process server):
 
 Bodies are JSON-encoded text content blocks (same shape as the in-process
 server) so the cross-language plugin contract (``mala-safety.ts``) can read
-the produced ``<hash>.lock`` files identically. The launcher does **not**
-emit ``WAITING`` events; deadlock observability for Amp is an out-of-scope
-follow-up — the locking_mcp orchestrator-side WAITING channel is a Claude-only
-concern in MVP (plan ``L702``).
+the produced ``<hash>.lock`` files identically. When ``MALA_LOCK_EVENT_LOG``
+is set, the launcher also appends lock events to that JSONL side channel so
+the parent Amp client can feed the existing orchestrator deadlock monitor.
 
 Configuration is read from CLI args first, then env-var fallback:
 
@@ -46,6 +45,8 @@ import json
 import logging
 import os
 import sys
+import time
+from pathlib import Path
 from typing import Any
 
 from mcp.server.lowlevel.server import Server
@@ -62,6 +63,8 @@ from src.infra.tools.locking import (
 )
 
 logger = logging.getLogger(__name__)
+
+_LOCK_EVENT_LOG_ENV = "MALA_LOCK_EVENT_LOG"
 
 
 _LOCK_ACQUIRE_DESCRIPTION = (
@@ -117,6 +120,28 @@ def _strip_canonical(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{k: v for k, v in r.items() if k != "canonical"} for r in results]
 
 
+def _emit_lock_event(event_type: str, agent_id: str, lock_path: str) -> None:
+    """Append a lock event for the parent Amp client to tail, if configured."""
+    event_log = os.environ.get(_LOCK_EVENT_LOG_ENV)
+    if not event_log:
+        return
+    payload = {
+        "event_type": event_type,
+        "agent_id": agent_id,
+        "lock_path": lock_path,
+        "timestamp": time.time(),
+    }
+    try:
+        path = Path(event_log)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, separators=(",", ":")))
+            fh.write("\n")
+            fh.flush()
+    except OSError:
+        logger.exception("Failed to append Amp lock event: %s", payload)
+
+
 async def _handle_lock_acquire(
     args: dict[str, Any],
     agent_id: str,
@@ -143,8 +168,11 @@ async def _handle_lock_acquire(
     blocked: list[str] = []
     for canon in sorted_canonical:
         original = seen_canonical[canon]
+        holder_before = _get_lock_holder(canon, repo_namespace)
         acquired = _try_lock(canon, agent_id, repo_namespace)
         holder = None if acquired else _get_lock_holder(canon, repo_namespace)
+        if acquired and holder_before != agent_id:
+            _emit_lock_event("acquired", agent_id, canon)
         results.append(
             {
                 "filepath": original,
@@ -163,6 +191,9 @@ async def _handle_lock_acquire(
                 "all_acquired": not blocked,
             }
         )
+
+    for canon in blocked:
+        _emit_lock_event("waiting", agent_id, canon)
 
     # Wait until ANY blocked file becomes available, mirroring the
     # in-process server's FIRST_COMPLETED behavior (locking_mcp.py:309-356).
@@ -198,6 +229,8 @@ async def _handle_lock_acquire(
                 acquired = task.result()
             except Exception:
                 acquired = False
+            if acquired:
+                _emit_lock_event("acquired", agent_id, canon)
             for r in results:
                 if r["canonical"] == canon:
                     r["acquired"] = acquired
@@ -240,6 +273,8 @@ async def _handle_lock_release(
 
     if release_all:
         count, released_paths = _cleanup_agent_locks(agent_id)
+        for path in released_paths:
+            _emit_lock_event("released", agent_id, path)
         return json.dumps({"released": released_paths, "count": count})
 
     if not filepaths:
@@ -253,6 +288,7 @@ async def _handle_lock_release(
             continue
         seen.add(canon)
         _release_lock(canon, agent_id, repo_namespace)
+        _emit_lock_event("released", agent_id, canon)
         released.append(fp)
 
     return json.dumps({"released": released, "count": len(released)})

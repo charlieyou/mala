@@ -58,7 +58,7 @@ from src.infra.clients.amp_messages import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Sequence
+    from collections.abc import AsyncGenerator, Callable, Sequence
     from pathlib import Path
 
     from src.infra.clients.amp_client import ResumeStrategy
@@ -170,6 +170,15 @@ def _python_argv_for(script: Path) -> list[str]:
     return [sys.executable, str(script)]
 
 
+async def _wait_until(condition: Callable[[], bool], timeout: float = 1.0) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if condition():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("condition was not met before timeout")
+
+
 # ---------------------------------------------------------------------------
 # Sample stream-json events
 # ---------------------------------------------------------------------------
@@ -217,6 +226,122 @@ def _assistant_thinking(text: str = "ponder") -> str:
             "message": {"content": [{"type": "thinking", "text": text}]},
         }
     )
+
+
+@pytest.mark.unit
+async def test_lock_event_jsonl_is_forwarded_to_callback(tmp_path: Path) -> None:
+    from src.core.models import LockEvent, LockEventType
+
+    events: list[LockEvent] = []
+    event_log = tmp_path / "lock-events.jsonl"
+    options = AmpClientOptions(
+        cwd=tmp_path,
+        env=dict(os.environ),
+        argv=(sys.executable, "-c", "print('unused')"),
+        log_path=tmp_path / "amp.jsonl",
+        lock_event_log_path=event_log,
+        lock_event_callback=events.append,
+    )
+
+    async with AmpClient(options):
+        event_log.write_text(
+            json.dumps(
+                {
+                    "event_type": "waiting",
+                    "agent_id": "agent-a",
+                    "lock_path": "/tmp/file.py",
+                    "timestamp": 123.0,
+                }
+            )
+            + "\n"
+        )
+        await _wait_until(lambda: bool(events))
+
+    assert events == [
+        LockEvent(
+            event_type=LockEventType.WAITING,
+            agent_id="agent-a",
+            lock_path="/tmp/file.py",
+            timestamp=123.0,
+        )
+    ]
+
+
+@pytest.mark.unit
+async def test_lock_event_jsonl_supports_async_callback(tmp_path: Path) -> None:
+    from src.core.models import LockEvent
+
+    events: list[LockEvent] = []
+    event_log = tmp_path / "lock-events.jsonl"
+
+    async def capture(event: object) -> None:
+        assert isinstance(event, LockEvent)
+        events.append(event)
+
+    options = AmpClientOptions(
+        cwd=tmp_path,
+        env=dict(os.environ),
+        argv=(sys.executable, "-c", "print('unused')"),
+        log_path=tmp_path / "amp.jsonl",
+        lock_event_log_path=event_log,
+        lock_event_callback=capture,
+    )
+
+    async with AmpClient(options):
+        event_log.write_text(
+            json.dumps(
+                {
+                    "event_type": "acquired",
+                    "agent_id": "agent-a",
+                    "lock_path": "/tmp/file.py",
+                    "timestamp": 123.0,
+                }
+            )
+            + "\n"
+        )
+        await _wait_until(lambda: bool(events))
+
+    assert len(events) == 1
+
+
+@pytest.mark.unit
+async def test_lock_event_tailer_waits_for_complete_jsonl_line(tmp_path: Path) -> None:
+    from src.core.models import LockEvent, LockEventType
+
+    events: list[LockEvent] = []
+    event_log = tmp_path / "lock-events.jsonl"
+    options = AmpClientOptions(
+        cwd=tmp_path,
+        env=dict(os.environ),
+        argv=(sys.executable, "-c", "print('unused')"),
+        log_path=tmp_path / "amp.jsonl",
+        lock_event_log_path=event_log,
+        lock_event_callback=events.append,
+    )
+    payload = json.dumps(
+        {
+            "event_type": "released",
+            "agent_id": "agent-a",
+            "lock_path": "/tmp/file.py",
+            "timestamp": 123.0,
+        }
+    )
+
+    async with AmpClient(options):
+        event_log.write_text(payload[:20])
+        await asyncio.sleep(0.1)
+        assert events == []
+        event_log.write_text(payload + "\n")
+        await _wait_until(lambda: bool(events))
+
+    assert events == [
+        LockEvent(
+            event_type=LockEventType.RELEASED,
+            agent_id="agent-a",
+            lock_path="/tmp/file.py",
+            timestamp=123.0,
+        )
+    ]
 
 
 def _user_tool_result(
@@ -488,6 +613,37 @@ async def test_user_tool_result_emits_assistant_message_with_tool_result_block(
     assert block.tool_use_id == "t-9"
     assert block.content == "output"
     assert block.is_error is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_large_tool_result_line_exceeding_default_asyncio_limit(
+    tmp_path: Path,
+) -> None:
+    content = "x" * (70 * 1024)
+    script = _write_fake_amp(
+        tmp_path,
+        lines=[
+            _system_init("T-large"),
+            _user_tool_result(tool_use_id="t-large", content=content),
+            _result("T-large"),
+        ],
+    )
+    options = _make_options(
+        log_path=tmp_path / ".pending-large.jsonl",
+        argv=_python_argv_for(script),
+        cwd=tmp_path,
+    )
+    async with AmpClient(options) as client:
+        await client.query("p")
+        msgs = await _drain(client)
+
+    assistants = [m for m in msgs if isinstance(m, AssistantMessage)]
+    assert len(assistants) == 1
+    block = assistants[0].content[0]
+    assert isinstance(block, ToolResultBlock)
+    assert block.tool_use_id == "t-large"
+    assert block.content == content
 
 
 # ---------------------------------------------------------------------------

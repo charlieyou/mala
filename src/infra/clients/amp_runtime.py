@@ -83,6 +83,10 @@ class AmpRuntime:
     resume_thread_id: str | None = None
 
 
+AMP_LOCK_EVENTS_DIR: Path = USER_CONFIG_DIR / "amp-lock-events"
+"""Directory where Amp's stdio locking MCP server writes lock-event JSONL."""
+
+
 class AmpRuntimeBuilder:
     """Build :class:`AmpRuntime` for one Amp session.
 
@@ -106,9 +110,9 @@ class AmpRuntimeBuilder:
             agent_id: Per-issue agent identifier; becomes ``MALA_AGENT_ID``.
             mcp_server_factory: Produces the MCP server map for
                 ``--mcp-config``. The factory is invoked with
-                ``(agent_id, repo_path, None)``; the third arg is the
-                deadlock-monitor callback hook used by the Claude path
-                (Amp does not wire deadlock events in MVP).
+                ``(agent_id, repo_path, None)``; Amp deadlock events are
+                bridged through ``MALA_LOCK_EVENT_LOG`` when
+                :meth:`with_hooks` receives a deadlock monitor.
             mode: Amp execution mode. Sourced from
                 ``MalaConfig.coder_options.amp.mode``; the orchestration layer
                 resolves the precedence (CLI > env > yaml > default) before
@@ -143,6 +147,7 @@ class AmpRuntimeBuilder:
         self._env_extra: dict[str, str] = {}
         self._mcp_servers_override: dict[str, object] | None = None
         self._lint_tools: AbstractSet[str] | None = None
+        self._deadlock_monitor: object | None = None
 
     def with_hooks(
         self,
@@ -155,20 +160,15 @@ class AmpRuntimeBuilder:
         """No-op fluent-API parity with :class:`AgentRuntimeBuilder.with_hooks`.
 
         Amp does not honor SDK hooks; the safety enforcement lives in the
-        bundled ``mala-safety.ts`` plugin loaded under ``PLUGINS=all``
-        (plan ``L412-L450``). The arguments are accepted for parity with
-        the Claude builder so the shared pipeline call site can chain
-        identically against either runtime; they are otherwise ignored.
+        bundled ``mala-safety.ts`` plugin loaded under ``PLUGINS=all``.
+        Deadlock monitoring is wired through a JSONL side channel written by
+        the stdio locking MCP server and tailed by ``AmpClient``.
 
         Returns:
             ``self`` for fluent chaining.
         """
-        del (
-            deadlock_monitor,
-            include_stop_hook,
-            include_mala_disallowed_tools_hook,
-            include_lock_enforcement_hook,
-        )
+        del include_stop_hook, include_mala_disallowed_tools_hook, include_lock_enforcement_hook
+        self._deadlock_monitor = deadlock_monitor
         return self
 
     def with_env(self, *, extra: Mapping[str, str] | None = None) -> AmpRuntimeBuilder:
@@ -257,12 +257,23 @@ class AmpRuntimeBuilder:
         surfaces an actionable error at the builder boundary instead of an
         opaque ``TypeError`` deep inside ``subprocess.Popen``.
         """
+        lock_event_callback = None
+        if self._deadlock_monitor is not None:
+            lock_event_callback = getattr(self._deadlock_monitor, "handle_event", None)
+        lock_event_log_path = (
+            AMP_LOCK_EVENTS_DIR / f"{self._agent_id}-{uuid.uuid4().hex}.jsonl"
+            if lock_event_callback is not None
+            else None
+        )
+
         if self._mcp_servers_override is not None:
             mcp_config: dict[str, object] = dict(self._mcp_servers_override)
         else:
             mcp_config = dict(
                 self._mcp_server_factory(self._agent_id, self._repo_path, None)
             )
+        if lock_event_log_path is not None:
+            mcp_config = _with_lock_event_log(mcp_config, str(lock_event_log_path))
         try:
             mcp_config_json = json.dumps(mcp_config)
         except TypeError as exc:
@@ -286,6 +297,8 @@ class AmpRuntimeBuilder:
             "MCP_TIMEOUT": "300000",
             **self._env_extra,
         }
+        if lock_event_log_path is not None:
+            env["MALA_LOCK_EVENT_LOG"] = str(lock_event_log_path)
 
         argv: list[str] = [
             "amp",
@@ -320,6 +333,8 @@ class AmpRuntimeBuilder:
             argv=tuple(argv),
             log_path=log_path,
             thread_id=self._resume_thread_id,
+            lock_event_log_path=lock_event_log_path,
+            lock_event_callback=lock_event_callback,
         )
 
         # LintCache parity with the Claude path. Even though the synthetic
@@ -345,3 +360,21 @@ class AmpRuntimeBuilder:
             lint_cache=lint_cache,
             resume_thread_id=self._resume_thread_id,
         )
+
+
+def _with_lock_event_log(
+    mcp_config: dict[str, object], lock_event_log_path: str
+) -> dict[str, object]:
+    """Return MCP config with ``MALA_LOCK_EVENT_LOG`` added to stdio envs."""
+    updated: dict[str, object] = {}
+    for name, spec in mcp_config.items():
+        if not isinstance(spec, dict):
+            updated[name] = spec
+            continue
+        spec_copy = dict(spec)
+        env = spec_copy.get("env")
+        env_copy = dict(env) if isinstance(env, dict) else {}
+        env_copy["MALA_LOCK_EVENT_LOG"] = lock_event_log_path
+        spec_copy["env"] = env_copy
+        updated[name] = spec_copy
+    return updated

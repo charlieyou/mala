@@ -60,6 +60,55 @@ def test_lock_acquire_writes_hash_lock_file(lock_dir: Path, tmp_path: Path) -> N
     assert lp.read_text().strip() == "agent-A"
 
 
+def test_lock_acquire_emits_acquired_event(
+    lock_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.infra.tools.locking_mcp_stdio import _handle_lock_acquire
+
+    event_log = tmp_path / "events.jsonl"
+    monkeypatch.setenv("MALA_LOCK_EVENT_LOG", str(event_log))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "foo.py"
+
+    asyncio.run(
+        _handle_lock_acquire(
+            {"filepaths": [str(target)], "timeout_seconds": 0},
+            agent_id="agent-A",
+            repo_namespace=str(repo),
+        )
+    )
+
+    events = [json.loads(line) for line in event_log.read_text().splitlines()]
+    assert events[0]["event_type"] == "acquired"
+    assert events[0]["agent_id"] == "agent-A"
+    assert events[0]["lock_path"] == str(target.resolve())
+
+
+def test_lock_acquire_does_not_emit_acquired_for_reentrant_lock(
+    lock_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.infra.tools.locking import try_lock
+    from src.infra.tools.locking_mcp_stdio import _handle_lock_acquire
+
+    event_log = tmp_path / "events.jsonl"
+    monkeypatch.setenv("MALA_LOCK_EVENT_LOG", str(event_log))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "foo.py"
+    assert try_lock(str(target), agent_id="agent-A", repo_namespace=str(repo))
+
+    asyncio.run(
+        _handle_lock_acquire(
+            {"filepaths": [str(target)], "timeout_seconds": 0},
+            agent_id="agent-A",
+            repo_namespace=str(repo),
+        )
+    )
+
+    assert not event_log.exists()
+
+
 def test_lock_acquire_nonblocking_reports_holder_when_blocked(
     lock_dir: Path, tmp_path: Path
 ) -> None:
@@ -87,6 +136,33 @@ def test_lock_acquire_nonblocking_reports_holder_when_blocked(
     result = payload["results"][0]
     assert result["acquired"] is False
     assert result["holder"] == "agent-B"
+
+
+def test_blocking_lock_acquire_emits_waiting_event(
+    lock_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.infra.tools.locking import try_lock
+    from src.infra.tools.locking_mcp_stdio import _handle_lock_acquire
+
+    event_log = tmp_path / "events.jsonl"
+    monkeypatch.setenv("MALA_LOCK_EVENT_LOG", str(event_log))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "foo.py"
+    assert try_lock(str(target), agent_id="agent-B", repo_namespace=str(repo))
+
+    asyncio.run(
+        _handle_lock_acquire(
+            {"filepaths": [str(target)], "timeout_seconds": 0.01},
+            agent_id="agent-A",
+            repo_namespace=str(repo),
+        )
+    )
+
+    events = [json.loads(line) for line in event_log.read_text().splitlines()]
+    assert [event["event_type"] for event in events] == ["waiting"]
+    assert events[0]["agent_id"] == "agent-A"
+    assert events[0]["lock_path"] == str(target.resolve())
 
 
 def test_lock_acquire_validates_empty_filepaths(lock_dir: Path) -> None:
@@ -122,6 +198,34 @@ def test_lock_release_releases_owned_lock(lock_dir: Path, tmp_path: Path) -> Non
     assert payload["count"] == 1
     assert payload["released"] == [str(target)]
     assert not lp.exists()
+
+
+def test_lock_release_emits_event_for_idempotent_release(
+    lock_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.infra.tools.locking_mcp_stdio import _handle_lock_release
+
+    event_log = tmp_path / "events.jsonl"
+    monkeypatch.setenv("MALA_LOCK_EVENT_LOG", str(event_log))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "foo.py"
+
+    body = asyncio.run(
+        _handle_lock_release(
+            {"filepaths": [str(target)]},
+            agent_id="agent-A",
+            repo_namespace=str(repo),
+        )
+    )
+    payload = json.loads(body)
+    assert payload["count"] == 1
+    assert payload["released"] == [str(target)]
+
+    events = [json.loads(line) for line in event_log.read_text().splitlines()]
+    assert events[0]["event_type"] == "released"
+    assert events[0]["agent_id"] == "agent-A"
+    assert events[0]["lock_path"] == str(target.resolve())
 
 
 def test_lock_release_rejects_both_params() -> None:
