@@ -173,7 +173,7 @@ class SessionLogParser:
                 return []
             commands = []
             for block in entry.entry.message.content:
-                if isinstance(block, ToolUseBlock) and block.name.lower() == "bash":
+                if isinstance(block, ToolUseBlock) and self._is_shell_tool(block.name):
                     command = self._extract_command_from_tool_input(block.input)
                     commands.append((block.id, command))
             return commands
@@ -189,6 +189,13 @@ class SessionLogParser:
         if not isinstance(command, str):
             return ""
         return command
+
+    def _is_shell_tool(self, tool_name: object) -> bool:
+        """Return whether a tool_use block represents a shell command."""
+        return isinstance(tool_name, str) and tool_name.lower() in {
+            "bash",
+            "shell_command",
+        }
 
     def _extract_bash_commands_from_data(
         self, data: dict[str, Any]
@@ -209,7 +216,7 @@ class SessionLogParser:
         for block in message.get("content", []):
             if isinstance(block, dict) and block.get("type") == "tool_use":
                 tool_name = block.get("name", "")
-                if tool_name.lower() == "bash":
+                if self._is_shell_tool(tool_name):
                     tool_id = block.get("id", "")
                     tool_input = block.get("input", {})
                     if not isinstance(tool_input, dict):

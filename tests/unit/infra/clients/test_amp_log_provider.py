@@ -90,6 +90,22 @@ def _assistant_amp_bash(tool_id: str, command: str) -> dict[str, object]:
     }
 
 
+def _assistant_amp_shell_command(tool_id: str, command: str) -> dict[str, object]:
+    return {
+        "type": "assistant",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": tool_id,
+                    "name": "shell_command",
+                    "input": {"command": command},
+                }
+            ]
+        },
+    }
+
+
 def _user_tool_result(
     tool_use_id: str, content: str = "ok", is_error: bool = False
 ) -> dict[str, object]:
@@ -197,6 +213,29 @@ def test_iter_events_extracts_amp_bash_cmd_input(tmp_path: Path) -> None:
             _system_init("T-amp-cmd"),
             _assistant_amp_bash("tool-1", "uvx ruff check ."),
             _assistant_amp_bash("tool-2", "uvx ty check"),
+        ],
+    )
+
+    provider = AmpLogProvider()
+
+    commands = [
+        command
+        for entry in provider.iter_events(log_path)
+        for (_tool_id, command) in provider.extract_bash_commands(entry)
+    ]
+
+    assert commands == ["uvx ruff check .", "uvx ty check"]
+
+
+@pytest.mark.unit
+def test_iter_events_extracts_amp_shell_command_tool(tmp_path: Path) -> None:
+    log_path = tmp_path / "T-amp-shell-command.jsonl"
+    _write_jsonl(
+        log_path,
+        [
+            _system_init("T-amp-shell-command"),
+            _assistant_amp_shell_command("tool-1", "uvx ruff check ."),
+            _assistant_amp_shell_command("tool-2", "uvx ty check"),
         ],
     )
 
