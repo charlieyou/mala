@@ -237,6 +237,42 @@ function getLockHolder(lockFile: string): string | null {
   }
 }
 
+// Return a rejection ToolDecision if the current agent does not hold the
+// lock for `filePath`, else null. Shared between the FILE_WRITE_TOOLS
+// branch and the Bash shell-write branch so both paths emit identical
+// "is not locked" / "is locked by <holder>" messages and use the same
+// lock-key derivation. Reads `cfg` from the module-level config populated
+// by `session.start`; callers must have already ensured `!cfg.failClosed`.
+function checkLockOwnership(filePath: string): ToolDecision | null {
+  let lockFile: string;
+  let holder: string | null;
+  try {
+    lockFile = lockFilePath(filePath, cfg.lockDir, cfg.repoNamespace);
+    holder = getLockHolder(lockFile);
+  } catch (err) {
+    return {
+      action: "reject-and-continue",
+      message: `mala-safety: lock check failed for ${filePath}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    };
+  }
+
+  if (holder === null) {
+    return {
+      action: "reject-and-continue",
+      message: `File ${filePath} is not locked. Use lock_acquire tool with filepaths: ["${filePath}"]`,
+    };
+  }
+  if (holder !== cfg.agentId) {
+    return {
+      action: "reject-and-continue",
+      message: `File ${filePath} is locked by ${holder}. Wait or coordinate to acquire the lock.`,
+    };
+  }
+  return null;
+}
+
 // --- File-write path extraction ------------------------------------------
 //
 // `apply_patch`'s input shape is unstable across Amp versions / toolboxes: it
@@ -484,12 +520,18 @@ function checkBashCommand(command: string): ToolDecision | null {
 // (`(?:[^|;&\n]+\s)*`). Pipe / `;` / `&` / newline are excluded so the
 // match doesn't span across separate pipeline stages.
 //
-// The reject reason redirects the agent to the proper file-write tools,
-// which DO route through the lock-ownership gate. Shell redirects
-// (`>`, `>>`, `tee`), `mv`, `cp`, and similar primitives have too many
-// legitimate uses to block reliably without parsing target paths and
-// remain allowed (a known parity gap with the file-write-tool gate
-// tracked as a follow-up).
+// In-place editors (sed -i, perl -i, awk -i inplace) are rejected outright —
+// they always rewrite their input file as their primary side-effect, so
+// there is no useful "lock-check" semantic for them; the agent is told to
+// route through the file-write tools instead.
+//
+// The OTHER shell primitives that can write repo files — output redirects
+// (`>`, `>>`, `1>`, `2>`, `&>`), `tee`, `dd of=`, `mv`, `cp` — DO have a
+// useful lock-check: they take an explicit target path. Those are handled
+// by `extractShellWritePaths` below; each extracted path is run through
+// the same lock-ownership gate as the FILE_WRITE_TOOLS branch, so a
+// `lock_acquire` of the redirect target unblocks the write the same way
+// it would for `edit_file`.
 
 // Flag-bundle alphabet for sed/perl: letters, digits, underscore, dot. Digits
 // matter because backup-extension forms (`sed -i1`, `perl -i0`) and digit-
@@ -563,6 +605,331 @@ function checkFileModifyingShell(command: string): ToolDecision | null {
     }
   }
   return null;
+}
+
+// --- Shell file-write target extraction ----------------------------------
+//
+// Extracts the file paths a shell command would write to via the primitives
+// (output redirects, `tee`, `dd of=`, `mv`, `cp`) that bypass Amp's
+// file-write tools. Each returned path is then lock-checked by the Bash
+// branch with the same allow/reject semantics as the FILE_WRITE_TOOLS
+// branch.
+//
+// Special device targets that are not real files (`/dev/null`,
+// `/dev/stderr`, `/dev/stdout`, `/dev/tty`, `/dev/fd/N`) are excluded so
+// `cmd > /dev/null` and similar discard-output idioms don't trigger a
+// lock-check. Every other captured target — including ones containing
+// unexpanded shell variables (`$VAR`, `$(...)`, `~`) — is forwarded to the
+// lock-check, where it will fail-closed (no matching <hash>.lock) unless
+// the agent took the lock under the literal string the plugin sees.
+//
+// Why a hand-written quote-aware scanner (and not just a global regex):
+// commands like `echo "echo X > foo" > script.sh` contain a `>` inside a
+// quoted argument that is NOT a redirect. A pure regex would match it and
+// produce a false-positive lock-check on `foo`, fail-closed-rejecting a
+// legitimate command. Tracking quote state on the way through the string
+// suppresses those interior matches without depending on full shell
+// tokenization.
+
+const SHELL_WRITE_DENYLIST_PATHS: ReadonlySet<string> = new Set([
+  "/dev/null",
+  "/dev/stderr",
+  "/dev/stdout",
+  "/dev/tty",
+]);
+
+function isExcludedShellWritePath(p: string): boolean {
+  if (SHELL_WRITE_DENYLIST_PATHS.has(p)) return true;
+  if (p.startsWith("/dev/fd/")) return true;
+  return false;
+}
+
+function unquoteShellPath(s: string): string {
+  if (s.length >= 2) {
+    const first = s[0];
+    const last = s[s.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      return s.slice(1, -1);
+    }
+  }
+  return s;
+}
+
+// Tokenize a single pipeline stage's argument string into whitespace-
+// separated tokens, preserving quoted regions as single tokens. This is a
+// poor-man's shell tokenizer: it does not implement word splitting,
+// backslash escapes, brace/glob/parameter expansion, or here-docs. It is
+// sufficient to identify positional vs flag arguments for `tee`, `mv`, and
+// `cp` invocations whose target paths are literal strings.
+function simpleShellTokenize(s: string): string[] {
+  const tokens: string[] = [];
+  let cur = "";
+  let inQuote: '"' | "'" | null = null;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inQuote) {
+      cur += c;
+      if (c === inQuote) inQuote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      inQuote = c as '"' | "'";
+      cur += c;
+      continue;
+    }
+    if (/\s/.test(c)) {
+      if (cur) {
+        tokens.push(cur);
+        cur = "";
+      }
+      continue;
+    }
+    cur += c;
+  }
+  if (cur) tokens.push(cur);
+  return tokens;
+}
+
+// Scan `command` for output-redirect operators (`>`, `>>`, `1>`, `2>`,
+// `&>`, with optional trailing `>`) at top-level (not inside quotes) and
+// return each captured target path. Skips `>(` (process substitution) and
+// `>&N` (file-descriptor duplication) which do not write to a path.
+function extractRedirectTargets(command: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  let inQuote: '"' | "'" | null = null;
+
+  while (i < command.length) {
+    const c = command[i];
+
+    if (inQuote) {
+      if (c === inQuote) inQuote = null;
+      i++;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      inQuote = c as '"' | "'";
+      i++;
+      continue;
+    }
+
+    // Match a redirect operator at this position. Possible operators:
+    //   >, >>, 1>, 1>>, 2>, 2>>, &>, &>>
+    // Guard against double-counting >> by looking back at prev char: if
+    // it's part of a wider operator, skip.
+    let opStart = i;
+    let opEnd = -1;
+    if (c === "&" && command[i + 1] === ">") {
+      opEnd = i + 2;
+      if (command[opEnd] === ">") opEnd++;
+    } else if (
+      (c === "1" || c === "2") &&
+      command[i + 1] === ">"
+    ) {
+      opEnd = i + 2;
+      if (command[opEnd] === ">") opEnd++;
+    } else if (c === ">") {
+      // Bare > or >>: must not be preceded by `>` (already consumed) or
+      // a digit/`&` (handled by the earlier branches). Also skip if
+      // preceded by `<` (here-doc / fd dup like `<>`) — `<>` opens a
+      // file for read+write and is ambiguous; treat as not a redirect
+      // for this purpose.
+      const prev = i > 0 ? command[i - 1] : "";
+      if (prev === ">" || prev === "<") {
+        i++;
+        continue;
+      }
+      // `2>>`, `1>>` etc are caught by the digit branch above; if we
+      // reach here with prev === '1'|'2'|'&', it means the digit/`&`
+      // wasn't followed by `>` immediately so this `>` is independent.
+      opEnd = i + 1;
+      if (command[opEnd] === ">") opEnd++;
+    }
+
+    if (opEnd === -1) {
+      i++;
+      continue;
+    }
+
+    // Consumed operator at [opStart, opEnd). Skip whitespace.
+    let j = opEnd;
+    while (j < command.length && /\s/.test(command[j])) j++;
+
+    // Reject fd-dup or process substitution.
+    if (j < command.length && (command[j] === "&" || command[j] === "(")) {
+      i = j;
+      continue;
+    }
+
+    // Capture target token: quoted or unquoted.
+    let target = "";
+    if (j < command.length && (command[j] === '"' || command[j] === "'")) {
+      const q = command[j++];
+      while (j < command.length && command[j] !== q) {
+        target += command[j++];
+      }
+      if (j < command.length && command[j] === q) j++;
+    } else {
+      while (
+        j < command.length &&
+        !/[\s|;&<>'"`(]/.test(command[j])
+      ) {
+        target += command[j++];
+      }
+    }
+
+    if (target && !isExcludedShellWritePath(target)) {
+      out.push(target);
+    }
+    i = j;
+  }
+
+  return out;
+}
+
+// Scan `command` for `tee` invocations and return file targets. Tokenizes
+// each pipeline stage that mentions `tee` with quote awareness. Flags
+// (`-a`, `--append`, ...) are skipped; remaining positional tokens are
+// targets. Multiple files per `tee` (a documented form) are all returned.
+function extractTeeTargets(command: string): string[] {
+  const out: string[] = [];
+  // Split into pipeline stages; pipes/`;`/`&&`/`||`/newlines separate.
+  // Use a quote-aware split so separators inside quotes are kept.
+  const stages = splitPipelineStages(command);
+  for (const stage of stages) {
+    // Find `tee` at a token boundary.
+    const teeRe = /\btee\b(.*)$/m;
+    const m = teeRe.exec(stage);
+    if (!m) continue;
+    const tokens = simpleShellTokenize(m[1]);
+    for (const tok of tokens) {
+      // Skip flags (unquoted leading `-`).
+      if (tok.startsWith("-")) continue;
+      // Skip a stray `--` separator.
+      if (tok === "--") continue;
+      const unq = unquoteShellPath(tok);
+      if (unq && !isExcludedShellWritePath(unq)) {
+        out.push(unq);
+      }
+    }
+  }
+  return out;
+}
+
+// Scan `command` for `dd of=PATH` and return the captured PATH. Paths may
+// be quoted; whitespace before `of=` is handled by the pipeline-stage
+// split. `dd if=...` (input) is not a write and is intentionally ignored.
+function extractDdOfTargets(command: string): string[] {
+  const out: string[] = [];
+  const stages = splitPipelineStages(command);
+  for (const stage of stages) {
+    if (!/\bdd\b/.test(stage)) continue;
+    const tokens = simpleShellTokenize(stage);
+    for (const tok of tokens) {
+      // `of=PATH` or `of="..."` or `of='...'`
+      if (tok.startsWith("of=")) {
+        const raw = tok.slice("of=".length);
+        const unq = unquoteShellPath(raw);
+        if (unq && !isExcludedShellWritePath(unq)) {
+          out.push(unq);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// Scan `command` for `mv` / `cp` invocations and return the destination
+// argument (the last positional token). With multiple sources + a directory
+// destination (`cp a b c destdir/`), the last token is still the
+// destination, and lock-checking that path is the right invariant — the
+// agent must hold a lock on the destination (file or directory) to write
+// into it.
+function extractMvCpTargets(command: string): string[] {
+  const out: string[] = [];
+  const stages = splitPipelineStages(command);
+  const cmdRe = /\b(mv|cp)\b(.*)$/m;
+  for (const stage of stages) {
+    const m = cmdRe.exec(stage);
+    if (!m) continue;
+    const tokens = simpleShellTokenize(m[2]);
+    // Strip flags. Treat `--` as a separator (everything after is positional).
+    let positional: string[] = [];
+    let afterDoubleDash = false;
+    for (const tok of tokens) {
+      if (afterDoubleDash) {
+        positional.push(tok);
+        continue;
+      }
+      if (tok === "--") {
+        afterDoubleDash = true;
+        continue;
+      }
+      if (tok.startsWith("-")) continue;
+      positional.push(tok);
+    }
+    if (positional.length >= 2) {
+      const dst = unquoteShellPath(positional[positional.length - 1]);
+      if (dst && !isExcludedShellWritePath(dst)) {
+        out.push(dst);
+      }
+    }
+  }
+  return out;
+}
+
+// Split a command into pipeline stages on top-level `|`, `;`, `&&`, `||`,
+// `&`, newline, and parens (subshells / process substitution). Quote-aware
+// so separators inside quotes are not split-on. Used so per-stage commands
+// (`tee`, `dd`, `mv`, `cp`) are matched independently. Splitting on `(`
+// and `)` is required so that `cmd > >(tee log)` yields a clean stage
+// `tee log` for the tee extractor — without the split, the trailing `)`
+// gets glued onto the path token and the lock-check sees `log)`.
+function splitPipelineStages(command: string): string[] {
+  const stages: string[] = [];
+  let cur = "";
+  let inQuote: '"' | "'" | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (inQuote) {
+      cur += c;
+      if (c === inQuote) inQuote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      inQuote = c as '"' | "'";
+      cur += c;
+      continue;
+    }
+    if (
+      c === "|" ||
+      c === ";" ||
+      c === "&" ||
+      c === "\n" ||
+      c === "(" ||
+      c === ")"
+    ) {
+      // Lookahead skip duplicates (`||`, `&&`) — they're the same separator.
+      if ((c === "|" && command[i + 1] === "|") || (c === "&" && command[i + 1] === "&")) {
+        i++;
+      }
+      stages.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += c;
+  }
+  if (cur) stages.push(cur);
+  return stages;
+}
+
+function extractShellWritePaths(command: string): string[] {
+  const seen = new Set<string>();
+  for (const p of extractRedirectTargets(command)) seen.add(p);
+  for (const p of extractTeeTargets(command)) seen.add(p);
+  for (const p of extractDdOfTargets(command)) seen.add(p);
+  for (const p of extractMvCpTargets(command)) seen.add(p);
+  return [...seen];
 }
 
 // --- Plugin entrypoint ----------------------------------------------------
@@ -647,6 +1014,17 @@ export default function plugin(amp: AmpPluginAPI): void {
         return fileModDecision;
       }
 
+      // Lock-check shell write primitives that can modify repo files
+      // (output redirects, tee, dd of=, mv, cp). Mirrors the FILE_WRITE_TOOLS
+      // branch below: same lock-key derivation, same allow/reject messages,
+      // so `lock_acquire` of the redirect target unblocks the write the
+      // same way it would for `edit_file`.
+      const shellWritePaths = extractShellWritePaths(cmd);
+      for (const filePath of shellWritePaths) {
+        const rejection = checkLockOwnership(filePath);
+        if (rejection) return rejection;
+      }
+
       return { action: "allow" };
     }
 
@@ -677,32 +1055,8 @@ export default function plugin(amp: AmpPluginAPI): void {
       }
 
       for (const filePath of filePaths) {
-        let lockFile: string;
-        let holder: string | null;
-        try {
-          lockFile = lockFilePath(filePath, cfg.lockDir, cfg.repoNamespace);
-          holder = getLockHolder(lockFile);
-        } catch (err) {
-          return {
-            action: "reject-and-continue",
-            message: `mala-safety: lock check failed for ${filePath}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          };
-        }
-
-        if (holder === null) {
-          return {
-            action: "reject-and-continue",
-            message: `File ${filePath} is not locked. Use lock_acquire tool with filepaths: ["${filePath}"]`,
-          };
-        }
-        if (holder !== cfg.agentId) {
-          return {
-            action: "reject-and-continue",
-            message: `File ${filePath} is locked by ${holder}. Wait or coordinate to acquire the lock.`,
-          };
-        }
+        const rejection = checkLockOwnership(filePath);
+        if (rejection) return rejection;
       }
 
       return { action: "allow" };

@@ -378,6 +378,35 @@ def _file_write_attempted(events: list[dict[str, Any]]) -> bool:
     return any(u.get("name") in file_write_tools for u in _tool_uses(events))
 
 
+def _bash_write_attempted(events: list[dict[str, Any]], target: Path) -> bool:
+    """True if the assistant invoked Bash with a redirect to ``target``.
+
+    The plugin's shell-write gate runs only when a ``Bash`` tool_use carries
+    a command with ``>``/``>>``/``tee``/``mv``/``cp``/``dd of=`` referencing
+    the target path. We accept any of those substrings plus a string match
+    on the target path (basename or absolute) so the test can verify the
+    plugin's decision was triggered by a real shell write, not by an
+    unrelated Bash invocation (e.g. ``ls``).
+    """
+    candidate_strings = (str(target), target.name)
+    write_tokens = ("> ", ">>", "tee ", "tee\t", "mv ", "cp ", "of=")
+    for u in _tool_uses(events):
+        if u.get("name") not in {"Bash", "shell_command"}:
+            continue
+        tool_input = u.get("input")
+        if not isinstance(tool_input, dict):
+            continue
+        for key in ("cmd", "command"):
+            v = tool_input.get(key)
+            if not isinstance(v, str):
+                continue
+            if any(t in v for t in write_tokens) and any(
+                s in v for s in candidate_strings
+            ):
+                return True
+    return False
+
+
 def _assert_plugin_loaded(result: AmpResult) -> None:
     """Hard assertion: plugin sentinel was seen on stderr or CLI log."""
     assert result.sentinel_loaded, (
@@ -401,6 +430,25 @@ def _skip_if_no_file_write(events: list[dict[str, Any]], scenario: str) -> None:
         pytest.skip(
             f"[{scenario}] amp produced no edit_file/create_file/undo_edit/"
             "apply_patch tool_use; LLM did not comply with the directive. "
+            "Cannot verify plugin allow/reject decision."
+        )
+
+
+def _skip_if_no_bash_write(
+    events: list[dict[str, Any]], target: Path, scenario: str
+) -> None:
+    """Skip when the LLM did not invoke Bash with a write referencing target.
+
+    Mirrors :func:`_skip_if_no_file_write` for the shell-write branch:
+    the plugin's lock-check only fires when ``Bash`` carries a command
+    that writes to a file. If the model routed through ``edit_file`` or
+    refused, this scenario cannot verify the plugin's allow/reject
+    decision and must skip.
+    """
+    if not _bash_write_attempted(events, target):
+        pytest.skip(
+            f"[{scenario}] amp produced no Bash redirect/tee/mv/cp/dd "
+            f"referencing {target}; LLM did not comply with the directive. "
             "Cannot verify plugin allow/reject decision."
         )
 
@@ -436,6 +484,30 @@ def _edit_prompt(target: Path, body: str = "edited") -> str:
         f"Make exactly one edit_file tool call.{path_note} Do not run any "
         "other tools (no Bash, no read_file, no grep). After the tool call "
         "returns, reply with the single word done and stop."
+    )
+
+
+def _shell_write_prompt(target: Path, body: str = "shell_write") -> str:
+    """Directive prompt: invoke ``Bash`` with a ``>`` redirect to ``target``.
+
+    Used by the AC-9a shell-write lock-check tests. The wording forces the
+    model away from ``edit_file`` / ``create_file`` / ``apply_patch`` and
+    onto a plain ``Bash`` invocation whose command is a single output
+    redirect — that is the exact code path `extractShellWritePaths` /
+    `extractRedirectTargets` is supposed to gate. Without the explicit
+    "Bash only" framing, rush-mode models pick ``edit_file`` and bypass
+    the new gate.
+    """
+    return (
+        f"Use the Bash tool to overwrite the file at the absolute path "
+        f"{target} so that its entire contents become the single line:\n"
+        f"{body}\n"
+        f'Run exactly this single Bash command: echo "{body}" > {target}\n'
+        "Do NOT call edit_file, create_file, apply_patch, undo_edit, or "
+        "read_file. Do not use a heredoc, sed, or any other in-place "
+        "editor. Make exactly one Bash tool call with the redirect form "
+        "shown above. After the tool call returns, reply with the single "
+        "word done and stop."
     )
 
 
@@ -825,4 +897,102 @@ def test_nonexistent_target_canonicalization_parity(amp_env: AmpLockEnv) -> None
     assert "is locked by" not in text, (
         "non-existent-target parity broke (wrong-agent reported); "
         f"tool_result:\n{text[:2048]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# AC-9a: shell-write lock-check (close fail-open in Bash branch)
+# ---------------------------------------------------------------------------
+
+
+def test_shell_write_rejected_when_no_lock(amp_env: AmpLockEnv) -> None:
+    """No-lock case for shell write (AC-9a closure).
+
+    The plugin extracts the target of `echo X > target.py` and lock-checks
+    it with the same semantics as `edit_file`. With no lock present, the
+    write must be rejected with the same "is not locked" message the
+    FILE_WRITE_TOOLS branch emits.
+
+    Without the AC-9a fix, a `Bash` tool_use carrying a redirect would be
+    allowed unconditionally — the regression this test pins.
+    """
+    target = amp_env.repo_path / "shell_no_lock.py"
+    target.write_text("# original\n")
+
+    spawned_env = _build_amp_env(amp_env, agent_id=_DEFAULT_AGENT_ID)
+    result = _run_amp(_shell_write_prompt(target), spawned_env, amp_env.repo_path)
+
+    _assert_plugin_loaded(result)
+    _skip_if_no_bash_write(result.events, target, "shell-no-lock")
+
+    text = _tool_result_text(result.events)
+    assert "is not locked" in text, (
+        "expected the plugin's no-lock rejection text "
+        "('File ... is not locked. Use lock_acquire ...') for the shell "
+        f"redirect target; got:\n{text[:2048]}"
+    )
+
+
+def test_shell_write_allowed_after_lock_acquire(amp_env: AmpLockEnv) -> None:
+    """Allow case for shell write (AC-9a closure).
+
+    The same redirect that was rejected without a lock must be allowed
+    once the agent holds the lock for the target file. This pins the
+    "lock-check, not blanket-reject" semantics: the plugin's behavior
+    on Bash writes mirrors the FILE_WRITE_TOOLS branch — a `lock_acquire`
+    of the target unblocks the write.
+    """
+    target = amp_env.repo_path / "shell_with_lock.py"
+    target.write_text("# original\n")
+
+    _create_python_lock(
+        str(target),
+        _DEFAULT_AGENT_ID,
+        str(amp_env.repo_path),
+    )
+
+    spawned_env = _build_amp_env(amp_env, agent_id=_DEFAULT_AGENT_ID)
+    result = _run_amp(_shell_write_prompt(target), spawned_env, amp_env.repo_path)
+
+    _assert_plugin_loaded(result)
+    _skip_if_no_bash_write(result.events, target, "shell-allow-with-lock")
+
+    text = _tool_result_text(result.events)
+    assert "is not locked" not in text, (
+        "unexpected no-lock rejection while agent A holds the lock for the "
+        f"shell-redirect target: {text[:1024]}"
+    )
+    assert "is locked by" not in text, (
+        "unexpected wrong-agent rejection while agent A holds the lock for "
+        f"the shell-redirect target: {text[:1024]}"
+    )
+
+
+def test_shell_write_rejected_wrong_agent(amp_env: AmpLockEnv) -> None:
+    """Wrong-agent case for shell write (AC-9a closure).
+
+    Agent B holds the lock; agent A's shell redirect to the same path is
+    rejected with the "locked by <holder>" message — same behavior as the
+    FILE_WRITE_TOOLS branch.
+    """
+    target = amp_env.repo_path / "shell_other_agent.py"
+    target.write_text("# original\n")
+
+    _create_python_lock(
+        str(target),
+        _OTHER_AGENT_ID,
+        str(amp_env.repo_path),
+    )
+
+    spawned_env = _build_amp_env(amp_env, agent_id=_DEFAULT_AGENT_ID)
+    result = _run_amp(_shell_write_prompt(target), spawned_env, amp_env.repo_path)
+
+    _assert_plugin_loaded(result)
+    _skip_if_no_bash_write(result.events, target, "shell-wrong-agent")
+
+    text = _tool_result_text(result.events)
+    assert "is locked by" in text and _OTHER_AGENT_ID in text, (
+        "expected the plugin's wrong-agent rejection text "
+        f"('File ... is locked by {_OTHER_AGENT_ID}.') for the shell-redirect "
+        f"target; got:\n{text[:2048]}"
     )
