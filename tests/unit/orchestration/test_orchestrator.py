@@ -366,8 +366,8 @@ class TestOrchestratorInitialization:
         """Default values should be set correctly."""
         orch = make_orchestrator(repo_path=tmp_path)
         assert orch.max_agents is None  # Unlimited by default
-        # Default timeout of 60 min protects against hung MCP subprocesses
-        assert orch.timeout_seconds == 60 * 60
+        # Default timeout of 30 min protects against hung MCP subprocesses
+        assert orch.timeout_seconds == 30 * 60
         assert orch.max_issues is None
 
     def test_repo_path_resolved(
@@ -2676,8 +2676,8 @@ class TestOrchestratorFactory:
 
         assert orchestrator.event_sink is custom_sink
 
-    def test_create_orchestrator_timeout_defaults_to_60(self, tmp_path: Path) -> None:
-        """Default timeout is 60 minutes when not specified."""
+    def test_create_orchestrator_timeout_defaults_to_30(self, tmp_path: Path) -> None:
+        """Default timeout is 30 minutes when not specified."""
         from src.orchestration.factory import create_orchestrator
         from src.orchestration.types import (
             DEFAULT_AGENT_TIMEOUT_MINUTES,

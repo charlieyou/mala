@@ -504,16 +504,20 @@ class AgentSessionRunner:
 
             # === QUERY + MESSAGE ITERATION ===
             if pending_query is not None:
-                iter_result = await self._retry_policy.execute_iteration(
-                    query=pending_query,
-                    issue_id=input.issue_id,
-                    options=session_cfg.options,
-                    state=state.msg_state,
-                    lifecycle_ctx=lifecycle_ctx,
-                    lint_cache=session_cfg.lint_cache,
-                    idle_timeout_seconds=session_cfg.idle_timeout_seconds,
-                    tracer=tracer,
-                )
+                # The hard per-task timeout applies only while the coder is
+                # running. Post-session checks have their own timeouts and
+                # should not reduce the budget for the next coder start.
+                async with asyncio.timeout(self.config.timeout_seconds):
+                    iter_result = await self._retry_policy.execute_iteration(
+                        query=pending_query,
+                        issue_id=input.issue_id,
+                        options=session_cfg.options,
+                        state=state.msg_state,
+                        lifecycle_ctx=lifecycle_ctx,
+                        lint_cache=session_cfg.lint_cache,
+                        idle_timeout_seconds=session_cfg.idle_timeout_seconds,
+                        tracer=tracer,
+                    )
                 if iter_result.session_id is not None:
                     state.session_id = iter_result.session_id
                 pending_query = None
@@ -1036,11 +1040,6 @@ class AgentSessionRunner:
                 was_interrupted = True
                 break
 
-            # Calculate remaining time to enforce overall session timeout
-            loop = asyncio.get_event_loop()
-            elapsed = loop.time() - start_time
-            remaining = self.config.timeout_seconds - elapsed
-
             # Create fresh lifecycle for each iteration
             session_input = AgentSessionInput(
                 issue_id=input.issue_id,
@@ -1052,13 +1051,9 @@ class AgentSessionRunner:
             session_cfg, state = self._initialize_session(session_input, agent_id)
 
             try:
-                # Check timeout inside try block so on_timeout cleanup runs
-                if remaining <= 0:
-                    raise TimeoutError("Session timeout exceeded across restarts")
-                async with asyncio.timeout(remaining):
-                    await self._run_lifecycle_loop(
-                        session_input, session_cfg, state, tracer
-                    )
+                await self._run_lifecycle_loop(
+                    session_input, session_cfg, state, tracer
+                )
                 # Normal completion - exit loop
                 break
             except FlowInterruptedError:

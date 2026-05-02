@@ -586,7 +586,7 @@ class TestTimeoutMinutes:
     """Tests for timeout_minutes field in ValidationConfig."""
 
     def test_timeout_minutes_defaults_to_none(self) -> None:
-        """Default timeout_minutes is None (use default 60)."""
+        """Default timeout_minutes is None (use default 30)."""
         config = ValidationConfig.from_dict({})
         assert config.timeout_minutes is None
         assert "timeout_minutes" not in config._fields_set

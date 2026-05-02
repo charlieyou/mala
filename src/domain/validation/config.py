@@ -855,7 +855,7 @@ class ValidationConfig:
         validation_triggers: Configuration for validation triggers. None means no triggers.
         claude_settings_sources: Sources to load Claude settings from. Valid sources are
             'local', 'project', 'user'. None means use default. Empty tuple means no sources.
-        timeout_minutes: Timeout per agent in minutes. None means use default (60).
+        timeout_minutes: Timeout per agent in minutes. None means use default (30).
         max_idle_retries: Maximum number of idle timeout retries. None means use default (2).
         idle_timeout_seconds: Idle timeout for SDK stream in seconds.
             None means derive from agent timeout; 0 disables idle timeout.

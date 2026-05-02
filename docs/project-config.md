@@ -73,7 +73,7 @@ coder_options:                   # Optional. Per-coder options
   amp:
     mode: string                 # Optional. Amp mode: "smart", "rush", "deep" (default: deep)
 
-timeout_minutes: int             # Optional. Agent timeout in minutes (default: 60)
+timeout_minutes: int             # Optional. Agent timeout in minutes (default: 30)
 
 max_idle_retries: int            # Optional. Maximum idle timeout retries (default: 2)
 idle_timeout_seconds: float      # Optional. Idle timeout in seconds (default: derived from timeout_minutes)
@@ -129,7 +129,7 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `claude_settings_sources` | list | No | SDK settings sources: `local`, `project`, `user` (default: `[local, project]`) |
 | `coder` | string | No | Coder backend: `claude` or `amp` (default: `claude`). Overridden by `--coder` / `MALA_CODER`. See [Coder Selection](#coder-selection). |
 | `coder_options.amp.mode` | string | No | Amp execution mode: `smart`, `rush`, or `deep` (default: `deep`). Only consulted when `coder: amp`. |
-| `timeout_minutes` | integer | No | Agent timeout in minutes (default: 60). Can be overridden by CLI `--timeout` |
+| `timeout_minutes` | integer | No | Agent timeout in minutes (default: 30). Can be overridden by CLI `--timeout` |
 | `max_idle_retries` | integer | No | Maximum idle timeout retries before aborting (default: 2). Set to 0 to disable retries. |
 | `idle_timeout_seconds` | float | No | Seconds to wait for SDK activity before triggering idle recovery (default: derived from `timeout_minutes`). Set to 0 to disable idle timeout. |
 | `max_diff_size_kb` | integer | No | Maximum diff size in KB for epic verification. Diffs larger than this limit will skip verification. |

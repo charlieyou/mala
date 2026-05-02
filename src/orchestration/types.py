@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from src.infra.telemetry import TelemetryProvider
 
 # Default timeout for agent execution (protects against hung MCP server subprocesses)
-DEFAULT_AGENT_TIMEOUT_MINUTES = 60
+DEFAULT_AGENT_TIMEOUT_MINUTES = 30
 
 # Default idle timeout retry configuration
 DEFAULT_MAX_IDLE_RETRIES = 2
@@ -64,7 +64,7 @@ class OrchestratorConfig:
     Attributes:
         repo_path: Path to the repository with beads issues.
         max_agents: Maximum concurrent agents (None = unlimited).
-        timeout_minutes: Timeout per agent in minutes (None = default 60).
+        timeout_minutes: Timeout per agent in minutes (None = default 30).
         max_issues: Maximum issues to process (None = unlimited).
         epic_id: Only process tasks under this epic.
         only_ids: List of issue IDs to process exclusively.

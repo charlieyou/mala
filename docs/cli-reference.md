@@ -88,7 +88,7 @@ mala epic-verify EPIC-123 --human-override --close
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--max-agents`, `-n` | unlimited | Maximum concurrent agents |
-| `--timeout`, `-t` | 60 | Timeout per agent in minutes |
+| `--timeout`, `-t` | 30 | Timeout per agent in minutes |
 | `--max-issues`, `-i` | unlimited | Maximum total issues to process |
 
 ### Scope & Ordering

@@ -494,7 +494,7 @@ def run(
         typer.Option(
             "--timeout",
             "-t",
-            help="Timeout per agent in minutes (default: 60)",
+            help="Timeout per agent in minutes (default: 30)",
             rich_help_panel="Execution Limits",
         ),
     ] = None,

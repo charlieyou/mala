@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -29,9 +29,13 @@ from src.pipeline.agent_session_runner import (
 )
 from tests.fakes.agent_provider import FakeAgentProvider
 from tests.helpers.protocol_stubs import (
+    StubGateOutcome,
     StubGateRunner,
     StubReviewRunner,
     StubSessionLifecycle,
+)
+from tests.fakes.sdk_client import (
+    FakeSDKClientFactory as StreamingFakeSDKClientFactory,
 )
 
 if TYPE_CHECKING:
@@ -60,6 +64,14 @@ class FakeReviewResult:
     parse_error: str | None = None
     fatal_error: bool = False
     interrupted: bool = False
+
+
+@dataclass
+class ResultMessage:
+    """Minimal SDK result message recognized by MessageStreamProcessor."""
+
+    session_id: str
+    result: str = "done"
 
 
 @dataclass
@@ -549,6 +561,60 @@ class TestEarlyInterruptPath:
         assert output.interrupted is True
         assert output.baseline_timestamp == 1700000000
         assert output.agent_id == "agent-123"
+
+
+class TestCoderTimeoutBudget:
+    """Tests for hard timeout boundaries around coder execution."""
+
+    @pytest.mark.asyncio
+    async def test_post_session_check_time_does_not_reduce_next_coder_timeout(
+        self, tmp_path: Path
+    ) -> None:
+        """A slow gate retry should not consume the next coder attempt's budget."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("{}\n")
+        gate_attempts = 0
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: object
+        ) -> tuple[StubGateOutcome, int]:
+            del issue_id, log_path, retry_state
+            nonlocal gate_attempts
+            gate_attempts += 1
+            if gate_attempts == 1:
+                await asyncio.sleep(0.25)
+                return StubGateOutcome(
+                    passed=False, failure_reasons=["needs another pass"]
+                ), 0
+            return StubGateOutcome(passed=True), 0
+
+        client_factory = StreamingFakeSDKClientFactory()
+        client_factory.configure_next_client(
+            result_message=ResultMessage(session_id="session-1", result="first pass")
+        )
+        client_factory.configure_next_client(
+            result_message=ResultMessage(session_id="session-1", result="second pass")
+        )
+        config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=cast("int", 0.2),
+            prompts=make_prompts(),
+            max_gate_retries=2,
+        )
+        runner = AgentSessionRunner(
+            config=config,
+            agent_provider=FakeAgentProvider(client_factory),
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(log_path=log_path),
+        )
+
+        output = await runner.run_session(
+            AgentSessionInput(issue_id="test-issue", prompt="initial prompt")
+        )
+
+        assert output.success is True
+        assert output.gate_attempts == 2
 
 
 class TestProtocolInterfaceAcceptance:
