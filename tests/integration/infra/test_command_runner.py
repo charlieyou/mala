@@ -197,7 +197,7 @@ class TestCommandRunner:
         script = tmp_path / "spawner.sh"
         script.write_text(
             """#!/bin/bash
-            (echo "spawned" > "$1/spawned.txt"; sleep 2; echo "child survived" > "$1/child_output.txt") &
+            (echo "spawned" > "$1/spawned.txt"; sleep 2; echo "child survived" > "$1/child_output.txt") >/dev/null 2>&1 &
             sleep 10
             """
         )
@@ -205,14 +205,18 @@ class TestCommandRunner:
 
         # Use a longer timeout so bash has time to fork the background
         # subshell before SIGTERM arrives under parallel load.
-        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.5)
+        runner = CommandRunner(
+            cwd=tmp_path, timeout_seconds=0.5, kill_grace_seconds=0.1
+        )
         result = runner.run([str(script), str(tmp_path)], use_process_group=False)
 
         assert result.timed_out is True
         assert (tmp_path / "spawned.txt").exists()
+        child_output = tmp_path / "child_output.txt"
+        assert not child_output.exists()
         time.sleep(2.5)
         # With use_process_group=False, child process survives
-        assert (tmp_path / "child_output.txt").exists(), "Child should survive"
+        assert child_output.exists(), "Child should survive"
 
     def test_run_with_env(self, tmp_path: Path) -> None:
         runner = CommandRunner(cwd=tmp_path)
@@ -381,22 +385,26 @@ class TestAsyncCommandRunner:
         # child_output.txt only if it survives the parent's timeout.
         script.write_text(
             """#!/bin/bash
-            (echo "spawned" > "$1/spawned.txt"; sleep 2; echo "child survived" > "$1/child_output.txt") &
+            (echo "spawned" > "$1/spawned.txt"; sleep 2; echo "child survived" > "$1/child_output.txt") >/dev/null 2>&1 &
             sleep 30
             """
         )
         script.chmod(0o755)
 
-        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.5)
+        runner = CommandRunner(
+            cwd=tmp_path, timeout_seconds=0.5, kill_grace_seconds=0.1
+        )
         result = await runner.run_async(
             [str(script), str(tmp_path)], use_process_group=False
         )
 
         assert result.timed_out is True
         assert (tmp_path / "spawned.txt").exists()
+        child_output = tmp_path / "child_output.txt"
+        assert not child_output.exists()
         await asyncio.sleep(2.5)
         # With use_process_group=False, child process survives
-        assert (tmp_path / "child_output.txt").exists(), "Child should survive"
+        assert child_output.exists(), "Child should survive"
 
 
 class TestShellMode:
