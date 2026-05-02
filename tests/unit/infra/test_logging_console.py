@@ -230,14 +230,18 @@ def test_log_tool_quiet_mode_output(
     assert "Install deps" not in output
 
     # Amp shell_command should be displayed as Bash with command/cmd value.
-    console.log_tool("shell_command", arguments={"cmd": "uv run pytest", "timeout_ms": 1000})
+    console.log_tool(
+        "shell_command", arguments={"cmd": "uv run pytest", "timeout_ms": 1000}
+    )
     output = capsys.readouterr().out
     assert "Bash" in output
     assert "shell_command" not in output
     assert "uv run pytest" in output
     assert "cmd=..." not in output
 
-    console.log_tool("shell_command", arguments={"command": "uv sync", "workdir": "/tmp"})
+    console.log_tool(
+        "shell_command", arguments={"command": "uv sync", "workdir": "/tmp"}
+    )
     output = capsys.readouterr().out
     assert "Bash" in output
     assert "shell_command" not in output

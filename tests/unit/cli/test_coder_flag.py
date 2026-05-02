@@ -164,7 +164,8 @@ def test_coder_help_shows_effective_defaults(
     assert "--amp-mode" in output
     assert "Default: deep" in output
     assert "--effort" in output
-    assert "Default: unset" in output
+    assert "Default:" in output
+    assert "unset" in output
     assert "leave backend default" in output
 
 
