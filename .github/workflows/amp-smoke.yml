@@ -1,0 +1,68 @@
+name: Amp Smoke
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/amp-smoke.yml"
+      - "plugins/amp/**"
+      - "src/infra/clients/__init__.py"
+      - "src/infra/clients/amp*.py"
+      - "tests/e2e/test_amp_real_cli.py"
+      - "pyproject.toml"
+      - "uv.lock"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/amp-smoke.yml"
+      - "plugins/amp/**"
+      - "src/infra/clients/__init__.py"
+      - "src/infra/clients/amp*.py"
+      - "tests/e2e/test_amp_real_cli.py"
+      - "pyproject.toml"
+      - "uv.lock"
+
+permissions:
+  contents: read
+
+jobs:
+  real-amp-e2e:
+    name: Real Amp e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Require Amp API key
+        env:
+          AMP_API_KEY: ${{ secrets.AMP_API_KEY }}
+        run: |
+          if [ -z "${AMP_API_KEY:-}" ]; then
+            echo "AMP_API_KEY secret is required for real Amp smoke tests" >&2
+            exit 1
+          fi
+
+      - name: Install Amp CLI
+        run: |
+          curl -fsSL https://ampcode.com/install.sh | bash
+          {
+            echo "$HOME/.local/bin"
+            echo "$HOME/.amp/bin"
+            echo "$HOME/.bun/bin"
+          } >> "$GITHUB_PATH"
+
+      - name: Show Amp version
+        env:
+          AMP_API_KEY: ${{ secrets.AMP_API_KEY }}
+        run: amp --version
+
+      - name: Run real Amp stream-json e2e tests
+        env:
+          AMP_API_KEY: ${{ secrets.AMP_API_KEY }}
+        run: uv run pytest -m e2e tests/e2e/test_amp_real_cli.py
