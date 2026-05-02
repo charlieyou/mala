@@ -981,11 +981,14 @@ class BeadsClient:
                 parent_id = str(parent_id)
                 metadata = await self._get_issue_metadata_async(parent_id)
                 if metadata is None:
-                    return None
+                    continue
                 if metadata.get("issue_type") == "epic":
                     self._cache_epic_priority(parent_id, metadata.get("priority"))
                     return parent_id
-                return await self._resolve_parent_epic_async(parent_id, seen)
+                resolved = await self._resolve_parent_epic_async(parent_id, seen)
+                if resolved is not None:
+                    return resolved
+                continue
 
             if item.get("depth", 0) > 0 and item.get("issue_type") == "epic":
                 # Accept the older dep-tree shape used by existing tests.

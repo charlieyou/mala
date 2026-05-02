@@ -251,6 +251,96 @@ class TestGetParentEpicAsync:
 
         assert result == "epic-1"
 
+    @pytest.mark.asyncio
+    async def test_continues_past_branch_with_missing_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        """If one parent-child branch has missing metadata, later branches
+        should still be checked instead of aborting the search."""
+        beads = BeadsClient(tmp_path)
+
+        async def mock_run(cmd: list[str]) -> CommandResult:
+            if cmd[:4] == ["br", "dep", "list", "task-1"]:
+                return make_command_result(
+                    stdout=json.dumps(
+                        [
+                            {
+                                "issue_id": "task-1",
+                                "depends_on_id": "broken-link",
+                                "type": "parent-child",
+                            },
+                            {
+                                "issue_id": "task-1",
+                                "depends_on_id": "epic-1",
+                                "type": "parent-child",
+                            },
+                        ]
+                    )
+                )
+            if cmd == ["br", "show", "broken-link", "--json"]:
+                # Simulate broken link: br show fails / returns no metadata.
+                return make_command_result(returncode=1, stderr="not found")
+            if cmd == ["br", "show", "epic-1", "--json"]:
+                return make_command_result(
+                    stdout=json.dumps(
+                        [{"id": "epic-1", "issue_type": "epic", "priority": 1}]
+                    )
+                )
+            return make_command_result(stdout="[]")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", mock_run)
+            result = await beads.get_parent_epic_async("task-1")
+
+        assert result == "epic-1"
+
+    @pytest.mark.asyncio
+    async def test_continues_past_branch_with_no_epic_ancestor(
+        self, tmp_path: Path
+    ) -> None:
+        """If a non-epic parent has no epic ancestor, fall back to other
+        parent-child dependencies instead of returning None."""
+        beads = BeadsClient(tmp_path)
+
+        async def mock_run(cmd: list[str]) -> CommandResult:
+            if cmd[:4] == ["br", "dep", "list", "task-1"]:
+                return make_command_result(
+                    stdout=json.dumps(
+                        [
+                            {
+                                "issue_id": "task-1",
+                                "depends_on_id": "task-orphan",
+                                "type": "parent-child",
+                            },
+                            {
+                                "issue_id": "task-1",
+                                "depends_on_id": "epic-1",
+                                "type": "parent-child",
+                            },
+                        ]
+                    )
+                )
+            if cmd == ["br", "show", "task-orphan", "--json"]:
+                return make_command_result(
+                    stdout=json.dumps([{"id": "task-orphan", "issue_type": "task"}])
+                )
+            if cmd[:4] == ["br", "dep", "list", "task-orphan"]:
+                # No further parents -> orphan branch yields None.
+                return make_command_result(stdout="[]")
+            if cmd == ["br", "show", "epic-1", "--json"]:
+                return make_command_result(
+                    stdout=json.dumps(
+                        [{"id": "epic-1", "issue_type": "epic", "priority": 1}]
+                    )
+                )
+            return make_command_result(stdout="[]")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", mock_run)
+            result = await beads.get_parent_epic_async("task-1")
+
+        assert result == "epic-1"
+
 
 class TestGetParentEpicsAsync:
     """Test get_parent_epics_async batch method."""
