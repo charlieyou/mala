@@ -170,9 +170,7 @@ class TestGetParentEpicAsync:
         ] in commands
 
     @pytest.mark.asyncio
-    async def test_uses_parent_metadata_for_epic_priority(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_uses_parent_metadata_for_epic_priority(self, tmp_path: Path) -> None:
         """Dependency rows expose child priority; epic priority comes from br show."""
         beads = BeadsClient(tmp_path)
         parent_deps = json.dumps(
@@ -2641,9 +2639,7 @@ class TestGetEpicChildrenAsync:
         async def mock_run(cmd: list[str]) -> CommandResult:
             parent_id = cmd[3]
             if parent_id == "epic-1":
-                return make_command_result(
-                    stdout=json.dumps([{"id": "child-epic"}])
-                )
+                return make_command_result(stdout=json.dumps([{"id": "child-epic"}]))
             if parent_id == "child-epic":
                 return make_command_result(stdout=json.dumps([{"id": "task-1"}]))
             return make_command_result(stdout="[]")
