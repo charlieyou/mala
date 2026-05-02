@@ -162,7 +162,7 @@ def test_absence_of_flags_preserves_default_config(
     assert config is not None
     # Defaults (no env, no yaml, no CLI override).
     assert config.coder == "claude"
-    assert config.coder_options.amp.mode == "smart"
+    assert config.coder_options.amp.mode == "deep"
 
 
 def test_amp_mode_with_coder_claude_logs_ignored(

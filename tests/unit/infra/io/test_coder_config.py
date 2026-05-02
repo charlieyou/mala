@@ -39,14 +39,14 @@ class TestDefaults:
     def test_malaconfig_defaults_to_claude(self) -> None:
         config = MalaConfig()
         assert config.coder == "claude"
-        assert config.coder_options.amp.mode == "smart"
+        assert config.coder_options.amp.mode == "deep"
 
     def test_from_env_no_overrides_uses_defaults(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config = MalaConfig.from_env(validate=False)
         assert config.coder == "claude"
-        assert config.coder_options.amp.mode == "smart"
+        assert config.coder_options.amp.mode == "deep"
 
     def test_amp_options_and_coder_options_are_frozen(self) -> None:
         amp = AmpOptions()
@@ -123,7 +123,7 @@ class TestRegressionLegacyYaml:
             validate=False, yaml_coder=None, yaml_amp_mode=None
         )
         assert config.coder == "claude"
-        assert config.coder_options.amp.mode == "smart"
+        assert config.coder_options.amp.mode == "deep"
 
 
 class TestYamlEndToEnd:
@@ -177,7 +177,7 @@ class TestYamlEndToEnd:
             yaml_amp_mode=validation_config.amp_mode,
         )
         assert config.coder == "claude"
-        assert config.coder_options.amp.mode == "smart"
+        assert config.coder_options.amp.mode == "deep"
 
 
 class TestBuildResolvedConfigPrecedence:
@@ -191,7 +191,7 @@ class TestBuildResolvedConfigPrecedence:
     def test_default_when_no_layers_set(self) -> None:
         resolved = build_resolved_config(self._base(), CLIOverrides())
         assert resolved.coder == "claude"
-        assert resolved.coder_options.amp.mode == "smart"
+        assert resolved.coder_options.amp.mode == "deep"
 
     def test_yaml_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
         config = MalaConfig.from_env(

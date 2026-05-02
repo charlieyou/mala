@@ -602,7 +602,7 @@ class AmpAgentProvider:
 
     name: Literal["amp"] = "amp"
 
-    def __init__(self, *, mode: AmpMode = "smart") -> None:
+    def __init__(self, *, mode: AmpMode = "deep") -> None:
         """Initialize the provider.
 
         Args:

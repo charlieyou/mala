@@ -92,7 +92,7 @@ class AmpRuntimeBuilder:
         repo_path: Path,
         agent_id: str,
         mcp_server_factory: McpServerFactory,
-        mode: AmpMode = "smart",
+        mode: AmpMode = "deep",
     ) -> None:
         """Initialize the builder.
 

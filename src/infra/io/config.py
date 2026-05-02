@@ -43,7 +43,7 @@ _logger = logging.getLogger(__name__)
 VALID_CODERS: frozenset[str] = frozenset({"claude", "amp"})
 VALID_AMP_MODES: frozenset[str] = frozenset({"smart", "rush", "deep"})
 DEFAULT_CODER: Literal["claude", "amp"] = "claude"
-DEFAULT_AMP_MODE: Literal["smart", "rush", "deep"] = "smart"
+DEFAULT_AMP_MODE: Literal["smart", "rush", "deep"] = "deep"
 
 
 def parse_cerberus_args(raw: str | None, *, source: str) -> list[str]:
@@ -230,7 +230,7 @@ class AmpOptions:
     """Amp-coder specific options.
 
     Attributes:
-        mode: Amp execution mode. One of "smart" (default), "rush", or "deep".
+        mode: Amp execution mode. One of "smart", "rush", or "deep" (default).
             Only consulted when MalaConfig.coder == "amp".
     """
 

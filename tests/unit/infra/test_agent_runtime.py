@@ -255,6 +255,18 @@ class TestAgentRuntimeBuilder:
         assert factory.created_options[0]["disallowed_tools"] == tools
 
     @pytest.mark.unit
+    def test_claude_coder_uses_opus_1m_model(
+        self, repo_path: Path, factory: FakeSDKClientFactory
+    ) -> None:
+        """Claude coder sessions request the 1M context Opus model."""
+        AgentRuntimeBuilder(repo_path, "agent-model", factory).with_mcp(
+            servers={}
+        ).build()
+
+        assert len(factory.created_options) == 1
+        assert factory.created_options[0]["model"] == "opus[1m]"
+
+    @pytest.mark.unit
     def test_hooks_dict_structure(
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:

@@ -72,9 +72,9 @@ stream-json contract.
 
 | Mode | Model |
 |------|-------|
-| `smart` (default) | Claude Opus |
+| `smart` | Claude Opus |
 | `rush` | Claude Haiku |
-| `deep` | GPT-5 reasoning |
+| `deep` (default) | GPT-5 reasoning |
 
 **Known limitations under `coder: amp` (MVP):**
 

@@ -156,13 +156,13 @@ def test_mode_flows_into_argv_and_runtime_field(repo_path: Path, mode: str) -> N
 
 
 @pytest.mark.unit
-def test_default_mode_is_smart_when_omitted(
+def test_default_mode_is_deep_when_omitted(
     repo_path: Path,
 ) -> None:
     runtime = AmpRuntimeBuilder(repo_path, "agent-1", _stdio_locking_factory()).build()
-    assert runtime.mode == "smart"
+    assert runtime.mode == "deep"
     idx = runtime.argv.index("--mode")
-    assert runtime.argv[idx + 1] == "smart"
+    assert runtime.argv[idx + 1] == "deep"
 
 
 # ---------------------------------------------------------------------------

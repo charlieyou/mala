@@ -170,7 +170,7 @@ uses the same coder, and fixer agents follow the main coder.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--coder` | `claude` | Coder backend: `claude` or `amp`. Validated at parse time. |
-| `--amp-mode` | `smart` | Amp execution mode: `smart`, `rush`, or `deep`. Only consulted when `coder=amp`. |
+| `--amp-mode` | `deep` | Amp execution mode: `smart`, `rush`, or `deep`. Only consulted when `coder=amp`. |
 
 #### Precedence
 
@@ -180,7 +180,7 @@ Both flags follow the same **CLI > env > yaml > default** precedence as
 | Setting | CLI | Env | YAML | Default |
 |---------|-----|-----|------|---------|
 | Coder | `--coder amp` | `MALA_CODER=amp` | `coder: amp` | `claude` |
-| Amp mode | `--amp-mode deep` | `MALA_AMP_MODE=deep` | `coder_options.amp.mode: deep` | `smart` |
+| Amp mode | `--amp-mode rush` | `MALA_AMP_MODE=rush` | `coder_options.amp.mode: rush` | `deep` |
 
 Invalid values fail validation **before** any agent process starts.
 
@@ -199,7 +199,7 @@ not require pruning unrelated flags from your invocation:
 **Examples:**
 
 ```bash
-# Run with Amp (Claude Opus via smart mode)
+# Run with Amp (GPT-5 reasoning via deep mode)
 mala run --coder amp /path/to/repo
 
 # Run with Amp in rush mode (Haiku) for cheaper iteration
@@ -238,7 +238,7 @@ Precedence: CLI flags override global config, which overrides program defaults.
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Claude SDK config directory (plugins, sessions) |
 | `MALA_CLAUDE_SETTINGS_SOURCES` | `local,project` | Comma-separated Claude settings sources |
 | `MALA_CODER` | `claude` | Coder backend: `claude` or `amp`. Overridden by `--coder`; falls back to `coder:` in `mala.yaml`. |
-| `MALA_AMP_MODE` | `smart` | Amp execution mode: `smart`, `rush`, or `deep`. Overridden by `--amp-mode`; falls back to `coder_options.amp.mode`. Only consulted when coder is `amp`. |
+| `MALA_AMP_MODE` | `deep` | Amp execution mode: `smart`, `rush`, or `deep`. Overridden by `--amp-mode`; falls back to `coder_options.amp.mode`. Only consulted when coder is `amp`. |
 
 ### Epic Verification
 

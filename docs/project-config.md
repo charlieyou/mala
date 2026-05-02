@@ -71,7 +71,7 @@ claude_settings_sources: list     # Optional. SDK settings sources (default: [lo
 coder: string                    # Optional. Coder backend: "claude" or "amp" (default: claude)
 coder_options:                   # Optional. Per-coder options
   amp:
-    mode: string                 # Optional. Amp mode: "smart", "rush", "deep" (default: smart)
+    mode: string                 # Optional. Amp mode: "smart", "rush", "deep" (default: deep)
 
 timeout_minutes: int             # Optional. Agent timeout in minutes (default: 60)
 
@@ -128,7 +128,7 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `coverage.threshold` | number | Yes* | Minimum coverage % |
 | `claude_settings_sources` | list | No | SDK settings sources: `local`, `project`, `user` (default: `[local, project]`) |
 | `coder` | string | No | Coder backend: `claude` or `amp` (default: `claude`). Overridden by `--coder` / `MALA_CODER`. See [Coder Selection](#coder-selection). |
-| `coder_options.amp.mode` | string | No | Amp execution mode: `smart`, `rush`, or `deep` (default: `smart`). Only consulted when `coder: amp`. |
+| `coder_options.amp.mode` | string | No | Amp execution mode: `smart`, `rush`, or `deep` (default: `deep`). Only consulted when `coder: amp`. |
 | `timeout_minutes` | integer | No | Agent timeout in minutes (default: 60). Can be overridden by CLI `--timeout` |
 | `max_idle_retries` | integer | No | Maximum idle timeout retries before aborting (default: 2). Set to 0 to disable retries. |
 | `idle_timeout_seconds` | float | No | Seconds to wait for SDK activity before triggering idle recovery (default: derived from `timeout_minutes`). Set to 0 to disable idle timeout. |
@@ -541,7 +541,7 @@ coder: amp
 
 coder_options:
   amp:
-    mode: smart   # smart (Opus, default), rush (Haiku), deep (GPT-5 reasoning)
+    mode: deep    # deep (GPT-5 reasoning, default), smart (Opus), rush (Haiku)
 ```
 
 Existing `mala.yaml` files **without `coder:` remain valid** and default to
@@ -555,7 +555,7 @@ precedence used by `claude_settings_sources`:
 1. CLI flag (`--coder`, `--amp-mode`)
 2. Environment variable (`MALA_CODER`, `MALA_AMP_MODE`)
 3. `mala.yaml` (`coder:`, `coder_options.amp.mode:`)
-4. Default: `claude`, `smart`
+4. Default: `claude`, `deep`
 
 ### Validation
 

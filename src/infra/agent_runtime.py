@@ -421,6 +421,7 @@ class AgentRuntimeBuilder:
         # Build SDK options
         options = self._sdk_client_factory.create_options(
             cwd=str(self._repo_path),
+            model="opus[1m]",
             mcp_servers=self._mcp_servers,
             disallowed_tools=self._disallowed_tools,
             env=env,
