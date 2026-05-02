@@ -43,6 +43,7 @@ _logger = logging.getLogger(__name__)
 VALID_CODERS: frozenset[str] = frozenset({"claude", "amp"})
 VALID_AMP_MODES: frozenset[str] = frozenset({"smart", "rush", "deep"})
 VALID_EFFORTS: frozenset[str] = frozenset({"low", "medium", "high", "xhigh", "max"})
+VALID_AMP_DEEP_EFFORTS: frozenset[str] = frozenset({"medium", "high", "xhigh"})
 """Reasoning-effort values forwarded to supported coder backends.
 
 The Claude SDK currently types its ``effort`` field as
@@ -227,6 +228,24 @@ def parse_effort(raw: str | None, *, source: str) -> str | None:
             f"{source}: Invalid effort '{stripped}'. Valid efforts: {valid}"
         )
     return stripped
+
+
+def validate_amp_effort_for_mode(
+    *,
+    coder: Literal["claude", "amp"],
+    mode: Literal["smart", "rush", "deep"],
+    effort: str | None,
+    source: str,
+) -> None:
+    """Validate effort values that are meaningful to Amp deep mode."""
+    if coder != "amp" or mode != "deep" or effort is None:
+        return
+    if effort not in VALID_AMP_DEEP_EFFORTS:
+        valid = ", ".join(sorted(VALID_AMP_DEEP_EFFORTS))
+        raise ValueError(
+            f"{source}: Amp deep mode only accepts effort values: {valid}; "
+            f"got '{effort}'"
+        )
 
 
 class ConfigurationError(Exception):
@@ -556,6 +575,15 @@ class MalaConfig:
         resolved_effort: str | None = (
             env_effort if env_effort is not None else yaml_effort
         )
+        try:
+            validate_amp_effort_for_mode(
+                coder=resolved_coder,
+                mode=resolved_amp_mode,
+                effort=resolved_effort,
+                source="configuration",
+            )
+        except ValueError as exc:
+            parse_errors.append(str(exc))
 
         config = cls(
             runs_dir=runs_dir,
@@ -822,6 +850,12 @@ def build_resolved_config(
     # base_config already has env > yaml > default applied.
     cli_effort = parse_effort(overrides.effort, source="CLI")
     effort: str | None = cli_effort if cli_effort is not None else base_config.effort
+    validate_amp_effort_for_mode(
+        coder=coder,
+        mode=amp_mode,
+        effort=effort,
+        source="CLI/configuration",
+    )
 
     # Info-level log when options are set against the inactive coder.
     # Heuristic: explicit CLI override OR resolved value differs from default.

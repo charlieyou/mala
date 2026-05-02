@@ -403,6 +403,36 @@ class TestEffortPrecedence:
         with pytest.raises(ValueError, match="CLI"):
             build_resolved_config(self._base(), CLIOverrides(effort="turbo"))
 
+    @pytest.mark.parametrize("effort", ["low", "max"])
+    def test_amp_deep_rejects_unsupported_effort(self, effort: str) -> None:
+        config = MalaConfig.from_env(validate=False, yaml_coder="amp")
+        with pytest.raises(ValueError, match="Amp deep mode"):
+            build_resolved_config(config, CLIOverrides(effort=effort))
+
+    @pytest.mark.parametrize("effort", ["medium", "high", "xhigh"])
+    def test_amp_deep_accepts_supported_effort(self, effort: str) -> None:
+        config = MalaConfig.from_env(validate=False, yaml_coder="amp")
+        resolved = build_resolved_config(config, CLIOverrides(effort=effort))
+        assert resolved.effort == effort
+
+    def test_amp_non_deep_allows_effort_for_silent_drop(self) -> None:
+        config = MalaConfig.from_env(
+            validate=False,
+            yaml_coder="amp",
+            yaml_amp_mode="smart",
+            yaml_effort="max",
+        )
+        resolved = build_resolved_config(config, CLIOverrides())
+        assert resolved.effort == "max"
+        assert resolved.coder_options.amp.mode == "smart"
+
+    def test_env_effort_rejected_when_amp_deep(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MALA_EFFORT", "low")
+        with pytest.raises(ConfigurationError, match="Amp deep mode"):
+            MalaConfig.from_env(validate=False, yaml_coder="amp")
+
     def test_partial_cli_only_overrides_effort(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -442,4 +472,23 @@ class TestEffortPrecedence:
         yaml_path = tmp_path / "mala.yaml"
         yaml_path.write_text("preset: python-uv\neffort: turbo\n")
         with pytest.raises(ConfigError, match="effort"):
+            load_config(tmp_path)
+
+    @pytest.mark.parametrize("effort", ["low", "max"])
+    def test_yaml_amp_deep_effort_rejects_unsupported_values(
+        self, tmp_path: Path, effort: str
+    ) -> None:
+        from src.domain.validation.config import ConfigError
+        from src.domain.validation.config_loader import load_config
+
+        yaml_path = tmp_path / "mala.yaml"
+        yaml_path.write_text(
+            "preset: python-uv\n"
+            "coder: amp\n"
+            "coder_options:\n"
+            "  amp:\n"
+            "    mode: deep\n"
+            f"effort: {effort}\n"
+        )
+        with pytest.raises(ConfigError, match="medium"):
             load_config(tmp_path)

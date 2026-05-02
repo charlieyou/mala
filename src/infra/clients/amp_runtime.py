@@ -22,6 +22,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from src.infra.io.config import validate_amp_effort_for_mode
 from src.infra.tools.env import SCRIPTS_DIR, USER_CONFIG_DIR, get_lock_dir
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,12 @@ class AmpRuntimeBuilder:
         self._mcp_server_factory = mcp_server_factory
         self._mode: AmpMode = mode
         self._effort: str | None = effort
+        validate_amp_effort_for_mode(
+            coder="amp",
+            mode=mode,
+            effort=effort,
+            source="AmpRuntimeBuilder",
+        )
         self._resume_thread_id: str | None = None
         # Fluent-API state collected by the with_* helpers below. The Amp
         # pipeline does not act on most of these (Amp enforces
@@ -294,7 +301,7 @@ class AmpRuntimeBuilder:
         # CLI; we forward ``--effort`` only when the active mode is ``deep``
         # and emit an info-level log so the silent drop on other modes is
         # observable. The Amp CLI itself accepts the same string values mala
-        # validated upstream (low | medium | high | xhigh | max).
+        # validated upstream (medium | high | xhigh for deep mode).
         if self._effort is not None:
             if self._mode == "deep":
                 argv.extend(["--effort", self._effort])

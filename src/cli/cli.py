@@ -482,7 +482,8 @@ _EFFORT_HELP = (
 )
 _RUN_EFFORT_HELP = (
     f"{_EFFORT_HELP} Forwarded to ClaudeAgentOptions.effort for coder=claude "
-    "and to `amp --effort <value>` for coder=amp (deep mode only)."
+    "and to `amp --effort <value>` for coder=amp (deep mode only; Amp deep "
+    "accepts medium, high, or xhigh)."
 )
 
 

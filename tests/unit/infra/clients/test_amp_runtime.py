@@ -571,7 +571,7 @@ def test_runtime_exposes_lint_cache_for_session_config(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
+@pytest.mark.parametrize("effort", ["medium", "high", "xhigh"])
 def test_effort_appended_to_argv_in_deep_mode(repo_path: Path, effort: str) -> None:
     runtime = AmpRuntimeBuilder(
         repo_path,
@@ -587,6 +587,19 @@ def test_effort_appended_to_argv_in_deep_mode(repo_path: Path, effort: str) -> N
     # ``--mode deep`` is preserved alongside the new flag.
     mode_idx = runtime.argv.index("--mode")
     assert runtime.argv[mode_idx + 1] == "deep"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("effort", ["low", "max"])
+def test_deep_mode_rejects_unsupported_effort(repo_path: Path, effort: str) -> None:
+    with pytest.raises(ValueError, match="Amp deep mode"):
+        AmpRuntimeBuilder(
+            repo_path,
+            "agent-1",
+            _stdio_locking_factory(),
+            mode="deep",
+            effort=effort,
+        )
 
 
 @pytest.mark.unit
