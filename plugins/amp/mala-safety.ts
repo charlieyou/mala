@@ -607,29 +607,63 @@ function checkFileModifyingShell(command: string): ToolDecision | null {
   return null;
 }
 
-// --- Shell file-write target extraction ----------------------------------
+// --- Shell file-write classification -------------------------------------
 //
-// Extracts the file paths a shell command would write to via the primitives
-// (output redirects, `tee`, `dd of=`, `mv`, `cp`) that bypass Amp's
-// file-write tools. Each returned path is then lock-checked by the Bash
-// branch with the same allow/reject semantics as the FILE_WRITE_TOOLS
-// branch.
+// Bash carries many primitives that can write repo files without going
+// through Amp's edit_file/create_file/apply_patch tools: output redirects
+// (`>`, `>>`, `>|`, `1>`, `2>`, `&>`), `tee`, `mv`, `cp`, `dd of=`,
+// `install`, `ln`, command substitutions `$(...)` and backticks, etc.
+// Without coverage in the Bash branch, an agent under
+// `--dangerously-allow-all` can write any repo file by routing through
+// these primitives — bypassing the FILE_WRITE_TOOLS lock-ownership gate.
+//
+// `classifyShellWrites` is the single decision surface: it returns either
+//   - a list of redirect target paths to lock-check (mirrors FILE_WRITE_TOOLS),
+//   - or a `reject` reason string the Bash branch surfaces verbatim.
+//
+// Two classes of input are reject-only because they cannot be safely
+// parsed for target paths:
+//
+//   1. `tee`/`mv`/`cp`/`dd`/`install`/`ln` invoked at command position.
+//      These primitives' destinations interact with redirect operators
+//      (`mv foo bar > /dev/null` confuses positional parsing), GNU
+//      destination flags (`cp -t out src`, `cp --target-directory=out src`),
+//      multi-source forms, and source-deletion semantics (`mv` modifies
+//      both source and destination). The proper hand-written grammar is
+//      large; the Bash branch instead refuses these calls and the agent
+//      uses edit_file / create_file / apply_patch (which lock-check the
+//      target) or a single output redirect after lock_acquire.
+//
+//   2. `$(...)` / backtick command substitutions whose body contains a
+//      write. Bash evaluates these substitutions even inside double
+//      quotes (`echo "$(echo X > target.py)"`), so they can write a file
+//      while the outer command's redirect-scanner skips the quoted span.
+//      Detected by walking the command, skipping single-quoted regions,
+//      and recursing into each substitution body to look for a redirect
+//      operator or a rejected primitive at command position.
+//
+// The remaining surface — output redirects with literal target paths —
+// IS lock-checkable: every captured target is fed to `checkLockOwnership`
+// with the same lock-key derivation as the FILE_WRITE_TOOLS branch.
+// Targets containing shell expansion (`$VAR`, `` ` ``, `~`, `*`, `?`, `[`)
+// in expanded contexts are also rejected, because the path Bash actually
+// writes to differs from the literal string the plugin sees — so the
+// lock-check on the literal would not protect the resolved write.
 //
 // Special device targets that are not real files (`/dev/null`,
-// `/dev/stderr`, `/dev/stdout`, `/dev/tty`, `/dev/fd/N`) are excluded so
-// `cmd > /dev/null` and similar discard-output idioms don't trigger a
-// lock-check. Every other captured target — including ones containing
-// unexpanded shell variables (`$VAR`, `$(...)`, `~`) — is forwarded to the
-// lock-check, where it will fail-closed (no matching <hash>.lock) unless
-// the agent took the lock under the literal string the plugin sees.
+// `/dev/stderr`, `/dev/stdout`, `/dev/tty`, and literal `/dev/fd/<digits>`)
+// are excluded from lock-checking. The `/dev/fd/` exclusion uses a strict
+// regex (`^/dev/fd/\d+$`); a `startsWith` check would let
+// `/dev/fd/../../path` slip through path traversal that Bash resolves to
+// an arbitrary repo file.
 //
 // Why a hand-written quote-aware scanner (and not just a global regex):
-// commands like `echo "echo X > foo" > script.sh` contain a `>` inside a
-// quoted argument that is NOT a redirect. A pure regex would match it and
-// produce a false-positive lock-check on `foo`, fail-closed-rejecting a
-// legitimate command. Tracking quote state on the way through the string
-// suppresses those interior matches without depending on full shell
-// tokenization.
+// commands like `echo "echo X > foo" > script.sh` contain a literal `>`
+// inside a quoted argument that is NOT a redirect. A pure regex would
+// match it and produce a false-positive lock-check on `foo`, fail-closed-
+// rejecting a legitimate command. Tracking quote state on the way through
+// the string suppresses those interior matches without depending on full
+// shell tokenization.
 
 const SHELL_WRITE_DENYLIST_PATHS: ReadonlySet<string> = new Set([
   "/dev/null",
@@ -638,9 +672,14 @@ const SHELL_WRITE_DENYLIST_PATHS: ReadonlySet<string> = new Set([
   "/dev/tty",
 ]);
 
+const DEV_FD_LITERAL_RE = /^\/dev\/fd\/\d+$/;
+
 function isExcludedShellWritePath(p: string): boolean {
   if (SHELL_WRITE_DENYLIST_PATHS.has(p)) return true;
-  if (p.startsWith("/dev/fd/")) return true;
+  // Strict literal-only match. `startsWith("/dev/fd/")` is fail-open:
+  // `/dev/fd/../../etc/passwd` would slip the lock-check while Bash
+  // resolves the traversal and writes to the resolved path.
+  if (DEV_FD_LITERAL_RE.test(p)) return true;
   return false;
 }
 
@@ -656,11 +695,9 @@ function unquoteShellPath(s: string): string {
 }
 
 // Tokenize a single pipeline stage's argument string into whitespace-
-// separated tokens, preserving quoted regions as single tokens. This is a
-// poor-man's shell tokenizer: it does not implement word splitting,
-// backslash escapes, brace/glob/parameter expansion, or here-docs. It is
-// sufficient to identify positional vs flag arguments for `tee`, `mv`, and
-// `cp` invocations whose target paths are literal strings.
+// separated tokens, preserving quoted regions as single tokens. Used only
+// for command-name classification (first non-assignment token); not used
+// for path extraction, which has its own quote-aware logic.
 function simpleShellTokenize(s: string): string[] {
   const tokens: string[] = [];
   let cur = "";
@@ -690,17 +727,70 @@ function simpleShellTokenize(s: string): string[] {
   return tokens;
 }
 
-// Scan `command` for output-redirect operators (`>`, `>>`, `1>`, `2>`,
-// `&>`, with optional trailing `>`) at top-level (not inside quotes) and
-// return each captured target path. Skips `>(` (process substitution) and
-// `>&N` (file-descriptor duplication) which do not write to a path.
-function extractRedirectTargets(command: string): string[] {
-  const out: string[] = [];
+// A redirect-target finding from `extractRedirectTargets`.
+//
+//   - `kind: "literal"` — the target is a pure literal string, safe to
+//     lock-check directly. The path Bash writes to equals `path` (modulo
+//     canonicalization, which Python's writer and the plugin both apply
+//     identically).
+//   - `kind: "expanded"` — the target captured by the scanner contains a
+//     shell expansion ($, backtick, ~, glob) in an expanded context. The
+//     literal does NOT equal what Bash writes; lock-checking it would let
+//     the agent acquire a lock on the literal `$VAR/file` while Bash
+//     writes to the resolved path. The classifier rejects these.
+type RedirectFinding =
+  | { kind: "literal"; path: string }
+  | { kind: "expanded"; raw: string };
+
+const EXPANSION_TRIGGERS_OUTSIDE_QUOTES = /[$`~*?\[]/;
+const EXPANSION_TRIGGERS_INSIDE_DQUOTE = /[$`]/;
+
+// Skip past a `$((arith))` expansion starting at index `i` (pointing at
+// `$`). Returns the index of the first character after the matching `))`.
+// Tracks `(` / `)` depth (starts at 2 because `((` opens two levels).
+function skipArithmeticExpansion(s: string, i: number): number {
+  let j = i + 3;
+  let depth = 2;
+  while (j < s.length && depth > 0) {
+    const c = s[j];
+    if (c === "(") depth++;
+    else if (c === ")") depth--;
+    j++;
+  }
+  return j;
+}
+
+// Scan `command` for output-redirect operators at top-level (not inside
+// quotes) and return each captured target as either a literal path or an
+// "expanded" finding. Recognized operators:
+//
+//   >, >>, >|, 1>, 1>>, 1>|, 2>, 2>>, 2>|, &>, &>>, &>|
+//
+// `>&N` (file-descriptor duplication) and `>(...)` (process substitution)
+// are intentionally not redirects-to-a-file and are skipped. `<` is not a
+// write. Backslash-escaped operators (`\>`) are handled implicitly: the
+// previous char is `\` so the operator detection still fires; the agent
+// can use the `>(...)` process-substitution form to feed the redirect to
+// a sub-pipeline if they need a non-file write.
+function extractRedirectTargets(command: string): RedirectFinding[] {
+  const out: RedirectFinding[] = [];
   let i = 0;
   let inQuote: '"' | "'" | null = null;
 
   while (i < command.length) {
     const c = command[i];
+
+    // Skip arithmetic expansion `$((...))` so its inner `>` isn't read
+    // as a redirect (the inside is a numeric expression, not a command).
+    if (
+      !inQuote &&
+      c === "$" &&
+      command[i + 1] === "(" &&
+      command[i + 2] === "("
+    ) {
+      i = skipArithmeticExpansion(command, i);
+      continue;
+    }
 
     if (inQuote) {
       if (c === inQuote) inQuote = null;
@@ -713,37 +803,27 @@ function extractRedirectTargets(command: string): string[] {
       continue;
     }
 
-    // Match a redirect operator at this position. Possible operators:
-    //   >, >>, 1>, 1>>, 2>, 2>>, &>, &>>
-    // Guard against double-counting >> by looking back at prev char: if
-    // it's part of a wider operator, skip.
-    let opStart = i;
     let opEnd = -1;
     if (c === "&" && command[i + 1] === ">") {
       opEnd = i + 2;
       if (command[opEnd] === ">") opEnd++;
-    } else if (
-      (c === "1" || c === "2") &&
-      command[i + 1] === ">"
-    ) {
+      else if (command[opEnd] === "|") opEnd++;
+    } else if ((c === "1" || c === "2") && command[i + 1] === ">") {
       opEnd = i + 2;
       if (command[opEnd] === ">") opEnd++;
+      else if (command[opEnd] === "|") opEnd++;
     } else if (c === ">") {
-      // Bare > or >>: must not be preceded by `>` (already consumed) or
-      // a digit/`&` (handled by the earlier branches). Also skip if
-      // preceded by `<` (here-doc / fd dup like `<>`) — `<>` opens a
-      // file for read+write and is ambiguous; treat as not a redirect
-      // for this purpose.
       const prev = i > 0 ? command[i - 1] : "";
+      // Skip `>>` second char (the first `>` already consumed `>>`),
+      // `<>` (read+write open), and the `1`/`2`/`&` cases handled above
+      // (they would have set opEnd).
       if (prev === ">" || prev === "<") {
         i++;
         continue;
       }
-      // `2>>`, `1>>` etc are caught by the digit branch above; if we
-      // reach here with prev === '1'|'2'|'&', it means the digit/`&`
-      // wasn't followed by `>` immediately so this `>` is independent.
       opEnd = i + 1;
       if (command[opEnd] === ">") opEnd++;
+      else if (command[opEnd] === "|") opEnd++;
     }
 
     if (opEnd === -1) {
@@ -751,35 +831,101 @@ function extractRedirectTargets(command: string): string[] {
       continue;
     }
 
-    // Consumed operator at [opStart, opEnd). Skip whitespace.
     let j = opEnd;
     while (j < command.length && /\s/.test(command[j])) j++;
 
-    // Reject fd-dup or process substitution.
+    // Skip fd-dup `>&N` and process substitution `>(...)`.
     if (j < command.length && (command[j] === "&" || command[j] === "(")) {
       i = j;
       continue;
     }
 
-    // Capture target token: quoted or unquoted.
+    // Capture the redirect target as a single shell word: a sequence of
+    // interleaved literal characters, single-quoted spans, double-quoted
+    // spans, backtick command substitutions, and `$(...)` substitutions,
+    // terminated by the next unquoted shell separator (whitespace,
+    // |, ;, &, <, >, (, ) or end). Note that `)` is in the separator
+    // set so `(echo X > foo)` does not capture `foo)`. ` ` ` and `$(`
+    // are NOT separators here — they begin substitution spans that are
+    // consumed as part of the target with the `expanded` flag set.
+    //
+    // `expanded` is set when the captured span includes a context Bash
+    // would evaluate before opening the redirect: outside any quote
+    // (raw `$`, ` ` `, `~`, glob), inside double quotes (`$`, ` ` `),
+    // inside `$(...)` spans, or inside backtick spans. Inside single
+    // quotes, no expansion occurs and the contents are appended
+    // literally without setting `expanded`.
     let target = "";
-    if (j < command.length && (command[j] === '"' || command[j] === "'")) {
-      const q = command[j++];
-      while (j < command.length && command[j] !== q) {
-        target += command[j++];
+    let expanded = false;
+    let captured = false;
+
+    while (j < command.length) {
+      const ch = command[j];
+      if (ch === "'") {
+        captured = true;
+        j++;
+        while (j < command.length && command[j] !== "'") target += command[j++];
+        if (j < command.length && command[j] === "'") j++;
+        continue;
       }
-      if (j < command.length && command[j] === q) j++;
-    } else {
-      while (
-        j < command.length &&
-        !/[\s|;&<>'"`(]/.test(command[j])
-      ) {
-        target += command[j++];
+      if (ch === '"') {
+        captured = true;
+        j++;
+        while (j < command.length && command[j] !== '"') {
+          if (EXPANSION_TRIGGERS_INSIDE_DQUOTE.test(command[j])) expanded = true;
+          target += command[j++];
+        }
+        if (j < command.length && command[j] === '"') j++;
+        continue;
       }
+      if (ch === "`") {
+        // Backtick command substitution mid-target. Bash evaluates the
+        // body and splices the result into the path. Mark expanded and
+        // consume through the closing backtick.
+        captured = true;
+        expanded = true;
+        target += ch;
+        j++;
+        while (j < command.length && command[j] !== "`") {
+          target += command[j++];
+        }
+        if (j < command.length && command[j] === "`") {
+          target += command[j];
+          j++;
+        }
+        continue;
+      }
+      if (ch === "$" && command[j + 1] === "(") {
+        // `$(...)` mid-target substitution. Same reasoning as backtick:
+        // Bash evaluates and splices, so the literal differs from the
+        // path written. Consume the paren-balanced span.
+        captured = true;
+        expanded = true;
+        target += command[j++]; // $
+        target += command[j++]; // (
+        let depth = 1;
+        while (j < command.length && depth > 0) {
+          const cj = command[j];
+          if (cj === "(") depth++;
+          else if (cj === ")") depth--;
+          target += cj;
+          j++;
+        }
+        continue;
+      }
+      if (/[\s|;&<>'"()]/.test(ch)) break;
+      if (EXPANSION_TRIGGERS_OUTSIDE_QUOTES.test(ch)) expanded = true;
+      target += ch;
+      captured = true;
+      j++;
     }
 
-    if (target && !isExcludedShellWritePath(target)) {
-      out.push(target);
+    if (captured) {
+      if (expanded) {
+        out.push({ kind: "expanded", raw: target });
+      } else if (target && !isExcludedShellWritePath(target)) {
+        out.push({ kind: "literal", path: target });
+      }
     }
     i = j;
   }
@@ -787,104 +933,11 @@ function extractRedirectTargets(command: string): string[] {
   return out;
 }
 
-// Scan `command` for `tee` invocations and return file targets. Tokenizes
-// each pipeline stage that mentions `tee` with quote awareness. Flags
-// (`-a`, `--append`, ...) are skipped; remaining positional tokens are
-// targets. Multiple files per `tee` (a documented form) are all returned.
-function extractTeeTargets(command: string): string[] {
-  const out: string[] = [];
-  // Split into pipeline stages; pipes/`;`/`&&`/`||`/newlines separate.
-  // Use a quote-aware split so separators inside quotes are kept.
-  const stages = splitPipelineStages(command);
-  for (const stage of stages) {
-    // Find `tee` at a token boundary.
-    const teeRe = /\btee\b(.*)$/m;
-    const m = teeRe.exec(stage);
-    if (!m) continue;
-    const tokens = simpleShellTokenize(m[1]);
-    for (const tok of tokens) {
-      // Skip flags (unquoted leading `-`).
-      if (tok.startsWith("-")) continue;
-      // Skip a stray `--` separator.
-      if (tok === "--") continue;
-      const unq = unquoteShellPath(tok);
-      if (unq && !isExcludedShellWritePath(unq)) {
-        out.push(unq);
-      }
-    }
-  }
-  return out;
-}
-
-// Scan `command` for `dd of=PATH` and return the captured PATH. Paths may
-// be quoted; whitespace before `of=` is handled by the pipeline-stage
-// split. `dd if=...` (input) is not a write and is intentionally ignored.
-function extractDdOfTargets(command: string): string[] {
-  const out: string[] = [];
-  const stages = splitPipelineStages(command);
-  for (const stage of stages) {
-    if (!/\bdd\b/.test(stage)) continue;
-    const tokens = simpleShellTokenize(stage);
-    for (const tok of tokens) {
-      // `of=PATH` or `of="..."` or `of='...'`
-      if (tok.startsWith("of=")) {
-        const raw = tok.slice("of=".length);
-        const unq = unquoteShellPath(raw);
-        if (unq && !isExcludedShellWritePath(unq)) {
-          out.push(unq);
-        }
-      }
-    }
-  }
-  return out;
-}
-
-// Scan `command` for `mv` / `cp` invocations and return the destination
-// argument (the last positional token). With multiple sources + a directory
-// destination (`cp a b c destdir/`), the last token is still the
-// destination, and lock-checking that path is the right invariant — the
-// agent must hold a lock on the destination (file or directory) to write
-// into it.
-function extractMvCpTargets(command: string): string[] {
-  const out: string[] = [];
-  const stages = splitPipelineStages(command);
-  const cmdRe = /\b(mv|cp)\b(.*)$/m;
-  for (const stage of stages) {
-    const m = cmdRe.exec(stage);
-    if (!m) continue;
-    const tokens = simpleShellTokenize(m[2]);
-    // Strip flags. Treat `--` as a separator (everything after is positional).
-    let positional: string[] = [];
-    let afterDoubleDash = false;
-    for (const tok of tokens) {
-      if (afterDoubleDash) {
-        positional.push(tok);
-        continue;
-      }
-      if (tok === "--") {
-        afterDoubleDash = true;
-        continue;
-      }
-      if (tok.startsWith("-")) continue;
-      positional.push(tok);
-    }
-    if (positional.length >= 2) {
-      const dst = unquoteShellPath(positional[positional.length - 1]);
-      if (dst && !isExcludedShellWritePath(dst)) {
-        out.push(dst);
-      }
-    }
-  }
-  return out;
-}
-
 // Split a command into pipeline stages on top-level `|`, `;`, `&&`, `||`,
-// `&`, newline, and parens (subshells / process substitution). Quote-aware
-// so separators inside quotes are not split-on. Used so per-stage commands
-// (`tee`, `dd`, `mv`, `cp`) are matched independently. Splitting on `(`
-// and `)` is required so that `cmd > >(tee log)` yields a clean stage
-// `tee log` for the tee extractor — without the split, the trailing `)`
-// gets glued onto the path token and the lock-check sees `log)`.
+// `&`, newline, and parens (subshells / process substitution). Quote-aware.
+// Used to identify the command name of each stage independently — without
+// the parens split, `cmd > >(tee log)` would yield a single stage and the
+// command-name classifier would incorrectly see `cmd`, missing the `tee`.
 function splitPipelineStages(command: string): string[] {
   const stages: string[] = [];
   let cur = "";
@@ -909,7 +962,6 @@ function splitPipelineStages(command: string): string[] {
       c === "(" ||
       c === ")"
     ) {
-      // Lookahead skip duplicates (`||`, `&&`) — they're the same separator.
       if ((c === "|" && command[i + 1] === "|") || (c === "&" && command[i + 1] === "&")) {
         i++;
       }
@@ -923,14 +975,228 @@ function splitPipelineStages(command: string): string[] {
   return stages;
 }
 
-function extractShellWritePaths(command: string): string[] {
-  const seen = new Set<string>();
-  for (const p of extractRedirectTargets(command)) seen.add(p);
-  for (const p of extractTeeTargets(command)) seen.add(p);
-  for (const p of extractDdOfTargets(command)) seen.add(p);
-  for (const p of extractMvCpTargets(command)) seen.add(p);
-  return [...seen];
+// Return the first non-assignment token of a pipeline stage, with the
+// directory prefix stripped so `/usr/bin/cp` matches `cp`. Variable
+// assignments (`FOO=bar dd of=...`) are skipped so the command-name
+// classifier sees `dd`, not `FOO=bar`. Returns null when the stage is
+// empty or contains only assignments.
+function getStageCommandBaseName(stage: string): string | null {
+  const tokens = simpleShellTokenize(stage);
+  for (const tok of tokens) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tok)) continue;
+    const unq = unquoteShellPath(tok);
+    if (!unq) continue;
+    const slash = unq.lastIndexOf("/");
+    return slash >= 0 ? unq.slice(slash + 1) : unq;
+  }
+  return null;
 }
+
+// Shell primitives whose target-path extraction is too brittle for
+// safe lock-checking. When any of these is the command at the start of
+// a pipeline stage, the Bash branch refuses the call — see the header
+// comment for the rationale.
+//
+// `cat` is excluded because `cat src` is read-only; the redirect-to-file
+// form `cat src > dst` is caught by the redirect scanner. Same for
+// `echo`, `printf`, etc.
+const REJECTED_SHELL_WRITE_PRIMITIVES: ReadonlySet<string> = new Set([
+  "tee",
+  "mv",
+  "cp",
+  "dd",
+  "install",
+  "ln",
+]);
+
+function findRejectedShellPrimitive(command: string): string | null {
+  const stages = splitPipelineStages(command);
+  for (const stage of stages) {
+    const cmdName = getStageCommandBaseName(stage);
+    if (cmdName === null) continue;
+    if (REJECTED_SHELL_WRITE_PRIMITIVES.has(cmdName)) {
+      return (
+        `mala-safety: blocked file-modifying shell primitive '${cmdName}'. ` +
+        "This primitive's destination cannot be safely parsed for the " +
+        "lock-check (redirect operators in args, GNU destination flags " +
+        "like `-t out`/`--target-directory=out`, multi-source forms, and " +
+        "`mv`'s source-deletion semantics all defeat naive parsing). Use " +
+        "edit_file / create_file / apply_patch (which route through the " +
+        "plugin's lock-check) or, for shell appends/overwrites, a single " +
+        "output redirect (`echo X > path`) after lock_acquire of `path`."
+      );
+    }
+  }
+  return null;
+}
+
+// Scan `command` for `$(...)` and backtick command substitutions whose
+// body contains a write. Bash evaluates these substitutions even inside
+// double quotes (`echo "$(echo X > target.py)"`), so the outer
+// redirect-scanner — which skips double-quoted spans — would otherwise
+// miss the inner redirect. Returns the rejection reason string when a
+// write is found, else null.
+//
+// Recurses into substitution bodies so nested forms (`$(echo "$(echo X > inner)")`)
+// are detected.
+//
+// Single-quoted regions are skipped because Bash does not expand inside
+// them: `echo '$(echo X > target.py)'` is a literal string, not a
+// substitution.
+//
+// `$((arith))` is NOT a command substitution (it's arithmetic) and is
+// skipped past — `$((1>0))` is a numeric comparison, not a redirect.
+function findCommandSubstitutionWithWrite(command: string): string | null {
+  let i = 0;
+  while (i < command.length) {
+    const c = command[i];
+
+    if (c === "'") {
+      i++;
+      while (i < command.length && command[i] !== "'") i++;
+      if (i < command.length) i++;
+      continue;
+    }
+
+    // Arithmetic expansion `$((...))`: skip the whole thing.
+    if (
+      c === "$" &&
+      command[i + 1] === "(" &&
+      command[i + 2] === "("
+    ) {
+      i = skipArithmeticExpansion(command, i);
+      continue;
+    }
+
+    // `$(...)` command substitution.
+    if (c === "$" && command[i + 1] === "(") {
+      let depth = 1;
+      let j = i + 2;
+      let subQuote: '"' | "'" | null = null;
+      while (j < command.length && depth > 0) {
+        const cj = command[j];
+        if (subQuote) {
+          if (cj === subQuote) subQuote = null;
+          j++;
+          continue;
+        }
+        if (cj === '"' || cj === "'") {
+          subQuote = cj as '"' | "'";
+          j++;
+          continue;
+        }
+        if (cj === "(") depth++;
+        else if (cj === ")") depth--;
+        if (depth === 0) {
+          j++;
+          break;
+        }
+        j++;
+      }
+      const inner = command.slice(i + 2, j > 0 ? j - 1 : j);
+      if (substringContainsWrite(inner)) {
+        return (
+          "mala-safety: $(...) command substitution body contains a shell " +
+          "write (redirect or rejected primitive) that would bypass the " +
+          `lock-check. Substitution body: \`${inner.slice(0, 200)}\`. ` +
+          "Use edit_file / create_file / apply_patch instead, or move the " +
+          "write out of the substitution and lock_acquire its target."
+        );
+      }
+      const recursive = findCommandSubstitutionWithWrite(inner);
+      if (recursive) return recursive;
+      i = j;
+      continue;
+    }
+
+    // Backtick command substitution.
+    if (c === "`") {
+      let j = i + 1;
+      while (j < command.length && command[j] !== "`") {
+        if (command[j] === "\\") j++;
+        j++;
+      }
+      const inner = command.slice(i + 1, j);
+      if (substringContainsWrite(inner)) {
+        return (
+          "mala-safety: `...` backtick command substitution body contains " +
+          "a shell write (redirect or rejected primitive) that would " +
+          `bypass the lock-check. Body: \`${inner.slice(0, 200)}\`. ` +
+          "Use edit_file / create_file / apply_patch instead."
+        );
+      }
+      const recursive = findCommandSubstitutionWithWrite(inner);
+      if (recursive) return recursive;
+      i = j + 1;
+      continue;
+    }
+
+    i++;
+  }
+  return null;
+}
+
+function substringContainsWrite(s: string): boolean {
+  if (extractRedirectTargets(s).length > 0) return true;
+  if (findRejectedShellPrimitive(s) !== null) return true;
+  return false;
+}
+
+// The single decision surface for the Bash branch. See module header.
+type ShellWriteAnalysis = {
+  paths: string[];
+  reject: string | null;
+};
+
+function classifyShellWrites(command: string): ShellWriteAnalysis {
+  // 1. Substitutions evaluated by Bash inside double quotes can write
+  //    files invisibly to the outer redirect-scanner. Reject if any
+  //    substitution body contains a write.
+  const csReject = findCommandSubstitutionWithWrite(command);
+  if (csReject) return { paths: [], reject: csReject };
+
+  // 2. tee/mv/cp/dd/install/ln at command position cannot be safely
+  //    parsed (see header). Reject.
+  const primReject = findRejectedShellPrimitive(command);
+  if (primReject) return { paths: [], reject: primReject };
+
+  // 3. Top-level redirects: lock-check the literal-target findings;
+  //    reject any "expanded" finding (path Bash writes to ≠ literal).
+  const findings = extractRedirectTargets(command);
+  const paths: string[] = [];
+  for (const f of findings) {
+    if (f.kind === "expanded") {
+      return {
+        paths: [],
+        reject:
+          "mala-safety: shell redirect target contains a shell expansion " +
+          `($, backtick, ~, *, ?, or [). Captured raw: \`${f.raw}\`. ` +
+          "The path Bash writes to is not the literal string the plugin " +
+          "sees, so a lock-check on the literal would not protect the " +
+          "resolved write. Resolve the path before the redirect (and " +
+          "lock_acquire that resolved path), or use edit_file / " +
+          "create_file / apply_patch with the resolved path.",
+      };
+    }
+    paths.push(f.path);
+  }
+  return { paths, reject: null };
+}
+
+// Named exports for unit testing under Bun. The default export
+// (`export default function plugin(amp)`) remains the production
+// entrypoint Amp loads.
+export {
+  classifyShellWrites,
+  extractRedirectTargets,
+  findCommandSubstitutionWithWrite,
+  findRejectedShellPrimitive,
+  getStageCommandBaseName,
+  isExcludedShellWritePath,
+  splitPipelineStages,
+  substringContainsWrite,
+};
+export type { RedirectFinding, ShellWriteAnalysis };
 
 // --- Plugin entrypoint ----------------------------------------------------
 
@@ -1014,13 +1280,15 @@ export default function plugin(amp: AmpPluginAPI): void {
         return fileModDecision;
       }
 
-      // Lock-check shell write primitives that can modify repo files
-      // (output redirects, tee, dd of=, mv, cp). Mirrors the FILE_WRITE_TOOLS
-      // branch below: same lock-key derivation, same allow/reject messages,
-      // so `lock_acquire` of the redirect target unblocks the write the
-      // same way it would for `edit_file`.
-      const shellWritePaths = extractShellWritePaths(cmd);
-      for (const filePath of shellWritePaths) {
+      // Classify shell writes. classifyShellWrites returns either:
+      //   - paths: lock-check each, mirroring FILE_WRITE_TOOLS branch;
+      //   - reject: surface verbatim (rejected primitives, command-sub
+      //     writes, or expanded-target redirects — see classifier header).
+      const analysis = classifyShellWrites(cmd);
+      if (analysis.reject) {
+        return { action: "reject-and-continue", message: analysis.reject };
+      }
+      for (const filePath of analysis.paths) {
         const rejection = checkLockOwnership(filePath);
         if (rejection) return rejection;
       }
