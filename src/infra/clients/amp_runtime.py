@@ -22,7 +22,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from src.infra.io.config import validate_amp_effort_for_mode
+from src.core.constants import validate_amp_effort_for_mode
 from src.infra.tools.env import SCRIPTS_DIR, USER_CONFIG_DIR, get_lock_dir
 
 logger = logging.getLogger(__name__)
@@ -229,8 +229,8 @@ class AmpRuntimeBuilder:
     def with_resume(self, thread_id: str) -> AmpRuntimeBuilder:
         """Configure the next ``build()`` to continue an existing Amp thread.
 
-        The exact resume CLI shape is the impl-spike default (``--thread-id <id>``
-        on ``amp --execute``); see ``plans/2026-04-29-amp-provider-plan.md#L679``.
+        The runtime records the thread id on :class:`AmpClientOptions`; the
+        client applies the verified Amp continuation shape at spawn time.
 
         Returns:
             ``self`` for fluent chaining.
@@ -312,8 +312,6 @@ class AmpRuntimeBuilder:
                     self._effort,
                     self._mode,
                 )
-        if self._resume_thread_id is not None:
-            argv.extend(["--thread-id", self._resume_thread_id])
 
         if self._resume_thread_id is not None:
             log_path = AMP_SESSIONS_DIR / f"{self._resume_thread_id}.jsonl"

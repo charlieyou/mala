@@ -379,13 +379,13 @@ def test_with_resume_returns_builder_for_chaining(
 
 
 @pytest.mark.unit
-def test_with_resume_threads_thread_id_into_argv(
+def test_with_resume_records_thread_id_for_client_resume(
     builder: AmpRuntimeBuilder,
 ) -> None:
     runtime = builder.with_resume("T-deadbeef").build()
-    assert "--thread-id" in runtime.argv
-    idx = runtime.argv.index("--thread-id")
-    assert runtime.argv[idx + 1] == "T-deadbeef"
+    assert "--thread-id" not in runtime.argv
+    assert runtime.options.thread_id == "T-deadbeef"
+    assert runtime.options.resume_strategy == "threads-continue"
 
 
 @pytest.mark.unit

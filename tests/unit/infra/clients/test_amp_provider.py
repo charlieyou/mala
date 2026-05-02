@@ -114,6 +114,28 @@ def test_provider_exposes_required_attributes() -> None:
     assert provider.log_provider is provider.log_provider
 
 
+@pytest.mark.unit
+def test_client_factory_resume_uses_verified_threads_continue_strategy(
+    tmp_path: Path,
+) -> None:
+    from src.infra.clients.amp_client import AmpClientOptions
+
+    provider = AmpAgentProvider()
+    options = AmpClientOptions(
+        cwd=tmp_path,
+        env={},
+        argv=("amp", "--execute", "--stream-json"),
+        log_path=tmp_path / ".pending.jsonl",
+    )
+
+    resumed = provider.client_factory.with_resume(options, "T-resume")
+
+    assert isinstance(resumed, AmpClientOptions)
+    assert resumed.thread_id == "T-resume"
+    assert resumed.resume_strategy == "threads-continue"
+    assert "--thread-id" not in resumed.argv
+
+
 # ---------------------------------------------------------------------------
 # Lazy-import guard
 # ---------------------------------------------------------------------------

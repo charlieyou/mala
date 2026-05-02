@@ -712,6 +712,11 @@ as the safe default:
   invocation for a given thread (initial run + resumes triggered by idle
   timeout, gate failure, or review-issue retries) appends to
   `~/.config/mala/amp-sessions/{thread_id}.jsonl`.
+- Real Amp CLI verification on `0.0.1777753404-g60c948` (2026-05-02) showed
+  `amp --execute --stream-json --thread-id <id>` fails with `unknown option
+  '--thread-id'`. The production resume strategy is therefore
+  `amp threads continue <id> --execute --stream-json ...`, which preserves the
+  original thread id and emits the resumed turn as delta stream-json events.
 - Because the thread ID is not known until the first `system(init)` event,
   the tee initially writes to a temp file (`.pending-{pid}.jsonl`) and is
   atomically renamed to `{thread_id}.jsonl` once the ID is captured. On

@@ -564,7 +564,7 @@ class _AmpClientFactory:
 
         For the Amp path this updates :attr:`AmpClientOptions.thread_id`;
         the next ``query()`` then applies the configured resume strategy
-        (``--thread-id <id>`` by default) to the spawn argv.
+        (``amp threads continue <id>`` by default) to the spawn argv.
         """
         from src.infra.clients.amp_client import AmpClientOptions
 

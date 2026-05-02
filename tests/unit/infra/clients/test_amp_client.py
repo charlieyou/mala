@@ -72,6 +72,7 @@ if TYPE_CHECKING:
 
 
 _FAKE_AMP_TEMPLATE = """\
+#!/usr/bin/env python3
 import json, os, sys, time
 
 LINES = {lines!r}
@@ -151,7 +152,7 @@ def _make_options(
     argv: Sequence[str],
     cwd: Path,
     thread_id: str | None = None,
-    resume_strategy: ResumeStrategy = "thread-id-flag",
+    resume_strategy: ResumeStrategy = "threads-continue",
     kill_grace_seconds: float = 0.5,
 ) -> AmpClientOptions:
     return AmpClientOptions(
@@ -826,16 +827,22 @@ def test_with_resume_returns_self_for_chaining(tmp_path: Path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_with_resume_argv_observed_by_subprocess(tmp_path: Path) -> None:
-    """End-to-end: ``with_resume`` causes the spawned argv to include ``--thread-id``."""
+async def test_with_resume_argv_observed_by_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: ``with_resume`` spawns the verified continuation shape."""
     argv_record = tmp_path / "argv.json"
     script = _write_fake_amp(
         tmp_path,
         lines=[_system_init(), _result()],
         record_argv_to=argv_record,
     )
+    amp_bin = tmp_path / "amp"
+    amp_bin.write_text(script.read_text())
+    amp_bin.chmod(script.stat().st_mode)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
     base_argv = [
-        *_python_argv_for(script),
+        "amp",
         "--execute",
         "--stream-json",
         "--dangerously-allow-all",
@@ -844,7 +851,6 @@ async def test_with_resume_argv_observed_by_subprocess(tmp_path: Path) -> None:
         log_path=tmp_path / ".pending-end.jsonl",
         argv=base_argv,
         cwd=tmp_path,
-        resume_strategy="thread-id-flag",
     )
     async with AmpClient(options) as client:
         client.with_resume("T-e2e")
@@ -852,8 +858,9 @@ async def test_with_resume_argv_observed_by_subprocess(tmp_path: Path) -> None:
         await _drain(client)
 
     spawned = json.loads(argv_record.read_text())
-    assert "--thread-id" in spawned
-    assert spawned[spawned.index("--thread-id") + 1] == "T-e2e"
+    assert spawned[1:4] == ["threads", "continue", "T-e2e"]
+    assert "--execute" in spawned
+    assert "--stream-json" in spawned
 
 
 # ---------------------------------------------------------------------------
@@ -1091,7 +1098,9 @@ async def test_disconnect_is_idempotent(tmp_path: Path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_query_session_id_param_acts_as_resume_default(tmp_path: Path) -> None:
+async def test_query_session_id_param_acts_as_resume_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """When ``with_resume`` was not called, the protocol's ``session_id``
     parameter is treated as the resume target (parity with Claude path)."""
     argv_record = tmp_path / "argv-q.json"
@@ -1100,9 +1109,13 @@ async def test_query_session_id_param_acts_as_resume_default(tmp_path: Path) -> 
         lines=[_system_init("T-from-query"), _result("T-from-query")],
         record_argv_to=argv_record,
     )
+    amp_bin = tmp_path / "amp"
+    amp_bin.write_text(script.read_text())
+    amp_bin.chmod(script.stat().st_mode)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
     options = _make_options(
         log_path=tmp_path / ".pending-q.jsonl",
-        argv=[*_python_argv_for(script), "--execute"],
+        argv=["amp", "--execute", "--stream-json"],
         cwd=tmp_path,
     )
     async with AmpClient(options) as client:
@@ -1110,5 +1123,6 @@ async def test_query_session_id_param_acts_as_resume_default(tmp_path: Path) -> 
         await _drain(client)
 
     spawned = json.loads(argv_record.read_text())
-    assert "--thread-id" in spawned
-    assert spawned[spawned.index("--thread-id") + 1] == "T-from-query"
+    assert spawned[1:4] == ["threads", "continue", "T-from-query"]
+    assert "--execute" in spawned
+    assert "--stream-json" in spawned
