@@ -48,6 +48,7 @@ _LAZY_NAMES = frozenset(
         "get_lock_dir",
         "get_running_instances",
         "get_running_instances_for_dir",
+        "load_yaml_coder_resolution",
     }
 )
 
@@ -658,8 +659,18 @@ def run(
             order_preference=order_preference,
         )
 
+    # Load yaml coder selection so the base MalaConfig honors the
+    # CLI > env > yaml > default precedence (AC-3) before CLI overrides
+    # are layered on. ConfigError propagates so invalid mala.yaml fails fast.
+    yaml_css, yaml_coder, yaml_amp_mode = _lazy("load_yaml_coder_resolution")(repo_path)
+
     # Build and configure MalaConfig from environment
-    config = _lazy("MalaConfig").from_env(validate=False)
+    config = _lazy("MalaConfig").from_env(
+        validate=False,
+        yaml_claude_settings_sources=yaml_css,
+        yaml_coder=yaml_coder,
+        yaml_amp_mode=yaml_amp_mode,
+    )
 
     # Apply CLI overrides (claude_settings_sources, coder, amp_mode)
     try:
@@ -803,7 +814,14 @@ def epic_verify(
 
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-    config = _lazy("MalaConfig").from_env(validate=False)
+    yaml_css, yaml_coder, yaml_amp_mode = _lazy("load_yaml_coder_resolution")(repo_path)
+
+    config = _lazy("MalaConfig").from_env(
+        validate=False,
+        yaml_claude_settings_sources=yaml_css,
+        yaml_coder=yaml_coder,
+        yaml_amp_mode=yaml_amp_mode,
+    )
 
     try:
         config = _apply_cli_overrides(
@@ -1646,6 +1664,10 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         from ..orchestration.factory import create_orchestrator
 
         _lazy_modules[name] = create_orchestrator
+    elif name == "load_yaml_coder_resolution":
+        from ..orchestration.factory import load_yaml_coder_resolution
+
+        _lazy_modules[name] = load_yaml_coder_resolution
     elif name == "get_all_locks":
         from ..infra.tools.locking import get_all_locks
 

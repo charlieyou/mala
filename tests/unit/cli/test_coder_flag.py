@@ -230,3 +230,75 @@ def test_claude_settings_sources_with_coder_amp_logs_ignored(
         "claude_settings_sources" in msg and "ignored" in msg and "amp" in msg
         for msg in messages
     ), f"expected cross-coder ignore log, got: {messages}"
+
+
+def test_yaml_coder_amp_applied_in_cli_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`mala run` honors mala.yaml `coder: amp` when no env/CLI override is set.
+
+    Regression for AC-3 of the Amp provider epic: the CLI previously built
+    MalaConfig.from_env() without yaml inputs, so yaml `coder:` was ignored
+    on the normal `mala run` path even though create_orchestrator() loaded it.
+    """
+    from typer.testing import CliRunner
+
+    _isolate_env(monkeypatch)
+    (tmp_path / "mala.yaml").write_text(
+        "preset: python-uv\ncoder: amp\ncoder_options:\n  amp:\n    mode: deep\n"
+    )
+
+    cli = _reload_cli(monkeypatch)
+    _patch_orchestrator(monkeypatch, cli, tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["run", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    config = _DummyOrchestrator.last_mala_config
+    assert config is not None
+    assert config.coder == "amp"
+    assert config.coder_options.amp.mode == "deep"
+
+
+def test_cli_coder_overrides_yaml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--coder claude` beats yaml `coder: amp` (CLI > yaml)."""
+    from typer.testing import CliRunner
+
+    _isolate_env(monkeypatch)
+    (tmp_path / "mala.yaml").write_text("preset: python-uv\ncoder: amp\n")
+
+    cli = _reload_cli(monkeypatch)
+    _patch_orchestrator(monkeypatch, cli, tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["run", str(tmp_path), "--coder", "claude"])
+
+    assert result.exit_code == 0, result.output
+    config = _DummyOrchestrator.last_mala_config
+    assert config is not None
+    assert config.coder == "claude"
+
+
+def test_env_coder_overrides_yaml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`MALA_CODER=claude` beats yaml `coder: amp` (env > yaml)."""
+    from typer.testing import CliRunner
+
+    _isolate_env(monkeypatch)
+    monkeypatch.setenv("MALA_CODER", "claude")
+    (tmp_path / "mala.yaml").write_text("preset: python-uv\ncoder: amp\n")
+
+    cli = _reload_cli(monkeypatch)
+    _patch_orchestrator(monkeypatch, cli, tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["run", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    config = _DummyOrchestrator.last_mala_config
+    assert config is not None
+    assert config.coder == "claude"

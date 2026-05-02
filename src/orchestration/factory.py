@@ -49,6 +49,7 @@ __all__ = [
     "OrchestratorDependencies",
     "create_issue_provider",
     "create_orchestrator",
+    "load_yaml_coder_resolution",
 ]
 
 
@@ -135,6 +136,51 @@ def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
     return cast(
         "AgentProvider",
         ClaudeAgentProvider(setting_sources=list(mala_config.claude_settings_sources)),
+    )
+
+
+def load_yaml_coder_resolution(
+    repo_path: Path,
+) -> tuple[
+    tuple[str, ...] | None,
+    Literal["claude", "amp"] | None,
+    Literal["smart", "rush", "deep"] | None,
+]:
+    """Load yaml-derived inputs for the coder-selection precedence chain.
+
+    Returns ``(yaml_claude_settings_sources, yaml_coder, yaml_amp_mode)`` so
+    callers can feed them into :meth:`MalaConfig.from_env`. This is the
+    bridge that lets the CLI honor ``mala.yaml`` ``coder:`` /
+    ``coder_options.amp.mode`` under the documented
+    CLI > env > yaml > default precedence (AC-3 of the Amp provider epic).
+
+    When ``mala.yaml`` is missing, returns ``(None, None, None)`` so
+    ``from_env`` falls back to env / defaults.
+
+    Raises:
+        ConfigError: ``mala.yaml`` is present but malformed (propagates so
+            invalid configuration fails fast rather than silently selecting
+            defaults).
+    """
+    from src.domain.validation.config_loader import ConfigMissingError, load_config
+    from src.domain.validation.config_merger import merge_configs
+    from src.domain.validation.preset_registry import PresetRegistry
+
+    try:
+        user_config = load_config(repo_path)
+    except ConfigMissingError:
+        return (None, None, None)
+
+    if user_config.preset is not None:
+        preset_config = PresetRegistry().get(user_config.preset)
+        validation_config = merge_configs(preset_config, user_config)
+    else:
+        validation_config = user_config
+
+    return (
+        validation_config.claude_settings_sources,
+        validation_config.coder,
+        validation_config.amp_mode,
     )
 
 
