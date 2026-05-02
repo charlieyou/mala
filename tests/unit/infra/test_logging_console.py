@@ -91,17 +91,54 @@ def test_quiet_summary_file_tools() -> None:
     assert summary == "**/*.py"
 
 
-def test_quiet_summary_bash_uses_description() -> None:
-    """Test that Bash tool shows description field in quiet mode."""
-    # From description parameter
+def test_quiet_summary_bash_uses_command() -> None:
+    """Test that Bash tool shows the command in quiet mode."""
     summary = console._get_quiet_summary("Bash", "Run tests", {"command": "pytest"})
+    assert summary == "pytest"
+
+    summary = console._get_quiet_summary("shell_command", "", {"command": "uv sync"})
+    assert summary == "uv sync"
+
+    summary = console._get_quiet_summary("shell_command", "", {"cmd": "uv run pytest"})
+    assert summary == "uv run pytest"
+
+
+def test_quiet_summary_bash_falls_back_to_description() -> None:
+    """Test that Bash tool shows description when command is absent."""
+    summary = console._get_quiet_summary("Bash", "Run tests", {"command": "pytest"})
+    assert summary == "pytest"
+
+    summary = console._get_quiet_summary("Bash", "Run tests", {})
     assert summary == "Run tests"
 
     # From arguments when description param is empty
     summary = console._get_quiet_summary(
-        "Bash", "", {"command": "pytest", "description": "Execute test suite"}
+        "Bash", "", {"description": "Execute test suite"}
     )
     assert summary == "Execute test suite"
+
+
+def test_quiet_summary_shell_command_truncates_command() -> None:
+    """Test that shell commands are truncated in quiet mode."""
+    command = "x" * 90
+    summary = console._get_quiet_summary("shell_command", "", {"command": command})
+    assert summary == f"{'x' * 80}..."
+
+
+def test_quiet_summary_shell_command_replaces_newlines() -> None:
+    """Test that shell commands stay single-line in quiet mode."""
+    summary = console._get_quiet_summary(
+        "shell_command", "", {"command": "echo one\necho two"}
+    )
+    assert summary == "echo one↵echo two"
+
+
+def test_quiet_summary_shell_command_prefers_command_key() -> None:
+    """Test that command key takes precedence over cmd key."""
+    summary = console._get_quiet_summary(
+        "shell_command", "", {"command": "", "cmd": "fallback"}
+    )
+    assert summary == ""
 
 
 def test_quiet_summary_other_tools_truncated_args() -> None:
@@ -143,14 +180,30 @@ def test_log_tool_quiet_mode_output(
     assert "/src/main.py" in output
     assert "\n    " not in output  # No multi-line args
 
-    # Bash should show description
+    # Bash should show command
     console.log_tool(
         "Bash", description="Install deps", arguments={"command": "npm install"}
     )
     output = capsys.readouterr().out
     assert "Bash" in output
-    assert "Install deps" in output
-    assert "npm install" not in output  # Command not shown in quiet mode
+    assert "npm install" in output
+    assert "Install deps" not in output
+
+    # Amp shell_command should be displayed as Bash with command/cmd value.
+    console.log_tool("shell_command", arguments={"cmd": "uv run pytest", "timeout_ms": 1000})
+    output = capsys.readouterr().out
+    assert "Bash" in output
+    assert "shell_command" not in output
+    assert "uv run pytest" in output
+    assert "cmd=..." not in output
+
+    console.log_tool("shell_command", arguments={"command": "uv sync", "workdir": "/tmp"})
+    output = capsys.readouterr().out
+    assert "Bash" in output
+    assert "shell_command" not in output
+    assert "uv sync" in output
+    assert "command=..." not in output
+    assert "workdir=..." not in output
 
     console.set_verbose(False)
 

@@ -285,11 +285,12 @@ def log_tool(
 
     In quiet mode (non-verbose), shows single line per tool call:
     - File tools (Read/Edit/Write/etc): show file_path or path
-    - Bash: show description field
+    - Shell tools (Bash/shell_command): show command or cmd
     - Other tools: show truncated args dict
     """
     icon = "\u2699"
     verbose = is_verbose_enabled()
+    display_tool_name = _display_tool_name(tool_name)
 
     if agent_id:
         agent_color = get_agent_color(agent_id)
@@ -303,11 +304,11 @@ def log_tool(
         summary = _get_quiet_summary(tool_name, description, arguments)
         if summary:
             print(
-                f"  {prefix}{Colors.CYAN}{icon} {tool_name}{Colors.RESET} "
+                f"  {prefix}{Colors.CYAN}{icon} {display_tool_name}{Colors.RESET} "
                 f"{Colors.MUTED}{summary}{Colors.RESET}"
             )
         else:
-            print(f"  {prefix}{Colors.CYAN}{icon} {tool_name}{Colors.RESET}")
+            print(f"  {prefix}{Colors.CYAN}{icon} {display_tool_name}{Colors.RESET}")
         return
 
     # Verbose mode: full output with arguments
@@ -322,7 +323,39 @@ def log_tool(
             # Multi-line key:value format (no "args:" prefix)
             args_output = f"\n    {formatted_args}"
 
-    print(f"  {prefix}{Colors.CYAN}{icon} {tool_name}{Colors.RESET}{desc}{args_output}")
+    print(
+        f"  {prefix}{Colors.CYAN}{icon} {display_tool_name}{Colors.RESET}"
+        f"{desc}{args_output}"
+    )
+
+
+def _display_tool_name(tool_name: str) -> str:
+    """Return the user-facing tool name for console output."""
+    if _is_shell_tool(tool_name):
+        return "Bash"
+    return tool_name
+
+
+def _is_shell_tool(tool_name: str) -> bool:
+    return tool_name.lower() in {"bash", "shell_command"}
+
+
+def _get_shell_command(arguments: dict[str, Any] | None) -> str | None:
+    if not arguments:
+        return None
+    command = arguments.get("command")
+    if command is None:
+        command = arguments.get("cmd")
+    if command is None:
+        return None
+    return str(command)
+
+
+def _format_quiet_command(command: str) -> str:
+    command = command.replace("\n", "↵")
+    if len(command) > 80:
+        return command[:80] + "..."
+    return command
 
 
 def _get_quiet_summary(
@@ -348,8 +381,12 @@ def _get_quiet_summary(
         if path:
             return str(path)
 
-    # Bash: show description field
-    if tool_name == "Bash":
+    # Shell tools: show the command itself. Amp deep mode reports
+    # `command`; Amp smart mode reports `cmd`.
+    if _is_shell_tool(tool_name):
+        command = _get_shell_command(arguments)
+        if command is not None:
+            return _format_quiet_command(command)
         if description:
             return description
         if arguments and arguments.get("description"):
