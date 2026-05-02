@@ -602,15 +602,22 @@ class AmpAgentProvider:
 
     name: Literal["amp"] = "amp"
 
-    def __init__(self, *, mode: AmpMode = "deep") -> None:
+    def __init__(self, *, mode: AmpMode = "deep", effort: str | None = None) -> None:
         """Initialize the provider.
 
         Args:
             mode: Amp execution mode (``"smart" | "rush" | "deep"``).
                 Sourced from ``MalaConfig.coder_options.amp.mode`` after
                 CLI > env > yaml > default precedence resolution.
+            effort: Optional Mala-level reasoning effort. Forwarded to the
+                Amp CLI as ``--effort <value>`` only when ``mode == "deep"``;
+                non-deep modes ignore it (the Amp CLI documents reasoning
+                effort as a deep-mode-only concept). The runtime builder
+                logs an info message when effort is set against a non-deep
+                mode so the silent drop is observable in logs.
         """
         self._mode: AmpMode = mode
+        self._effort: str | None = effort
         self._client_factory_cached: _AmpClientFactory | None = None
         self._log_provider_cached: object | None = None
 
@@ -663,6 +670,7 @@ class AmpAgentProvider:
             agent_id,
             mcp_server_factory,
             mode=self._mode,
+            effort=self._effort,
         )
 
     def install_prerequisites(

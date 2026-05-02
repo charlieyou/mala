@@ -85,6 +85,7 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "per_issue_review",
         "coder",
         "coder_options",
+        "effort",
     }
 )
 

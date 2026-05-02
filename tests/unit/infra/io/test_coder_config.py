@@ -21,6 +21,7 @@ from src.infra.io.config import (
     build_resolved_config,
     parse_amp_mode,
     parse_coder,
+    parse_effort,
 )
 
 
@@ -31,6 +32,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "MALA_CODER",
         "MALA_AMP_MODE",
         "MALA_CLAUDE_SETTINGS_SOURCES",
+        "MALA_EFFORT",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -320,3 +322,124 @@ class TestParseHelpers:
     def test_parse_amp_mode_rejects_invalid(self) -> None:
         with pytest.raises(ValueError, match="Invalid amp mode 'blast'"):
             parse_amp_mode("blast", source="MALA_AMP_MODE")
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("low", "low"),
+            ("medium", "medium"),
+            ("high", "high"),
+            ("xhigh", "xhigh"),
+            ("max", "max"),
+            ("  high  ", "high"),
+            (None, None),
+            ("", None),
+            ("   ", None),
+        ],
+    )
+    def test_parse_effort_valid_and_empty(
+        self, raw: str | None, expected: str | None
+    ) -> None:
+        assert parse_effort(raw, source="test") == expected
+
+    def test_parse_effort_rejects_invalid(self) -> None:
+        with pytest.raises(ValueError, match="Invalid effort 'turbo'"):
+            parse_effort("turbo", source="MALA_EFFORT")
+
+
+class TestEffortPrecedence:
+    """CLI > env > yaml > default(=None) for the unified ``effort`` option."""
+
+    def _base(self) -> MalaConfig:
+        return MalaConfig(
+            runs_dir=Path("/tmp/runs"),
+            lock_dir=Path("/tmp/locks"),
+            claude_config_dir=Path("/tmp/claude"),
+        )
+
+    def test_default_effort_is_none(self) -> None:
+        config = MalaConfig.from_env(validate=False)
+        assert config.effort is None
+        resolved = build_resolved_config(config, CLIOverrides())
+        assert resolved.effort is None
+
+    def test_yaml_effort_used_when_env_absent(self) -> None:
+        config = MalaConfig.from_env(validate=False, yaml_effort="high")
+        assert config.effort == "high"
+
+    def test_env_effort_honored(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MALA_EFFORT", "max")
+        config = MalaConfig.from_env(validate=False)
+        assert config.effort == "max"
+
+    def test_env_effort_strips_whitespace(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MALA_EFFORT", "  xhigh  ")
+        config = MalaConfig.from_env(validate=False)
+        assert config.effort == "xhigh"
+
+    def test_env_effort_invalid_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MALA_EFFORT", "turbo")
+        with pytest.raises(ConfigurationError) as exc_info:
+            MalaConfig.from_env(validate=False)
+        assert "MALA_EFFORT" in str(exc_info.value)
+        assert "turbo" in str(exc_info.value)
+
+    def test_env_effort_beats_yaml(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MALA_EFFORT", "low")
+        config = MalaConfig.from_env(validate=False, yaml_effort="high")
+        assert config.effort == "low"
+
+    def test_cli_effort_beats_env_beats_yaml_beats_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MALA_EFFORT", "low")
+        config = MalaConfig.from_env(validate=False, yaml_effort="medium")
+        resolved = build_resolved_config(config, CLIOverrides(effort="max"))
+        assert resolved.effort == "max"
+
+    def test_cli_invalid_effort_raises(self) -> None:
+        with pytest.raises(ValueError, match="CLI"):
+            build_resolved_config(self._base(), CLIOverrides(effort="turbo"))
+
+    def test_partial_cli_only_overrides_effort(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLI effort override leaves coder / amp_mode untouched."""
+        monkeypatch.setenv("MALA_AMP_MODE", "deep")
+        config = MalaConfig.from_env(validate=False, yaml_coder="amp")
+        resolved = build_resolved_config(config, CLIOverrides(effort="high"))
+        assert resolved.effort == "high"
+        assert resolved.coder == "amp"
+        assert resolved.coder_options.amp.mode == "deep"
+
+    def test_yaml_effort_flows_through_validation_config(self, tmp_path: Path) -> None:
+        """End-to-end: ``effort:`` in mala.yaml reaches MalaConfig.
+
+        Mirrors the regression test for ``coder:`` so the validation +
+        resolver layers stay in sync.
+        """
+        from src.domain.validation.config_loader import load_config
+
+        yaml_path = tmp_path / "mala.yaml"
+        yaml_path.write_text("preset: python-uv\ncoder: claude\neffort: xhigh\n")
+        validation_config = load_config(tmp_path)
+        assert validation_config.effort == "xhigh"
+
+        config = MalaConfig.from_env(
+            validate=False,
+            yaml_coder=validation_config.coder,
+            yaml_effort=validation_config.effort,
+        )
+        assert config.effort == "xhigh"
+        assert config.coder == "claude"
+
+    def test_yaml_effort_invalid_value_raises(self, tmp_path: Path) -> None:
+        from src.domain.validation.config import ConfigError
+        from src.domain.validation.config_loader import load_config
+
+        yaml_path = tmp_path / "mala.yaml"
+        yaml_path.write_text("preset: python-uv\neffort: turbo\n")
+        with pytest.raises(ConfigError, match="effort"):
+            load_config(tmp_path)

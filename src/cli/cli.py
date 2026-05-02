@@ -359,19 +359,38 @@ def _validate_amp_mode_option(value: str | None) -> str | None:
     return parsed
 
 
+def _validate_effort_option(value: str | None) -> str | None:
+    """Typer callback validating --effort at parse time."""
+    from src.infra.io.config import parse_effort
+
+    if value is None:
+        return None
+    try:
+        parsed = parse_effort(value, source="--effort")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+    return parsed
+
+
 def _apply_cli_overrides(
     config: MalaConfig,
     *,
     claude_settings_sources: str | None,
     coder: str | None,
     amp_mode: str | None,
+    effort: str | None,
 ) -> MalaConfig:
     """Apply CLI overrides to MalaConfig.
 
     Uses build_resolved_config so CLI > env > yaml > default precedence and
     cross-coder ignored-flag info logging stay in one place.
     """
-    if claude_settings_sources is None and coder is None and amp_mode is None:
+    if (
+        claude_settings_sources is None
+        and coder is None
+        and amp_mode is None
+        and effort is None
+    ):
         return config
 
     from src.infra.io.config import CLIOverrides, build_resolved_config
@@ -380,6 +399,7 @@ def _apply_cli_overrides(
         claude_settings_sources=claude_settings_sources,
         coder=coder,
         amp_mode=amp_mode,
+        effort=effort,
     )
     resolved = build_resolved_config(config, overrides)
 
@@ -387,13 +407,20 @@ def _apply_cli_overrides(
         field.name: getattr(config, field.name)
         for field in fields(config)
         if field.init
-        and field.name not in {"claude_settings_sources_init", "coder", "coder_options"}
+        and field.name
+        not in {
+            "claude_settings_sources_init",
+            "coder",
+            "coder_options",
+            "effort",
+        }
     }
     return _lazy("MalaConfig")(
         **init_kwargs,
         claude_settings_sources_init=resolved.claude_settings_sources,
         coder=resolved.coder,
         coder_options=resolved.coder_options,
+        effort=resolved.effort,
     )
 
 
@@ -576,6 +603,20 @@ def run(
             rich_help_panel="Coder",
         ),
     ] = None,
+    effort: Annotated[
+        str | None,
+        typer.Option(
+            "--effort",
+            help=(
+                "Reasoning effort forwarded to the active coder. Valid: "
+                "low, medium, high, xhigh, max. Forwarded to "
+                "ClaudeAgentOptions.effort for coder=claude and to "
+                "`amp --effort <value>` for coder=amp (deep mode only)."
+            ),
+            callback=_validate_effort_option,
+            rich_help_panel="Coder",
+        ),
+    ] = None,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
@@ -662,7 +703,9 @@ def run(
     # Load yaml coder selection so the base MalaConfig honors the
     # CLI > env > yaml > default precedence (AC-3) before CLI overrides
     # are layered on. ConfigError propagates so invalid mala.yaml fails fast.
-    yaml_css, yaml_coder, yaml_amp_mode = _lazy("load_yaml_coder_resolution")(repo_path)
+    yaml_css, yaml_coder, yaml_amp_mode, yaml_effort = _lazy(
+        "load_yaml_coder_resolution"
+    )(repo_path)
 
     # Build and configure MalaConfig from environment
     config = _lazy("MalaConfig").from_env(
@@ -670,15 +713,17 @@ def run(
         yaml_claude_settings_sources=yaml_css,
         yaml_coder=yaml_coder,
         yaml_amp_mode=yaml_amp_mode,
+        yaml_effort=yaml_effort,
     )
 
-    # Apply CLI overrides (claude_settings_sources, coder, amp_mode)
+    # Apply CLI overrides (claude_settings_sources, coder, amp_mode, effort)
     try:
         config = _apply_cli_overrides(
             config,
             claude_settings_sources=claude_settings_sources,
             coder=coder,
             amp_mode=amp_mode,
+            effort=effort,
         )
     except ValueError as exc:
         log("✗", str(exc), Colors.RED)
@@ -799,6 +844,18 @@ def epic_verify(
             rich_help_panel="Coder",
         ),
     ] = None,
+    effort: Annotated[
+        str | None,
+        typer.Option(
+            "--effort",
+            help=(
+                "Reasoning effort forwarded to the active coder. Valid: "
+                "low, medium, high, xhigh, max."
+            ),
+            callback=_validate_effort_option,
+            rich_help_panel="Coder",
+        ),
+    ] = None,
 ) -> None:
     """Verify a single epic and optionally close it without running tasks."""
     set_verbose(verbose)
@@ -814,13 +871,16 @@ def epic_verify(
 
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-    yaml_css, yaml_coder, yaml_amp_mode = _lazy("load_yaml_coder_resolution")(repo_path)
+    yaml_css, yaml_coder, yaml_amp_mode, yaml_effort = _lazy(
+        "load_yaml_coder_resolution"
+    )(repo_path)
 
     config = _lazy("MalaConfig").from_env(
         validate=False,
         yaml_claude_settings_sources=yaml_css,
         yaml_coder=yaml_coder,
         yaml_amp_mode=yaml_amp_mode,
+        yaml_effort=yaml_effort,
     )
 
     try:
@@ -829,6 +889,7 @@ def epic_verify(
             claude_settings_sources=claude_settings_sources,
             coder=coder,
             amp_mode=amp_mode,
+            effort=effort,
         )
     except ValueError as exc:
         log("✗", str(exc), Colors.RED)

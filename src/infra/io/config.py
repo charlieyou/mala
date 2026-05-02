@@ -42,6 +42,16 @@ _logger = logging.getLogger(__name__)
 
 VALID_CODERS: frozenset[str] = frozenset({"claude", "amp"})
 VALID_AMP_MODES: frozenset[str] = frozenset({"smart", "rush", "deep"})
+VALID_EFFORTS: frozenset[str] = frozenset({"low", "medium", "high", "xhigh", "max"})
+"""Reasoning-effort values forwarded to supported coder backends.
+
+The Claude SDK currently types its ``effort`` field as
+``Literal["low", "medium", "high", "max"]``, but the local Claude CLI
+also accepts ``xhigh`` and the Amp CLI documents ``--effort`` with the
+same superset. Mala validates against this superset so users can pass
+``xhigh`` through to either CLI without us blocking it on the input
+boundary; the backends raise an error if they truly cannot honor it.
+"""
 DEFAULT_CODER: Literal["claude", "amp"] = "claude"
 DEFAULT_AMP_MODE: Literal["smart", "rush", "deep"] = "deep"
 
@@ -191,6 +201,34 @@ def parse_amp_mode(
     return "smart"
 
 
+def parse_effort(raw: str | None, *, source: str) -> str | None:
+    """Parse a reasoning-effort string.
+
+    Args:
+        raw: Raw value like "low", "medium", "high", "xhigh", or "max"
+            (after strip).
+        source: Source name for error messages (e.g., "MALA_EFFORT", "CLI",
+            "--effort").
+
+    Returns:
+        Validated effort string, or None if raw is empty/None.
+
+    Raises:
+        ValueError: If raw is not in VALID_EFFORTS.
+    """
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    if stripped not in VALID_EFFORTS:
+        valid = ", ".join(sorted(VALID_EFFORTS))
+        raise ValueError(
+            f"{source}: Invalid effort '{stripped}'. Valid efforts: {valid}"
+        )
+    return stripped
+
+
 class ConfigurationError(Exception):
     """Raised when configuration validation fails."""
 
@@ -333,6 +371,11 @@ class MalaConfig:
     coder: Literal["claude", "amp"] = DEFAULT_CODER
     coder_options: CoderOptions = field(default_factory=CoderOptions)
 
+    # Mala-level reasoning effort. Forwarded to ``ClaudeAgentOptions.effort``
+    # for the Claude coder and to ``--effort <value>`` for the Amp coder
+    # (deep mode only). ``None`` means "leave the backend default in place".
+    effort: str | None = None
+
     def __post_init__(
         self, claude_settings_sources_init: tuple[str, ...] | None
     ) -> None:
@@ -383,6 +426,7 @@ class MalaConfig:
         yaml_claude_settings_sources: tuple[str, ...] | None = None,
         yaml_coder: Literal["claude", "amp"] | None = None,
         yaml_amp_mode: Literal["smart", "rush", "deep"] | None = None,
+        yaml_effort: str | None = None,
     ) -> MalaConfig:
         """Create MalaConfig by loading from environment variables with validation.
 
@@ -501,6 +545,18 @@ class MalaConfig:
             else (yaml_amp_mode if yaml_amp_mode is not None else DEFAULT_AMP_MODE)
         )
 
+        # Parse MALA_EFFORT (env > yaml > default=None)
+        try:
+            env_effort = parse_effort(
+                os.environ.get("MALA_EFFORT"), source="MALA_EFFORT"
+            )
+        except ValueError as exc:
+            parse_errors.append(str(exc))
+            env_effort = None
+        resolved_effort: str | None = (
+            env_effort if env_effort is not None else yaml_effort
+        )
+
         config = cls(
             runs_dir=runs_dir,
             lock_dir=lock_dir,
@@ -526,6 +582,7 @@ class MalaConfig:
             ),
             coder=resolved_coder,
             coder_options=CoderOptions(amp=AmpOptions(mode=resolved_amp_mode)),
+            effort=resolved_effort,
         )
 
         if validate:
@@ -608,6 +665,7 @@ class CLIOverrides:
     claude_settings_sources: str | None = None
     coder: str | None = None
     amp_mode: str | None = None
+    effort: str | None = None
 
 
 @dataclass(frozen=True)
@@ -664,6 +722,7 @@ class ResolvedConfig:
     # Coder selection
     coder: Literal["claude", "amp"]
     coder_options: CoderOptions
+    effort: str | None
 
 
 def build_resolved_config(
@@ -759,6 +818,11 @@ def build_resolved_config(
     )
     coder_options = CoderOptions(amp=AmpOptions(mode=amp_mode))
 
+    # Apply effort override (CLI > env > yaml > default=None)
+    # base_config already has env > yaml > default applied.
+    cli_effort = parse_effort(overrides.effort, source="CLI")
+    effort: str | None = cli_effort if cli_effort is not None else base_config.effort
+
     # Info-level log when options are set against the inactive coder.
     # Heuristic: explicit CLI override OR resolved value differs from default.
     amp_mode_explicit = overrides.amp_mode is not None or amp_mode != DEFAULT_AMP_MODE
@@ -794,4 +858,5 @@ def build_resolved_config(
         claude_settings_sources=claude_settings,
         coder=coder,
         coder_options=coder_options,
+        effort=effort,
     )

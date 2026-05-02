@@ -400,6 +400,7 @@ class FakeSDKClientFactory:
         env: dict[str, str] | None = None,
         hooks: dict[str, list[object]] | None = None,
         resume: str | None = None,
+        effort: str | None = None,
     ) -> object:
         del (
             cwd,
@@ -414,6 +415,7 @@ class FakeSDKClientFactory:
             env,
             hooks,
             resume,
+            effort,
         )
         return {}
 

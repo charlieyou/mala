@@ -16,12 +16,15 @@ Claude-path's unprefixed names so both paths can co-exist in the same shell.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from src.infra.tools.env import SCRIPTS_DIR, USER_CONFIG_DIR, get_lock_dir
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Set as AbstractSet
@@ -93,6 +96,7 @@ class AmpRuntimeBuilder:
         agent_id: str,
         mcp_server_factory: McpServerFactory,
         mode: AmpMode = "deep",
+        effort: str | None = None,
     ) -> None:
         """Initialize the builder.
 
@@ -108,11 +112,18 @@ class AmpRuntimeBuilder:
                 ``MalaConfig.coder_options.amp.mode``; the orchestration layer
                 resolves the precedence (CLI > env > yaml > default) before
                 constructing the builder.
+            effort: Optional Mala-level reasoning effort. Resolved from
+                ``MalaConfig.effort`` (CLI > env > yaml > default=None).
+                Appended to the Amp argv as ``--effort <value>`` only when
+                ``mode == "deep"``; for non-deep modes the value is ignored
+                with an info-level log message so the silent drop is
+                observable.
         """
         self._repo_path = repo_path
         self._agent_id = agent_id
         self._mcp_server_factory = mcp_server_factory
         self._mode: AmpMode = mode
+        self._effort: str | None = effort
         self._resume_thread_id: str | None = None
         # Fluent-API state collected by the with_* helpers below. The Amp
         # pipeline does not act on most of these (Amp enforces
@@ -279,6 +290,21 @@ class AmpRuntimeBuilder:
             "--mode",
             self._mode,
         ]
+        # Reasoning effort is documented as a deep-mode concept in the Amp
+        # CLI; we forward ``--effort`` only when the active mode is ``deep``
+        # and emit an info-level log so the silent drop on other modes is
+        # observable. The Amp CLI itself accepts the same string values mala
+        # validated upstream (low | medium | high | xhigh | max).
+        if self._effort is not None:
+            if self._mode == "deep":
+                argv.extend(["--effort", self._effort])
+            else:
+                logger.info(
+                    "amp effort '%s' ignored — mode is '%s' (effort is "
+                    "applied only in deep mode)",
+                    self._effort,
+                    self._mode,
+                )
         if self._resume_thread_id is not None:
             argv.extend(["--thread-id", self._resume_thread_id])
 

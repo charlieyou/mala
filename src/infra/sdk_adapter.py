@@ -68,6 +68,7 @@ class SDKClientFactory:
         env: dict[str, str] | None = None,
         hooks: dict[str, list[object]] | None = None,
         resume: str | None = None,
+        effort: str | None = None,
     ) -> object:
         """Create SDK options without requiring SDK import in caller.
 
@@ -90,6 +91,12 @@ class SDKClientFactory:
                 the prior conversation context before processing the query.
                 This is different from session_id on query() which only
                 tags messages for multiplexing.
+            effort: Optional reasoning effort forwarded verbatim to
+                ``ClaudeAgentOptions.effort``. ``None`` leaves the SDK
+                default in place. The SDK statically types the field as
+                ``Literal["low", "medium", "high", "max"]``; ``"xhigh"`` is
+                accepted by the underlying CLI but produces a static-type
+                warning here, hence the ``type: ignore`` below.
 
         Returns:
             ClaudeAgentOptions instance.
@@ -114,6 +121,7 @@ class SDKClientFactory:
             env=effective_env,  # type: ignore[arg-type]
             hooks=hooks,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             resume=resume,  # type: ignore[arg-type]
+            effort=effort,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         )
 
     def create_hook_matcher(

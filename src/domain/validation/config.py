@@ -890,6 +890,11 @@ class ValidationConfig:
     # yaml_coder / yaml_amp_mode parameters (CLI > env > yaml > default).
     coder: Literal["claude", "amp"] | None = None
     amp_mode: Literal["smart", "rush", "deep"] | None = None
+    # Mala-level reasoning effort. Strict-enum validated below as
+    # ``low | medium | high | xhigh | max``. Forwarded by the orchestrator
+    # to ``MalaConfig.from_env(yaml_effort=...)``; the resolver layer in
+    # src/infra/io/config.py applies CLI > env > yaml > default precedence.
+    effort: str | None = None
     _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
@@ -1226,6 +1231,28 @@ class ValidationConfig:
                                 else:
                                     amp_mode = "smart"
 
+        # Validate effort (optional, strict enum). Resolver precedence is
+        # handled in src/infra/io/config.py; this block fails fast on invalid
+        # YAML and stores the parsed value so the orchestrator can flow it
+        # into MalaConfig.from_env(yaml_effort=...).
+        effort: str | None = None
+        if "effort" in data:
+            fields_set.add("effort")
+            effort_val = data["effort"]
+            if effort_val is not None:
+                if not isinstance(effort_val, str) or effort_val not in (
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max",
+                ):
+                    raise ConfigError(
+                        "effort must be 'low', 'medium', 'high', 'xhigh', "
+                        f"or 'max', got {effort_val!r}"
+                    )
+                effort = effort_val
+
         return cls(
             preset=preset,
             commands=commands,
@@ -1248,6 +1275,7 @@ class ValidationConfig:
             else CodeReviewConfig(enabled=False),
             coder=coder,
             amp_mode=amp_mode,
+            effort=effort,
             _fields_set=frozenset(fields_set),
         )
 

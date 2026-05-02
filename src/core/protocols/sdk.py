@@ -105,6 +105,7 @@ class SDKClientFactoryProtocol(Protocol):
         env: dict[str, str] | None = None,
         hooks: dict[str, list[object]] | None = None,
         resume: str | None = None,
+        effort: str | None = None,
     ) -> object:
         """Create SDK options without requiring SDK import in caller.
 
@@ -122,6 +123,9 @@ class SDKClientFactoryProtocol(Protocol):
             hooks: Hook configurations keyed by event type.
             resume: Session ID to resume from. When set, the SDK loads
                 the prior conversation context before processing the query.
+            effort: Optional reasoning effort forwarded to
+                ``ClaudeAgentOptions.effort``. ``None`` leaves the SDK
+                default in place.
 
         Returns:
             ClaudeAgentOptions instance.

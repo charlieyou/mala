@@ -267,6 +267,40 @@ class TestAgentRuntimeBuilder:
         assert factory.created_options[0]["model"] == "opus[1m]"
 
     @pytest.mark.unit
+    @pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
+    def test_effort_forwarded_to_create_options(
+        self,
+        repo_path: Path,
+        factory: FakeSDKClientFactory,
+        effort: str,
+    ) -> None:
+        """``effort`` flows from the builder into ``create_options(effort=...)``.
+
+        AC#1: Claude coder sessions pass the configured effort through to
+        ``ClaudeAgentOptions.effort``. The model field stays ``opus[1m]`` so
+        unrelated reviewer / epic model configuration is not affected.
+        """
+        AgentRuntimeBuilder(repo_path, "agent-effort", factory, effort=effort).with_mcp(
+            servers={}
+        ).build()
+
+        assert len(factory.created_options) == 1
+        opts = factory.created_options[0]
+        assert opts["effort"] == effort
+        # Coder model is still the configured 1M-context Opus.
+        assert opts["model"] == "opus[1m]"
+
+    @pytest.mark.unit
+    def test_effort_default_is_none(
+        self, repo_path: Path, factory: FakeSDKClientFactory
+    ) -> None:
+        """Without an explicit effort the SDK default is preserved (``None``)."""
+        AgentRuntimeBuilder(repo_path, "agent-noeffort", factory).with_mcp(
+            servers={}
+        ).build()
+        assert factory.created_options[0]["effort"] is None
+
+    @pytest.mark.unit
     def test_hooks_dict_structure(
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:

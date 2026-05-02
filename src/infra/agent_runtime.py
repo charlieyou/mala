@@ -101,6 +101,7 @@ class AgentRuntimeBuilder:
         sdk_client_factory: SDKClientFactoryProtocol,
         mcp_server_factory: McpServerFactory | None = None,
         setting_sources: list[str] | None = None,
+        effort: str | None = None,
     ) -> None:
         """Initialize the builder.
 
@@ -112,6 +113,11 @@ class AgentRuntimeBuilder:
                 Required unless MCP servers are explicitly provided via with_mcp().
             setting_sources: Optional list of Claude settings sources to use.
                 E.g., ["local", "project"]. If None, SDK defaults are used.
+            effort: Optional Mala-level reasoning effort forwarded to
+                ``ClaudeAgentOptions.effort`` for the coder session. ``None``
+                leaves the SDK default in place; reviewer / epic-verifier
+                option construction is intentionally not routed through this
+                builder.
         """
         self._repo_path = repo_path
         self._agent_id = agent_id
@@ -121,6 +127,7 @@ class AgentRuntimeBuilder:
         self._setting_sources = (
             None if setting_sources is None else list(setting_sources)
         )
+        self._effort: str | None = effort
 
         # Lint tools configuration
         self._lint_tools: set[str] | frozenset[str] | None = None
@@ -428,6 +435,7 @@ class AgentRuntimeBuilder:
             hooks=hooks_dict,
             setting_sources=self._setting_sources,
             settings='{"autoCompactEnabled": true}',
+            effort=self._effort,
         )
 
         return AgentRuntime(

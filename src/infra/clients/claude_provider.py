@@ -42,7 +42,12 @@ class ClaudeAgentProvider:
 
     name: Literal["claude"] = "claude"
 
-    def __init__(self, *, setting_sources: Sequence[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        setting_sources: Sequence[str] | None = None,
+        effort: str | None = None,
+    ) -> None:
         """Initialize the provider.
 
         Args:
@@ -50,12 +55,18 @@ class ClaudeAgentProvider:
                 ``["local", "project"]``) threaded into every per-session
                 :class:`AgentRuntimeBuilder`. Mirrors the existing
                 ``claude_settings_sources`` resolver wiring.
+            effort: Optional Mala-level reasoning effort, forwarded to
+                ``ClaudeAgentOptions.effort`` for every per-session coder
+                runtime built from this provider. ``None`` means "leave the
+                Claude SDK default in place"; reviewer / epic-verifier
+                ``ClaudeAgentOptions`` instances are intentionally untouched.
         """
         self.client_factory: SDKClientFactory = SDKClientFactory()
         self.log_provider: FileSystemLogProvider = FileSystemLogProvider()
         self._setting_sources: list[str] | None = (
             None if setting_sources is None else list(setting_sources)
         )
+        self._effort: str | None = effort
 
     def runtime_builder(
         self,
@@ -77,6 +88,7 @@ class ClaudeAgentProvider:
             self.client_factory,
             mcp_server_factory=mcp_server_factory,
             setting_sources=self._setting_sources,
+            effort=self._effort,
         )
 
     def install_prerequisites(

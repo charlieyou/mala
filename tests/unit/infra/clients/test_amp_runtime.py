@@ -561,3 +561,97 @@ def test_runtime_exposes_lint_cache_for_session_config(
 
     runtime = builder.with_lint_tools(frozenset({"ruff", "ty"})).build()
     assert isinstance(runtime.lint_cache, LintCache)
+
+
+# ---------------------------------------------------------------------------
+# AC#2: ``--effort`` is appended to argv only when ``mode == "deep"``.
+# Non-deep modes drop the value (with an info-level log message); ``None``
+# never adds the flag.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
+def test_effort_appended_to_argv_in_deep_mode(repo_path: Path, effort: str) -> None:
+    runtime = AmpRuntimeBuilder(
+        repo_path,
+        "agent-1",
+        _stdio_locking_factory(),
+        mode="deep",
+        effort=effort,
+    ).build()
+
+    assert "--effort" in runtime.argv
+    idx = runtime.argv.index("--effort")
+    assert runtime.argv[idx + 1] == effort
+    # ``--mode deep`` is preserved alongside the new flag.
+    mode_idx = runtime.argv.index("--mode")
+    assert runtime.argv[mode_idx + 1] == "deep"
+
+
+@pytest.mark.unit
+def test_effort_omitted_from_argv_when_none(repo_path: Path) -> None:
+    runtime = AmpRuntimeBuilder(
+        repo_path,
+        "agent-1",
+        _stdio_locking_factory(),
+        mode="deep",
+        effort=None,
+    ).build()
+    assert "--effort" not in runtime.argv
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("mode", ["smart", "rush"])
+def test_effort_ignored_for_non_deep_modes(
+    repo_path: Path, mode: Literal["smart", "rush"], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Non-deep modes drop ``--effort`` and log the silent-drop reason."""
+    import logging as _logging
+
+    with caplog.at_level(_logging.INFO, logger="src.infra.clients.amp_runtime"):
+        runtime = AmpRuntimeBuilder(
+            repo_path,
+            "agent-1",
+            _stdio_locking_factory(),
+            mode=cast("Literal['smart', 'rush', 'deep']", mode),
+            effort="high",
+        ).build()
+    assert "--effort" not in runtime.argv
+    assert any(
+        "ignored" in record.getMessage().lower()
+        and "high" in record.getMessage()
+        and mode in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.unit
+def test_default_builder_omits_effort(builder: AmpRuntimeBuilder) -> None:
+    """The fixture builder has no effort configured; argv must omit it."""
+    runtime = builder.build()
+    assert "--effort" not in runtime.argv
+
+
+@pytest.mark.unit
+def test_malaconfig_effort_flows_into_amp_argv(
+    repo_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: yaml-supplied effort lands in the Amp argv (deep mode)."""
+    for var in ("MALA_AMP_MODE", "MALA_CODER", "MALA_EFFORT"):
+        monkeypatch.delenv(var, raising=False)
+    config = MalaConfig.from_env(
+        validate=False, yaml_amp_mode="deep", yaml_effort="xhigh"
+    )
+    assert config.coder_options.amp.mode == "deep"
+    assert config.effort == "xhigh"
+
+    runtime = AmpRuntimeBuilder(
+        repo_path,
+        "agent-1",
+        _stdio_locking_factory(),
+        mode=config.coder_options.amp.mode,
+        effort=config.effort,
+    ).build()
+    idx = runtime.argv.index("--effort")
+    assert runtime.argv[idx + 1] == "xhigh"

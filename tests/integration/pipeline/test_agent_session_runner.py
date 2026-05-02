@@ -210,6 +210,7 @@ class SequencedSDKClientFactory:
         env: dict[str, str] | None = None,
         hooks: dict[str, list[object]] | None = None,
         resume: str | None = None,
+        effort: str | None = None,
     ) -> object:
         return {
             "cwd": cwd,
@@ -224,6 +225,7 @@ class SequencedSDKClientFactory:
             "env": env,
             "hooks": hooks,
             "resume": resume,
+            "effort": effort,
         }
 
     def create_hook_matcher(
@@ -1981,12 +1983,14 @@ class TestIdleTimeoutRetry:
                 env: dict[str, str] | None = None,
                 hooks: dict[str, list[object]] | None = None,
                 resume: str | None = None,
+                effort: str | None = None,
             ) -> object:
                 return {
                     "cwd": cwd,
                     "hooks": hooks,
                     "output_format": output_format,
                     "resume": resume,
+                    "effort": effort,
                 }
 
             def create_hook_matcher(
@@ -3747,6 +3751,7 @@ class TestLocalSettingsIntegration:
                 env: dict[str, str] | None = None,
                 hooks: dict[str, list[object]] | None = None,
                 resume: str | None = None,
+                effort: str | None = None,
             ) -> ClaudeAgentOptions:
                 opts = cast(
                     "ClaudeAgentOptions",
@@ -3763,6 +3768,7 @@ class TestLocalSettingsIntegration:
                         env=env,
                         hooks=hooks,
                         resume=resume,
+                        effort=effort,
                     ),
                 )
                 created_options.append(opts)

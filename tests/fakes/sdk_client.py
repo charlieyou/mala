@@ -219,6 +219,7 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
         env: dict[str, str] | None = None,
         hooks: dict[str, list[object]] | None = None,
         resume: str | None = None,
+        effort: str | None = None,
     ) -> dict[str, Any]:
         """Return a dict of options and track the call."""
         opts: dict[str, Any] = {
@@ -234,6 +235,7 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
             "env": env,
             "hooks": hooks,
             "resume": resume,
+            "effort": effort,
         }
         self.created_options.append(opts)
         return opts
