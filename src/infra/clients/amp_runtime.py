@@ -297,21 +297,8 @@ class AmpRuntimeBuilder:
             "--mode",
             self._mode,
         ]
-        # Reasoning effort is documented as a deep-mode concept in the Amp
-        # CLI; we forward ``--effort`` only when the active mode is ``deep``
-        # and emit an info-level log so the silent drop on other modes is
-        # observable. The Amp CLI itself accepts the same string values mala
-        # validated upstream (medium | high | xhigh for deep mode).
         if self._effort is not None:
-            if self._mode == "deep":
-                argv.extend(["--effort", self._effort])
-            else:
-                logger.info(
-                    "amp effort '%s' ignored — mode is '%s' (effort is "
-                    "applied only in deep mode)",
-                    self._effort,
-                    self._mode,
-                )
+            argv.extend(["--effort", self._effort])
 
         if self._resume_thread_id is not None:
             log_path = AMP_SESSIONS_DIR / f"{self._resume_thread_id}.jsonl"
