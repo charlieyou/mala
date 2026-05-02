@@ -383,16 +383,33 @@ def create_amp_mcp_server_factory() -> Callable[
     :func:`create_mcp_server_factory` (they contain a ``Server`` instance
     and fail ``json.dumps``).
 
-    The MVP locking MCP server has no standalone stdio entry point yet
-    (plan ``L702`` tracks that as part of the real-Amp lock-enforcement
-    work). For T013 the factory returns a structurally valid stdio spec
-    pointing at a placeholder ``mala-amp-mcp-locking`` command so the
-    orchestration boundary is exercised end-to-end without forcing the
-    self-test to launch a real MCP child. The plugin self-test only
-    needs ``--mcp-config`` JSON to parse cleanly inside Amp; it does not
-    require the MCP server itself to be reachable, because the self-test
-    terminates ``amp`` before any tool call (plan ``L309-L312``).
+    Wires Amp at the same ``locking_mcp`` server the Claude path uses by
+    pointing at the ``mala-amp-mcp-locking`` console script (registered
+    via ``[project.scripts]``; entry point lives at
+    :mod:`src.infra.tools.locking_mcp_stdio`). The launcher exposes
+    ``lock_acquire`` / ``lock_release`` over stdio JSON-RPC and writes
+    ``<hash>.lock`` files via the same Python primitives
+    (:func:`src.infra.tools.locking.try_lock`) that
+    :mod:`src.infra.tools.locking_mcp` uses, so the plugin's lock-key
+    derivation in ``plugins/amp/mala-safety.ts`` sees identical fixtures
+    regardless of which path produced them — closing AC#9 (plan
+    ``L702``).
+
+    ``MALA_AGENT_ID`` and ``MALA_REPO_NAMESPACE`` are also passed via
+    args **and** env so the launcher works whether Amp inherits parent
+    env into spawned MCP children or not. ``MALA_LOCK_DIR`` is forwarded
+    from the orchestrator's environment when set (it is what the Claude
+    path uses to choose the lock directory); when unset, the launcher
+    falls back to the default in :func:`src.infra.tools.env.get_lock_dir`,
+    matching Claude-side behavior.
+
+    The ``emit_lock_event`` parameter is intentionally unused: a stdio
+    subprocess cannot directly call back into the orchestrator's event
+    sink, and the WAITING-event channel is a Claude-only deadlock
+    observability feature in MVP.
     """
+
+    import os
 
     def factory(
         agent_id: str,
@@ -400,6 +417,18 @@ def create_amp_mcp_server_factory() -> Callable[
         emit_lock_event: Callable | None,
     ) -> dict[str, object]:
         del emit_lock_event
+        env: dict[str, str] = {
+            "MALA_AGENT_ID": agent_id,
+            "MALA_REPO_NAMESPACE": str(repo_path),
+        }
+        # Forward the orchestrator's lock dir when one is configured so
+        # the spawned launcher writes lock files where the rest of the
+        # run reads them. Falling through to the env.py default when the
+        # var is unset matches the Claude path's behavior.
+        lock_dir = os.environ.get("MALA_LOCK_DIR")
+        if lock_dir:
+            env["MALA_LOCK_DIR"] = lock_dir
+
         return {
             "mala-locking": {
                 "command": "mala-amp-mcp-locking",
@@ -409,7 +438,7 @@ def create_amp_mcp_server_factory() -> Callable[
                     "--repo-namespace",
                     str(repo_path),
                 ],
-                "env": {},
+                "env": env,
             }
         }
 

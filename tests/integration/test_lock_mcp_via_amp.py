@@ -18,24 +18,18 @@ end-to-end leg of AC#9a.
 
 Gating
 ------
-Identical ``amp``-on-PATH gate to ``test_amp_lock_enforcement.py``.
-Additionally, the test requires a real **stdio** locking MCP launcher
-reachable via ``amp --mcp-config``. The MVP locking server
-(``src/infra/tools/locking_mcp.py``) is built on the Claude Agent SDK's
-in-process server and has no standalone stdio entry point yet — plan
-L702 tracks that work as part of the real-Amp lock-enforcement effort.
-Until a stdio launcher exists, this test skips with a clear reference to
-the missing piece. The skip ensures the test remains a regression guard
-the moment the launcher lands.
+Identical ``amp``-on-PATH gate to ``test_amp_lock_enforcement.py``. The
+stdio launcher is the in-repo console script
+``mala-amp-mcp-locking`` registered by ``[project.scripts]`` and
+implemented in :mod:`src.infra.tools.locking_mcp_stdio`. After any
+editable install (``uv sync`` / ``pip install -e .``) the script lives
+next to ``sys.executable``; the test resolves it from there so the
+production launch path is exercised end-to-end without depending on
+``$PATH`` at run time.
 
-Why a placeholder factory is not enough
----------------------------------------
-``src.orchestration.orchestration_wiring.create_amp_mcp_server_factory``
-returns a stdio spec pointing at the placeholder command
-``mala-amp-mcp-locking``. That command is not on disk anywhere; spawning
-``amp`` against the placeholder would surface "command not found" errors
-mid-MCP startup and abort before any tool call. Skipping with a precise
-reason is preferable to a noisy false-failure.
+If the console script cannot be resolved (e.g. the env is mid-install),
+the test skips with a clear "run uv sync" hint so a missing install does
+not look like a real-Amp regression.
 """
 
 from __future__ import annotations
@@ -65,38 +59,46 @@ _AMP_BINARY_REASON = (
 )
 
 
-def _has_stdio_locking_launcher() -> bool:
-    """True if a stdio MCP launcher for ``locking_mcp`` is available.
+def _resolve_locking_launcher_path() -> str | None:
+    """Return the absolute path to the in-repo locking MCP launcher.
 
-    The MVP locking server has no standalone stdio entry point yet (plan
-    L702). When the launcher lands, it should appear on ``PATH`` under
-    a stable name; this probe is intentionally conservative — any of the
-    candidate names below resolves the gate. Until then, this returns
-    ``False`` and the tests in this module skip cleanly.
+    Resolution order:
+
+    1. ``Path(sys.executable).parent / "mala-amp-mcp-locking"`` — the
+       console script registered by ``[project.scripts]``. After any
+       editable install (``uv sync`` / ``pip install -e .``) this lives
+       in the venv's bin directory next to the active Python.
+    2. ``shutil.which("mala-amp-mcp-locking")`` — falls back to ``$PATH``
+       for system-wide installs (e.g. ``pipx install mala-agent``).
+
+    Returns the path string when found, ``None`` otherwise. The skipif
+    gate below converts a ``None`` result into a precise "run uv sync"
+    skip reason so a missing install does not surface as a real-Amp
+    regression.
     """
-    candidate_names = (
-        "mala-amp-mcp-locking",
-        "mala-locking-mcp",
-        "mala-mcp-locking",
-    )
-    for name in candidate_names:
-        if shutil.which(name) is not None:
-            return True
-    return False
+    sibling = Path(sys.executable).parent / "mala-amp-mcp-locking"
+    if sibling.is_file():
+        return str(sibling)
+    on_path = shutil.which("mala-amp-mcp-locking")
+    if on_path is not None:
+        return on_path
+    return None
 
+
+_LOCKING_LAUNCHER_PATH = _resolve_locking_launcher_path()
 
 _STDIO_LAUNCHER_REASON = (
-    "stdio MCP launcher for locking_mcp not on PATH. The MVP locking server "
-    "(src/infra/tools/locking_mcp.py) is in-process via the Claude SDK's "
-    "create_sdk_mcp_server; no standalone stdio entry point exists yet "
-    "(plan L702). Skip until the launcher lands so this test becomes a "
-    "regression guard automatically when it does."
+    "mala-amp-mcp-locking console script not registered. The launcher is "
+    f"defined in src.infra.tools.locking_mcp_stdio and exposed via "
+    f"[project.scripts] in pyproject.toml; after `uv sync` it lives at "
+    f"{Path(sys.executable).parent}/mala-amp-mcp-locking. Run `uv sync` "
+    f"and re-run this test."
 )
 
 pytestmark = [
     pytest.mark.skipif(shutil.which("amp") is None, reason=_AMP_BINARY_REASON),
     pytest.mark.skipif(
-        not _has_stdio_locking_launcher(),
+        _LOCKING_LAUNCHER_PATH is None,
         reason=_STDIO_LAUNCHER_REASON,
     ),
 ]
@@ -181,21 +183,6 @@ def amp_mcp_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AmpMcpEnv:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_stdio_launcher() -> str:
-    """Return the stdio launcher command name to wire into --mcp-config.
-
-    Matches :func:`_has_stdio_locking_launcher`'s probe; assumes the
-    skipif gate already verified availability.
-    """
-    for name in ("mala-amp-mcp-locking", "mala-locking-mcp", "mala-mcp-locking"):
-        if shutil.which(name) is not None:
-            return name
-    raise RuntimeError(
-        "stdio MCP launcher for locking_mcp disappeared after skipif gate; "
-        "this should not happen — file a bug."
-    )
-
-
 def _build_mcp_config(env: AmpMcpEnv) -> str:
     """Construct the ``--mcp-config`` JSON payload for Amp.
 
@@ -205,12 +192,15 @@ def _build_mcp_config(env: AmpMcpEnv) -> str:
 
     The launcher is invoked with the agent id and repo namespace it
     needs to compute lock keys identically to the in-test Python
-    fixtures.
+    fixtures. Using the absolute path resolved at module-load time
+    decouples Amp's spawn behavior from ``$PATH`` semantics — Amp's MCP
+    transport may strip parent env when forwarding the ``env`` field, so
+    relying on a name that needs ``$PATH`` resolution is unreliable.
     """
-    launcher = _resolve_stdio_launcher()
+    assert _LOCKING_LAUNCHER_PATH is not None  # pytestmark gate enforces this
     payload = {
         "mala-locking": {
-            "command": launcher,
+            "command": _LOCKING_LAUNCHER_PATH,
             "args": [
                 "--agent-id",
                 _AGENT_ID,
@@ -430,7 +420,14 @@ def test_lock_acquire_then_edit_allowed_and_unlocked_edit_rejected(
 
     uses = _tool_uses(result.events)
     used_names = [u.get("name") for u in uses]
-    if "lock_acquire" not in used_names:
+    # Amp namespaces MCP tools as ``mcp__<server>__<tool>`` (server name
+    # is the key under ``mcp-config``). Accept either the bare tool name
+    # or the namespaced form so the gate doesn't false-skip when Amp's
+    # MCP-namespacing convention is in effect.
+    if not any(
+        isinstance(n, str) and (n == "lock_acquire" or n.endswith("__lock_acquire"))
+        for n in used_names
+    ):
         pytest.skip(
             "amp did not call the lock_acquire MCP tool; LLM did not comply "
             "with the directive prompt. Cannot verify the MCP round-trip. "

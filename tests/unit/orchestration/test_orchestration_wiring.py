@@ -19,6 +19,7 @@ from src.orchestration.orchestration_wiring import (
     build_run_coordinator,
     build_session_callback_factory,
     build_session_config,
+    create_amp_mcp_server_factory,
 )
 from src.orchestration.types import (
     IssueFilterConfig,
@@ -345,3 +346,93 @@ class TestBuildSessionCallbackFactory:
         )
 
         assert isinstance(factory, SessionCallbackFactory)
+
+
+def _amp_mcp_spec(repo_path: Path, agent_id: str = "agent-A") -> dict[str, object]:
+    """Invoke the factory and return the ``mala-locking`` server spec.
+
+    Centralises the type-narrowing dance so each test can read keys
+    without re-asserting ``isinstance`` against ``dict[str, object]``.
+    """
+    from typing import cast
+
+    factory = create_amp_mcp_server_factory()
+    raw = factory(agent_id, repo_path, None)["mala-locking"]
+    assert isinstance(raw, dict)
+    return cast("dict[str, object]", raw)
+
+
+def _amp_mcp_env(spec: dict[str, object]) -> dict[str, object]:
+    from typing import cast
+
+    env_raw = spec["env"]
+    assert isinstance(env_raw, dict)
+    return cast("dict[str, object]", env_raw)
+
+
+@pytest.mark.unit
+class TestCreateAmpMcpServerFactory:
+    """Tests for create_amp_mcp_server_factory.
+
+    Pins the stdio launch spec the factory emits for Amp's
+    ``--mcp-config``. The launcher itself
+    (``mala-amp-mcp-locking`` → :mod:`src.infra.tools.locking_mcp_stdio`)
+    is exercised in :mod:`tests.unit.infra.tools.test_locking_mcp_stdio`
+    and end-to-end through real Amp in
+    ``tests/integration/test_lock_mcp_via_amp.py`` (AC#9 closure).
+    """
+
+    def test_emits_real_launcher_command(self, tmp_path: Path) -> None:
+        """The factory must point at the registered console script, not
+        a placeholder. After ``uv sync`` (or any editable install) this
+        is the on-PATH ``mala-amp-mcp-locking`` shipped via
+        ``[project.scripts]``."""
+        spec = _amp_mcp_spec(tmp_path)
+        assert spec["command"] == "mala-amp-mcp-locking"
+
+    def test_args_carry_agent_id_and_repo_namespace(self, tmp_path: Path) -> None:
+        spec = _amp_mcp_spec(tmp_path)
+        assert spec["args"] == [
+            "--agent-id",
+            "agent-A",
+            "--repo-namespace",
+            str(tmp_path),
+        ]
+
+    def test_env_includes_agent_id_and_repo_namespace(self, tmp_path: Path) -> None:
+        """Args + env both carry agent id + namespace so the launcher
+        boots whether Amp's MCP transport forwards args, env, or both."""
+        env = _amp_mcp_env(_amp_mcp_spec(tmp_path))
+        assert env["MALA_AGENT_ID"] == "agent-A"
+        assert env["MALA_REPO_NAMESPACE"] == str(tmp_path)
+
+    def test_env_forwards_lock_dir_when_set(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When the orchestrator has chosen a lock dir, the spawned
+        launcher must see it — otherwise its lock files would land in a
+        different directory than the rest of the run reads, breaking the
+        cross-process contract with the safety plugin."""
+        monkeypatch.setenv("MALA_LOCK_DIR", "/tmp/some-lock-dir")
+        env = _amp_mcp_env(_amp_mcp_spec(tmp_path))
+        assert env["MALA_LOCK_DIR"] == "/tmp/some-lock-dir"
+
+    def test_env_omits_lock_dir_when_unset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When MALA_LOCK_DIR is unset, the launcher must fall through to
+        :func:`src.infra.tools.env.get_lock_dir`'s default rather than
+        receive an empty value that would shadow it."""
+        monkeypatch.delenv("MALA_LOCK_DIR", raising=False)
+        env = _amp_mcp_env(_amp_mcp_spec(tmp_path))
+        assert "MALA_LOCK_DIR" not in env
+
+    def test_factory_output_is_json_serializable(self, tmp_path: Path) -> None:
+        """Amp's --mcp-config consumes JSON; the factory output must
+        round-trip through ``json.dumps``."""
+        import json as _json
+
+        factory = create_amp_mcp_server_factory()
+        out = factory("agent-A", tmp_path, None)
+        encoded = _json.dumps(out)
+        assert "mala-locking" in encoded
