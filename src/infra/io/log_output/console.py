@@ -333,11 +333,27 @@ def _display_tool_name(tool_name: str) -> str:
     """Return the user-facing tool name for console output."""
     if _is_shell_tool(tool_name):
         return "Bash"
+    if _is_lock_acquire_tool(tool_name):
+        return "Lock"
+    if _is_amp_edit_tool(tool_name):
+        return "Edit"
     return tool_name
 
 
 def _is_shell_tool(tool_name: str) -> bool:
     return tool_name.lower() in {"bash", "shell_command"}
+
+
+def _is_lock_acquire_tool(tool_name: str) -> bool:
+    normalized = tool_name.replace("-", "_")
+    return normalized in {
+        "lock_acquire",
+        "mcp__mala_locking__lock_acquire",
+    }
+
+
+def _is_amp_edit_tool(tool_name: str) -> bool:
+    return tool_name in {"apply_patch", "edit_file"}
 
 
 def _get_shell_command(arguments: dict[str, Any] | None) -> str | None:
@@ -356,6 +372,38 @@ def _format_quiet_command(command: str) -> str:
     if len(command) > 80:
         return command[:80] + "..."
     return command
+
+
+def _format_lock_filepaths(arguments: dict[str, Any] | None) -> str | None:
+    if not arguments:
+        return None
+
+    filepaths = arguments.get("filepaths")
+    if isinstance(filepaths, list):
+        paths = [str(path) for path in filepaths if path]
+        if paths:
+            return ", ".join(paths)
+    if filepaths:
+        return str(filepaths)
+    return None
+
+
+def _format_amp_edit_paths(arguments: dict[str, Any] | None) -> str | None:
+    if not arguments:
+        return None
+
+    paths = arguments.get("paths")
+    if isinstance(paths, list):
+        path_strings = [str(path) for path in paths if path]
+        if path_strings:
+            return ", ".join(path_strings)
+    if paths:
+        return str(paths)
+
+    path = arguments.get("path")
+    if path:
+        return str(path)
+    return None
 
 
 def _get_quiet_summary(
@@ -380,6 +428,16 @@ def _get_quiet_summary(
         )
         if path:
             return str(path)
+
+    if _is_lock_acquire_tool(tool_name):
+        filepaths = _format_lock_filepaths(arguments)
+        if filepaths is not None:
+            return filepaths
+
+    if _is_amp_edit_tool(tool_name):
+        paths = _format_amp_edit_paths(arguments)
+        if paths is not None:
+            return paths
 
     # Shell tools: show the command itself. Amp deep mode reports
     # `command`; Amp smart mode reports `cmd`.

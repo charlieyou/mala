@@ -103,6 +103,46 @@ def test_quiet_summary_bash_uses_command() -> None:
     assert summary == "uv run pytest"
 
 
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "mcp__mala_locking__lock_acquire",
+        "mcp__mala-locking__lock_acquire",
+    ],
+)
+def test_quiet_summary_amp_lock_acquire_uses_filepaths(tool_name: str) -> None:
+    """Amp lock acquisition logs show paths instead of raw MCP arguments."""
+    summary = console._get_quiet_summary(
+        tool_name,
+        "",
+        {"filepaths": ["src/main.py", "src/utils.py"], "timeout_seconds": 300},
+    )
+    assert summary == "src/main.py, src/utils.py"
+    assert console._display_tool_name(tool_name) == "Lock"
+
+
+def test_quiet_summary_apply_patch_uses_paths() -> None:
+    """Amp apply_patch logs show edited paths instead of raw tool arguments."""
+    summary = console._get_quiet_summary(
+        "apply_patch",
+        "",
+        {"paths": ["src/main.py", "tests/test_main.py"], "patchText": "..."},
+    )
+    assert summary == "src/main.py, tests/test_main.py"
+    assert console._display_tool_name("apply_patch") == "Edit"
+
+
+def test_quiet_summary_edit_file_uses_path() -> None:
+    """Amp smart-mode edit_file logs show the edited path."""
+    summary = console._get_quiet_summary(
+        "edit_file",
+        "",
+        {"path": "src/main.py", "old_str": "before", "new_str": "after"},
+    )
+    assert summary == "src/main.py"
+    assert console._display_tool_name("edit_file") == "Edit"
+
+
 def test_quiet_summary_bash_falls_back_to_description() -> None:
     """Test that Bash tool shows description when command is absent."""
     summary = console._get_quiet_summary("Bash", "Run tests", {"command": "pytest"})
@@ -204,6 +244,39 @@ def test_log_tool_quiet_mode_output(
     assert "uv sync" in output
     assert "command=..." not in output
     assert "workdir=..." not in output
+
+    console.log_tool(
+        "mcp__mala_locking__lock_acquire",
+        arguments={"filepaths": ["src/main.py"], "timeout_seconds": 300},
+    )
+    output = capsys.readouterr().out
+    assert "Lock" in output
+    assert "src/main.py" in output
+    assert "mcp__mala_locking__lock_acquire" not in output
+    assert "filepaths=..." not in output
+    assert "timeout_seconds=..." not in output
+
+    console.log_tool(
+        "apply_patch",
+        arguments={"paths": ["src/main.py"], "patchText": "*** Begin Patch"},
+    )
+    output = capsys.readouterr().out
+    assert "Edit" in output
+    assert "src/main.py" in output
+    assert "apply_patch" not in output
+    assert "paths=..." not in output
+    assert "patchText=..." not in output
+
+    console.log_tool(
+        "edit_file",
+        arguments={"path": "src/main.py", "old_str": "before", "new_str": "after"},
+    )
+    output = capsys.readouterr().out
+    assert "Edit" in output
+    assert "src/main.py" in output
+    assert "edit_file" not in output
+    assert "old_str=..." not in output
+    assert "new_str=..." not in output
 
     console.set_verbose(False)
 
