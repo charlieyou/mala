@@ -170,6 +170,33 @@ class TestGetParentEpicAsync:
         ] in commands
 
     @pytest.mark.asyncio
+    async def test_parent_lookup_accepts_dep_list_metadata_shape(
+        self, tmp_path: Path
+    ) -> None:
+        """Parent lookup should accept br dep list metadata rows."""
+        beads = BeadsClient(tmp_path)
+        parent_deps = json.dumps(
+            [
+                {
+                    "id": "epic-1",
+                    "dependency_type": "parent-child",
+                },
+            ]
+        )
+        epic_metadata = json.dumps([{"id": "epic-1", "issue_type": "epic"}])
+
+        async def mock_run(cmd: list[str]) -> CommandResult:
+            if cmd == ["br", "show", "epic-1", "--json"]:
+                return make_command_result(stdout=epic_metadata)
+            return make_command_result(stdout=parent_deps)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", mock_run)
+            result = await beads.get_parent_epic_async("task-1")
+
+        assert result == "epic-1"
+
+    @pytest.mark.asyncio
     async def test_uses_parent_metadata_for_epic_priority(self, tmp_path: Path) -> None:
         """Dependency rows expose child priority; epic priority comes from br show."""
         beads = BeadsClient(tmp_path)

@@ -974,8 +974,11 @@ class BeadsClient:
             if not isinstance(item, dict):
                 continue
 
-            if item.get("type") == "parent-child":
+            dependency_type = item.get("dependency_type") or item.get("type")
+            if dependency_type == "parent-child":
                 parent_id = item.get("depends_on_id")
+                if parent_id is None:
+                    parent_id = item.get("id")
                 if parent_id is None:
                     continue
                 parent_id = str(parent_id)
