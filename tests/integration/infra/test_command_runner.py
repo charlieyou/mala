@@ -197,7 +197,7 @@ class TestCommandRunner:
         script = tmp_path / "spawner.sh"
         script.write_text(
             """#!/bin/bash
-            (sleep 1; echo "child survived" > "$1/child_output.txt") &
+            (echo "spawned" > "$1/spawned.txt"; sleep 2; echo "child survived" > "$1/child_output.txt") &
             sleep 10
             """
         )
@@ -209,7 +209,8 @@ class TestCommandRunner:
         result = runner.run([str(script), str(tmp_path)], use_process_group=False)
 
         assert result.timed_out is True
-        time.sleep(1.0)
+        assert (tmp_path / "spawned.txt").exists()
+        time.sleep(2.5)
         # With use_process_group=False, child process survives
         assert (tmp_path / "child_output.txt").exists(), "Child should survive"
 
@@ -376,24 +377,24 @@ class TestAsyncCommandRunner:
     ) -> None:
         """Verify use_process_group=False only kills parent, children survive."""
         script = tmp_path / "spawner.sh"
-        # The child must have time to fork and write before the parent times
-        # out — on macOS, subprocess fork latency makes a 100ms timeout
-        # marginal. 1s gives the shell ample time to background the child.
+        # The child writes spawned.txt before the timeout, then writes
+        # child_output.txt only if it survives the parent's timeout.
         script.write_text(
             """#!/bin/bash
-            (sleep 0.5; echo "child survived" > "$1/child_output.txt") &
+            (echo "spawned" > "$1/spawned.txt"; sleep 2; echo "child survived" > "$1/child_output.txt") &
             sleep 30
             """
         )
         script.chmod(0o755)
 
-        runner = CommandRunner(cwd=tmp_path, timeout_seconds=1.0)
+        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.5)
         result = await runner.run_async(
             [str(script), str(tmp_path)], use_process_group=False
         )
 
         assert result.timed_out is True
-        await asyncio.sleep(1.0)
+        assert (tmp_path / "spawned.txt").exists()
+        await asyncio.sleep(2.5)
         # With use_process_group=False, child process survives
         assert (tmp_path / "child_output.txt").exists(), "Child should survive"
 
