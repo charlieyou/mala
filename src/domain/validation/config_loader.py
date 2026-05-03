@@ -19,6 +19,8 @@ import yaml
 
 from src.domain.validation.config import (
     ConfigError,
+    DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS,
+    DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS,
     EpicCompletionTriggerConfig,
     EpicDepth,
     EvidenceCheckConfig,
@@ -433,8 +435,8 @@ def _parse_cerberus_config(data: dict[str, Any]) -> CerberusConfig:
         first = sorted(str(k) for k in unknown)[0]
         raise ConfigError(f"Unknown field '{first}' in code_review.cerberus")
 
-    # Parse timeout (optional, defaults to 300)
-    timeout = 300
+    # Parse timeout (optional, defaults to 600)
+    timeout = DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS
     if "timeout" in data:
         timeout_val = data["timeout"]
         if isinstance(timeout_val, bool) or not isinstance(timeout_val, int):
@@ -726,8 +728,8 @@ def _parse_epic_verification_config(
                 )
             cerberus = _parse_cerberus_config(cerberus_val)
 
-    # Parse agent_sdk_timeout (optional, defaults to 600)
-    agent_sdk_timeout = 600
+    # Parse agent_sdk_timeout (optional, defaults to 300)
+    agent_sdk_timeout = DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS
     if "agent_sdk_timeout" in data:
         timeout_val = data["agent_sdk_timeout"]
         if isinstance(timeout_val, bool) or not isinstance(timeout_val, int):
@@ -960,8 +962,8 @@ def _parse_code_review_config(
                 )
             cerberus = _parse_cerberus_config(cerberus_val)
 
-    # Parse agent_sdk_timeout (optional, defaults to 600)
-    agent_sdk_timeout = 600
+    # Parse agent_sdk_timeout (optional, defaults to 300)
+    agent_sdk_timeout = DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS
     if "agent_sdk_timeout" in data:
         timeout_val = data["agent_sdk_timeout"]
         if isinstance(timeout_val, bool) or not isinstance(timeout_val, int):

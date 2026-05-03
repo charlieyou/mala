@@ -29,7 +29,7 @@ class TestParseCerberusConfig:
     def test_defaults(self) -> None:
         """Empty dict returns defaults."""
         result = _parse_cerberus_config({})
-        assert result.timeout == 300
+        assert result.timeout == 600
         assert result.spawn_args == ()
         assert result.wait_args == ()
         assert result.env == ()

@@ -1312,7 +1312,7 @@ class TestCerberusConfig:
     def test_defaults(self) -> None:
         """CerberusConfig has sensible defaults."""
         config = CerberusConfig()
-        assert config.timeout == 300
+        assert config.timeout == 600
         assert config.spawn_args == ()
         assert config.wait_args == ()
         assert config.env == ()

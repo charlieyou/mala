@@ -33,6 +33,10 @@ import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
+from src.core.constants import (
+    DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS,
+    DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS,
+)
 
 # Import shared types from types module (breaks circular import)
 from .types import (
@@ -98,7 +102,7 @@ class _ReviewerConfig:
     """
 
     reviewer_type: str = "agent_sdk"
-    agent_sdk_review_timeout: int = 600
+    agent_sdk_review_timeout: int = DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS
     agent_sdk_reviewer_model: str = "opus"
     cerberus_config: CerberusConfig | None = None
 
@@ -404,7 +408,7 @@ def _extract_reviewer_config(
     Priority order (only when enabled=True):
     1. per_issue_review - highest priority
     2. First enabled trigger code_review config
-    3. Defaults (agent_sdk with timeout=600, model=opus)
+    3. Defaults (agent_sdk with timeout=300, model=opus)
 
     When reviewer_type='cerberus', also extracts code_review.cerberus config.
 
@@ -421,7 +425,9 @@ def _extract_reviewer_config(
             return _ReviewerConfig(
                 reviewer_type=getattr(per_issue_review, "reviewer_type", "agent_sdk"),
                 agent_sdk_review_timeout=getattr(
-                    per_issue_review, "agent_sdk_timeout", 600
+                    per_issue_review,
+                    "agent_sdk_timeout",
+                    DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS,
                 ),
                 agent_sdk_reviewer_model=getattr(
                     per_issue_review, "agent_sdk_model", "opus"
@@ -437,10 +443,35 @@ def _extract_reviewer_config(
 
     return _ReviewerConfig(
         reviewer_type=getattr(code_review, "reviewer_type", "agent_sdk"),
-        agent_sdk_review_timeout=getattr(code_review, "agent_sdk_timeout", 600),
+        agent_sdk_review_timeout=getattr(
+            code_review,
+            "agent_sdk_timeout",
+            DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS,
+        ),
         agent_sdk_reviewer_model=getattr(code_review, "agent_sdk_model", "opus"),
         cerberus_config=getattr(code_review, "cerberus", None),
     )
+
+
+def _resolve_review_timeout_seconds(
+    mala_config: MalaConfig,
+    reviewer_config: _ReviewerConfig,
+) -> int:
+    """Resolve the timeout passed to code reviewers.
+
+    ``MalaConfig.review_timeout`` is a legacy programmatic override. When it is
+    still at the old default, use the reviewer-specific YAML/default timeout.
+    """
+    legacy_default = DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS
+    if mala_config.review_timeout != legacy_default:
+        return mala_config.review_timeout
+
+    if reviewer_config.reviewer_type == "cerberus":
+        if reviewer_config.cerberus_config is not None:
+            return reviewer_config.cerberus_config.timeout
+        return DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS
+
+    return reviewer_config.agent_sdk_review_timeout
 
 
 def _get_reviewer_config(repo_path: Path) -> _ReviewerConfig:
@@ -1089,6 +1120,10 @@ def create_orchestrator(
         validation_config=validation_config,
         validation_config_missing=validation_config_missing,
     )
+    derived.review_timeout_seconds = _resolve_review_timeout_seconds(
+        mala_config,
+        reviewer_config,
+    )
 
     # Check review availability and update disabled_validations
     review_disabled_reason = _check_review_availability(
@@ -1124,7 +1159,7 @@ def create_orchestrator(
             validation_config.epic_verification.agent_sdk_timeout
         )
     else:
-        epic_verifier_timeout_seconds = 600  # default
+        epic_verifier_timeout_seconds = DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS
 
     # Extract retry_policy for per-category retry limits (R6)
     epic_verifier_retry_policy = (

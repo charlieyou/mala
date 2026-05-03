@@ -41,7 +41,7 @@ class TestParseEpicVerificationConfigDefaults:
         assert config.max_retries == 3
         assert config.failure_mode == FailureMode.CONTINUE
         assert config.cerberus is None
-        assert config.agent_sdk_timeout == 600
+        assert config.agent_sdk_timeout == 300
         assert config.agent_sdk_model == "opus"
         assert config.retry_policy.timeout_retries == 3
         assert config.retry_policy.execution_retries == 2
@@ -56,7 +56,7 @@ class TestParseEpicVerificationConfigDefaults:
         assert config.max_retries == 3
         assert config.failure_mode == FailureMode.CONTINUE
         assert config.cerberus is None
-        assert config.agent_sdk_timeout == 600
+        assert config.agent_sdk_timeout == 300
         assert config.agent_sdk_model == "opus"
         assert config.retry_policy.timeout_retries == 3
         assert config.retry_policy.execution_retries == 2
@@ -71,7 +71,7 @@ class TestParseEpicVerificationConfigDefaults:
         assert config.max_retries == 3
         assert config.failure_mode == FailureMode.CONTINUE
         assert config.cerberus is None
-        assert config.agent_sdk_timeout == 600
+        assert config.agent_sdk_timeout == 300
         assert config.agent_sdk_model == "opus"
 
 
@@ -376,7 +376,7 @@ class TestEpicVerifierConfigDataclass:
         assert config.max_retries == 3
         assert config.failure_mode == FailureMode.CONTINUE
         assert config.cerberus is None
-        assert config.agent_sdk_timeout == 600
+        assert config.agent_sdk_timeout == 300
         assert config.agent_sdk_model == "opus"
         assert config.retry_policy.timeout_retries == 3
         assert config.retry_policy.execution_retries == 2

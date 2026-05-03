@@ -110,6 +110,7 @@ def mock_pipeline_config(
         validation_config=None,
         validation_config_missing=False,
         deadlock_monitor=None,
+        review_timeout_seconds=300,
     )
 
 

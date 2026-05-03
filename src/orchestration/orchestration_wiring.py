@@ -91,7 +91,7 @@ def build_review_runner(runtime: RuntimeDeps, pipeline: PipelineConfig) -> Revie
     config = ReviewRunnerConfig(
         max_review_retries=pipeline.max_review_retries,
         capture_session_log=False,
-        review_timeout=runtime.mala_config.review_timeout,
+        review_timeout=pipeline.review_timeout_seconds,
     )
     return ReviewRunner(
         code_reviewer=runtime.code_reviewer,
@@ -112,7 +112,7 @@ def build_cumulative_review_runner(
     # Build ReviewRunner for code reviews
     review_runner = ReviewRunner(
         code_reviewer=runtime.code_reviewer,
-        config=ReviewRunnerConfig(),
+        config=ReviewRunnerConfig(review_timeout=pipeline.review_timeout_seconds),
         gate_checker=runtime.evidence_check,
     )
 

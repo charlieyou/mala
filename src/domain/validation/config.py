@@ -24,7 +24,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal, cast
 
-from src.core.constants import VALID_CLAUDE_SETTINGS_SOURCES
+from src.core.constants import (
+    DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS,
+    DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS,
+    VALID_CLAUDE_SETTINGS_SOURCES,
+)
 
 # Regex for valid custom command names: starts with letter or underscore,
 # followed by letters, digits, underscores, or hyphens
@@ -242,7 +246,7 @@ class CerberusConfig:
         env: Environment variables as key-value pairs.
     """
 
-    timeout: int = 300
+    timeout: int = DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS
     spawn_args: tuple[str, ...] = field(default_factory=tuple)
     wait_args: tuple[str, ...] = field(default_factory=tuple)
     env: tuple[tuple[str, str], ...] = field(default_factory=tuple)
@@ -260,7 +264,7 @@ class CodeReviewConfig:
         finding_threshold: Minimum severity to report findings.
         baseline: What code to include in review.
         cerberus: Cerberus-specific settings if reviewer_type is "cerberus".
-        agent_sdk_timeout: Timeout in seconds for Agent SDK reviews (default: 600).
+        agent_sdk_timeout: Timeout in seconds for Agent SDK reviews (default: 300).
         agent_sdk_model: Model for Agent SDK reviewer ('sonnet', 'opus', 'haiku').
         track_review_issues: Whether to create beads issues for P2/P3 review findings.
     """
@@ -272,7 +276,7 @@ class CodeReviewConfig:
     finding_threshold: Literal["P0", "P1", "P2", "P3", "none"] = "none"
     baseline: Literal["since_run_start", "since_last_review"] | None = None
     cerberus: CerberusConfig | None = None
-    agent_sdk_timeout: int = 600
+    agent_sdk_timeout: int = DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS
     agent_sdk_model: Literal["sonnet", "opus", "haiku"] = "opus"
     track_review_issues: bool = True
 
@@ -319,7 +323,7 @@ class EpicVerifierConfig:
             This is the global fallback; per-category limits in retry_policy take precedence.
         failure_mode: How to handle verification failures.
         cerberus: Cerberus-specific settings (timeout, spawn_args, wait_args, env).
-        agent_sdk_timeout: Timeout in seconds for Agent SDK verification.
+        agent_sdk_timeout: Timeout in seconds for Agent SDK verification (default: 300).
         agent_sdk_model: Model for Agent SDK verifier ('sonnet', 'opus', 'haiku').
         retry_policy: Per-category retry limits for different failure types.
     """
@@ -330,7 +334,7 @@ class EpicVerifierConfig:
     max_retries: int = 3
     failure_mode: FailureMode = FailureMode.CONTINUE
     cerberus: CerberusConfig | None = None
-    agent_sdk_timeout: int = 600
+    agent_sdk_timeout: int = DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS
     agent_sdk_model: Literal["sonnet", "opus", "haiku"] = "opus"
     retry_policy: VerificationRetryPolicy = field(
         default_factory=VerificationRetryPolicy

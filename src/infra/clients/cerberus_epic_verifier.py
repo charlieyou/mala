@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from src.core.constants import DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS
 from src.core.models import EpicVerdict, UnmetCriterion
 from src.infra.clients.cerberus_gate_cli import CerberusGateCLI
 from src.infra.tools.command_runner import CommandRunner
@@ -77,7 +78,7 @@ class CerberusEpicVerifier:
 
     repo_path: Path
     bin_path: Path | None = None
-    timeout: int = 300
+    timeout: int = DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS
     spawn_args: tuple[str, ...] = ()
     wait_args: tuple[str, ...] = ()
     env: dict[str, str] | None = None

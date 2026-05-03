@@ -15,6 +15,8 @@ from src.orchestration.factory import (
     _check_review_availability,
     _derive_config,
     _extract_reviewer_config,
+    _resolve_review_timeout_seconds,
+    _ReviewerConfig,
 )
 from src.orchestration.types import OrchestratorConfig
 
@@ -728,6 +730,38 @@ class TestDeriveConfig:
         assert derived.max_review_retries == 3
 
 
+class TestResolveReviewTimeoutSeconds:
+    """Tests for reviewer-specific timeout resolution."""
+
+    @pytest.mark.parametrize(
+        ("reviewer_config", "expected"),
+        [
+            (_ReviewerConfig(reviewer_type="agent_sdk"), 300),
+            (_ReviewerConfig(reviewer_type="cerberus"), 600),
+        ],
+    )
+    def test_uses_reviewer_defaults(
+        self,
+        reviewer_config: _ReviewerConfig,
+        expected: int,
+    ) -> None:
+        config = MalaConfig(
+            runs_dir=Path("/tmp/runs"),
+            lock_dir=Path("/tmp/locks"),
+        )
+
+        assert _resolve_review_timeout_seconds(config, reviewer_config) == expected
+
+    def test_legacy_mala_config_override_wins(self) -> None:
+        config = MalaConfig(
+            runs_dir=Path("/tmp/runs"),
+            lock_dir=Path("/tmp/locks"),
+            review_timeout=900,
+        )
+
+        assert _resolve_review_timeout_seconds(config, _ReviewerConfig()) == 900
+
+
 class TestExtractReviewerConfig:
     """Tests for _extract_reviewer_config priority order."""
 
@@ -894,7 +928,7 @@ class TestExtractReviewerConfig:
 
         # Falls back to defaults
         assert result.reviewer_type == "agent_sdk"
-        assert result.agent_sdk_review_timeout == 600
+        assert result.agent_sdk_review_timeout == 300
         assert result.agent_sdk_reviewer_model == "opus"
 
     def test_defaults_when_no_validation_config(self) -> None:
@@ -902,7 +936,7 @@ class TestExtractReviewerConfig:
         result = _extract_reviewer_config(None)
 
         assert result.reviewer_type == "agent_sdk"
-        assert result.agent_sdk_review_timeout == 600
+        assert result.agent_sdk_review_timeout == 300
         assert result.agent_sdk_reviewer_model == "opus"
 
 

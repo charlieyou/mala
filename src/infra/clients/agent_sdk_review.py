@@ -21,6 +21,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from src.core.constants import DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS
 from src.infra.clients.review_output_parser import ReviewIssue, ReviewResult
 
 logger = logging.getLogger(__name__)
@@ -102,7 +103,7 @@ class AgentSDKReviewer:
         sdk_client_factory: Factory for creating SDK clients (injected for testability).
         event_sink: Optional event sink for telemetry and warnings.
         model: Model short name (sonnet, opus, haiku). Default: opus.
-        default_timeout: Default timeout in seconds. Default: 600.
+        default_timeout: Default timeout in seconds. Default: 300.
     """
 
     repo_path: Path
@@ -110,7 +111,7 @@ class AgentSDKReviewer:
     sdk_client_factory: SDKClientFactoryProtocol
     event_sink: MalaEventSink | None = None
     model: str = "opus"
-    default_timeout: int = 600
+    default_timeout: int = DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS
 
     def overrides_disabled_setting(self) -> bool:
         """Return False; AgentSDKReviewer respects the disabled setting."""

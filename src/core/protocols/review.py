@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from collections.abc import Sequence  # noqa: TC003 - runtime needed
 
+from src.core.constants import DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS
+
 if TYPE_CHECKING:
     import asyncio
     from pathlib import Path
@@ -89,7 +91,7 @@ class CodeReviewer(Protocol):
     async def __call__(
         self,
         context_file: Path | None = None,
-        timeout: int = 300,
+        timeout: int = DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS,
         claude_session_id: str | None = None,
         author_context: str | None = None,
         *,

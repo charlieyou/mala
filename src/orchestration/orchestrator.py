@@ -455,6 +455,7 @@ class MalaOrchestrator:
             timeout_seconds=self.timeout_seconds,
             max_gate_retries=self.max_gate_retries,
             max_review_retries=self.max_review_retries,
+            review_timeout_seconds=self._derived.review_timeout_seconds,
             disabled_validations=set(self._disabled_validations)
             if self._disabled_validations
             else None,

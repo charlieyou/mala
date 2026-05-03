@@ -320,7 +320,7 @@ Each trigger can optionally include a `code_review` block to run automated code 
 | `finding_threshold` | No | `P0`, `P1`, `P2`, `P3`, `none` | `none` | Minimum severity to report |
 | `baseline` | Yes for `epic_completion`, `run_end` | `since_run_start`, `since_last_review` | - | What code to include |
 | `cerberus` | No | Object | - | Cerberus-specific settings |
-| `agent_sdk_timeout` | No | Integer | `600` | Timeout in seconds for Agent SDK reviews |
+| `agent_sdk_timeout` | No | Integer | `300` | Timeout in seconds for Agent SDK reviews |
 | `agent_sdk_model` | No | `sonnet`, `opus`, `haiku` | `opus` | Model for Agent SDK reviewer |
 | `track_review_issues` | No | Boolean | `true` | Create beads issues for P2/P3 review findings |
 
@@ -386,7 +386,7 @@ code_review:
   enabled: true
   reviewer_type: cerberus
   cerberus:
-    timeout: 300
+    timeout: 600
     spawn_args: ["--verbose"]
     wait_args: []
     env: [["API_KEY", "xxx"]]
@@ -394,7 +394,7 @@ code_review:
 
 | Field | Description |
 |-------|-------------|
-| `timeout` | Review timeout in seconds (default: 300) |
+| `timeout` | Review timeout in seconds (default: 600) |
 | `spawn_args` | Additional arguments when spawning reviewer |
 | `wait_args` | Additional arguments when waiting for results |
 | `env` | Environment variables as key-value pairs |

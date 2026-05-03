@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from src.core.constants import DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS
 from src.infra.clients.cerberus_gate_cli import CerberusGateCLI
 from src.infra.clients.review_output_parser import (
     ReviewIssue,  # noqa: TC001 (used at runtime in format_review_issues)
@@ -94,7 +95,7 @@ class DefaultReviewer:
     async def __call__(
         self,
         context_file: Path | None = None,
-        timeout: int = 300,
+        timeout: int = DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS,
         claude_session_id: str | None = None,
         author_context: str | None = None,
         *,

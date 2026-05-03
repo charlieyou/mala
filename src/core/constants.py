@@ -16,6 +16,9 @@ VALID_CLAUDE_SETTINGS_SOURCES: frozenset[str] = frozenset({"local", "project", "
 # Default sources to load when not explicitly configured (order matters for override priority)
 DEFAULT_CLAUDE_SETTINGS_SOURCES: tuple[str, ...] = ("local", "project")
 
+DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS = 600
+DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS = 300
+
 # Reasoning-effort values forwarded to supported coder backends. Claude SDK
 # types effort as ``low | medium | high | max``, while local Claude and Amp also
 # accept ``xhigh``; mala validates that superset at the input boundary.

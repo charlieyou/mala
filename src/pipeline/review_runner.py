@@ -74,13 +74,14 @@ class ReviewRunnerConfig:
 
     Attributes:
         max_review_retries: Maximum number of review retry attempts.
-        review_timeout: Timeout in seconds for review operations.
+        review_timeout: Timeout in seconds for review operations. None delegates
+            to the configured reviewer default.
         thinking_mode: Deprecated, kept for backward compatibility.
         capture_session_log: Deprecated, kept for backward compatibility.
     """
 
     max_review_retries: int = 3
-    review_timeout: int = 600
+    review_timeout: int | None = None
     # Deprecated fields (kept for backward compatibility with orchestrator)
     thinking_mode: str | None = None
     capture_session_log: bool = False
@@ -323,14 +324,23 @@ class ReviewRunner:
                 temp_file.write(context_text)
                 temp_file.close()
 
-            result = await self.code_reviewer(
-                context_file=context_file,
-                timeout=self.config.review_timeout,
-                claude_session_id=input.claude_session_id,
-                author_context=input.author_context,
-                commit_shas=input.commit_shas,
-                interrupt_event=interrupt_event,
-            )
+            if self.config.review_timeout is None:
+                result = await self.code_reviewer(
+                    context_file=context_file,
+                    claude_session_id=input.claude_session_id,
+                    author_context=input.author_context,
+                    commit_shas=input.commit_shas,
+                    interrupt_event=interrupt_event,
+                )
+            else:
+                result = await self.code_reviewer(
+                    context_file=context_file,
+                    timeout=self.config.review_timeout,
+                    claude_session_id=input.claude_session_id,
+                    author_context=input.author_context,
+                    commit_shas=input.commit_shas,
+                    interrupt_event=interrupt_event,
+                )
 
             # Check if interrupted during review
             was_interrupted = guard.is_interrupted()

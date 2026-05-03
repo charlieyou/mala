@@ -156,6 +156,7 @@ class _DerivedConfig:
     idle_timeout_seconds: float | None
     max_gate_retries: int | None = None
     max_review_retries: int | None = None
+    review_timeout_seconds: int | None = None
     max_epic_verification_retries: int | None = None
     max_diff_size_kb: int | None = None
     epic_verify_lock_timeout_seconds: int | None = None
@@ -207,6 +208,7 @@ class PipelineConfig:
         timeout_seconds: Timeout per agent in seconds.
         max_gate_retries: Maximum quality gate retry attempts per issue.
         max_review_retries: Maximum code review retry attempts per issue.
+        review_timeout_seconds: Timeout for code reviews. None delegates to reviewer default.
         disabled_validations: Set of validation types to disable.
         max_idle_retries: Maximum number of idle timeout retries.
         idle_timeout_seconds: Idle timeout for SDK stream (None = derive from timeout).
@@ -229,6 +231,7 @@ class PipelineConfig:
     validation_config: ValidationConfig | None = None
     validation_config_missing: bool = False
     deadlock_monitor: DeadlockMonitor | None = None
+    review_timeout_seconds: int | None = None
 
 
 @dataclass(frozen=True)
