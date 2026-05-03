@@ -56,7 +56,7 @@ class TestMalaConfigFromEnv:
         ):
             config = MalaConfig.from_env(validate=False)
         # Env var is ignored; default is used
-        assert config.review_timeout == 1200
+        assert config.review_timeout == 600
 
     def test_from_env_ignores_cerberus_spawn_args_deprecated(
         self, monkeypatch: pytest.MonkeyPatch

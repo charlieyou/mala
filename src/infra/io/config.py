@@ -295,7 +295,7 @@ class MalaConfig:
         review_enabled: Whether automated code review is enabled.
             Defaults to True.
         review_timeout: Timeout in seconds for review operations.
-            Defaults to 1200. Configure via mala.yaml code_review settings.
+            Defaults to 600. Configure via mala.yaml code_review settings.
         cerberus_spawn_args: Extra args for `review-gate spawn-code-review`.
             Defaults to empty. Configure via mala.yaml code_review.cerberus.spawn_args.
         cerberus_wait_args: Extra args for `review-gate wait`.
@@ -333,7 +333,7 @@ class MalaConfig:
 
     # Review settings
     review_enabled: bool = field(default=True)
-    review_timeout: int = field(default=1200)
+    review_timeout: int = field(default=600)
     cerberus_bin_path: Path | None = None  # Path to cerberus bin/ directory
     cerberus_spawn_args: tuple[str, ...] = field(default_factory=tuple)
     cerberus_wait_args: tuple[str, ...] = field(default_factory=tuple)
@@ -562,7 +562,7 @@ class MalaConfig:
             runs_dir=runs_dir,
             lock_dir=lock_dir,
             claude_config_dir=claude_config_dir,
-            review_timeout=1200,  # Default; use mala.yaml for custom values
+            review_timeout=600,  # Default; use mala.yaml for custom values
             cerberus_bin_path=cerberus_bin_path,
             cerberus_spawn_args=(),  # Default; use mala.yaml for custom values
             cerberus_wait_args=(),  # Default; use mala.yaml for custom values
