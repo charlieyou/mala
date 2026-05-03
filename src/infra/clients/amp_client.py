@@ -40,8 +40,9 @@ import logging
 import os
 import signal
 import sys
+import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from src.infra.clients.amp_messages import (
     AssistantMessage,
@@ -71,6 +72,12 @@ _STREAM_JSON_READER_LIMIT = 16 * 1024 * 1024
 
 _DEFAULT_KILL_GRACE_SECONDS = 2.0
 """Seconds between SIGTERM and SIGKILL during ``__aexit__`` cleanup."""
+
+_HANDOFF_EXPORT_POLL_SECONDS = 1.0
+"""Seconds between child-thread export polls after a followed handoff."""
+
+_HANDOFF_EXPORT_TIMEOUT_SECONDS = 900.0
+"""Maximum time to wait for an Amp handoff child thread to complete."""
 
 _AUTH_ERROR_MARKERS: tuple[str, ...] = (
     "unauthorized",
@@ -179,6 +186,8 @@ class _ClientState:
     lock_event_offset: int = 0
     tee_path: Path | None = None
     tee_file: Any = None  # binary file handle; typed Any to avoid IO[...] noise
+    handoff_tool_follow: dict[str, bool] = field(default_factory=dict)
+    handoff_thread_id: str | None = None
 
 
 class AmpClient:
@@ -506,7 +515,17 @@ class AmpClient:
                 yield msg
         elif event_type == "result":
             await self._drain_configured_lock_events()
-            yield self._build_result(event)
+            result_msg = self._build_result(event)
+            if self._state.handoff_thread_id is not None:
+                result = await self._materialize_handoff_child(
+                    self._state.handoff_thread_id
+                )
+                self._state.session_id = self._state.handoff_thread_id
+                result_msg = ResultMessage(
+                    session_id=self._state.handoff_thread_id,
+                    result=result if result is not None else result_msg.result,
+                )
+            yield result_msg
         else:
             # Unknown event types are warn-level only (plan L651): they
             # may be future Amp additions; do not crash.
@@ -542,11 +561,18 @@ class AmpClient:
             if btype == "text":
                 blocks.append(TextBlock(text=str(raw.get("text", ""))))
             elif btype == "tool_use":
+                tool_id = str(raw.get("id", ""))
+                name = str(raw.get("name", ""))
+                tool_input = dict(raw.get("input") or {})
+                if name.lower() == "handoff" and tool_id:
+                    self._state.handoff_tool_follow[tool_id] = bool(
+                        tool_input.get("follow", False)
+                    )
                 blocks.append(
                     ToolUseBlock(
-                        id=str(raw.get("id", "")),
-                        name=str(raw.get("name", "")),
-                        input=dict(raw.get("input") or {}),
+                        id=tool_id,
+                        name=name,
+                        input=tool_input,
                     )
                 )
             elif btype in ("thinking", "redacted_thinking"):
@@ -571,9 +597,24 @@ class AmpClient:
                 continue
             if raw.get("type") != "tool_result":
                 continue
+            tool_use_id = str(raw.get("tool_use_id", ""))
+            handoff_thread_id = self._extract_handoff_thread_id(raw.get("content"))
+            if (
+                handoff_thread_id is not None
+                and self._state.handoff_tool_follow.get(tool_use_id, False)
+            ):
+                if (
+                    self._state.handoff_thread_id is not None
+                    and self._state.handoff_thread_id != handoff_thread_id
+                ):
+                    logger.warning(
+                        "AmpClient: multiple followed handoffs observed; using latest child thread %s",
+                        handoff_thread_id,
+                    )
+                self._state.handoff_thread_id = handoff_thread_id
             blocks.append(
                 ToolResultBlock(
-                    tool_use_id=str(raw.get("tool_use_id", "")),
+                    tool_use_id=tool_use_id,
                     is_error=bool(raw.get("is_error", False)),
                     content=raw.get("content"),
                 )
@@ -592,6 +633,219 @@ class AmpClient:
         if result is None:
             result = event.get("subtype")
         return ResultMessage(session_id=str(sid), result=result)
+
+    def _extract_handoff_thread_id(self, content: object) -> str | None:
+        """Return Amp handoff child thread id from a handoff tool result."""
+        payload = content
+        if isinstance(content, str):
+            try:
+                payload = json.loads(content)
+            except json.JSONDecodeError:
+                return None
+        if not isinstance(payload, dict):
+            return None
+        payload_dict = cast("dict[str, Any]", payload)
+        thread_id = payload_dict.get("newThreadID")
+        if isinstance(thread_id, str) and thread_id.startswith("T-"):
+            return thread_id
+        return None
+
+    async def _materialize_handoff_child(self, thread_id: str) -> object | None:
+        """Export a followed handoff child into the thread-keyed JSONL log.
+
+        Amp's parent ``--stream-json`` process reports only the handoff tool
+        result. The followed child thread runs separately, so mala must fetch
+        the child thread before returning its session id to the orchestrator.
+        """
+        deadline = time.monotonic() + _HANDOFF_EXPORT_TIMEOUT_SECONDS
+        last_error: str | None = None
+        while time.monotonic() < deadline:
+            try:
+                exported = await self._export_handoff_thread(thread_id)
+                events, result = self._events_from_thread_export(exported, thread_id)
+                self._write_handoff_thread_log(thread_id, events)
+                if result is not None:
+                    return result
+            except AmpClientError as exc:
+                last_error = str(exc)
+            await asyncio.sleep(_HANDOFF_EXPORT_POLL_SECONDS)
+        detail = f": {last_error}" if last_error else ""
+        raise AmpClientError(
+            f"Timed out waiting for Amp handoff child thread {thread_id}{detail}",
+            stderr_tail=self.get_stderr(),
+            stdout_tail=self._stdout_tail_text(),
+        )
+
+    async def _export_handoff_thread(self, thread_id: str) -> dict[str, Any]:
+        """Run ``amp threads export`` for a handoff child thread."""
+        amp_executable = self._options.argv[0] if self._options.argv else "amp"
+        proc = await asyncio.create_subprocess_exec(
+            amp_executable,
+            "threads",
+            "export",
+            thread_id,
+            "--no-ide",
+            "--no-notifications",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(self._options.cwd),
+            env=dict(self._options.env),
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise AmpClientError(
+                f"Amp handoff child export failed for {thread_id} with exit code {proc.returncode}",
+                stderr_tail=stderr.decode(errors="replace")[-_STDERR_BUFFER_LIMIT:],
+                stdout_tail=stdout.decode(errors="replace")[-_STDOUT_TAIL_LIMIT:],
+            )
+        try:
+            data = json.loads(stdout.decode())
+        except json.JSONDecodeError as exc:
+            raise AmpClientError(
+                f"Amp handoff child export for {thread_id} was not JSON: {exc}",
+                stderr_tail=stderr.decode(errors="replace")[-_STDERR_BUFFER_LIMIT:],
+                stdout_tail=stdout.decode(errors="replace")[-_STDOUT_TAIL_LIMIT:],
+            ) from exc
+        if not isinstance(data, dict):
+            raise AmpClientError(f"Amp handoff child export for {thread_id} was not an object")
+        return data
+
+    def _events_from_thread_export(
+        self, exported: dict[str, Any], thread_id: str
+    ) -> tuple[list[dict[str, Any]], object | None]:
+        """Normalize ``amp threads export`` JSON into stream-json-shaped events."""
+        meta = exported.get("meta")
+        agent_mode = exported.get("agentMode") or (
+            meta.get("agentMode") if isinstance(meta, dict) else None
+        )
+        events: list[dict[str, Any]] = [
+            {
+                "type": "system",
+                "subtype": "init",
+                "cwd": str(self._options.cwd),
+                "session_id": thread_id,
+                "tools": [],
+                "mcp_servers": [],
+                "agent_mode": agent_mode,
+            }
+        ]
+        result: object | None = None
+        messages = exported.get("messages")
+        if not isinstance(messages, list):
+            return events, None
+
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            role = message.get("role")
+            if role not in {"assistant", "user"}:
+                continue
+            content = self._export_content_to_stream_blocks(
+                message.get("content"), role=str(role)
+            )
+            if not content:
+                continue
+            stream_message: dict[str, Any] = {"role": role, "content": content}
+            if role == "assistant":
+                stream_message["type"] = "message"
+                state = message.get("state")
+                if isinstance(state, dict) and isinstance(state.get("stopReason"), str):
+                    stream_message["stop_reason"] = state["stopReason"]
+            events.append(
+                {
+                    "type": role,
+                    "message": stream_message,
+                    "parent_tool_use_id": None,
+                    "session_id": thread_id,
+                }
+            )
+            if role == "assistant" and self._export_assistant_message_is_complete(message):
+                text = "".join(
+                    str(block.get("text", ""))
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                )
+                result = text or "success"
+
+        if result is not None:
+            events.append(
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "is_error": False,
+                    "result": result,
+                    "session_id": thread_id,
+                }
+            )
+        return events, result
+
+    def _export_content_to_stream_blocks(
+        self, content: object, *, role: str
+    ) -> list[dict[str, Any]]:
+        if not isinstance(content, list):
+            return []
+        blocks: list[dict[str, Any]] = []
+        for raw in content:
+            if not isinstance(raw, dict):
+                continue
+            raw_block = cast("dict[str, Any]", raw)
+            block_type = raw_block.get("type")
+            if block_type == "text":
+                blocks.append({"type": "text", "text": str(raw_block.get("text", ""))})
+            elif role == "assistant" and block_type == "tool_use":
+                blocks.append(
+                    {
+                        "type": "tool_use",
+                        "id": str(raw_block.get("id", "")),
+                        "name": str(raw_block.get("name", "")),
+                        "input": dict(raw_block.get("input") or {}),
+                    }
+                )
+            elif role == "user" and block_type == "tool_result":
+                tool_use_id = (
+                    raw_block.get("tool_use_id") or raw_block.get("toolUseID") or ""
+                )
+                run = raw_block.get("run")
+                content_value: object = raw_block.get("content", "")
+                is_error = bool(raw_block.get("is_error", False))
+                if isinstance(run, dict):
+                    if "result" in run:
+                        content_value = run["result"]
+                    elif "error" in run:
+                        content_value = run["error"]
+                    is_error = run.get("status") not in {None, "done", "success"}
+                blocks.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": str(tool_use_id),
+                        "content": content_value,
+                        "is_error": is_error,
+                    }
+                )
+        return blocks
+
+    def _export_assistant_message_is_complete(self, message: dict[str, Any]) -> bool:
+        state = message.get("state")
+        return (
+            isinstance(state, dict)
+            and state.get("type") == "complete"
+            and state.get("stopReason") != "tool_use"
+        )
+
+    def _write_handoff_thread_log(
+        self, thread_id: str, events: list[dict[str, Any]]
+    ) -> None:
+        from src.infra.clients.amp_runtime import AMP_SESSIONS_DIR
+
+        log_path = AMP_SESSIONS_DIR / f"{thread_id}.jsonl"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = log_path.with_name(f".{log_path.name}.tmp-{os.getpid()}")
+        with tmp_path.open("w", encoding="utf-8") as fh:
+            for event in events:
+                fh.write(json.dumps(event, separators=(",", ":")))
+                fh.write("\n")
+        os.replace(tmp_path, log_path)
 
     # ------------------------------------------------------------------
     # Tee management

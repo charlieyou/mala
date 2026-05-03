@@ -1061,6 +1061,190 @@ async def test_tee_log_contains_each_event_exactly_once(tmp_path: Path) -> None:
     assert types.count("result") == 1
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_followed_handoff_returns_child_thread_and_materializes_child_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A followed Amp handoff transfers the active session to the child thread."""
+    sessions_dir = tmp_path / "amp-sessions"
+    monkeypatch.setattr("src.infra.clients.amp_runtime.AMP_SESSIONS_DIR", sessions_dir)
+
+    async def export_child(self: AmpClient, thread_id: str) -> dict[str, object]:
+        del self
+        assert thread_id == "T-child"
+        return {
+            "agentMode": "smart",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "continue"}],
+                },
+                {
+                    "role": "assistant",
+                    "state": {"type": "complete", "stopReason": "tool_use"},
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "bash-1",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest -q"},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "toolUseID": "bash-1",
+                            "run": {"status": "done", "result": "1 passed"},
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "state": {"type": "complete", "stopReason": "end_turn"},
+                    "content": [{"type": "text", "text": "HANDOFF_CHILD_DONE"}],
+                },
+            ],
+        }
+
+    monkeypatch.setattr(AmpClient, "_export_handoff_thread", export_child)
+    script = _write_fake_amp(
+        tmp_path,
+        lines=[
+            _system_init("T-parent"),
+            _assistant_tool_use(
+                "handoff-1",
+                "handoff",
+                {"follow": True, "goal": "continue"},
+            ),
+            _user_tool_result(
+                "handoff-1",
+                json.dumps(
+                    {
+                        "newThreadID": "T-child",
+                        "message": "Created handoff thread T-child.",
+                    }
+                ),
+            ),
+            _result("T-parent", result="parent finished"),
+        ],
+    )
+    options = _make_options(
+        log_path=tmp_path / ".pending-handoff.jsonl",
+        argv=_python_argv_for(script),
+        cwd=tmp_path,
+    )
+
+    async with AmpClient(options) as client:
+        await client.query("p")
+        messages = await _drain(client)
+
+    result = messages[-1]
+    assert isinstance(result, ResultMessage)
+    assert result.session_id == "T-child"
+    assert result.result == "HANDOFF_CHILD_DONE"
+    assert client.session_id == "T-child"
+
+    parent_log = tmp_path / "T-parent.jsonl"
+    child_log = sessions_dir / "T-child.jsonl"
+    assert parent_log.exists()
+    assert child_log.exists()
+
+    from src.infra.clients.amp_log_provider import AmpLogProvider
+
+    provider = AmpLogProvider(native_dir=sessions_dir)
+    commands = [
+        command
+        for entry in provider.iter_events(child_log)
+        for (_tool_id, command) in provider.extract_bash_commands(entry)
+    ]
+    results = [
+        result
+        for entry in provider.iter_events(child_log)
+        for result in provider.extract_tool_result_content(entry)
+    ]
+    assert commands == ["uv run pytest -q"]
+    assert results == [("bash-1", "1 passed")]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_unfollowed_handoff_keeps_parent_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fail_export(self: AmpClient, thread_id: str) -> dict[str, object]:
+        del self, thread_id
+        raise AssertionError("unfollowed handoff should not export child thread")
+
+    monkeypatch.setattr(AmpClient, "_export_handoff_thread", fail_export)
+    script = _write_fake_amp(
+        tmp_path,
+        lines=[
+            _system_init("T-parent"),
+            _assistant_tool_use(
+                "handoff-1",
+                "handoff",
+                {"follow": False, "goal": "continue"},
+            ),
+            _user_tool_result(
+                "handoff-1",
+                json.dumps({"newThreadID": "T-child"}),
+            ),
+            _result("T-parent", result="parent finished"),
+        ],
+    )
+    options = _make_options(
+        log_path=tmp_path / ".pending-unfollowed-handoff.jsonl",
+        argv=_python_argv_for(script),
+        cwd=tmp_path,
+    )
+
+    async with AmpClient(options) as client:
+        await client.query("p")
+        messages = await _drain(client)
+
+    result = messages[-1]
+    assert isinstance(result, ResultMessage)
+    assert result.session_id == "T-parent"
+    assert result.result == "parent finished"
+
+
+@pytest.mark.unit
+def test_handoff_export_with_only_tool_use_is_not_terminal(tmp_path: Path) -> None:
+    options = _make_options(
+        log_path=tmp_path / ".pending-export.jsonl",
+        argv=["amp"],
+        cwd=tmp_path,
+    )
+    client = AmpClient(options)
+
+    events, result = client._events_from_thread_export(
+        {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "state": {"type": "complete", "stopReason": "tool_use"},
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "bash-1",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest -q"},
+                        }
+                    ],
+                }
+            ]
+        },
+        "T-child",
+    )
+
+    assert result is None
+    assert all(event.get("type") != "result" for event in events)
+
+
 # ---------------------------------------------------------------------------
 # Cancellation mid-stream
 # ---------------------------------------------------------------------------
