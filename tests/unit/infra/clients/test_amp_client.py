@@ -233,6 +233,10 @@ async def test_lock_event_jsonl_is_forwarded_to_callback(tmp_path: Path) -> None
     from src.core.models import LockEvent, LockEventType
 
     events: list[LockEvent] = []
+
+    def capture(event: object) -> None:
+        events.append(cast("LockEvent", event))
+
     event_log = tmp_path / "lock-events.jsonl"
     options = AmpClientOptions(
         cwd=tmp_path,
@@ -240,7 +244,7 @@ async def test_lock_event_jsonl_is_forwarded_to_callback(tmp_path: Path) -> None
         argv=(sys.executable, "-c", "print('unused')"),
         log_path=tmp_path / "amp.jsonl",
         lock_event_log_path=event_log,
-        lock_event_callback=events.append,
+        lock_event_callback=capture,
     )
 
     async with AmpClient(options):
@@ -309,6 +313,10 @@ async def test_lock_event_tailer_waits_for_complete_jsonl_line(tmp_path: Path) -
     from src.core.models import LockEvent, LockEventType
 
     events: list[LockEvent] = []
+
+    def capture(event: object) -> None:
+        events.append(cast("LockEvent", event))
+
     event_log = tmp_path / "lock-events.jsonl"
     options = AmpClientOptions(
         cwd=tmp_path,
@@ -316,7 +324,7 @@ async def test_lock_event_tailer_waits_for_complete_jsonl_line(tmp_path: Path) -
         argv=(sys.executable, "-c", "print('unused')"),
         log_path=tmp_path / "amp.jsonl",
         lock_event_log_path=event_log,
-        lock_event_callback=events.append,
+        lock_event_callback=capture,
     )
     payload = json.dumps(
         {
