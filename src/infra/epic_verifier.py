@@ -995,6 +995,10 @@ class EpicVerifier:
             verdict, context = await self._verify_epic_with_context(epic_id)
             verdicts[epic_id] = verdict
             verified_count = 1
+            has_findings = bool(verdict.unmet_criteria)
+            has_blocking_findings = any(
+                criterion.priority <= 1 for criterion in verdict.unmet_criteria
+            )
 
             # Create remediation/advisory issues for any unmet criteria
             blocking_ids: list[str] = []
@@ -1007,8 +1011,8 @@ class EpicVerifier:
                 remediation_issues.extend(blocking_ids)
                 remediation_issues.extend(informational_ids)
 
-            # Epic fails if: has P0/P1 blocking issues OR model explicitly said passed=false
-            if blocking_ids or not verdict.passed:
+            # P2/P3 findings are advisory: record them, but don't block closure.
+            if has_blocking_findings or (not verdict.passed and not has_findings):
                 if blocking_ids:
                     await self.add_epic_blockers(epic_id, blocking_ids)
                 failed_count = 1
@@ -1112,7 +1116,7 @@ class EpicVerifier:
         Deduplication: Checks for existing issues with matching
         epic_remediation:<epic_id>:<criterion_hash> tag before creating.
 
-        P0/P1 issues are blocking (parented to epic, block closure).
+        P0/P1 issues are blocking (block epic closure).
         P2/P3 issues are informational (standalone, don't block closure).
 
         Args:
@@ -1126,7 +1130,14 @@ class EpicVerifier:
         blocking_ids: list[str] = []
         informational_ids: list[str] = []
         context_block = self._format_remediation_context(context)
-        prev_issue_id: str | None = None
+        prev_blocking_issue_id: str | None = None
+
+        async def register_blocking_issue(issue_id: str) -> None:
+            nonlocal prev_blocking_issue_id
+            if prev_blocking_issue_id is not None:
+                await self.beads.add_dependency_async(issue_id, prev_blocking_issue_id)
+            prev_blocking_issue_id = issue_id
+            blocking_ids.append(issue_id)
 
         for criterion in verdict.unmet_criteria:
             is_blocking = criterion.priority <= 1  # P0/P1 are blocking
@@ -1138,8 +1149,9 @@ class EpicVerifier:
             # Check for existing issue with this tag
             existing_id = await self.beads.find_issue_by_tag_async(dedup_tag)
             if existing_id:
+                await self._detach_remediation_from_epic_parent(epic_id, existing_id)
                 if is_blocking:
-                    blocking_ids.append(existing_id)
+                    await register_blocking_issue(existing_id)
                 else:
                     informational_ids.append(existing_id)
                 continue
@@ -1179,23 +1191,16 @@ This issue was auto-created by epic verification for epic `{epic_id}`.
 
             priority_str = f"P{criterion.priority}"
 
-            # Blocking issues are parented to epic; informational are standalone
-            parent_id = epic_id if is_blocking else None
-
             issue_id = await self.beads.create_issue_async(
                 title=title,
                 description=description,
                 priority=priority_str,
                 tags=[dedup_tag, "auto_generated"],
-                parent_id=parent_id,
+                parent_id=None,
             )
             if issue_id:
-                # Add sequential dependency on previous issue
-                if prev_issue_id is not None:
-                    await self.beads.add_dependency_async(issue_id, prev_issue_id)
-                prev_issue_id = issue_id
                 if is_blocking:
-                    blocking_ids.append(issue_id)
+                    await register_blocking_issue(issue_id)
                 else:
                     informational_ids.append(issue_id)
                 # Emit remediation created event
@@ -1205,6 +1210,15 @@ This issue was auto-created by epic verification for epic `{epic_id}`.
                     )
 
         return blocking_ids, informational_ids
+
+    async def _detach_remediation_from_epic_parent(
+        self, epic_id: str, issue_id: str
+    ) -> None:
+        """Remove stale parent-child dependency from old remediation issues."""
+        await self._runner.run_async(
+            ["br", "dep", "remove", issue_id, epic_id],
+            cwd=self.repo_path,
+        )
 
     async def add_epic_blockers(
         self, epic_id: str, blocker_issue_ids: list[str]
