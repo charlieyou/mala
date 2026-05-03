@@ -164,9 +164,10 @@ def test_coder_help_shows_effective_defaults(
     assert "--amp-mode" in output
     assert "Default: deep" in output
     assert "--effort" in output
-    assert "Default:" in output
-    assert "unset" in output
-    assert "leave backend default" in output
+    assert "Defaults:" in output
+    assert "claude=xhigh" in output
+    assert "amp smart=xhigh" in output
+    assert "amp deep=high" in output
 
 
 def test_absence_of_flags_preserves_default_config(

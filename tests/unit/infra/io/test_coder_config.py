@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -42,6 +43,7 @@ class TestDefaults:
         config = MalaConfig()
         assert config.coder == "claude"
         assert config.coder_options.amp.mode == "deep"
+        assert config.effort == "xhigh"
 
     def test_from_env_no_overrides_uses_defaults(
         self, monkeypatch: pytest.MonkeyPatch
@@ -49,6 +51,7 @@ class TestDefaults:
         config = MalaConfig.from_env(validate=False)
         assert config.coder == "claude"
         assert config.coder_options.amp.mode == "deep"
+        assert config.effort == "xhigh"
 
     def test_amp_options_and_coder_options_are_frozen(self) -> None:
         amp = AmpOptions()
@@ -348,7 +351,7 @@ class TestParseHelpers:
 
 
 class TestEffortPrecedence:
-    """CLI > env > yaml > default(=None) for the unified ``effort`` option."""
+    """CLI > env > yaml > backend/mode default for the unified ``effort`` option."""
 
     def _base(self) -> MalaConfig:
         return MalaConfig(
@@ -357,11 +360,25 @@ class TestEffortPrecedence:
             claude_config_dir=Path("/tmp/claude"),
         )
 
-    def test_default_effort_is_none(self) -> None:
+    def test_default_effort_uses_claude_default(self) -> None:
         config = MalaConfig.from_env(validate=False)
-        assert config.effort is None
+        assert config.effort == "xhigh"
         resolved = build_resolved_config(config, CLIOverrides())
-        assert resolved.effort is None
+        assert resolved.effort == "xhigh"
+
+    @pytest.mark.parametrize(
+        ("mode", "expected"),
+        [("smart", "xhigh"), ("deep", "high"), ("rush", None)],
+    )
+    def test_amp_default_effort_depends_on_mode(
+        self, mode: Literal["smart", "rush", "deep"], expected: str | None
+    ) -> None:
+        config = MalaConfig.from_env(
+            validate=False,
+            yaml_coder="amp",
+            yaml_amp_mode=mode,
+        )
+        assert config.effort == expected
 
     def test_yaml_effort_used_when_env_absent(self) -> None:
         config = MalaConfig.from_env(validate=False, yaml_effort="high")
@@ -415,16 +432,16 @@ class TestEffortPrecedence:
         resolved = build_resolved_config(config, CLIOverrides(effort=effort))
         assert resolved.effort == effort
 
-    def test_amp_non_deep_allows_effort_for_silent_drop(self) -> None:
+    def test_amp_rush_allows_effort_for_silent_drop(self) -> None:
         config = MalaConfig.from_env(
             validate=False,
             yaml_coder="amp",
-            yaml_amp_mode="smart",
+            yaml_amp_mode="rush",
             yaml_effort="max",
         )
         resolved = build_resolved_config(config, CLIOverrides())
         assert resolved.effort == "max"
-        assert resolved.coder_options.amp.mode == "smart"
+        assert resolved.coder_options.amp.mode == "rush"
 
     def test_env_effort_rejected_when_amp_deep(
         self, monkeypatch: pytest.MonkeyPatch
@@ -443,6 +460,16 @@ class TestEffortPrecedence:
         assert resolved.effort == "high"
         assert resolved.coder == "amp"
         assert resolved.coder_options.amp.mode == "deep"
+
+    def test_cli_coder_mode_override_recomputes_default_effort(self) -> None:
+        config = MalaConfig.from_env(validate=False)
+        resolved = build_resolved_config(
+            config,
+            CLIOverrides(coder="amp", amp_mode="deep"),
+        )
+        assert resolved.coder == "amp"
+        assert resolved.coder_options.amp.mode == "deep"
+        assert resolved.effort == "high"
 
     def test_yaml_effort_flows_through_validation_config(self, tmp_path: Path) -> None:
         """End-to-end: ``effort:`` in mala.yaml reaches MalaConfig.

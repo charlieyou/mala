@@ -37,6 +37,7 @@ from src.core.constants import (
     DEFAULT_CLAUDE_SETTINGS_SOURCES,
     VALID_CLAUDE_SETTINGS_SOURCES,
     VALID_EFFORTS,
+    default_effort_for,
     validate_amp_effort_for_mode,
 )
 
@@ -364,8 +365,8 @@ class MalaConfig:
     coder_options: CoderOptions = field(default_factory=CoderOptions)
 
     # Mala-level reasoning effort. Forwarded to ``ClaudeAgentOptions.effort``
-    # for the Claude coder and to ``--effort <value>`` for the Amp coder
-    # (deep mode only). ``None`` means "leave the backend default in place".
+    # for the Claude coder and to ``--effort <value>`` for supported Amp modes.
+    # ``None`` means "use mala's backend/mode default" during config resolution.
     effort: str | None = None
 
     def __post_init__(
@@ -403,6 +404,15 @@ class MalaConfig:
         else:
             object.__setattr__(
                 self, "_claude_settings_sources", claude_settings_sources_init
+            )
+        if self.effort is None:
+            object.__setattr__(
+                self,
+                "effort",
+                default_effort_for(
+                    coder=self.coder,
+                    mode=self.coder_options.amp.mode,
+                ),
             )
 
     @property
@@ -537,7 +547,7 @@ class MalaConfig:
             else (yaml_amp_mode if yaml_amp_mode is not None else DEFAULT_AMP_MODE)
         )
 
-        # Parse MALA_EFFORT (env > yaml > default=None)
+        # Parse MALA_EFFORT (env > yaml > backend/mode default)
         try:
             env_effort = parse_effort(
                 os.environ.get("MALA_EFFORT"), source="MALA_EFFORT"
@@ -548,6 +558,11 @@ class MalaConfig:
         resolved_effort: str | None = (
             env_effort if env_effort is not None else yaml_effort
         )
+        if resolved_effort is None:
+            resolved_effort = default_effort_for(
+                coder=resolved_coder,
+                mode=resolved_amp_mode,
+            )
         try:
             validate_amp_effort_for_mode(
                 coder=resolved_coder,
@@ -819,10 +834,22 @@ def build_resolved_config(
     )
     coder_options = CoderOptions(amp=AmpOptions(mode=amp_mode))
 
-    # Apply effort override (CLI > env > yaml > default=None)
-    # base_config already has env > yaml > default applied.
+    # Apply effort override (CLI > env > yaml > backend/mode default).
+    # base_config already has env > yaml > default applied; if a CLI override
+    # changes the selected coder or Amp mode without setting effort, recompute
+    # the default for the final selection.
     cli_effort = parse_effort(overrides.effort, source="CLI")
     effort: str | None = cli_effort if cli_effort is not None else base_config.effort
+    base_default_effort = default_effort_for(
+        coder=base_config.coder,
+        mode=base_config.coder_options.amp.mode,
+    )
+    if (
+        cli_effort is None
+        and (overrides.coder is not None or overrides.amp_mode is not None)
+        and effort == base_default_effort
+    ):
+        effort = default_effort_for(coder=coder, mode=amp_mode)
     validate_amp_effort_for_mode(
         coder=coder,
         mode=amp_mode,

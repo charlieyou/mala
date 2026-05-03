@@ -478,12 +478,12 @@ _AMP_MODE_HELP = (
 )
 _EFFORT_HELP = (
     "Reasoning effort forwarded to the active coder. Valid: low, medium, high, "
-    "xhigh, max. Default: unset (leave backend default)."
+    "xhigh, max. Defaults: claude=xhigh, amp smart=xhigh, amp deep=high."
 )
 _RUN_EFFORT_HELP = (
     f"{_EFFORT_HELP} Forwarded to ClaudeAgentOptions.effort for coder=claude "
-    "and to `amp --effort <value>` for coder=amp (deep mode only; Amp deep "
-    "accepts medium, high, or xhigh)."
+    "and to `amp --effort <value>` for coder=amp (smart/deep modes only; "
+    "Amp smart/deep accept medium, high, or xhigh)."
 )
 
 

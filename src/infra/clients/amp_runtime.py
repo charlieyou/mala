@@ -123,11 +123,10 @@ class AmpRuntimeBuilder:
                 resolves the precedence (CLI > env > yaml > default) before
                 constructing the builder.
             effort: Optional Mala-level reasoning effort. Resolved from
-                ``MalaConfig.effort`` (CLI > env > yaml > default=None).
-                Appended to the Amp argv as ``--effort <value>`` only when
-                ``mode == "deep"``; for non-deep modes the value is ignored
-                with an info-level log message so the silent drop is
-                observable.
+                ``MalaConfig.effort`` (CLI > env > yaml > backend/mode default).
+                Appended to the Amp argv as ``--effort <value>`` for smart and
+                deep modes; rush mode does not support reasoning-effort
+                selection.
         """
         self._repo_path = repo_path
         self._agent_id = agent_id
@@ -139,11 +138,10 @@ class AmpRuntimeBuilder:
             effort=effort,
             source="AmpRuntimeBuilder",
         )
-        if effort is not None and mode != "deep":
+        if effort is not None and mode == "rush":
             logger.info(
-                "Amp effort %s ignored for %s mode; --effort is only used with deep mode",
+                "Amp effort %s ignored for rush mode; --effort is only used with smart or deep mode",
                 effort,
-                mode,
             )
             effort = None
         self._effort: str | None = effort
@@ -179,7 +177,11 @@ class AmpRuntimeBuilder:
         Returns:
             ``self`` for fluent chaining.
         """
-        del include_stop_hook, include_mala_disallowed_tools_hook, include_lock_enforcement_hook
+        del (
+            include_stop_hook,
+            include_mala_disallowed_tools_hook,
+            include_lock_enforcement_hook,
+        )
         self._deadlock_monitor = deadlock_monitor
         return self
 

@@ -57,9 +57,11 @@ class ClaudeAgentProvider:
                 ``claude_settings_sources`` resolver wiring.
             effort: Optional Mala-level reasoning effort, forwarded to
                 ``ClaudeAgentOptions.effort`` for every per-session coder
-                runtime built from this provider. ``None`` means "leave the
-                Claude SDK default in place"; reviewer / epic-verifier
-                ``ClaudeAgentOptions`` instances are intentionally untouched.
+                runtime built from this provider. ``None`` leaves the Claude
+                SDK default in place; config resolution supplies mala's default
+                ``xhigh`` effort for normal orchestrator runs. Reviewer /
+                epic-verifier ``ClaudeAgentOptions`` instances are
+                intentionally untouched.
         """
         self.client_factory: SDKClientFactory = SDKClientFactory()
         self.log_provider: FileSystemLogProvider = FileSystemLogProvider()

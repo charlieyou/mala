@@ -21,6 +21,24 @@ DEFAULT_CLAUDE_SETTINGS_SOURCES: tuple[str, ...] = ("local", "project")
 # accept ``xhigh``; mala validates that superset at the input boundary.
 VALID_EFFORTS: frozenset[str] = frozenset({"low", "medium", "high", "xhigh", "max"})
 VALID_AMP_DEEP_EFFORTS: frozenset[str] = frozenset({"medium", "high", "xhigh"})
+VALID_AMP_SMART_EFFORTS: frozenset[str] = frozenset({"medium", "high", "xhigh"})
+DEFAULT_CLAUDE_EFFORT = "xhigh"
+DEFAULT_AMP_EFFORT_BY_MODE: dict[Literal["smart", "rush", "deep"], str | None] = {
+    "smart": "xhigh",
+    "rush": None,
+    "deep": "high",
+}
+
+
+def default_effort_for(
+    *,
+    coder: Literal["claude", "amp"],
+    mode: Literal["smart", "rush", "deep"],
+) -> str | None:
+    """Return mala's default reasoning effort for the selected backend."""
+    if coder == "claude":
+        return DEFAULT_CLAUDE_EFFORT
+    return DEFAULT_AMP_EFFORT_BY_MODE[mode]
 
 
 def validate_amp_effort_for_mode(
@@ -30,12 +48,16 @@ def validate_amp_effort_for_mode(
     effort: str | None,
     source: str,
 ) -> None:
-    """Validate effort values that are meaningful to Amp deep mode."""
-    if coder != "amp" or mode != "deep" or effort is None:
+    """Validate effort values that are meaningful to Amp modes."""
+    if coder != "amp" or mode == "rush" or effort is None:
         return
-    if effort not in VALID_AMP_DEEP_EFFORTS:
-        valid = ", ".join(sorted(VALID_AMP_DEEP_EFFORTS))
+    valid_efforts = {
+        "smart": VALID_AMP_SMART_EFFORTS,
+        "deep": VALID_AMP_DEEP_EFFORTS,
+    }[mode]
+    if effort not in valid_efforts:
+        valid = ", ".join(sorted(valid_efforts)) or "none"
         raise ValueError(
-            f"{source}: Amp deep mode only accepts effort values: {valid}; "
+            f"{source}: Amp {mode} mode only accepts effort values: {valid}; "
             f"got '{effort}'"
         )

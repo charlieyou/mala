@@ -610,11 +610,10 @@ class AmpAgentProvider:
                 Sourced from ``MalaConfig.coder_options.amp.mode`` after
                 CLI > env > yaml > default precedence resolution.
             effort: Optional Mala-level reasoning effort. Forwarded to the
-                Amp CLI as ``--effort <value>`` only when ``mode == "deep"``;
-                non-deep modes ignore it (the Amp CLI documents reasoning
-                effort as a deep-mode-only concept). The runtime builder
-                logs an info message when effort is set against a non-deep
-                mode so the silent drop is observable in logs.
+                Amp CLI as ``--effort <value>`` for smart and deep modes.
+                Rush mode ignores it; the runtime builder logs an info message
+                when effort is set against rush so the silent drop is
+                observable in logs.
         """
         self._mode: AmpMode = mode
         self._effort: str | None = effort
