@@ -23,7 +23,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from src.core.constants import validate_amp_effort_for_mode
-from src.infra.tools.env import SCRIPTS_DIR, USER_CONFIG_DIR, get_lock_dir
+from src.infra.tools.env import (
+    SCRIPTS_DIR,
+    USER_CONFIG_DIR,
+    get_lock_dir,
+    get_repo_validation_log_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,13 +133,20 @@ class AmpRuntimeBuilder:
         self._agent_id = agent_id
         self._mcp_server_factory = mcp_server_factory
         self._mode: AmpMode = mode
-        self._effort: str | None = effort
         validate_amp_effort_for_mode(
             coder="amp",
             mode=mode,
             effort=effort,
             source="AmpRuntimeBuilder",
         )
+        if effort is not None and mode != "deep":
+            logger.info(
+                "Amp effort %s ignored for %s mode; --effort is only used with deep mode",
+                effort,
+                mode,
+            )
+            effort = None
+        self._effort: str | None = effort
         self._resume_thread_id: str | None = None
         # Fluent-API state collected by the with_* helpers below. The Amp
         # pipeline does not act on most of these (Amp enforces
@@ -293,6 +305,9 @@ class AmpRuntimeBuilder:
             "PLUGINS": "all",
             "MALA_AGENT_ID": self._agent_id,
             "MALA_LOCK_DIR": str(get_lock_dir()),
+            "MALA_VALIDATION_LOG_DIR": str(
+                get_repo_validation_log_dir(self._repo_path)
+            ),
             "MALA_REPO_NAMESPACE": str(self._repo_path),
             "MCP_TIMEOUT": "300000",
             **self._env_extra,

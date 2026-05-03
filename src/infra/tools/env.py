@@ -74,6 +74,18 @@ def get_lock_dir() -> Path:
     return Path(os.environ.get("MALA_LOCK_DIR", "/tmp/mala-locks"))
 
 
+# Validation log directory for agent command output
+# Can be overridden via MALA_VALIDATION_LOG_DIR environment variable
+def get_validation_log_dir() -> Path:
+    """Get the validation log directory, respecting MALA_VALIDATION_LOG_DIR."""
+    return Path(os.environ.get("MALA_VALIDATION_LOG_DIR", "/tmp/mala-validation-logs"))
+
+
+def get_repo_validation_log_dir(repo_path: Path) -> Path:
+    """Get validation log directory segmented by repo path."""
+    return get_validation_log_dir() / encode_repo_path(repo_path)
+
+
 # Lock scripts directory (relative to this file: src/infra/tools/env.py -> src/scripts/)
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 

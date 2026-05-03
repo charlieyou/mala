@@ -171,6 +171,11 @@ Shell tools: `Bash` and `shell_command` are both checked. Their command is
 read from `cmd` (Amp) with a defensive fallback to `command` (Anthropic-shaped
 or alternative toolbox payloads).
 
+Shell redirects under `MALA_VALIDATION_LOG_DIR` are exempt from lock ownership
+checks because implementer validation logs are scratch artifacts, not repository
+files. The exemption is narrow: paths are resolved before comparison, and file
+edit tools still require normal locks.
+
 Adding a new file-write or shell tool to Amp upstream requires updating
 `FILE_WRITE_TOOLS` / `FILE_PATH_KEYS` / `BASH_TOOL_NAMES` in this file in the
 same commit as Python's mirrors.
@@ -200,7 +205,7 @@ installer (T010) ships the `.ts` file unchanged.
 Before merging changes to this file:
 
 - [ ] First line is exactly `// @i-know-the-amp-plugin-api-is-wip-and-very-experimental-right-now`.
-- [ ] `session.start` reads the three env vars and emits the sentinel marker
+- [ ] `session.start` reads the safety env vars and emits the sentinel marker
       on stderr in both "config OK" and "fail-closed" paths.
 - [ ] Fail-closed mode rejects every non-sentinel `tool.call` (Bash,
       shell_command, file-write tools) with a "lock-ownership env missing"

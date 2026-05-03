@@ -234,6 +234,7 @@ Precedence: CLI flags override global config, which overrides program defaults.
 |----------|---------|-------------|
 | `MALA_RUNS_DIR` | `~/.config/mala/runs` | Base directory for run metadata (per-repo subdirs) |
 | `MALA_LOCK_DIR` | `/tmp/mala-locks` | Directory for filesystem locks |
+| `MALA_VALIDATION_LOG_DIR` | `/tmp/mala-validation-logs` | Base directory for implementer validation command logs |
 | `MALA_DISABLE_DEBUG_LOG` | - | Set to `1` to disable debug file logging (for performance or disk space) |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Claude SDK config directory (plugins, sessions) |
 | `MALA_CLAUDE_SETTINGS_SOURCES` | `local,project` | Comma-separated Claude settings sources |

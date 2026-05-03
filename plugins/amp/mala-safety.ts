@@ -398,6 +398,7 @@ function extractFileWritePaths(
 interface SafetyConfig {
   agentId: string;
   lockDir: string;
+  validationLogDir: string;
   repoNamespace: string;
   failClosed: boolean;
   failClosedReason: string;
@@ -406,6 +407,7 @@ interface SafetyConfig {
 let cfg: SafetyConfig = {
   agentId: "",
   lockDir: "",
+  validationLogDir: "",
   repoNamespace: "",
   failClosed: true,
   failClosedReason:
@@ -415,6 +417,7 @@ let cfg: SafetyConfig = {
 function loadConfig(): SafetyConfig {
   const agentId = process.env.MALA_AGENT_ID ?? "";
   const lockDir = process.env.MALA_LOCK_DIR ?? "";
+  const validationLogDir = process.env.MALA_VALIDATION_LOG_DIR ?? "";
   const repoNamespace = process.env.MALA_REPO_NAMESPACE ?? "";
   const missing: string[] = [];
   if (!agentId) missing.push("MALA_AGENT_ID");
@@ -424,6 +427,7 @@ function loadConfig(): SafetyConfig {
     return {
       agentId,
       lockDir,
+      validationLogDir,
       repoNamespace,
       failClosed: true,
       failClosedReason: `mala-safety: lock-ownership env missing (${missing.join(", ")}); refusing all file-write tool calls`,
@@ -432,6 +436,7 @@ function loadConfig(): SafetyConfig {
   return {
     agentId,
     lockDir,
+    validationLogDir,
     repoNamespace,
     failClosed: false,
     failClosedReason: "",
@@ -681,6 +686,14 @@ function isExcludedShellWritePath(p: string): boolean {
   // resolves the traversal and writes to the resolved path.
   if (DEV_FD_LITERAL_RE.test(p)) return true;
   return false;
+}
+
+function isValidationLogPath(filePath: string, validationLogDir: string): boolean {
+  if (!validationLogDir) return false;
+  const resolvedPath = resolveWithParents(normalize(resolve(filePath)));
+  const resolvedDir = resolveWithParents(normalize(resolve(validationLogDir)));
+  if (resolvedDir === "/") return false;
+  return resolvedPath === resolvedDir || resolvedPath.startsWith(`${resolvedDir}/`);
 }
 
 function unquoteShellPath(s: string): string {
@@ -1193,6 +1206,7 @@ export {
   findRejectedShellPrimitive,
   getStageCommandBaseName,
   isExcludedShellWritePath,
+  isValidationLogPath,
   splitPipelineStages,
   substringContainsWrite,
 };
@@ -1289,6 +1303,7 @@ export default function plugin(amp: AmpPluginAPI): void {
         return { action: "reject-and-continue", message: analysis.reject };
       }
       for (const filePath of analysis.paths) {
+        if (isValidationLogPath(filePath, cfg.validationLogDir)) continue;
         const rejection = checkLockOwnership(filePath);
         if (rejection) return rejection;
       }

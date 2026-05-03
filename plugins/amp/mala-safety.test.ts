@@ -15,6 +15,9 @@
 //   uv run pytest tests/integration/test_amp_safety_parser.py
 
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   classifyShellWrites,
@@ -23,6 +26,7 @@ import {
   findRejectedShellPrimitive,
   getStageCommandBaseName,
   isExcludedShellWritePath,
+  isValidationLogPath,
 } from "./mala-safety.ts";
 
 // `dd if=` is in the dangerous-pattern list of the plugin's *other*
@@ -68,6 +72,69 @@ describe("isExcludedShellWritePath", () => {
 
   test("does NOT exclude /dev/fd/N/extra", () => {
     expect(isExcludedShellWritePath("/dev/fd/3/extra")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isValidationLogPath — narrow shell-redirect exemption
+// ---------------------------------------------------------------------------
+
+describe("isValidationLogPath", () => {
+  test("matches files under the configured validation log directory", () => {
+    expect(
+      isValidationLogPath(
+        "/tmp/mala-validation-logs/repo/issue.test.log",
+        "/tmp/mala-validation-logs",
+      ),
+    ).toBe(true);
+  });
+
+  test("does NOT match sibling prefixes", () => {
+    expect(
+      isValidationLogPath(
+        "/tmp/mala-validation-logs-evil/issue.test.log",
+        "/tmp/mala-validation-logs",
+      ),
+    ).toBe(false);
+  });
+
+  test("does NOT match traversal out of the validation log directory", () => {
+    expect(
+      isValidationLogPath(
+        "/tmp/mala-validation-logs/../repo/file.py",
+        "/tmp/mala-validation-logs",
+      ),
+    ).toBe(false);
+  });
+
+  test("does NOT exempt lock directory logs", () => {
+    expect(
+      isValidationLogPath(
+        "/tmp/mala-locks/engine-5hx.4.test.log",
+        "/tmp/mala-validation-logs",
+      ),
+    ).toBe(false);
+  });
+
+  test("does NOT exempt paths escaping through a symlink", () => {
+    const root = mkdtempSync(join(tmpdir(), "mala-validation-test-"));
+    try {
+      const logs = join(root, "logs");
+      const repo = join(root, "repo");
+      mkdirSync(logs);
+      mkdirSync(repo);
+      symlinkSync(repo, join(logs, "escape"), "dir");
+
+      expect(isValidationLogPath(join(logs, "escape", "file.py"), logs)).toBe(
+        false,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("does NOT exempt everything when validation log dir is root", () => {
+    expect(isValidationLogPath("/tmp/anything.log", "/")).toBe(false);
   });
 });
 

@@ -7,11 +7,11 @@ Covers the runtime-builder slice of plan section "Testing & Validation"
   --mcp-config <json>``.
 - Env includes ``PLUGINS=all`` and inherits parent ``os.environ`` keys.
 - **Regression guard**: env includes ``MALA_AGENT_ID``, ``MALA_LOCK_DIR``,
-  ``MALA_REPO_NAMESPACE`` with values matching what the Claude path's
-  ``AgentRuntimeBuilder.with_env()`` would inject for ``AGENT_ID``,
-  ``LOCK_DIR``, ``REPO_NAMESPACE`` — if any of the three is missing, the
-  ``mala-safety.ts`` plugin's lock-ownership check is silently disabled,
-  so this is asserted positively *and* defensively.
+  ``MALA_VALIDATION_LOG_DIR``, and ``MALA_REPO_NAMESPACE``. The lock ownership
+  values match what the Claude path's ``AgentRuntimeBuilder.with_env()`` would
+  inject for ``AGENT_ID``, ``LOCK_DIR``, ``REPO_NAMESPACE``. If core safety env
+  is missing, the ``mala-safety.ts`` plugin is disabled or cannot exempt
+  validation logs, so this is asserted positively *and* defensively.
 - ``--mode <smart|rush|deep>`` wired from :class:`AmpOptions.mode`.
 - ``mcp_config`` JSON contains the ``locking_mcp`` stdio launch spec.
 - Env is built from ``os.environ`` (not a bare dict).
@@ -22,6 +22,7 @@ Covers the runtime-builder slice of plan section "Testing & Validation"
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
@@ -30,12 +31,11 @@ from src.core.protocols.agent_provider import CoderRuntimeBuilder
 from src.infra.agent_runtime import AgentRuntimeBuilder
 from src.infra.clients.amp_runtime import AmpRuntime, AmpRuntimeBuilder
 from src.infra.io.config import MalaConfig
-from src.infra.tools.env import SCRIPTS_DIR
+from src.infra.tools.env import SCRIPTS_DIR, encode_repo_path
 from tests.fakes import FakeSDKClientFactory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
 
 def _stdio_locking_factory() -> Callable[..., dict[str, object]]:
@@ -222,7 +222,13 @@ def test_env_includes_mcp_timeout_300000(builder: AmpRuntimeBuilder) -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    "var", ["MALA_AGENT_ID", "MALA_LOCK_DIR", "MALA_REPO_NAMESPACE"]
+    "var",
+    [
+        "MALA_AGENT_ID",
+        "MALA_LOCK_DIR",
+        "MALA_VALIDATION_LOG_DIR",
+        "MALA_REPO_NAMESPACE",
+    ],
 )
 def test_env_includes_each_lock_ownership_var(
     builder: AmpRuntimeBuilder, var: str
@@ -233,6 +239,23 @@ def test_env_includes_each_lock_ownership_var(
         "the mala-safety.ts lock-ownership check"
     )
     assert runtime.env[var] != ""
+
+
+@pytest.mark.unit
+def test_env_validation_log_dir_is_repo_scoped(
+    repo_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", "/tmp/custom-validation-logs")
+    runtime = AmpRuntimeBuilder(
+        repo_path,
+        "agent-42",
+        _stdio_locking_factory(),
+        mode="smart",
+    ).build()
+
+    assert runtime.env["MALA_VALIDATION_LOG_DIR"] == str(
+        Path("/tmp/custom-validation-logs") / encode_repo_path(repo_path)
+    )
 
 
 @pytest.mark.unit

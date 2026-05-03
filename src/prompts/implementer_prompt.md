@@ -5,6 +5,7 @@ Implement the assigned issue completely before returning. This runs non-interact
 **Issue ID:** {issue_id}
 **Repository:** {repo_path}
 **Lock Directory:** {lock_dir}
+**Validation Log Directory:** {validation_log_dir}
 **Agent Lock Prefix:** {agent_id}
 **Issue Details:**
 {issue_description}
@@ -216,16 +217,17 @@ Run validation commands before committing:
 - Do NOT skip validation without recording a concrete reason
 
 **Output handling (context preservation):**
-- Always redirect output to `{lock_dir}/{issue_id}.<check>.log` (where `<check>` is `test`, `lint`, `format`, or `typecheck`)
+- Always redirect output to `{validation_log_dir}/{issue_id}.<check>.log` (where `<check>` is `test`, `lint`, `format`, or `typecheck`)
+- Validation logs are scratch artifacts only; do not acquire file locks for files under `{validation_log_dir}`.
 - Always report: command, exit code, log path (regardless of pass/fail)
 - **On success**: Just the summary line, no output in chat
 - **On failure**: Include a focused excerpt (first unique error + one traceback) + log path for full details
 - Pattern:
   ```bash
-  mkdir -p {lock_dir}
-  {test_command} > {lock_dir}/{issue_id}.test.log 2>&1; echo "exit=$? log={lock_dir}/{issue_id}.test.log"
+  mkdir -p {validation_log_dir}
+  {test_command} > {validation_log_dir}/{issue_id}.test.log 2>&1; echo "exit=$? log={validation_log_dir}/{issue_id}.test.log"
   ```
-- If exit≠0, extract key errors: `grep -E "^(ERROR|FAILED|error\[)" {lock_dir}/{issue_id}.test.log | head -20`
+- If exit≠0, extract key errors: `grep -E "^(ERROR|FAILED|error\[)" {validation_log_dir}/{issue_id}.test.log | head -20`
 
 ### 5. Self-Review
 Verify before committing:

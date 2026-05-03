@@ -367,6 +367,7 @@ class TestPromptTemplateIntegration:
             issue_id="test-123",
             repo_path=tmp_path,
             lock_dir="/tmp/locks",
+            validation_log_dir="/tmp/validation-logs",
             agent_id="test-agent",
             lint_command=cmds.lint,
             format_command=cmds.format,
@@ -386,6 +387,8 @@ class TestPromptTemplateIntegration:
         assert "{format_command}" not in prompt
         assert "{typecheck_command}" not in prompt
         assert "{test_command}" not in prompt
+        assert "{validation_log_dir}" not in prompt
+        assert "Validation Log Directory" in prompt
 
     def test_implementer_prompt_renders_with_go_commands(self, tmp_path: Path) -> None:
         """Implementer prompt renders correctly with Go validation commands."""
@@ -399,6 +402,7 @@ class TestPromptTemplateIntegration:
             issue_id="test-123",
             repo_path=tmp_path,
             lock_dir="/tmp/locks",
+            validation_log_dir="/tmp/validation-logs",
             agent_id="test-agent",
             lint_command=cmds.lint,
             format_command=cmds.format,
@@ -458,6 +462,7 @@ class TestFormatImplementerPrompt:
             agent_id="test-agent",
             validation_commands=cmds,
             lock_dir=tmp_path / "locks",
+            validation_log_dir=tmp_path / "validation-logs",
             issue_description=description_with_braces,
         )
 
@@ -477,7 +482,32 @@ class TestFormatImplementerPrompt:
             agent_id="test-agent",
             validation_commands=cmds,
             lock_dir=tmp_path / "locks",
+            validation_log_dir=tmp_path / "validation-logs",
             issue_description=None,
         )
 
         assert "No description available" in prompt
+
+    def test_uses_validation_log_dir_for_quality_logs(self, tmp_path: Path) -> None:
+        """Implementer prompt keeps lock coordination separate from log output."""
+        prompts = load_prompts(PROMPTS_DIR)
+        cmds = build_prompt_validation_commands(tmp_path, config_missing=True)
+        lock_dir = tmp_path / "locks"
+        validation_log_dir = tmp_path / "validation-logs"
+
+        prompt = format_implementer_prompt(
+            prompts.implementer_prompt,
+            issue_id="test-123",
+            repo_path=tmp_path,
+            agent_id="test-agent",
+            validation_commands=cmds,
+            lock_dir=lock_dir,
+            validation_log_dir=validation_log_dir,
+            issue_description="Issue details",
+        )
+
+        assert f"**Lock Directory:** {lock_dir}" in prompt
+        assert f"**Validation Log Directory:** {validation_log_dir}" in prompt
+        assert f"mkdir -p {validation_log_dir}" in prompt
+        assert f"{validation_log_dir}/test-123.test.log" in prompt
+        assert f"{lock_dir}/test-123.test.log" not in prompt

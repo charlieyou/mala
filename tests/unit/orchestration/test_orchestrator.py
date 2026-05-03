@@ -75,6 +75,7 @@ class TestPromptTemplate:
             "issue_id",
             "repo_path",
             "lock_dir",
+            "validation_log_dir",
             "agent_id",
             "lint_command",
             "format_command",

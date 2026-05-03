@@ -33,6 +33,7 @@ from src.infra.tools.env import (
     PROMPTS_DIR,
     encode_repo_path,
     get_lock_dir,
+    get_repo_validation_log_dir,
     get_runs_dir,
 )
 from src.domain.deadlock import DeadlockMonitor
@@ -909,6 +910,7 @@ class MalaOrchestrator:
             agent_id=temp_agent_id,
             validation_commands=self._prompt_validation_commands,
             lock_dir=get_lock_dir(),
+            validation_log_dir=get_repo_validation_log_dir(self.repo_path),
             issue_description=issue_description,
         )
 
