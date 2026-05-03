@@ -509,5 +509,6 @@ class TestFormatImplementerPrompt:
         assert f"**Lock Directory:** {lock_dir}" in prompt
         assert f"**Validation Log Directory:** {validation_log_dir}" in prompt
         assert f"mkdir -p {validation_log_dir}" in prompt
+        assert prompt.count(f"mkdir -p {validation_log_dir}") == 1
         assert f"{validation_log_dir}/test-123.test.log" in prompt
         assert f"{lock_dir}/test-123.test.log" not in prompt

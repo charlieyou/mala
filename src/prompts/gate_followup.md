@@ -1,31 +1,46 @@
 ## Quality Gate Failed (Attempt {attempt}/{max_attempts})
 
-**Token Efficiency:** Use `read_range` ≤120 lines. No narration ("Let me..."). No git archaeology. No whole-file summaries. Fix directly.
+Continue following the implementer prompt. This prompt overrides it only where explicitly stated.
 
-The quality gate check failed with the following issues:
+The quality gate failed with these issues:
+
 {failure_reasons}
 
-**Stale commit detection (previous runs)**
+## Stale Commit Detection
 
-If the failure reason mentions "stale commits from previous runs are rejected", the orchestrator is telling you that any existing `bd-{issue_id}` commit was created *before* this run's baseline timestamp. In this case:
+No git archaeology except this stale-commit check.
 
-1. **If the work is already complete from a prior run** (the commit fully implements the issue and your working tree is clean):
-   - Verify a `bd-{issue_id}` commit exists with `git log --oneline --grep="bd-{issue_id}"`
-   - Return `ISSUE_ALREADY_COMPLETE: <rationale>` as your final output
-   - Your rationale MUST include the commit hash (e.g., "Work completed in commit abc1234 with message bd-{issue_id}: ...")
-   - This skips the baseline check and validation evidence
+If the failure reason mentions "stale commits from previous runs are rejected", the orchestrator is telling you that any existing `bd-{issue_id}` commit was created before this run's baseline timestamp.
 
-2. **If the work is not complete** (code changes still needed), treat this as a normal failure: make changes, run validations, and create a new commit.
+If the work is already complete from a prior run and the working tree is clean:
 
-**Required actions (for all other failures):**
-1. Fix ALL issues causing validation failures - including pre-existing errors in files you didn't touch
-2. Re-run the full validation suite on the ENTIRE codebase:
-   - `{test_command}`
-   - `{lint_command}`
-   - `{format_command}`
-   - `{typecheck_command}`
-3. Commit your changes with message: `bd-{issue_id}: <description>` (multiple commits allowed; use the prefix on each). Use `git add <files>` with explicit file paths only (no `-A`, `-u`, `--all`, directories, or globs) and commit in the same command.
+1. Verify a `bd-{issue_id}` commit exists with `git log --oneline --grep="bd-{issue_id}"`.
+2. Return `ISSUE_ALREADY_COMPLETE: <rationale>` as your final output.
+3. Include the commit hash and `bd-{issue_id}` message in the rationale.
 
-**CRITICAL:** Do NOT scope checks to only your modified files. The validation runs on the entire codebase. Fix ALL errors you see, even if you didn't introduce them. Do NOT use `git blame` to decide whether to fix an error.
+If work is not complete, treat this as a normal validation failure and create a new commit.
 
-Note: The orchestrator requires NEW validation evidence - re-run all validations even if you ran them before.
+## Required Actions
+
+This follow-up overrides the baseline "do not fix untouched files" validation rule. The full quality gate must pass, so fix all errors required by the gate, even if they appear in files you did not touch before this retry.
+
+1. Fix all validation failures listed above.
+2. Re-run the full validation suite on the entire codebase:
+
+```bash
+{format_command}
+{lint_command}
+{typecheck_command}
+{test_command}
+```
+
+3. If formatting changes files, re-run validations from the start.
+4. Commit fixes with:
+
+```bash
+git add <explicit files> && git commit -m "bd-{issue_id}: <description>"
+```
+
+Use explicit file paths only. Do not use `-A`, `-u`, `--all`, directories, globs, or `git commit -a`.
+
+The orchestrator requires new validation evidence, so re-run validations even if they passed before.
