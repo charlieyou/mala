@@ -425,6 +425,7 @@ class AgentSessionRunner:
         )
         runtime = (
             builder.with_hooks(deadlock_monitor=self.config.deadlock_monitor)
+            .with_agent_timeout(self.config.timeout_seconds)
             .with_env(extra={"MALA_SDK_FLOW": input.flow})
             .with_mcp()
             .with_disallowed_tools()

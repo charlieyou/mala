@@ -103,6 +103,37 @@ class TestAgentRuntimeBuilder:
         assert runtime.env["MCP_TIMEOUT"] == "300000"
 
     @pytest.mark.unit
+    def test_agent_timeout_sets_mcp_timeout(
+        self, repo_path: Path, factory: FakeSDKClientFactory
+    ) -> None:
+        """with_agent_timeout() converts seconds to MCP timeout milliseconds."""
+        runtime = (
+            AgentRuntimeBuilder(repo_path, "agent-xyz", factory)
+            .with_agent_timeout(1800)
+            .with_env()
+            .with_mcp(servers={})
+            .build()
+        )
+
+        assert runtime.env["MCP_TIMEOUT"] == "1800000"
+
+    @pytest.mark.unit
+    def test_agent_timeout_updates_existing_env(
+        self, repo_path: Path, factory: FakeSDKClientFactory
+    ) -> None:
+        """with_agent_timeout() also applies when with_env() ran first."""
+        runtime = (
+            AgentRuntimeBuilder(repo_path, "agent-xyz", factory)
+            .with_env(extra={"MCP_TIMEOUT": "1"})
+            .with_agent_timeout(1800)
+            .with_mcp(servers={})
+            .build()
+        )
+
+        assert runtime.env["MCP_TIMEOUT"] == "1800000"
+        assert factory.created_options[0]["env"]["MCP_TIMEOUT"] == "1800000"
+
+    @pytest.mark.unit
     def test_env_extra_vars_merged(
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
@@ -127,17 +158,20 @@ class TestAgentRuntimeBuilder:
         result1 = builder.with_hooks()
         assert result1 is builder
 
-        result2 = builder.with_env()
+        result2 = builder.with_agent_timeout(600)
         assert result2 is builder
 
-        result3 = builder.with_mcp(servers={})  # Explicitly disable locking
+        result3 = builder.with_env()
         assert result3 is builder
 
-        result4 = builder.with_disallowed_tools()
+        result4 = builder.with_mcp(servers={})  # Explicitly disable locking
         assert result4 is builder
 
-        result5 = builder.with_lint_tools({"ruff"})
+        result5 = builder.with_disallowed_tools()
         assert result5 is builder
+
+        result6 = builder.with_lint_tools({"ruff"})
+        assert result6 is builder
 
     @pytest.mark.unit
     def test_pre_tool_hooks_ordering(

@@ -184,6 +184,7 @@ class FixerService:
                 include_stop_hook=True,
                 include_mala_disallowed_tools_hook=False,
             )
+            .with_agent_timeout(self._config.timeout_seconds)
             .with_env(extra={"MALA_SDK_FLOW": "fixer"})
             .with_disallowed_tools()
         )

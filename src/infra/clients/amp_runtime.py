@@ -26,6 +26,7 @@ from src.core.constants import validate_amp_effort_for_mode
 from src.infra.tools.env import (
     SCRIPTS_DIR,
     USER_CONFIG_DIR,
+    format_mcp_timeout_ms,
     get_lock_dir,
     get_repo_validation_log_dir,
 )
@@ -158,6 +159,7 @@ class AmpRuntimeBuilder:
         self._mcp_servers_override: dict[str, object] | None = None
         self._lint_tools: AbstractSet[str] | None = None
         self._deadlock_monitor: object | None = None
+        self._agent_timeout_seconds: float | None = None
 
     def with_hooks(
         self,
@@ -185,21 +187,30 @@ class AmpRuntimeBuilder:
         self._deadlock_monitor = deadlock_monitor
         return self
 
-    def with_env(self, *, extra: Mapping[str, str] | None = None) -> AmpRuntimeBuilder:
+    def with_agent_timeout(self, timeout_seconds: float | None) -> AmpRuntimeBuilder:
+        """Configure the per-agent timeout used for MCP tool calls.
+
+        Amp reads ``MCP_TIMEOUT`` from the environment in milliseconds, while
+        mala's session timeout is tracked in seconds.
+        """
+        self._agent_timeout_seconds = timeout_seconds
+        return self
+
+    def with_env(self, extra: Mapping[str, str] | None = None) -> AmpRuntimeBuilder:
         """Overlay extra env vars on top of the env composed in :meth:`build`.
 
         Mirrors :meth:`AgentRuntimeBuilder.with_env`'s ``extra=`` shape
         (``src/infra/agent_runtime.py:180-202``). The extras are layered
-        on **after** the plan's mandatory overlays (PATH, PLUGINS,
-        MALA_*), so a caller cannot accidentally clobber the lock-ownership
-        env vars consumed by the safety plugin.
+        on **after** the plan's mandatory overlays (PATH, PLUGINS, MALA_*);
+        ``MCP_TIMEOUT`` is reapplied in :meth:`build` so it always reflects
+        :meth:`with_agent_timeout`.
         """
         if extra:
             self._env_extra.update(extra)
         return self
 
     def with_mcp(
-        self, *, servers: Mapping[str, object] | None = None
+        self, servers: Mapping[str, object] | None = None
     ) -> AmpRuntimeBuilder:
         """Configure MCP servers; default uses the injected factory.
 
@@ -311,9 +322,10 @@ class AmpRuntimeBuilder:
                 get_repo_validation_log_dir(self._repo_path)
             ),
             "MALA_REPO_NAMESPACE": str(self._repo_path),
-            "MCP_TIMEOUT": "300000",
+            "MCP_TIMEOUT": format_mcp_timeout_ms(self._agent_timeout_seconds),
             **self._env_extra,
         }
+        env["MCP_TIMEOUT"] = format_mcp_timeout_ms(self._agent_timeout_seconds)
         if lock_event_log_path is not None:
             env["MALA_LOCK_EVENT_LOG"] = str(lock_event_log_path)
 

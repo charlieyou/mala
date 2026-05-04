@@ -19,6 +19,9 @@ from src.pipeline.fixer_service import (
     FixerServiceConfig,
 )
 from tests.fakes.agent_provider import FakeAgentProvider
+from tests.fakes.sdk_client import (
+    FakeSDKClientFactory as StreamingFakeSDKClientFactory,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -91,6 +94,7 @@ def install_mock_runtime_builder(
     """
     mock_builder = MagicMock()
     mock_builder.with_hooks.return_value = mock_builder
+    mock_builder.with_agent_timeout.return_value = mock_builder
     mock_builder.with_env.return_value = mock_builder
     mock_builder.with_mcp.return_value = mock_builder
     mock_builder.with_disallowed_tools.return_value = mock_builder
@@ -225,6 +229,25 @@ class TestFixerServiceSuccess:
         assert result.success is True
         assert result.interrupted is False
         assert result.log_path == "/tmp/fixer.log"
+
+    @pytest.mark.asyncio
+    async def test_run_fixer_sets_mcp_timeout_from_config(self, tmp_path: Path) -> None:
+        """The fixer timeout reaches the spawned client env."""
+        factory = StreamingFakeSDKClientFactory()
+        factory.configure_next_client(result_message=None)
+        config = make_config(repo_path=tmp_path, timeout_seconds=1800)
+        provider = FakeAgentProvider(factory)
+        service = FixerService(config, provider)
+        ctx = make_failure_context()
+
+        with patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path:
+            mock_log_path.return_value = tmp_path / "fixer.log"
+
+            result = await service.run_fixer(ctx)
+
+        assert result.success is True
+        env = factory.created_options[0]["env"]
+        assert env["MCP_TIMEOUT"] == "1800000"
 
     @pytest.mark.asyncio
     async def test_run_fixer_uses_prompt_template(self) -> None:

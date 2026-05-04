@@ -92,6 +92,20 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 # Prompts directory (relative to this file: src/infra/tools/env.py -> src/prompts/)
 PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
 
+DEFAULT_MCP_TIMEOUT_SECONDS = 300.0
+
+
+def format_mcp_timeout_ms(timeout_seconds: float | None = None) -> str:
+    """Format an MCP timeout value for SDK/CLI environment variables.
+
+    The MCP timeout env var is expressed in milliseconds, while mala's agent
+    timeout config is expressed in seconds.
+    """
+    seconds = (
+        DEFAULT_MCP_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+    )
+    return str(int(seconds * 1000))
+
 
 def load_user_env() -> None:
     """Load environment from user config directory.

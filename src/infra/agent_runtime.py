@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
-from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
+from src.infra.tools.env import SCRIPTS_DIR, format_mcp_timeout_ms, get_lock_dir
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +142,7 @@ class AgentRuntimeBuilder:
         self._env: dict[str, str] | None = None
         self._mcp_servers: object | None = None
         self._disallowed_tools: list[str] | None = None
+        self._agent_timeout_seconds: float | None = None
 
     def with_hooks(
         self,
@@ -184,6 +185,17 @@ class AgentRuntimeBuilder:
             self._include_lock_enforcement_hook = include_lock_enforcement_hook
         return self
 
+    def with_agent_timeout(self, timeout_seconds: float | None) -> AgentRuntimeBuilder:
+        """Configure the per-agent timeout used for MCP tool calls.
+
+        Mala's session timeout is in seconds; SDK MCP timeouts are configured
+        through the ``MCP_TIMEOUT`` environment variable in milliseconds.
+        """
+        self._agent_timeout_seconds = timeout_seconds
+        if self._env is not None:
+            self._env["MCP_TIMEOUT"] = format_mcp_timeout_ms(timeout_seconds)
+        return self
+
     def with_env(self, extra: dict[str, str] | None = None) -> AgentRuntimeBuilder:
         """Configure environment variables.
 
@@ -202,10 +214,11 @@ class AgentRuntimeBuilder:
             "LOCK_DIR": str(get_lock_dir()),
             "AGENT_ID": self._agent_id,
             "REPO_NAMESPACE": str(self._repo_path),
-            "MCP_TIMEOUT": "300000",
+            "MCP_TIMEOUT": format_mcp_timeout_ms(self._agent_timeout_seconds),
         }
         if extra:
             self._env.update(extra)
+        self._env["MCP_TIMEOUT"] = format_mcp_timeout_ms(self._agent_timeout_seconds)
         return self
 
     def with_mcp(

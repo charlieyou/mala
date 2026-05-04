@@ -177,6 +177,7 @@ class TestFixerInterruptHandling:
         """
         mock_builder = MagicMock()
         mock_builder.with_hooks.return_value = mock_builder
+        mock_builder.with_agent_timeout.return_value = mock_builder
         mock_builder.with_env.return_value = mock_builder
         mock_builder.with_mcp.return_value = mock_builder
         mock_builder.with_disallowed_tools.return_value = mock_builder

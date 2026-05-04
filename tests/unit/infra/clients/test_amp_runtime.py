@@ -208,9 +208,16 @@ def test_env_inherits_custom_parent_env_key(
 
 
 @pytest.mark.unit
-def test_env_includes_mcp_timeout_300000(builder: AmpRuntimeBuilder) -> None:
+def test_env_includes_default_mcp_timeout(builder: AmpRuntimeBuilder) -> None:
     runtime = builder.build()
     assert runtime.env["MCP_TIMEOUT"] == "300000"
+
+
+@pytest.mark.unit
+def test_agent_timeout_sets_mcp_timeout(builder: AmpRuntimeBuilder) -> None:
+    runtime = builder.with_agent_timeout(1800).build()
+    assert runtime.env["MCP_TIMEOUT"] == "1800000"
+    assert runtime.options.env["MCP_TIMEOUT"] == "1800000"
 
 
 # ---------------------------------------------------------------------------
@@ -516,8 +523,9 @@ def test_malaconfig_amp_mode_deep_flows_into_argv(
 
 # ---------------------------------------------------------------------------
 # Fluent-API regression: pipeline calls
-# builder.with_hooks().with_env().with_mcp().with_disallowed_tools()
-# .with_lint_tools().build() and reads runtime.options + runtime.lint_cache.
+# builder.with_hooks().with_agent_timeout().with_env().with_mcp()
+# .with_disallowed_tools().with_lint_tools().build() and reads runtime.options
+# + runtime.lint_cache.
 # Without these, AgentSessionRunner._build_session raises AttributeError
 # on the first Amp issue session (AC#6 break documented at
 # plans/2026-04-29-amp-provider-plan.md#L165).
@@ -531,12 +539,13 @@ def test_fluent_chain_used_by_agent_session_runner_returns_runtime(
     """The exact chain ``AgentSessionRunner._build_session`` calls must
     produce an :class:`AmpRuntime`.
 
-    Mirrors ``src/pipeline/agent_session_runner.py:426-433``. A regression
+    Mirrors ``AgentSessionRunner._initialize_session``. A regression
     that drops one of these methods would re-introduce the AttributeError
     the reviewer flagged.
     """
     runtime = (
         builder.with_hooks(deadlock_monitor=None)
+        .with_agent_timeout(600)
         .with_env(extra={"MALA_SDK_FLOW": "implementer"})
         .with_mcp()
         .with_disallowed_tools()
@@ -558,6 +567,7 @@ def test_fluent_chain_used_by_fixer_service_returns_runtime(
             include_stop_hook=True,
             include_mala_disallowed_tools_hook=False,
         )
+        .with_agent_timeout(600)
         .with_env(extra={"MALA_SDK_FLOW": "fixer"})
         .with_disallowed_tools()
         .with_mcp(servers={})
@@ -576,8 +586,13 @@ def test_with_env_extras_are_layered_on_top_of_mandatory_overlays(
     builder: AmpRuntimeBuilder,
 ) -> None:
     """Caller extras (``MALA_SDK_FLOW`` etc.) reach the spawn env."""
-    runtime = builder.with_env(extra={"MALA_SDK_FLOW": "implementer"}).build()
+    runtime = (
+        builder.with_agent_timeout(1800)
+        .with_env({"MALA_SDK_FLOW": "implementer", "MCP_TIMEOUT": "1"})
+        .build()
+    )
     assert runtime.env["MALA_SDK_FLOW"] == "implementer"
+    assert runtime.env["MCP_TIMEOUT"] == "1800000"
     # Mandatory overlays still in place — extras must not have clobbered them.
     assert runtime.env["PLUGINS"] == "all"
     assert runtime.env["MALA_AGENT_ID"] == "agent-42"

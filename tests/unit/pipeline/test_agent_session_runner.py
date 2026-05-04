@@ -567,6 +567,39 @@ class TestCoderTimeoutBudget:
     """Tests for hard timeout boundaries around coder execution."""
 
     @pytest.mark.asyncio
+    async def test_session_timeout_sets_client_mcp_timeout(
+        self, tmp_path: Path
+    ) -> None:
+        """The configured agent timeout reaches the spawned client env."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("{}\n")
+        client_factory = StreamingFakeSDKClientFactory()
+        client_factory.configure_next_client(
+            result_message=ResultMessage(session_id="session-1", result="done")
+        )
+        config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=1800,
+            prompts=make_prompts(),
+            review_enabled=False,
+        )
+        runner = AgentSessionRunner(
+            config=config,
+            agent_provider=FakeAgentProvider(client_factory),
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(log_path=log_path),
+        )
+
+        output = await runner.run_session(
+            AgentSessionInput(issue_id="test-issue", prompt="initial prompt")
+        )
+
+        assert output.success is True
+        env = client_factory.created_options[0]["env"]
+        assert env["MCP_TIMEOUT"] == "1800000"
+
+    @pytest.mark.asyncio
     async def test_post_session_check_time_does_not_reduce_next_coder_timeout(
         self, tmp_path: Path
     ) -> None:
