@@ -231,6 +231,11 @@ class AmpClient:
         """Alias for :attr:`session_id` (Amp uses thread = session id)."""
         return self._state.session_id
 
+    @property
+    def log_path(self) -> Path | None:
+        """Current tee log path, including pending path before init."""
+        return self._state.tee_path
+
     def get_stderr(self) -> str:
         """Return the bounded stderr ring buffer as a UTF-8-decoded string."""
         return self._state.stderr_buf.decode(errors="replace")
@@ -498,6 +503,12 @@ class AmpClient:
             # already imminent so the returncode is observable to callers.
             await self._drain_configured_lock_events()
             await self._reap_if_done()
+            if sys.exc_info()[0] is None and proc.returncode not in (None, 0):
+                raise AmpClientError(
+                    f"amp subprocess exited with code {proc.returncode}",
+                    stderr_tail=self.get_stderr(),
+                    stdout_tail=self._stdout_tail_text(),
+                )
 
     async def _dispatch(self, event: dict[str, Any]) -> AsyncIterator[object]:
         """Map one parsed event to zero or more synthetic messages."""

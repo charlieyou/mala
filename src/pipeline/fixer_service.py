@@ -203,18 +203,36 @@ class FixerService:
         client = self._agent_provider.client_factory.create(runtime.options)
 
         pending_lint_commands: dict[str, tuple[str, str]] = {}
-        log_path: str = str(get_claude_log_path(self._config.repo_path, agent_id))
+        is_amp_provider = getattr(self._agent_provider, "name", None) == "amp"
+        log_path: str = (
+            str(runtime.log_path)
+            if is_amp_provider
+            else str(get_claude_log_path(self._config.repo_path, agent_id))
+        )
+
+        def current_log_path() -> str:
+            if not is_amp_provider:
+                return log_path
+            client_log_path = getattr(client, "log_path", None)
+            if client_log_path is not None:
+                return str(client_log_path)
+            return str(runtime.log_path)
 
         try:
             async with asyncio.timeout(self._config.timeout_seconds):
                 async with client:
-                    await client.query(prompt, session_id=agent_id)
+                    await client.query(
+                        prompt,
+                        session_id=None if is_amp_provider else agent_id,
+                    )
 
                     async for message in client.receive_response():
                         # Check for interrupt between messages
                         if guard.is_interrupted():
                             return FixerResult(
-                                success=None, interrupted=True, log_path=log_path
+                                success=None,
+                                interrupted=True,
+                                log_path=current_log_path(),
                             )
 
                         # Process message using duck typing
@@ -225,16 +243,16 @@ class FixerService:
                             pending_lint_commands,
                         )
 
-            return FixerResult(success=True, log_path=log_path)
+            return FixerResult(success=True, log_path=current_log_path())
 
         except TimeoutError:
             if self._event_sink is not None:
                 self._event_sink.on_fixer_failed("timeout")
-            return FixerResult(success=False, log_path=log_path)
+            return FixerResult(success=False, log_path=current_log_path())
         except Exception as e:
             if self._event_sink is not None:
                 self._event_sink.on_fixer_failed(str(e))
-            return FixerResult(success=False, log_path=log_path)
+            return FixerResult(success=False, log_path=current_log_path())
         finally:
             # Safe removal - list may have been cleared by cleanup_locks()
             if agent_id in self._active_fixer_ids:

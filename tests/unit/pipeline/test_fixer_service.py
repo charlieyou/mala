@@ -274,6 +274,47 @@ class TestFixerServiceSuccess:
         assert "Attempt 2/5" in prompt
         assert "Lint error" in prompt
 
+    @pytest.mark.asyncio
+    async def test_run_fixer_starts_fresh_amp_thread(self, tmp_path: Path) -> None:
+        """Amp fixers must not treat synthetic fixer ids as thread ids."""
+        client = MockSDKClient()
+        factory = make_mock_sdk_client_factory(client)
+        runtime = make_mock_runtime()
+        runtime.log_path = tmp_path / ".pending-fixer.jsonl"
+        config = make_config(repo_path=tmp_path)
+        provider = FakeAgentProvider(factory, name="amp")
+        install_mock_runtime_builder(provider, runtime)
+        service = FixerService(config, provider)
+        ctx = make_failure_context()
+
+        result = await service.run_fixer(ctx)
+
+        assert result.success is True
+        assert len(client.query_calls) == 1
+        _, session_id = client.query_calls[0]
+        assert session_id is None
+
+    @pytest.mark.asyncio
+    async def test_run_fixer_amp_success_reports_actual_log_path(
+        self, tmp_path: Path
+    ) -> None:
+        """Amp fixer log path comes from the client tee path."""
+        client = MockSDKClient()
+        client.log_path = tmp_path / "T-fixer.jsonl"  # type: ignore[attr-defined]
+        factory = make_mock_sdk_client_factory(client)
+        runtime = make_mock_runtime()
+        runtime.log_path = tmp_path / ".pending-fixer.jsonl"
+        config = make_config(repo_path=tmp_path)
+        provider = FakeAgentProvider(factory, name="amp")
+        install_mock_runtime_builder(provider, runtime)
+        service = FixerService(config, provider)
+        ctx = make_failure_context()
+
+        result = await service.run_fixer(ctx)
+
+        assert result.success is True
+        assert result.log_path == str(tmp_path / "T-fixer.jsonl")
+
 
 class TestFixerServiceFailure:
     """Test fixer agent failure scenarios."""
@@ -326,6 +367,28 @@ class TestFixerServiceFailure:
 
         assert result.success is False
         assert result.log_path == "/tmp/fixer.log"
+        event_sink.on_fixer_failed.assert_called_once_with("Connection lost")
+
+    @pytest.mark.asyncio
+    async def test_run_fixer_amp_exception_reports_pending_log_path(
+        self, tmp_path: Path
+    ) -> None:
+        """Amp fixer failures before init report the pending tee path."""
+        client = MockSDKClient(raise_on_receive=RuntimeError("Connection lost"))
+        factory = make_mock_sdk_client_factory(client)
+        runtime = make_mock_runtime()
+        runtime.log_path = tmp_path / ".pending-fixer.jsonl"
+        config = make_config(repo_path=tmp_path)
+        event_sink = MagicMock()
+        provider = FakeAgentProvider(factory, name="amp")
+        install_mock_runtime_builder(provider, runtime)
+        service = FixerService(config, provider, event_sink=event_sink)
+        ctx = make_failure_context()
+
+        result = await service.run_fixer(ctx)
+
+        assert result.success is False
+        assert result.log_path == str(tmp_path / ".pending-fixer.jsonl")
         event_sink.on_fixer_failed.assert_called_once_with("Connection lost")
 
 
@@ -382,6 +445,37 @@ class TestFixerServiceInterrupt:
         assert result.success is None
         assert result.interrupted is True
         assert result.log_path == "/tmp/fixer.log"
+
+    @pytest.mark.asyncio
+    async def test_run_fixer_amp_interrupt_reports_actual_log_path(
+        self, tmp_path: Path
+    ) -> None:
+        """Amp interruptions report the actual tee path when available."""
+        mock_msg = MagicMock()
+        type(mock_msg).__name__ = "AssistantMessage"
+        mock_msg.content = []
+
+        client = MockSDKClient(messages=[mock_msg])
+        client.log_path = tmp_path / "T-fixer.jsonl"  # type: ignore[attr-defined]
+        factory = make_mock_sdk_client_factory(client)
+        runtime = make_mock_runtime()
+        runtime.log_path = tmp_path / ".pending-fixer.jsonl"
+        config = make_config(repo_path=tmp_path)
+        provider = FakeAgentProvider(factory, name="amp")
+        install_mock_runtime_builder(provider, runtime)
+        service = FixerService(config, provider)
+        ctx = make_failure_context()
+
+        with patch("src.pipeline.fixer_service.InterruptGuard") as mock_guard_cls:
+            mock_guard = MagicMock()
+            mock_guard.is_interrupted.side_effect = [False, True]
+            mock_guard_cls.return_value = mock_guard
+
+            result = await service.run_fixer(ctx, asyncio.Event())
+
+        assert result.success is None
+        assert result.interrupted is True
+        assert result.log_path == str(tmp_path / "T-fixer.jsonl")
 
 
 class TestFixerServiceEvents:

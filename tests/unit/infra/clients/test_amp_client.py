@@ -1670,6 +1670,28 @@ async def test_malformed_json_raises_amp_client_error(tmp_path: Path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_malformed_json_error_wins_over_nonzero_exit(tmp_path: Path) -> None:
+    script = _write_fake_amp(
+        tmp_path,
+        lines=[_system_init(), "not-json-at-all"],
+        stderr="later subprocess failure\n",
+        exit_code=2,
+    )
+    options = _make_options(
+        log_path=tmp_path / ".pending-mj-nonzero.jsonl",
+        argv=_python_argv_for(script),
+        cwd=tmp_path,
+    )
+    async with AmpClient(options) as client:
+        await client.query("p")
+        with pytest.raises(AmpClientError) as exc_info:
+            await _drain(client)
+    assert "stream-json" in str(exc_info.value).lower()
+    assert "exited with code" not in str(exc_info.value)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_premature_exit_with_no_result_returns_no_result_message(
     tmp_path: Path,
 ) -> None:
@@ -1695,10 +1717,11 @@ async def test_premature_exit_with_no_result_returns_no_result_message(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_premature_exit_nonzero_does_not_hang(tmp_path: Path) -> None:
+async def test_premature_exit_nonzero_raises_with_stderr(tmp_path: Path) -> None:
     script = _write_fake_amp(
         tmp_path,
         lines=[_system_init("T-px")],
+        stderr="Invalid thread ID or URL: fixer-test\n",
         exit_code=2,
     )
     options = _make_options(
@@ -1708,10 +1731,34 @@ async def test_premature_exit_nonzero_does_not_hang(tmp_path: Path) -> None:
     )
     async with AmpClient(options) as client:
         await client.query("p")
-        msgs = await asyncio.wait_for(_drain(client), timeout=5.0)
+        with pytest.raises(AmpClientError) as exc_info:
+            await asyncio.wait_for(_drain(client), timeout=5.0)
 
-    # Iterator completes; no result message but session_id captured.
-    assert all(not isinstance(m, ResultMessage) for m in msgs)
+    assert "exited with code 2" in str(exc_info.value)
+    assert "Invalid thread ID" in exc_info.value.stderr_tail
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_result_then_nonzero_exit_raises(tmp_path: Path) -> None:
+    script = _write_fake_amp(
+        tmp_path,
+        lines=[_system_init("T-rnz"), _result("T-rnz", "success")],
+        stderr="post-result failure\n",
+        exit_code=2,
+    )
+    options = _make_options(
+        log_path=tmp_path / ".pending-rnz.jsonl",
+        argv=_python_argv_for(script),
+        cwd=tmp_path,
+    )
+    async with AmpClient(options) as client:
+        await client.query("p")
+        with pytest.raises(AmpClientError) as exc_info:
+            await _drain(client)
+
+    assert "exited with code 2" in str(exc_info.value)
+    assert "post-result failure" in exc_info.value.stderr_tail
 
 
 # ---------------------------------------------------------------------------

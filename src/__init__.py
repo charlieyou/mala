@@ -3,9 +3,9 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .orchestration.orchestrator import MalaOrchestrator
+    from .orchestration.orchestrator import MalaOrchestrator  # noqa: TC004
 
-__version__ = "1.2.13"
+__version__ = "1.2.14"
 __all__ = ["MalaOrchestrator", "__version__"]
 
 
