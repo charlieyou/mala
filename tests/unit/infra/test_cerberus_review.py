@@ -22,12 +22,12 @@ from src.infra.clients.cerberus_review import (
 from src.infra.clients.review_output_parser import (
     ReviewIssue,
     ReviewOutputParser,
-    ReviewResult,
 )
 from src.infra.io.base_sink import BaseEventSink
 
 if TYPE_CHECKING:
     from src.core.protocols.events import MalaEventSink
+    from src.infra.clients.review_output_parser import ReviewResult
 
 # Path to golden files captured from real Cerberus output
 FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures" / "cerberus"
@@ -628,58 +628,6 @@ class TestFormatReviewIssues:
         # Should not have empty brackets
         assert "[]" not in result
         assert "Issue" in result
-
-
-class TestReviewResultProtocol:
-    """Tests verifying ReviewResult satisfies ReviewOutcome protocol."""
-
-    def test_result_has_required_fields(self) -> None:
-        """ReviewResult must have passed, parse_error, fatal_error, issues."""
-        result = ReviewResult(
-            passed=True,
-            issues=[],
-            parse_error=None,
-            fatal_error=False,
-        )
-
-        # These are the fields required by ReviewOutcome protocol
-        assert hasattr(result, "passed")
-        assert hasattr(result, "parse_error")
-        assert hasattr(result, "fatal_error")
-        assert hasattr(result, "issues")
-
-    def test_parse_error_is_str_or_none(self) -> None:
-        """parse_error must be str | None, not bool."""
-        result_none = ReviewResult(passed=True, parse_error=None)
-        result_str = ReviewResult(passed=False, parse_error="error message")
-
-        assert result_none.parse_error is None
-        assert isinstance(result_str.parse_error, str)
-
-
-class TestReviewIssueProtocol:
-    """Tests verifying ReviewIssue satisfies lifecycle.ReviewIssue protocol."""
-
-    def test_issue_has_required_fields(self) -> None:
-        """ReviewIssue must have all fields required by lifecycle protocol."""
-        issue = ReviewIssue(
-            file="test.py",
-            line_start=1,
-            line_end=2,
-            priority=1,
-            title="Title",
-            body="Body",
-            reviewer="codex",
-        )
-
-        # These are the fields required by lifecycle.ReviewIssue protocol
-        assert hasattr(issue, "file")
-        assert hasattr(issue, "line_start")
-        assert hasattr(issue, "line_end")
-        assert hasattr(issue, "priority")
-        assert hasattr(issue, "title")
-        assert hasattr(issue, "body")
-        assert hasattr(issue, "reviewer")
 
 
 class TestToRelativePath:

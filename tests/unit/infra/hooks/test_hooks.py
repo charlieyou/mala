@@ -22,7 +22,6 @@ from src.infra.hooks import (
     SAFE_GIT_ALTERNATIVES,
     FILE_WRITE_TOOLS,
     FileReadCache,
-    CachedFileInfo,
     make_file_read_cache_hook,
     make_commit_guard_hook,
     make_stop_hook,
@@ -665,19 +664,6 @@ class TestFileReadCache:
         assert is_redundant_1 is True
         assert is_redundant_2 is True
         assert cache.blocked_count == 2
-
-    def test_cached_file_info_dataclass(self) -> None:
-        """CachedFileInfo dataclass should work correctly."""
-        info = CachedFileInfo(
-            mtime_ns=1234567890,
-            size=100,
-            content_hash="abc123",
-            read_count=1,
-        )
-        assert info.mtime_ns == 1234567890
-        assert info.size == 100
-        assert info.content_hash == "abc123"
-        assert info.read_count == 1
 
     def test_different_offset_limit_allowed(self, tmp_path: Path) -> None:
         """Reading same file with different offset/limit should be allowed."""

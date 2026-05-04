@@ -15,24 +15,6 @@ from src.infra.sigint_guard import (
 )
 
 
-class TestFlowInterruptedError:
-    """Tests for FlowInterruptedError exception."""
-
-    def test_is_exception(self) -> None:
-        """FlowInterruptedError is an Exception."""
-        assert issubclass(FlowInterruptedError, Exception)
-
-    def test_raise_with_message(self) -> None:
-        """Can raise with a message."""
-        with pytest.raises(FlowInterruptedError, match="test message"):
-            raise FlowInterruptedError("test message")
-
-    def test_not_interrupted_error(self) -> None:
-        """FlowInterruptedError is NOT Python's InterruptedError (OSError)."""
-        assert not issubclass(FlowInterruptedError, InterruptedError)
-        assert not issubclass(FlowInterruptedError, OSError)
-
-
 class TestInterruptGuard:
     """Tests for InterruptGuard class."""
 

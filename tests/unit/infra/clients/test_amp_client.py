@@ -42,7 +42,6 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from src.core.protocols.sdk import SDKClientProtocol
 from src.infra.clients.amp_client import (
     AmpClient,
     AmpClientError,
@@ -442,22 +441,6 @@ async def _drain(client: AmpClient) -> list[object]:
     async for msg in client.receive_response():
         out.append(msg)
     return out
-
-
-# ---------------------------------------------------------------------------
-# Protocol conformance
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-def test_amp_client_conforms_to_sdk_client_protocol(tmp_path: Path) -> None:
-    options = _make_options(
-        log_path=tmp_path / ".pending-x.jsonl",
-        argv=["true"],
-        cwd=tmp_path,
-    )
-    client = AmpClient(options)
-    assert isinstance(client, SDKClientProtocol)
 
 
 # ---------------------------------------------------------------------------

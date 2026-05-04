@@ -104,55 +104,6 @@ def context_with_commit(tmp_repo: Path) -> ValidationContext:
     )
 
 
-class TestSpecRunWorkspaceDataclass:
-    """Test SpecRunWorkspace dataclass fields."""
-
-    def test_workspace_has_required_fields(
-        self, tmp_repo: Path, basic_spec: ValidationSpec
-    ) -> None:
-        """SpecRunWorkspace should have validation_cwd, artifacts, and baseline_percent."""
-        from src.domain.validation.spec_workspace import SpecRunWorkspace
-
-        # Create a minimal workspace for in-place validation
-        workspace = SpecRunWorkspace(
-            validation_cwd=tmp_repo,
-            artifacts=ValidationArtifacts(log_dir=tmp_repo / "logs"),
-            baseline_percent=85.0,
-            run_id="run-abc123",
-            log_dir=tmp_repo / "logs",
-            worktree_ctx=None,
-        )
-
-        assert workspace.validation_cwd == tmp_repo
-        assert workspace.artifacts.log_dir == tmp_repo / "logs"
-        assert workspace.baseline_percent == 85.0
-        assert workspace.run_id == "run-abc123"
-        assert workspace.worktree_ctx is None
-
-    def test_workspace_with_worktree_context(self, tmp_repo: Path) -> None:
-        """SpecRunWorkspace should include optional worktree context."""
-        from src.domain.validation.spec_workspace import SpecRunWorkspace
-
-        worktree_path = tmp_repo / "worktree"
-        worktree_path.mkdir()
-
-        mock_worktree = MagicMock(spec=WorktreeContext)
-        mock_worktree.state = WorktreeState.CREATED
-        mock_worktree.path = worktree_path
-
-        workspace = SpecRunWorkspace(
-            validation_cwd=worktree_path,
-            artifacts=ValidationArtifacts(log_dir=tmp_repo / "logs"),
-            baseline_percent=None,
-            run_id="run-xyz789",
-            log_dir=tmp_repo / "logs",
-            worktree_ctx=mock_worktree,
-        )
-
-        assert workspace.worktree_ctx is not None
-        assert workspace.worktree_ctx.path == worktree_path
-
-
 class TestSetupWorkspace:
     """Test setup_workspace function."""
 

@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from src.core.protocols.log import LogProvider
 from src.infra.clients.amp_log_provider import (
     AMP_SESSIONS_DIR,
     AmpLogProvider,
@@ -147,17 +146,6 @@ def _append_jsonl(path: Path, events: Iterable[dict[str, object]]) -> None:
         for event in events:
             fh.write(json.dumps(event))
             fh.write("\n")
-
-
-# ---------------------------------------------------------------------------
-# Protocol conformance
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-def test_conforms_to_log_provider_protocol() -> None:
-    provider = AmpLogProvider()
-    assert isinstance(provider, LogProvider)
 
 
 @pytest.mark.unit

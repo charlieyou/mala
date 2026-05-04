@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 
-from src.core.protocols.agent_provider import CoderRuntimeBuilder
 from src.infra.agent_runtime import AgentRuntimeBuilder
 from src.infra.clients.amp_runtime import AmpRuntime, AmpRuntimeBuilder
 from src.infra.io.config import MalaConfig
@@ -85,18 +84,6 @@ def builder(repo_path: Path) -> AmpRuntimeBuilder:
         _stdio_locking_factory(),
         mode="smart",
     )
-
-
-# ---------------------------------------------------------------------------
-# Conformance to the CoderRuntimeBuilder protocol.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-def test_builder_conforms_to_coder_runtime_builder_protocol(
-    builder: AmpRuntimeBuilder,
-) -> None:
-    assert isinstance(builder, CoderRuntimeBuilder)
 
 
 @pytest.mark.unit

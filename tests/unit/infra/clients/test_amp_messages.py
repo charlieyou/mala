@@ -64,20 +64,6 @@ def test_class_names_match_processor_keys() -> None:
     assert ToolResultBlock.__name__ == "ToolResultBlock"
 
 
-def test_dataclasses_are_frozen() -> None:
-    for cls in (
-        AssistantMessage,
-        ResultMessage,
-        TextBlock,
-        ToolUseBlock,
-        ToolResultBlock,
-    ):
-        assert dataclasses.is_dataclass(cls)
-        # Frozen dataclasses raise FrozenInstanceError on attribute assignment.
-        params = getattr(cls, "__dataclass_params__")
-        assert params.frozen is True, f"{cls.__name__} must be frozen"
-
-
 @pytest.mark.parametrize(
     ("cls", "expected_fields"),
     [

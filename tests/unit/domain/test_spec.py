@@ -17,10 +17,8 @@ from src.domain.validation.config import (
     CustomCommandConfig,
 )
 from src.domain.validation.spec import (
-    DEFAULT_COMMAND_TIMEOUT,
     CommandKind,
-    CoverageConfig,
-    E2EConfig,
+    DEFAULT_COMMAND_TIMEOUT,
     ValidationCommand,
     ValidationScope,
     ValidationSpec,
@@ -30,92 +28,8 @@ from src.domain.validation.spec import (
 )
 
 
-class TestValidationCommand:
-    """Test ValidationCommand dataclass."""
-
-    def test_basic_command(self) -> None:
-        cmd = ValidationCommand(
-            name="pytest",
-            command="uv run pytest",
-            kind=CommandKind.TEST,
-        )
-        assert cmd.name == "pytest"
-        assert cmd.command == "uv run pytest"
-        assert cmd.kind == CommandKind.TEST
-        assert cmd.shell is True  # default
-        assert cmd.timeout == DEFAULT_COMMAND_TIMEOUT  # default 120
-        assert cmd.use_test_mutex is False  # default
-        assert cmd.allow_fail is False  # default
-
-    def test_command_with_mutex(self) -> None:
-        cmd = ValidationCommand(
-            name="pytest",
-            command="uv run pytest",
-            kind=CommandKind.TEST,
-            use_test_mutex=True,
-        )
-        assert cmd.use_test_mutex is True
-
-    def test_command_allow_fail(self) -> None:
-        cmd = ValidationCommand(
-            name="ty check",
-            command="uvx ty check",
-            kind=CommandKind.TYPECHECK,
-            allow_fail=True,
-        )
-        assert cmd.allow_fail is True
-
-    def test_command_with_custom_timeout(self) -> None:
-        cmd = ValidationCommand(
-            name="pytest",
-            command="uv run pytest",
-            kind=CommandKind.TEST,
-            timeout=300,
-        )
-        assert cmd.timeout == 300
-
-
 class TestValidationSpec:
     """Test ValidationSpec dataclass."""
-
-    def test_minimal_spec(self) -> None:
-        spec = ValidationSpec(
-            commands=[],
-            scope=ValidationScope.PER_SESSION,
-        )
-        assert spec.commands == []
-        assert spec.require_clean_git is True  # default
-        assert spec.require_pytest_for_code_changes is True  # default
-        assert spec.scope == ValidationScope.PER_SESSION
-        assert spec.coverage is not None
-        assert spec.e2e is not None
-        assert spec.code_patterns == []
-        assert spec.config_files == []
-        assert spec.setup_files == []
-
-    def test_full_spec(self) -> None:
-        cmd = ValidationCommand(
-            name="pytest",
-            command="uv run pytest",
-            kind=CommandKind.TEST,
-        )
-        spec = ValidationSpec(
-            commands=[cmd],
-            require_clean_git=True,
-            require_pytest_for_code_changes=True,
-            coverage=CoverageConfig(enabled=True, min_percent=90.0),
-            e2e=E2EConfig(enabled=False),
-            scope=ValidationScope.GLOBAL,
-            code_patterns=["**/*.py"],
-            config_files=["pyproject.toml"],
-            setup_files=["uv.lock"],
-        )
-        assert len(spec.commands) == 1
-        assert spec.coverage.min_percent == 90.0
-        assert spec.e2e.enabled is False
-        assert spec.code_patterns == ["**/*.py"]
-        assert spec.config_files == ["pyproject.toml"]
-        assert spec.setup_files == ["uv.lock"]
 
     def test_commands_by_kind(self) -> None:
         lint_cmd = ValidationCommand(

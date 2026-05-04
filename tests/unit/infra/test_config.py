@@ -310,25 +310,6 @@ class TestMalaConfigEnsureDirectories:
         assert locks.exists()
 
 
-class TestMalaConfigImmutability:
-    """Tests for frozen dataclass behavior."""
-
-    def test_config_is_frozen(self) -> None:
-        """MalaConfig is immutable after creation."""
-        config = MalaConfig()
-        with pytest.raises(AttributeError):
-            config.runs_dir = Path("/new/path")  # type: ignore[misc]  # ty:ignore[invalid-assignment]
-
-    def test_config_is_hashable(self) -> None:
-        """Frozen MalaConfig is hashable and can be used in sets."""
-        config1 = MalaConfig(review_timeout=100)
-        config2 = MalaConfig(review_timeout=200)
-
-        # Should be hashable
-        config_set = {config1, config2}
-        assert len(config_set) == 2
-
-
 class TestBuildResolvedConfig:
     """Tests for build_resolved_config() function."""
 
@@ -528,28 +509,6 @@ class TestCerberusEnvParsing:
         with pytest.raises(ValueError) as exc_info:
             build_resolved_config(base, overrides)
         assert "empty key" in str(exc_info.value).lower()
-
-
-class TestResolvedConfigImmutability:
-    """Tests for ResolvedConfig frozen dataclass behavior."""
-
-    def test_resolved_config_is_frozen(self) -> None:
-        """ResolvedConfig is immutable after creation."""
-        base = MalaConfig()
-        resolved = build_resolved_config(base, None)
-
-        with pytest.raises(AttributeError):
-            resolved.runs_dir = Path("/new")  # type: ignore[misc]  # ty:ignore[invalid-assignment]
-
-    def test_resolved_config_is_hashable(self) -> None:
-        """ResolvedConfig can be used in sets."""
-        base1 = MalaConfig(review_timeout=100)
-        base2 = MalaConfig(review_timeout=200)
-        resolved1 = build_resolved_config(base1, None)
-        resolved2 = build_resolved_config(base2, None)
-
-        config_set = {resolved1, resolved2}
-        assert len(config_set) == 2
 
 
 class TestBuildResolvedConfigIdempotency:

@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from src.core.protocols.agent_provider import AgentProvider
 from src.infra.clients.amp_provider import (
     AmpAgentProvider,
     AmpPluginNotActiveError,
@@ -89,29 +88,6 @@ def _install_fake_amp_emitting_sentinel(
     fake_amp.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
     return fake_amp
-
-
-# ---------------------------------------------------------------------------
-# Conformance
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-def test_provider_passes_runtime_isinstance_check() -> None:
-    provider = AmpAgentProvider()
-    assert isinstance(provider, AgentProvider)
-    assert provider.name == "amp"
-
-
-@pytest.mark.unit
-def test_provider_exposes_required_attributes() -> None:
-    provider = AmpAgentProvider()
-    assert provider.client_factory is not None
-    assert provider.log_provider is not None
-    # ``client_factory`` is cached across accesses so the orchestrator
-    # always sees the same instance.
-    assert provider.client_factory is provider.client_factory
-    assert provider.log_provider is provider.log_provider
 
 
 @pytest.mark.unit

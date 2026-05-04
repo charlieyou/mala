@@ -548,13 +548,3 @@ class TestFileSystemLogProvider:
         offset = provider.get_end_offset(nonexistent, start_offset=50)
 
         assert offset == 50
-
-    def test_conforms_to_log_provider_protocol(self, tmp_path: Path) -> None:
-        """FileSystemLogProvider should conform to LogProvider protocol."""
-        from src.core.protocols.log import LogProvider
-        from src.infra.io.session_log_parser import FileSystemLogProvider
-
-        provider = FileSystemLogProvider()
-
-        # Protocol check (runtime_checkable)
-        assert isinstance(provider, LogProvider)

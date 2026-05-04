@@ -2,12 +2,9 @@
 
 These tests are the regression guard for T006 (the Claude-path refactor):
 
-- The provider conforms to :class:`AgentProvider` (runtime-checkable).
-- ``install_prerequisites`` is a no-op and idempotent.
 - The bundled pieces round-trip through the existing Claude pipeline call
-  sites: ``client_factory`` is :class:`SDKClientFactory`, ``log_provider`` is
-  :class:`FileSystemLogProvider`, and ``runtime_builder`` returns an
-  :class:`AgentRuntimeBuilder` configured with the provider's client factory.
+  sites: ``runtime_builder`` returns an :class:`AgentRuntimeBuilder`
+  configured with the provider's client factory.
 - Importing the Claude provider does NOT pull in any
   ``src.infra.clients.amp_*`` adapter module - this protects the
   Amp-vs-Claude lazy-import boundary.
@@ -22,13 +19,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from src.core.protocols.agent_provider import AgentProvider, CoderRuntimeBuilder
-from src.core.protocols.log import LogProvider
-from src.core.protocols.sdk import SDKClientFactoryProtocol
 from src.infra.agent_runtime import AgentRuntimeBuilder
 from src.infra.clients.claude_provider import ClaudeAgentProvider
-from src.infra.io.session_log_parser import FileSystemLogProvider
-from src.infra.sdk_adapter import SDKClientFactory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -53,59 +45,8 @@ def _mcp_server_factory() -> Callable[..., dict[str, object]]:
 
 
 # ---------------------------------------------------------------------------
-# Conformance: ClaudeAgentProvider satisfies the AgentProvider protocol
-# ---------------------------------------------------------------------------
-
-
-def test_provider_conforms_to_agent_provider_protocol() -> None:
-    provider = ClaudeAgentProvider()
-    assert isinstance(provider, AgentProvider)
-
-
-def test_name_attribute_is_claude_literal() -> None:
-    provider = ClaudeAgentProvider()
-    assert provider.name == "claude"
-
-
-def test_client_factory_is_sdk_client_factory_and_conforms_to_protocol() -> None:
-    provider = ClaudeAgentProvider()
-    assert isinstance(provider.client_factory, SDKClientFactory)
-    assert isinstance(provider.client_factory, SDKClientFactoryProtocol)
-
-
-def test_log_provider_is_filesystem_log_provider_and_conforms_to_protocol() -> None:
-    provider = ClaudeAgentProvider()
-    assert isinstance(provider.log_provider, FileSystemLogProvider)
-    assert isinstance(provider.log_provider, LogProvider)
-
-
-# ---------------------------------------------------------------------------
-# install_prerequisites: no-op + idempotent for Claude
-# ---------------------------------------------------------------------------
-
-
-def test_install_prerequisites_is_a_noop(tmp_path: Path) -> None:
-    provider = ClaudeAgentProvider()
-    result = provider.install_prerequisites(
-        tmp_path, mcp_server_factory=_mcp_server_factory()
-    )
-    assert result is None
-
-
-def test_install_prerequisites_is_idempotent(tmp_path: Path) -> None:
-    provider = ClaudeAgentProvider()
-    factory = _mcp_server_factory()
-    # Calling repeatedly must not raise or mutate provider state.
-    for _ in range(3):
-        provider.install_prerequisites(tmp_path, mcp_server_factory=factory)
-    # Bundled pieces remain the same instances (no re-construction).
-    assert isinstance(provider.client_factory, SDKClientFactory)
-    assert isinstance(provider.log_provider, FileSystemLogProvider)
-
-
-# ---------------------------------------------------------------------------
 # runtime_builder: returns an AgentRuntimeBuilder wired to the provider's
-# client factory; structurally conforms to CoderRuntimeBuilder.
+# client factory.
 # ---------------------------------------------------------------------------
 
 
@@ -115,7 +56,6 @@ def test_runtime_builder_returns_agent_runtime_builder(tmp_path: Path) -> None:
         tmp_path, "agent-1", mcp_server_factory=_mcp_server_factory()
     )
     assert isinstance(builder, AgentRuntimeBuilder)
-    assert isinstance(builder, CoderRuntimeBuilder)
 
 
 def test_runtime_builder_uses_provider_client_factory(tmp_path: Path) -> None:

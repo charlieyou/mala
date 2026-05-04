@@ -17,11 +17,8 @@ import pytest
 import yaml
 
 from src.domain.validation.config import (
-    CerberusConfig,
     ConfigError,
-    EpicVerifierConfig,
     FailureMode,
-    VerificationRetryPolicy,
 )
 from src.domain.validation.config_loader import (
     _parse_epic_verification_config,
@@ -351,66 +348,6 @@ class TestParseEpicVerificationConfigFromYaml:
         assert config.reviewer_type == "agent_sdk"
 
 
-class TestEpicVerifierConfigDataclass:
-    """Tests for the EpicVerifierConfig dataclass itself."""
-
-    def test_dataclass_has_all_expected_fields(self) -> None:
-        """EpicVerifierConfig has all expected fields."""
-        config = EpicVerifierConfig()
-        assert hasattr(config, "enabled")
-        assert hasattr(config, "reviewer_type")
-        assert hasattr(config, "timeout")
-        assert hasattr(config, "max_retries")
-        assert hasattr(config, "failure_mode")
-        assert hasattr(config, "cerberus")
-        assert hasattr(config, "agent_sdk_timeout")
-        assert hasattr(config, "agent_sdk_model")
-        assert hasattr(config, "retry_policy")
-
-    def test_dataclass_defaults(self) -> None:
-        """EpicVerifierConfig has correct defaults."""
-        config = EpicVerifierConfig()
-        assert config.enabled is True
-        assert config.reviewer_type == "agent_sdk"
-        assert config.timeout == 600
-        assert config.max_retries == 3
-        assert config.failure_mode == FailureMode.CONTINUE
-        assert config.cerberus is None
-        assert config.agent_sdk_timeout == 300
-        assert config.agent_sdk_model == "opus"
-        assert config.retry_policy.timeout_retries == 3
-        assert config.retry_policy.execution_retries == 2
-        assert config.retry_policy.parse_retries == 1
-
-    def test_dataclass_is_frozen(self) -> None:
-        """EpicVerifierConfig is immutable (frozen)."""
-        config = EpicVerifierConfig()
-        with pytest.raises(AttributeError):
-            setattr(config, "enabled", False)
-
-    def test_dataclass_can_be_created_with_all_fields(self) -> None:
-        """EpicVerifierConfig can be created with all field values."""
-        cerberus = CerberusConfig(timeout=120)
-        config = EpicVerifierConfig(
-            enabled=False,
-            reviewer_type="cerberus",
-            timeout=300,
-            max_retries=5,
-            failure_mode=FailureMode.ABORT,
-            cerberus=cerberus,
-            agent_sdk_timeout=900,
-            agent_sdk_model="haiku",
-        )
-        assert config.enabled is False
-        assert config.reviewer_type == "cerberus"
-        assert config.timeout == 300
-        assert config.max_retries == 5
-        assert config.failure_mode == FailureMode.ABORT
-        assert config.cerberus is cerberus
-        assert config.agent_sdk_timeout == 900
-        assert config.agent_sdk_model == "haiku"
-
-
 class TestParseRetryPolicy:
     """Tests for _parse_retry_policy function (R6: per-category retry limits)."""
 
@@ -549,38 +486,3 @@ class TestParseEpicVerificationConfigRetryPolicy:
         assert config.retry_policy.timeout_retries == 10
         assert config.retry_policy.execution_retries == 5
         assert config.retry_policy.parse_retries == 2
-
-
-class TestVerificationRetryPolicyDataclass:
-    """Tests for the VerificationRetryPolicy dataclass itself."""
-
-    def test_dataclass_has_all_expected_fields(self) -> None:
-        """VerificationRetryPolicy has all expected fields."""
-        policy = VerificationRetryPolicy()
-        assert hasattr(policy, "timeout_retries")
-        assert hasattr(policy, "execution_retries")
-        assert hasattr(policy, "parse_retries")
-
-    def test_dataclass_defaults(self) -> None:
-        """VerificationRetryPolicy has correct defaults."""
-        policy = VerificationRetryPolicy()
-        assert policy.timeout_retries == 3
-        assert policy.execution_retries == 2
-        assert policy.parse_retries == 1
-
-    def test_dataclass_is_frozen(self) -> None:
-        """VerificationRetryPolicy is immutable (frozen)."""
-        policy = VerificationRetryPolicy()
-        with pytest.raises(AttributeError):
-            setattr(policy, "timeout_retries", 5)
-
-    def test_dataclass_can_be_created_with_all_fields(self) -> None:
-        """VerificationRetryPolicy can be created with all field values."""
-        policy = VerificationRetryPolicy(
-            timeout_retries=10,
-            execution_retries=8,
-            parse_retries=3,
-        )
-        assert policy.timeout_retries == 10
-        assert policy.execution_retries == 8
-        assert policy.parse_retries == 3

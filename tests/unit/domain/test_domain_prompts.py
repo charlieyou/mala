@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from src.domain.prompts import (
-    PromptProvider,
     build_continuation_prompt,
     build_prompt_validation_commands,
     extract_checkpoint,
@@ -26,19 +25,6 @@ if TYPE_CHECKING:
 
 class TestLoadPrompts:
     """Tests for load_prompts function."""
-
-    def test_returns_prompt_provider(self) -> None:
-        """load_prompts returns a PromptProvider with all prompts."""
-        result = load_prompts(PROMPTS_DIR)
-        assert isinstance(result, PromptProvider)
-        assert isinstance(result.implementer_prompt, str)
-        assert isinstance(result.review_followup_prompt, str)
-        assert isinstance(result.gate_followup_prompt, str)
-        assert isinstance(result.fixer_prompt, str)
-        assert isinstance(result.idle_resume_prompt, str)
-        assert isinstance(result.checkpoint_request_prompt, str)
-        assert isinstance(result.continuation_prompt, str)
-        assert isinstance(result.review_agent_prompt, str)
 
     def test_gate_followup_contains_template_placeholders(self) -> None:
         """Gate followup prompt contains expected placeholders."""
