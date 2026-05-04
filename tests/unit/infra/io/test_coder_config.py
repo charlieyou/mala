@@ -147,7 +147,7 @@ class TestYamlEndToEnd:
 
         yaml_path = tmp_path / "mala.yaml"
         yaml_path.write_text(
-            "preset: python-uv\ncoder: amp\ncoder_options:\n  amp:\n    mode: deep\n"
+            "preset: python-uv\ncoder: amp\namp_mode: deep\n"
         )
         validation_config = load_config(tmp_path)
         assert validation_config.coder == "amp"
@@ -512,9 +512,7 @@ class TestEffortPrecedence:
         yaml_path.write_text(
             "preset: python-uv\n"
             "coder: amp\n"
-            "coder_options:\n"
-            "  amp:\n"
-            "    mode: deep\n"
+            "amp_mode: deep\n"
             f"effort: {effort}\n"
         )
         with pytest.raises(ConfigError, match="medium"):

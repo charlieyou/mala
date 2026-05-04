@@ -459,7 +459,7 @@ class MalaConfig:
                 Precedence: env var > yaml > default.
             yaml_coder: Coder selection from mala.yaml. Used as fallback when
                 MALA_CODER is not set. Precedence: env > yaml > default.
-            yaml_amp_mode: Amp mode from mala.yaml (coder_options.amp.mode).
+            yaml_amp_mode: Amp mode from mala.yaml (top-level `amp_mode`).
                 Used as fallback when MALA_AMP_MODE is not set.
                 Precedence: env > yaml > default.
 

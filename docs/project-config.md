@@ -69,9 +69,7 @@ evidence_check:          # Optional. Gate evidence requirements
 claude_settings_sources: list     # Optional. SDK settings sources (default: [local, project])
 
 coder: string                    # Optional. Coder backend: "claude" or "amp" (default: claude)
-coder_options:                   # Optional. Per-coder options
-  amp:
-    mode: string                 # Optional. Amp mode: "smart", "rush", "deep" (default: deep)
+amp_mode: string                 # Optional. Amp mode: "smart", "rush", "deep" (default: deep). Only consulted when coder: amp.
 
 timeout_minutes: int             # Optional. Agent timeout in minutes (default: 30)
 
@@ -128,7 +126,7 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `coverage.threshold` | number | Yes* | Minimum coverage % |
 | `claude_settings_sources` | list | No | SDK settings sources: `local`, `project`, `user` (default: `[local, project]`) |
 | `coder` | string | No | Coder backend: `claude` or `amp` (default: `claude`). Overridden by `--coder` / `MALA_CODER`. See [Coder Selection](#coder-selection). |
-| `coder_options.amp.mode` | string | No | Amp execution mode: `smart`, `rush`, or `deep` (default: `deep`). Only consulted when `coder: amp`. |
+| `amp_mode` | string | No | Amp execution mode: `smart`, `rush`, or `deep` (default: `deep`). Only consulted when `coder: amp`. |
 | `timeout_minutes` | integer | No | Agent timeout in minutes (default: 30). Can be overridden by CLI `--timeout` |
 | `max_idle_retries` | integer | No | Maximum idle timeout retries before aborting (default: 2). Set to 0 to disable retries. |
 | `idle_timeout_seconds` | float | No | Seconds to wait for SDK activity before triggering idle recovery (default: derived from `timeout_minutes`). Set to 0 to disable idle timeout. |
@@ -538,10 +536,7 @@ coder, and fixer agents follow the main coder.
 ```yaml
 # Use Amp instead of Claude (default: claude)
 coder: amp
-
-coder_options:
-  amp:
-    mode: deep    # deep (GPT-5 reasoning, default), smart (Opus), rush (Haiku)
+amp_mode: deep    # deep (GPT-5 reasoning, default), smart (Opus), rush (Haiku)
 ```
 
 Existing `mala.yaml` files **without `coder:` remain valid** and default to
@@ -549,12 +544,12 @@ Existing `mala.yaml` files **without `coder:` remain valid** and default to
 
 ### Precedence
 
-`coder` and `coder_options.amp.mode` follow the same **CLI > env > yaml > default**
+`coder` and `amp_mode` follow the same **CLI > env > yaml > default**
 precedence used by `claude_settings_sources`:
 
 1. CLI flag (`--coder`, `--amp-mode`)
 2. Environment variable (`MALA_CODER`, `MALA_AMP_MODE`)
-3. `mala.yaml` (`coder:`, `coder_options.amp.mode:`)
+3. `mala.yaml` (`coder:`, `amp_mode:`)
 4. Default: `claude`, `deep`
 
 ### Validation
@@ -565,11 +560,11 @@ starts:
 | Field | Allowed values |
 |-------|----------------|
 | `coder` | `claude`, `amp` |
-| `coder_options.amp.mode` | `smart`, `rush`, `deep` |
+| `amp_mode` | `smart`, `rush`, `deep` |
 
 ### Cross-Coder Behavior
 
-- `coder_options.amp.mode` is **only consulted when `coder: amp`**. Set with
+- `amp_mode` is **only consulted when `coder: amp`**. Set with
   `coder: claude`, it is logged as ignored (info-level) and does not error.
 - `claude_settings_sources` is logged as ignored (info-level) when
   `coder: amp`.
@@ -589,9 +584,7 @@ for the full list.
 ```yaml
 preset: python-uv
 coder: amp
-coder_options:
-  amp:
-    mode: rush     # Haiku — cheaper for batch issue work
+amp_mode: rush     # Haiku — cheaper for batch issue work
 evidence_check:
   required: [test, lint]
 ```

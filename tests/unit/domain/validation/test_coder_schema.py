@@ -1,4 +1,4 @@
-"""Schema validation tests for the `coder` and `coder_options.amp.mode` fields.
+"""Schema validation tests for the `coder` and `amp_mode` fields.
 
 These tests own AC#13 from the AMP provider plan
 (plans/2026-04-29-amp-provider-plan.md L194-L215):
@@ -49,56 +49,34 @@ class TestCoderEnum:
 
 
 class TestAmpMode:
-    """Strict-enum validation for `coder_options.amp.mode`."""
+    """Strict-enum validation for top-level `amp_mode`."""
 
     @pytest.mark.parametrize("mode", ["smart", "rush", "deep"])
     def test_valid_modes(self, mode: str) -> None:
-        ValidationConfig.from_dict({"coder_options": {"amp": {"mode": mode}}})
+        ValidationConfig.from_dict({"amp_mode": mode})
 
     def test_unknown_mode_rejected(self) -> None:
         with pytest.raises(
             ConfigError,
-            match=r"coder_options\.amp\.mode must be 'smart', 'rush', or 'deep', got 'bar'",
+            match=r"amp_mode must be 'smart', 'rush', or 'deep', got 'bar'",
         ):
-            ValidationConfig.from_dict({"coder_options": {"amp": {"mode": "bar"}}})
+            ValidationConfig.from_dict({"amp_mode": "bar"})
 
     def test_non_string_mode_rejected(self) -> None:
-        with pytest.raises(ConfigError, match=r"coder_options\.amp\.mode must be"):
-            ValidationConfig.from_dict({"coder_options": {"amp": {"mode": 7}}})
-
-    def test_coder_options_not_object_rejected(self) -> None:
-        with pytest.raises(
-            ConfigError, match=r"coder_options must be an object, got str"
-        ):
-            ValidationConfig.from_dict({"coder_options": "amp"})
-
-    def test_amp_not_object_rejected(self) -> None:
-        with pytest.raises(
-            ConfigError, match=r"coder_options\.amp must be an object, got list"
-        ):
-            ValidationConfig.from_dict({"coder_options": {"amp": ["mode", "smart"]}})
+        with pytest.raises(ConfigError, match=r"amp_mode must be"):
+            ValidationConfig.from_dict({"amp_mode": 7})
 
 
 class TestOptionalDefaults:
     """Existing mala.yaml without coder fields must still validate (regression)."""
 
     def test_omitting_both_fields_is_valid(self) -> None:
-        # Sanity: existing yaml shape (no coder, no coder_options) parses cleanly.
+        # Sanity: existing yaml shape (no coder, no amp_mode) parses cleanly.
         cfg = ValidationConfig.from_dict({"preset": "python-uv"})
         assert cfg.preset == "python-uv"
 
-    def test_coder_options_without_amp_subkey_is_valid(self) -> None:
-        # T002's resolver applies amp defaults downstream when amp is omitted.
-        ValidationConfig.from_dict({"coder_options": {}})
-
-    def test_amp_without_mode_subkey_is_valid(self) -> None:
-        ValidationConfig.from_dict({"coder_options": {"amp": {}}})
-
-    def test_coder_options_null_is_valid(self) -> None:
-        ValidationConfig.from_dict({"coder_options": None})
-
     def test_amp_mode_null_is_valid(self) -> None:
-        ValidationConfig.from_dict({"coder_options": {"amp": {"mode": None}}})
+        ValidationConfig.from_dict({"amp_mode": None})
 
 
 class TestEndToEndViaLoadConfig:
@@ -118,10 +96,10 @@ class TestEndToEndViaLoadConfig:
         # Must not raise "Unknown field 'coder'" — the allow-list permits it.
         load_config(repo)
 
-    def test_coder_options_field_accepted_at_top_level(self, tmp_path: Path) -> None:
+    def test_amp_mode_field_accepted_at_top_level(self, tmp_path: Path) -> None:
         repo = self._write_yaml(
             tmp_path,
-            "preset: python-uv\ncoder_options:\n  amp:\n    mode: deep\n",
+            "preset: python-uv\namp_mode: deep\n",
         )
         load_config(repo)
 
@@ -136,7 +114,19 @@ class TestEndToEndViaLoadConfig:
     def test_invalid_amp_mode_rejected_via_load_config(self, tmp_path: Path) -> None:
         repo = self._write_yaml(
             tmp_path,
-            "preset: python-uv\ncoder_options:\n  amp:\n    mode: bar\n",
+            "preset: python-uv\namp_mode: bar\n",
         )
-        with pytest.raises(ConfigError, match=r"coder_options\.amp\.mode must be"):
+        with pytest.raises(ConfigError, match=r"amp_mode must be"):
+            load_config(repo)
+
+    def test_legacy_coder_options_rejected_via_load_config(
+        self, tmp_path: Path
+    ) -> None:
+        """The pre-flatten YAML shape (`coder_options.amp.mode`) is no longer
+        supported. The top-level allow-list rejects it as an unknown field."""
+        repo = self._write_yaml(
+            tmp_path,
+            "preset: python-uv\ncoder: amp\ncoder_options:\n  amp:\n    mode: deep\n",
+        )
+        with pytest.raises(ConfigError, match=r"coder_options"):
             load_config(repo)

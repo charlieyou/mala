@@ -86,7 +86,7 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "epic_verification",
         "per_issue_review",
         "coder",
-        "coder_options",
+        "amp_mode",
         "effort",
     }
 )

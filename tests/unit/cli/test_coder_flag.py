@@ -271,7 +271,7 @@ def test_yaml_coder_amp_applied_in_cli_run(
 
     _isolate_env(monkeypatch)
     (tmp_path / "mala.yaml").write_text(
-        "preset: python-uv\ncoder: amp\ncoder_options:\n  amp:\n    mode: deep\n"
+        "preset: python-uv\ncoder: amp\namp_mode: deep\n"
     )
 
     cli = _reload_cli(monkeypatch)

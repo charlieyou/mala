@@ -1193,47 +1193,31 @@ class ValidationConfig:
                 # Narrow Literal type for the type checker.
                 coder = "amp" if coder_val == "amp" else "claude"
 
-        # Validate coder_options (optional). Currently only the 'amp' sub-key
-        # with a strict-enum 'mode' (smart | rush | deep) is recognized.
+        # Validate amp_mode (optional, strict enum: smart | rush | deep).
+        # Top-level YAML key; only meaningful when coder == 'amp'. The
+        # internal MalaConfig.coder_options.amp.mode shape is preserved at
+        # runtime (see src/infra/io/config.py).
         amp_mode: Literal["smart", "rush", "deep"] | None = None
-        if "coder_options" in data:
-            fields_set.add("coder_options")
-            co_raw = data["coder_options"]
-            if co_raw is not None:
-                if not isinstance(co_raw, dict):
+        if "amp_mode" in data:
+            fields_set.add("amp_mode")
+            mode_val = data["amp_mode"]
+            if mode_val is not None:
+                if not isinstance(mode_val, str) or mode_val not in (
+                    "smart",
+                    "rush",
+                    "deep",
+                ):
                     raise ConfigError(
-                        f"coder_options must be an object, got {type(co_raw).__name__}"
+                        "amp_mode must be 'smart', 'rush', or 'deep', "
+                        f"got {mode_val!r}"
                     )
-                co_val = cast("dict[str, object]", co_raw)
-                if "amp" in co_val:
-                    amp_raw = co_val["amp"]
-                    if amp_raw is not None:
-                        if not isinstance(amp_raw, dict):
-                            raise ConfigError(
-                                f"coder_options.amp must be an object, "
-                                f"got {type(amp_raw).__name__}"
-                            )
-                        amp_val = cast("dict[str, object]", amp_raw)
-                        if "mode" in amp_val:
-                            mode_val = amp_val["mode"]
-                            if mode_val is not None:
-                                if not isinstance(mode_val, str) or mode_val not in (
-                                    "smart",
-                                    "rush",
-                                    "deep",
-                                ):
-                                    raise ConfigError(
-                                        f"coder_options.amp.mode must be "
-                                        f"'smart', 'rush', or 'deep', "
-                                        f"got {mode_val!r}"
-                                    )
-                                # Narrow Literal type for the type checker.
-                                if mode_val == "rush":
-                                    amp_mode = "rush"
-                                elif mode_val == "deep":
-                                    amp_mode = "deep"
-                                else:
-                                    amp_mode = "smart"
+                # Narrow Literal type for the type checker.
+                if mode_val == "rush":
+                    amp_mode = "rush"
+                elif mode_val == "deep":
+                    amp_mode = "deep"
+                else:
+                    amp_mode = "smart"
 
         # Validate effort (optional, strict enum). Resolver precedence is
         # handled in src/infra/io/config.py; this block fails fast on invalid
@@ -1260,7 +1244,7 @@ class ValidationConfig:
         if coder == "amp" and effective_amp_mode == "deep" and effort in {"low", "max"}:
             raise ConfigError(
                 "effort must be 'medium', 'high', or 'xhigh' when "
-                f"coder_options.amp.mode is 'deep', got {effort!r}"
+                f"coder is 'amp' and amp_mode is 'deep', got {effort!r}"
             )
 
         return cls(

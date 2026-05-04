@@ -180,7 +180,7 @@ Both flags follow the same **CLI > env > yaml > default** precedence as
 | Setting | CLI | Env | YAML | Default |
 |---------|-----|-----|------|---------|
 | Coder | `--coder amp` | `MALA_CODER=amp` | `coder: amp` | `claude` |
-| Amp mode | `--amp-mode rush` | `MALA_AMP_MODE=rush` | `coder_options.amp.mode: rush` | `deep` |
+| Amp mode | `--amp-mode rush` | `MALA_AMP_MODE=rush` | `amp_mode: rush` | `deep` |
 
 Invalid values fail validation **before** any agent process starts.
 
@@ -193,7 +193,7 @@ not require pruning unrelated flags from your invocation:
 | Flag/setting | When `coder=claude` | When `coder=amp` |
 |--------------|---------------------|------------------|
 | `--claude-settings-sources` / `MALA_CLAUDE_SETTINGS_SOURCES` | applied | logged as ignored (info) |
-| `--amp-mode` / `MALA_AMP_MODE` / `coder_options.amp.mode` | logged as ignored (info) | applied |
+| `--amp-mode` / `MALA_AMP_MODE` / `amp_mode` | logged as ignored (info) | applied |
 | `MALA_DISALLOWED_TOOLS` | applied (Claude hooks) | **no-op**, warned once at run start (MVP limitation) |
 
 **Examples:**
@@ -239,7 +239,7 @@ Precedence: CLI flags override global config, which overrides program defaults.
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Claude SDK config directory (plugins, sessions) |
 | `MALA_CLAUDE_SETTINGS_SOURCES` | `local,project` | Comma-separated Claude settings sources |
 | `MALA_CODER` | `claude` | Coder backend: `claude` or `amp`. Overridden by `--coder`; falls back to `coder:` in `mala.yaml`. |
-| `MALA_AMP_MODE` | `deep` | Amp execution mode: `smart`, `rush`, or `deep`. Overridden by `--amp-mode`; falls back to `coder_options.amp.mode`. Only consulted when coder is `amp`. |
+| `MALA_AMP_MODE` | `deep` | Amp execution mode: `smart`, `rush`, or `deep`. Overridden by `--amp-mode`; falls back to `amp_mode` in `mala.yaml`. Only consulted when coder is `amp`. |
 
 ### Epic Verification
 

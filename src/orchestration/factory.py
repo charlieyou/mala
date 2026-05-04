@@ -164,7 +164,7 @@ def load_yaml_coder_resolution(
     ``(yaml_claude_settings_sources, yaml_coder, yaml_amp_mode, yaml_effort)``
     so callers can feed them into :meth:`MalaConfig.from_env`. This is the
     bridge that lets the CLI honor ``mala.yaml`` ``coder:`` /
-    ``coder_options.amp.mode`` / ``effort:`` under the documented
+    ``amp_mode:`` / ``effort:`` under the documented
     CLI > env > yaml > default precedence (AC-3 of the Amp provider epic
     and the unified-effort issue).
 
