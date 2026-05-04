@@ -45,7 +45,7 @@ _logger = logging.getLogger(__name__)
 
 VALID_CODERS: frozenset[str] = frozenset({"claude", "amp"})
 VALID_AMP_MODES: frozenset[str] = frozenset({"smart", "rush", "deep"})
-DEFAULT_CODER: Literal["claude", "amp"] = "claude"
+DEFAULT_CODER: Literal["claude", "amp"] = "amp"
 DEFAULT_AMP_MODE: Literal["smart", "rush", "deep"] = "deep"
 
 

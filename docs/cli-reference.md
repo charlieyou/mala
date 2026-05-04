@@ -169,7 +169,7 @@ uses the same coder, and fixer agents follow the main coder.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--coder` | `claude` | Coder backend: `claude` or `amp`. Validated at parse time. |
+| `--coder` | `amp` | Coder backend: `claude` or `amp`. Validated at parse time. |
 | `--amp-mode` | `deep` | Amp execution mode: `smart`, `rush`, or `deep`. Only consulted when `coder=amp`. |
 
 #### Precedence
@@ -179,7 +179,7 @@ Both flags follow the same **CLI > env > yaml > default** precedence as
 
 | Setting | CLI | Env | YAML | Default |
 |---------|-----|-----|------|---------|
-| Coder | `--coder amp` | `MALA_CODER=amp` | `coder: amp` | `claude` |
+| Coder | `--coder claude` | `MALA_CODER=claude` | `coder: claude` | `amp` |
 | Amp mode | `--amp-mode rush` | `MALA_AMP_MODE=rush` | `amp_mode: rush` | `deep` |
 
 Invalid values fail validation **before** any agent process starts.

@@ -122,7 +122,7 @@ def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
 
     Args:
         mala_config: Configuration carrying ``coder`` and ``coder_options``.
-            ``coder`` is one of ``"claude"`` (default) or ``"amp"``.
+            ``coder`` is one of ``"amp"`` (default) or ``"claude"``.
 
     Returns:
         An :class:`AgentProvider` for the selected backend. The Amp provider

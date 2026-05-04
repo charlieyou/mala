@@ -2,7 +2,7 @@
 
 Covers AC#3: CLI > env > yaml > default precedence for both `coder` and
 `coder_options.amp.mode`, plus the regression that older `mala.yaml` files
-without `coder:` continue to load with the Claude default.
+without `coder:` continue to load with the built-in default.
 """
 
 from __future__ import annotations
@@ -39,19 +39,19 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestDefaults:
-    def test_malaconfig_defaults_to_claude(self) -> None:
+    def test_malaconfig_defaults_to_amp(self) -> None:
         config = MalaConfig()
-        assert config.coder == "claude"
+        assert config.coder == "amp"
         assert config.coder_options.amp.mode == "deep"
-        assert config.effort == "xhigh"
+        assert config.effort == "medium"
 
     def test_from_env_no_overrides_uses_defaults(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config = MalaConfig.from_env(validate=False)
-        assert config.coder == "claude"
+        assert config.coder == "amp"
         assert config.coder_options.amp.mode == "deep"
-        assert config.effort == "xhigh"
+        assert config.effort == "medium"
 
     def test_amp_options_and_coder_options_are_frozen(self) -> None:
         amp = AmpOptions()
@@ -122,12 +122,12 @@ class TestRegressionLegacyYaml:
     def test_legacy_yaml_without_coder_field_loads_with_default(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Older mala.yaml files without `coder:` still load and default to claude."""
+        """Older mala.yaml files without `coder:` still load and use the default."""
         # yaml_coder=None simulates a yaml file without the `coder:` field.
         config = MalaConfig.from_env(
             validate=False, yaml_coder=None, yaml_amp_mode=None
         )
-        assert config.coder == "claude"
+        assert config.coder == "amp"
         assert config.coder_options.amp.mode == "deep"
 
 
@@ -167,7 +167,7 @@ class TestYamlEndToEnd:
     def test_real_yaml_without_coder_falls_through_to_default(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Real mala.yaml without `coder:` still loads and defaults to claude."""
+        """Real mala.yaml without `coder:` still loads and uses the default."""
         from src.domain.validation.config_loader import load_config
 
         yaml_path = tmp_path / "mala.yaml"
@@ -181,7 +181,7 @@ class TestYamlEndToEnd:
             yaml_coder=validation_config.coder,
             yaml_amp_mode=validation_config.amp_mode,
         )
-        assert config.coder == "claude"
+        assert config.coder == "amp"
         assert config.coder_options.amp.mode == "deep"
 
 
@@ -195,7 +195,7 @@ class TestBuildResolvedConfigPrecedence:
 
     def test_default_when_no_layers_set(self) -> None:
         resolved = build_resolved_config(self._base(), CLIOverrides())
-        assert resolved.coder == "claude"
+        assert resolved.coder == "amp"
         assert resolved.coder_options.amp.mode == "deep"
 
     def test_yaml_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -255,7 +255,7 @@ class TestIgnoredOptionsLog:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """`--amp-mode rush --coder claude` logs an info-level ignored message."""
-        config = MalaConfig()  # default coder=claude
+        config = MalaConfig()
         overrides = CLIOverrides(coder="claude", amp_mode="rush")
         with caplog.at_level(logging.INFO, logger="src.infra.io.config"):
             build_resolved_config(config, overrides)
@@ -360,11 +360,11 @@ class TestEffortPrecedence:
             claude_config_dir=Path("/tmp/claude"),
         )
 
-    def test_default_effort_uses_claude_default(self) -> None:
+    def test_default_effort_uses_amp_deep_default(self) -> None:
         config = MalaConfig.from_env(validate=False)
-        assert config.effort == "xhigh"
+        assert config.effort == "medium"
         resolved = build_resolved_config(config, CLIOverrides())
-        assert resolved.effort == "xhigh"
+        assert resolved.effort == "medium"
 
     @pytest.mark.parametrize(
         ("mode", "expected"),
@@ -381,10 +381,13 @@ class TestEffortPrecedence:
         assert config.effort == expected
 
     def test_yaml_effort_used_when_env_absent(self) -> None:
-        config = MalaConfig.from_env(validate=False, yaml_effort="high")
+        config = MalaConfig.from_env(
+            validate=False, yaml_coder="claude", yaml_effort="high"
+        )
         assert config.effort == "high"
 
     def test_env_effort_honored(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MALA_CODER", "claude")
         monkeypatch.setenv("MALA_EFFORT", "max")
         config = MalaConfig.from_env(validate=False)
         assert config.effort == "max"
@@ -412,7 +415,9 @@ class TestEffortPrecedence:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("MALA_EFFORT", "low")
-        config = MalaConfig.from_env(validate=False, yaml_effort="medium")
+        config = MalaConfig.from_env(
+            validate=False, yaml_coder="claude", yaml_effort="medium"
+        )
         resolved = build_resolved_config(config, CLIOverrides(effort="max"))
         assert resolved.effort == "max"
 
