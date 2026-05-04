@@ -38,6 +38,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import signal
 import sys
 import time
@@ -188,6 +189,7 @@ class _ClientState:
     tee_file: Any = None  # binary file handle; typed Any to avoid IO[...] noise
     handoff_tool_follow: dict[str, bool] = field(default_factory=dict)
     handoff_thread_id: str | None = None
+    query_prompt: str | None = None
 
 
 class AmpClient:
@@ -291,6 +293,7 @@ class AmpClient:
         """
         if session_id is not None and self._resume_thread_id is None:
             self._resume_thread_id = session_id
+        self._state.query_prompt = prompt
 
         if self._state.proc is not None:
             raise AmpClientError(
@@ -515,6 +518,9 @@ class AmpClient:
                 yield msg
         elif event_type == "result":
             await self._drain_configured_lock_events()
+            if self._is_resume_context_limit_result(event):
+                yield await self._handoff_after_resume_context_limit(event)
+                return
             result_msg = self._build_result(event)
             if self._state.handoff_thread_id is not None:
                 result = await self._materialize_handoff_child(
@@ -634,6 +640,111 @@ class AmpClient:
             result = event.get("subtype")
         return ResultMessage(session_id=str(sid), result=result)
 
+    def _is_resume_context_limit_result(self, event: dict[str, Any]) -> bool:
+        """Return true for Amp's resumed-thread context-limit no-op result."""
+        if self._resume_thread_id is None:
+            return False
+        if event.get("type") != "result":
+            return False
+        if event.get("subtype") != "error_during_execution":
+            return False
+        text_parts = [
+            event.get("error"),
+            event.get("result"),
+            event.get("message"),
+            event.get("details"),
+        ]
+        text = " ".join(str(part) for part in text_parts if part is not None)
+        return "context limit reached" in text.lower()
+
+    async def _handoff_after_resume_context_limit(
+        self,
+        event: dict[str, Any],
+    ) -> ResultMessage:
+        """Create and materialize a fresh Amp child thread after resume saturation."""
+        del event
+        parent_thread_id = self._resume_thread_id or self._state.session_id
+        goal = self._state.query_prompt
+        if not parent_thread_id:
+            raise AmpClientError(
+                "Amp resume hit context limit, but no parent thread id is available",
+                stderr_tail=self.get_stderr(),
+                stdout_tail=self._stdout_tail_text(),
+            )
+        if goal is None:
+            raise AmpClientError(
+                f"Amp resume hit context limit for {parent_thread_id}, but no query prompt is available for handoff",
+                stderr_tail=self.get_stderr(),
+                stdout_tail=self._stdout_tail_text(),
+            )
+
+        child_thread_id = await self._run_cli_handoff(parent_thread_id, goal)
+        result = await self._materialize_handoff_child(child_thread_id)
+        self._state.session_id = child_thread_id
+        return ResultMessage(
+            session_id=child_thread_id,
+            result=result if result is not None else "success",
+        )
+
+    async def _run_cli_handoff(self, parent_thread_id: str, goal: str) -> str:
+        """Run ``amp threads handoff`` and return the created child thread id."""
+        amp_executable = self._options.argv[0] if self._options.argv else "amp"
+        proc = await asyncio.create_subprocess_exec(
+            amp_executable,
+            "threads",
+            "handoff",
+            parent_thread_id,
+            "--goal",
+            goal,
+            "--print",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(self._options.cwd),
+            env=dict(self._options.env),
+        )
+        stdout, stderr = await proc.communicate()
+        stdout_text = stdout.decode(errors="replace")
+        stderr_text = stderr.decode(errors="replace")
+        if proc.returncode != 0:
+            raise AmpClientError(
+                f"Amp handoff failed for parent thread {parent_thread_id} with exit code {proc.returncode}",
+                stderr_tail=stderr_text[-_STDERR_BUFFER_LIMIT:],
+                stdout_tail=stdout_text[-_STDOUT_TAIL_LIMIT:],
+            )
+
+        child_thread_id = self._parse_handoff_child_thread_id(stdout_text)
+        if child_thread_id is None:
+            raise AmpClientError(
+                f"Amp handoff for parent thread {parent_thread_id} did not report a child thread id",
+                stderr_tail=stderr_text[-_STDERR_BUFFER_LIMIT:],
+                stdout_tail=stdout_text[-_STDOUT_TAIL_LIMIT:],
+            )
+        if child_thread_id == parent_thread_id:
+            raise AmpClientError(
+                f"Amp handoff for parent thread {parent_thread_id} returned the parent id as the child",
+                stderr_tail=stderr_text[-_STDERR_BUFFER_LIMIT:],
+                stdout_tail=stdout_text[-_STDOUT_TAIL_LIMIT:],
+            )
+        return child_thread_id
+
+    def _parse_handoff_child_thread_id(self, stdout_text: str) -> str | None:
+        """Parse an Amp thread id from ``amp threads handoff --print`` output."""
+        try:
+            payload = json.loads(stdout_text)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            for key in ("newThreadID", "threadID", "thread_id", "id"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.startswith("T-"):
+                    return value
+
+        matches = re.findall(r"T-[A-Za-z0-9][A-Za-z0-9_-]*", stdout_text)
+        if matches:
+            return matches[-1]
+        return None
+
     def _extract_handoff_thread_id(self, content: object) -> str | None:
         """Return Amp handoff child thread id from a handoff tool result."""
         payload = content
@@ -733,6 +844,18 @@ class AmpClient:
         result: object | None = None
         messages = exported.get("messages")
         if not isinstance(messages, list):
+            error_result = self._export_terminal_error_result(exported)
+            if error_result is not None:
+                events.append(
+                    {
+                        "type": "result",
+                        "subtype": "error_during_execution",
+                        "is_error": True,
+                        "result": error_result,
+                        "session_id": thread_id,
+                    }
+                )
+                return events, error_result
             return events, None
 
         for message in messages:
@@ -778,7 +901,55 @@ class AmpClient:
                     "session_id": thread_id,
                 }
             )
+        else:
+            error_result = self._export_terminal_error_result(exported)
+            if error_result is not None:
+                events.append(
+                    {
+                        "type": "result",
+                        "subtype": "error_during_execution",
+                        "is_error": True,
+                        "result": error_result,
+                        "session_id": thread_id,
+                    }
+                )
+                result = error_result
         return events, result
+
+    def _export_terminal_error_result(self, exported: dict[str, Any]) -> object | None:
+        """Return an exported child-thread terminal error payload, if explicit."""
+        if self._export_status_is_error(exported):
+            return self._export_error_payload(exported)
+
+        state = exported.get("state")
+        if isinstance(state, dict) and self._export_status_is_error(state):
+            return self._export_error_payload(state)
+
+        result = exported.get("result")
+        if isinstance(result, dict) and self._export_status_is_error(result):
+            return self._export_error_payload(result)
+        return None
+
+    def _export_status_is_error(self, payload: dict[str, Any]) -> bool:
+        if payload.get("is_error") is True or payload.get("isError") is True:
+            return True
+        for key in ("status", "type", "subtype", "stopReason", "stop_reason"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.lower() in {
+                "error",
+                "failed",
+                "failure",
+                "error_during_execution",
+            }:
+                return True
+        return False
+
+    def _export_error_payload(self, payload: dict[str, Any]) -> object:
+        for key in ("error", "result", "message", "details"):
+            value = payload.get(key)
+            if value is not None:
+                return value
+        return "error_during_execution"
 
     def _export_content_to_stream_blocks(
         self, content: object, *, role: str

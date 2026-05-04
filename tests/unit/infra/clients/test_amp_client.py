@@ -146,6 +146,36 @@ def _write_fake_amp(
     return script
 
 
+def _write_fake_handoff_cli(
+    tmp_path: Path,
+    *,
+    stdout: str = "T-child\n",
+    stderr: str = "",
+    exit_code: int = 0,
+    record_argv_to: Path | None = None,
+) -> Path:
+    script = tmp_path / f"fake_handoff_{abs(hash((stdout, stderr, exit_code)))}.py"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        f"RECORD_ARGV_TO = {str(record_argv_to)!r}\n"
+        f"STDOUT = {stdout!r}\n"
+        f"STDERR = {stderr!r}\n"
+        f"EXIT_CODE = {exit_code}\n"
+        "if RECORD_ARGV_TO:\n"
+        "    with open(RECORD_ARGV_TO, 'w') as fh:\n"
+        "        json.dump(sys.argv, fh)\n"
+        "sys.stdout.write(STDOUT)\n"
+        "sys.stdout.flush()\n"
+        "sys.stderr.write(STDERR)\n"
+        "sys.stderr.flush()\n"
+        "sys.exit(EXIT_CODE)\n"
+    )
+    st = script.stat()
+    script.chmod(st.st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
 def _make_options(
     *,
     log_path: Path,
@@ -385,6 +415,19 @@ def _result(
             "subtype": subtype,
             "session_id": session_id,
             "result": result,
+        }
+    )
+
+
+def _context_limit_result(session_id: str = "T-old") -> str:
+    return json.dumps(
+        {
+            "type": "result",
+            "subtype": "error_during_execution",
+            "is_error": True,
+            "num_turns": 0,
+            "error": "Context Limit Reached This conversation has reached the context window limit.",
+            "session_id": session_id,
         }
     )
 
@@ -714,6 +757,310 @@ async def test_result_falls_back_to_subtype_when_result_field_missing(
     results = [m for m in msgs if isinstance(m, ResultMessage)]
     assert len(results) == 1
     assert results[0].result == "error_max_turns"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_resume_context_limit_invokes_cli_handoff_and_yields_child_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sessions_dir = tmp_path / "amp-sessions"
+    monkeypatch.setattr("src.infra.clients.amp_runtime.AMP_SESSIONS_DIR", sessions_dir)
+
+    async def run_handoff(self: AmpClient, parent_thread_id: str, goal: str) -> str:
+        del self
+        assert parent_thread_id == "T-old"
+        assert goal == "implement review feedback"
+        return "T-child"
+
+    async def export_child(self: AmpClient, thread_id: str) -> dict[str, object]:
+        del self
+        assert thread_id == "T-child"
+        return {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "state": {"type": "complete", "stopReason": "end_turn"},
+                    "content": [{"type": "text", "text": "CHILD_DONE"}],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(AmpClient, "_run_cli_handoff", run_handoff)
+    monkeypatch.setattr(AmpClient, "_export_handoff_thread", export_child)
+    script = _write_fake_amp(
+        tmp_path,
+        lines=[_system_init("T-old"), _context_limit_result("T-old")],
+    )
+    options = _make_options(
+        log_path=tmp_path / "T-old.jsonl",
+        argv=_python_argv_for(script),
+        cwd=tmp_path,
+        thread_id="T-old",
+    )
+
+    async with AmpClient(options) as client:
+        await client.query("implement review feedback")
+        messages = await _drain(client)
+
+    result = messages[-1]
+    assert isinstance(result, ResultMessage)
+    assert result.session_id == "T-child"
+    assert result.result == "CHILD_DONE"
+    assert client.session_id == "T-child"
+    assert (sessions_dir / "T-child.jsonl").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_resume_context_limit_handoff_uses_exact_query_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prompt = 'Review feedback:\n- fix "quotes"\nRun `uv run pytest -q` && echo done'
+    captured_goal: list[str] = []
+
+    async def run_handoff(self: AmpClient, parent_thread_id: str, goal: str) -> str:
+        del self, parent_thread_id
+        captured_goal.append(goal)
+        return "T-child"
+
+    async def export_child(self: AmpClient, thread_id: str) -> dict[str, object]:
+        del self, thread_id
+        return {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "state": {"type": "complete", "stopReason": "end_turn"},
+                    "content": [{"type": "text", "text": "ok"}],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(AmpClient, "_run_cli_handoff", run_handoff)
+    monkeypatch.setattr(AmpClient, "_export_handoff_thread", export_child)
+    monkeypatch.setattr(
+        "src.infra.clients.amp_runtime.AMP_SESSIONS_DIR", tmp_path / "sessions"
+    )
+    script = _write_fake_amp(
+        tmp_path,
+        lines=[_system_init("T-old"), _context_limit_result("T-old")],
+    )
+    options = _make_options(
+        log_path=tmp_path / "T-old.jsonl",
+        argv=_python_argv_for(script),
+        cwd=tmp_path,
+        thread_id="T-old",
+    )
+
+    async with AmpClient(options) as client:
+        await client.query(prompt)
+        await _drain(client)
+
+    assert captured_goal == [prompt]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_non_resume_context_limit_does_not_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fail_handoff(self: AmpClient, parent_thread_id: str, goal: str) -> str:
+        del self, parent_thread_id, goal
+        raise AssertionError("fresh context-limit result should not hand off")
+
+    monkeypatch.setattr(AmpClient, "_run_cli_handoff", fail_handoff)
+    script = _write_fake_amp(
+        tmp_path,
+        lines=[_system_init("T-fresh"), _context_limit_result("T-fresh")],
+    )
+    options = _make_options(
+        log_path=tmp_path / ".pending-context-limit.jsonl",
+        argv=_python_argv_for(script),
+        cwd=tmp_path,
+    )
+
+    async with AmpClient(options) as client:
+        await client.query("p")
+        messages = await _drain(client)
+
+    result = messages[-1]
+    assert isinstance(result, ResultMessage)
+    assert result.session_id == "T-fresh"
+    assert result.result == "error_during_execution"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_non_context_error_during_execution_does_not_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fail_handoff(self: AmpClient, parent_thread_id: str, goal: str) -> str:
+        del self, parent_thread_id, goal
+        raise AssertionError("unrelated execution error should not hand off")
+
+    monkeypatch.setattr(AmpClient, "_run_cli_handoff", fail_handoff)
+    raw = json.dumps(
+        {
+            "type": "result",
+            "subtype": "error_during_execution",
+            "error": "tool failed",
+            "session_id": "T-old",
+        }
+    )
+    script = _write_fake_amp(tmp_path, lines=[_system_init("T-old"), raw])
+    options = _make_options(
+        log_path=tmp_path / "T-old.jsonl",
+        argv=_python_argv_for(script),
+        cwd=tmp_path,
+        thread_id="T-old",
+    )
+
+    async with AmpClient(options) as client:
+        await client.query("p")
+        messages = await _drain(client)
+
+    result = messages[-1]
+    assert isinstance(result, ResultMessage)
+    assert result.session_id == "T-old"
+    assert result.result == "error_during_execution"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_resume_context_limit_handoff_failure_raises_amp_client_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fail_handoff(self: AmpClient, parent_thread_id: str, goal: str) -> str:
+        del self, parent_thread_id, goal
+        raise AmpClientError("handoff failed")
+
+    monkeypatch.setattr(AmpClient, "_run_cli_handoff", fail_handoff)
+    script = _write_fake_amp(
+        tmp_path,
+        lines=[_system_init("T-old"), _context_limit_result("T-old")],
+    )
+    options = _make_options(
+        log_path=tmp_path / "T-old.jsonl",
+        argv=_python_argv_for(script),
+        cwd=tmp_path,
+        thread_id="T-old",
+    )
+
+    async with AmpClient(options) as client:
+        await client.query("p")
+        with pytest.raises(AmpClientError, match="handoff failed"):
+            await _drain(client)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_resume_context_limit_rejects_parent_id_as_child_id(
+    tmp_path: Path,
+) -> None:
+    script = _write_fake_handoff_cli(tmp_path, stdout="T-old\n")
+    options = _make_options(
+        log_path=tmp_path / "T-old.jsonl",
+        argv=[str(script), "--execute", "--stream-json"],
+        cwd=tmp_path,
+        thread_id="T-old",
+    )
+
+    client = AmpClient(options)
+    with pytest.raises(AmpClientError, match="returned the parent id"):
+        await client._run_cli_handoff("T-old", "p")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_cli_handoff_preserves_exact_goal_argv_and_parses_json(
+    tmp_path: Path,
+) -> None:
+    argv_record = tmp_path / "handoff-argv.json"
+    script = _write_fake_handoff_cli(
+        tmp_path,
+        stdout=json.dumps({"newThreadID": "T-child-json"}),
+        record_argv_to=argv_record,
+    )
+    prompt = 'line 1\nline "2" && rm -rf nope; $(echo literal)'
+    options = _make_options(
+        log_path=tmp_path / "T-old.jsonl",
+        argv=[str(script), "--execute", "--stream-json"],
+        cwd=tmp_path,
+    )
+
+    child = await AmpClient(options)._run_cli_handoff("T-old", prompt)
+
+    assert child == "T-child-json"
+    argv = json.loads(argv_record.read_text())
+    assert argv[1:] == [
+        "threads",
+        "handoff",
+        "T-old",
+        "--goal",
+        prompt,
+        "--print",
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_cli_handoff_regex_fallback_uses_last_thread_id(
+    tmp_path: Path,
+) -> None:
+    script = _write_fake_handoff_cli(
+        tmp_path,
+        stdout="parent T-old created child T-child-last\n",
+    )
+    options = _make_options(
+        log_path=tmp_path / "T-old.jsonl",
+        argv=[str(script), "--execute", "--stream-json"],
+        cwd=tmp_path,
+    )
+
+    child = await AmpClient(options)._run_cli_handoff("T-old", "p")
+
+    assert child == "T-child-last"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_cli_handoff_nonzero_includes_diagnostic_tails(
+    tmp_path: Path,
+) -> None:
+    script = _write_fake_handoff_cli(
+        tmp_path,
+        stdout="partial stdout",
+        stderr="boom stderr",
+        exit_code=7,
+    )
+    options = _make_options(
+        log_path=tmp_path / "T-old.jsonl",
+        argv=[str(script), "--execute", "--stream-json"],
+        cwd=tmp_path,
+    )
+
+    with pytest.raises(AmpClientError) as exc_info:
+        await AmpClient(options)._run_cli_handoff("T-old", "p")
+
+    assert "exit code 7" in str(exc_info.value)
+    assert exc_info.value.stdout_tail == "partial stdout"
+    assert exc_info.value.stderr_tail == "boom stderr"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_cli_handoff_missing_child_id_raises(
+    tmp_path: Path,
+) -> None:
+    script = _write_fake_handoff_cli(tmp_path, stdout="no child here\n")
+    options = _make_options(
+        log_path=tmp_path / "T-old.jsonl",
+        argv=[str(script), "--execute", "--stream-json"],
+        cwd=tmp_path,
+    )
+
+    with pytest.raises(AmpClientError, match="did not report"):
+        await AmpClient(options)._run_cli_handoff("T-old", "p")
 
 
 # ---------------------------------------------------------------------------
@@ -1243,6 +1590,37 @@ def test_handoff_export_with_only_tool_use_is_not_terminal(tmp_path: Path) -> No
 
     assert result is None
     assert all(event.get("type") != "result" for event in events)
+
+
+@pytest.mark.unit
+def test_handoff_export_terminal_error_returns_child_error_result(
+    tmp_path: Path,
+) -> None:
+    options = _make_options(
+        log_path=tmp_path / ".pending-export-error.jsonl",
+        argv=["amp"],
+        cwd=tmp_path,
+    )
+    client = AmpClient(options)
+
+    events, result = client._events_from_thread_export(
+        {
+            "status": "failed",
+            "error": "child thread failed",
+            "messages": [],
+        },
+        "T-child",
+    )
+
+    assert result == "child thread failed"
+    terminal = events[-1]
+    assert terminal == {
+        "type": "result",
+        "subtype": "error_during_execution",
+        "is_error": True,
+        "result": "child thread failed",
+        "session_id": "T-child",
+    }
 
 
 # ---------------------------------------------------------------------------
