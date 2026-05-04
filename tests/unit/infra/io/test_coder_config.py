@@ -368,7 +368,7 @@ class TestEffortPrecedence:
 
     @pytest.mark.parametrize(
         ("mode", "expected"),
-        [("smart", "xhigh"), ("deep", "high"), ("rush", None)],
+        [("smart", "xhigh"), ("deep", "medium"), ("rush", None)],
     )
     def test_amp_default_effort_depends_on_mode(
         self, mode: Literal["smart", "rush", "deep"], expected: str | None
@@ -420,13 +420,13 @@ class TestEffortPrecedence:
         with pytest.raises(ValueError, match="CLI"):
             build_resolved_config(self._base(), CLIOverrides(effort="turbo"))
 
-    @pytest.mark.parametrize("effort", ["low", "max"])
+    @pytest.mark.parametrize("effort", ["high", "max"])
     def test_amp_deep_rejects_unsupported_effort(self, effort: str) -> None:
         config = MalaConfig.from_env(validate=False, yaml_coder="amp")
         with pytest.raises(ValueError, match="Amp deep mode"):
             build_resolved_config(config, CLIOverrides(effort=effort))
 
-    @pytest.mark.parametrize("effort", ["medium", "high", "xhigh"])
+    @pytest.mark.parametrize("effort", ["low", "medium", "xhigh"])
     def test_amp_deep_accepts_supported_effort(self, effort: str) -> None:
         config = MalaConfig.from_env(validate=False, yaml_coder="amp")
         resolved = build_resolved_config(config, CLIOverrides(effort=effort))
@@ -446,7 +446,7 @@ class TestEffortPrecedence:
     def test_env_effort_rejected_when_amp_deep(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("MALA_EFFORT", "low")
+        monkeypatch.setenv("MALA_EFFORT", "high")
         with pytest.raises(ConfigurationError, match="Amp deep mode"):
             MalaConfig.from_env(validate=False, yaml_coder="amp")
 
@@ -456,8 +456,8 @@ class TestEffortPrecedence:
         """CLI effort override leaves coder / amp_mode untouched."""
         monkeypatch.setenv("MALA_AMP_MODE", "deep")
         config = MalaConfig.from_env(validate=False, yaml_coder="amp")
-        resolved = build_resolved_config(config, CLIOverrides(effort="high"))
-        assert resolved.effort == "high"
+        resolved = build_resolved_config(config, CLIOverrides(effort="low"))
+        assert resolved.effort == "low"
         assert resolved.coder == "amp"
         assert resolved.coder_options.amp.mode == "deep"
 
@@ -469,7 +469,7 @@ class TestEffortPrecedence:
         )
         assert resolved.coder == "amp"
         assert resolved.coder_options.amp.mode == "deep"
-        assert resolved.effort == "high"
+        assert resolved.effort == "medium"
 
     def test_yaml_effort_flows_through_validation_config(self, tmp_path: Path) -> None:
         """End-to-end: ``effort:`` in mala.yaml reaches MalaConfig.
@@ -501,7 +501,7 @@ class TestEffortPrecedence:
         with pytest.raises(ConfigError, match="effort"):
             load_config(tmp_path)
 
-    @pytest.mark.parametrize("effort", ["low", "max"])
+    @pytest.mark.parametrize("effort", ["high", "max"])
     def test_yaml_amp_deep_effort_rejects_unsupported_values(
         self, tmp_path: Path, effort: str
     ) -> None:

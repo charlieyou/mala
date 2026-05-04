@@ -23,13 +23,13 @@ DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS = 300
 # types effort as ``low | medium | high | max``, while local Claude and Amp also
 # accept ``xhigh``; mala validates that superset at the input boundary.
 VALID_EFFORTS: frozenset[str] = frozenset({"low", "medium", "high", "xhigh", "max"})
-VALID_AMP_DEEP_EFFORTS: frozenset[str] = frozenset({"medium", "high", "xhigh"})
+VALID_AMP_DEEP_EFFORTS: frozenset[str] = frozenset({"low", "medium", "xhigh"})
 VALID_AMP_SMART_EFFORTS: frozenset[str] = frozenset({"medium", "high", "xhigh"})
 DEFAULT_CLAUDE_EFFORT = "xhigh"
 DEFAULT_AMP_EFFORT_BY_MODE: dict[Literal["smart", "rush", "deep"], str | None] = {
     "smart": "xhigh",
     "rush": None,
-    "deep": "high",
+    "deep": "medium",
 }
 
 

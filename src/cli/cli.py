@@ -478,12 +478,12 @@ _AMP_MODE_HELP = (
 )
 _EFFORT_HELP = (
     "Reasoning effort forwarded to the active coder. Valid: low, medium, high, "
-    "xhigh, max. Defaults: claude=xhigh, amp smart=xhigh, amp deep=high."
+    "xhigh, max. Defaults: claude=xhigh, amp smart=xhigh, amp deep=medium."
 )
 _RUN_EFFORT_HELP = (
     f"{_EFFORT_HELP} Forwarded to ClaudeAgentOptions.effort for coder=claude "
     "and to `amp --effort <value>` for coder=amp (smart/deep modes only; "
-    "Amp smart/deep accept medium, high, or xhigh)."
+    "Amp smart accepts medium, high, or xhigh; Amp deep accepts low, medium, or xhigh)."
 )
 
 
@@ -858,7 +858,7 @@ def epic_verify(
         str | None,
         typer.Option(
             "--effort",
-            help=_EFFORT_HELP,
+            help=_RUN_EFFORT_HELP,
             callback=_validate_effort_option,
             rich_help_panel="Coder",
         ),

@@ -634,8 +634,17 @@ def test_runtime_exposes_lint_cache_for_session_config(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("mode", ["smart", "deep"])
-@pytest.mark.parametrize("effort", ["medium", "high", "xhigh"])
+@pytest.mark.parametrize(
+    ("mode", "effort"),
+    [
+        ("smart", "medium"),
+        ("smart", "high"),
+        ("smart", "xhigh"),
+        ("deep", "low"),
+        ("deep", "medium"),
+        ("deep", "xhigh"),
+    ],
+)
 def test_effort_appended_to_argv_in_supported_modes(
     repo_path: Path, mode: Literal["smart", "deep"], effort: str
 ) -> None:
@@ -656,7 +665,7 @@ def test_effort_appended_to_argv_in_supported_modes(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("effort", ["low", "max"])
+@pytest.mark.parametrize("effort", ["high", "max"])
 def test_deep_mode_rejects_unsupported_effort(repo_path: Path, effort: str) -> None:
     with pytest.raises(ValueError, match="Amp deep mode"):
         AmpRuntimeBuilder(
@@ -720,7 +729,7 @@ def test_malaconfig_effort_flows_into_amp_argv(
         monkeypatch.delenv(var, raising=False)
     config = MalaConfig.from_env(validate=False, yaml_coder="amp", yaml_amp_mode="deep")
     assert config.coder_options.amp.mode == "deep"
-    assert config.effort == "high"
+    assert config.effort == "medium"
 
     runtime = AmpRuntimeBuilder(
         repo_path,
@@ -730,4 +739,4 @@ def test_malaconfig_effort_flows_into_amp_argv(
         effort=config.effort,
     ).build()
     idx = runtime.argv.index("--effort")
-    assert runtime.argv[idx + 1] == "high"
+    assert runtime.argv[idx + 1] == "medium"

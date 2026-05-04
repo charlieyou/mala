@@ -73,7 +73,12 @@ def _patch_orchestrator(
 
 def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Strip env vars that would leak the user's defaults into the CLI run."""
-    for name in ("MALA_CODER", "MALA_AMP_MODE", "MALA_CLAUDE_SETTINGS_SOURCES"):
+    for name in (
+        "MALA_CODER",
+        "MALA_AMP_MODE",
+        "MALA_CLAUDE_SETTINGS_SOURCES",
+        "MALA_EFFORT",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -117,6 +122,68 @@ def test_amp_mode_rush_parses_into_config(
     assert config is not None
     assert config.coder == "amp"
     assert config.coder_options.amp.mode == "rush"
+
+
+def test_amp_deep_effort_low_parses_into_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--effort low` is accepted for Amp deep mode."""
+    from typer.testing import CliRunner
+
+    _isolate_env(monkeypatch)
+    cli = _reload_cli(monkeypatch)
+    _patch_orchestrator(monkeypatch, cli, tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app,
+        [
+            "run",
+            str(tmp_path),
+            "--coder",
+            "amp",
+            "--amp-mode",
+            "deep",
+            "--effort",
+            "low",
+        ],
+    )
+
+    assert result.exit_code == 0
+    config = _DummyOrchestrator.last_mala_config
+    assert config is not None
+    assert config.coder == "amp"
+    assert config.coder_options.amp.mode == "deep"
+    assert config.effort == "low"
+
+
+def test_amp_deep_effort_high_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--effort high` is rejected for Amp deep mode."""
+    from typer.testing import CliRunner
+
+    _isolate_env(monkeypatch)
+    cli = _reload_cli(monkeypatch)
+    _patch_orchestrator(monkeypatch, cli, tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app,
+        [
+            "run",
+            str(tmp_path),
+            "--coder",
+            "amp",
+            "--amp-mode",
+            "deep",
+            "--effort",
+            "high",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Amp deep mode" in result.output
 
 
 @pytest.mark.parametrize(
@@ -167,7 +234,7 @@ def test_coder_help_shows_effective_defaults(
     assert "Defaults:" in output
     assert "claude=xhigh" in output
     assert "amp smart=xhigh" in output
-    assert "amp deep=high" in output
+    assert "amp deep=medium" in output
 
 
 def test_absence_of_flags_preserves_default_config(

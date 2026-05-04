@@ -1241,9 +1241,9 @@ class ValidationConfig:
                     )
                 effort = effort_val
         effective_amp_mode = amp_mode if amp_mode is not None else "deep"
-        if coder == "amp" and effective_amp_mode == "deep" and effort in {"low", "max"}:
+        if coder == "amp" and effective_amp_mode == "deep" and effort in {"high", "max"}:
             raise ConfigError(
-                "effort must be 'medium', 'high', or 'xhigh' when "
+                "effort must be 'low', 'medium', or 'xhigh' when "
                 f"coder is 'amp' and amp_mode is 'deep', got {effort!r}"
             )
 
