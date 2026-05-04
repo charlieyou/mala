@@ -131,11 +131,10 @@ def load_env(repo_path: Path | None = None) -> None:
 
 
 def encode_repo_path(repo_path: Path) -> str:
-    """Encode repo path to match Claude SDK project directory naming.
+    """Encode repo path for mala-owned storage directories.
 
-    Claude SDK stores session logs in ~/.claude/projects/{encoded-path}/.
-    The encoding replaces path separators with hyphens, normalizes underscores
-    to hyphens, and prefixes with a hyphen.
+    The encoding replaces path separators with hyphens, preserves dots in path
+    segments, normalizes underscores to hyphens, and prefixes with a hyphen.
 
     Example: /home/cyou/mala -> -home-cyou-mala
 
@@ -143,13 +142,17 @@ def encode_repo_path(repo_path: Path) -> str:
         repo_path: Repository path to encode.
 
     Returns:
-        Encoded path string suitable for Claude projects directory.
+        Encoded path string suitable for mala-owned storage directories.
     """
     resolved = repo_path.resolve()
-    # Skip root and join parts with hyphens, prefix with hyphen.
-    # Normalize underscores to hyphens to match Claude SDK project dir naming.
     encoded = "-" + "-".join(resolved.parts[1:])
     return encoded.replace("_", "-")
+
+
+def encode_claude_project_path(repo_path: Path) -> str:
+    """Encode repo path to match Claude's session log project directory naming."""
+    resolved = repo_path.resolve()
+    return str(resolved).replace("/", "-").replace(".", "-").replace("_", "-")
 
 
 def get_claude_config_dir() -> Path:
@@ -179,7 +182,7 @@ def get_claude_log_path(repo_path: Path, session_id: str) -> Path:
     Returns:
         Path to the JSONL log file.
     """
-    encoded = encode_repo_path(repo_path)
+    encoded = encode_claude_project_path(repo_path)
     return get_claude_config_dir() / "projects" / encoded / f"{session_id}.jsonl"
 
 

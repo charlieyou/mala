@@ -29,7 +29,7 @@ from src.core.log_events import (
     UserLogEntry,
     parse_log_entry,
 )
-from src.infra.tools.env import encode_repo_path, get_claude_config_dir
+from src.infra.tools.env import get_claude_log_path
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -438,8 +438,7 @@ class FileSystemLogProvider:
         Returns:
             Path to the JSONL log file.
         """
-        encoded = encode_repo_path(repo_path)
-        return get_claude_config_dir() / "projects" / encoded / f"{session_id}.jsonl"
+        return get_claude_log_path(repo_path, session_id)
 
     def iter_events(
         self, log_path: Path, offset: int = 0
