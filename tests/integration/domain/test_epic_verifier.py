@@ -142,11 +142,12 @@ class TestRemediationIssueCreation:
         assert len(blocking_ids) == 1
         assert blocking_ids[0] == "remediation-1"
         assert len(informational_ids) == 0
-        # Remediations are children of the epic so completion triggers epic
-        # verification again; add_epic_blockers separately blocks closure.
+        # Remediations block epic closure via add_epic_blockers, but must not
+        # also be epic children because that creates a Beads readiness loop.
         mock_beads.create_issue_async.assert_called_once()
         call_kwargs = mock_beads.create_issue_async.call_args[1]
-        assert call_kwargs["parent_id"] == "epic-1"
+        assert call_kwargs["parent_id"] is None
+        mock_beads.add_parent_child_dependency_async.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_deduplicates_by_tag(
@@ -173,9 +174,7 @@ class TestRemediationIssueCreation:
         )
         assert blocking_ids == ["existing-issue"]
         assert informational_ids == []
-        mock_beads.add_parent_child_dependency_async.assert_awaited_once_with(
-            "existing-issue", "epic-1"
-        )
+        mock_beads.add_parent_child_dependency_async.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_remediation_issue_format(
@@ -209,7 +208,7 @@ class TestRemediationIssueCreation:
         assert call_kwargs["title"].startswith("[Remediation]")
         assert call_kwargs["tags"][0].startswith("er:")
         assert "auto_generated" in call_kwargs["tags"]
-        assert call_kwargs["parent_id"] == "epic-1"
+        assert call_kwargs["parent_id"] is None
 
     @pytest.mark.asyncio
     async def test_creates_advisory_issue_for_p2_criterion(
@@ -291,10 +290,10 @@ class TestRemediationIssueCreation:
         calls = mock_beads.create_issue_async.call_args_list
         assert len(calls) == 2
 
-        # First call (P1) should be blocking and parented to the epic; epic
-        # blockers are added separately with a dependency from epic to remediation.
+        # First call (P1) should be blocking without being parented to the epic;
+        # epic blockers are added separately with a dependency from epic to remediation.
         assert calls[0][1]["title"].startswith("[Remediation]")
-        assert calls[0][1]["parent_id"] == "epic-1"
+        assert calls[0][1]["parent_id"] is None
 
         # Second call (P3) should be advisory without a parent
         assert calls[1][1]["title"].startswith("[Advisory]")
@@ -386,16 +385,14 @@ class TestRemediationIssueCreation:
 
         assert blocking_ids == ["existing-1", "new-2"]
         assert informational_ids == []
-        mock_beads.add_parent_child_dependency_async.assert_awaited_once_with(
-            "existing-1", "epic-1"
-        )
+        mock_beads.add_parent_child_dependency_async.assert_not_awaited()
         mock_beads.add_dependency_async.assert_awaited_once_with("new-2", "existing-1")
 
     @pytest.mark.asyncio
-    async def test_failed_epic_adds_remediation_as_blocker_and_child(
+    async def test_failed_epic_adds_remediation_as_blocker_without_child(
         self, verifier: EpicVerifier, mock_beads: MagicMock, mock_model: MagicMock
     ) -> None:
-        """Failed epic verification should create a child blocker task."""
+        """Failed epic verification should create a non-child blocker task."""
         mock_model.verify.return_value = EpicVerdict(
             passed=False,
             unmet_criteria=[
@@ -436,7 +433,7 @@ class TestRemediationIssueCreation:
         assert result.failed_count == 1
         assert result.remediation_issues_created == ["remediation-1"]
         create_kwargs = mock_beads.create_issue_async.call_args.kwargs
-        assert create_kwargs["parent_id"] == "epic-1"
+        assert create_kwargs["parent_id"] is None
         assert dep_commands == [["br", "dep", "add", "epic-1", "remediation-1"]]
 
 

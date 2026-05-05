@@ -1116,9 +1116,11 @@ class EpicVerifier:
         Deduplication: Checks for existing issues with matching
         epic_remediation:<epic_id>:<criterion_hash> tag before creating.
 
-        P0/P1 issues are blocking (block epic closure) and parented to the epic
-        so completing them triggers the epic closure check again.
-        P2/P3 issues are informational (standalone, don't block closure).
+        New P0/P1 issues are blocking (block epic closure) but are not parented
+        to the epic. A remediation issue must not be both a child and a blocker
+        of the same epic, because Beads readiness can propagate the blocked
+        parent state back to the child. New P2/P3 issues are informational
+        (standalone, don't block closure).
 
         Args:
             epic_id: The epic ID the issues are for.
@@ -1151,15 +1153,6 @@ class EpicVerifier:
             existing_id = await self.beads.find_issue_by_tag_async(dedup_tag)
             if existing_id:
                 if is_blocking:
-                    attached = await self.beads.add_parent_child_dependency_async(
-                        existing_id, epic_id
-                    )
-                    if not attached:
-                        logger.warning(
-                            "Failed to attach remediation issue %s to epic %s",
-                            existing_id,
-                            epic_id,
-                        )
                     await register_blocking_issue(existing_id)
                 else:
                     informational_ids.append(existing_id)
@@ -1205,7 +1198,7 @@ This issue was auto-created by epic verification for epic `{epic_id}`.
                 description=description,
                 priority=priority_str,
                 tags=[dedup_tag, "auto_generated"],
-                parent_id=epic_id if is_blocking else None,
+                parent_id=None,
             )
             if issue_id:
                 if is_blocking:
