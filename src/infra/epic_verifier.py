@@ -356,7 +356,7 @@ class ClaudeEpicVerificationModel:
             criterion = title or body or "Unspecified criterion"
             priority = item.get("priority", 1)
             # Accept int, float, or numeric string; cast to int, clamp to valid range 0-3
-            if isinstance(priority, (int, float)):
+            if isinstance(priority, int | float):
                 priority = max(0, min(3, int(priority)))
             elif isinstance(priority, str) and priority.isdigit():
                 priority = max(0, min(3, int(priority)))
@@ -1116,7 +1116,8 @@ class EpicVerifier:
         Deduplication: Checks for existing issues with matching
         epic_remediation:<epic_id>:<criterion_hash> tag before creating.
 
-        P0/P1 issues are blocking (block epic closure).
+        P0/P1 issues are blocking (block epic closure) and parented to the epic
+        so completing them triggers the epic closure check again.
         P2/P3 issues are informational (standalone, don't block closure).
 
         Args:
@@ -1149,8 +1150,16 @@ class EpicVerifier:
             # Check for existing issue with this tag
             existing_id = await self.beads.find_issue_by_tag_async(dedup_tag)
             if existing_id:
-                await self._detach_remediation_from_epic_parent(epic_id, existing_id)
                 if is_blocking:
+                    attached = await self.beads.add_parent_child_dependency_async(
+                        existing_id, epic_id
+                    )
+                    if not attached:
+                        logger.warning(
+                            "Failed to attach remediation issue %s to epic %s",
+                            existing_id,
+                            epic_id,
+                        )
                     await register_blocking_issue(existing_id)
                 else:
                     informational_ids.append(existing_id)
@@ -1196,7 +1205,7 @@ This issue was auto-created by epic verification for epic `{epic_id}`.
                 description=description,
                 priority=priority_str,
                 tags=[dedup_tag, "auto_generated"],
-                parent_id=None,
+                parent_id=epic_id if is_blocking else None,
             )
             if issue_id:
                 if is_blocking:
@@ -1210,15 +1219,6 @@ This issue was auto-created by epic verification for epic `{epic_id}`.
                     )
 
         return blocking_ids, informational_ids
-
-    async def _detach_remediation_from_epic_parent(
-        self, epic_id: str, issue_id: str
-    ) -> None:
-        """Remove stale parent-child dependency from old remediation issues."""
-        await self._runner.run_async(
-            ["br", "dep", "remove", issue_id, epic_id],
-            cwd=self.repo_path,
-        )
 
     async def add_epic_blockers(
         self, epic_id: str, blocker_issue_ids: list[str]

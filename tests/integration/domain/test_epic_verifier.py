@@ -46,6 +46,7 @@ def mock_beads() -> MagicMock:
     beads.close_async = AsyncMock(return_value=True)
     beads.find_issue_by_tag_async = AsyncMock(return_value=None)
     beads.create_issue_async = AsyncMock(return_value="issue-123")
+    beads.add_parent_child_dependency_async = AsyncMock(return_value=True)
     return beads
 
 
@@ -141,11 +142,11 @@ class TestRemediationIssueCreation:
         assert len(blocking_ids) == 1
         assert blocking_ids[0] == "remediation-1"
         assert len(informational_ids) == 0
-        # Blocking remediations are standalone so the open epic does not block
-        # claiming the remediation task; add_epic_blockers links them back.
+        # Remediations are children of the epic so completion triggers epic
+        # verification again; add_epic_blockers separately blocks closure.
         mock_beads.create_issue_async.assert_called_once()
         call_kwargs = mock_beads.create_issue_async.call_args[1]
-        assert call_kwargs["parent_id"] is None
+        assert call_kwargs["parent_id"] == "epic-1"
 
     @pytest.mark.asyncio
     async def test_deduplicates_by_tag(
@@ -154,14 +155,6 @@ class TestRemediationIssueCreation:
         """Should reuse existing issue with matching dedup tag."""
         # Mock beads to return existing issue
         mock_beads.find_issue_by_tag_async = AsyncMock(return_value="existing-issue")
-        dep_commands: list[list[str]] = []
-
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            dep_commands.append(cmd)
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-
         verdict = EpicVerdict(
             passed=False,
             unmet_criteria=[
@@ -180,9 +173,9 @@ class TestRemediationIssueCreation:
         )
         assert blocking_ids == ["existing-issue"]
         assert informational_ids == []
-        assert dep_commands == [
-            ["br", "dep", "remove", "existing-issue", "epic-1"]
-        ]
+        mock_beads.add_parent_child_dependency_async.assert_awaited_once_with(
+            "existing-issue", "epic-1"
+        )
 
     @pytest.mark.asyncio
     async def test_remediation_issue_format(
@@ -216,13 +209,13 @@ class TestRemediationIssueCreation:
         assert call_kwargs["title"].startswith("[Remediation]")
         assert call_kwargs["tags"][0].startswith("er:")
         assert "auto_generated" in call_kwargs["tags"]
-        assert call_kwargs["parent_id"] is None
+        assert call_kwargs["parent_id"] == "epic-1"
 
     @pytest.mark.asyncio
     async def test_creates_advisory_issue_for_p2_criterion(
         self, verifier: EpicVerifier, mock_beads: MagicMock
     ) -> None:
-        """P2/P3 criteria should create standalone advisory issues, not parented."""
+        """P2/P3 criteria should create standalone advisory issues."""
         mock_beads.find_issue_by_tag_async = AsyncMock(return_value=None)
         mock_beads.create_issue_async = AsyncMock(return_value="advisory-1")
 
@@ -254,7 +247,7 @@ class TestRemediationIssueCreation:
         call_kwargs = mock_beads.create_issue_async.call_args[1]
         assert call_kwargs["title"].startswith("[Advisory]")
         assert call_kwargs["priority"] == "P3"
-        assert call_kwargs["parent_id"] is None  # Not parented to epic
+        assert call_kwargs["parent_id"] is None
 
     @pytest.mark.asyncio
     async def test_mixed_blocking_and_advisory_criteria(
@@ -298,12 +291,12 @@ class TestRemediationIssueCreation:
         calls = mock_beads.create_issue_async.call_args_list
         assert len(calls) == 2
 
-        # First call (P1) should be blocking but standalone; epic blockers are
-        # added separately with a one-way dependency from epic to remediation.
+        # First call (P1) should be blocking and parented to the epic; epic
+        # blockers are added separately with a dependency from epic to remediation.
         assert calls[0][1]["title"].startswith("[Remediation]")
-        assert calls[0][1]["parent_id"] is None
+        assert calls[0][1]["parent_id"] == "epic-1"
 
-        # Second call (P3) should be advisory without parent
+        # Second call (P3) should be advisory without a parent
         assert calls[1][1]["title"].startswith("[Advisory]")
         assert calls[1][1]["parent_id"] is None
 
@@ -368,14 +361,6 @@ class TestRemediationIssueCreation:
         )
         mock_beads.create_issue_async = AsyncMock(return_value="new-2")
         mock_beads.add_dependency_async = AsyncMock(return_value=True)
-        dep_commands: list[list[str]] = []
-
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            dep_commands.append(cmd)
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
-
         verdict = EpicVerdict(
             passed=False,
             unmet_criteria=[
@@ -401,14 +386,16 @@ class TestRemediationIssueCreation:
 
         assert blocking_ids == ["existing-1", "new-2"]
         assert informational_ids == []
+        mock_beads.add_parent_child_dependency_async.assert_awaited_once_with(
+            "existing-1", "epic-1"
+        )
         mock_beads.add_dependency_async.assert_awaited_once_with("new-2", "existing-1")
-        assert dep_commands == [["br", "dep", "remove", "existing-1", "epic-1"]]
 
     @pytest.mark.asyncio
-    async def test_failed_epic_adds_remediation_as_blocker_not_parent(
+    async def test_failed_epic_adds_remediation_as_blocker_and_child(
         self, verifier: EpicVerifier, mock_beads: MagicMock, mock_model: MagicMock
     ) -> None:
-        """Failed epic verification should create a claimable blocker task."""
+        """Failed epic verification should create a child blocker task."""
         mock_model.verify.return_value = EpicVerdict(
             passed=False,
             unmet_criteria=[
@@ -449,7 +436,7 @@ class TestRemediationIssueCreation:
         assert result.failed_count == 1
         assert result.remediation_issues_created == ["remediation-1"]
         create_kwargs = mock_beads.create_issue_async.call_args.kwargs
-        assert create_kwargs["parent_id"] is None
+        assert create_kwargs["parent_id"] == "epic-1"
         assert dep_commands == [["br", "dep", "add", "epic-1", "remediation-1"]]
 
 

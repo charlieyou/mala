@@ -778,6 +778,30 @@ class BeadsClient:
         )
         return result.returncode == 0
 
+    async def add_parent_child_dependency_async(
+        self, issue_id: str, parent_id: str
+    ) -> bool:
+        """Attach an issue to a parent via a parent-child dependency.
+
+        Args:
+            issue_id: The child issue ID.
+            parent_id: The parent issue ID.
+
+        Returns:
+            True if dependency added successfully, False otherwise.
+        """
+        result = await self._run_subprocess_async(
+            ["br", "dep", "add", issue_id, parent_id, "--type", "parent-child"]
+        )
+        if result.returncode != 0:
+            self._log_warning(
+                f"br dep add --type parent-child failed for {issue_id}: {result.stderr}"
+            )
+            return False
+
+        self._parent_epic_cache.pop(issue_id, None)
+        return True
+
     async def create_issue_async(
         self,
         title: str,
@@ -821,23 +845,29 @@ class BeadsClient:
             return None
 
         # Parse issue ID from output (typically "Created issue: <id>" or silent id)
+        issue_id: str | None = None
         match = re.search(r"Created issue:\s*(\S+)", result.stdout)
         if match:
-            return match.group(1)
+            issue_id = match.group(1)
 
         # Try parsing as JSON if the CLI returns JSON
-        try:
-            data = json.loads(result.stdout)
-            if isinstance(data, dict):
-                issue_id = data.get("id")
-                if issue_id:
-                    return str(issue_id)
-        except json.JSONDecodeError:
-            pass
+        if issue_id is None:
+            try:
+                data = json.loads(result.stdout)
+                if isinstance(data, dict):
+                    parsed_issue_id = data.get("id")
+                    if parsed_issue_id:
+                        issue_id = str(parsed_issue_id)
+            except json.JSONDecodeError:
+                pass
 
         # Fallback: try using stripped output as bare ID
-        issue_id = result.stdout.strip()
-        return issue_id if issue_id else None
+        if issue_id is None:
+            issue_id = result.stdout.strip() or None
+
+        if issue_id and parent_id:
+            self._parent_epic_cache[issue_id] = parent_id
+        return issue_id
 
     async def find_issue_by_tag_async(self, tag: str) -> str | None:
         """Find an existing issue with the given tag.

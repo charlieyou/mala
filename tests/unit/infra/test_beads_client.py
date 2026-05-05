@@ -2460,6 +2460,60 @@ class TestAddDependencyAsync:
         assert result is False
 
 
+class TestAddParentChildDependencyAsync:
+    """Test add_parent_child_dependency_async method."""
+
+    @pytest.mark.asyncio
+    async def test_adds_parent_child_dependency_and_invalidates_cache(
+        self, tmp_path: Path
+    ) -> None:
+        """Should add parent-child dependency and clear stale parent cache."""
+        beads = BeadsClient(tmp_path)
+        beads._parent_epic_cache["issue-1"] = None
+        captured_cmds: list[list[str]] = []
+
+        async def capturing_run(cmd: list[str]) -> CommandResult:
+            captured_cmds.append(cmd)
+            return make_command_result(returncode=0)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", capturing_run)
+            result = await beads.add_parent_child_dependency_async(
+                "issue-1", "epic-1"
+            )
+
+        assert result is True
+        assert captured_cmds == [
+            ["br", "dep", "add", "issue-1", "epic-1", "--type", "parent-child"]
+        ]
+        assert "issue-1" not in beads._parent_epic_cache
+
+    @pytest.mark.asyncio
+    async def test_returns_false_and_keeps_cache_on_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """Should report parent-child dependency failures."""
+        warnings: list[str] = []
+        beads = BeadsClient(tmp_path, log_warning=warnings.append)
+        beads._parent_epic_cache["issue-1"] = None
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(returncode=1, stderr="boom")),
+            )
+            result = await beads.add_parent_child_dependency_async(
+                "issue-1", "epic-1"
+            )
+
+        assert result is False
+        assert beads._parent_epic_cache["issue-1"] is None
+        assert warnings == [
+            "br dep add --type parent-child failed for issue-1: boom"
+        ]
+
+
 class TestCreateIssueAsync:
     """Test create_issue_async method."""
 
@@ -2547,6 +2601,7 @@ class TestCreateIssueAsync:
         assert "epic-1" in cmd
         assert "--labels" in cmd
         assert "bug,urgent" in cmd
+        assert beads._parent_epic_cache["new-1"] == "epic-1"
 
     @pytest.mark.asyncio
     async def test_normalizes_labels_for_br_validation(self, tmp_path: Path) -> None:
