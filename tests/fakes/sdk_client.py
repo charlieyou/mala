@@ -62,6 +62,7 @@ class FakeSDKClient(SDKClientProtocol):
         result_message: Final message to yield (typically ResultMessage).
             Defaults to a minimal ResultMessage. Set to None to suppress.
         query_error: If set, raise this on query().
+        session_id: Optional provider session/thread id exposed before a result.
         queries: List of (prompt, session_id) tuples from query() calls.
         disconnect_called: Whether disconnect() was called.
         disconnect_delay: Optional delay in seconds before disconnect completes.
@@ -70,6 +71,7 @@ class FakeSDKClient(SDKClientProtocol):
     messages: list[Any] = field(default_factory=list)
     result_message: Any = field(default=_NO_RESULT_MESSAGE)
     query_error: Exception | None = None
+    session_id: str | None = None
     queries: list[tuple[str, str | None]] = field(default_factory=list)
     disconnect_called: bool = False
     disconnect_delay: float = 0

@@ -307,6 +307,414 @@ class TestExecuteIterationTimeout:
 
 
 @pytest.mark.unit
+class TestSubprocessExitRetry:
+    """Tests for retrying transient subprocess exits."""
+
+    @pytest.mark.asyncio
+    async def test_retryable_subprocess_exit_retries_twice_then_succeeds(
+        self,
+        sdk_factory: FakeSDKClientFactory,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: FakeLintCache,
+    ) -> None:
+        """A code-1 subprocess exit gets two safe retries before succeeding."""
+        for _ in range(3):
+            sdk_factory.configure_next_client(responses=[])
+
+        class FlakySubprocessProcessor:
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def process_stream(
+                self,
+                stream: IdleTimeoutStream,
+                issue_id: str,
+                state: MessageIterationState,
+                lifecycle_ctx: LifecycleContext,
+                lint_cache: LintCacheProtocol,
+                query_start: float,
+                tracer: TelemetrySpan | None,
+            ) -> MessageIterationResult:
+                self.call_count += 1
+                if self.call_count <= 2:
+                    raise RuntimeError("amp subprocess exited with code 1")
+                return MessageIterationResult(success=True, session_id="final-session")
+
+        processor = FlakySubprocessProcessor()
+        config = RetryConfig(
+            max_idle_retries=2,
+            idle_retry_backoff=(0.0, 0.0),
+            idle_resume_prompt="Continue {issue_id}",
+        )
+        policy = IdleTimeoutRetryPolicy(
+            sdk_client_factory=sdk_factory,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
+            config=config,
+        )
+
+        state = MessageIterationState()
+        result = await policy.execute_iteration(
+            query="Initial query",
+            issue_id="TEST-12",
+            options={},
+            state=state,
+            lifecycle_ctx=lifecycle_ctx,
+            lint_cache=lint_cache,
+            idle_timeout_seconds=300.0,
+        )
+
+        assert result.success is True
+        assert result.session_id == "final-session"
+        assert processor.call_count == 3
+        assert len(sdk_factory.clients) == 3
+        assert [client._query_calls[0] for client in sdk_factory.clients] == [
+            ("Initial query", None),
+            ("Initial query", None),
+            ("Initial query", None),
+        ]
+        assert sdk_factory.clients[0]._disconnect_called is True
+        assert sdk_factory.clients[1]._disconnect_called is True
+        assert state.idle_retry_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retryable_subprocess_exit_reraises_after_two_retries(
+        self,
+        sdk_factory: FakeSDKClientFactory,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: FakeLintCache,
+    ) -> None:
+        """The original subprocess exit error is raised after retry budget ends."""
+        for _ in range(3):
+            sdk_factory.configure_next_client(responses=[])
+
+        processor = FakeStreamProcessor(
+            side_effect=RuntimeError("amp subprocess exited with code 1")
+        )
+        config = RetryConfig(
+            max_idle_retries=2,
+            idle_retry_backoff=(0.0, 0.0),
+            idle_resume_prompt="Continue {issue_id}",
+        )
+        policy = IdleTimeoutRetryPolicy(
+            sdk_client_factory=sdk_factory,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
+            config=config,
+        )
+
+        state = MessageIterationState()
+        with pytest.raises(RuntimeError, match="amp subprocess exited with code 1"):
+            await policy.execute_iteration(
+                query="Initial query",
+                issue_id="TEST-13",
+                options={},
+                state=state,
+                lifecycle_ctx=lifecycle_ctx,
+                lint_cache=lint_cache,
+                idle_timeout_seconds=300.0,
+            )
+
+        assert processor.call_count == 3
+        assert len(sdk_factory.clients) == 3
+        assert state.idle_retry_count == 2
+
+    @pytest.mark.asyncio
+    async def test_subprocess_exit_resumes_from_client_session_id(
+        self,
+        sdk_factory: FakeSDKClientFactory,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: FakeLintCache,
+    ) -> None:
+        """A client-known session id makes a mid-stream tool call retry safe."""
+        first_client = sdk_factory.configure_next_client(responses=[])
+        first_client.session_id = "known-amp-thread"
+        sdk_factory.configure_next_client(responses=[])
+
+        class ClientSessionProcessor:
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def process_stream(
+                self,
+                stream: IdleTimeoutStream,
+                issue_id: str,
+                state: MessageIterationState,
+                lifecycle_ctx: LifecycleContext,
+                lint_cache: LintCacheProtocol,
+                query_start: float,
+                tracer: TelemetrySpan | None,
+            ) -> MessageIterationResult:
+                self.call_count += 1
+                if self.call_count == 1:
+                    state.tool_calls_this_turn = 1
+                    raise RuntimeError("amp subprocess exited with code 1")
+                return MessageIterationResult(success=True, session_id="final-session")
+
+        processor = ClientSessionProcessor()
+        config = RetryConfig(
+            max_idle_retries=2,
+            idle_retry_backoff=(0.0, 0.0),
+            idle_resume_prompt="Continue {issue_id}",
+        )
+        policy = IdleTimeoutRetryPolicy(
+            sdk_client_factory=sdk_factory,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
+            config=config,
+        )
+
+        state = MessageIterationState()
+        result = await policy.execute_iteration(
+            query="Initial query",
+            issue_id="TEST-14",
+            options={},
+            state=state,
+            lifecycle_ctx=lifecycle_ctx,
+            lint_cache=lint_cache,
+            idle_timeout_seconds=300.0,
+        )
+
+        assert result.success is True
+        assert processor.call_count == 2
+        assert sdk_factory.clients[0]._query_calls[0] == ("Initial query", None)
+        assert sdk_factory.clients[1]._query_calls[0] == ("Continue TEST-14", None)
+        assert sdk_factory.with_resume_calls[0][1] == "known-amp-thread"
+        options = cast("dict[str, Any]", sdk_factory.create_calls[1])
+        assert options.get("resume") == "known-amp-thread"
+
+    @pytest.mark.asyncio
+    async def test_subprocess_exit_preserves_pending_session_id_on_next_retry(
+        self,
+        sdk_factory: FakeSDKClientFactory,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: FakeLintCache,
+    ) -> None:
+        """A resumed crash keeps using the prior pending session id."""
+        first_client = sdk_factory.configure_next_client(responses=[])
+        first_client.session_id = "known-amp-thread"
+        sdk_factory.configure_next_client(responses=[])
+        sdk_factory.configure_next_client(responses=[])
+
+        class ConsecutiveSubprocessProcessor:
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def process_stream(
+                self,
+                stream: IdleTimeoutStream,
+                issue_id: str,
+                state: MessageIterationState,
+                lifecycle_ctx: LifecycleContext,
+                lint_cache: LintCacheProtocol,
+                query_start: float,
+                tracer: TelemetrySpan | None,
+            ) -> MessageIterationResult:
+                self.call_count += 1
+                if self.call_count <= 2:
+                    state.tool_calls_this_turn = 1
+                    raise RuntimeError("amp subprocess exited with code 1")
+                return MessageIterationResult(success=True, session_id="final-session")
+
+        processor = ConsecutiveSubprocessProcessor()
+        config = RetryConfig(
+            max_idle_retries=2,
+            idle_retry_backoff=(0.0, 0.0),
+            idle_resume_prompt="Continue {issue_id}",
+        )
+        policy = IdleTimeoutRetryPolicy(
+            sdk_client_factory=sdk_factory,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
+            config=config,
+        )
+
+        state = MessageIterationState()
+        result = await policy.execute_iteration(
+            query="Initial query",
+            issue_id="TEST-15",
+            options={},
+            state=state,
+            lifecycle_ctx=lifecycle_ctx,
+            lint_cache=lint_cache,
+            idle_timeout_seconds=300.0,
+        )
+
+        assert result.success is True
+        assert processor.call_count == 3
+        assert [client._query_calls[0] for client in sdk_factory.clients] == [
+            ("Initial query", None),
+            ("Continue TEST-15", None),
+            ("Continue TEST-15", None),
+        ]
+        assert [call[1] for call in sdk_factory.with_resume_calls] == [
+            "known-amp-thread",
+            "known-amp-thread",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_pending_session_id_survives_subprocess_then_idle_retry(
+        self,
+        sdk_factory: FakeSDKClientFactory,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: FakeLintCache,
+    ) -> None:
+        """Mixed stream failures keep the established resume session id."""
+        first_client = sdk_factory.configure_next_client(responses=[])
+        first_client.session_id = "known-amp-thread"
+        sdk_factory.configure_next_client(responses=[])
+        sdk_factory.configure_next_client(responses=[])
+
+        class SubprocessThenIdleProcessor:
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def process_stream(
+                self,
+                stream: IdleTimeoutStream,
+                issue_id: str,
+                state: MessageIterationState,
+                lifecycle_ctx: LifecycleContext,
+                lint_cache: LintCacheProtocol,
+                query_start: float,
+                tracer: TelemetrySpan | None,
+            ) -> MessageIterationResult:
+                self.call_count += 1
+                if self.call_count == 1:
+                    state.tool_calls_this_turn = 1
+                    raise RuntimeError("amp subprocess exited with code 1")
+                if self.call_count == 2:
+                    state.tool_calls_this_turn = 1
+                    raise IdleTimeoutError("idle timeout")
+                return MessageIterationResult(success=True, session_id="final-session")
+
+        processor = SubprocessThenIdleProcessor()
+        config = RetryConfig(
+            max_idle_retries=2,
+            idle_retry_backoff=(0.0, 0.0),
+            idle_resume_prompt="Continue {issue_id}",
+        )
+        policy = IdleTimeoutRetryPolicy(
+            sdk_client_factory=sdk_factory,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
+            config=config,
+        )
+
+        state = MessageIterationState()
+        result = await policy.execute_iteration(
+            query="Initial query",
+            issue_id="TEST-16",
+            options={},
+            state=state,
+            lifecycle_ctx=lifecycle_ctx,
+            lint_cache=lint_cache,
+            idle_timeout_seconds=300.0,
+        )
+
+        assert result.success is True
+        assert processor.call_count == 3
+        assert [client._query_calls[0] for client in sdk_factory.clients] == [
+            ("Initial query", None),
+            ("Continue TEST-16", None),
+            ("Continue TEST-16", None),
+        ]
+        assert [call[1] for call in sdk_factory.with_resume_calls] == [
+            "known-amp-thread",
+            "known-amp-thread",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_subprocess_exit_with_tool_calls_no_session_preserves_state(
+        self,
+        sdk_factory: FakeSDKClientFactory,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: FakeLintCache,
+    ) -> None:
+        """Unsafe subprocess exits re-raise without consuming retry state."""
+        sdk_factory.configure_next_client(responses=[])
+
+        class UnsafeSubprocessProcessor:
+            async def process_stream(
+                self,
+                stream: IdleTimeoutStream,
+                issue_id: str,
+                state: MessageIterationState,
+                lifecycle_ctx: LifecycleContext,
+                lint_cache: LintCacheProtocol,
+                query_start: float,
+                tracer: TelemetrySpan | None,
+            ) -> MessageIterationResult:
+                state.tool_calls_this_turn = 1
+                state.pending_tool_ids.add("tool-1")
+                state.pending_lint_commands["tool-1"] = ("ruff", "ruff check .")
+                raise RuntimeError("amp subprocess exited with code 1")
+
+        processor = UnsafeSubprocessProcessor()
+        config = RetryConfig(
+            max_idle_retries=2,
+            idle_retry_backoff=(0.0, 0.0),
+            idle_resume_prompt="Continue {issue_id}",
+        )
+        policy = IdleTimeoutRetryPolicy(
+            sdk_client_factory=sdk_factory,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
+            config=config,
+        )
+
+        state = MessageIterationState()
+        with pytest.raises(RuntimeError, match="amp subprocess exited with code 1"):
+            await policy.execute_iteration(
+                query="Initial query",
+                issue_id="TEST-17",
+                options={},
+                state=state,
+                lifecycle_ctx=lifecycle_ctx,
+                lint_cache=lint_cache,
+                idle_timeout_seconds=300.0,
+            )
+
+        assert len(sdk_factory.clients) == 1
+        assert state.idle_retry_count == 0
+        assert state.pending_tool_ids == {"tool-1"}
+        assert state.pending_lint_commands == {"tool-1": ("ruff", "ruff check .")}
+
+    @pytest.mark.asyncio
+    async def test_query_time_subprocess_exit_does_not_retry(
+        self,
+        sdk_factory: FakeSDKClientFactory,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: FakeLintCache,
+    ) -> None:
+        """Retry handling is limited to stream-consumption failures."""
+        sdk_factory.configure_next_client(
+            responses=[], query_error=RuntimeError("amp subprocess exited with code 1")
+        )
+        processor = FakeStreamProcessor()
+        config = RetryConfig(
+            max_idle_retries=2,
+            idle_retry_backoff=(0.0, 0.0),
+            idle_resume_prompt="Continue {issue_id}",
+        )
+        policy = IdleTimeoutRetryPolicy(
+            sdk_client_factory=sdk_factory,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
+            config=config,
+        )
+
+        state = MessageIterationState()
+        with pytest.raises(RuntimeError, match="amp subprocess exited with code 1"):
+            await policy.execute_iteration(
+                query="Initial query",
+                issue_id="TEST-18",
+                options={},
+                state=state,
+                lifecycle_ctx=lifecycle_ctx,
+                lint_cache=lint_cache,
+                idle_timeout_seconds=300.0,
+            )
+
+        assert len(sdk_factory.clients) == 1
+        assert processor.call_count == 0
+        assert state.idle_retry_count == 0
+
+
+@pytest.mark.unit
 class TestRetryConfigZeroMaxRetries:
     """Tests for RetryConfig with max_idle_retries=0."""
 

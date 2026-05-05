@@ -41,6 +41,22 @@ logger = logging.getLogger(__name__)
 # Timeout for disconnect() call
 DISCONNECT_TIMEOUT = 10.0
 
+_RETRYABLE_SUBPROCESS_EXIT_MARKER = "amp subprocess exited with code 1"
+
+
+def _is_retryable_subprocess_exit(exc: Exception) -> bool:
+    """Return True for the transient Amp subprocess exit seen in the stream."""
+    return _RETRYABLE_SUBPROCESS_EXIT_MARKER in str(exc).lower()
+
+
+def _client_session_id(client: object) -> str | None:
+    """Best-effort session/thread id exposed by clients such as AmpClient."""
+    session_id = getattr(client, "session_id", None)
+    if session_id is None:
+        return None
+    session_text = str(session_id)
+    return session_text or None
+
 
 @dataclass
 class RetryConfig:
@@ -81,14 +97,14 @@ class IterationResult:
 
 
 class IdleTimeoutRetryPolicy:
-    """Encapsulates idle timeout handling with backoff semantics.
+    """Encapsulates agent iteration retry handling with backoff semantics.
 
     This policy manages the retry logic for SDK message iterations when
-    idle timeouts occur. It handles:
+    idle timeouts or known transient subprocess exits occur. It handles:
     - Backoff delays between retry attempts
     - Preparing state for retry (session ID, tool IDs)
     - Processing message streams with timeout wrappers
-    - Graceful client disconnection on timeout
+    - Graceful client disconnection on retryable failures
 
     Usage:
         policy = IdleTimeoutRetryPolicy(
@@ -240,6 +256,36 @@ class IdleTimeoutRetryPolicy:
                         if retry_query:
                             pending_query = retry_query
 
+                    except Exception as exc:
+                        if not _is_retryable_subprocess_exit(exc):
+                            raise
+
+                        elapsed = time.time() - query_start
+                        logger.warning(
+                            "Session %s: amp subprocess exited after %.1fs, "
+                            "first_msg=%s, %d tool calls, disconnecting subprocess",
+                            issue_id,
+                            elapsed,
+                            state.first_message_received,
+                            state.tool_calls_this_turn,
+                        )
+                        await self._disconnect_client_safely(client, issue_id)
+
+                        retry_query = self._prepare_subprocess_retry(
+                            state,
+                            lifecycle_ctx,
+                            issue_id,
+                            exc,
+                            resume_id=_client_session_id(client)
+                            or state.pending_session_id
+                            or state.session_id
+                            or lifecycle_ctx.session_id,
+                        )
+                        if retry_query is None:
+                            raise
+                        if retry_query:
+                            pending_query = retry_query
+
             except IdleTimeoutError:
                 raise
 
@@ -261,7 +307,7 @@ class IdleTimeoutRetryPolicy:
         else:
             backoff = 0.0
         if backoff > 0:
-            logger.info(f"Idle retry {retry_count}: waiting {backoff}s")
+            logger.info(f"Agent retry {retry_count}: waiting {backoff}s")
             await asyncio.sleep(backoff)
 
     async def _disconnect_client_safely(
@@ -306,37 +352,13 @@ class IdleTimeoutRetryPolicy:
                 f"Max idle retries ({self._config.max_idle_retries}) exceeded"
             )
 
-        # Prepare for retry
-        state.idle_retry_count += 1
-        # Clear pending state from previous attempt to avoid
-        # hanging on stale tool IDs (they won't resolve on new stream)
-        state.pending_tool_ids.clear()
-        state.pending_lint_commands.clear()
-        state.first_message_received = False
-        resume_id = state.session_id or lifecycle_ctx.session_id
-
-        if resume_id is not None:
-            state.pending_session_id = resume_id
-            pending_query = self._config.idle_resume_prompt.format(issue_id=issue_id)
-            logger.info(
-                f"Session {issue_id}: retrying with resume "
-                f"(session_id={resume_id[:8]}..., "
-                f"attempt {state.idle_retry_count})"
-            )
-            # Reset tool calls after decision to preserve safety check
-            state.tool_calls_this_turn = 0
-            return pending_query
-        elif state.tool_calls_this_turn == 0:
-            state.pending_session_id = None
-            # Keep original query - caller must provide it
-            logger.info(
-                f"Session {issue_id}: retrying with fresh session "
-                f"(no session_id, no side effects, "
-                f"attempt {state.idle_retry_count})"
-            )
-            # Return empty string to signal caller to keep original query
-            return ""
-        else:
+        retry_query = self._prepare_retry_state(
+            state,
+            lifecycle_ctx,
+            issue_id,
+            retry_reason="idle timeout",
+        )
+        if retry_query is None:
             logger.error(
                 f"Session {issue_id}: cannot retry - "
                 f"{state.tool_calls_this_turn} tool calls "
@@ -346,6 +368,100 @@ class IdleTimeoutRetryPolicy:
                 f"Cannot retry: {state.tool_calls_this_turn} tool calls "
                 "occurred without session context"
             )
+        return retry_query
+
+    def _prepare_subprocess_retry(
+        self,
+        state: MessageIterationState,
+        lifecycle_ctx: LifecycleContext,
+        issue_id: str,
+        exc: Exception,
+        resume_id: str | None,
+    ) -> str | None:
+        """Prepare a safe retry after a transient subprocess exit.
+
+        Returns None when retrying would exceed the retry budget or risk
+        duplicating tool-side effects; the caller should then re-raise ``exc``.
+        """
+        if state.idle_retry_count >= self._config.max_idle_retries:
+            logger.error(
+                "Session %s: max subprocess retries (%d) exceeded after: %s",
+                issue_id,
+                self._config.max_idle_retries,
+                exc,
+            )
+            return None
+
+        retry_query = self._prepare_retry_state(
+            state,
+            lifecycle_ctx,
+            issue_id,
+            retry_reason="amp subprocess exit",
+            resume_id=resume_id,
+        )
+        if retry_query is None:
+            logger.error(
+                "Session %s: cannot retry subprocess exit after %d tool calls "
+                "without session_id: %s",
+                issue_id,
+                state.tool_calls_this_turn,
+                exc,
+            )
+        return retry_query
+
+    def _prepare_retry_state(
+        self,
+        state: MessageIterationState,
+        lifecycle_ctx: LifecycleContext,
+        issue_id: str,
+        retry_reason: str,
+        resume_id: str | None = None,
+    ) -> str | None:
+        """Update iteration state for a safe retry.
+
+        Returns a replacement query, an empty string to keep the original query,
+        or None when retrying would risk duplicating tool-side effects.
+        """
+        if resume_id is None:
+            resume_id = (
+                state.pending_session_id or state.session_id or lifecycle_ctx.session_id
+            )
+        if resume_id is None and state.tool_calls_this_turn != 0:
+            return None
+
+        state.idle_retry_count += 1
+        # Clear pending state from previous attempt to avoid
+        # hanging on stale tool IDs (they won't resolve on new stream)
+        state.pending_tool_ids.clear()
+        state.pending_lint_commands.clear()
+        state.first_message_received = False
+
+        if resume_id is not None:
+            state.pending_session_id = resume_id
+            pending_query = self._config.idle_resume_prompt.format(issue_id=issue_id)
+            logger.info(
+                "Session %s: retrying after %s with resume "
+                "(session_id=%s..., attempt %d)",
+                issue_id,
+                retry_reason,
+                resume_id[:8],
+                state.idle_retry_count,
+            )
+            # Reset tool calls after decision to preserve safety check
+            state.tool_calls_this_turn = 0
+            return pending_query
+        state.pending_session_id = None
+        state.tool_calls_this_turn = 0
+        # Keep original query - caller must provide it
+        logger.info(
+            "Session %s: retrying after %s with fresh session "
+            "(no session_id, no side effects, attempt %d)",
+            issue_id,
+            retry_reason,
+            state.idle_retry_count,
+        )
+        # Return empty string to signal caller to keep original query
+        return ""
 
     async def _process_message_stream(
         self,
