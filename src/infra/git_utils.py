@@ -163,6 +163,37 @@ async def get_issue_commits_async(
     return [line.strip() for line in log_result.stdout.splitlines() if line.strip()]
 
 
+async def get_commits_between_async(
+    repo_path: Path,
+    from_commit: str,
+    to_commit: str = "HEAD",
+    timeout: float = DEFAULT_GIT_TIMEOUT,
+) -> list[str]:
+    """Get commits reachable from target but not from base, oldest first.
+
+    Uses `git rev-list --reverse <from_commit>..<to_commit>`.
+
+    Args:
+        repo_path: Path to the git repository.
+        from_commit: Base commit excluded from the result.
+        to_commit: Target commit included if reachable from the range.
+        timeout: Timeout in seconds for git operations.
+
+    Returns:
+        Full commit SHAs in chronological order, or an empty list if git fails.
+    """
+    runner = CommandRunner(cwd=repo_path, timeout_seconds=timeout)
+
+    result = await runner.run_async(
+        ["git", "rev-list", "--reverse", f"{from_commit}..{to_commit}"],
+    )
+
+    if not result.ok:
+        return []
+
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
 @dataclass(frozen=True)
 class DiffStat:
     """Statistics about a git diff."""
@@ -231,6 +262,43 @@ async def get_diff_stat(
                 total_lines += int(removed)
 
     return DiffStat(total_lines=total_lines, files_changed=files_changed)
+
+
+async def has_tree_changes(
+    repo_path: Path,
+    from_commit: str,
+    to_commit: str = "HEAD",
+    timeout: float = DEFAULT_GIT_TIMEOUT,
+) -> bool:
+    """Return whether two commits have any tree changes.
+
+    Uses `git diff --quiet` so rename-only, mode-only, and binary changes are
+    treated as real changes even when a line-count diff would be empty.
+
+    Args:
+        repo_path: Path to the git repository.
+        from_commit: The base commit.
+        to_commit: The target commit (default: HEAD).
+        timeout: Timeout in seconds for git operations.
+
+    Returns:
+        True if the tree differs, False if there is no diff.
+
+    Raises:
+        ValueError: If git diff fails for reasons other than finding changes.
+    """
+    runner = CommandRunner(cwd=repo_path, timeout_seconds=timeout)
+
+    result = await runner.run_async(
+        ["git", "diff", "--quiet", from_commit, to_commit],
+    )
+
+    if result.returncode == 0:
+        return False
+    if result.returncode == 1:
+        return True
+
+    raise ValueError(f"git diff --quiet failed: {result.stderr}")
 
 
 def _unquote_git_path(path: str) -> str:

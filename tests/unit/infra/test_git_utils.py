@@ -699,6 +699,141 @@ class TestGetDiffStat:
         assert result.files_changed == ["src/v1/new.py"]
 
 
+class TestHasTreeChanges:
+    """Tests for has_tree_changes() function."""
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_diff_is_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Exit code 0 from git diff --quiet means no tree changes."""
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff", "--quiet"],
+                    returncode=0,
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.has_tree_changes(Path("/repo"), "abc123", "def456")
+
+        assert result is False
+        assert mock_runner.calls[0] == [
+            "git",
+            "diff",
+            "--quiet",
+            "abc123",
+            "def456",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_returns_true_when_diff_exists(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Exit code 1 from git diff --quiet means tree changes exist."""
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff", "--quiet"],
+                    returncode=1,
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.has_tree_changes(Path("/repo"), "abc123")
+
+        assert result is True
+        assert mock_runner.calls[0] == [
+            "git",
+            "diff",
+            "--quiet",
+            "abc123",
+            "HEAD",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_raises_on_git_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Exit codes above 1 are git errors, not diff results."""
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "diff", "--quiet"],
+                    returncode=128,
+                    stderr="fatal: bad revision 'missing'",
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        with pytest.raises(ValueError, match="git diff --quiet failed"):
+            await git_utils.has_tree_changes(Path("/repo"), "missing")
+
+
+class TestGetCommitsBetweenAsync:
+    """Tests for get_commits_between_async() function."""
+
+    @pytest.mark.asyncio
+    async def test_returns_commits_between_base_and_target(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Returns rev-list output in chronological order."""
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "rev-list", "--reverse"],
+                    returncode=0,
+                    stdout="commit1\ncommit2\n",
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.get_commits_between_async(
+            Path("/repo"), "base", "target"
+        )
+
+        assert result == ["commit1", "commit2"]
+        assert mock_runner.calls[0] == [
+            "git",
+            "rev-list",
+            "--reverse",
+            "base..target",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_list_on_git_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Git errors return an empty list so callers can avoid unsafe skips."""
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "rev-list", "--reverse"],
+                    returncode=128,
+                    stderr="fatal: bad revision",
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.get_commits_between_async(Path("/repo"), "base")
+
+        assert result == []
+
+
 class TestGetDiffContent:
     """Tests for get_diff_content() function."""
 

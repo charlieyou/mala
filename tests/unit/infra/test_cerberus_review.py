@@ -721,6 +721,49 @@ class TestExtractWaitTimeout:
         assert DefaultReviewer._extract_wait_timeout(args) == 450
 
 
+class TestNoChangesSpawnError:
+    """Tests for empty-diff spawn handling."""
+
+    async def test_spawn_no_changes_is_treated_as_pass(self) -> None:
+        """Empty review-gate commit diffs skip review instead of failing the run."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        reviewer = DefaultReviewer(repo_path=Path("/tmp"))
+
+        with patch(
+            "src.infra.clients.cerberus_gate_cli.CerberusGateCLI.validate_binary",
+            return_value=None,
+        ):
+            spawn_result = MagicMock()
+            spawn_result.returncode = 1
+            spawn_result.timed_out = False
+            spawn_result.stderr_tail.return_value = (
+                "Error: No changes found for diff mode: --commit abc123,def456"
+            )
+            spawn_result.stdout_tail.return_value = ""
+
+            with patch(
+                "src.infra.clients.cerberus_review.CommandRunner"
+            ) as mock_runner_class:
+                mock_runner = AsyncMock()
+                mock_runner.run_async.return_value = spawn_result
+                mock_runner_class.return_value = mock_runner
+
+                result = await reviewer(
+                    commit_shas=["abc123", "def456"],
+                    claude_session_id="test-session",
+                )
+
+            assert result.passed is True
+            assert result.fatal_error is False
+            assert result.parse_error is None
+            assert result.issues == []
+
+            calls = [call[0][0] for call in mock_runner.run_async.call_args_list]
+            assert len(calls) == 1
+            assert "spawn-code-review" in calls[0]
+
+
 class TestAlreadyActiveGateError:
     """Tests for 'already active' gate error handling.
 

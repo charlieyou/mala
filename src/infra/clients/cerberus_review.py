@@ -92,6 +92,12 @@ class DefaultReviewer:
         """Return False; DefaultReviewer respects the disabled setting."""
         return False
 
+    @staticmethod
+    def _is_no_changes_error(error_detail: str) -> bool:
+        """Return True when review-gate skipped spawn because the diff is empty."""
+        normalized = error_detail.lower()
+        return "no changes found" in normalized and "diff mode" in normalized
+
     async def __call__(
         self,
         context_file: Path | None = None,
@@ -157,6 +163,17 @@ class DefaultReviewer:
             )
 
         if not spawn_result.success:
+            if self._is_no_changes_error(spawn_result.error_detail):
+                logger.info(
+                    "Review skipped because review-gate found no changes in diff"
+                )
+                return ReviewResult(
+                    passed=True,
+                    issues=[],
+                    parse_error=None,
+                    fatal_error=False,
+                )
+
             # Check for stale gate from a previous attempt in this session.
             if spawn_result.already_active:
                 if self.event_sink is not None:
@@ -183,6 +200,17 @@ class DefaultReviewer:
                             fatal_error=False,
                         )
                     if not spawn_result.success:
+                        if self._is_no_changes_error(spawn_result.error_detail):
+                            logger.info(
+                                "Review skipped because review-gate found no changes in diff"
+                            )
+                            return ReviewResult(
+                                passed=True,
+                                issues=[],
+                                parse_error=None,
+                                fatal_error=False,
+                            )
+
                         # If still "already active", another session owns the gate
                         if spawn_result.already_active:
                             return ReviewResult(

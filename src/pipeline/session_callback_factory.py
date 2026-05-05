@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -119,6 +119,18 @@ class _InterruptedReviewResultWrapper:
     fatal_error: bool
     review_log_path: Path | None = None
     interrupted: bool = True
+
+
+@dataclass
+class _SkippedReviewResult:
+    """Minimal passing review result for intentional review skips."""
+
+    passed: bool = True
+    issues: list[ReviewIssue] = field(default_factory=list)
+    parse_error: str | None = None
+    fatal_error: bool = False
+    review_log_path: Path | None = None
+    interrupted: bool = False
 
 
 class GateAsyncRunner(Protocol):
@@ -1061,7 +1073,11 @@ class _ReviewRunnerAdapter:
     ) -> ReviewOutcomeProtocol:
         """Run code review."""
         from src.core.models import ReviewInput
-        from src.infra.git_utils import get_issue_commits_async
+        from src.infra.git_utils import (
+            get_commits_between_async,
+            get_issue_commits_async,
+            has_tree_changes,
+        )
 
         self._factory._review_runner.config.capture_session_log = (
             self._factory._is_verbose()
@@ -1070,6 +1086,38 @@ class _ReviewRunnerAdapter:
             self._factory._repo_path,
             issue_id,
         )
+
+        base_sha = self._factory._context.get_base_sha(issue_id)
+        if commit_shas and base_sha:
+            commits_between = await get_commits_between_async(
+                self._factory._repo_path,
+                base_sha,
+                commit_shas[-1],
+            )
+            if commits_between == commit_shas:
+                try:
+                    has_changes = await has_tree_changes(
+                        self._factory._repo_path,
+                        base_sha,
+                        commit_shas[-1],
+                    )
+                except ValueError as exc:
+                    logger.warning(
+                        "Review empty-diff check failed for %s: %s", issue_id, exc
+                    )
+                else:
+                    if not has_changes:
+                        logger.info(
+                            "Review skipped: empty cumulative issue diff for %s",
+                            issue_id,
+                        )
+                        return _SkippedReviewResult()
+            else:
+                logger.warning(
+                    "Review empty-diff precheck skipped for %s: issue commits are not contiguous",
+                    issue_id,
+                )
+
         review_input = ReviewInput(
             issue_id=issue_id,
             repo_path=self._factory._repo_path,
