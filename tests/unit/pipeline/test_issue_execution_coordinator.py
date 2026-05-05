@@ -156,6 +156,115 @@ class TestRunLoop:
         assert ("no_more_issues", ("none_ready",)) in event_sink.events
 
     @pytest.mark.asyncio
+    async def test_repolls_after_startup_no_ready_work(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Startup no-ready work can create issues for the loop to process."""
+        beads = MockIssueProvider(ready_issues=[[], ["remediation-1"], []])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            config=CoordinatorConfig(),
+        )
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None] | None:
+            async def work() -> None:
+                pass
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+
+        startup_checks = 0
+
+        async def on_startup_no_ready() -> bool:
+            nonlocal startup_checks
+            startup_checks += 1
+            return True
+
+        result = await coord.run_loop(
+            spawn_callback,
+            finalize_callback,
+            AsyncMock(),
+            on_startup_no_ready=on_startup_no_ready,
+        )
+
+        assert result.issues_spawned == 1
+        assert "remediation-1" in coord.completed_ids
+        assert startup_checks == 1
+
+    @pytest.mark.asyncio
+    async def test_exits_when_startup_no_ready_work_has_no_changes(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Startup no-ready work can decline a repoll and exit normally."""
+        beads = MockIssueProvider(ready_issues=[[]])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            config=CoordinatorConfig(),
+        )
+
+        startup_checks = 0
+
+        async def on_startup_no_ready() -> bool:
+            nonlocal startup_checks
+            startup_checks += 1
+            return False
+
+        result = await coord.run_loop(
+            AsyncMock(return_value=None),
+            AsyncMock(),
+            AsyncMock(),
+            on_startup_no_ready=on_startup_no_ready,
+        )
+
+        assert result.issues_spawned == 0
+        assert coord.completed_ids == set()
+        assert startup_checks == 1
+        assert ("no_more_issues", ("none_ready",)) in event_sink.events
+
+    @pytest.mark.asyncio
+    async def test_startup_no_ready_work_skipped_when_first_poll_has_ready_issue(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Startup no-ready work only runs when the first poll is empty."""
+        beads = MockIssueProvider(ready_issues=[["issue-1"], []])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            config=CoordinatorConfig(),
+        )
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None] | None:
+            async def work() -> None:
+                pass
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+
+        startup_checks = 0
+
+        async def on_startup_no_ready() -> bool:
+            nonlocal startup_checks
+            startup_checks += 1
+            return True
+
+        result = await coord.run_loop(
+            spawn_callback,
+            finalize_callback,
+            AsyncMock(),
+            on_startup_no_ready=on_startup_no_ready,
+        )
+
+        assert result.issues_spawned == 1
+        assert "issue-1" in coord.completed_ids
+        assert startup_checks == 0
+
+    @pytest.mark.asyncio
     async def test_spawns_single_issue(self, event_sink: MockEventSink) -> None:
         """Loop spawns and completes a single issue."""
         beads = MockIssueProvider(ready_issues=[["issue-1"], []])

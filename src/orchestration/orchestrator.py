@@ -1151,6 +1151,27 @@ class MalaOrchestrator:
                 run_metadata, is_interrupt=is_interrupt
             )
 
+        async def verify_startup_eligible_epics() -> bool:
+            try:
+                if self.epic_verifier is not None:
+                    result = await self.epic_verifier.verify_and_close_eligible(
+                        self.epic_override_ids
+                    )
+                    return (
+                        result.verified_count > 0
+                        or len(result.remediation_issues_created) > 0
+                    )
+
+                return await self.beads.close_eligible_epics_async()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Startup epic verification failed")
+                self.event_sink.on_warning(
+                    "Startup epic verification failed; continuing without startup repoll"
+                )
+                return False
+
         return await self.issue_coordinator.run_loop(
             spawn_callback=self.spawn_agent,
             finalize_callback=finalize_callback,
@@ -1161,6 +1182,7 @@ class MalaOrchestrator:
             interrupt_event=interrupt_event,
             validation_callback=validation_callback,
             on_validation_failed=self._mark_validation_failed,
+            on_startup_no_ready=verify_startup_eligible_epics,
         )
 
     async def _finalize_run(

@@ -27,7 +27,7 @@ from src.domain.prompts import load_prompts
 from src.infra.tools.env import PROMPTS_DIR
 from src.infra.tools.command_runner import CommandRunner
 
-from src.core.models import OrderPreference
+from src.core.models import EpicVerificationResult, OrderPreference
 from src.core.protocols.log import LogProvider
 from tests.fakes.issue_provider import FakeIssueProvider, FakeIssue
 
@@ -191,6 +191,180 @@ class TestRunOrchestrationLoop:
 
         assert result == (0, 0)
         assert len(orchestrator._state.completed) == 0
+
+    @pytest.mark.asyncio
+    async def test_verifies_eligible_epics_when_starting_with_no_ready_issues(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """When no tasks are ready at startup, eligible epics are verified first."""
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=5,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+            epic_override_ids={"epic-override"},
+        )
+        assert orchestrator.epic_verifier is not None
+
+        ready_polls = 0
+        override_sets: list[set[str]] = []
+
+        async def get_ready_async(*args: object, **kwargs: object) -> list[str]:
+            nonlocal ready_polls
+            ready_polls += 1
+            return []
+
+        async def verify_and_close_eligible(
+            human_override_epic_ids: set[str] | None = None,
+        ) -> EpicVerificationResult:
+            override_sets.append(human_override_epic_ids or set())
+            return EpicVerificationResult(
+                verified_count=1,
+                passed_count=1,
+                failed_count=0,
+                verdicts={},
+                remediation_issues_created=[],
+            )
+
+        with (
+            patch.object(orchestrator.beads, "get_ready_async", side_effect=get_ready_async),
+            patch.object(
+                orchestrator.epic_verifier,
+                "verify_and_close_eligible",
+                side_effect=verify_and_close_eligible,
+            ),
+            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
+            patch("src.orchestration.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            result = await orchestrator.run()
+
+        assert result == (0, 0)
+        assert ready_polls >= 2
+        assert override_sets == [{"epic-override"}]
+
+    @pytest.mark.asyncio
+    async def test_processes_startup_epic_remediation_issue(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Startup epic verification can create remediation work for the run."""
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=5,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
+        assert orchestrator.epic_verifier is not None
+
+        ready_polls = 0
+        processed_issues: list[str] = []
+
+        async def get_ready_async(*args: object, **kwargs: object) -> list[str]:
+            nonlocal ready_polls
+            ready_polls += 1
+            if ready_polls == 2:
+                return ["remediation-1"]
+            return []
+
+        async def verify_and_close_eligible(
+            human_override_epic_ids: set[str] | None = None,
+        ) -> EpicVerificationResult:
+            return EpicVerificationResult(
+                verified_count=1,
+                passed_count=0,
+                failed_count=1,
+                verdicts={},
+                remediation_issues_created=["remediation-1"],
+            )
+
+        async def run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
+            processed_issues.append(issue_id)
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,
+                summary="Completed successfully",
+                session_log_path=log_path,
+            )
+
+        with (
+            patch.object(orchestrator.beads, "get_ready_async", side_effect=get_ready_async),
+            patch.object(orchestrator.beads, "claim_async", return_value=True),
+            patch.object(orchestrator.beads, "close_async", return_value=True),
+            patch.object(
+                orchestrator.beads, "get_parent_epic_async", return_value=None
+            ),
+            patch.object(
+                orchestrator.epic_verifier,
+                "verify_and_close_eligible",
+                side_effect=verify_and_close_eligible,
+            ),
+            patch.object(orchestrator, "run_implementer", side_effect=run_implementer),
+            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
+            patch("src.orchestration.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            result = await orchestrator.run()
+
+        assert result == (1, 1)
+        assert processed_issues == ["remediation-1"]
+        assert [item.issue_id for item in orchestrator._state.completed] == [
+            "remediation-1"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_startup_epic_verification_failure_exits_cleanly(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Startup epic verification failures warn without crashing idle runs."""
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=5,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
+        assert orchestrator.epic_verifier is not None
+
+        async def get_ready_async(*args: object, **kwargs: object) -> list[str]:
+            return []
+
+        async def verify_and_close_eligible(
+            human_override_epic_ids: set[str] | None = None,
+        ) -> EpicVerificationResult:
+            raise RuntimeError("verifier unavailable")
+
+        with (
+            patch.object(orchestrator.beads, "get_ready_async", side_effect=get_ready_async),
+            patch.object(
+                orchestrator.epic_verifier,
+                "verify_and_close_eligible",
+                side_effect=verify_and_close_eligible,
+            ),
+            patch.object(orchestrator.event_sink, "on_warning") as on_warning,
+            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
+            patch("src.orchestration.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            result = await orchestrator.run()
+
+        assert result == (0, 0)
+        on_warning.assert_called_once_with(
+            "Startup epic verification failed; continuing without startup repoll"
+        )
 
     @pytest.mark.asyncio
     async def test_respects_max_issues_limit(

@@ -212,6 +212,7 @@ class IssueExecutionCoordinator:
         sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
         drain_event: asyncio.Event | None = None,
         on_validation_failed: Callable[[], None] | None = None,
+        on_startup_no_ready: Callable[[], Awaitable[bool]] | None = None,
     ) -> RunResult:
         """Run the main agent spawning and completion loop.
 
@@ -238,6 +239,8 @@ class IssueExecutionCoordinator:
             on_validation_failed: Called when validation fails, before returning with
                 exit_code=1. Used to propagate validation failure state to orchestrator
                 (e.g., for correct SIGINT exit code handling).
+            on_startup_no_ready: Called once when the first poll finds no ready issues.
+                Return True to re-poll before entering idle/exit handling.
 
         Returns:
             RunResult with issues_spawned, exit_code, and exit_reason.
@@ -254,6 +257,7 @@ class IssueExecutionCoordinator:
         )
         # Track interrupt_task outside the loop to ensure cleanup on any exit path
         interrupt_task: asyncio.Task[object] | None = None
+        startup_no_ready_check_pending = True
 
         async def _cleanup_interrupt_task() -> None:
             """Cancel interrupt_task if it exists and is pending."""
@@ -413,6 +417,7 @@ class IssueExecutionCoordinator:
                         continue
 
                 if ready:
+                    startup_no_ready_check_pending = False
                     self.event_sink.on_ready_issues(list(ready))
 
                 # Spawn agents while we have capacity, ready issues, and haven't hit limit
@@ -471,6 +476,11 @@ class IssueExecutionCoordinator:
                             exit_reason="limit_reached",
                         )
                     elif not ready:
+                        if startup_no_ready_check_pending:
+                            startup_no_ready_check_pending = False
+                            if on_startup_no_ready and await on_startup_no_ready():
+                                continue
+
                         # Idle: no ready issues AND no active agents
                         if watch_config and watch_config.enabled:
                             # Detect transition to idle and rate-limit logging
