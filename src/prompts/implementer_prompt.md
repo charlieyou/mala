@@ -141,7 +141,8 @@ Rules:
 Validation output handling:
 
 - Create `{validation_log_dir}` once before the validation run. Do not repeat `mkdir -p` for each validation command.
-- Always redirect output to `{validation_log_dir}/{issue_id}.<check>.log`, where `<check>` is `format`, `lint`, `typecheck`, `custom`, or `test`.
+- Always redirect output to `{validation_log_dir}/{issue_id}.<evidence_key>.log`, where `<evidence_key>` is the exact validation evidence key: `format`, `lint`, `typecheck`, `test`, or the exact custom command name from `mala.yaml` such as `python_test` or `python_lint`.
+- Do not combine multiple custom validation commands into one `custom.log`. Run each custom command separately and give it its own log named after the custom command key.
 - Validation logs are scratch artifacts; do not lock or commit files under `{validation_log_dir}`.
 - Always report command, exit code, and log path.
 - On success, report only the summary line.
@@ -154,9 +155,9 @@ mkdir -p {validation_log_dir}
 {format_command} > {validation_log_dir}/{issue_id}.format.log 2>&1; echo "exit=$? log={validation_log_dir}/{issue_id}.format.log"
 {lint_command} > {validation_log_dir}/{issue_id}.lint.log 2>&1; echo "exit=$? log={validation_log_dir}/{issue_id}.lint.log"
 {typecheck_command} > {validation_log_dir}/{issue_id}.typecheck.log 2>&1; echo "exit=$? log={validation_log_dir}/{issue_id}.typecheck.log"
-(set -e
-{custom_commands_section}
-) > {validation_log_dir}/{issue_id}.custom.log 2>&1; echo "exit=$? log={validation_log_dir}/{issue_id}.custom.log"
+# For each custom command from the validation list, redirect that command's marker-wrapped wrapper to its exact evidence-key log.
+# Example: <python_test wrapper> > {validation_log_dir}/{issue_id}.python_test.log 2>&1; echo "python_test exit=$? log={validation_log_dir}/{issue_id}.python_test.log"
+# Example: <python_lint wrapper> > {validation_log_dir}/{issue_id}.python_lint.log 2>&1; echo "python_lint exit=$? log={validation_log_dir}/{issue_id}.python_lint.log"
 {test_command} > {validation_log_dir}/{issue_id}.test.log 2>&1; echo "exit=$? log={validation_log_dir}/{issue_id}.test.log"
 ```
 

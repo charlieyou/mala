@@ -38,6 +38,7 @@ class TestLoadPrompts:
         assert "{lint_command}" in result.gate_followup_prompt
         assert "{format_command}" in result.gate_followup_prompt
         assert "{typecheck_command}" in result.gate_followup_prompt
+        assert "{custom_commands_section}" in result.gate_followup_prompt
         assert "{test_command}" in result.gate_followup_prompt
 
     def test_raises_on_missing_prompt_dir(self, tmp_path: Path) -> None:
@@ -422,6 +423,7 @@ class TestPromptTemplateIntegration:
             lint_command=cmds.lint,
             format_command=cmds.format,
             typecheck_command=cmds.typecheck,
+            custom_commands_section="",
             test_command=cmds.test,
         )
 
@@ -430,6 +432,19 @@ class TestPromptTemplateIntegration:
         assert "go test" in prompt
         # Verify no unsubstituted placeholders
         assert "{" not in prompt or "}" not in prompt.split("{")[-1]
+
+    def test_implementer_prompt_directs_custom_commands_to_named_logs(
+        self,
+    ) -> None:
+        """Implementer prompt discourages generic custom.log evidence."""
+        prompts = load_prompts(PROMPTS_DIR)
+
+        assert "{issue_id}.<evidence_key>.log" in prompts.implementer_prompt
+        assert "Do not combine multiple custom validation commands" in (
+            prompts.implementer_prompt
+        )
+        assert "{issue_id}.python_test.log" in prompts.implementer_prompt
+        assert "{issue_id}.python_lint.log" in prompts.implementer_prompt
 
 
 class TestFormatImplementerPrompt:

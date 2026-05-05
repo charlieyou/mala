@@ -31,8 +31,11 @@ This follow-up overrides the baseline "do not fix untouched files" validation ru
 {format_command}
 {lint_command}
 {typecheck_command}
+{custom_commands_section}
 {test_command}
 ```
+
+If the failure mentions missing custom evidence keys such as `python_test` or `python_lint`, re-run those exact custom commands individually with their configured custom names and separate `{issue_id}.<custom_name>.log` files. A generic `custom.log` or unlabeled raw command may not be attributed.
 
 3. If formatting changes files, re-run validations from the start.
 4. Commit fixes with:

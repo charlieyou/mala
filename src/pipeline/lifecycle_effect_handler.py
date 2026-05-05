@@ -395,6 +395,9 @@ class LifecycleEffectHandler:
                 self.config.prompt_validation_commands
                 or _get_default_validation_commands()
             )
+            custom_commands_section = build_custom_commands_section(
+                cmds.custom_commands
+            )
             pending_query = self.config.prompts.gate_followup.format(
                 attempt=lifecycle_ctx.retry_state.gate_attempt,
                 max_attempts=self.config.max_gate_retries,
@@ -403,6 +406,7 @@ class LifecycleEffectHandler:
                 lint_command=cmds.lint,
                 format_command=cmds.format,
                 typecheck_command=cmds.typecheck,
+                custom_commands_section=custom_commands_section,
                 test_command=cmds.test,
             )
             return pending_query, False, result  # continue with retry

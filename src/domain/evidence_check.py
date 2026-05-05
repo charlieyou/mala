@@ -60,6 +60,85 @@ CUSTOM_MARKER_PATTERN = re.compile(
     r"\[custom:([\w-]+):(start|pass|fail exit=\d+|timeout)\]"
 )
 
+CUSTOM_EXIT_PATTERN_TEMPLATE = r"(?:^|\s|;){}\s+exit=(\d+)\b"
+
+
+@dataclass(frozen=True)
+class CustomCommandFallbackMatch:
+    """Custom command fallback match derived from shell command structure."""
+
+    name: str
+    shell_status_is_authoritative: bool
+
+
+def _normalize_shell_command(command: str) -> str:
+    """Normalize shell command text for exact configured-command matching."""
+    return " ".join(command.split())
+
+
+def _split_shell_segments(command: str) -> list[str]:
+    """Split a shell command into conservative top-level command segments."""
+    segments: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    index = 0
+
+    while index < len(command):
+        char = command[index]
+        next_char = command[index + 1] if index + 1 < len(command) else ""
+
+        if quote is not None:
+            current.append(char)
+            if char == quote:
+                quote = None
+            elif char == "\\" and quote == '"' and next_char:
+                index += 1
+                current.append(command[index])
+            index += 1
+            continue
+
+        if char in {"'", '"'}:
+            quote = char
+            current.append(char)
+            index += 1
+            continue
+
+        if char == "\n" or char == ";" or (char in {"&", "|"} and next_char == char):
+            segment = "".join(current).strip()
+            if segment:
+                segments.append(segment)
+            current = []
+            index += 2 if char in {"&", "|"} and next_char == char else 1
+            continue
+
+        current.append(char)
+        index += 1
+
+    segment = "".join(current).strip()
+    if segment:
+        segments.append(segment)
+    return segments
+
+
+def _shell_segment_matches_configured_command(segment: str, configured: str) -> bool:
+    """Return whether a segment executes configured directly with redirections."""
+    if not segment.startswith(configured):
+        return False
+
+    remainder = segment[len(configured) :].strip()
+    if not remainder:
+        return True
+
+    redirection_pattern = re.compile(
+        r"^(?:(?:\d?>&\d)|(?:(?:\d?>|\d?>>|&>|<)\s*(?:'[^']*'|\"[^\"]*\"|\S+)))(?:\s+|$)"
+    )
+    while remainder:
+        match = redirection_pattern.match(remainder)
+        if match is None:
+            return False
+        remainder = remainder[match.end() :].strip()
+    return True
+
 
 @dataclass
 class ValidationEvidence:
@@ -425,6 +504,99 @@ class EvidenceCheck:
                 kind_patterns[cmd.kind].append(cmd.detection_pattern)
         return kind_patterns
 
+    def _match_custom_commands_by_configured_command(
+        self, command: str, spec: ValidationSpec
+    ) -> list[CustomCommandFallbackMatch]:
+        """Match shell text to custom command names using exact configured commands.
+
+        Built-in custom detection patterns are intentionally broad because they
+        derive from tool names such as ``make`` or ``python``. Named custom
+        evidence needs a stricter fallback: only credit a custom command when
+        a shell segment directly executes its full configured shell command.
+        """
+        normalized_command = _normalize_shell_command(command)
+        normalized_segments = [
+            _normalize_shell_command(segment)
+            for segment in _split_shell_segments(command)
+        ]
+        matches: list[tuple[str, str, bool]] = []
+
+        for custom_cmd in spec.commands:
+            if custom_cmd.kind != CommandKind.CUSTOM:
+                continue
+            normalized_custom = _normalize_shell_command(custom_cmd.command)
+            if not normalized_custom:
+                continue
+            for segment in normalized_segments:
+                if _shell_segment_matches_configured_command(
+                    segment, normalized_custom
+                ):
+                    matches.append(
+                        (
+                            normalized_custom,
+                            custom_cmd.name,
+                            len(normalized_segments) == 1
+                            and segment == normalized_command,
+                        )
+                    )
+                    break
+
+        if not matches:
+            return []
+
+        non_overlapped_matches = [
+            (matched_command, name, shell_status_is_authoritative)
+            for matched_command, name, shell_status_is_authoritative in matches
+            if not any(
+                matched_command != other_command and matched_command in other_command
+                for other_command, _other_name, _other_safe in matches
+            )
+        ]
+        return [
+            CustomCommandFallbackMatch(
+                name=name,
+                shell_status_is_authoritative=shell_status_is_authoritative,
+            )
+            for _matched_command, name, shell_status_is_authoritative in sorted(
+                non_overlapped_matches, key=lambda match: match[1]
+            )
+        ]
+
+    def _apply_custom_command_fallback(
+        self,
+        matches: list[CustomCommandFallbackMatch],
+        is_error: bool,
+        content: str,
+        state: dict[str, tuple[bool, str | None]],
+    ) -> None:
+        """Credit custom evidence from exact command matches when markers are absent.
+
+        A single exact custom command match can use the shell tool result status.
+        Multiple matches in one shell invocation are only credited when the tool
+        output reports per-command ``<name> exit=<code>`` lines, which avoids
+        treating one aggregate shell exit code as proof for several checks.
+        Explicit ``[custom:<name>:...]`` markers always win over this fallback.
+        """
+        if not matches:
+            return
+
+        for fallback_match in matches:
+            name = fallback_match.name
+            if name in state:
+                continue
+            pattern = re.compile(
+                CUSTOM_EXIT_PATTERN_TEMPLATE.format(re.escape(name)), re.MULTILINE
+            )
+            match = pattern.search(content)
+            if match is not None:
+                exit_code = int(match.group(1))
+                state[name] = (
+                    True,
+                    "pass" if exit_code == 0 else f"fail exit={exit_code}",
+                )
+            elif len(matches) == 1 and fallback_match.shell_status_is_authoritative:
+                state[name] = (True, "fail exit=1" if is_error else "pass")
+
     def _parse_custom_markers(
         self,
         content: str,
@@ -549,6 +721,8 @@ class EvidenceCheck:
         tool_id_to_info: dict[str, list[tuple[CommandKind, str]]] = {}
         # Track failures per CommandKind (latest status wins for retries of same command)
         kind_failed: dict[CommandKind, tuple[bool, str]] = {}
+        # Track tool_id → custom command matches derived from exact configured commands.
+        tool_id_to_custom_matches: dict[str, list[CustomCommandFallbackMatch]] = {}
         # Track custom command markers: name → (has_start, latest_terminal_marker)
         # Terminal markers: "pass", "fail exit=N", "timeout"
         # None means no terminal marker seen yet
@@ -564,6 +738,11 @@ class EvidenceCheck:
                     tool_id_to_info[tool_id] = [
                         (kind, command) for kind in matched_kinds
                     ]
+                matched_custom_matches = (
+                    self._match_custom_commands_by_configured_command(command, spec)
+                )
+                if matched_custom_matches:
+                    tool_id_to_custom_matches[tool_id] = matched_custom_matches
             for tool_use_id, is_error in self._log_provider.extract_tool_results(entry):
                 if tool_use_id in tool_id_to_info:
                     for kind, full_cmd in tool_id_to_info[tool_use_id]:
@@ -576,6 +755,17 @@ class EvidenceCheck:
                 content,
             ) in self._log_provider.extract_tool_result_content(entry):
                 self._parse_custom_markers(content, custom_marker_state)
+                if _tool_use_id in tool_id_to_custom_matches:
+                    # Re-read the result status for this tool id from the same entry.
+                    result_status = dict(
+                        self._log_provider.extract_tool_results(entry)
+                    ).get(_tool_use_id, False)
+                    self._apply_custom_command_fallback(
+                        tool_id_to_custom_matches[_tool_use_id],
+                        result_status,
+                        content,
+                        custom_marker_state,
+                    )
 
         # Build failed_commands from kinds that failed, using full command strings
         # Filter out ignored kinds (e.g., SETUP) so they don't block the gate
