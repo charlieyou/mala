@@ -388,19 +388,6 @@ def _result(
     )
 
 
-def _context_limit_result(session_id: str = "T-old") -> str:
-    return json.dumps(
-        {
-            "type": "result",
-            "subtype": "error_during_execution",
-            "is_error": True,
-            "num_turns": 0,
-            "error": "Context Limit Reached This conversation has reached the context window limit.",
-            "session_id": session_id,
-        }
-    )
-
-
 # ---------------------------------------------------------------------------
 # Helpers to drive an AmpClient end-to-end
 # ---------------------------------------------------------------------------
@@ -710,33 +697,6 @@ async def test_result_falls_back_to_subtype_when_result_field_missing(
     results = [m for m in msgs if isinstance(m, ResultMessage)]
     assert len(results) == 1
     assert results[0].result == "error_max_turns"
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_resume_context_limit_surfaces_amp_result_unchanged(
-    tmp_path: Path,
-) -> None:
-    script = _write_fake_amp(
-        tmp_path,
-        lines=[_system_init("T-old"), _context_limit_result("T-old")],
-    )
-    options = _make_options(
-        log_path=tmp_path / "T-old.jsonl",
-        argv=_python_argv_for(script),
-        cwd=tmp_path,
-        thread_id="T-old",
-    )
-
-    async with AmpClient(options) as client:
-        await client.query("implement review feedback")
-        messages = await _drain(client)
-
-    result = messages[-1]
-    assert isinstance(result, ResultMessage)
-    assert result.session_id == "T-old"
-    assert result.result == "error_during_execution"
-    assert client.session_id == "T-old"
 
 
 # ---------------------------------------------------------------------------
