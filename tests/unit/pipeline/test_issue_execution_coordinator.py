@@ -119,6 +119,16 @@ class TestIssueExecutionCoordinator:
         assert "issue-1" in coordinator.completed_ids
         assert "issue-1" not in coordinator.active_tasks
 
+    def test_release_task(self, coordinator: IssueExecutionCoordinator) -> None:
+        """release_task removes active work without marking the issue completed."""
+        task = MagicMock()
+        coordinator.active_tasks["issue-1"] = task
+
+        coordinator.release_task("issue-1")
+
+        assert "issue-1" not in coordinator.active_tasks
+        assert "issue-1" not in coordinator.completed_ids
+
     def test_register_task(self, coordinator: IssueExecutionCoordinator) -> None:
         """register_task adds to active_tasks."""
         task = MagicMock()
@@ -395,6 +405,43 @@ class TestRunLoop:
         assert completed_count == 2
         assert result.exit_reason == "limit_reached"
         assert ("no_more_issues", ("limit_reached (2)",)) in event_sink.events
+
+    @pytest.mark.asyncio
+    async def test_released_attempt_does_not_count_toward_max_issues(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """A released attempt stays retryable and does not consume max_issues."""
+        beads = MockIssueProvider(ready_issues=[["issue-1"], ["issue-1"]])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            config=CoordinatorConfig(max_issues=1, max_agents=1),
+        )
+
+        attempts = 0
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None] | None:
+            async def work() -> None:
+                pass
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(
+            issue_id: str, task: asyncio.Task[None]
+        ) -> None:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                coord.release_task(issue_id)
+            else:
+                coord.mark_completed(issue_id)
+
+        result = await coord.run_loop(spawn_callback, finalize_callback, AsyncMock())
+
+        assert attempts == 2
+        assert result.issues_spawned == 2
+        assert result.exit_reason == "limit_reached"
+        assert coord.completed_ids == {"issue-1"}
 
     @pytest.mark.asyncio
     async def test_spawn_failure_marks_failed(self, event_sink: MockEventSink) -> None:

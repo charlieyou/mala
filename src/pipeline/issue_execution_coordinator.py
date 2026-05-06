@@ -259,6 +259,12 @@ class IssueExecutionCoordinator:
         interrupt_task: asyncio.Task[object] | None = None
         startup_no_ready_check_pending = True
 
+        async def _finalize_task(issue_id: str, task: asyncio.Task[Any]) -> bool:
+            """Finalize a task and report whether it reached a terminal state."""
+            already_completed = issue_id in self.completed_ids
+            await finalize_callback(issue_id, task)
+            return issue_id in self.completed_ids and not already_completed
+
         async def _cleanup_interrupt_task() -> None:
             """Cancel interrupt_task if it exists and is pending."""
             nonlocal interrupt_task
@@ -364,8 +370,8 @@ class IssueExecutionCoordinator:
                                 # Finalize any tasks that completed during gather
                                 for issue_id, t in list(self.active_tasks.items()):
                                     if t.done():
-                                        await finalize_callback(issue_id, t)
-                                        watch_state.completed_count += 1
+                                        if await _finalize_task(issue_id, t):
+                                            watch_state.completed_count += 1
                             # Abort any active tasks before returning
                             await abort_callback()
                             # Run final validation if any issues completed
@@ -420,13 +426,14 @@ class IssueExecutionCoordinator:
                     startup_no_ready_check_pending = False
                     self.event_sink.on_ready_issues(list(ready))
 
-                # Spawn agents while we have capacity, ready issues, and haven't hit limit
-                # Note: max_issues counts terminal states (completed_count), not spawn attempts
-                # Once limit_reached, stop spawning but let active tasks complete
-                # Also limit spawns to max_issues to prevent over-spawning on first iteration
+                # Spawn agents while we have capacity, ready issues, and haven't hit limit.
+                # max_issues counts terminal states, but active tasks reserve capacity so
+                # the first iteration doesn't over-spawn. Non-terminal attempts that are
+                # released for retry free their reserved capacity.
                 spawn_limit_reached = (
                     self.config.max_issues is not None
-                    and issues_spawned >= self.config.max_issues
+                    and watch_state.completed_count + len(self.active_tasks)
+                    >= self.config.max_issues
                 )
                 while (
                     not limit_reached
@@ -446,7 +453,9 @@ class IssueExecutionCoordinator:
                             # Update spawn limit check for next iteration
                             spawn_limit_reached = (
                                 self.config.max_issues is not None
-                                and issues_spawned >= self.config.max_issues
+                                and watch_state.completed_count
+                                + len(self.active_tasks)
+                                >= self.config.max_issues
                             )
 
                 # Exit if no active work
@@ -582,8 +591,8 @@ class IssueExecutionCoordinator:
                 for task in done_agent_tasks:
                     for issue_id, t in list(self.active_tasks.items()):
                         if t is task:
-                            await finalize_callback(issue_id, task)
-                            watch_state.completed_count += 1
+                            if await _finalize_task(issue_id, task):
+                                watch_state.completed_count += 1
                             break
 
                 # Check for abort after processing completions
@@ -624,8 +633,8 @@ class IssueExecutionCoordinator:
                         # Finalize any additional completed tasks
                         for issue_id, t in list(self.active_tasks.items()):
                             if t.done():
-                                await finalize_callback(issue_id, t)
-                                watch_state.completed_count += 1
+                                if await _finalize_task(issue_id, t):
+                                    watch_state.completed_count += 1
 
                     # Run validation
                     if validation_callback:
@@ -687,3 +696,15 @@ class IssueExecutionCoordinator:
         self.completed_ids.add(issue_id)
         self.active_tasks.pop(issue_id, None)
         logger.debug("Issue marked completed: issue_id=%s", issue_id)
+
+    def release_task(self, issue_id: str) -> None:
+        """Remove an issue from active tracking without marking it terminal.
+
+        Use this when an in-flight attempt was cancelled but the issue should remain
+        eligible for a later retry in the same run.
+
+        Args:
+            issue_id: The issue ID whose active task should be released.
+        """
+        self.active_tasks.pop(issue_id, None)
+        logger.debug("Issue released for retry: issue_id=%s", issue_id)

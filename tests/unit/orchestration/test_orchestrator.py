@@ -324,6 +324,90 @@ class TestRunOrchestrationLoop:
         ]
 
     @pytest.mark.asyncio
+    async def test_retries_deadlock_victim_after_blocker_completes(
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A deadlock victim stays eligible for retry in the same run."""
+        fake_issues = FakeIssueProvider(
+            {
+                "blocker": FakeIssue(id="blocker", priority=2),
+                "victim": FakeIssue(id="victim", priority=1),
+            }
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=2,
+            max_issues=2,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
+
+        ready_polls = 0
+        victim_attempts = 0
+        processed_issues: list[str] = []
+
+        async def get_ready_async(
+            exclude_ids: set[str] | None = None,
+            *args: object,
+            **kwargs: object,
+        ) -> list[str]:
+            nonlocal ready_polls
+            ready_polls += 1
+            exclude = exclude_ids or set()
+            if ready_polls == 1:
+                return [
+                    issue_id
+                    for issue_id in ("blocker", "victim")
+                    if issue_id not in exclude
+                ]
+            if (
+                fake_issues.issues["blocker"].status == "closed"
+                and fake_issues.issues["victim"].status == "open"
+                and "victim" not in exclude
+            ):
+                return ["victim"]
+            return []
+
+        async def run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
+            nonlocal victim_attempts
+            processed_issues.append(issue_id)
+            if issue_id == "victim":
+                victim_attempts += 1
+                if victim_attempts == 1:
+                    orchestrator._state.deadlock_victim_issues.add(issue_id)
+                    fake_issues.issues[issue_id].status = "open"
+                    raise asyncio.CancelledError
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent-{victim_attempts}",
+                success=True,
+                summary="Completed successfully",
+            )
+
+        monkeypatch.setattr(orchestrator.beads, "get_ready_async", get_ready_async)
+        monkeypatch.setattr(orchestrator, "run_implementer", run_implementer)
+        with patch("subprocess.run", return_value=make_subprocess_result()):
+            result = await orchestrator.run()
+
+        assert result == (2, 2)
+        assert processed_issues.count("victim") == 2
+        assert processed_issues.count("blocker") == 1
+        assert [item.issue_id for item in orchestrator._state.completed] == [
+            "blocker",
+            "victim",
+        ]
+        assert orchestrator.issue_coordinator.completed_ids == {"blocker", "victim"}
+        assert orchestrator._state.deadlock_victim_issues == set()
+
+    @pytest.mark.asyncio
     async def test_startup_epic_verification_failure_exits_cleanly(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:

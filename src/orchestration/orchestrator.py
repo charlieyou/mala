@@ -804,6 +804,12 @@ class MalaOrchestrator:
         """
         self._state.active_session_log_paths.pop(issue_id, None)
 
+    def _cleanup_issue_runtime_state(self, issue_id: str) -> None:
+        """Remove per-attempt runtime tracking for an issue."""
+        self._cleanup_active_session_path(issue_id)
+        self.async_gate_runner.clear_gate_result(issue_id)
+        self._state.agent_ids.pop(issue_id, None)
+
     async def _finalize_issue_result(
         self,
         issue_id: str,
@@ -845,13 +851,10 @@ class MalaOrchestrator:
             # Update tracking state (active_tasks is updated by mark_completed in finalize_callback)
             self._state.completed.append(result)
 
-            # Cleanup active session path and gate result
-            self._cleanup_active_session_path(issue_id)
-            self.async_gate_runner.clear_gate_result(issue_id)
-
-            # Remove agent_id from tracking now that finalization is complete
-            # (deferred from run_implementer.finally to keep it available for get_agent_id callback)
-            self._state.agent_ids.pop(issue_id, None)
+            # Remove per-attempt tracking now that finalization is complete
+            # (agent_id is deferred from run_implementer.finally to keep it
+            # available for get_agent_id callback)
+            self._cleanup_issue_runtime_state(issue_id)
 
     async def _abort_active_tasks(
         self, run_metadata: RunMetadata, *, is_interrupt: bool = False
@@ -1105,10 +1108,11 @@ class MalaOrchestrator:
             task: asyncio.Task[Any],
         ) -> None:
             """Finalize a completed task."""
+            was_deadlock_victim = issue_id in self._state.deadlock_victim_issues
             try:
                 result = task.result()
             except asyncio.CancelledError:
-                if issue_id in self._state.deadlock_victim_issues:
+                if was_deadlock_victim:
                     summary = (
                         "Killed as deadlock victim (will retry after blocker completes)"
                     )
@@ -1131,6 +1135,17 @@ class MalaOrchestrator:
                     summary=str(e),
                     session_log_path=self._state.active_session_log_paths.get(issue_id),
                 )
+            if was_deadlock_victim and not result.success:
+                # The deadlock handler already added the dependency, marked the issue
+                # needs-followup, and reopened it. This cancelled attempt is not a
+                # terminal issue result, so keep it out of completed_ids and the run
+                # totals; otherwise the same run suppresses the reopened issue from
+                # ready polling and it never retries after its blocker completes.
+                self.issue_coordinator.release_task(issue_id)
+                self._cleanup_issue_runtime_state(issue_id)
+                self._state.deadlock_victim_issues.discard(issue_id)
+                return
+            self._state.deadlock_victim_issues.discard(issue_id)
             await self._finalize_issue_result(issue_id, result, run_metadata)
             self.issue_coordinator.mark_completed(issue_id)
 

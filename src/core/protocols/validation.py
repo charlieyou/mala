@@ -300,6 +300,20 @@ class EpicVerifierProtocol(Protocol):
         """
         ...
 
+    async def verify_and_close_eligible(
+        self,
+        human_override_epic_ids: set[str] | None = None,
+    ) -> EpicVerificationResult:
+        """Verify and close all currently eligible epics.
+
+        Args:
+            human_override_epic_ids: Epic IDs to close without verification.
+
+        Returns:
+            EpicVerificationResult with aggregate verification outcome.
+        """
+        ...
+
 
 @runtime_checkable
 class EpicVerificationModel(Protocol):
