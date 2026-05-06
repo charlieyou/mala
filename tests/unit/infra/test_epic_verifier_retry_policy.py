@@ -11,10 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
+from src.core.models import EpicVerdict, UnmetCriterion
 from src.infra.clients.cerberus_epic_verifier import (
     VerificationExecutionError,
     VerificationParseError,
@@ -312,3 +313,49 @@ class TestPerCategoryRetries:
         assert "unexpected error" in verdict.reasoning
         # Should only call once - no retries for unknown errors
         assert call_count == 1
+
+
+class TestRemediationIssueDependencies:
+    """Tests for dependency chaining between epic verification findings."""
+
+    @pytest.mark.asyncio
+    async def test_chains_blocking_and_informational_findings_to_avoid_conflicts(
+        self,
+    ) -> None:
+        """Epic verification issues should be ready one at a time."""
+        beads = MagicMock()
+        beads.find_issue_by_tag_async = AsyncMock(return_value=None)
+        beads.create_issue_async = AsyncMock(
+            side_effect=["blocking-1", "advisory-1", "blocking-2", "advisory-2"]
+        )
+        beads.add_dependency_async = AsyncMock(return_value=True)
+
+        verifier = EpicVerifier(
+            beads=beads,
+            model=MagicMock(),
+            repo_path=Path("/tmp"),
+            command_runner=MagicMock(),
+        )
+
+        verdict = EpicVerdict(
+            passed=False,
+            unmet_criteria=[
+                UnmetCriterion("blocking one", "evidence", 1, "hash-a"),
+                UnmetCriterion("advisory one", "evidence", 2, "hash-b"),
+                UnmetCriterion("blocking two", "evidence", 0, "hash-c"),
+                UnmetCriterion("advisory two", "evidence", 3, "hash-d"),
+            ],
+            reasoning="findings",
+        )
+
+        blocking_ids, informational_ids = await verifier.create_remediation_issues(
+            "epic-1", verdict
+        )
+
+        assert blocking_ids == ["blocking-1", "blocking-2"]
+        assert informational_ids == ["advisory-1", "advisory-2"]
+        assert beads.add_dependency_async.await_args_list == [
+            call("blocking-2", "blocking-1"),
+            call("advisory-1", "blocking-2"),
+            call("advisory-2", "advisory-1"),
+        ]

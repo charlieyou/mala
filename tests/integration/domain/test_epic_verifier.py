@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
@@ -335,7 +335,7 @@ class TestRemediationIssueCreation:
     async def test_creates_sequential_dependencies_between_blocking_remediations(
         self, verifier: EpicVerifier, mock_beads: MagicMock
     ) -> None:
-        """Blocking remediations should chain without depending on advisories."""
+        """Epic verification findings should chain with blockers first."""
         issue_ids = iter(["issue-1", "issue-2", "issue-3"])
         mock_beads.find_issue_by_tag_async = AsyncMock(return_value=None)
         mock_beads.create_issue_async = AsyncMock(
@@ -375,11 +375,12 @@ class TestRemediationIssueCreation:
         assert blocking_ids == ["issue-1", "issue-3"]
         assert informational_ids == ["issue-2"]
 
-        # Verify sequential dependencies only across blocking issues. Advisory
-        # issues are returned after blockers, so blockers must not depend on them.
-        dep_calls = mock_beads.add_dependency_async.call_args_list
-        assert len(dep_calls) == 1
-        assert dep_calls[0].args == ("issue-3", "issue-1")
+        # Verify sequential dependencies across all findings, with blocking
+        # issues first so only one remediation/advisory is ready at a time.
+        assert mock_beads.add_dependency_async.await_args_list == [
+            call("issue-3", "issue-1"),
+            call("issue-2", "issue-3"),
+        ]
 
     @pytest.mark.asyncio
     async def test_chains_existing_and_new_blocking_remediations(

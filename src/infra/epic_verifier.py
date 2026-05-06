@@ -1118,6 +1118,10 @@ class EpicVerifier:
         the epic closure check again. They are not also added as normal blockers
         of the epic; the open parent-child issue is what prevents epic closure.
         New P2/P3 issues are informational (standalone, don't block closure).
+        All issues created by a verification failure are chained in dependency
+        order, with blocking remediation first and informational advisories
+        after, so agents do not work on overlapping verification findings in
+        parallel.
 
         Args:
             epic_id: The epic ID the issues are for.
@@ -1130,14 +1134,31 @@ class EpicVerifier:
         blocking_ids: list[str] = []
         informational_ids: list[str] = []
         context_block = self._format_remediation_context(context)
-        prev_blocking_issue_id: str | None = None
+        pending_blocking_ids: list[str] = []
+        pending_informational_ids: list[str] = []
 
-        async def register_blocking_issue(issue_id: str) -> None:
-            nonlocal prev_blocking_issue_id
-            if prev_blocking_issue_id is not None:
-                await self.beads.add_dependency_async(issue_id, prev_blocking_issue_id)
-            prev_blocking_issue_id = issue_id
+        async def chain_issue_ids(issue_ids: list[str]) -> None:
+            previous_issue_id: str | None = None
+            for issue_id in issue_ids:
+                if previous_issue_id is not None:
+                    added = await self.beads.add_dependency_async(
+                        issue_id, previous_issue_id
+                    )
+                    if not added:
+                        logger.warning(
+                            "Failed to chain epic remediation issue %s after %s",
+                            issue_id,
+                            previous_issue_id,
+                        )
+                previous_issue_id = issue_id
+
+        def register_blocking_issue(issue_id: str) -> None:
+            pending_blocking_ids.append(issue_id)
             blocking_ids.append(issue_id)
+
+        def register_informational_issue(issue_id: str) -> None:
+            pending_informational_ids.append(issue_id)
+            informational_ids.append(issue_id)
 
         for criterion in verdict.unmet_criteria:
             is_blocking = criterion.priority <= 1  # P0/P1 are blocking
@@ -1160,9 +1181,9 @@ class EpicVerifier:
                             epic_id,
                         )
                         continue
-                    await register_blocking_issue(existing_id)
+                    register_blocking_issue(existing_id)
                 else:
-                    informational_ids.append(existing_id)
+                    register_informational_issue(existing_id)
                 continue
 
             # Create new remediation issue
@@ -1209,13 +1230,15 @@ This issue was auto-created by epic verification for epic `{epic_id}`.
             )
             if issue_id:
                 if is_blocking:
-                    await register_blocking_issue(issue_id)
+                    register_blocking_issue(issue_id)
                 else:
-                    informational_ids.append(issue_id)
+                    register_informational_issue(issue_id)
                 # Emit remediation created event
                 if self.event_sink is not None:
                     self.event_sink.on_epic_remediation_created(
                         epic_id, issue_id, criterion.criterion
                     )
+
+        await chain_issue_ids(pending_blocking_ids + pending_informational_ids)
 
         return blocking_ids, informational_ids
