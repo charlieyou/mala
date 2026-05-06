@@ -212,7 +212,7 @@ sequenceDiagram
   alt passed
     Epic->>Beads: close epic
   else failed
-    Epic->>Beads: create remediation issues + add blockers
+    Epic->>Beads: create/attach remediation issues as epic children
     EpicCoord->>EpicCoord: spawn remediation + retry
   end
 ```
@@ -501,7 +501,6 @@ Supporting orchestration components:
     - `verify_and_close_eligible()`: main epic closure loop.
     - `verify_epic()` / `verify_epic_with_options()`: verify a specific epic.
     - `create_remediation_issues()`: open follow-up tasks for unmet criteria.
-    - `add_epic_blockers()` / `request_human_review()`: enforcement actions.
 - `EpicScopeAnalyzer`: computes scoped commit ranges for epic verification.
 - `AgentRuntimeBuilder` / `AgentRuntime`: build per-agent runtime env, hooks, and SDK options.
 - `SDKClientFactory`: isolates Claude SDK client creation in infra.

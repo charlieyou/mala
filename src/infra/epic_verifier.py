@@ -583,7 +583,7 @@ class EpicVerifier:
                 None,
             )
 
-        # Get blocker issue IDs (remediation issues from previous verification runs)
+        # Include any legacy blocker issue IDs from previous verification runs.
         blocker_ids = await self.beads.get_epic_blockers_async(epic_id) or set()
 
         # Compute scoped commits using EpicScopeAnalyzer
@@ -1013,8 +1013,6 @@ class EpicVerifier:
 
             # P2/P3 findings are advisory: record them, but don't block closure.
             if has_blocking_findings or (not verdict.passed and not has_findings):
-                if blocking_ids:
-                    await self.add_epic_blockers(epic_id, blocking_ids)
                 failed_count = 1
                 if self.event_sink is not None:
                     # If no blocking issues but still failed, include reasoning in log
@@ -1116,11 +1114,10 @@ class EpicVerifier:
         Deduplication: Checks for existing issues with matching
         epic_remediation:<epic_id>:<criterion_hash> tag before creating.
 
-        New P0/P1 issues are blocking (block epic closure) but are not parented
-        to the epic. A remediation issue must not be both a child and a blocker
-        of the same epic, because Beads readiness can propagate the blocked
-        parent state back to the child. New P2/P3 issues are informational
-        (standalone, don't block closure).
+        New P0/P1 issues are parented to the epic so completing them triggers
+        the epic closure check again. They are not also added as normal blockers
+        of the epic; the open parent-child issue is what prevents epic closure.
+        New P2/P3 issues are informational (standalone, don't block closure).
 
         Args:
             epic_id: The epic ID the issues are for.
@@ -1153,6 +1150,16 @@ class EpicVerifier:
             existing_id = await self.beads.find_issue_by_tag_async(dedup_tag)
             if existing_id:
                 if is_blocking:
+                    attached = await self.beads.add_parent_child_dependency_async(
+                        existing_id, epic_id
+                    )
+                    if not attached:
+                        logger.warning(
+                            "Failed to attach remediation issue %s to epic %s",
+                            existing_id,
+                            epic_id,
+                        )
+                        continue
                     await register_blocking_issue(existing_id)
                 else:
                     informational_ids.append(existing_id)
@@ -1198,7 +1205,7 @@ This issue was auto-created by epic verification for epic `{epic_id}`.
                 description=description,
                 priority=priority_str,
                 tags=[dedup_tag, "auto_generated"],
-                parent_id=None,
+                parent_id=epic_id if is_blocking else None,
             )
             if issue_id:
                 if is_blocking:
@@ -1212,18 +1219,3 @@ This issue was auto-created by epic verification for epic `{epic_id}`.
                     )
 
         return blocking_ids, informational_ids
-
-    async def add_epic_blockers(
-        self, epic_id: str, blocker_issue_ids: list[str]
-    ) -> None:
-        """Add issues as blockers of the epic via br dep add.
-
-        Args:
-            epic_id: The epic to block.
-            blocker_issue_ids: Issues that must be resolved before epic closes.
-        """
-        for blocker_id in blocker_issue_ids:
-            await self._runner.run_async(
-                ["br", "dep", "add", epic_id, blocker_id],
-                cwd=self.repo_path,
-            )
