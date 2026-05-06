@@ -90,6 +90,8 @@ class TestRetryConfigValidation:
         config = RetryConfig(max_idle_retries=0)
         assert config.max_idle_retries == 0
         assert config.idle_retry_backoff == (0.0, 5.0, 15.0)
+        assert config.max_subprocess_exit_attempts == 5
+        assert config.subprocess_exit_retry_backoff == (1.0, 2.0, 4.0, 8.0)
 
     def test_valid_config_with_retries(self) -> None:
         """Valid config with retries requires idle_resume_prompt."""
@@ -103,6 +105,14 @@ class TestRetryConfigValidation:
         """Negative max_idle_retries should raise ValueError."""
         with pytest.raises(ValueError, match="max_idle_retries must be non-negative"):
             RetryConfig(max_idle_retries=-1)
+
+    def test_zero_subprocess_exit_attempts_raises(self) -> None:
+        """At least one subprocess-exit attempt must be allowed."""
+        with pytest.raises(
+            ValueError,
+            match="max_subprocess_exit_attempts must be at least 1",
+        ):
+            RetryConfig(max_subprocess_exit_attempts=0)
 
     def test_empty_resume_prompt_with_retries_raises(self) -> None:
         """Empty idle_resume_prompt with positive max_idle_retries should raise."""
@@ -345,6 +355,7 @@ class TestSubprocessExitRetry:
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0),
             idle_resume_prompt="Continue {issue_id}",
+            subprocess_exit_retry_backoff=(0.0, 0.0, 0.0, 0.0),
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
@@ -374,17 +385,17 @@ class TestSubprocessExitRetry:
         ]
         assert sdk_factory.clients[0]._disconnect_called is True
         assert sdk_factory.clients[1]._disconnect_called is True
-        assert state.idle_retry_count == 2
+        assert state.idle_retry_count == 0
 
     @pytest.mark.asyncio
-    async def test_retryable_subprocess_exit_reraises_after_two_retries(
+    async def test_retryable_subprocess_exit_reraises_after_five_attempts(
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
         lint_cache: FakeLintCache,
     ) -> None:
-        """The original subprocess exit error is raised after retry budget ends."""
-        for _ in range(3):
+        """The original subprocess exit error is raised after five attempts."""
+        for _ in range(5):
             sdk_factory.configure_next_client(responses=[])
 
         processor = FakeStreamProcessor(
@@ -394,6 +405,7 @@ class TestSubprocessExitRetry:
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0),
             idle_resume_prompt="Continue {issue_id}",
+            subprocess_exit_retry_backoff=(0.0, 0.0, 0.0, 0.0),
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
@@ -413,9 +425,75 @@ class TestSubprocessExitRetry:
                 idle_timeout_seconds=300.0,
             )
 
-        assert processor.call_count == 3
-        assert len(sdk_factory.clients) == 3
-        assert state.idle_retry_count == 2
+        assert processor.call_count == 5
+        assert len(sdk_factory.clients) == 5
+        assert state.idle_retry_count == 0
+
+    @pytest.mark.asyncio
+    async def test_retryable_subprocess_exit_uses_exponential_backoff(
+        self,
+        sdk_factory: FakeSDKClientFactory,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: FakeLintCache,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Exit-code-1 retries wait with the configured exponential sequence."""
+        for _ in range(5):
+            sdk_factory.configure_next_client(responses=[])
+
+        sleeps: list[float] = []
+
+        async def capture_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        monkeypatch.setattr(
+            "src.pipeline.idle_retry_policy.asyncio.sleep", capture_sleep
+        )
+
+        class EventuallySuccessfulSubprocessProcessor:
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def process_stream(
+                self,
+                stream: IdleTimeoutStream,
+                issue_id: str,
+                state: MessageIterationState,
+                lifecycle_ctx: LifecycleContext,
+                lint_cache: LintCacheProtocol,
+                query_start: float,
+                tracer: TelemetrySpan | None,
+            ) -> MessageIterationResult:
+                self.call_count += 1
+                if self.call_count < 5:
+                    raise RuntimeError("amp subprocess exited with code 1")
+                return MessageIterationResult(success=True, session_id="final-session")
+
+        processor = EventuallySuccessfulSubprocessProcessor()
+        config = RetryConfig(
+            max_idle_retries=0,
+            idle_resume_prompt="Continue {issue_id}",
+            subprocess_exit_retry_backoff=(1.0, 2.0, 4.0, 8.0),
+        )
+        policy = IdleTimeoutRetryPolicy(
+            sdk_client_factory=sdk_factory,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
+            config=config,
+        )
+
+        state = MessageIterationState()
+        result = await policy.execute_iteration(
+            query="Initial query",
+            issue_id="TEST-13B",
+            options={},
+            state=state,
+            lifecycle_ctx=lifecycle_ctx,
+            lint_cache=lint_cache,
+            idle_timeout_seconds=300.0,
+        )
+
+        assert result.success is True
+        assert sleeps == [1.0, 2.0, 4.0, 8.0]
 
     @pytest.mark.asyncio
     async def test_subprocess_exit_resumes_from_client_session_id(
@@ -451,9 +529,10 @@ class TestSubprocessExitRetry:
 
         processor = ClientSessionProcessor()
         config = RetryConfig(
-            max_idle_retries=2,
+            max_idle_retries=1,
             idle_retry_backoff=(0.0, 0.0),
             idle_resume_prompt="Continue {issue_id}",
+            subprocess_exit_retry_backoff=(0.0, 0.0, 0.0, 0.0),
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
@@ -479,6 +558,7 @@ class TestSubprocessExitRetry:
         assert sdk_factory.with_resume_calls[0][1] == "known-amp-thread"
         options = cast("dict[str, Any]", sdk_factory.create_calls[1])
         assert options.get("resume") == "known-amp-thread"
+        assert state.idle_retry_count == 0
 
     @pytest.mark.asyncio
     async def test_subprocess_exit_preserves_pending_session_id_on_next_retry(
@@ -518,6 +598,7 @@ class TestSubprocessExitRetry:
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0),
             idle_resume_prompt="Continue {issue_id}",
+            subprocess_exit_retry_backoff=(0.0, 0.0, 0.0, 0.0),
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
@@ -547,6 +628,81 @@ class TestSubprocessExitRetry:
             "known-amp-thread",
             "known-amp-thread",
         ]
+        assert state.idle_retry_count == 0
+
+    @pytest.mark.asyncio
+    async def test_subprocess_retry_does_not_shift_idle_backoff(
+        self,
+        sdk_factory: FakeSDKClientFactory,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: FakeLintCache,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A subprocess retry does not make the first idle retry use a later backoff."""
+        first_client = sdk_factory.configure_next_client(responses=[])
+        first_client.session_id = "known-amp-thread"
+        sdk_factory.configure_next_client(responses=[])
+        sdk_factory.configure_next_client(responses=[])
+
+        sleeps: list[float] = []
+
+        async def capture_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        monkeypatch.setattr(
+            "src.pipeline.idle_retry_policy.asyncio.sleep", capture_sleep
+        )
+
+        class SubprocessThenIdleProcessor:
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def process_stream(
+                self,
+                stream: IdleTimeoutStream,
+                issue_id: str,
+                state: MessageIterationState,
+                lifecycle_ctx: LifecycleContext,
+                lint_cache: LintCacheProtocol,
+                query_start: float,
+                tracer: TelemetrySpan | None,
+            ) -> MessageIterationResult:
+                self.call_count += 1
+                if self.call_count == 1:
+                    state.tool_calls_this_turn = 1
+                    raise RuntimeError("amp subprocess exited with code 1")
+                if self.call_count == 2:
+                    state.tool_calls_this_turn = 1
+                    raise IdleTimeoutError("idle timeout")
+                return MessageIterationResult(success=True, session_id="final-session")
+
+        processor = SubprocessThenIdleProcessor()
+        config = RetryConfig(
+            max_idle_retries=1,
+            idle_retry_backoff=(3.0, 9.0),
+            idle_resume_prompt="Continue {issue_id}",
+            subprocess_exit_retry_backoff=(1.0, 2.0, 4.0, 8.0),
+        )
+        policy = IdleTimeoutRetryPolicy(
+            sdk_client_factory=sdk_factory,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
+            config=config,
+        )
+
+        state = MessageIterationState()
+        result = await policy.execute_iteration(
+            query="Initial query",
+            issue_id="TEST-16B",
+            options={},
+            state=state,
+            lifecycle_ctx=lifecycle_ctx,
+            lint_cache=lint_cache,
+            idle_timeout_seconds=300.0,
+        )
+
+        assert result.success is True
+        assert sleeps == [1.0, 3.0]
+        assert state.idle_retry_count == 1
 
     @pytest.mark.asyncio
     async def test_pending_session_id_survives_subprocess_then_idle_retry(
@@ -586,9 +742,10 @@ class TestSubprocessExitRetry:
 
         processor = SubprocessThenIdleProcessor()
         config = RetryConfig(
-            max_idle_retries=2,
+            max_idle_retries=1,
             idle_retry_backoff=(0.0, 0.0),
             idle_resume_prompt="Continue {issue_id}",
+            subprocess_exit_retry_backoff=(0.0, 0.0, 0.0, 0.0),
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
@@ -618,6 +775,7 @@ class TestSubprocessExitRetry:
             "known-amp-thread",
             "known-amp-thread",
         ]
+        assert state.idle_retry_count == 1
 
     @pytest.mark.asyncio
     async def test_subprocess_exit_with_tool_calls_no_session_preserves_state(
@@ -650,6 +808,7 @@ class TestSubprocessExitRetry:
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0),
             idle_resume_prompt="Continue {issue_id}",
+            subprocess_exit_retry_backoff=(0.0, 0.0, 0.0, 0.0),
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
@@ -690,6 +849,7 @@ class TestSubprocessExitRetry:
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0),
             idle_resume_prompt="Continue {issue_id}",
+            subprocess_exit_retry_backoff=(0.0, 0.0, 0.0, 0.0),
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,

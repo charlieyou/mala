@@ -43,6 +43,7 @@ import signal
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from src.infra.clients.amp_messages import (
@@ -79,6 +80,9 @@ _HANDOFF_EXPORT_POLL_SECONDS = 1.0
 
 _HANDOFF_EXPORT_TIMEOUT_SECONDS = 900.0
 """Maximum time to wait for an Amp handoff child thread to complete."""
+
+_HANDOFF_RECOVERY_SCAN_LIMIT = 100
+"""Maximum number of recent Amp threads to export while recovering handoff partial success."""
 
 _AUTH_ERROR_MARKERS: tuple[str, ...] = (
     "unauthorized",
@@ -190,6 +194,22 @@ class _ClientState:
     handoff_tool_follow: dict[str, bool] = field(default_factory=dict)
     handoff_thread_id: str | None = None
     query_prompt: str | None = None
+
+
+@dataclass(frozen=True)
+class _HandoffRecoveryResult:
+    """Outcome of trying to recover a handoff child after a CLI failure."""
+
+    thread_id: str | None = None
+    diagnostics: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _HandoffRecoveryCandidate:
+    """A matching handoff child candidate with its relationship timestamp."""
+
+    thread_id: str
+    created_at: float
 
 
 class AmpClient:
@@ -616,9 +636,8 @@ class AmpClient:
                 continue
             tool_use_id = str(raw.get("tool_use_id", ""))
             handoff_thread_id = self._extract_handoff_thread_id(raw.get("content"))
-            if (
-                handoff_thread_id is not None
-                and self._state.handoff_tool_follow.get(tool_use_id, False)
+            if handoff_thread_id is not None and self._state.handoff_tool_follow.get(
+                tool_use_id, False
             ):
                 if (
                     self._state.handoff_thread_id is not None
@@ -700,6 +719,7 @@ class AmpClient:
     async def _run_cli_handoff(self, parent_thread_id: str, goal: str) -> str:
         """Run ``amp threads handoff`` and return the created child thread id."""
         amp_executable = self._options.argv[0] if self._options.argv else "amp"
+        started_at = time.time()
         proc = await asyncio.create_subprocess_exec(
             amp_executable,
             "threads",
@@ -715,11 +735,28 @@ class AmpClient:
             env=dict(self._options.env),
         )
         stdout, stderr = await proc.communicate()
+        ended_at = time.time()
         stdout_text = stdout.decode(errors="replace")
         stderr_text = stderr.decode(errors="replace")
         if proc.returncode != 0:
+            recovery = await self._recover_handoff_child_thread_id(
+                parent_thread_id,
+                goal,
+                started_at=started_at,
+                ended_at=ended_at,
+            )
+            if recovery.thread_id is not None:
+                logger.warning(
+                    "Amp handoff exited with code %s for parent thread %s, "
+                    "but recovered created child thread %s",
+                    proc.returncode,
+                    parent_thread_id,
+                    recovery.thread_id,
+                )
+                return recovery.thread_id
+            recovery_detail = self._handoff_recovery_error_detail(recovery)
             raise AmpClientError(
-                f"Amp handoff failed for parent thread {parent_thread_id} with exit code {proc.returncode}",
+                f"Amp handoff failed for parent thread {parent_thread_id} with exit code {proc.returncode}{recovery_detail}",
                 stderr_tail=stderr_text[-_STDERR_BUFFER_LIMIT:],
                 stdout_tail=stdout_text[-_STDOUT_TAIL_LIMIT:],
             )
@@ -738,6 +775,191 @@ class AmpClient:
                 stdout_tail=stdout_text[-_STDOUT_TAIL_LIMIT:],
             )
         return child_thread_id
+
+    async def _recover_handoff_child_thread_id(
+        self,
+        parent_thread_id: str,
+        goal: str,
+        *,
+        started_at: float,
+        ended_at: float,
+    ) -> _HandoffRecoveryResult:
+        """Recover a child thread created before ``amp threads handoff`` failed.
+
+        Some Amp CLI failures happen after the child thread is created but before
+        ``--print`` reports it. The durable signal is the exported child thread's
+        ``relationships`` entry: ``role=child``, ``type=handoff``,
+        ``threadID=<parent>``, ``comment=<goal>``, and a relationship creation
+        timestamp inside this handoff attempt's time window.
+        """
+        diagnostics: list[str] = []
+        try:
+            thread_ids = await self._list_recent_handoff_thread_ids()
+        except AmpClientError as exc:
+            diagnostics.append(f"could not list recent threads: {exc}")
+            logger.debug("Amp handoff recovery %s", diagnostics[-1])
+            return _HandoffRecoveryResult(diagnostics=tuple(diagnostics))
+
+        matches: list[_HandoffRecoveryCandidate] = []
+        window_start = started_at
+        window_end = ended_at
+        for thread_id in thread_ids[:_HANDOFF_RECOVERY_SCAN_LIMIT]:
+            if thread_id == parent_thread_id:
+                continue
+            try:
+                exported = await self._export_handoff_thread(thread_id)
+            except AmpClientError as exc:
+                diagnostics.append(f"could not export candidate {thread_id}: {exc}")
+                logger.debug(
+                    "Amp handoff recovery could not export candidate %s: %s",
+                    thread_id,
+                    exc,
+                )
+                continue
+            created_at = self._export_handoff_relationship_created_at(
+                exported,
+                parent_thread_id=parent_thread_id,
+                goal=goal,
+            )
+            if created_at is None:
+                continue
+            if created_at < 0:
+                diagnostics.append(
+                    f"candidate {thread_id} matched relationship but had no creation timestamp"
+                )
+                continue
+            if window_start <= created_at <= window_end:
+                matches.append(
+                    _HandoffRecoveryCandidate(
+                        thread_id=thread_id,
+                        created_at=created_at,
+                    )
+                )
+            else:
+                diagnostics.append(
+                    f"candidate {thread_id} matched relationship outside handoff window"
+                )
+
+        if len(matches) == 1:
+            return _HandoffRecoveryResult(thread_id=matches[0].thread_id)
+        if len(matches) > 1:
+            diagnostics.append(
+                "ambiguous handoff recovery candidates: "
+                + ", ".join(match.thread_id for match in matches)
+            )
+        return _HandoffRecoveryResult(diagnostics=tuple(diagnostics))
+
+    def _handoff_recovery_error_detail(
+        self,
+        recovery: _HandoffRecoveryResult,
+    ) -> str:
+        """Format bounded recovery diagnostics for the final handoff error."""
+        if not recovery.diagnostics:
+            return ""
+        detail = " | ".join(recovery.diagnostics[-5:])
+        return f"; recovery attempted but failed: {detail}"
+
+    async def _list_recent_handoff_thread_ids(self) -> list[str]:
+        """Return recent Amp thread ids, newest first, for handoff recovery."""
+        amp_executable = self._options.argv[0] if self._options.argv else "amp"
+        proc = await asyncio.create_subprocess_exec(
+            amp_executable,
+            "threads",
+            "list",
+            "--json",
+            "--no-ide",
+            "--no-notifications",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(self._options.cwd),
+            env=dict(self._options.env),
+        )
+        stdout, stderr = await proc.communicate()
+        stdout_text = stdout.decode(errors="replace")
+        stderr_text = stderr.decode(errors="replace")
+        if proc.returncode != 0:
+            raise AmpClientError(
+                f"Amp threads list failed with exit code {proc.returncode}",
+                stderr_tail=stderr_text[-_STDERR_BUFFER_LIMIT:],
+                stdout_tail=stdout_text[-_STDOUT_TAIL_LIMIT:],
+            )
+
+        try:
+            payload = json.loads(stdout_text)
+        except json.JSONDecodeError as exc:
+            raise AmpClientError(
+                f"Amp threads list was not JSON: {exc}",
+                stderr_tail=stderr_text[-_STDERR_BUFFER_LIMIT:],
+                stdout_tail=stdout_text[-_STDOUT_TAIL_LIMIT:],
+            ) from exc
+
+        if isinstance(payload, dict):
+            raw_threads = payload.get("threads") or payload.get("data") or []
+        else:
+            raw_threads = payload
+        if not isinstance(raw_threads, list):
+            raise AmpClientError("Amp threads list JSON did not contain a thread list")
+
+        thread_ids: list[str] = []
+        for raw_thread in raw_threads:
+            if not isinstance(raw_thread, dict):
+                continue
+            thread_id = raw_thread.get("id") or raw_thread.get("threadID")
+            if isinstance(thread_id, str) and thread_id.startswith("T-"):
+                thread_ids.append(thread_id)
+        return thread_ids
+
+    def _export_handoff_relationship_created_at(
+        self,
+        exported: dict[str, Any],
+        *,
+        parent_thread_id: str,
+        goal: str,
+    ) -> float | None:
+        """Return matching handoff relationship creation time, or ``None``.
+
+        A negative return value means the relationship matched but had no usable
+        creation timestamp, which callers treat as an unsafe recovery candidate.
+        """
+        relationships = exported.get("relationships")
+        if not isinstance(relationships, list):
+            return None
+        for raw_relationship in relationships:
+            if not isinstance(raw_relationship, dict):
+                continue
+            relationship = cast("dict[str, Any]", raw_relationship)
+            if (
+                relationship.get("role") == "child"
+                and relationship.get("type") == "handoff"
+                and relationship.get("threadID") == parent_thread_id
+                and relationship.get("comment") == goal
+            ):
+                created_at = self._relationship_created_at_seconds(relationship)
+                return created_at if created_at is not None else -1.0
+        return None
+
+    def _relationship_created_at_seconds(
+        self,
+        relationship: dict[str, Any],
+    ) -> float | None:
+        """Parse an Amp relationship creation timestamp as epoch seconds."""
+        for key in ("createdAt", "created_at", "created"):
+            value = relationship.get(key)
+            if isinstance(value, int | float):
+                timestamp = float(value)
+                # Amp exports relationship ``createdAt`` in epoch milliseconds.
+                if timestamp > 10_000_000_000:
+                    return timestamp / 1000.0
+                return timestamp
+            if isinstance(value, str):
+                try:
+                    return datetime.fromisoformat(
+                        value.replace("Z", "+00:00")
+                    ).timestamp()
+                except ValueError:
+                    continue
+        return None
 
     def _parse_handoff_child_thread_id(self, stdout_text: str) -> str | None:
         """Parse an Amp thread id from ``amp threads handoff --print`` output."""
@@ -830,7 +1052,9 @@ class AmpClient:
                 stdout_tail=stdout.decode(errors="replace")[-_STDOUT_TAIL_LIMIT:],
             ) from exc
         if not isinstance(data, dict):
-            raise AmpClientError(f"Amp handoff child export for {thread_id} was not an object")
+            raise AmpClientError(
+                f"Amp handoff child export for {thread_id} was not an object"
+            )
         return data
 
     def _events_from_thread_export(
@@ -894,7 +1118,9 @@ class AmpClient:
                     "session_id": thread_id,
                 }
             )
-            if role == "assistant" and self._export_assistant_message_is_complete(message):
+            if role == "assistant" and self._export_assistant_message_is_complete(
+                message
+            ):
                 text = "".join(
                     str(block.get("text", ""))
                     for block in content
@@ -1168,7 +1394,9 @@ class AmpClient:
         try:
             data = json.loads(stripped)
         except json.JSONDecodeError:
-            logger.warning("AmpClient: invalid lock-event JSONL line: %s", stripped[:200])
+            logger.warning(
+                "AmpClient: invalid lock-event JSONL line: %s", stripped[:200]
+            )
             return
         if not isinstance(data, dict):
             return

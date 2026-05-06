@@ -47,6 +47,7 @@ from src.infra.clients.amp_client import (
     AmpClientError,
     AmpClientOptions,
     AmpStreamMissingInitError,
+    _HandoffRecoveryResult,
 )
 from src.infra.clients.amp_messages import (
     AssistantMessage,
@@ -1028,6 +1029,333 @@ async def test_run_cli_handoff_nonzero_includes_diagnostic_tails(
     assert "exit code 7" in str(exc_info.value)
     assert exc_info.value.stdout_tail == "partial stdout"
     assert exc_info.value.stderr_tail == "boom stderr"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_cli_handoff_nonzero_recovers_created_child_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = _write_fake_handoff_cli(
+        tmp_path,
+        stderr="upload failed after create",
+        exit_code=1,
+    )
+    options = _make_options(
+        log_path=tmp_path / "T-old.jsonl",
+        argv=[str(script), "--execute", "--stream-json"],
+        cwd=tmp_path,
+    )
+
+    async def recover(
+        self: AmpClient,
+        parent_thread_id: str,
+        goal: str,
+        *,
+        started_at: float,
+        ended_at: float,
+    ) -> _HandoffRecoveryResult:
+        assert parent_thread_id == "T-old"
+        assert goal == "retry prompt"
+        assert started_at <= ended_at
+        return _HandoffRecoveryResult(thread_id="T-recovered-child")
+
+    monkeypatch.setattr(AmpClient, "_recover_handoff_child_thread_id", recover)
+
+    child = await AmpClient(options)._run_cli_handoff("T-old", "retry prompt")
+
+    assert child == "T-recovered-child"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_handoff_recovery_scans_recent_exports_for_matching_relationship(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    options = _make_options(
+        log_path=tmp_path / "T-old.jsonl",
+        argv=["amp", "--execute", "--stream-json"],
+        cwd=tmp_path,
+    )
+    exported_by_thread: dict[str, dict[str, object]] = {
+        "T-no-relationships": {},
+        "T-wrong-parent": {
+            "relationships": [
+                {
+                    "role": "child",
+                    "type": "handoff",
+                    "threadID": "T-other-parent",
+                    "comment": "retry prompt",
+                    "createdAt": 1_700_000_005_000,
+                }
+            ]
+        },
+        "T-wrong-goal": {
+            "relationships": [
+                {
+                    "role": "child",
+                    "type": "handoff",
+                    "threadID": "T-old",
+                    "comment": "different prompt",
+                    "createdAt": 1_700_000_005_000,
+                }
+            ]
+        },
+        "T-matching-child": {
+            "relationships": [
+                {
+                    "role": "child",
+                    "type": "handoff",
+                    "threadID": "T-old",
+                    "comment": "retry prompt",
+                    "createdAt": 1_700_000_005_000,
+                }
+            ]
+        },
+    }
+
+    async def list_recent(self: AmpClient) -> list[str]:
+        return [
+            "T-old",
+            "T-no-relationships",
+            "T-wrong-parent",
+            "T-wrong-goal",
+            "T-matching-child",
+        ]
+
+    async def export_thread(self: AmpClient, thread_id: str) -> dict[str, object]:
+        return exported_by_thread[thread_id]
+
+    monkeypatch.setattr(AmpClient, "_list_recent_handoff_thread_ids", list_recent)
+    monkeypatch.setattr(AmpClient, "_export_handoff_thread", export_thread)
+
+    recovery = await AmpClient(options)._recover_handoff_child_thread_id(
+        "T-old",
+        "retry prompt",
+        started_at=1_700_000_000,
+        ended_at=1_700_000_010,
+    )
+
+    assert recovery.thread_id == "T-matching-child"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_handoff_recovery_refuses_stale_matching_child(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    options = _make_options(
+        log_path=tmp_path / "T-old.jsonl",
+        argv=["amp", "--execute", "--stream-json"],
+        cwd=tmp_path,
+    )
+
+    async def list_recent(self: AmpClient) -> list[str]:
+        return ["T-stale-child"]
+
+    async def export_thread(self: AmpClient, thread_id: str) -> dict[str, object]:
+        return {
+            "relationships": [
+                {
+                    "role": "child",
+                    "type": "handoff",
+                    "threadID": "T-old",
+                    "comment": "retry prompt",
+                    "createdAt": 1_699_999_000_000,
+                }
+            ]
+        }
+
+    monkeypatch.setattr(AmpClient, "_list_recent_handoff_thread_ids", list_recent)
+    monkeypatch.setattr(AmpClient, "_export_handoff_thread", export_thread)
+
+    recovery = await AmpClient(options)._recover_handoff_child_thread_id(
+        "T-old",
+        "retry prompt",
+        started_at=1_700_000_000,
+        ended_at=1_700_000_010,
+    )
+
+    assert recovery.thread_id is None
+    assert "outside handoff window" in " | ".join(recovery.diagnostics)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("thread_id", "created_at"),
+    [
+        ("T-before-attempt", 1_699_999_970_000),
+        ("T-after-attempt", 1_700_000_040_000),
+    ],
+)
+async def test_handoff_recovery_refuses_matches_just_outside_attempt_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    thread_id: str,
+    created_at: int,
+) -> None:
+    options = _make_options(
+        log_path=tmp_path / "T-old.jsonl",
+        argv=["amp", "--execute", "--stream-json"],
+        cwd=tmp_path,
+    )
+
+    async def list_recent(self: AmpClient) -> list[str]:
+        return [thread_id]
+
+    async def export_thread(self: AmpClient, thread_id: str) -> dict[str, object]:
+        return {
+            "relationships": [
+                {
+                    "role": "child",
+                    "type": "handoff",
+                    "threadID": "T-old",
+                    "comment": "retry prompt",
+                    "createdAt": created_at,
+                }
+            ]
+        }
+
+    monkeypatch.setattr(AmpClient, "_list_recent_handoff_thread_ids", list_recent)
+    monkeypatch.setattr(AmpClient, "_export_handoff_thread", export_thread)
+
+    recovery = await AmpClient(options)._recover_handoff_child_thread_id(
+        "T-old",
+        "retry prompt",
+        started_at=1_700_000_000,
+        ended_at=1_700_000_010,
+    )
+
+    assert recovery.thread_id is None
+    assert "outside handoff window" in " | ".join(recovery.diagnostics)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_handoff_recovery_refuses_matching_child_without_creation_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    options = _make_options(
+        log_path=tmp_path / "T-old.jsonl",
+        argv=["amp", "--execute", "--stream-json"],
+        cwd=tmp_path,
+    )
+
+    async def list_recent(self: AmpClient) -> list[str]:
+        return ["T-no-created-at"]
+
+    async def export_thread(self: AmpClient, thread_id: str) -> dict[str, object]:
+        return {
+            "relationships": [
+                {
+                    "role": "child",
+                    "type": "handoff",
+                    "threadID": "T-old",
+                    "comment": "retry prompt",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(AmpClient, "_list_recent_handoff_thread_ids", list_recent)
+    monkeypatch.setattr(AmpClient, "_export_handoff_thread", export_thread)
+
+    recovery = await AmpClient(options)._recover_handoff_child_thread_id(
+        "T-old",
+        "retry prompt",
+        started_at=1_700_000_000,
+        ended_at=1_700_000_010,
+    )
+
+    assert recovery.thread_id is None
+    assert "no creation timestamp" in " | ".join(recovery.diagnostics)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_handoff_recovery_refuses_ambiguous_matching_children(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    options = _make_options(
+        log_path=tmp_path / "T-old.jsonl",
+        argv=["amp", "--execute", "--stream-json"],
+        cwd=tmp_path,
+    )
+
+    async def list_recent(self: AmpClient) -> list[str]:
+        return ["T-child-one", "T-child-two"]
+
+    async def export_thread(self: AmpClient, thread_id: str) -> dict[str, object]:
+        return {
+            "relationships": [
+                {
+                    "role": "child",
+                    "type": "handoff",
+                    "threadID": "T-old",
+                    "comment": "retry prompt",
+                    "createdAt": 1_700_000_005_000,
+                }
+            ]
+        }
+
+    monkeypatch.setattr(AmpClient, "_list_recent_handoff_thread_ids", list_recent)
+    monkeypatch.setattr(AmpClient, "_export_handoff_thread", export_thread)
+
+    recovery = await AmpClient(options)._recover_handoff_child_thread_id(
+        "T-old",
+        "retry prompt",
+        started_at=1_700_000_000,
+        ended_at=1_700_000_010,
+    )
+
+    assert recovery.thread_id is None
+    assert "ambiguous handoff recovery candidates" in " | ".join(recovery.diagnostics)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_cli_handoff_nonzero_includes_recovery_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = _write_fake_handoff_cli(
+        tmp_path,
+        stdout="partial stdout",
+        stderr="handoff stderr",
+        exit_code=1,
+    )
+    options = _make_options(
+        log_path=tmp_path / "T-old.jsonl",
+        argv=[str(script), "--execute", "--stream-json"],
+        cwd=tmp_path,
+    )
+
+    async def recover(
+        self: AmpClient,
+        parent_thread_id: str,
+        goal: str,
+        *,
+        started_at: float,
+        ended_at: float,
+    ) -> _HandoffRecoveryResult:
+        return _HandoffRecoveryResult(
+            diagnostics=("ambiguous handoff recovery candidates: T-a, T-b",)
+        )
+
+    monkeypatch.setattr(AmpClient, "_recover_handoff_child_thread_id", recover)
+
+    with pytest.raises(AmpClientError) as exc_info:
+        await AmpClient(options)._run_cli_handoff("T-old", "retry prompt")
+
+    assert "recovery attempted but failed" in str(exc_info.value)
+    assert "ambiguous handoff recovery candidates" in str(exc_info.value)
+    assert exc_info.value.stdout_tail == "partial stdout"
+    assert exc_info.value.stderr_tail == "handoff stderr"
 
 
 @pytest.mark.unit
