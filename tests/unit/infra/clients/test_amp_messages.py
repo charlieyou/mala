@@ -71,7 +71,7 @@ def test_class_names_match_processor_keys() -> None:
         (ToolUseBlock, {"id", "name", "input"}),
         (ToolResultBlock, {"tool_use_id", "is_error", "content"}),
         (AssistantMessage, {"content"}),
-        (ResultMessage, {"session_id", "result"}),
+        (ResultMessage, {"session_id", "result", "subtype", "is_error"}),
     ],
 )
 def test_field_names_match_processor_getattr_keys(

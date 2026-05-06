@@ -44,13 +44,15 @@ def make_result_message(
     session_id: str = "test-session-123",
     result: str | None = "Test completed successfully",
     usage: dict[str, int] | None = None,
+    subtype: str = "result",
+    is_error: bool = False,
 ) -> ResultMessage:
     """Create a ResultMessage with the given fields."""
     msg = ResultMessage(
-        subtype="result",
+        subtype=subtype,
         duration_ms=100,
         duration_api_ms=50,
-        is_error=False,
+        is_error=is_error,
         num_turns=1,
         session_id=session_id,
         result=result,
@@ -214,6 +216,60 @@ class TestMessageStreamProcessorBasic:
         assert result.session_id == "sess-abc"
         assert state.session_id == "sess-abc"
         assert lifecycle_ctx.session_id == "sess-abc"
+
+    @pytest.mark.asyncio
+    async def test_error_result_message_is_not_success(
+        self, processor: MessageStreamProcessor, lifecycle_ctx: LifecycleContext
+    ) -> None:
+        """Amp error ResultMessages should not be treated as completed turns."""
+        result_msg = make_result_message(
+            session_id="sess-error",
+            result="error_during_execution",
+        )
+        state = MessageIterationState()
+
+        result = await processor.process_stream(
+            messages_to_stream([], result_msg),
+            issue_id="test-issue",
+            state=state,
+            lifecycle_ctx=lifecycle_ctx,
+            lint_cache=FakeLintCache(),
+            query_start=0.0,
+            tracer=None,
+        )
+
+        assert result.success is False
+        assert result.session_id == "sess-error"
+        assert result.error == "error_during_execution"
+        assert lifecycle_ctx.session_id == "sess-error"
+
+    @pytest.mark.asyncio
+    async def test_error_subtype_with_human_result_is_not_success(
+        self, processor: MessageStreamProcessor, lifecycle_ctx: LifecycleContext
+    ) -> None:
+        """Detect real Amp shape where subtype classifies a human error result."""
+        result_msg = make_result_message(
+            session_id="sess-error",
+            result="Response incomplete: stream ended unexpectedly",
+            subtype="error_during_execution",
+            is_error=True,
+        )
+        state = MessageIterationState()
+
+        result = await processor.process_stream(
+            messages_to_stream([], result_msg),
+            issue_id="test-issue",
+            state=state,
+            lifecycle_ctx=lifecycle_ctx,
+            lint_cache=FakeLintCache(),
+            query_start=0.0,
+            tracer=None,
+        )
+
+        assert result.success is False
+        assert result.session_id == "sess-error"
+        assert result.error == "Response incomplete: stream ended unexpectedly"
+        assert lifecycle_ctx.session_id == "sess-error"
 
     @pytest.mark.asyncio
     async def test_process_text_block_invokes_callback(

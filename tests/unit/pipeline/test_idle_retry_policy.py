@@ -631,6 +631,76 @@ class TestSubprocessExitRetry:
         assert state.idle_retry_count == 0
 
     @pytest.mark.asyncio
+    async def test_error_result_retries_before_gate(
+        self,
+        sdk_factory: FakeSDKClientFactory,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: FakeLintCache,
+    ) -> None:
+        """SDK error results should resume the coder instead of completing the turn."""
+        sdk_factory.configure_next_client(responses=[])
+        sdk_factory.configure_next_client(responses=[])
+
+        class ErrorThenSuccessProcessor:
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def process_stream(
+                self,
+                stream: IdleTimeoutStream,
+                issue_id: str,
+                state: MessageIterationState,
+                lifecycle_ctx: LifecycleContext,
+                lint_cache: LintCacheProtocol,
+                query_start: float,
+                tracer: TelemetrySpan | None,
+            ) -> MessageIterationResult:
+                self.call_count += 1
+                if self.call_count == 1:
+                    state.tool_calls_this_turn = 1
+                    return MessageIterationResult(
+                        success=False,
+                        session_id="errored-thread",
+                        error="error_during_execution",
+                    )
+                return MessageIterationResult(success=True, session_id="final-thread")
+
+        processor = ErrorThenSuccessProcessor()
+        config = RetryConfig(
+            max_idle_retries=2,
+            idle_retry_backoff=(0.0, 0.0),
+            idle_resume_prompt="Continue {issue_id}",
+            subprocess_exit_retry_backoff=(0.0, 0.0, 0.0, 0.0),
+        )
+        policy = IdleTimeoutRetryPolicy(
+            sdk_client_factory=sdk_factory,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
+            config=config,
+        )
+
+        state = MessageIterationState()
+        result = await policy.execute_iteration(
+            query="Initial query",
+            issue_id="TEST-15B",
+            options={},
+            state=state,
+            lifecycle_ctx=lifecycle_ctx,
+            lint_cache=lint_cache,
+            idle_timeout_seconds=300.0,
+        )
+
+        assert result.success is True
+        assert result.session_id == "final-thread"
+        assert [client._query_calls[0] for client in sdk_factory.clients] == [
+            ("Initial query", None),
+            ("Continue TEST-15B", None),
+        ]
+        assert [call[1] for call in sdk_factory.with_resume_calls] == [
+            "errored-thread",
+        ]
+        assert state.idle_retry_count == 0
+
+    @pytest.mark.asyncio
     async def test_subprocess_retry_does_not_shift_idle_backoff(
         self,
         sdk_factory: FakeSDKClientFactory,

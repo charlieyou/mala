@@ -671,6 +671,8 @@ async def test_result_subtypes_emit_result_message(
     assert len(results) == 1
     assert results[0].session_id == "T-zzz"
     assert results[0].result == "payload"
+    assert results[0].subtype == subtype
+    assert results[0].is_error is subtype.startswith("error_")
 
 
 @pytest.mark.unit
@@ -697,6 +699,41 @@ async def test_result_falls_back_to_subtype_when_result_field_missing(
     results = [m for m in msgs if isinstance(m, ResultMessage)]
     assert len(results) == 1
     assert results[0].result == "error_max_turns"
+    assert results[0].subtype == "error_max_turns"
+    assert results[0].is_error is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_error_result_preserves_subtype_and_human_error(
+    tmp_path: Path,
+) -> None:
+    """Amp error results should keep classification separate from diagnostics."""
+    raw = json.dumps(
+        {
+            "type": "result",
+            "subtype": "error_during_execution",
+            "is_error": True,
+            "error": "Response incomplete: stream ended unexpectedly",
+            "session_id": "T-error",
+        }
+    )
+    script = _write_fake_amp(tmp_path, lines=[_system_init("T-error"), raw])
+    options = _make_options(
+        log_path=tmp_path / ".pending-error.jsonl",
+        argv=_python_argv_for(script),
+        cwd=tmp_path,
+    )
+    async with AmpClient(options) as client:
+        await client.query("p")
+        msgs = await _drain(client)
+
+    results = [m for m in msgs if isinstance(m, ResultMessage)]
+    assert len(results) == 1
+    assert results[0].session_id == "T-error"
+    assert results[0].result == "Response incomplete: stream ended unexpectedly"
+    assert results[0].subtype == "error_during_execution"
+    assert results[0].is_error is True
 
 
 # ---------------------------------------------------------------------------

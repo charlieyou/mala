@@ -125,6 +125,7 @@ class MessageIterationResult:
     Attributes:
         success: Whether the iteration completed successfully.
         session_id: Updated session ID (if received).
+        error: Error text when the SDK reports an unsuccessful result.
         pending_query: Next query to send (for retries), or None if complete.
         pending_session_id: Session ID to use for next query.
         idle_retry_count: Updated idle retry count.
@@ -132,6 +133,7 @@ class MessageIterationResult:
 
     success: bool
     session_id: str | None = None
+    error: str | None = None
     pending_query: str | None = None
     pending_session_id: str | None = None
     idle_retry_count: int = 0
@@ -212,6 +214,7 @@ class MessageStreamProcessor:
             MessageIterationResult with success status.
         """
         # Use duck typing to avoid SDK imports - check type name instead of isinstance
+        result_error: str | None = None
         async for message in stream:
             if not state.first_message_received:
                 state.first_message_received = True
@@ -229,7 +232,9 @@ class MessageStreamProcessor:
                 self._process_assistant_message(message, issue_id, state, lint_cache)
 
             elif msg_type == "ResultMessage":
-                self._process_result_message(message, issue_id, state, lifecycle_ctx)
+                result_error = self._process_result_message(
+                    message, issue_id, state, lifecycle_ctx
+                )
 
         # Success
         stream_duration = time.time() - query_start
@@ -240,8 +245,9 @@ class MessageStreamProcessor:
             state.tool_calls_this_turn,
         )
         return MessageIterationResult(
-            success=True,
+            success=result_error is None,
             session_id=state.session_id,
+            error=result_error,
             idle_retry_count=0,
         )
 
@@ -291,8 +297,28 @@ class MessageStreamProcessor:
         issue_id: str,
         state: MessageIterationState,
         lifecycle_ctx: LifecycleContext,
-    ) -> None:
-        """Process a ResultMessage, extracting session ID and final result."""
+    ) -> str | None:
+        """Process a ResultMessage, extracting session ID and final result.
+
+        Returns an error string when the SDK reports an unsuccessful result.
+        Amp exposes transient stream failures as ResultMessage values (for
+        example ``error_during_execution``) rather than as Python exceptions;
+        callers must not treat those as completed agent turns.
+        """
         state.session_id = getattr(message, "session_id", None)
         lifecycle_ctx.session_id = state.session_id
-        lifecycle_ctx.final_result = getattr(message, "result", "") or ""
+        result = getattr(message, "result", "") or ""
+        lifecycle_ctx.final_result = result
+
+        subtype = str(getattr(message, "subtype", "") or "")
+        result_text = str(result)
+        subtype_lower = subtype.lower()
+        result_text_lower = result_text.lower()
+        is_error = bool(getattr(message, "is_error", False))
+        if (
+            is_error
+            or subtype_lower.startswith("error_")
+            or result_text_lower.startswith("error_")
+        ):
+            return result_text or subtype or "SDK result reported an error"
+        return None

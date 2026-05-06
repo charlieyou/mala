@@ -42,3 +42,5 @@ class AssistantMessage:
 class ResultMessage:
     session_id: str
     result: object = None
+    subtype: str = ""
+    is_error: bool = False

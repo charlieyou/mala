@@ -633,14 +633,22 @@ class AmpClient:
 
     def _build_result(self, event: dict[str, Any]) -> ResultMessage:
         sid = event.get("session_id") or self._state.session_id or ""
+        subtype = str(event.get("subtype") or "")
         # Amp emits result/subtype values: success | error_during_execution |
-        # error_max_turns. Surface the explicit ``result`` field if present,
-        # otherwise fall back to the subtype so the orchestrator can branch
-        # on a stable string.
+        # error_max_turns. Preserve the machine-readable subtype separately
+        # from the human-readable error/result payload so downstream lifecycle
+        # code can both classify failures and report useful diagnostics.
         result: object = event.get("result")
         if result is None:
-            result = event.get("subtype")
-        return ResultMessage(session_id=str(sid), result=result)
+            result = event.get("error")
+        if result is None:
+            result = subtype
+        return ResultMessage(
+            session_id=str(sid),
+            result=result,
+            subtype=subtype,
+            is_error=bool(event.get("is_error", False)) or subtype.startswith("error_"),
+        )
 
     # ------------------------------------------------------------------
     # Tee management

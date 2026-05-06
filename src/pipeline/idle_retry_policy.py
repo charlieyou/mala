@@ -241,6 +241,30 @@ class IdleTimeoutRetryPolicy:
                             query_start,
                             tracer,
                         )
+                        if not result.success:
+                            error_text = result.error or "SDK result reported an error"
+                            exc = RuntimeError(
+                                f"amp subprocess exited with code 1: {error_text}"
+                            )
+                            retry_query = self._prepare_subprocess_retry(
+                                state,
+                                lifecycle_ctx,
+                                issue_id,
+                                exc,
+                                subprocess_exit_retries=subprocess_exit_retries,
+                                resume_id=_client_session_id(client)
+                                or result.session_id
+                                or state.pending_session_id
+                                or state.session_id
+                                or lifecycle_ctx.session_id,
+                            )
+                            if retry_query is None:
+                                raise exc
+                            subprocess_exit_retries += 1
+                            pending_retry_kind = "subprocess"
+                            if retry_query:
+                                pending_query = retry_query
+                            continue
                         return IterationResult(
                             success=result.success,
                             session_id=result.session_id,
