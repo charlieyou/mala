@@ -1225,6 +1225,10 @@ interface AmpPluginAPI {
 }
 
 export default function plugin(amp: AmpPluginAPI): void {
+  if (process.env.AMP_MALA !== "true") {
+    return;
+  }
+
   amp.on("session.start", () => {
     cfg = loadConfig();
     emitSentinelMarker();

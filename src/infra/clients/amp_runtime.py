@@ -325,6 +325,7 @@ class AmpRuntimeBuilder:
             "MCP_TIMEOUT": format_mcp_timeout_ms(self._agent_timeout_seconds),
             **self._env_extra,
         }
+        env["AMP_MALA"] = "true"
         env["MCP_TIMEOUT"] = format_mcp_timeout_ms(self._agent_timeout_seconds)
         if lock_event_log_path is not None:
             env["MALA_LOCK_EVENT_LOG"] = str(lock_event_log_path)

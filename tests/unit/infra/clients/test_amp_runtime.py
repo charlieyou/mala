@@ -186,6 +186,13 @@ def test_env_includes_plugins_all(builder: AmpRuntimeBuilder) -> None:
 
 
 @pytest.mark.unit
+def test_env_enables_mala_amp_plugin(builder: AmpRuntimeBuilder) -> None:
+    runtime = builder.build()
+    assert runtime.env["AMP_MALA"] == "true"
+    assert runtime.options.env["AMP_MALA"] == "true"
+
+
+@pytest.mark.unit
 def test_env_inherits_custom_parent_env_key(
     builder: AmpRuntimeBuilder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -575,11 +582,14 @@ def test_with_env_extras_are_layered_on_top_of_mandatory_overlays(
     """Caller extras (``MALA_SDK_FLOW`` etc.) reach the spawn env."""
     runtime = (
         builder.with_agent_timeout(1800)
-        .with_env({"MALA_SDK_FLOW": "implementer", "MCP_TIMEOUT": "1"})
+        .with_env(
+            {"MALA_SDK_FLOW": "implementer", "MCP_TIMEOUT": "1", "AMP_MALA": "false"}
+        )
         .build()
     )
     assert runtime.env["MALA_SDK_FLOW"] == "implementer"
     assert runtime.env["MCP_TIMEOUT"] == "1800000"
+    assert runtime.env["AMP_MALA"] == "true"
     # Mandatory overlays still in place — extras must not have clobbered them.
     assert runtime.env["PLUGINS"] == "all"
     assert runtime.env["MALA_AGENT_ID"] == "agent-42"

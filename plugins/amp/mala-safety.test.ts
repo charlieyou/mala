@@ -21,6 +21,7 @@ import { join } from "node:path";
 
 import {
   classifyShellWrites,
+  default as plugin,
   extractRedirectTargets,
   findCommandSubstitutionWithWrite,
   findRejectedShellPrimitive,
@@ -34,6 +35,56 @@ import {
 // test sources, since some surrounding agents apply the same gate to
 // their own tool-call inputs and would refuse to write the test file.
 const DD_IF = "if" + "=";
+
+// ---------------------------------------------------------------------------
+// Plugin entrypoint env gate
+// ---------------------------------------------------------------------------
+
+describe("plugin entrypoint AMP_MALA gate", () => {
+  function withAmpMala(value: string | undefined, fn: () => void): void {
+    const previous = process.env.AMP_MALA;
+    try {
+      if (value === undefined) {
+        delete process.env.AMP_MALA;
+      } else {
+        process.env.AMP_MALA = value;
+      }
+      fn();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.AMP_MALA;
+      } else {
+        process.env.AMP_MALA = previous;
+      }
+    }
+  }
+
+  function registeredEvents(): string[] {
+    const events: string[] = [];
+    plugin({
+      on(event: string): void {
+        events.push(event);
+      },
+    });
+    return events;
+  }
+
+  test("does not register hooks outside mala", () => {
+    withAmpMala(undefined, () => {
+      expect(registeredEvents()).toEqual([]);
+    });
+  });
+
+  test("registers hooks when mala enables it", () => {
+    withAmpMala("true", () => {
+      expect(registeredEvents()).toEqual([
+        "session.start",
+        "tool.call",
+        "tool.result",
+      ]);
+    });
+  });
+});
 
 // ---------------------------------------------------------------------------
 // isExcludedShellWritePath — strict /dev/fd/<digits> regex
