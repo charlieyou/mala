@@ -1130,6 +1130,116 @@ async def test_malformed_json_error_wins_over_nonzero_exit(tmp_path: Path) -> No
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_preinit_amp_stdout_logfmt_warning_is_skipped(
+    tmp_path: Path,
+) -> None:
+    log_line = (
+        'level=warn msg="failed to fetch metadata, retrying" '
+        'endpoint=https://actors.ampcode.com/ attempt=2 '
+        'error="Error: HTTP request error"'
+    )
+    script = _write_fake_amp(
+        tmp_path,
+        lines=[log_line, _system_init("T-preinit-log"), _result("T-preinit-log")],
+    )
+    pending = tmp_path / ".pending-preinit-log.jsonl"
+    options = _make_options(
+        log_path=pending,
+        argv=_python_argv_for(script),
+        cwd=tmp_path,
+    )
+
+    async with AmpClient(options) as client:
+        await client.query("p")
+        msgs = await _drain(client)
+
+    assert client.session_id == "T-preinit-log"
+    assert [type(msg) for msg in msgs] == [ResultMessage]
+    assert log_line in (tmp_path / "T-preinit-log.jsonl").read_text()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_preinit_non_logfmt_garbage_still_fails(tmp_path: Path) -> None:
+    script = _write_fake_amp(tmp_path, lines=["not-json-not-logfmt"])
+    options = _make_options(
+        log_path=tmp_path / ".pending-preinit-garbage.jsonl",
+        argv=_python_argv_for(script),
+        cwd=tmp_path,
+    )
+
+    async with AmpClient(options) as client:
+        await client.query("p")
+        with pytest.raises(AmpClientError) as exc_info:
+            await _drain(client)
+
+    assert "stream-json" in str(exc_info.value).lower()
+    assert "not-json-not-logfmt" in str(exc_info.value)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_postinit_logfmt_stdout_line_still_fails(tmp_path: Path) -> None:
+    log_line = 'level=warn msg="post-init stdout noise"'
+    script = _write_fake_amp(tmp_path, lines=[_system_init(), log_line])
+    options = _make_options(
+        log_path=tmp_path / ".pending-postinit-log.jsonl",
+        argv=_python_argv_for(script),
+        cwd=tmp_path,
+    )
+
+    async with AmpClient(options) as client:
+        await client.query("p")
+        with pytest.raises(AmpClientError) as exc_info:
+            await _drain(client)
+
+    assert "stream-json" in str(exc_info.value).lower()
+    assert log_line in str(exc_info.value)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_only_preinit_logfmt_then_eof_fails_clearly(tmp_path: Path) -> None:
+    log_line = 'level=warn msg="failed to fetch metadata, retrying" attempt=2'
+    script = _write_fake_amp(tmp_path, lines=[log_line])
+    options = _make_options(
+        log_path=tmp_path / ".pending-only-preinit-log.jsonl",
+        argv=_python_argv_for(script),
+        cwd=tmp_path,
+    )
+
+    async with AmpClient(options) as client:
+        await client.query("p")
+        with pytest.raises(AmpClientError) as exc_info:
+            await _drain(client)
+
+    assert "exited before system(init)" in str(exc_info.value)
+    assert "skipping 1 pre-init stdout log line" in str(exc_info.value)
+    assert log_line in exc_info.value.stdout_tail
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_too_many_preinit_logfmt_lines_fails(tmp_path: Path) -> None:
+    lines = [f'level=warn msg="metadata retry" attempt={i}' for i in range(6)]
+    script = _write_fake_amp(tmp_path, lines=[*lines, _system_init()])
+    options = _make_options(
+        log_path=tmp_path / ".pending-many-preinit-logs.jsonl",
+        argv=_python_argv_for(script),
+        cwd=tmp_path,
+    )
+
+    async with AmpClient(options) as client:
+        await client.query("p")
+        with pytest.raises(AmpClientError) as exc_info:
+            await _drain(client)
+
+    assert "stream-json" in str(exc_info.value).lower()
+    assert lines[-1] in str(exc_info.value)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_premature_exit_with_no_result_returns_no_result_message(
     tmp_path: Path,
 ) -> None:

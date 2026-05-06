@@ -38,6 +38,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import signal
 import sys
 from dataclasses import dataclass, field
@@ -68,6 +69,12 @@ _STDOUT_TAIL_LIMIT = 4096
 
 _STREAM_JSON_READER_LIMIT = 16 * 1024 * 1024
 """Allow large single-line stream-json events such as verbose tool results."""
+
+_PREINIT_STDOUT_LOGFMT_RE = re.compile(rb"^\s*level=(trace|debug|info|warn)\b.*\bmsg=")
+"""Conservative Amp CLI logfmt lines tolerated before ``system(init)`` only."""
+
+_MAX_PREINIT_STDOUT_LOG_LINES = 5
+"""Maximum non-JSON Amp CLI stdout log lines skipped before ``system(init)``."""
 
 _DEFAULT_KILL_GRACE_SECONDS = 2.0
 """Seconds between SIGTERM and SIGKILL during ``__aexit__`` cleanup."""
@@ -458,6 +465,7 @@ class AmpClient:
         if stdout is None:
             raise AmpClientError("amp subprocess opened without stdout pipe")
 
+        skipped_preinit_logs: list[str] = []
         try:
             while True:
                 line = await stdout.readline()
@@ -471,8 +479,16 @@ class AmpClient:
                 try:
                     event = json.loads(stripped)
                 except json.JSONDecodeError as exc:
+                    if self._should_skip_preinit_stdout_log(
+                        stripped, skipped_count=len(skipped_preinit_logs)
+                    ):
+                        skipped_preinit_logs.append(
+                            stripped.decode(errors="replace")
+                        )
+                        continue
                     raise AmpClientError(
-                        f"AmpClient could not parse stream-json line: {exc}",
+                        "AmpClient could not parse stream-json line: "
+                        f"{exc}; line={stripped[:500]!r}",
                         stderr_tail=self.get_stderr(),
                         stdout_tail=self._stdout_tail_text(),
                     ) from exc
@@ -484,6 +500,15 @@ class AmpClient:
                     continue
                 async for msg in self._dispatch(event):
                     yield msg
+            if skipped_preinit_logs and not self._state.init_seen:
+                skipped = "\n".join(skipped_preinit_logs[-_MAX_PREINIT_STDOUT_LOG_LINES:])
+                raise AmpClientError(
+                    "amp subprocess exited before system(init) after skipping "
+                    f"{len(skipped_preinit_logs)} pre-init stdout log line(s): "
+                    f"{skipped}",
+                    stderr_tail=self.get_stderr(),
+                    stdout_tail=self._stdout_tail_text(),
+                )
         finally:
             # Don't block the iterator on subprocess wait; __aexit__ owns
             # full cleanup. We only opportunistically reap if exit is
@@ -496,6 +521,16 @@ class AmpClient:
                     stderr_tail=self.get_stderr(),
                     stdout_tail=self._stdout_tail_text(),
                 )
+
+    def _should_skip_preinit_stdout_log(
+        self, stripped: bytes, *, skipped_count: int
+    ) -> bool:
+        """Return whether a non-JSON stdout line is tolerable pre-init noise."""
+        return (
+            not self._state.init_seen
+            and skipped_count < _MAX_PREINIT_STDOUT_LOG_LINES
+            and _PREINIT_STDOUT_LOGFMT_RE.match(stripped) is not None
+        )
 
     async def _dispatch(self, event: dict[str, Any]) -> AsyncIterator[object]:
         """Map one parsed event to zero or more synthetic messages."""
