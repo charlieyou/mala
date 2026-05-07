@@ -76,7 +76,6 @@ def make_mock_sdk_client_factory(
 def make_mock_runtime() -> MagicMock:
     """Create a mock AgentRuntime."""
     runtime = MagicMock()
-    runtime.options = MagicMock()
     runtime.lint_cache = MagicMock()
     runtime.lint_cache.detect_lint_command.return_value = None
     return runtime

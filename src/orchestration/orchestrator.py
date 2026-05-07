@@ -25,6 +25,7 @@ from src.domain.prompts import build_custom_commands_section
 from src.pipeline.review_formatter import format_review_issues
 from src.infra.git_utils import get_git_branch_async, get_git_commit_async
 from src.infra.io.log_output.run_metadata import (
+    find_sessions_for_issue,
     lookup_prior_session_info,
     remove_run_marker,
     write_run_marker,
@@ -923,31 +924,39 @@ class MalaOrchestrator:
         resume_session_id: str | None = None
         baseline_timestamp: int | None = None
         if self.include_wip:
-            prior_session = lookup_prior_session_info(self.repo_path, issue_id)
+            if self.fresh_session:
+                prior_sessions = find_sessions_for_issue(self.repo_path, issue_id)
+                prior_session = prior_sessions[0] if prior_sessions else None
+            else:
+                prior_session = lookup_prior_session_info(self.repo_path, issue_id)
             resume_session_id = prior_session.session_id if prior_session else None
             baseline_timestamp = (
                 prior_session.baseline_timestamp if prior_session else None
             )
+            if prior_session:
+                # Preserve prior-review feedback in the prompt even when the
+                # SDK session itself will not be resumed (for example,
+                # --fresh clears resume_session_id below).
+                resume_prompt = _build_resume_prompt(
+                    prior_session.last_review_issues or [],
+                    self._prompts,
+                    self._prompt_validation_commands,
+                    issue_id,
+                    self.max_review_retries,
+                    self.repo_path,
+                    prior_session.run_id,
+                )
+                if resume_prompt:
+                    if self.fresh_session:
+                        prompt = f"{prompt}\n\n{resume_prompt}"
+                    else:
+                        prompt = resume_prompt
             if resume_session_id:
                 logger.debug(
                     "Resuming session %s for issue %s",
                     resume_session_id,
                     issue_id,
                 )
-                # Build resume prompt if prior session has review issues
-                # _build_resume_prompt returns None if no issues, so call unconditionally
-                if prior_session:
-                    resume_prompt = _build_resume_prompt(
-                        prior_session.last_review_issues or [],
-                        self._prompts,
-                        self._prompt_validation_commands,
-                        issue_id,
-                        self.max_review_retries,
-                        self.repo_path,
-                        prior_session.run_id,
-                    )
-                    if resume_prompt:
-                        prompt = resume_prompt
             elif self.strict_resume:
                 # Strict mode: fail issue if no prior session found
                 logger.warning(

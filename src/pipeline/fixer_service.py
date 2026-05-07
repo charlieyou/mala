@@ -200,7 +200,7 @@ class FixerService:
         if lint_tools is not None:
             builder = builder.with_lint_tools(lint_tools)
         runtime = builder.build()
-        client = self._agent_provider.client_factory.create(runtime.options)
+        client = self._agent_provider.client_factory.create(runtime)
 
         pending_lint_commands: dict[str, tuple[str, str]] = {}
         is_amp_provider = getattr(self._agent_provider, "name", None) == "amp"

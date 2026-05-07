@@ -34,11 +34,10 @@ from src.infra.tools.env import (
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Set as AbstractSet
+    from collections.abc import Callable, Mapping, Set as AbstractSet
     from pathlib import Path
 
     from src.core.protocols.sdk import McpServerFactory
-    from src.infra.clients.amp_client import AmpClientOptions
     from src.infra.hooks.lint_cache import LintCache
 
 
@@ -63,10 +62,11 @@ fresh sessions interleave stream-json bytes, corrupting both."""
 class AmpRuntime:
     """Complete spawn description for one ``amp --execute --stream-json`` invocation.
 
-    Returned by :meth:`AmpRuntimeBuilder.build`. Consumed by the matching
-    ``AmpClient`` (T008) and read by :class:`AgentSessionRunner` for the
-    ``options`` / ``lint_cache`` fields the pipeline expects on every
-    coder-shaped runtime.
+    Returned by :meth:`AmpRuntimeBuilder.build`. Consumed privately by
+    :class:`AmpAgentProvider.client_factory` (T008), which unpacks these
+    fields into an :class:`AmpClientOptions` at ``create(runtime)`` time.
+    The pipeline forwards the runtime opaquely; ``runtime.options`` is no
+    longer surfaced (plan A3).
     """
 
     cwd: Path
@@ -75,18 +75,21 @@ class AmpRuntime:
     mcp_config: dict[str, object]
     mode: AmpMode
     log_path: Path
-    options: AmpClientOptions
-    """Pre-built :class:`AmpClientOptions` consumed by
-    :meth:`AmpAgentProvider.client_factory.create`. The pipeline reads
-    ``runtime.options`` after ``builder.build()`` exactly the same way it
-    reads ``ClaudeRuntime.options``, so the ``AgentSessionRunner`` path is
-    coder-agnostic."""
     lint_cache: LintCache
     """In-memory :class:`LintCache` used by the session runner to dedupe
     lint commands across attempts. Amp does not consume the cache itself —
     the synthetic message dataclasses do not interact with it — but the
     runtime carries one for protocol parity with the Claude path."""
     resume_thread_id: str | None = None
+    lock_event_log_path: Path | None = None
+    """Path the stdio locking MCP server writes lock-event JSONL to when
+    a deadlock monitor was wired via :meth:`AmpRuntimeBuilder.with_hooks`.
+    The Amp client factory forwards this verbatim into
+    :class:`AmpClientOptions`."""
+    lock_event_callback: Callable[[object], object] | None = None
+    """Async-or-sync handler invoked for each parsed lock event. Sourced
+    from the deadlock monitor's ``handle_event`` method when
+    :meth:`AmpRuntimeBuilder.with_hooks` received a monitor."""
 
 
 AMP_LOCK_EVENTS_DIR: Path = USER_CONFIG_DIR / "amp-lock-events"
@@ -351,22 +354,6 @@ class AmpRuntimeBuilder:
             )
             log_path = AMP_SESSIONS_DIR / pending_name
 
-        # Construct AmpClientOptions eagerly so AgentSessionRunner sees a
-        # ``runtime.options`` value with the same role ClaudeRuntime.options
-        # plays — the pipeline forwards it verbatim to
-        # ``client_factory.create(runtime)``.
-        from src.infra.clients.amp_client import AmpClientOptions
-
-        options = AmpClientOptions(
-            cwd=self._repo_path,
-            env=env,
-            argv=tuple(argv),
-            log_path=log_path,
-            thread_id=self._resume_thread_id,
-            lock_event_log_path=lock_event_log_path,
-            lock_event_callback=lock_event_callback,
-        )
-
         # LintCache parity with the Claude path. Even though the synthetic
         # Amp message dataclasses do not currently interact with the
         # cache, ``SessionConfig`` reads ``runtime.lint_cache`` and
@@ -386,9 +373,10 @@ class AmpRuntimeBuilder:
             mcp_config=mcp_config,
             mode=self._mode,
             log_path=log_path,
-            options=options,
             lint_cache=lint_cache,
             resume_thread_id=self._resume_thread_id,
+            lock_event_log_path=lock_event_log_path,
+            lock_event_callback=lock_event_callback,
         )
 
 

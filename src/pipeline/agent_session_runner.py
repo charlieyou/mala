@@ -130,7 +130,11 @@ class SessionConfig:
 
     Attributes:
         agent_id: Unique agent ID for this session.
-        options: SDK client options.
+        runtime: Opaque coder-shaped runtime forwarded verbatim to
+            ``provider.client_factory.create(runtime)``. The pipeline
+            never inspects its shape; each provider's factory privately
+            unpacks the runtime it produced from its
+            :class:`CoderRuntimeBuilder`.
         lint_cache: Lint command result cache.
         log_file_wait_timeout: Timeout for log file availability.
         log_file_poll_interval: Poll interval for log file.
@@ -138,7 +142,7 @@ class SessionConfig:
     """
 
     agent_id: str
-    options: object
+    runtime: object
     lint_cache: LintCache
     log_file_wait_timeout: float
     log_file_poll_interval: float
@@ -441,16 +445,18 @@ class AgentSessionRunner:
         if idle_timeout_seconds <= 0:
             idle_timeout_seconds = None
 
-        # Apply session resumption if resume_session_id is set
-        options = runtime.options
+        # Apply session resumption if resume_session_id is set. The
+        # runtime is forwarded opaquely; ``with_resume`` returns a new
+        # opaque runtime that the factory will later unpack privately.
+        session_runtime: object = runtime
         if input.resume_session_id:
-            options = self.agent_provider.client_factory.with_resume(
-                options, input.resume_session_id
+            session_runtime = self.agent_provider.client_factory.with_resume(
+                session_runtime, input.resume_session_id
             )
 
         session_config = SessionConfig(
             agent_id=agent_id,
-            options=options,
+            runtime=session_runtime,
             lint_cache=runtime.lint_cache,
             log_file_wait_timeout=self.config.log_file_wait_timeout,
             log_file_poll_interval=0.5,
@@ -512,7 +518,7 @@ class AgentSessionRunner:
                     iter_result = await self._retry_policy.execute_iteration(
                         query=pending_query,
                         issue_id=input.issue_id,
-                        options=session_cfg.options,
+                        runtime=session_cfg.runtime,
                         state=state.msg_state,
                         lifecycle_ctx=lifecycle_ctx,
                         lint_cache=session_cfg.lint_cache,

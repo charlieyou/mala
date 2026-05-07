@@ -92,7 +92,7 @@ def make_session_config() -> SessionConfig:
     """Create a minimal SessionConfig for testing."""
     return SessionConfig(
         agent_id="test-agent",
-        options=FakeOptions(),
+        runtime=FakeOptions(),
         lint_cache=FakeLintCache(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         log_file_wait_timeout=10.0,
         log_file_poll_interval=0.5,

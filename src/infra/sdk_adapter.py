@@ -51,10 +51,15 @@ class SDKClientFactory:
         """Create a new SDK client for the given Claude runtime.
 
         Args:
-            runtime: ClaudeAgentOptions (or compatible) for the client.
-                Typed as ``object`` to satisfy the slim cross-coder
-                ``SDKClientFactoryProtocol``; this concrete factory
-                privately treats it as ``ClaudeAgentOptions``.
+            runtime: Opaque Claude-shaped runtime. Either an
+                :class:`AgentRuntime` produced by
+                :class:`AgentRuntimeBuilder.build`, in which case its
+                ``options`` field carries the ``ClaudeAgentOptions``, or a
+                bare ``ClaudeAgentOptions`` for Claude-private callers
+                (e.g. :class:`AgentSDKReviewer`) that build options
+                themselves. The pipeline only goes through the runtime
+                form; the bare-options shape is a Claude-private
+                convenience preserved here.
 
         Returns:
             SDKClientProtocol wrapping a ClaudeSDKClient.
@@ -62,10 +67,12 @@ class SDKClientFactory:
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient  # noqa: TC002
         from src.infra.sdk_transport import ensure_sigint_isolated_cli_transport
 
+        options = getattr(runtime, "options", runtime)
+
         ensure_sigint_isolated_cli_transport()
         return cast(
             "SDKClientProtocol",
-            ClaudeSDKClient(options=cast("ClaudeAgentOptions", runtime)),
+            ClaudeSDKClient(options=cast("ClaudeAgentOptions", options)),
         )
 
     def create_options(
@@ -165,17 +172,26 @@ class SDKClientFactory:
         context before processing the next query.
 
         Args:
-            runtime: Existing ClaudeAgentOptions to clone.
+            runtime: Existing Claude-shaped runtime. Either an
+                :class:`AgentRuntime` (with an ``options`` field carrying
+                the ``ClaudeAgentOptions``) or a bare ``ClaudeAgentOptions``
+                for Claude-private callers.
             resume: Session ID to resume from, or None to start fresh.
 
         Returns:
-            New ClaudeAgentOptions with the resume field set.
+            Same shape as ``runtime`` with its ``ClaudeAgentOptions``
+            ``resume`` field updated.
         """
         from claude_agent_sdk import ClaudeAgentOptions
-        from dataclasses import fields
+        from dataclasses import fields, replace
 
-        # ClaudeAgentOptions is a dataclass - extract all field values
-        opts = runtime
+        from src.infra.agent_runtime import AgentRuntime
+
+        if isinstance(runtime, AgentRuntime):
+            opts = runtime.options
+        else:
+            opts = runtime
+
         if not isinstance(opts, ClaudeAgentOptions):
             raise TypeError(f"Expected ClaudeAgentOptions, got {type(opts)}")
 
@@ -185,4 +201,7 @@ class SDKClientFactory:
         if "settings" in kwargs and kwargs["settings"] is None:
             kwargs["settings"] = '{"autoCompactEnabled": true}'
 
-        return ClaudeAgentOptions(**kwargs)  # type: ignore[arg-type]
+        new_opts = ClaudeAgentOptions(**kwargs)  # type: ignore[arg-type]
+        if isinstance(runtime, AgentRuntime):
+            return replace(runtime, options=new_opts)
+        return new_opts

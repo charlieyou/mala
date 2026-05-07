@@ -200,7 +200,7 @@ class TestExecuteIterationSuccess:
         result = await policy.execute_iteration(
             query="Test query",
             issue_id="TEST-1",
-            options={},
+            runtime={},
             state=state,
             lifecycle_ctx=lifecycle_ctx,
             lint_cache=lint_cache,
@@ -250,7 +250,7 @@ class TestExecuteIterationTimeout:
         result = await policy.execute_iteration(
             query="Initial query",
             issue_id="TEST-2",
-            options={},
+            runtime={},
             state=state,
             lifecycle_ctx=lifecycle_ctx,
             lint_cache=lint_cache,
@@ -305,7 +305,7 @@ class TestExecuteIterationTimeout:
             await policy.execute_iteration(
                 query="Test query",
                 issue_id="TEST-3",
-                options={},
+                runtime={},
                 state=state,
                 lifecycle_ctx=lifecycle_ctx,
                 lint_cache=lint_cache,
@@ -369,7 +369,7 @@ class TestExecuteIterationTimeout:
         result = await policy.execute_iteration(
             query="Initial query",
             issue_id="TEST-IDLE-CLIENT-SID",
-            options={},
+            runtime={},
             state=state,
             lifecycle_ctx=lifecycle_ctx,
             lint_cache=lint_cache,
@@ -437,7 +437,7 @@ class TestExecuteIterationTimeout:
             await policy.execute_iteration(
                 query="Initial query",
                 issue_id="TEST-IDLE-NO-SID",
-                options={},
+                runtime={},
                 state=state,
                 lifecycle_ctx=lifecycle_ctx,
                 lint_cache=lint_cache,
@@ -499,7 +499,7 @@ class TestSubprocessExitRetry:
         result = await policy.execute_iteration(
             query="Initial query",
             issue_id="TEST-12",
-            options={},
+            runtime={},
             state=state,
             lifecycle_ctx=lifecycle_ctx,
             lint_cache=lint_cache,
@@ -550,7 +550,7 @@ class TestSubprocessExitRetry:
             await policy.execute_iteration(
                 query="Initial query",
                 issue_id="TEST-13",
-                options={},
+                runtime={},
                 state=state,
                 lifecycle_ctx=lifecycle_ctx,
                 lint_cache=lint_cache,
@@ -617,7 +617,7 @@ class TestSubprocessExitRetry:
         result = await policy.execute_iteration(
             query="Initial query",
             issue_id="TEST-13B",
-            options={},
+            runtime={},
             state=state,
             lifecycle_ctx=lifecycle_ctx,
             lint_cache=lint_cache,
@@ -676,7 +676,7 @@ class TestSubprocessExitRetry:
         result = await policy.execute_iteration(
             query="Initial query",
             issue_id="TEST-14",
-            options={},
+            runtime={},
             state=state,
             lifecycle_ctx=lifecycle_ctx,
             lint_cache=lint_cache,
@@ -742,7 +742,7 @@ class TestSubprocessExitRetry:
         result = await policy.execute_iteration(
             query="Initial query",
             issue_id="TEST-15",
-            options={},
+            runtime={},
             state=state,
             lifecycle_ctx=lifecycle_ctx,
             lint_cache=lint_cache,
@@ -814,7 +814,7 @@ class TestSubprocessExitRetry:
         result = await policy.execute_iteration(
             query="Initial query",
             issue_id="TEST-15B",
-            options={},
+            runtime={},
             state=state,
             lifecycle_ctx=lifecycle_ctx,
             lint_cache=lint_cache,
@@ -895,7 +895,7 @@ class TestSubprocessExitRetry:
         result = await policy.execute_iteration(
             query="Initial query",
             issue_id="TEST-16B",
-            options={},
+            runtime={},
             state=state,
             lifecycle_ctx=lifecycle_ctx,
             lint_cache=lint_cache,
@@ -959,7 +959,7 @@ class TestSubprocessExitRetry:
         result = await policy.execute_iteration(
             query="Initial query",
             issue_id="TEST-16",
-            options={},
+            runtime={},
             state=state,
             lifecycle_ctx=lifecycle_ctx,
             lint_cache=lint_cache,
@@ -1023,7 +1023,7 @@ class TestSubprocessExitRetry:
             await policy.execute_iteration(
                 query="Initial query",
                 issue_id="TEST-17",
-                options={},
+                runtime={},
                 state=state,
                 lifecycle_ctx=lifecycle_ctx,
                 lint_cache=lint_cache,
@@ -1064,7 +1064,7 @@ class TestSubprocessExitRetry:
             await policy.execute_iteration(
                 query="Initial query",
                 issue_id="TEST-18",
-                options={},
+                runtime={},
                 state=state,
                 lifecycle_ctx=lifecycle_ctx,
                 lint_cache=lint_cache,
@@ -1107,7 +1107,7 @@ class TestRetryConfigZeroMaxRetries:
             await policy.execute_iteration(
                 query="Test query",
                 issue_id="TEST-4",
-                options={},
+                runtime={},
                 state=state,
                 lifecycle_ctx=lifecycle_ctx,
                 lint_cache=lint_cache,
@@ -1163,7 +1163,7 @@ class TestBackoffTiming:
             result = await policy.execute_iteration(
                 query="Test query",
                 issue_id="TEST-5",
-                options={},
+                runtime={},
                 state=state,
                 lifecycle_ctx=lifecycle_ctx,
                 lint_cache=lint_cache,
@@ -1216,7 +1216,7 @@ class TestBackoffTiming:
             result = await policy.execute_iteration(
                 query="Test query",
                 issue_id="TEST-6",
-                options={},
+                runtime={},
                 state=state,
                 lifecycle_ctx=lifecycle_ctx,
                 lint_cache=lint_cache,
@@ -1266,7 +1266,7 @@ class TestRetryWithoutSessionId:
         result = await policy.execute_iteration(
             query="Original query",
             issue_id="TEST-7",
-            options={},
+            runtime={},
             state=state,
             lifecycle_ctx=lifecycle_ctx,
             lint_cache=lint_cache,
@@ -1324,7 +1324,7 @@ class TestRetryWithoutSessionId:
             await policy.execute_iteration(
                 query="Test query",
                 issue_id="TEST-8",
-                options={},
+                runtime={},
                 state=state,
                 lifecycle_ctx=lifecycle_ctx,
                 lint_cache=lint_cache,
@@ -1361,7 +1361,7 @@ class TestDisconnectBehavior:
             await policy.execute_iteration(
                 query="Test query",
                 issue_id="TEST-9",
-                options={},
+                runtime={},
                 state=state,
                 lifecycle_ctx=lifecycle_ctx,
                 lint_cache=lint_cache,
@@ -1403,7 +1403,7 @@ class TestStateManagement:
         await policy.execute_iteration(
             query="Test query",
             issue_id="TEST-10",
-            options={},
+            runtime={},
             state=state,
             lifecycle_ctx=lifecycle_ctx,
             lint_cache=lint_cache,
@@ -1477,7 +1477,7 @@ class TestStateManagement:
         await policy.execute_iteration(
             query="Test query",
             issue_id="TEST-11",
-            options={},
+            runtime={},
             state=state,
             lifecycle_ctx=lifecycle_ctx,
             lint_cache=lint_cache,

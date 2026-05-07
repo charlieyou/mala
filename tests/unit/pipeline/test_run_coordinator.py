@@ -264,7 +264,6 @@ class TestFixerInterruptHandling:
         # Override provider.runtime_builder to avoid MCP server factory
         # dependency (the production path goes through agent_provider).
         mock_runtime = MagicMock()
-        mock_runtime.options = {}
         mock_runtime.lint_cache = MagicMock()
         self._install_mock_runtime_builder(fake_agent_provider, mock_runtime)
 
@@ -310,7 +309,6 @@ class TestFixerInterruptHandling:
         # Override provider.runtime_builder to avoid MCP server factory
         # dependency.
         mock_runtime = MagicMock()
-        mock_runtime.options = {}
         mock_runtime.lint_cache = MagicMock()
         self._install_mock_runtime_builder(fake_agent_provider, mock_runtime)
 
@@ -375,7 +373,6 @@ class TestFixerInterruptHandling:
         # Override provider.runtime_builder to avoid MCP server factory
         # dependency.
         mock_runtime = MagicMock()
-        mock_runtime.options = {}
         mock_runtime.lint_cache = MagicMock()
         self._install_mock_runtime_builder(fake_agent_provider, mock_runtime)
 
@@ -422,7 +419,6 @@ class TestFixerInterruptHandling:
         mock_sdk_client_factory.create.return_value = mock_client
 
         mock_runtime = MagicMock()
-        mock_runtime.options = {}
         mock_runtime.lint_cache = MagicMock()
         self._install_mock_runtime_builder(fake_agent_provider, mock_runtime)
 

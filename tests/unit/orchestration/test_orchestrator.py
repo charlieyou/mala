@@ -22,8 +22,10 @@ from claude_agent_sdk.types import ResultMessage
 from src.orchestration.orchestrator import (
     MalaOrchestrator,
 )
+from src.pipeline.agent_session_runner import AgentSessionInput, AgentSessionOutput
 from src.pipeline.issue_result import IssueResult
 from src.domain.prompts import load_prompts
+from src.infra.io.config import MalaConfig
 from src.infra.tools.env import PROMPTS_DIR
 from src.infra.tools.command_runner import CommandRunner
 
@@ -845,6 +847,7 @@ class TestMissingLogFile:
             repo_path=tmp_path,
             max_agents=1,
             timeout_minutes=5,  # Global timeout much longer than log wait
+            config=MalaConfig(coder="claude"),
         )
 
         # Mock the Claude SDK client to yield a ResultMessage but no log file
@@ -911,6 +914,7 @@ class TestMissingLogFile:
             repo_path=tmp_path,
             max_agents=1,
             timeout_minutes=5,
+            config=MalaConfig(coder="claude"),
         )
 
         mock_client = AsyncMock()
@@ -981,7 +985,11 @@ class TestAgentEnvInheritance:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Agent environment should include inherited env vars plus lock overrides."""
-        orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            config=MalaConfig(coder="claude"),
+        )
 
         captured_env: dict[str, str] | None = None
 
@@ -5176,6 +5184,7 @@ class TestFreshSessionMode:
             repo_path=tmp_path,
             max_agents=1,
             issue_provider=fake_issues,
+            config=MalaConfig(coder="claude"),
             runs_dir=runs_dir,
             lock_releaser=lambda _: 0,
             include_wip=True,
@@ -5183,36 +5192,27 @@ class TestFreshSessionMode:
             log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
         )
 
-        # Create mock SDK client
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client.query = AsyncMock()
+        session_inputs: list[AgentSessionInput] = []
 
-        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
-            yield ResultMessage(
-                subtype="result",
+        async def capture_session_input(
+            runner: object,
+            session_input: AgentSessionInput,
+            **kwargs: object,
+        ) -> AgentSessionOutput:
+            session_inputs.append(session_input)
+            return AgentSessionOutput(
+                success=True,
+                summary="ISSUE_NO_CHANGE: Done",
                 session_id="new-session-id",
-                result="ISSUE_NO_CHANGE: Done",
-                duration_ms=1000,
-                duration_api_ms=800,
-                is_error=False,
-                num_turns=1,
-                total_cost_usd=0.01,
-                usage=None,
+                agent_id=session_input.agent_id or "test-agent",
+                baseline_timestamp=session_input.baseline_timestamp,
             )
 
-        mock_client.receive_response = mock_receive_response
-
-        # Track ALL calls to SDK client to verify initial call has resume=None
-        sdk_call_history: list[dict[str, object]] = []
-
-        def capture_sdk_client(**kwargs: object) -> AsyncMock:
-            sdk_call_history.append(dict(kwargs))
-            return mock_client
-
         with (
-            patch("claude_agent_sdk.ClaudeSDKClient", side_effect=capture_sdk_client),
+            patch(
+                "src.orchestration.orchestrator.AgentSessionRunner.run_session",
+                new=capture_session_input,
+            ),
             patch(
                 "src.orchestration.orchestrator.get_git_branch_async",
                 return_value="main",
@@ -5227,37 +5227,48 @@ class TestFreshSessionMode:
                 return_value="Test issue",
             ),
             patch(
-                "src.orchestration.orchestrator.lookup_prior_session_info",
-                return_value=MagicMock(
-                    session_id="prior-session-id",
-                    baseline_timestamp=1700000000,
-                    # Fixture schema matches StoredReviewIssue.from_dict contract
-                    # (file, line_start, line_end, priority, title, body, reviewer)
-                    last_review_issues=[
-                        {
-                            "file": "src/test.py",
-                            "line_start": 10,
-                            "line_end": 12,
-                            "priority": 2,
-                            "title": "Fix typo",
-                            "body": "Found a typo in variable name",
-                            "reviewer": "test-reviewer",
-                        }
-                    ],
-                    run_id="prior-run-id",
-                ),
+                "src.orchestration.orchestrator.find_sessions_for_issue",
+                return_value=[
+                    MagicMock(
+                        session_id=None,
+                        baseline_timestamp=1700000000,
+                        # Fixture schema matches StoredReviewIssue.from_dict contract
+                        # (file, line_start, line_end, priority, title, body, reviewer)
+                        last_review_issues=[
+                            {
+                                "file": "src/test.py",
+                                "line_start": 10,
+                                "line_end": 12,
+                                "priority": 1,
+                                "title": "Preserve prior review feedback",
+                                "body": "Ensure prior review feedback is included in the fresh-session prompt",
+                                "reviewer": "test-reviewer",
+                            }
+                        ],
+                        run_id="prior-run-id",
+                    )
+                ],
             ),
         ):
             result = await orchestrator.run_implementer("test-issue")
 
-            # Verify the FIRST SDK call had resume=None (fresh session)
-            # Note: Subsequent calls may have resume set after receiving session_id
-            # ClaudeSDKClient is called with options=<ClaudeAgentOptions> (a dataclass
-            # with a 'resume' field), not as a dict, so getattr is correct here.
-            assert len(sdk_call_history) >= 1, "SDK client should have been called"
-            first_call_options = sdk_call_history[0].get("options")
-            assert first_call_options is not None
-            assert getattr(first_call_options, "resume", "NOT_FOUND") is None
+            # Verify the session starts fresh even though prior metadata exists.
+            # This also covers prior run metadata without a resumable SDK session.
+            assert len(session_inputs) == 1
+            first_input = session_inputs[0]
+            assert first_input.resume_session_id is None
+
+            # Regression: fresh_session must only clear the SDK resume id; it
+            # must not drop the implementer prompt or prior-review follow-up
+            # prompt. The follow-up says to continue following the implementer
+            # prompt, so a fresh SDK session needs both prompt bodies.
+            first_prompt = first_input.prompt
+            assert "# Beads Issue Implementer" in first_prompt
+            assert "Test issue" in first_prompt
+            assert "File: src/test.py" in first_prompt
+            assert "L10-12: [test-reviewer]" in first_prompt
+            assert "Preserve prior review feedback" in first_prompt
+            assert "Ensure prior review feedback is included" in first_prompt
 
             # Session ran successfully
             assert result.session_id == "new-session-id"
@@ -5286,6 +5297,7 @@ class TestFreshSessionMode:
             lock_releaser=lambda _: 0,
             include_wip=True,
             fresh_session=True,
+            config=MalaConfig(coder="claude"),
             log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
         )
 

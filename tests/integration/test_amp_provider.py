@@ -16,10 +16,10 @@ binary on PATH:
   * **Per-issue lifecycle (AC#6)** — fake ``amp`` emits the sentinel
     marker on stderr **and** a canned stream-json transcript on stdout;
     ``run_implementer`` drives ``AgentSessionRunner._build_session`` →
-    ``client_factory.create(runtime.options)`` → ``query`` → message
+    ``client_factory.create(runtime)`` → ``query`` → message
     parsing → lifecycle → ``IssueResult`` end-to-end. Until T013 grew
     the fluent surface on :class:`AmpRuntimeBuilder` and added
-    ``options``/``lint_cache`` on :class:`AmpRuntime`, this path raised
+    ``lint_cache`` on :class:`AmpRuntime`, this path raised
     ``AttributeError: 'AmpRuntimeBuilder' object has no attribute
     'with_hooks'`` before any Amp client could run. The test pins that
     regression: a passing assertion here means the Claude pipeline can

@@ -2370,7 +2370,7 @@ class TestBuildSessionOutput:
 
         session_cfg = SessionConfig(
             agent_id="test-123-abc12345",
-            options={},
+            runtime={},
             lint_cache=LintCache(repo_path=tmp_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -2427,7 +2427,7 @@ class TestBuildSessionOutput:
 
         session_cfg = SessionConfig(
             agent_id="test-fail-abc",
-            options={},
+            runtime={},
             lint_cache=LintCache(repo_path=tmp_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -2482,7 +2482,7 @@ class TestBuildSessionOutput:
 
         session_cfg = SessionConfig(
             agent_id="test-res-abc",
-            options={},
+            runtime={},
             lint_cache=LintCache(repo_path=tmp_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -2532,7 +2532,7 @@ class TestBuildSessionOutput:
 
         session_cfg = SessionConfig(
             agent_id="test-low-abc",
-            options={},
+            runtime={},
             lint_cache=LintCache(repo_path=tmp_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -2591,7 +2591,7 @@ class TestBuildSessionOutput:
 
         session_cfg = SessionConfig(
             agent_id="test-session-end-abc",
-            options={},
+            runtime={},
             lint_cache=LintCache(repo_path=tmp_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -2650,7 +2650,7 @@ class TestBuildSessionOutput:
 
         session_cfg = SessionConfig(
             agent_id="test-no-session-end",
-            options={},
+            runtime={},
             lint_cache=LintCache(repo_path=tmp_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -3186,7 +3186,7 @@ class TestRunLifecycleLoop:
 
         session_cfg = SessionConfig(
             agent_id="test-loop-abc",
-            options=MagicMock(),  # Mock SDK options
+            runtime=MagicMock(),  # Mock SDK options
             lint_cache=LintCache(repo_path=session_config.repo_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -3252,7 +3252,7 @@ class TestRunLifecycleLoop:
 
         session_cfg = SessionConfig(
             agent_id="test-no-session",
-            options=MagicMock(),  # Mock SDK options
+            runtime=MagicMock(),  # Mock SDK options
             lint_cache=LintCache(repo_path=session_config.repo_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -3321,7 +3321,7 @@ class TestRunLifecycleLoop:
 
         session_cfg = SessionConfig(
             agent_id="test-events-abc",
-            options=MagicMock(),  # Mock SDK options
+            runtime=MagicMock(),  # Mock SDK options
             lint_cache=LintCache(repo_path=session_config.repo_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,

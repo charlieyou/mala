@@ -302,7 +302,7 @@ async def test_real_amp_provider_client_flow(
     runtime = builder.with_mcp(servers={}).build()
     assert isinstance(runtime, AmpRuntime)
 
-    client = provider.client_factory.create(runtime.options)
+    client = provider.client_factory.create(runtime)
     assert isinstance(client, AmpClient)
 
     last_commit = subprocess.run(

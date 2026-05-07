@@ -506,41 +506,56 @@ class _AmpClientFactory:
     def create(self, runtime: object) -> SDKClientProtocol:
         """Return a new :class:`AmpClient` for ``runtime``.
 
-        ``runtime`` must be an :class:`AmpClientOptions` constructed by the
-        Amp pipeline (typically out of an :class:`AmpRuntime`). The lazy
-        import keeps :mod:`amp_client` (and its asyncio + signal imports)
-        out of the Claude-only path.
+        ``runtime`` must be an :class:`AmpRuntime` produced by
+        :meth:`AmpAgentProvider.runtime_builder().build()`. The factory
+        privately unpacks the runtime's argv/env/log_path into an
+        :class:`AmpClientOptions`; the pipeline never inspects the
+        runtime shape (plan A3).
+
+        The lazy import keeps :mod:`amp_client` (and its asyncio +
+        signal imports) out of the Claude-only path.
         """
         from src.infra.clients.amp_client import AmpClient, AmpClientOptions
+        from src.infra.clients.amp_runtime import AmpRuntime
 
-        if not isinstance(runtime, AmpClientOptions):
+        if not isinstance(runtime, AmpRuntime):
             raise TypeError(
                 "AmpAgentProvider.client_factory.create(runtime) requires an "
-                "AmpClientOptions; got "
-                f"{type(runtime).__name__}. The pipeline must construct "
-                "AmpClientOptions from the AmpRuntime returned by "
+                "AmpRuntime; got "
+                f"{type(runtime).__name__}. Build it via "
                 "AmpAgentProvider.runtime_builder(...).build()."
             )
-        return cast("SDKClientProtocol", AmpClient(runtime))
+        options = AmpClientOptions(
+            cwd=runtime.cwd,
+            env=runtime.env,
+            argv=runtime.argv,
+            log_path=runtime.log_path,
+            thread_id=runtime.resume_thread_id,
+            lock_event_log_path=runtime.lock_event_log_path,
+            lock_event_callback=runtime.lock_event_callback,
+        )
+        return cast("SDKClientProtocol", AmpClient(options))
 
     def with_resume(self, runtime: object, resume: str | None) -> object:
         """Return a copy of ``runtime`` continuing Amp thread ``resume``.
 
-        For the Amp path this updates :attr:`AmpClientOptions.thread_id`;
-        the next ``query()`` then applies the configured resume strategy
-        (``amp threads continue <id>`` by default) to the spawn argv.
+        Updates :attr:`AmpRuntime.resume_thread_id`; the next
+        :meth:`create` materializes an :class:`AmpClientOptions` whose
+        ``thread_id`` carries the resume token, and the configured
+        resume strategy (``amp threads continue <id>`` by default) is
+        applied at spawn time.
         """
-        from src.infra.clients.amp_client import AmpClientOptions
+        from src.infra.clients.amp_runtime import AmpRuntime
 
-        if not isinstance(runtime, AmpClientOptions):
+        if not isinstance(runtime, AmpRuntime):
             raise TypeError(
                 "AmpAgentProvider.client_factory.with_resume(runtime, resume) "
-                "requires AmpClientOptions; got "
+                "requires AmpRuntime; got "
                 f"{type(runtime).__name__}."
             )
         if resume is None:
             return runtime
-        return replace(runtime, thread_id=resume)
+        return replace(runtime, resume_thread_id=resume)
 
 
 # ---------------------------------------------------------------------------
