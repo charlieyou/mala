@@ -1195,26 +1195,12 @@ def create_orchestrator(
 
     # Install per-coder prerequisites once before the first session of the run
     # (per plan L168). For Claude this is a no-op; for Amp this performs the
-    # plugin-load self-test (T013).
-    #
-    # Coders need different MCP factory shapes: Claude consumes in-process
-    # Claude-SDK ``Server`` objects, Amp consumes JSON stdio launch specs
-    # (plan ``L302-L312``: the self-test must use the SAME --mcp-config shape
-    # real sessions use). Dispatching here keeps the factory matched to the
-    # active provider.
-    from src.orchestration.orchestration_wiring import (
-        create_amp_mcp_server_factory,
-        create_mcp_server_factory,
-    )
-
-    if agent_provider.name == "amp":
-        prereq_mcp_factory = create_amp_mcp_server_factory()
-    else:
-        prereq_mcp_factory = create_mcp_server_factory()
-
+    # plugin-load self-test (T013). The provider owns its MCP factory shape
+    # so the self-test exercises the SAME --mcp-config payload real sessions
+    # use (plan ``L302-L312``).
     agent_provider.install_prerequisites(
         config.repo_path.resolve(),
-        mcp_server_factory=prereq_mcp_factory,
+        mcp_server_factory=agent_provider.mcp_server_factory(),
     )
 
     # Create orchestrator using internal constructor

@@ -138,6 +138,7 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
     ) -> MalaOrchestrator:
         """Create an orchestrator using the factory pattern."""
         from src.orchestration.factory import OrchestratorDependencies
+        from src.infra.io.config import MalaConfig
 
         orch_config = OrchestratorConfig(
             repo_path=repo_path,
@@ -168,6 +169,13 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
             runs_dir=runs_dir,
             lock_releaser=lock_releaser,
         )
+
+        if config is None:
+            config = MalaConfig(
+                runs_dir=repo_path / "runs",
+                lock_dir=repo_path / "locks",
+                coder="claude",
+            )
 
         return create_orchestrator(orch_config, mala_config=config, deps=deps)
 

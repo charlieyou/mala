@@ -55,6 +55,7 @@ from typing import IO, TYPE_CHECKING, Any, Literal, cast
 from src.infra.clients.amp_runtime import AmpRuntimeBuilder
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from src.core.protocols.agent_provider import CoderRuntimeBuilder
@@ -67,6 +68,79 @@ if TYPE_CHECKING:
     from src.infra.clients.amp_runtime import AmpMode, AmpRuntime
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Amp MCP server factory (provider-owned)
+# ---------------------------------------------------------------------------
+
+
+def _create_amp_mcp_server_factory() -> McpServerFactory:
+    """Amp-shaped MCP server factory returning **stdio launch specs**.
+
+    The Amp ``--mcp-config`` payload is plain JSON (see
+    :class:`AmpRuntimeBuilder.build`); it cannot consume the in-process
+    Claude SDK server objects produced by the Claude provider's factory
+    (they contain a ``Server`` instance and fail ``json.dumps``).
+
+    Wires Amp at the same ``locking_mcp`` server the Claude path uses by
+    pointing at the ``mala-amp-mcp-locking`` console script (registered
+    via ``[project.scripts]``; entry point lives at
+    :mod:`src.infra.tools.locking_mcp_stdio`). The launcher exposes
+    ``lock_acquire`` / ``lock_release`` over stdio JSON-RPC and writes
+    ``<hash>.lock`` files via the same Python primitives
+    (:func:`src.infra.tools.locking.try_lock`) that
+    :mod:`src.infra.tools.locking_mcp` uses, so the plugin's lock-key
+    derivation in ``plugins/amp/mala-safety.ts`` sees identical fixtures
+    regardless of which path produced them — closing AC#9 (plan
+    ``L702``).
+
+    ``MALA_AGENT_ID`` and ``MALA_REPO_NAMESPACE`` are also passed via
+    args **and** env so the launcher works whether Amp inherits parent
+    env into spawned MCP children or not. ``MALA_LOCK_DIR`` is forwarded
+    from the orchestrator's environment when set (it is what the Claude
+    path uses to choose the lock directory); when unset, the launcher
+    falls back to the default in :func:`src.infra.tools.env.get_lock_dir`,
+    matching Claude-side behavior.
+
+    The ``emit_lock_event`` parameter is interpreted by
+    :class:`AmpRuntimeBuilder`: when present it injects ``MALA_LOCK_EVENT_LOG``
+    into this stdio spec, and ``AmpClient`` tails that JSONL side channel back
+    into the orchestrator's deadlock monitor.
+    """
+
+    def factory(
+        agent_id: str,
+        repo_path: Path,
+        emit_lock_event: Callable | None,
+    ) -> dict[str, object]:
+        del emit_lock_event
+        env: dict[str, str] = {
+            "MALA_AGENT_ID": agent_id,
+            "MALA_REPO_NAMESPACE": str(repo_path),
+        }
+        # Forward the orchestrator's lock dir when one is configured so
+        # the spawned launcher writes lock files where the rest of the
+        # run reads them. Falling through to the env.py default when the
+        # var is unset matches the Claude path's behavior.
+        lock_dir = os.environ.get("MALA_LOCK_DIR")
+        if lock_dir:
+            env["MALA_LOCK_DIR"] = lock_dir
+
+        return {
+            "mala-locking": {
+                "command": "mala-amp-mcp-locking",
+                "args": [
+                    "--agent-id",
+                    agent_id,
+                    "--repo-namespace",
+                    str(repo_path),
+                ],
+                "env": env,
+            }
+        }
+
+    return factory
 
 
 # ---------------------------------------------------------------------------
@@ -650,6 +724,10 @@ class AmpAgentProvider:
             mode=self._mode,
             effort=self._effort,
         )
+
+    def mcp_server_factory(self) -> McpServerFactory:
+        """Return the Amp-shaped MCP server factory (stdio launch specs)."""
+        return _create_amp_mcp_server_factory()
 
     def install_prerequisites(
         self,

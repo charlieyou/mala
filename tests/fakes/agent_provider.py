@@ -101,6 +101,24 @@ class FakeAgentProvider:
             setting_sources=self._setting_sources,
         )
 
+    def mcp_server_factory(self) -> McpServerFactory:
+        """Return a no-op MCP factory for tests.
+
+        Tests that need a real Claude / Amp factory should construct the
+        concrete provider; this fake just satisfies the protocol.
+        """
+        from typing import cast
+
+        def _factory(
+            agent_id: str,
+            repo_path: Path,
+            emit_lock_event: object,
+        ) -> dict[str, object]:
+            del agent_id, repo_path, emit_lock_event
+            return {}
+
+        return cast("McpServerFactory", _factory)
+
     def install_prerequisites(
         self,
         repo_path: Path,

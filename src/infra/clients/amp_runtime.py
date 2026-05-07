@@ -308,10 +308,10 @@ class AmpRuntimeBuilder:
             msg = (
                 "AmpRuntimeBuilder requires an Amp-shaped MCP server factory "
                 "that returns JSON-serializable stdio launch specs (command, "
-                "args, env). The Claude path's create_mcp_server_factory() "
-                "returns in-process Claude SDK server objects and cannot be "
+                "args, env). The Claude path's MCP factory returns "
+                "in-process Claude SDK server objects and cannot be "
                 "reused for Amp. Wire an Amp-specific factory via "
-                f"AmpAgentProvider. Underlying error: {exc}"
+                f"AmpAgentProvider.mcp_server_factory(). Underlying error: {exc}"
             )
             raise TypeError(msg) from exc
 

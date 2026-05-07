@@ -77,6 +77,16 @@ class AgentProvider(Protocol):
         """
         ...
 
+    def mcp_server_factory(self) -> McpServerFactory:
+        """Return the coder-shaped MCP server factory.
+
+        Each provider knows whether it consumes in-process Server objects
+        (Claude) or stdio launch specs (Amp / Codex), so dispatch is owned
+        here rather than at the orchestrator. The orchestrator and factory
+        call this method instead of branching on ``self.name``.
+        """
+        ...
+
     def install_prerequisites(
         self,
         repo_path: Path,

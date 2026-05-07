@@ -12,6 +12,7 @@ import pytest
 from src.domain.prompts import PromptProvider
 from src.domain.validation.config import PromptValidationCommands
 from src.infra.io.config import MalaConfig
+from src.infra.clients.amp_provider import _create_amp_mcp_server_factory
 from src.orchestration.orchestration_wiring import (
     build_gate_runner,
     build_issue_coordinator,
@@ -19,7 +20,6 @@ from src.orchestration.orchestration_wiring import (
     build_run_coordinator,
     build_session_callback_factory,
     build_session_config,
-    create_amp_mcp_server_factory,
 )
 from src.orchestration.types import (
     IssueFilterConfig,
@@ -357,7 +357,7 @@ def _amp_mcp_spec(repo_path: Path, agent_id: str = "agent-A") -> dict[str, objec
     """
     from typing import cast
 
-    factory = create_amp_mcp_server_factory()
+    factory = _create_amp_mcp_server_factory()
     raw = factory(agent_id, repo_path, None)["mala-locking"]
     assert isinstance(raw, dict)
     return cast("dict[str, object]", raw)
@@ -373,7 +373,7 @@ def _amp_mcp_env(spec: dict[str, object]) -> dict[str, object]:
 
 @pytest.mark.unit
 class TestCreateAmpMcpServerFactory:
-    """Tests for create_amp_mcp_server_factory.
+    """Tests for ``_create_amp_mcp_server_factory`` in amp_provider.
 
     Pins the stdio launch spec the factory emits for Amp's
     ``--mcp-config``. The launcher itself
@@ -433,7 +433,7 @@ class TestCreateAmpMcpServerFactory:
         round-trip through ``json.dumps``."""
         import json as _json
 
-        factory = create_amp_mcp_server_factory()
+        factory = _create_amp_mcp_server_factory()
         out = factory("agent-A", tmp_path, None)
         encoded = _json.dumps(out)
         assert "mala-locking" in encoded

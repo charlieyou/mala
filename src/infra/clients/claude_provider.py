@@ -24,11 +24,41 @@ from src.infra.io.session_log_parser import FileSystemLogProvider
 from src.infra.sdk_adapter import SDKClientFactory
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from src.core.protocols.agent_provider import CoderRuntimeBuilder
     from src.core.protocols.sdk import McpServerFactory
+
+
+def _create_claude_mcp_server_factory() -> McpServerFactory:
+    """Claude-shaped MCP factory returning in-process SDK ``Server`` objects.
+
+    The Claude path consumes MCP servers as Python objects passed via
+    ``ClaudeAgentOptions(mcp_servers=...)``; they are not JSON-serializable
+    and cannot be reused for Amp's ``--mcp-config`` stdio launch spec.
+    Owned by the Claude provider so the orchestrator does not branch on
+    ``provider.name``.
+    """
+    from src.infra.tools.locking_mcp import create_locking_mcp_server
+
+    def factory(
+        agent_id: str,
+        repo_path: Path,
+        emit_lock_event: Callable | None,
+    ) -> dict[str, object]:
+        def _noop_handler(event: object) -> None:
+            pass
+
+        return {
+            "mala-locking": create_locking_mcp_server(
+                agent_id=agent_id,
+                repo_namespace=str(repo_path),
+                emit_lock_event=emit_lock_event or _noop_handler,
+            )
+        }
+
+    return factory
 
 
 class ClaudeAgentProvider:
@@ -92,6 +122,15 @@ class ClaudeAgentProvider:
             setting_sources=self._setting_sources,
             effort=self._effort,
         )
+
+    def mcp_server_factory(self) -> McpServerFactory:
+        """Return the Claude-shaped MCP server factory.
+
+        Returns a fresh factory on each call (matching the prior
+        orchestrator behavior); the factory itself produces a new
+        ``mala-locking`` SDK ``Server`` per agent invocation.
+        """
+        return _create_claude_mcp_server_factory()
 
     def install_prerequisites(
         self,
