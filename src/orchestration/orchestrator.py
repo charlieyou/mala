@@ -88,8 +88,8 @@ if TYPE_CHECKING:
         EnvConfigPort,
         LockManagerPort,
     )
+    from src.core.protocols.evidence import EvidenceProvider
     from src.core.protocols.issue import IssueProvider
-    from src.core.protocols.log import LogProvider
     from src.core.protocols.review import CodeReviewer
     from src.core.protocols.validation import EpicVerifierProtocol, GateChecker
     from src.domain.prompts import PromptProvider
@@ -234,7 +234,7 @@ class MalaOrchestrator:
         _issue_provider: IssueProvider,
         _code_reviewer: CodeReviewer,
         _gate_checker: GateChecker,
-        _log_provider: LogProvider,
+        _evidence_provider: EvidenceProvider,
         _telemetry_provider: TelemetryProvider,
         _event_sink: MalaEventSink,
         _epic_verifier: EpicVerifierProtocol | None = None,
@@ -252,7 +252,7 @@ class MalaOrchestrator:
             _issue_provider,
             _code_reviewer,
             _gate_checker,
-            _log_provider,
+            _evidence_provider,
             _telemetry_provider,
             _event_sink,
             _epic_verifier,
@@ -272,7 +272,7 @@ class MalaOrchestrator:
         issue_provider: IssueProvider,
         code_reviewer: CodeReviewer,
         gate_checker: GateChecker,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         telemetry_provider: TelemetryProvider,
         event_sink: MalaEventSink,
         epic_verifier: EpicVerifierProtocol | None,
@@ -327,7 +327,7 @@ class MalaOrchestrator:
         self.review_disabled_reason = derived.review_disabled_reason
         self._per_issue_review = derived.per_issue_review
         self._init_runtime_state()
-        self.log_provider = log_provider
+        self.evidence_provider = evidence_provider
         self.evidence_check = gate_checker
         self.event_sink = event_sink
         self.beads = issue_provider
@@ -338,9 +338,10 @@ class MalaOrchestrator:
         self._command_runner = _command_runner
         self._env_config = _env_config
         self._lock_manager = _lock_manager
-        # AgentProvider bundles client_factory + runtime_builder + log_provider
-        # for the chosen coder backend (Claude or Amp). Selected by the factory
-        # so the pipeline never branches on coder identity.
+        # AgentProvider bundles client_factory + runtime_builder +
+        # evidence_provider for the chosen coder backend (Claude or Amp).
+        # Selected by the factory so the pipeline never branches on coder
+        # identity.
         self._agent_provider = _agent_provider
         self._init_pipeline_runners()
 
@@ -412,7 +413,7 @@ class MalaOrchestrator:
 
         # Build session infrastructure
         context = SessionRunContext(
-            log_provider_getter=lambda: self.log_provider,
+            evidence_provider_getter=lambda: self.evidence_provider,
             evidence_check_getter=lambda: self.evidence_check,
             on_session_log_path=self._on_session_log_path,
             on_review_log_path=self._on_review_log_path,

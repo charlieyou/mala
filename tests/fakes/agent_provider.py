@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.agent_provider import CoderRuntimeBuilder
-    from src.core.protocols.log import LogProvider
+    from src.core.protocols.evidence import EvidenceProvider
     from src.core.protocols.sdk import McpServerFactory, SDKClientFactoryProtocol
     from src.infra.agent_runtime import ClaudeSDKClientFactoryProtocol
 
@@ -50,7 +50,7 @@ class FakeAgentProvider:
         name: ``"claude"`` by default; tests for Amp selection construct
             ``AmpAgentProvider`` directly instead.
         client_factory: The wrapped factory.
-        log_provider: Optional override; defaults to
+        evidence_provider: Optional override; defaults to
             :class:`FileSystemLogProvider`.
     """
 
@@ -60,7 +60,7 @@ class FakeAgentProvider:
         self,
         client_factory: ClaudeSDKClientFactoryProtocol,
         *,
-        log_provider: LogProvider | None = None,
+        evidence_provider: EvidenceProvider | None = None,
         install_prerequisites_count: int = 0,
         name: Literal["claude", "amp"] = "claude",
         setting_sources: list[str] | None = None,
@@ -74,12 +74,12 @@ class FakeAgentProvider:
         # passed in ships those Claude knobs.
         self.client_factory: SDKClientFactoryProtocol = client_factory
         self._claude_factory: ClaudeSDKClientFactoryProtocol = client_factory
-        if log_provider is None:
+        if evidence_provider is None:
             from src.infra.io.session_log_parser import FileSystemLogProvider
 
-            self.log_provider: LogProvider = FileSystemLogProvider()  # type: ignore[assignment]
+            self.evidence_provider: EvidenceProvider = FileSystemLogProvider()  # type: ignore[assignment]
         else:
-            self.log_provider = log_provider
+            self.evidence_provider = evidence_provider
         self.name = name
         # Track install_prerequisites calls for tests that verify idempotency
         # / single invocation (e.g. T007 factory tests).

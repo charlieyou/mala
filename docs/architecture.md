@@ -260,7 +260,7 @@ Pure data structures and interfaces with **no internal dependencies**.
 |--------|---------|
 | `models.py` | Shared dataclasses (IssueResolution, ValidationArtifacts, EpicVerdict, RetryConfig) |
 | `constants.py` | Shared constants used across layers |
-| `protocols.py` | Protocol interfaces (IssueProvider, GateChecker, CodeReviewer, LogProvider, EpicVerificationModel) |
+| `protocols.py` | Protocol interfaces (IssueProvider, GateChecker, CodeReviewer, EvidenceProvider, EpicVerificationModel) |
 | `log_events.py` | JSONL log schema types and parsing helpers |
 | `session_end_result.py` | Session_end trigger result and remediation state |
 | `tool_name_extractor.py` | Normalize tool names from shell commands for logs/caching |
@@ -507,7 +507,8 @@ Supporting orchestration components:
 - `SessionLogParser` / `FileSystemLogProvider`: parsing and offset tracking for JSONL logs.
   - Key methods:
     - `iter_jsonl_entries()` / `get_log_end_offset()`: parser-level iteration + offsets.
-    - `iter_events()` / `get_end_offset()`: provider-level streaming access + offsets.
+    - `iter_session_events()` / `iter_thread_evidence()` / `get_end_offset()`:
+      EvidenceProvider-level streaming access + offsets.
     - `extract_*()` helpers: tool use, tool result, and assistant text parsing.
 - `CommandRunner`: standardized subprocess execution with timeouts and process-group handling.
   - Key methods:
@@ -560,7 +561,7 @@ Hardening constraints (aspirational; not yet enforced):
 
 Core protocols define contracts between orchestration and infra:
 - `IssueProvider`, `GateChecker`, `CodeReviewer`
-- `LogProvider`, `EpicVerificationModel`, `TelemetryProvider`
+- `EvidenceProvider`, `EpicVerificationModel`, `TelemetryProvider`
 
 ### 4) Pipeline Decomposition
 
@@ -625,7 +626,7 @@ three pluggable concerns:
 |---------|-------------|----------|
 | `client_factory` (produces `SDKClientProtocol`-conforming clients) | `ClaudeSDKClient` via Claude Agent SDK | `AmpClient` (subprocess wrapper around `amp --execute --stream-json`) |
 | `runtime_builder(repo_path, agent_id, *, mcp_server_factory)` (produces an opaque coder-shaped runtime) | hooks dict + MCP servers + setting sources (`AgentRuntimeBuilder`) | `AmpRuntime` (CLI args + `--mcp-config` JSON + `MALA_*` env injection + tee log path) |
-| `log_provider` (`LogProvider` for evidence parsing) | `FileSystemLogProvider` over `~/.claude/projects/...` | `AmpLogProvider` over `~/.config/mala/amp-sessions/{thread_id}.jsonl` (per-thread, append-only across resumes) |
+| `evidence_provider` (`EvidenceProvider` for evidence parsing) | `FileSystemLogProvider` over `~/.claude/projects/...` | `AmpLogProvider` over `~/.config/mala/amp-sessions/{thread_id}.jsonl` (per-thread, append-only across resumes) |
 | `install_prerequisites(repo_path, *, mcp_server_factory)` | no-op | install plugin + run **fail-closed runtime self-test** (see below) |
 
 ```mermaid
@@ -721,8 +722,8 @@ as the safe default:
   atomically renamed to `{thread_id}.jsonl` once the ID is captured. On
   resume, the pending file's contents are appended to the existing thread
   file.
-- `AmpLogProvider.iter_events()` reads the whole file regardless of which
-  invocation produced which events, tolerating both possible Amp resume
+- `AmpLogProvider.iter_session_events()` reads the whole file regardless of
+  which invocation produced which events, tolerating both possible Amp resume
   shapes (delta-only vs. full-history-on-resume) — evidence is presence-based,
   not count-based.
 

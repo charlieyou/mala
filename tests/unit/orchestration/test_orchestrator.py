@@ -30,7 +30,7 @@ from src.infra.tools.env import PROMPTS_DIR
 from src.infra.tools.command_runner import CommandRunner
 
 from src.core.models import EpicVerificationResult, OrderPreference
-from src.core.protocols.log import LogProvider
+from src.core.protocols.evidence import EvidenceProvider
 from tests.fakes.issue_provider import FakeIssueProvider, FakeIssue
 
 
@@ -2494,20 +2494,22 @@ class TestFailedRunEvidenceCheckEvidence:
         assert len(issue_run.evidence_check.failure_reasons) > 0
 
 
-def _make_mock_log_provider(log_file: Path) -> object:
-    """Create a mock LogProvider that returns the given log file."""
+def _make_mock_evidence_provider(log_file: Path) -> object:
+    """Create a mock EvidenceProvider that returns the given log file."""
     from collections.abc import Iterator
 
     from src.infra.io.session_log_parser import JsonlEntry
 
-    class MockLogProvider:
+    class MockEvidenceProvider:
         def get_log_path(self, repo_path: Path, session_id: str) -> Path:
             return log_file
 
-        def iter_events(self, log_path: Path, offset: int = 0) -> Iterator[JsonlEntry]:
+        def iter_session_events(
+            self, log_path: Path, offset: int = 0
+        ) -> Iterator[JsonlEntry]:
             return iter([])
 
-        def iter_thread_events(
+        def iter_thread_evidence(
             self, log_path: Path, offset: int = 0
         ) -> Iterator[JsonlEntry]:
             return iter([])
@@ -2515,7 +2517,7 @@ def _make_mock_log_provider(log_file: Path) -> object:
         def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
             return log_path.stat().st_size if log_path.exists() else start_offset
 
-    return MockLogProvider()
+    return MockEvidenceProvider()
 
 
 class TestReviewUsesIssueCommits:
@@ -2547,7 +2549,7 @@ class TestReviewUsesIssueCommits:
             repo_path=tmp_path,
             max_agents=1,
             timeout_minutes=1,
-            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
+            evidence_provider=_make_mock_evidence_provider(log_file),  # type: ignore[arg-type]
         )
 
         captured_commit_lists: list[Sequence[str] | None] = []
@@ -3004,7 +3006,7 @@ class TestOrchestratorFactory:
         assert deps.issue_provider is None
         assert deps.code_reviewer is None
         assert deps.gate_checker is None
-        assert deps.log_provider is None
+        assert deps.evidence_provider is None
         assert deps.telemetry_provider is None
         assert deps.event_sink is None
 
@@ -3140,7 +3142,7 @@ class TestBuildGateMetadataFromLogs:
     """Tests for _build_gate_metadata_from_logs fallback function."""
 
     def test_none_spec_returns_empty_metadata(
-        self, tmp_path: Path, log_provider: LogProvider
+        self, tmp_path: Path, evidence_provider: EvidenceProvider
     ) -> None:
         """When per_session_spec is None, returns empty GateMetadata."""
         from typing import TYPE_CHECKING, cast
@@ -3157,7 +3159,7 @@ class TestBuildGateMetadataFromLogs:
         log_path.write_text("{}")
         evidence_check = cast(
             "GateChecker",
-            EvidenceCheck(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
+            EvidenceCheck(tmp_path, evidence_provider, CommandRunner(cwd=tmp_path)),
         )
 
         result = _build_gate_metadata_from_logs(
@@ -3172,7 +3174,7 @@ class TestBuildGateMetadataFromLogs:
         assert result.validation_result is None
 
     def test_valid_spec_parses_evidence(
-        self, tmp_path: Path, log_provider: LogProvider
+        self, tmp_path: Path, evidence_provider: EvidenceProvider
     ) -> None:
         """With valid spec, parses evidence from logs."""
         import re
@@ -3198,7 +3200,7 @@ class TestBuildGateMetadataFromLogs:
 
         evidence_check = cast(
             "GateChecker",
-            EvidenceCheck(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
+            EvidenceCheck(tmp_path, evidence_provider, CommandRunner(cwd=tmp_path)),
         )
         spec = ValidationSpec(
             commands=[
@@ -3228,7 +3230,7 @@ class TestBuildGateMetadataFromLogs:
         assert result.validation_result.passed is False
 
     def test_result_success_determines_passed_status(
-        self, tmp_path: Path, log_provider: LogProvider
+        self, tmp_path: Path, evidence_provider: EvidenceProvider
     ) -> None:
         """result_success parameter determines evidence_check_result.passed."""
         from typing import TYPE_CHECKING, cast
@@ -3247,7 +3249,7 @@ class TestBuildGateMetadataFromLogs:
 
         evidence_check = cast(
             "GateChecker",
-            EvidenceCheck(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
+            EvidenceCheck(tmp_path, evidence_provider, CommandRunner(cwd=tmp_path)),
         )
         spec = ValidationSpec(commands=[], scope=ValidationScope.PER_SESSION)
 
@@ -3264,7 +3266,7 @@ class TestBuildGateMetadataFromLogs:
         assert result.evidence_check_result.passed is True
 
     def test_extracts_failure_reasons_from_summary(
-        self, tmp_path: Path, log_provider: LogProvider
+        self, tmp_path: Path, evidence_provider: EvidenceProvider
     ) -> None:
         """Extracts failure reasons from 'Quality gate failed:' prefix."""
         from typing import TYPE_CHECKING, cast
@@ -3283,7 +3285,7 @@ class TestBuildGateMetadataFromLogs:
 
         evidence_check = cast(
             "GateChecker",
-            EvidenceCheck(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
+            EvidenceCheck(tmp_path, evidence_provider, CommandRunner(cwd=tmp_path)),
         )
         spec = ValidationSpec(commands=[], scope=ValidationScope.PER_SESSION)
 
@@ -3302,7 +3304,7 @@ class TestBuildGateMetadataFromLogs:
         ]
 
     def test_builds_validation_result_from_evidence(
-        self, tmp_path: Path, log_provider: LogProvider
+        self, tmp_path: Path, evidence_provider: EvidenceProvider
     ) -> None:
         """Builds validation_result (not None) matching _build_gate_metadata behavior."""
         from typing import TYPE_CHECKING, cast
@@ -3322,7 +3324,7 @@ class TestBuildGateMetadataFromLogs:
 
         evidence_check = cast(
             "GateChecker",
-            EvidenceCheck(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
+            EvidenceCheck(tmp_path, evidence_provider, CommandRunner(cwd=tmp_path)),
         )
         spec = ValidationSpec(commands=[], scope=ValidationScope.PER_SESSION)
 
@@ -3656,7 +3658,7 @@ class TestSessionResume:
             runs_dir=runs_dir,
             lock_releaser=lambda _: 0,
             include_wip=True,
-            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
+            evidence_provider=_make_mock_evidence_provider(log_file),  # type: ignore[arg-type]
         )
 
         # Create mock SDK client
@@ -3777,7 +3779,7 @@ class TestSessionResume:
             lock_releaser=lambda _: 0,
             include_wip=True,
             strict_resume=False,  # Default lenient mode
-            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
+            evidence_provider=_make_mock_evidence_provider(log_file),  # type: ignore[arg-type]
         )
 
         # Create mock SDK client
@@ -5189,7 +5191,7 @@ class TestFreshSessionMode:
             lock_releaser=lambda _: 0,
             include_wip=True,
             fresh_session=True,
-            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
+            evidence_provider=_make_mock_evidence_provider(log_file),  # type: ignore[arg-type]
         )
 
         session_inputs: list[AgentSessionInput] = []
@@ -5298,7 +5300,7 @@ class TestFreshSessionMode:
             include_wip=True,
             fresh_session=True,
             config=MalaConfig(coder="claude"),
-            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
+            evidence_provider=_make_mock_evidence_provider(log_file),  # type: ignore[arg-type]
         )
 
         # Create mock SDK client

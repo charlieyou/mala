@@ -128,7 +128,7 @@ def _amp_session_log_contains_tool_use(log_path: Path) -> bool:
         return False
 
     provider = AmpLogProvider(native_dir=log_path.parent)
-    for entry in provider.iter_events(log_path):
+    for entry in provider.iter_session_events(log_path):
         if provider.extract_bash_commands(entry):
             return True
         if provider.extract_tool_results(entry):

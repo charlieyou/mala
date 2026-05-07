@@ -3,7 +3,7 @@
 Replaces the T007 stub with the real provider. Binds:
   * :class:`AmpClient` (T008) via the lazy ``client_factory``
   * :class:`AmpRuntimeBuilder` (T012) via :meth:`runtime_builder`
-  * :class:`AmpLogProvider` (T011) via the lazy ``log_provider``
+  * :class:`AmpLogProvider` (T011) via the lazy ``evidence_provider``
   * :class:`AmpPluginInstaller` (T010) inside :meth:`install_prerequisites`
 
 :meth:`install_prerequisites` is the safety-critical fail-closed gate
@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.agent_provider import CoderRuntimeBuilder
-    from src.core.protocols.log import LogProvider
+    from src.core.protocols.evidence import EvidenceProvider
     from src.core.protocols.sdk import (
         McpServerFactory,
         SDKClientFactoryProtocol,
@@ -650,7 +650,8 @@ class AmpAgentProvider:
         name: Provider identifier (always ``"amp"``).
         client_factory: :class:`SDKClientFactoryProtocol` returning
             :class:`AmpClient` instances.
-        log_provider: :class:`LogProvider` reading the per-thread tee log.
+        evidence_provider: :class:`EvidenceProvider` reading the per-thread
+            tee log.
     """
 
     name: Literal["amp"] = "amp"
@@ -671,7 +672,7 @@ class AmpAgentProvider:
         self._mode: AmpMode = mode
         self._effort: str | None = effort
         self._client_factory_cached: _AmpClientFactory | None = None
-        self._log_provider_cached: object | None = None
+        self._evidence_provider_cached: object | None = None
 
         # In-memory self-test cache keyed on (amp_version, plugin_hash).
         # Per plan L121: not persisted across runs. Per plan L823: invoked
@@ -696,18 +697,18 @@ class AmpAgentProvider:
         return cast("SDKClientFactoryProtocol", self._client_factory_cached)
 
     @property
-    def log_provider(self) -> LogProvider:
-        """Lazily-instantiated Amp log provider.
+    def evidence_provider(self) -> EvidenceProvider:
+        """Lazily-instantiated Amp evidence provider.
 
         Constructed on first access using
         :meth:`AmpLogProvider.from_probe` so the native-log probe runs
         once per run (per plan ``L122``).
         """
-        if self._log_provider_cached is None:
+        if self._evidence_provider_cached is None:
             from src.infra.clients.amp_log_provider import AmpLogProvider
 
-            self._log_provider_cached = AmpLogProvider.from_probe()
-        return cast("LogProvider", self._log_provider_cached)
+            self._evidence_provider_cached = AmpLogProvider.from_probe()
+        return cast("EvidenceProvider", self._evidence_provider_cached)
 
     def runtime_builder(
         self,

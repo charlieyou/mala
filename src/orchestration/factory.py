@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.agent_provider import AgentProvider
+    from src.core.protocols.evidence import EvidenceProvider
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.infra import (
         CommandRunnerPort,
@@ -69,7 +70,6 @@ if TYPE_CHECKING:
         LockManagerPort,
     )
     from src.core.protocols.issue import IssueProvider
-    from src.core.protocols.log import LogProvider
     from src.core.protocols.review import CodeReviewer
     from src.core.protocols.validation import (
         EpicVerificationModel,
@@ -847,7 +847,7 @@ def _build_dependencies(
     IssueProvider,
     CodeReviewer,
     GateChecker,
-    LogProvider,
+    EvidenceProvider,
     TelemetryProvider,
     MalaEventSink,
     EpicVerifierProtocol | None,
@@ -911,23 +911,24 @@ def _build_dependencies(
     else:
         event_sink = ConsoleEventSink()
 
-    # Agent provider - select the coder backend now so its log_provider can
-    # be reused for evidence parsing below. Per plan L100, selection happens
-    # exactly once per run; later pipeline construction reuses this instance.
+    # Agent provider - select the coder backend now so its evidence_provider
+    # can be reused for evidence parsing below. Per plan L100, selection
+    # happens exactly once per run; later pipeline construction reuses this
+    # instance.
     agent_provider: AgentProvider
     if deps is not None and deps.agent_provider is not None:
         agent_provider = deps.agent_provider
     else:
         agent_provider = _create_agent_provider(mala_config)
 
-    # Log provider
-    log_provider: LogProvider
-    if deps is not None and deps.log_provider is not None:
-        log_provider = deps.log_provider
+    # Evidence provider
+    evidence_provider: EvidenceProvider
+    if deps is not None and deps.evidence_provider is not None:
+        evidence_provider = deps.evidence_provider
     else:
-        log_provider = agent_provider.log_provider
+        evidence_provider = agent_provider.evidence_provider
 
-    # Gate checker (needs log_provider and command_runner)
+    # Gate checker (needs evidence_provider and command_runner)
     gate_checker: GateChecker
     if deps is not None and deps.gate_checker is not None:
         gate_checker = deps.gate_checker
@@ -935,7 +936,9 @@ def _build_dependencies(
         gate_checker = cast(
             "GateChecker",
             EvidenceCheck(
-                repo_path, log_provider=log_provider, command_runner=command_runner
+                repo_path,
+                evidence_provider=evidence_provider,
+                command_runner=command_runner,
             ),
         )
 
@@ -1013,7 +1016,7 @@ def _build_dependencies(
         issue_provider,
         code_reviewer,
         gate_checker,
-        log_provider,
+        evidence_provider,
         telemetry_provider,
         event_sink,
         epic_verifier,
@@ -1173,7 +1176,7 @@ def create_orchestrator(
         issue_provider,
         code_reviewer,
         gate_checker,
-        log_provider,
+        evidence_provider,
         telemetry_provider,
         event_sink,
         epic_verifier,
@@ -1217,7 +1220,7 @@ def create_orchestrator(
         _issue_provider=issue_provider,
         _code_reviewer=code_reviewer,
         _gate_checker=gate_checker,
-        _log_provider=log_provider,
+        _evidence_provider=evidence_provider,
         _telemetry_provider=telemetry_provider,
         _event_sink=event_sink,
         _epic_verifier=epic_verifier,

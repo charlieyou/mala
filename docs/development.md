@@ -89,11 +89,11 @@ Codex, Aider) symmetric to Claude and Amp, implement the three concerns:
    opaque coder-shaped runtime (CLI args, env, config). The pipeline never
    inspects the runtime; only the matching `client_factory.create(runtime, …)`
    knows its shape. See `src/infra/clients/amp_runtime.py`.
-3. **Log provider** — implement `LogProvider` (`src/core/protocols/log.py`)
-   for evidence parsing. Reuse `FileSystemLogProvider` if your coder writes
-   JSONL, or build a tee-based provider like
-   `src/infra/clients/amp_log_provider.py` if the native log format is
-   undocumented or unstable.
+3. **Evidence provider** — implement `EvidenceProvider`
+   (`src/core/protocols/evidence.py`) for evidence parsing. Reuse
+   `FileSystemLogProvider` if your coder writes JSONL, or build a tee-based
+   provider like `src/infra/clients/amp_log_provider.py` if the native log
+   format is undocumented or unstable.
 
 Bundle them in an `AgentProvider` implementation
 (`src/infra/clients/<coder>_provider.py`). Add an `install_prerequisites()`

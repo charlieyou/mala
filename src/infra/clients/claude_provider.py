@@ -67,7 +67,8 @@ class ClaudeAgentProvider:
     Attributes:
         name: Provider identifier (always ``"claude"``).
         client_factory: :class:`SDKClientFactory` for creating SDK clients.
-        log_provider: :class:`FileSystemLogProvider` reading Claude session JSONL.
+        evidence_provider: :class:`FileSystemLogProvider` reading Claude
+            session JSONL.
     """
 
     name: Literal["claude"] = "claude"
@@ -94,7 +95,7 @@ class ClaudeAgentProvider:
                 intentionally untouched.
         """
         self.client_factory: SDKClientFactory = SDKClientFactory()
-        self.log_provider: FileSystemLogProvider = FileSystemLogProvider()
+        self.evidence_provider: FileSystemLogProvider = FileSystemLogProvider()
         self._setting_sources: list[str] | None = (
             None if setting_sources is None else list(setting_sources)
         )

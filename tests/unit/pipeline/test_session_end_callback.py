@@ -161,7 +161,7 @@ def _create_factory(
 ) -> SessionCallbackFactory:
     """Create a SessionCallbackFactory with test dependencies."""
     context = SessionRunContext(
-        log_provider_getter=lambda: MagicMock(),
+        evidence_provider_getter=lambda: MagicMock(),
         evidence_check_getter=lambda: MagicMock(),
         on_session_log_path=lambda issue_id, path: None,
         on_review_log_path=lambda issue_id, path: None,

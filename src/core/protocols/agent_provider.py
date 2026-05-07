@@ -2,8 +2,8 @@
 
 This module defines the abstraction line between pipeline code and concrete
 coder backends. The pipeline consumes an ``AgentProvider`` (which bundles a
-client factory, a per-session runtime builder, and a log provider) and is
-agnostic to whether the underlying coder is Claude or Amp.
+client factory, a per-session runtime builder, and an evidence provider) and
+is agnostic to whether the underlying coder is Claude or Amp.
 
 Concrete provider implementations (``ClaudeAgentProvider``,
 ``AmpAgentProvider``) live in ``src/infra``; this module contains protocol
@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.core.protocols.log import LogProvider
+    from src.core.protocols.evidence import EvidenceProvider
     from src.core.protocols.sdk import McpServerFactory, SDKClientFactoryProtocol
 
 
@@ -41,19 +41,19 @@ class AgentProvider(Protocol):
     """Encapsulates a coder backend (Claude or Amp).
 
     Bundles three pluggable concerns:
-      - client_factory:  produces SDKClientProtocol-conforming clients
-      - runtime_builder: produces a coder-shaped runtime per session
-      - log_provider:    produces a LogProvider for evidence parsing
+      - client_factory:     produces SDKClientProtocol-conforming clients
+      - runtime_builder:    produces a coder-shaped runtime per session
+      - evidence_provider:  produces an EvidenceProvider for evidence parsing
 
-    ``client_factory`` and ``log_provider`` are attributes (values) because the
-    same instance is reused across the run; ``runtime_builder`` is a method
-    because the runtime is constructed per session and depends on the repo
-    path and per-issue ``agent_id``.
+    ``client_factory`` and ``evidence_provider`` are attributes (values)
+    because the same instance is reused across the run; ``runtime_builder``
+    is a method because the runtime is constructed per session and depends
+    on the repo path and per-issue ``agent_id``.
     """
 
     name: Literal["claude", "amp"]
     client_factory: SDKClientFactoryProtocol
-    log_provider: LogProvider
+    evidence_provider: EvidenceProvider
 
     def runtime_builder(
         self,

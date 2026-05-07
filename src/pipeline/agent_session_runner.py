@@ -336,9 +336,9 @@ class AgentSessionRunner:
         config: Session configuration.
         agent_provider: Bundles ``client_factory`` (for SDK-style streaming),
             ``runtime_builder()`` (for per-session env/options assembly), and
-            ``log_provider`` (for evidence parsing). One ``AgentProvider`` is
-            chosen per run by the orchestration factory; the pipeline never
-            branches on which coder is active.
+            ``evidence_provider`` (for evidence parsing). One
+            ``AgentProvider`` is chosen per run by the orchestration factory;
+            the pipeline never branches on which coder is active.
         event_sink: Optional event sink for structured logging.
         gate_runner: Protocol for gate checking operations (required).
         review_runner: Protocol for review operations (required).

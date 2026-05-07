@@ -441,7 +441,7 @@ async def test_resume_with_review_feedback_uses_review_followup_prompt(
             {issue_id: FakeIssue(id=issue_id, description="Run 1")}
         ),
         gate_checker=gate_checker_run1,
-        log_provider=agent_provider_run1.log_provider,
+        evidence_provider=agent_provider_run1.evidence_provider,
         runs_dir=runs_dir,
         disable_validations={"global-validate"},
     )
@@ -510,7 +510,7 @@ async def test_resume_with_review_feedback_uses_review_followup_prompt(
             }
         ),
         gate_checker=gate_checker_run2,
-        log_provider=agent_provider_run2.log_provider,
+        evidence_provider=agent_provider_run2.evidence_provider,
         runs_dir=runs_dir,
         include_wip=True,  # Enable resume
         disable_validations={"global-validate"},

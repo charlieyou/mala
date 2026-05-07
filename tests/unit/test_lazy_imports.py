@@ -180,7 +180,7 @@ provider = AmpAgentProvider()
 # Touching the lazy-init properties must NOT pull in the Claude SDK
 # either; only an accidental top-level import would.
 provider.client_factory  # noqa: B018
-provider.log_provider  # noqa: B018
+provider.evidence_provider  # noqa: B018
 loaded = sorted(m for m in sys.modules if m.startswith('claude_agent_sdk'))
 if loaded:
     print('FAIL: ' + ','.join(loaded))

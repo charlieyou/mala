@@ -464,7 +464,7 @@ class TestSessionLogParserIndependentUsability:
 
 
 class TestFileSystemLogProvider:
-    """Test FileSystemLogProvider implementation of LogProvider protocol."""
+    """Test FileSystemLogProvider implementation of EvidenceProvider protocol."""
 
     def test_get_log_path_computes_sdk_path(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -490,8 +490,8 @@ class TestFileSystemLogProvider:
         encoded = encode_repo_path(repo_path)
         assert log_path == tmp_path / "projects" / encoded / "abc123.jsonl"
 
-    def test_iter_events_delegates_to_parser(self, tmp_path: Path) -> None:
-        """iter_events should delegate to SessionLogParser."""
+    def test_iter_session_events_delegates_to_parser(self, tmp_path: Path) -> None:
+        """iter_session_events should delegate to SessionLogParser."""
         from src.infra.io.session_log_parser import FileSystemLogProvider
 
         log_path = tmp_path / "session.jsonl"
@@ -502,13 +502,13 @@ class TestFileSystemLogProvider:
         log_path.write_text(json.dumps(entry) + "\n")
 
         provider = FileSystemLogProvider()
-        results = list(provider.iter_events(log_path))
+        results = list(provider.iter_session_events(log_path))
 
         assert len(results) == 1
         assert results[0].data["type"] == "assistant"
 
-    def test_iter_events_respects_offset(self, tmp_path: Path) -> None:
-        """iter_events should start from the given offset."""
+    def test_iter_session_events_respects_offset(self, tmp_path: Path) -> None:
+        """iter_session_events should start from the given offset."""
         from src.infra.io.session_log_parser import FileSystemLogProvider
 
         log_path = tmp_path / "session.jsonl"
@@ -518,7 +518,7 @@ class TestFileSystemLogProvider:
 
         provider = FileSystemLogProvider()
         offset = len(first_entry) + 1
-        results = list(provider.iter_events(log_path, offset=offset))
+        results = list(provider.iter_session_events(log_path, offset=offset))
 
         assert len(results) == 1
         assert results[0].data["type"] == "user"

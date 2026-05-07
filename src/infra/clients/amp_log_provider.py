@@ -1,4 +1,4 @@
-"""LogProvider for the Amp coder.
+"""EvidenceProvider for the Amp coder.
 
 Aggregates validation evidence across all invocations of an Amp thread by
 reading the per-thread tee'd stream-json JSONL written by
@@ -11,7 +11,7 @@ from earlier invocations remain observable to validation gates regardless of
 whether Amp's resume mode emits delta-only or full-history events.
 
 The provider conforms structurally to
-:class:`src.core.protocols.log.LogProvider` and emits the same
+:class:`src.core.protocols.evidence.EvidenceProvider` and emits the same
 ``JsonlEntry`` shape :class:`src.infra.io.session_log_parser.FileSystemLogProvider`
 produces, so ``EvidenceCheck`` and other gate consumers parse Amp evidence
 identically without provider-specific branches.
@@ -39,7 +39,7 @@ from src.infra.io.session_log_parser import JsonlEntry, SessionLogParser
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
-    from src.core.protocols.log import JsonlEntryProtocol
+    from src.core.protocols.evidence import JsonlEntryProtocol
 
 
 logger = logging.getLogger(__name__)
@@ -94,13 +94,13 @@ def _discover_native_log_dir(
 
 
 class AmpLogProvider:
-    """LogProvider for Amp; reads tee'd or native JSONL log.
+    """EvidenceProvider for Amp; reads tee'd or native JSONL log.
 
-    Conforms structurally to :class:`src.core.protocols.log.LogProvider`.
-    The tee path convention (``~/.config/mala/amp-sessions/{thread_id}.jsonl``)
-    is shared with :class:`src.infra.clients.amp_client.AmpClient` via the
-    single :data:`src.infra.clients.amp_runtime.AMP_SESSIONS_DIR` source of
-    truth.
+    Conforms structurally to
+    :class:`src.core.protocols.evidence.EvidenceProvider`. The tee path
+    convention (``~/.config/mala/amp-sessions/{thread_id}.jsonl``) is shared
+    with :class:`src.infra.clients.amp_client.AmpClient` via the single
+    :data:`src.infra.clients.amp_runtime.AMP_SESSIONS_DIR` source of truth.
 
     Construction modes:
       * ``AmpLogProvider()`` — use the tee path (MVP default).
@@ -151,7 +151,7 @@ class AmpLogProvider:
         return cls(native_dir=_discover_native_log_dir(search_paths))
 
     # ------------------------------------------------------------------
-    # LogProvider protocol surface
+    # EvidenceProvider protocol surface
     # ------------------------------------------------------------------
 
     def get_log_path(self, repo_path: Path, session_id: str) -> Path:
@@ -175,7 +175,7 @@ class AmpLogProvider:
         base = self._native_dir if self._native_dir is not None else AMP_SESSIONS_DIR
         return base / f"{session_id}.jsonl"
 
-    def iter_events(
+    def iter_session_events(
         self, log_path: Path, offset: int = 0
     ) -> Iterator[JsonlEntryProtocol]:
         """Yield parsed JSONL entries from ``log_path`` starting at ``offset``.
@@ -190,7 +190,7 @@ class AmpLogProvider:
         For cross-invocation validation-evidence reads (AC#7a — Bash
         ``tool_use`` events from invocation 1 must remain visible after
         invocation 2 appends to the same thread file) callers must use
-        :meth:`iter_thread_events`, which ignores offset on this
+        :meth:`iter_thread_evidence`, which ignores offset on this
         provider and re-reads the full thread file.
 
         Tolerance contract (plan ``L675-L676``):
@@ -248,7 +248,7 @@ class AmpLogProvider:
                     ),
                 )
 
-    def iter_thread_events(
+    def iter_thread_evidence(
         self, log_path: Path, offset: int = 0
     ) -> Iterator[JsonlEntryProtocol]:
         """Cross-invocation evidence read; ignores ``offset`` on Amp.
@@ -264,11 +264,12 @@ class AmpLogProvider:
         This method ignores ``offset`` and re-reads from byte 0. The
         caller (:meth:`EvidenceCheck.parse_validation_evidence_with_spec`)
         uses this for validation-evidence presence detection;
-        resolution-marker parsing keeps using :meth:`iter_events` so the
-        offset still scopes resolution decisions to the latest attempt.
+        resolution-marker parsing keeps using :meth:`iter_session_events`
+        so the offset still scopes resolution decisions to the latest
+        attempt.
         """
         del offset  # see docstring rationale.
-        return self.iter_events(log_path, 0)
+        return self.iter_session_events(log_path, 0)
 
     def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
         """Return the byte offset at the end of ``log_path``.

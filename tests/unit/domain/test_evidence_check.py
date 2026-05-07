@@ -21,7 +21,7 @@ from src.domain.validation.spec import (
     build_validation_spec,
 )
 
-from src.core.protocols.log import LogProvider
+from src.core.protocols.evidence import EvidenceProvider
 from src.domain.evidence_check import (
     EvidenceCheck,
     ValidationEvidence,
@@ -106,7 +106,7 @@ class TestSpecDrivenParsing:
     def test_returns_evidence(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should return ValidationEvidence from log."""
@@ -127,7 +127,7 @@ class TestSpecDrivenParsing:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -139,7 +139,7 @@ class TestSpecDrivenParsing:
     def test_starts_from_given_offset(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should only parse log entries after the given byte offset."""
@@ -177,7 +177,7 @@ class TestSpecDrivenParsing:
         )
         log_path.write_text(first_entry + "\n" + second_entry + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -196,7 +196,7 @@ class TestSpecDrivenParsing:
     def test_offset_zero_parses_entire_file(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Offset=0 should parse the entire file (default behavior)."""
@@ -217,7 +217,7 @@ class TestSpecDrivenParsing:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -228,7 +228,7 @@ class TestSpecDrivenParsing:
     def test_offset_at_end_returns_empty_evidence(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Offset at EOF should return empty evidence."""
@@ -249,7 +249,7 @@ class TestSpecDrivenParsing:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -267,7 +267,7 @@ class TestSpecDrivenParsing:
     def test_new_offset_points_to_end_of_file(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Log end offset should match file size."""
@@ -288,7 +288,7 @@ class TestSpecDrivenParsing:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         new_offset = gate.get_log_end_offset(log_path)
 
         assert new_offset == log_path.stat().st_size
@@ -296,11 +296,11 @@ class TestSpecDrivenParsing:
     def test_handles_missing_file(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should handle missing log file gracefully."""
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -313,7 +313,7 @@ class TestSpecDrivenParsing:
     def test_detects_all_validation_commands(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should detect all validation commands."""
@@ -346,7 +346,7 @@ class TestSpecDrivenParsing:
             )
         log_path.write_text("\n".join(entries) + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -364,7 +364,7 @@ class TestNoProgressDetection:
     def test_no_progress_when_same_commit_and_no_new_evidence(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """No progress: unchanged commit hash + no new evidence since offset."""
@@ -372,7 +372,7 @@ class TestNoProgressDetection:
         # Empty file - no new evidence
         log_path.write_text("")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Same commit as before, file has no content after offset 0
         is_no_progress = gate.check_no_progress(
             log_path=log_path,
@@ -386,14 +386,14 @@ class TestNoProgressDetection:
     def test_progress_when_commit_changed(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Progress detected: different commit hash (even without new evidence)."""
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("")  # No new evidence
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         is_no_progress = gate.check_no_progress(
             log_path=log_path,
             log_offset=0,
@@ -406,7 +406,7 @@ class TestNoProgressDetection:
     def test_progress_when_new_evidence_found(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Progress detected: new validation evidence (even with same commit)."""
@@ -428,7 +428,7 @@ class TestNoProgressDetection:
         log_path.write_text(log_content + "\n")
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         is_no_progress = gate.check_no_progress(
             log_path=log_path,
             log_offset=0,  # Check from beginning - will find evidence
@@ -441,7 +441,7 @@ class TestNoProgressDetection:
     def test_no_progress_when_evidence_before_offset_only(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """No progress: validation evidence exists but only before the offset."""
@@ -462,7 +462,7 @@ class TestNoProgressDetection:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Set offset to after the evidence
         offset = log_path.stat().st_size
 
@@ -478,14 +478,14 @@ class TestNoProgressDetection:
     def test_progress_when_no_previous_commit(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Progress detected: first attempt (no previous commit to compare)."""
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         is_no_progress = gate.check_no_progress(
             log_path=log_path,
             log_offset=0,
@@ -499,14 +499,14 @@ class TestNoProgressDetection:
     def test_no_progress_with_none_commits_and_no_evidence(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """No progress: both commits None (no commit made) and no new evidence."""
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         is_no_progress = gate.check_no_progress(
             log_path=log_path,
             log_offset=0,
@@ -519,11 +519,11 @@ class TestNoProgressDetection:
     def test_handles_missing_log_file(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should handle missing log file (no evidence = no progress)."""
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         nonexistent = tmp_path / "nonexistent.jsonl"
 
         is_no_progress = gate.check_no_progress(
@@ -538,7 +538,7 @@ class TestNoProgressDetection:
     def test_progress_when_working_tree_has_changes(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Progress detected: uncommitted changes in working tree.
@@ -559,7 +559,7 @@ class TestNoProgressDetection:
                 )
             }
         )
-        gate = EvidenceCheck(tmp_path, log_provider, dirty_tree_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, dirty_tree_runner)
 
         is_no_progress = gate.check_no_progress(
             log_path=log_path,
@@ -745,7 +745,7 @@ class TestCommitBaselineCheck:
     def test_rejects_commit_before_baseline(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should reject commits created before the baseline timestamp."""
@@ -761,7 +761,7 @@ class TestCommitBaselineCheck:
             ),
             with_timestamp=True,
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
 
         # Baseline makes the commit stale
         result = gate.check_commit_exists("issue-123", baseline_timestamp=1703501000)
@@ -771,7 +771,7 @@ class TestCommitBaselineCheck:
     def test_accepts_commit_after_baseline(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should accept commits created after the baseline timestamp."""
@@ -787,7 +787,7 @@ class TestCommitBaselineCheck:
             ),
             with_timestamp=True,
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
 
         # Baseline allows the newer commit
         result = gate.check_commit_exists("issue-123", baseline_timestamp=1703501000)
@@ -798,7 +798,7 @@ class TestCommitBaselineCheck:
     def test_accepts_any_commit_without_baseline(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should accept any matching commit when no baseline is provided (backward compat)."""
@@ -814,7 +814,7 @@ class TestCommitBaselineCheck:
             ),
             with_timestamp=False,
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
 
         # No baseline - accepts any commit
         result = gate.check_commit_exists("issue-123")
@@ -825,7 +825,7 @@ class TestCommitBaselineCheck:
     def test_gate_check_uses_baseline(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Gate check method should use baseline to reject stale commits."""
@@ -874,7 +874,7 @@ class TestCommitBaselineCheck:
             ),
             with_timestamp=True,
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
 
         # Baseline makes the commit stale
         result = gate.check_with_resolution(
@@ -890,13 +890,13 @@ class TestCommitBaselineCheck:
     def test_gate_check_passes_with_new_commit(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Gate check should pass when commit is after baseline."""
         from src.domain.evidence_check import EvidenceCheck
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
 
         # Create log with all validation commands (including uv sync for SETUP)
         log_path = tmp_path / "session.jsonl"
@@ -942,7 +942,7 @@ class TestCommitBaselineCheck:
             ),
             with_timestamp=True,
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
 
         # Baseline allows the newer commit
         result = gate.check_with_resolution(
@@ -958,7 +958,7 @@ class TestIssueResolutionMarkerParsing:
     def test_parses_no_change_marker_with_rationale(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should parse ISSUE_NO_CHANGE marker and extract rationale."""
@@ -980,7 +980,7 @@ class TestIssueResolutionMarkerParsing:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         resolution = gate.parse_issue_resolution(log_path)
 
         assert resolution is not None
@@ -990,7 +990,7 @@ class TestIssueResolutionMarkerParsing:
     def test_parses_obsolete_marker_with_rationale(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should parse ISSUE_OBSOLETE marker and extract rationale."""
@@ -1012,7 +1012,7 @@ class TestIssueResolutionMarkerParsing:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         resolution = gate.parse_issue_resolution(log_path)
 
         assert resolution is not None
@@ -1022,7 +1022,7 @@ class TestIssueResolutionMarkerParsing:
     def test_returns_none_when_no_marker_present(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should return None when no resolution marker is present."""
@@ -1042,7 +1042,7 @@ class TestIssueResolutionMarkerParsing:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         resolution = gate.parse_issue_resolution(log_path)
 
         assert resolution is None
@@ -1050,11 +1050,11 @@ class TestIssueResolutionMarkerParsing:
     def test_handles_missing_log_file(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should return None for missing log file."""
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         nonexistent = tmp_path / "nonexistent.jsonl"
 
         resolution = gate.parse_issue_resolution(nonexistent)
@@ -1064,7 +1064,7 @@ class TestIssueResolutionMarkerParsing:
     def test_parses_marker_from_offset(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should parse markers starting from the given offset."""
@@ -1097,7 +1097,7 @@ class TestIssueResolutionMarkerParsing:
         )
         log_path.write_text(first_entry + "\n" + second_entry + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         offset = len(first_entry) + 1  # +1 for newline
         resolution, _ = gate.parse_issue_resolution_from_offset(log_path, offset=offset)
 
@@ -1107,7 +1107,7 @@ class TestIssueResolutionMarkerParsing:
     def test_marker_not_found_before_offset(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should not find markers before the given offset."""
@@ -1129,7 +1129,7 @@ class TestIssueResolutionMarkerParsing:
         )
         log_path.write_text(entry + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Offset at end of file - marker is before
         offset = log_path.stat().st_size
         resolution, _ = gate.parse_issue_resolution_from_offset(log_path, offset=offset)
@@ -1143,7 +1143,7 @@ class TestScopeAwareEvidence:
     def test_per_session_scope_does_not_require_e2e(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Per-session EvidenceGate should never require E2E evidence."""
@@ -1158,7 +1158,7 @@ class TestScopeAwareEvidence:
     def test_global_scope_can_require_e2e(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Global scope can require E2E evidence when enabled."""
@@ -1173,7 +1173,7 @@ class TestScopeAwareEvidence:
     def test_evidence_gate_accepts_no_change_with_clean_tree(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """EvidenceGate should accept no-change resolution with clean working tree."""
@@ -1197,7 +1197,7 @@ class TestScopeAwareEvidence:
 
         # Create fake command runner for clean working tree
         fake_runner = FakeCommandRunner(allow_unregistered=True)
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -1215,7 +1215,7 @@ class TestScopeAwareEvidence:
     def test_evidence_gate_accepts_obsolete_with_clean_tree(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """EvidenceGate should accept obsolete resolution with clean working tree."""
@@ -1239,7 +1239,7 @@ class TestScopeAwareEvidence:
 
         # Create fake command runner for clean working tree
         fake_runner = FakeCommandRunner(allow_unregistered=True)
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -1257,7 +1257,7 @@ class TestScopeAwareEvidence:
     def test_evidence_gate_passes_no_change_with_dirty_tree(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """EvidenceGate should pass no-change resolution even if working tree is dirty.
@@ -1283,7 +1283,7 @@ class TestScopeAwareEvidence:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -1301,7 +1301,7 @@ class TestScopeAwareEvidence:
     def test_evidence_gate_requires_rationale_for_no_change(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """EvidenceGate should fail no-change resolution without rationale."""
@@ -1317,7 +1317,7 @@ class TestScopeAwareEvidence:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         resolution = gate.parse_issue_resolution(log_path)
 
         # Should either return None or have empty rationale (which gate should reject)
@@ -1331,7 +1331,7 @@ class TestEvidenceGateSkipsValidation:
     def test_no_change_skips_commit_check(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """No-change resolution should not require a commit or git status check."""
@@ -1353,7 +1353,7 @@ class TestEvidenceGateSkipsValidation:
 
         # Create fake command runner
         fake_runner = FakeCommandRunner(allow_unregistered=True)
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -1364,7 +1364,7 @@ class TestEvidenceGateSkipsValidation:
         assert evidence.pytest_ran is False
 
     def test_obsolete_skips_commit_and_validation(
-        self, tmp_path: Path, log_provider: LogProvider
+        self, tmp_path: Path, evidence_provider: EvidenceProvider
     ) -> None:
         """Obsolete resolution should skip commit, validation, and git status checks."""
         log_path = tmp_path / "session.jsonl"
@@ -1385,7 +1385,7 @@ class TestEvidenceGateSkipsValidation:
 
         # Create FakeCommandRunner to track calls
         fake_runner = FakeCommandRunner(allow_unregistered=True)
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -1407,7 +1407,7 @@ class TestClearFailureMessages:
     def test_missing_commit_message_is_clear(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Failure for missing commit should be descriptive."""
@@ -1444,7 +1444,7 @@ class TestClearFailureMessages:
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         # Create gate with fake command runner - no commit found
         fake_runner = FakeCommandRunner(allow_unregistered=True)
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
 
         result = gate.check_with_resolution("missing-commit-123", log_path, spec=spec)
 
@@ -1457,7 +1457,7 @@ class TestClearFailureMessages:
     def test_missing_validation_message_lists_commands(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Failure for missing validation should list which commands didn't run."""
@@ -1496,7 +1496,7 @@ class TestClearFailureMessages:
             ),
             with_timestamp=False,
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
 
         result = gate.check_with_resolution("test-123", log_path, spec=spec)
 
@@ -1511,7 +1511,7 @@ class TestClearFailureMessages:
     def test_no_change_without_rationale_message(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Failure for no-change without rationale should be clear."""
@@ -1529,7 +1529,7 @@ class TestClearFailureMessages:
 
         # Create fake command runner for clean working tree
         fake_runner = FakeCommandRunner(allow_unregistered=True)
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -1547,7 +1547,7 @@ class TestGetRequiredEvidenceKinds:
     def test_returns_gate_required_kinds_from_spec(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should return set of gate-required command kinds."""
@@ -2094,7 +2094,7 @@ class TestCheckWithResolutionSpec:
     def test_uses_spec_when_provided(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should use spec-based evidence checking when spec is provided."""
@@ -2126,7 +2126,7 @@ class TestCheckWithResolutionSpec:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
 
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
@@ -2148,7 +2148,7 @@ class TestCheckWithResolutionSpec:
             ),
             with_timestamp=True,
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
 
         result = gate.check_with_resolution(
             issue_id="test-123",
@@ -2163,7 +2163,7 @@ class TestCheckWithResolutionSpec:
     def test_raises_without_spec(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should raise ValueError when spec is not provided."""
@@ -2172,7 +2172,7 @@ class TestCheckWithResolutionSpec:
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("{}\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
 
         with pytest_module.raises(ValueError, match="spec is required"):
             gate.check_with_resolution(
@@ -2187,7 +2187,7 @@ class TestUserPromptInjectionPrevention:
     def test_user_message_with_no_change_marker_ignored(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """User prompt containing ISSUE_NO_CHANGE should not trigger resolution."""
@@ -2209,7 +2209,7 @@ class TestUserPromptInjectionPrevention:
         )
         log_path.write_text(user_entry + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         resolution = gate.parse_issue_resolution(log_path)
 
         # Should NOT find resolution from user message
@@ -2218,7 +2218,7 @@ class TestUserPromptInjectionPrevention:
     def test_user_message_with_obsolete_marker_ignored(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """User prompt containing ISSUE_OBSOLETE should not trigger resolution."""
@@ -2239,7 +2239,7 @@ class TestUserPromptInjectionPrevention:
         )
         log_path.write_text(user_entry + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         resolution = gate.parse_issue_resolution(log_path)
 
         assert resolution is None
@@ -2247,7 +2247,7 @@ class TestUserPromptInjectionPrevention:
     def test_assistant_message_still_parsed(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Assistant messages with resolution markers should still work."""
@@ -2270,7 +2270,7 @@ class TestUserPromptInjectionPrevention:
         )
         log_path.write_text(assistant_entry + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         resolution = gate.parse_issue_resolution(log_path)
 
         assert resolution is not None
@@ -2283,7 +2283,7 @@ class TestGitFailureHandling:
     def test_git_failure_returns_dirty(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Git failure should return is_clean=False with error message."""
@@ -2299,7 +2299,7 @@ class TestGitFailureHandling:
                 )
             }
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
 
         is_clean, output = gate.check_working_tree_clean()
 
@@ -2310,7 +2310,7 @@ class TestGitFailureHandling:
     def test_no_change_resolution_passes_without_git_check(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """No-change resolution should pass without checking git status.
@@ -2336,7 +2336,7 @@ class TestGitFailureHandling:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -2355,7 +2355,7 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
     def test_evidence_only_from_current_attempt(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Evidence before log_offset should not count for current attempt."""
@@ -2422,7 +2422,7 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
             ),
             with_timestamp=True,
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         base_spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -2456,7 +2456,7 @@ class TestByteOffsetConsistency:
     def test_unicode_content_uses_byte_offsets(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Multi-byte unicode should not break offset calculations.
@@ -2499,7 +2499,7 @@ class TestByteOffsetConsistency:
         content = entry_with_emoji + "\n" + validation_entry + "\n"
         log_path.write_text(content)
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -2520,7 +2520,7 @@ class TestByteOffsetConsistency:
     def test_empty_lines_preserved_in_offset_tracking(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Empty lines should be counted in byte offsets but skipped in parsing."""
@@ -2558,7 +2558,7 @@ class TestByteOffsetConsistency:
         content = entry1 + "\n\n\n" + entry2 + "\n"
         log_path.write_text(content)
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         resolution, new_offset = gate.parse_issue_resolution_from_offset(log_path, 0)
 
         assert resolution is not None
@@ -2569,7 +2569,7 @@ class TestByteOffsetConsistency:
     def test_binary_data_skipped_without_crash(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Binary data (invalid UTF-8) should be skipped without crashing."""
@@ -2596,7 +2596,7 @@ class TestByteOffsetConsistency:
             f.write(b"\x80\x81\x82\xff\xfe\n")  # Invalid UTF-8
             f.write((valid_entry + "\n").encode("utf-8"))
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -2608,7 +2608,7 @@ class TestByteOffsetConsistency:
     def test_truncated_json_skipped_without_crash(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Truncated JSON lines should be skipped without crashing."""
@@ -2632,7 +2632,7 @@ class TestByteOffsetConsistency:
         content = '{"type": "ass\n' + valid_entry + "\n"
         log_path.write_text(content)
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -2645,7 +2645,7 @@ class TestByteOffsetConsistency:
     def test_offset_beyond_eof_returns_empty_evidence(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Offset beyond EOF should return empty evidence."""
@@ -2659,7 +2659,7 @@ class TestByteOffsetConsistency:
         )
         log_path.write_text(entry + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -2681,7 +2681,7 @@ class TestSpecDrivenEvidencePatterns:
     def test_all_spec_commands_have_detection_patterns(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Every ValidationCommand in build_validation_spec should have a detection_pattern.
@@ -2706,7 +2706,7 @@ class TestSpecDrivenEvidencePatterns:
     def test_spec_patterns_match_their_own_commands(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Each command's detection_pattern should match the command itself.
@@ -2730,7 +2730,7 @@ class TestSpecDrivenEvidencePatterns:
     def test_evidence_check_uses_spec_patterns_for_evidence(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """EvidenceCheck should use patterns from the spec, not hardcoded patterns.
@@ -2765,7 +2765,7 @@ class TestSpecDrivenEvidencePatterns:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -2779,7 +2779,7 @@ class TestSpecDrivenEvidencePatterns:
     def test_command_without_pattern_skipped(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Commands without detection_pattern should be skipped (no fallback)."""
@@ -2820,7 +2820,7 @@ class TestSpecDrivenEvidencePatterns:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Use the custom spec (not build_validation_spec which would overwrite it)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
@@ -2830,7 +2830,7 @@ class TestSpecDrivenEvidencePatterns:
     def test_check_with_resolution_uses_spec_patterns(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """check_with_resolution should use spec-defined patterns, not hardcoded.
@@ -2910,7 +2910,7 @@ class TestSpecDrivenEvidencePatterns:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Use the custom spec (not build_validation_spec which would overwrite it)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
@@ -2922,7 +2922,7 @@ class TestSpecDrivenEvidencePatterns:
     def test_check_with_resolution_uses_spec_patterns_with_offset(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """check_with_resolution should use spec-defined patterns, not hardcoded.
@@ -3002,7 +3002,7 @@ class TestSpecDrivenEvidencePatterns:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Use the custom spec (not build_validation_spec which would overwrite it)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
@@ -3022,7 +3022,7 @@ class TestValidationExitCodeParsing:
     def test_gate_fails_when_pytest_exits_nonzero(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Gate should fail when pytest ran but exited with non-zero exit code."""
@@ -3062,7 +3062,7 @@ class TestValidationExitCodeParsing:
         )
         log_path.write_text(tool_use_entry + "\n" + tool_result_entry + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3074,7 +3074,7 @@ class TestValidationExitCodeParsing:
     def test_gate_fails_when_ruff_check_exits_nonzero(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Gate should fail when ruff check ran but exited with non-zero exit code."""
@@ -3132,7 +3132,7 @@ class TestValidationExitCodeParsing:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3146,7 +3146,7 @@ class TestValidationExitCodeParsing:
     def test_gate_passes_when_all_commands_succeed(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Gate should pass when all validation commands exit with code 0."""
@@ -3198,7 +3198,7 @@ class TestValidationExitCodeParsing:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3211,7 +3211,7 @@ class TestValidationExitCodeParsing:
     def test_failure_reason_includes_exit_details(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Failure reason should include which command failed and its exit code."""
@@ -3267,7 +3267,7 @@ class TestValidationExitCodeParsing:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3279,7 +3279,7 @@ class TestValidationExitCodeParsing:
     def test_gate_passes_when_command_fails_then_succeeds(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Gate should pass when a command fails initially but succeeds on retry.
@@ -3405,7 +3405,7 @@ class TestValidationExitCodeParsing:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3422,7 +3422,7 @@ class TestAlreadyCompleteResolution:
     def test_already_complete_passes_with_valid_commit(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """ALREADY_COMPLETE should pass if commit exists (ignoring baseline)."""
@@ -3456,7 +3456,7 @@ class TestAlreadyCompleteResolution:
             ),
             with_timestamp=False,
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3475,7 +3475,7 @@ class TestAlreadyCompleteResolution:
     def test_already_complete_with_different_issue_id_in_rationale(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """ALREADY_COMPLETE should pass when rationale references a different issue ID.
@@ -3515,7 +3515,7 @@ class TestAlreadyCompleteResolution:
             ),
             with_timestamp=False,
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3539,7 +3539,7 @@ class TestAlreadyCompleteResolution:
     def test_already_complete_referenced_issue_not_found(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """ALREADY_COMPLETE should fail with clear error when referenced commit doesn't exist."""
@@ -3561,7 +3561,7 @@ class TestAlreadyCompleteResolution:
 
         # Create gate with fake command runner - no commit found
         fake_runner = FakeCommandRunner(allow_unregistered=True)
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3583,7 +3583,7 @@ class TestDocsOnlyResolution:
     def test_docs_only_passes_with_valid_commit_and_no_code_files(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """DOCS_ONLY should pass if commit exists and contains no code files."""
@@ -3642,7 +3642,7 @@ class TestDocsOnlyResolution:
                 ),
             }
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
         # Create minimal mala.yaml for test with code_patterns
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3663,7 +3663,7 @@ class TestDocsOnlyResolution:
     def test_docs_only_fails_if_commit_contains_code_files(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """DOCS_ONLY should fail if commit contains files matching code_patterns."""
@@ -3720,7 +3720,7 @@ class TestDocsOnlyResolution:
                 ),
             }
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
         # Create minimal mala.yaml for test with code_patterns
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3740,7 +3740,7 @@ class TestDocsOnlyResolution:
     def test_docs_only_fails_without_rationale(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """DOCS_ONLY should fail if no rationale is provided."""
@@ -3755,7 +3755,7 @@ class TestDocsOnlyResolution:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3772,7 +3772,7 @@ class TestDocsOnlyResolution:
     def test_docs_only_fails_without_commit(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """DOCS_ONLY should fail if no commit exists."""
@@ -3793,7 +3793,7 @@ class TestDocsOnlyResolution:
         log_path.write_text(log_content + "\n")
 
         # FakeCommandRunner with allow_unregistered returns empty for git log
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3810,7 +3810,7 @@ class TestDocsOnlyResolution:
     def test_docs_only_parses_marker_correctly(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should parse ISSUE_DOCS_ONLY marker and extract rationale."""
@@ -3832,7 +3832,7 @@ class TestDocsOnlyResolution:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         resolution = gate.parse_issue_resolution(log_path)
 
         assert resolution is not None
@@ -3842,7 +3842,7 @@ class TestDocsOnlyResolution:
     def test_docs_only_fails_with_empty_patterns_fail_closed(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """DOCS_ONLY should fail if no patterns configured (fail closed)."""
@@ -3898,7 +3898,7 @@ class TestDocsOnlyResolution:
                 ),
             }
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
         # Create mala.yaml with preset but override all patterns to empty (fail closed scenario)
         (tmp_path / "mala.yaml").write_text(
             "preset: python-uv\ncode_patterns: []\nconfig_files: []\nsetup_files: []\n"
@@ -3924,7 +3924,7 @@ class TestDocsOnlyResolution:
     def test_docs_only_fails_when_git_diff_tree_fails(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """DOCS_ONLY should fail if git diff-tree fails (fail closed)."""
@@ -3980,7 +3980,7 @@ class TestDocsOnlyResolution:
                 ),
             }
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -3999,7 +3999,7 @@ class TestDocsOnlyResolution:
     def test_docs_only_fails_with_setup_files(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """DOCS_ONLY should fail if commit contains setup_files (e.g., lockfiles)."""
@@ -4055,7 +4055,7 @@ class TestDocsOnlyResolution:
                 ),
             }
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
         # Create mala.yaml with setup_files pattern
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -4076,7 +4076,7 @@ class TestDocsOnlyResolution:
     def test_docs_only_fails_with_mala_yaml_change(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """DOCS_ONLY should fail if commit contains mala.yaml (always triggers)."""
@@ -4132,7 +4132,7 @@ class TestDocsOnlyResolution:
                 ),
             }
         )
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner=fake_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
         # Create mala.yaml (mala.yaml changes always trigger validation)
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -4155,11 +4155,11 @@ class TestExtractIssueFromRationale:
     def test_extracts_issue_from_commit_message_format(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should extract issue ID from 'bd-issue-123: message' format."""
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         result = gate.extract_issue_from_rationale(
             "Work committed in 238e17f (bd-issue-123: Add feature X)"
         )
@@ -4168,11 +4168,11 @@ class TestExtractIssueFromRationale:
     def test_extracts_issue_from_prose_format(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should extract issue ID from prose mentioning bd-<id>."""
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         result = gate.extract_issue_from_rationale(
             "This is a duplicate. Work was done in bd-mala-xyz commit 238e17f"
         )
@@ -4181,11 +4181,11 @@ class TestExtractIssueFromRationale:
     def test_returns_none_when_no_issue_id(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should return None when no bd-<id> pattern found."""
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         result = gate.extract_issue_from_rationale(
             "Work was completed previously in commit 238e17f"
         )
@@ -4194,11 +4194,11 @@ class TestExtractIssueFromRationale:
     def test_extracts_first_issue_when_multiple(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should extract first issue ID when multiple are mentioned."""
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         result = gate.extract_issue_from_rationale(
             "Duplicate of bd-original-123, see also bd-related-456"
         )
@@ -4216,7 +4216,7 @@ class TestSpecCommandChangesPropagation:
     def test_strict_pattern_change_updates_evidence(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Changing a spec command's detection_pattern should update evidence detection.
@@ -4296,7 +4296,7 @@ class TestSpecCommandChangesPropagation:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Use the custom strict spec (not build_validation_spec which would overwrite it)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
@@ -4348,16 +4348,16 @@ class TestSpecCommandChangesPropagation:
         assert evidence2.ty_check_ran is True
 
 
-class TestLogProviderInjection:
-    """Test EvidenceCheck with injected LogProvider for testability."""
+class TestEvidenceProviderInjection:
+    """Test EvidenceCheck with injected EvidenceProvider for testability."""
 
-    def test_accepts_custom_log_provider(
+    def test_accepts_custom_evidence_provider(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
-        """EvidenceCheck should accept a custom LogProvider."""
+        """EvidenceCheck should accept a custom EvidenceProvider."""
         from collections.abc import Iterator
 
         from src.core.log_events import (
@@ -4367,8 +4367,8 @@ class TestLogProviderInjection:
         )
         from src.infra.io.session_log_parser import JsonlEntry
 
-        class MockLogProvider:
-            """Mock LogProvider that returns synthetic events."""
+        class MockEvidenceProvider:
+            """Mock EvidenceProvider that returns synthetic events."""
 
             def __init__(self, entries: list[JsonlEntry]) -> None:
                 self._entries = entries
@@ -4376,12 +4376,12 @@ class TestLogProviderInjection:
             def get_log_path(self, repo_path: Path, session_id: str) -> Path:
                 return repo_path / f"{session_id}.jsonl"
 
-            def iter_events(
+            def iter_session_events(
                 self, log_path: Path, offset: int = 0
             ) -> Iterator[JsonlEntry]:
                 yield from self._entries
 
-            def iter_thread_events(
+            def iter_thread_evidence(
                 self, log_path: Path, offset: int = 0
             ) -> Iterator[JsonlEntry]:
                 yield from self._entries
@@ -4451,15 +4451,15 @@ class TestLogProviderInjection:
             )
         ]
 
-        mock_provider = MockLogProvider(mock_entries)
+        mock_provider = MockEvidenceProvider(mock_entries)
         fake_cmd_runner = FakeCommandRunner(allow_unregistered=True)
         gate = EvidenceCheck(
             tmp_path,
-            log_provider=cast("LogProvider", mock_provider),
+            evidence_provider=cast("EvidenceProvider", mock_provider),
             command_runner=fake_cmd_runner,
         )
 
-        # Verify LogProvider is used
+        # Verify EvidenceProvider is used
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -4473,24 +4473,24 @@ class TestLogProviderInjection:
     def test_get_log_end_offset_uses_provider(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
-        """get_log_end_offset should delegate to LogProvider."""
+        """get_log_end_offset should delegate to EvidenceProvider."""
         from collections.abc import Iterator
 
         from src.infra.io.session_log_parser import JsonlEntry
 
-        class MockLogProvider:
+        class MockEvidenceProvider:
             def get_log_path(self, repo_path: Path, session_id: str) -> Path:
                 return repo_path / f"{session_id}.jsonl"
 
-            def iter_events(
+            def iter_session_events(
                 self, log_path: Path, offset: int = 0
             ) -> Iterator[JsonlEntry]:
                 return iter([])
 
-            def iter_thread_events(
+            def iter_thread_evidence(
                 self, log_path: Path, offset: int = 0
             ) -> Iterator[JsonlEntry]:
                 return iter([])
@@ -4512,16 +4512,16 @@ class TestLogProviderInjection:
             ) -> list[tuple[str, str]]:
                 return []
 
-        mock_provider = MockLogProvider()
+        mock_provider = MockEvidenceProvider()
         fake_cmd_runner = FakeCommandRunner(allow_unregistered=True)
         gate = EvidenceCheck(
             tmp_path,
-            log_provider=cast("LogProvider", mock_provider),
+            evidence_provider=cast("EvidenceProvider", mock_provider),
             command_runner=fake_cmd_runner,
         )
 
-        # Verify internal provider is FileSystemLogProvider
-        assert gate._log_provider is mock_provider
+        # Verify the injected provider is used directly
+        assert gate._evidence_provider is mock_provider
 
 
 class TestExtractedToolNames:
@@ -4535,7 +4535,7 @@ class TestExtractedToolNames:
     def test_failed_commands_shows_full_pytest_command(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Failed commands should show full command like 'uv run pytest'."""
@@ -4575,7 +4575,7 @@ class TestExtractedToolNames:
         )
         log_path.write_text(tool_use_entry + "\n" + tool_result_entry + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -4587,7 +4587,7 @@ class TestExtractedToolNames:
     def test_failed_commands_shows_full_ruff_command(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Failed commands should show full command like 'uvx ruff check .'."""
@@ -4627,7 +4627,7 @@ class TestExtractedToolNames:
         )
         log_path.write_text(tool_use_entry + "\n" + tool_result_entry + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -4639,7 +4639,7 @@ class TestExtractedToolNames:
     def test_gate_failure_message_shows_full_commands(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Gate failure messages should show full commands for clarity."""
@@ -4692,7 +4692,7 @@ class TestExtractedToolNames:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
@@ -4704,7 +4704,7 @@ class TestExtractedToolNames:
     def test_failed_commands_deduplicates_same_command_multiple_kinds(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Failed commands should deduplicate when same command matches multiple kinds.
@@ -4748,7 +4748,7 @@ class TestExtractedToolNames:
         )
         log_path.write_text(tool_use_entry + "\n" + tool_result_entry + "\n")
 
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
@@ -4807,7 +4807,7 @@ class TestCustomCommandMarkerParsing:
     def test_parse_custom_marker_pass(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Pass marker sets ran=True and failed=False."""
@@ -4824,7 +4824,7 @@ class TestCustomCommandMarkerParsing:
         spec = self._make_custom_spec(
             [("import_lint", "python scripts/lint.py", False)]
         )
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert evidence.custom_commands_ran.get("import_lint") is True
@@ -4833,7 +4833,7 @@ class TestCustomCommandMarkerParsing:
     def test_parse_custom_marker_fail_with_exit_code(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Fail marker with exit code sets ran=True and failed=True."""
@@ -4850,7 +4850,7 @@ class TestCustomCommandMarkerParsing:
         spec = self._make_custom_spec(
             [("import_lint", "python scripts/lint.py", False)]
         )
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert evidence.custom_commands_ran.get("import_lint") is True
@@ -4859,7 +4859,7 @@ class TestCustomCommandMarkerParsing:
     def test_parse_custom_marker_timeout(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Timeout marker sets ran=True and failed=True."""
@@ -4874,7 +4874,7 @@ class TestCustomCommandMarkerParsing:
         )
 
         spec = self._make_custom_spec([("slow_check", "python scripts/slow.py", False)])
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert evidence.custom_commands_ran.get("slow_check") is True
@@ -4883,7 +4883,7 @@ class TestCustomCommandMarkerParsing:
     def test_parse_custom_marker_start_only_is_failure(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Start marker without terminal marker is a failure (incomplete run)."""
@@ -4900,7 +4900,7 @@ class TestCustomCommandMarkerParsing:
         spec = self._make_custom_spec(
             [("import_lint", "python scripts/lint.py", False)]
         )
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         # Start-only means command ran but failed (incomplete)
@@ -4910,7 +4910,7 @@ class TestCustomCommandMarkerParsing:
     def test_parse_custom_marker_terminal_without_start_is_ran(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Terminal marker without start marker still counts as ran."""
@@ -4927,7 +4927,7 @@ class TestCustomCommandMarkerParsing:
         spec = self._make_custom_spec(
             [("import_lint", "python scripts/lint.py", False)]
         )
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         # Terminal marker implies "ran" even without start marker
@@ -4937,7 +4937,7 @@ class TestCustomCommandMarkerParsing:
     def test_parse_custom_marker_latest_wins(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Latest terminal marker wins (retry scenario)."""
@@ -4960,7 +4960,7 @@ class TestCustomCommandMarkerParsing:
         spec = self._make_custom_spec(
             [("import_lint", "python scripts/lint.py", False)]
         )
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         # Latest marker (pass) should win
@@ -4970,7 +4970,7 @@ class TestCustomCommandMarkerParsing:
     def test_parse_custom_marker_incomplete_retry_is_failure(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Incomplete retry (pass then start-only) is treated as failure."""
@@ -4993,7 +4993,7 @@ class TestCustomCommandMarkerParsing:
         spec = self._make_custom_spec(
             [("import_lint", "python scripts/lint.py", False)]
         )
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         # Latest attempt was incomplete (start-only) so should be marked as failed
@@ -5003,7 +5003,7 @@ class TestCustomCommandMarkerParsing:
     def test_gate_advisory_failure_passes(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Advisory failure (allow_fail=True + failed) passes the gate."""
@@ -5023,7 +5023,7 @@ class TestCustomCommandMarkerParsing:
     def test_gate_strict_failure_fails(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Strict failure (allow_fail=False + failed) fails the gate."""
@@ -5045,7 +5045,7 @@ class TestCustomCommandMarkerParsing:
     def test_gate_not_run_distinct_from_failed(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Not run (no markers) is distinct from failed (markers present)."""
@@ -5065,7 +5065,7 @@ class TestCustomCommandMarkerParsing:
     def test_extract_tool_result_content_list_type(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Content as list is concatenated correctly."""
@@ -5093,7 +5093,7 @@ class TestCustomCommandMarkerParsing:
         log_path.write_text(entry + "\n")
 
         spec = self._make_custom_spec([("test_cmd", "python test.py", False)])
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         # Should detect marker even when content is a list
@@ -5103,7 +5103,7 @@ class TestCustomCommandMarkerParsing:
     def test_parse_custom_marker_hyphenated_name(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Hyphenated command names (valid YAML keys) are parsed correctly."""
@@ -5118,7 +5118,7 @@ class TestCustomCommandMarkerParsing:
         )
 
         spec = self._make_custom_spec([("docs-check", "python docs_check.py", False)])
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert evidence.custom_commands_ran.get("docs-check") is True
@@ -5127,7 +5127,7 @@ class TestCustomCommandMarkerParsing:
     def test_extract_tool_result_content_dict_blocks(
         self,
         tmp_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Content as list of dicts with 'text' key is extracted correctly."""
@@ -5154,7 +5154,7 @@ class TestCustomCommandMarkerParsing:
         log_path.write_text(entry + "\n")
 
         spec = self._make_custom_spec([("test_cmd", "python test.py", False)])
-        gate = EvidenceCheck(tmp_path, log_provider, mock_command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         # Should detect marker even when content is a list of dicts

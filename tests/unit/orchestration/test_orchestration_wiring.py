@@ -286,7 +286,7 @@ class TestBuildSessionConfig:
 def mock_session_run_context() -> SessionRunContext:
     """Create a SessionRunContext with lambda stubs."""
     return SessionRunContext(
-        log_provider_getter=lambda: MagicMock(),
+        evidence_provider_getter=lambda: MagicMock(),
         evidence_check_getter=lambda: MagicMock(),
         on_session_log_path=lambda issue_id, path: None,
         on_review_log_path=lambda issue_id, path: None,

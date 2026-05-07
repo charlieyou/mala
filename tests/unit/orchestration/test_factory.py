@@ -970,7 +970,7 @@ class TestBuildDependenciesRuntimeDeps:
             _issue_provider,
             _code_reviewer,
             _gate_checker,
-            _log_provider,
+            _evidence_provider,
             _telemetry_provider,
             _event_sink,
             _epic_verifier,
