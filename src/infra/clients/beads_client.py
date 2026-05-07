@@ -12,6 +12,7 @@ behavior across the codebase.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from collections.abc import Mapping
@@ -30,11 +31,19 @@ if TYPE_CHECKING:
 # Default timeout for bd/git subprocess calls (seconds)
 DEFAULT_COMMAND_TIMEOUT = 30.0
 _BR_LABEL_INVALID_CHARS = re.compile(r"[^A-Za-z0-9_:-]+")
+_BR_LABEL_MAX_LENGTH = 50
+_BR_LABEL_HASH_LENGTH = 8
 
 
 def _normalize_br_label(label: str) -> str:
-    """Normalize a label for br's current label character restrictions."""
-    return _BR_LABEL_INVALID_CHARS.sub("-", label).strip("-")
+    """Normalize a label for br's current label restrictions."""
+    normalized = _BR_LABEL_INVALID_CHARS.sub("-", label).strip("-")
+    if len(normalized) <= _BR_LABEL_MAX_LENGTH:
+        return normalized
+
+    digest = hashlib.sha1(normalized.encode()).hexdigest()[:_BR_LABEL_HASH_LENGTH]
+    prefix_length = _BR_LABEL_MAX_LENGTH - _BR_LABEL_HASH_LENGTH - 1
+    return f"{normalized[:prefix_length].rstrip('-')}:{digest}"
 
 
 def _normalize_br_labels(labels: list[str]) -> list[str]:

@@ -2626,6 +2626,31 @@ class TestCreateIssueAsync:
         assert "--labels" in cmd
         assert "source:mala-99bh-1,domain-lifecycle" in cmd
 
+    @pytest.mark.asyncio
+    async def test_shortens_long_labels_for_br_validation(self, tmp_path: Path) -> None:
+        """Should keep normalized labels within br's length limit."""
+        beads = BeadsClient(tmp_path)
+        captured_cmds: list[list[str]] = []
+
+        async def capturing_run(cmd: list[str]) -> CommandResult:
+            captured_cmds.append(cmd)
+            return make_command_result(stdout="Created issue: new-1")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", capturing_run)
+            await beads.create_issue_async(
+                title="Test",
+                description="Desc",
+                priority="P1",
+                tags=["source:rwa-db-transaction-audit-sim-testing-hbft-19"],
+            )
+
+        cmd = captured_cmds[0]
+        labels = cmd[cmd.index("--labels") + 1].split(",")
+        assert len(labels) == 1
+        assert len(labels[0]) <= 50
+        assert labels[0].startswith("source:rwa-db-transaction-audit-sim")
+
 
 class TestFindIssueByTagAsync:
     """Test find_issue_by_tag_async method."""
