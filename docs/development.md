@@ -72,12 +72,19 @@ protocol (`src/core/protocols/agent_provider.py`). To add a new coder (e.g.,
 Codex, Aider) symmetric to Claude and Amp, implement the three concerns:
 
 1. **Client** — produce an `SDKClientProtocol`-conforming client
-   (`src/core/protocols/sdk.py`). The pipeline reads message events as
-   duck-typed Anthropic-shaped objects (`AssistantMessage`, `ResultMessage`,
-   `TextBlock`, `ToolUseBlock`, `ToolResultBlock`); synthetic dataclasses with
-   matching class names + field names work without touching
-   `MessageStreamProcessor`. See `src/infra/clients/amp_messages.py` for the
-   pattern.
+   (`src/core/protocols/sdk.py`) whose `receive_response()` yields
+   `AgentEvent` values (`text` / `tool_use` / `tool_result` / `result`)
+   defined in `src/core/protocols/agent_event.py`. The pipeline
+   (`MessageStreamProcessor`) branches on `event.kind` only and silently
+   drops messages without a recognised `kind`, so producing the wrong
+   shape is a quiet failure. See
+   `src/infra/clients/amp_client.py::AmpClient.receive_response` for
+   the canonical pattern (Amp emits `AgentEvent`s directly). New
+   coders should emit `AgentEvent`s from the client; if the underlying
+   SDK yields Anthropic-shaped `AssistantMessage` / `ResultMessage`
+   objects, run them through `src.core.protocols.agent_event.to_agent_events`
+   inside the client (or wrap the client) so consumers always see the
+   uniform event stream.
 2. **Runtime builder** — implement `CoderRuntimeBuilder.build()` returning an
    opaque coder-shaped runtime (CLI args, env, config). The pipeline never
    inspects the runtime; only the matching `client_factory.create(runtime, …)`
