@@ -278,11 +278,22 @@ class IdleTimeoutRetryPolicy:
                             f"{idle_duration:.1f}s, first_msg={state.first_message_received}, "
                             f"{state.tool_calls_this_turn} tool calls, disconnecting subprocess"
                         )
+                        # Capture client-known session id BEFORE disconnect: Amp's
+                        # thread id arrives on the system init event and lives on
+                        # the client until ResultMessage. If the stream goes idle
+                        # mid-turn (no ResultMessage yet), state.session_id is
+                        # still None and only the client knows the resume id.
+                        idle_resume_id = (
+                            _client_session_id(client)
+                            or state.pending_session_id
+                            or state.session_id
+                            or lifecycle_ctx.session_id
+                        )
                         await self._disconnect_client_safely(client, issue_id)
 
                         # Prepare state for retry (may raise IdleTimeoutError)
                         retry_query = self._prepare_idle_retry(
-                            state, lifecycle_ctx, issue_id
+                            state, lifecycle_ctx, issue_id, resume_id=idle_resume_id
                         )
                         pending_retry_kind = "idle"
                         # Empty string means keep original query
@@ -384,11 +395,17 @@ class IdleTimeoutRetryPolicy:
         state: MessageIterationState,
         lifecycle_ctx: LifecycleContext,
         issue_id: str,
+        resume_id: str | None = None,
     ) -> str:
         """Prepare state for idle retry and return the next query.
 
         Updates state.idle_retry_count, state.pending_session_id, and clears
         state.pending_tool_ids and state.pending_lint_commands.
+
+        Args:
+            resume_id: Caller-provided session id to resume from. Pass the
+                client-known id (e.g. Amp thread id) so mid-turn idle timeouts
+                can resume even when no ResultMessage populated state.session_id.
 
         Raises:
             IdleTimeoutError: If retry is not possible (max retries exceeded,
@@ -412,6 +429,7 @@ class IdleTimeoutRetryPolicy:
             lifecycle_ctx,
             issue_id,
             retry_reason="idle timeout",
+            resume_id=resume_id,
         )
         if retry_query is None:
             logger.error(

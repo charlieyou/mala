@@ -315,6 +315,138 @@ class TestExecuteIterationTimeout:
         assert len(sdk_factory.clients) == 3
         assert state.idle_retry_count == 2
 
+    @pytest.mark.asyncio
+    async def test_idle_timeout_resumes_from_client_session_id(
+        self,
+        sdk_factory: FakeSDKClientFactory,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: FakeLintCache,
+    ) -> None:
+        """A mid-turn idle timeout with tool calls resumes from client.session_id.
+
+        Regression: Amp captures the thread id on the system init event and
+        exposes it via client.session_id. If the stream goes idle before any
+        ResultMessage arrives, state.session_id is still None — so the idle
+        retry path must consult the client to find a safe resume id.
+        """
+        first_client = sdk_factory.configure_next_client(responses=[])
+        first_client.session_id = "known-amp-thread"
+        sdk_factory.configure_next_client(responses=[])
+
+        class IdleThenSuccessProcessor:
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def process_stream(
+                self,
+                stream: IdleTimeoutStream,
+                issue_id: str,
+                state: MessageIterationState,
+                lifecycle_ctx: LifecycleContext,
+                lint_cache: LintCacheProtocol,
+                query_start: float,
+                tracer: TelemetrySpan | None,
+            ) -> MessageIterationResult:
+                self.call_count += 1
+                if self.call_count == 1:
+                    state.tool_calls_this_turn = 23
+                    raise IdleTimeoutError("idle for 1127 seconds")
+                return MessageIterationResult(success=True, session_id="final-session")
+
+        processor = IdleThenSuccessProcessor()
+        config = RetryConfig(
+            max_idle_retries=2,
+            idle_retry_backoff=(0.0, 0.0),
+            idle_resume_prompt="Continue {issue_id}",
+        )
+        policy = IdleTimeoutRetryPolicy(
+            sdk_client_factory=sdk_factory,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
+            config=config,
+        )
+
+        state = MessageIterationState()
+        result = await policy.execute_iteration(
+            query="Initial query",
+            issue_id="TEST-IDLE-CLIENT-SID",
+            options={},
+            state=state,
+            lifecycle_ctx=lifecycle_ctx,
+            lint_cache=lint_cache,
+            idle_timeout_seconds=300.0,
+        )
+
+        assert result.success is True
+        assert processor.call_count == 2
+        assert sdk_factory.clients[1]._query_calls[0] == (
+            "Continue TEST-IDLE-CLIENT-SID",
+            None,
+        )
+        assert sdk_factory.with_resume_calls[0][1] == "known-amp-thread"
+        options = cast("dict[str, Any]", sdk_factory.create_calls[1])
+        assert options.get("resume") == "known-amp-thread"
+        assert state.idle_retry_count == 1
+
+    @pytest.mark.asyncio
+    async def test_idle_timeout_with_tool_calls_no_session_raises(
+        self,
+        sdk_factory: FakeSDKClientFactory,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: FakeLintCache,
+    ) -> None:
+        """Idle timeout with mid-turn tool calls and no resume id refuses retry.
+
+        This is the safety invariant that the client-session-id fallback
+        protects: when no source (client, state, lifecycle) knows a resume id
+        and tool side effects already occurred, retrying could double-execute
+        them. The policy must raise instead.
+        """
+        sdk_factory.configure_next_client(responses=[])
+
+        class MidTurnIdleProcessor:
+            async def process_stream(
+                self,
+                stream: IdleTimeoutStream,
+                issue_id: str,
+                state: MessageIterationState,
+                lifecycle_ctx: LifecycleContext,
+                lint_cache: LintCacheProtocol,
+                query_start: float,
+                tracer: TelemetrySpan | None,
+            ) -> MessageIterationResult:
+                state.tool_calls_this_turn = 23
+                raise IdleTimeoutError("idle for 1127 seconds")
+
+        processor = MidTurnIdleProcessor()
+        config = RetryConfig(
+            max_idle_retries=2,
+            idle_retry_backoff=(0.0, 0.0),
+            idle_resume_prompt="Continue {issue_id}",
+        )
+        policy = IdleTimeoutRetryPolicy(
+            sdk_client_factory=sdk_factory,
+            stream_processor_factory=lambda: processor,  # ty:ignore[invalid-argument-type]
+            config=config,
+        )
+
+        state = MessageIterationState()
+        with pytest.raises(
+            IdleTimeoutError,
+            match="Cannot retry: 23 tool calls occurred without session context",
+        ):
+            await policy.execute_iteration(
+                query="Initial query",
+                issue_id="TEST-IDLE-NO-SID",
+                options={},
+                state=state,
+                lifecycle_ctx=lifecycle_ctx,
+                lint_cache=lint_cache,
+                idle_timeout_seconds=300.0,
+            )
+
+        assert len(sdk_factory.clients) == 1
+        assert state.idle_retry_count == 0
+
 
 @pytest.mark.unit
 class TestSubprocessExitRetry:
