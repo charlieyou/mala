@@ -7,7 +7,7 @@ Observable state:
 - FakeSDKClient.queries: list of (prompt, session_id) tuples sent via query()
 - FakeSDKClient.disconnect_called: whether disconnect() was invoked
 - FakeSDKClientFactory.clients: list of clients created
-- FakeSDKClientFactory.create_calls: list of options passed to create()
+- FakeSDKClientFactory.create_calls: list of runtimes passed to create()
 """
 
 from __future__ import annotations
@@ -131,15 +131,15 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
     """In-memory fake SDK client factory for testing.
 
     Can be initialized with a single client or a sequence of clients.
-    Tracks all create() calls and options for verification.
+    Tracks all create() calls and runtimes for verification.
 
     Attributes:
         client: Optional single client to always return (for simple test cases).
         clients: List of clients created (or pre-configured).
-        create_calls: List of options passed to create().
+        create_calls: List of runtimes passed to create().
         created_options: List of options dicts returned by create_options().
         created_matchers: List of (name, matcher, hooks) tuples from create_hook_matcher().
-        with_resume_calls: List of (options, resume) tuples passed to with_resume().
+        with_resume_calls: List of (runtime, resume) tuples passed to with_resume().
         _client_queue: Internal queue of clients to return.
     """
 
@@ -190,9 +190,9 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
         self._client_queue.append(client)
         return client
 
-    def create(self, options: object) -> SDKClientProtocol:
+    def create(self, runtime: object) -> SDKClientProtocol:
         """Return next queued client, fixed client, or create a new one."""
-        self.create_calls.append(options)
+        self.create_calls.append(runtime)
         if self.client is not None:
             # Always return the same client if one was provided
             # Track in clients list for test assertions
@@ -242,15 +242,15 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
         self.created_options.append(opts)
         return opts
 
-    def with_resume(self, options: object, resume: str | None) -> dict[str, Any]:
-        """Create a copy of options with a different resume session ID.
+    def with_resume(self, runtime: object, resume: str | None) -> dict[str, Any]:
+        """Create a copy of the runtime with a different resume session ID.
 
         For testing, this simply copies the dict and updates the resume field.
         Tracks the call in with_resume_calls for test verification.
         """
-        self.with_resume_calls.append((options, resume))
-        if isinstance(options, dict):
-            new_opts = dict(options)
+        self.with_resume_calls.append((runtime, resume))
+        if isinstance(runtime, dict):
+            new_opts = dict(runtime)
         else:
             new_opts = {}
         new_opts["resume"] = resume

@@ -493,74 +493,38 @@ _MALA_DISALLOWED_WARNING = (
 
 
 class _AmpClientFactory:
-    """:class:`SDKClientFactoryProtocol` implementation for the Amp coder.
+    """Slim :class:`SDKClientFactoryProtocol` implementation for the Amp coder.
 
-    Only :meth:`create` and :meth:`with_resume` are exercised on the Amp
-    pipeline — the other surfaces exist for protocol conformance because
-    :class:`SDKClientFactoryProtocol` was originally Claude-shaped. Methods
-    that have no Amp analog raise :class:`NotImplementedError` with a clear
-    "not applicable to Amp" message rather than silently no-op'ing, so a
-    misrouted Claude code path surfaces an actionable error instead of
-    failing deep inside the subprocess pipeline.
+    Implements just the cross-coder surface (``create`` / ``with_resume``).
+    Claude-only knobs (``create_options`` / ``create_hook_matcher``) do
+    not appear on the protocol, so the Amp factory has no
+    ``NotImplementedError`` walls — a misrouted Claude code path now
+    fails at type-check time rather than deep inside the subprocess
+    pipeline.
     """
 
-    def create(self, options: object) -> SDKClientProtocol:
-        """Return a new :class:`AmpClient` for ``options``.
+    def create(self, runtime: object) -> SDKClientProtocol:
+        """Return a new :class:`AmpClient` for ``runtime``.
 
-        ``options`` must be an :class:`AmpClientOptions` constructed by the
+        ``runtime`` must be an :class:`AmpClientOptions` constructed by the
         Amp pipeline (typically out of an :class:`AmpRuntime`). The lazy
         import keeps :mod:`amp_client` (and its asyncio + signal imports)
         out of the Claude-only path.
         """
         from src.infra.clients.amp_client import AmpClient, AmpClientOptions
 
-        if not isinstance(options, AmpClientOptions):
+        if not isinstance(runtime, AmpClientOptions):
             raise TypeError(
-                "AmpAgentProvider.client_factory.create(options) requires an "
+                "AmpAgentProvider.client_factory.create(runtime) requires an "
                 "AmpClientOptions; got "
-                f"{type(options).__name__}. The pipeline must construct "
+                f"{type(runtime).__name__}. The pipeline must construct "
                 "AmpClientOptions from the AmpRuntime returned by "
                 "AmpAgentProvider.runtime_builder(...).build()."
             )
-        return cast("SDKClientProtocol", AmpClient(options))
+        return cast("SDKClientProtocol", AmpClient(runtime))
 
-    def create_options(
-        self,
-        *,
-        cwd: str,
-        permission_mode: str = "bypassPermissions",
-        model: str = "opus",
-        system_prompt: dict[str, str] | None = None,
-        output_format: object | None = None,
-        settings: str | None = None,
-        setting_sources: list[str] | None = None,
-        mcp_servers: object | None = None,
-        disallowed_tools: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        hooks: dict[str, list[object]] | None = None,
-        resume: str | None = None,
-    ) -> object:
-        raise NotImplementedError(
-            "AmpAgentProvider.client_factory.create_options() is not used. "
-            "Amp uses a CLI-flag-shaped runtime (AmpClientOptions); the Amp "
-            "pipeline constructs it from the AmpRuntime, not via this "
-            "Claude-shaped helper."
-        )
-
-    def create_hook_matcher(
-        self,
-        matcher: object | None,
-        hooks: list[object],
-    ) -> object:
-        raise NotImplementedError(
-            "AmpAgentProvider.client_factory.create_hook_matcher() is not "
-            "applicable: Amp safety is enforced via the bundled "
-            "mala-safety.ts plugin loaded under PLUGINS=all, not via SDK "
-            "hooks."
-        )
-
-    def with_resume(self, options: object, resume: str | None) -> object:
-        """Return a copy of ``options`` continuing Amp thread ``resume``.
+    def with_resume(self, runtime: object, resume: str | None) -> object:
+        """Return a copy of ``runtime`` continuing Amp thread ``resume``.
 
         For the Amp path this updates :attr:`AmpClientOptions.thread_id`;
         the next ``query()`` then applies the configured resume strategy
@@ -568,15 +532,15 @@ class _AmpClientFactory:
         """
         from src.infra.clients.amp_client import AmpClientOptions
 
-        if not isinstance(options, AmpClientOptions):
+        if not isinstance(runtime, AmpClientOptions):
             raise TypeError(
-                "AmpAgentProvider.client_factory.with_resume(options, resume) "
+                "AmpAgentProvider.client_factory.with_resume(runtime, resume) "
                 "requires AmpClientOptions; got "
-                f"{type(options).__name__}."
+                f"{type(runtime).__name__}."
             )
         if resume is None:
-            return options
-        return replace(options, thread_id=resume)
+            return runtime
+        return replace(runtime, thread_id=resume)
 
 
 # ---------------------------------------------------------------------------

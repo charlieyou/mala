@@ -182,18 +182,18 @@ class SequencedSDKClientFactory:
         self.with_resume_calls: list[tuple[object, str | None]] = []
         self._index = 0
 
-    def create(self, options: object) -> SDKClientProtocol:
-        self.create_calls.append(options)
+    def create(self, runtime: object) -> SDKClientProtocol:
+        self.create_calls.append(runtime)
         client = self.clients[min(self._index, len(self.clients) - 1)]
         self._index += 1
         return cast("SDKClientProtocol", client)
 
-    def with_resume(self, options: object, resume: str | None) -> object:
-        """Create a copy of options with a different resume session ID."""
-        self.with_resume_calls.append((options, resume))
-        if isinstance(options, dict):
-            return {**options, "resume": resume}
-        return options
+    def with_resume(self, runtime: object, resume: str | None) -> object:
+        """Create a copy of the runtime with a different resume session ID."""
+        self.with_resume_calls.append((runtime, resume))
+        if isinstance(runtime, dict):
+            return {**runtime, "resume": resume}
+        return runtime
 
     def create_options(
         self,
@@ -1956,17 +1956,17 @@ class TestIdleTimeoutRetry:
                 self.create_calls: list[Any] = []
                 self.idx = 0
 
-            def create(self, options: object) -> SDKClientProtocol:
-                self.create_calls.append(options)
+            def create(self, runtime: object) -> SDKClientProtocol:
+                self.create_calls.append(runtime)
                 sid = session_ids[min(self.idx, len(session_ids) - 1)]
                 self.idx += 1
                 return cast("SDKClientProtocol", make_client_for_session(sid))
 
-            def with_resume(self, options: object, resume: str | None) -> object:
-                """Create a copy of options with resume session ID."""
-                if isinstance(options, dict):
-                    return {**options, "resume": resume}
-                return options
+            def with_resume(self, runtime: object, resume: str | None) -> object:
+                """Create a copy of the runtime with resume session ID."""
+                if isinstance(runtime, dict):
+                    return {**runtime, "resume": resume}
+                return runtime
 
             def create_options(
                 self,
@@ -3733,7 +3733,7 @@ class TestLocalSettingsIntegration:
         class HybridSDKClientFactory:
             """Factory using real SDK for options, fake client for execution."""
 
-            def create(self, options: object) -> FakeSDKClient:
+            def create(self, runtime: object) -> FakeSDKClient:
                 return fake_client
 
             def create_options(
@@ -3779,8 +3779,8 @@ class TestLocalSettingsIntegration:
             ) -> object:
                 return real_factory.create_hook_matcher(matcher, hooks)
 
-            def with_resume(self, options: object, resume: str | None) -> object:
-                return real_factory.with_resume(options, resume)
+            def with_resume(self, runtime: object, resume: str | None) -> object:
+                return real_factory.with_resume(runtime, resume)
 
         hybrid_factory = HybridSDKClientFactory()
 

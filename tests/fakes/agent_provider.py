@@ -8,6 +8,12 @@ factory + ``AgentRuntimeBuilder`` + ``FileSystemLogProvider`` so existing
 tests can swap one parameter (``sdk_client_factory=`` -> ``agent_provider=``)
 without rewriting their setup.
 
+The injected factory is typed as the Claude-private
+:class:`ClaudeSDKClientFactoryProtocol` because the bundled
+:class:`AgentRuntimeBuilder` is Claude-flavored and consumes the Claude
+knobs (``create_options``, ``create_hook_matcher``); test fakes
+already implement the full Claude surface.
+
 The fake is identifier-as-claude (``name="claude"``) by default because the
 fluent runtime builder it returns is the Claude-flavored
 :class:`AgentRuntimeBuilder` and the test pipeline assumes Claude-shaped
@@ -27,13 +33,14 @@ if TYPE_CHECKING:
     from src.core.protocols.agent_provider import CoderRuntimeBuilder
     from src.core.protocols.log import LogProvider
     from src.core.protocols.sdk import McpServerFactory, SDKClientFactoryProtocol
+    from src.infra.agent_runtime import ClaudeSDKClientFactoryProtocol
 
 
 class FakeAgentProvider:
     """Minimal :class:`AgentProvider` for tests.
 
-    Wraps an injected :class:`SDKClientFactoryProtocol` (typically a
-    ``FakeSDKClientFactory``) and exposes a ``runtime_builder()`` that
+    Wraps an injected :class:`ClaudeSDKClientFactoryProtocol` (typically
+    a ``FakeSDKClientFactory``) and exposes a ``runtime_builder()`` that
     returns a real :class:`AgentRuntimeBuilder` wired to that factory.
 
     Observable state mirrors the wrapped factory; tests assert on the
@@ -51,14 +58,22 @@ class FakeAgentProvider:
 
     def __init__(
         self,
-        client_factory: SDKClientFactoryProtocol,
+        client_factory: ClaudeSDKClientFactoryProtocol,
         *,
         log_provider: LogProvider | None = None,
         install_prerequisites_count: int = 0,
         name: Literal["claude", "amp"] = "claude",
         setting_sources: list[str] | None = None,
     ) -> None:
-        self.client_factory = client_factory
+        # ``client_factory`` is annotated as the slim cross-coder protocol
+        # to satisfy the ``AgentProvider`` shape (which is what pipeline
+        # code reads). Internally, the constructor accepts the Claude-full
+        # protocol so that ``runtime_builder()`` can hand it to
+        # :class:`AgentRuntimeBuilder` (which needs ``create_options`` /
+        # ``create_hook_matcher``); the cast is safe because every fake
+        # passed in ships those Claude knobs.
+        self.client_factory: SDKClientFactoryProtocol = client_factory
+        self._claude_factory: ClaudeSDKClientFactoryProtocol = client_factory
         if log_provider is None:
             from src.infra.io.session_log_parser import FileSystemLogProvider
 
@@ -81,7 +96,7 @@ class FakeAgentProvider:
         return AgentRuntimeBuilder(
             repo_path,
             agent_id,
-            self.client_factory,
+            self._claude_factory,
             mcp_server_factory=mcp_server_factory,
             setting_sources=self._setting_sources,
         )

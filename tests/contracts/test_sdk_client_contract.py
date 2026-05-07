@@ -189,11 +189,11 @@ class TestFakeSDKClientFactoryBehavior:
 
     @pytest.mark.unit
     def test_create_records_calls(self) -> None:
-        """create() records all options passed."""
+        """create() records all runtimes passed."""
         factory = FakeSDKClientFactory()
-        options = {"cwd": "/tmp", "model": "opus"}
-        factory.create(options)
-        assert options in factory.create_calls
+        runtime = {"cwd": "/tmp", "model": "opus"}
+        factory.create(runtime)
+        assert runtime in factory.create_calls
 
     @pytest.mark.unit
     def test_create_options_returns_dict(self) -> None:

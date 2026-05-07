@@ -393,8 +393,8 @@ class TestBuildSessionOutputFiltering:
 class FakeSDKClientFactory:
     """Fake SDK client factory for testing."""
 
-    def create(self, options: object) -> SDKClientProtocol:
-        del options
+    def create(self, runtime: object) -> SDKClientProtocol:
+        del runtime
         raise NotImplementedError("Should not be called in early interrupt tests")
 
     def create_options(
@@ -438,8 +438,8 @@ class FakeSDKClientFactory:
     ) -> object:
         return ("matcher", matcher, hooks)
 
-    def with_resume(self, options: object, resume: str | None) -> object:
-        del options, resume
+    def with_resume(self, runtime: object, resume: str | None) -> object:
+        del runtime, resume
         raise NotImplementedError("Should not be called in early interrupt tests")
 
 

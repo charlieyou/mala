@@ -204,9 +204,10 @@ class FixerService:
 
         pending_lint_commands: dict[str, tuple[str, str]] = {}
         is_amp_provider = getattr(self._agent_provider, "name", None) == "amp"
+        runtime_log_path = getattr(runtime, "log_path", None)
         log_path: str = (
-            str(runtime.log_path)
-            if is_amp_provider
+            str(runtime_log_path)
+            if is_amp_provider and runtime_log_path is not None
             else str(get_claude_log_path(self._config.repo_path, agent_id))
         )
 
@@ -216,7 +217,7 @@ class FixerService:
             client_log_path = getattr(client, "log_path", None)
             if client_log_path is not None:
                 return str(client_log_path)
-            return str(runtime.log_path)
+            return log_path
 
         try:
             async with asyncio.timeout(self._config.timeout_seconds):

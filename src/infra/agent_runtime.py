@@ -16,7 +16,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from src.infra.tools.env import SCRIPTS_DIR, format_mcp_timeout_ms, get_lock_dir
 
@@ -37,8 +37,56 @@ if TYPE_CHECKING:
 
     from src.core.models import LockEvent
     from src.core.protocols.lifecycle import DeadlockMonitorProtocol
-    from src.core.protocols.sdk import McpServerFactory, SDKClientFactoryProtocol
+    from src.core.protocols.sdk import McpServerFactory, SDKClientProtocol
     from src.infra.hooks import FileReadCache, LintCache
+
+
+@runtime_checkable
+class ClaudeSDKClientFactoryProtocol(Protocol):
+    """Claude-private factory protocol.
+
+    Exposes the slim cross-coder surface (``create`` / ``with_resume``)
+    plus the Claude-only knobs (``create_options`` /
+    ``create_hook_matcher``) consumed by Claude-specific wiring code
+    (``AgentRuntimeBuilder``, ``AgentSDKReviewer``). Declared next to
+    its Claude-side consumers — and pointedly NOT alongside the
+    cross-coder ``SDKClientFactoryProtocol`` in ``core/protocols/sdk.py``
+    — so the cross-coder protocol stays free of Claude vocabulary
+    (plan AC#16).
+
+    Lives here rather than in ``src.infra.sdk_adapter`` so importing
+    this protocol does not transitively pull in ``claude_agent_sdk``
+    (the ``SDK confined to infra`` import-linter contract forbids that
+    chain from ``agent_runtime``).
+    """
+
+    def create(self, runtime: object) -> SDKClientProtocol: ...
+
+    def with_resume(self, runtime: object, resume: str | None) -> object: ...
+
+    def create_options(
+        self,
+        *,
+        cwd: str,
+        permission_mode: str = "bypassPermissions",
+        model: str = "opus",
+        system_prompt: dict[str, str] | None = None,
+        output_format: object | None = None,
+        settings: str | None = None,
+        setting_sources: list[str] | None = None,
+        mcp_servers: object | None = None,
+        disallowed_tools: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        hooks: dict[str, list[object]] | None = None,
+        resume: str | None = None,
+        effort: str | None = None,
+    ) -> object: ...
+
+    def create_hook_matcher(
+        self,
+        matcher: object | None,
+        hooks: list[object],
+    ) -> object: ...
 
 
 @dataclass
@@ -98,7 +146,7 @@ class AgentRuntimeBuilder:
         self,
         repo_path: Path,
         agent_id: str,
-        sdk_client_factory: SDKClientFactoryProtocol,
+        sdk_client_factory: ClaudeSDKClientFactoryProtocol,
         mcp_server_factory: McpServerFactory | None = None,
         setting_sources: list[str] | None = None,
         effort: str | None = None,

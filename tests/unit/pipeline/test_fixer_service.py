@@ -39,6 +39,7 @@ class MockSDKClient:
         self.messages = messages or []
         self.raise_on_receive = raise_on_receive
         self.query_calls: list[tuple[str, str | None]] = []
+        self.log_path: Path | None = None
         self._entered = False
 
     async def __aenter__(self) -> Self:

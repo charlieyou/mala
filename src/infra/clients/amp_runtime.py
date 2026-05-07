@@ -354,7 +354,7 @@ class AmpRuntimeBuilder:
         # Construct AmpClientOptions eagerly so AgentSessionRunner sees a
         # ``runtime.options`` value with the same role ClaudeRuntime.options
         # plays — the pipeline forwards it verbatim to
-        # ``client_factory.create(options)``.
+        # ``client_factory.create(runtime)``.
         from src.infra.clients.amp_client import AmpClientOptions
 
         options = AmpClientOptions(

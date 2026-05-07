@@ -73,93 +73,45 @@ class SDKClientProtocol(Protocol):
 
 @runtime_checkable
 class SDKClientFactoryProtocol(Protocol):
-    """Protocol for SDK client factory.
+    """Cross-coder factory protocol consumed by the pipeline.
 
-    Enables dependency injection of the factory into pipeline components,
-    allowing tests to provide mock factories.
+    Slimmed to the surface every coder backend (Claude, Amp, Codex) must
+    expose: spawn a client and amend a runtime with a resume token.
+    Coder-specific knobs (Claude's ``create_options`` /
+    ``create_hook_matcher``) live on the concrete Claude factory class
+    (``src.infra.sdk_adapter.SDKClientFactory``) and never appear here.
+
+    The ``runtime`` argument is opaque: each provider's factory privately
+    unpacks the runtime shape it produced from its own
+    :class:`CoderRuntimeBuilder`.
     """
 
-    def create(self, options: object) -> SDKClientProtocol:
-        """Create a new SDK client with the given options.
+    def create(self, runtime: object) -> SDKClientProtocol:
+        """Create a new SDK client for the given coder-shaped runtime.
 
         Args:
-            options: ClaudeAgentOptions for the client.
+            runtime: Opaque coder-shaped runtime produced by the matching
+                provider's ``runtime_builder().build()``. The factory
+                privately unpacks it (Claude → ``ClaudeAgentOptions``,
+                Amp → ``AmpClientOptions``, etc.).
 
         Returns:
             SDKClientProtocol instance.
         """
         ...
 
-    def create_options(
-        self,
-        *,
-        cwd: str,
-        permission_mode: str = "bypassPermissions",
-        model: str = "opus",
-        system_prompt: dict[str, str] | None = None,
-        output_format: object | None = None,
-        settings: str | None = None,
-        setting_sources: list[str] | None = None,
-        mcp_servers: object | None = None,
-        disallowed_tools: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        hooks: dict[str, list[object]] | None = None,
-        resume: str | None = None,
-        effort: str | None = None,
-    ) -> object:
-        """Create SDK options without requiring SDK import in caller.
+    def with_resume(self, runtime: object, resume: str | None) -> object:
+        """Return a runtime continuing from ``resume``.
+
+        Used when retrying after idle timeout or review failures. Each
+        provider maps ``resume`` onto its native resume primitive (Claude
+        → SDK ``resume=`` field, Amp → thread continue id, etc.).
 
         Args:
-            cwd: Working directory for the agent.
-            permission_mode: Permission mode.
-            model: Model to use.
-            system_prompt: System prompt configuration.
-            output_format: Optional structured output format configuration.
-            settings: JSON settings string passed to ClaudeAgentOptions.
-            setting_sources: List of setting sources.
-            mcp_servers: List of MCP server configurations.
-            disallowed_tools: List of tools to disallow.
-            env: Environment variables for the agent.
-            hooks: Hook configurations keyed by event type.
-            resume: Session ID to resume from. When set, the SDK loads
-                the prior conversation context before processing the query.
-            effort: Optional reasoning effort forwarded to
-                ``ClaudeAgentOptions.effort``. ``None`` leaves the SDK
-                default in place.
+            runtime: Existing coder-shaped runtime to clone.
+            resume: Session/thread id to resume from, or None to start fresh.
 
         Returns:
-            ClaudeAgentOptions instance.
-        """
-        ...
-
-    def create_hook_matcher(
-        self,
-        matcher: object | None,
-        hooks: list[object],
-    ) -> object:
-        """Create a HookMatcher for SDK hook registration.
-
-        Args:
-            matcher: Optional matcher configuration.
-            hooks: List of hook callables.
-
-        Returns:
-            HookMatcher instance.
-        """
-        ...
-
-    def with_resume(self, options: object, resume: str | None) -> object:
-        """Create a copy of options with a different resume session ID.
-
-        This is used to resume a prior session when retrying after idle timeout
-        or review failures. The SDK's resume feature loads the prior conversation
-        context before processing the next query.
-
-        Args:
-            options: Existing ClaudeAgentOptions to clone.
-            resume: Session ID to resume from, or None to start fresh.
-
-        Returns:
-            New ClaudeAgentOptions with the resume field set.
+            New coder-shaped runtime carrying the resume token.
         """
         ...

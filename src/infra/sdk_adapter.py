@@ -1,8 +1,12 @@
 """SDK adapter for Claude Agent SDK.
 
-This module provides a factory for creating Claude SDK clients, isolating
-SDK imports to the infra layer. The pipeline layer uses SDKClientProtocol
-from core.protocols instead of importing SDK types directly.
+This module provides a Claude-private factory for creating Claude SDK
+clients, isolating SDK imports to the infra layer. The pipeline layer
+uses ``SDKClientProtocol`` and the slim cross-coder
+``SDKClientFactoryProtocol`` from ``core.protocols``; Claude-specific
+knobs (``create_options``, ``create_hook_matcher``) live on the
+concrete :class:`SDKClientFactory` defined here and never leak onto the
+cross-coder protocol.
 
 Design principles:
 - All SDK imports are local (inside methods, not at module level)
@@ -24,27 +28,33 @@ if TYPE_CHECKING:
 
 
 class SDKClientFactory:
-    """Factory for creating Claude SDK clients.
+    """Claude-private factory for creating Claude SDK clients.
 
-    This factory encapsulates SDK imports and client creation, allowing
-    the pipeline layer to use SDK clients without importing SDK directly.
+    Conforms to the slim cross-coder ``SDKClientFactoryProtocol``
+    (``create`` / ``with_resume``) and additionally exposes the
+    Claude-only knobs ``create_options`` and ``create_hook_matcher``
+    used by Claude-specific wiring code (``AgentRuntimeBuilder``,
+    ``AgentSDKReviewer``). The Claude knobs intentionally do not appear
+    on the cross-coder protocol so Amp / Codex backends are not forced
+    to provide ``NotImplementedError`` walls for them.
 
     Usage:
         factory = SDKClientFactory()
-        client = factory.create(options)
+        client = factory.create(runtime)
         async with client:
             await client.query(prompt)
             async for msg in client.receive_response():
                 ...
     """
 
-    def create(self, options: object) -> SDKClientProtocol:
-        """Create a new SDK client with the given options.
+    def create(self, runtime: object) -> SDKClientProtocol:
+        """Create a new SDK client for the given Claude runtime.
 
         Args:
-            options: ClaudeAgentOptions (or compatible) for the client.
-                The type is `object` to avoid requiring SDK import in
-                the caller's type annotations.
+            runtime: ClaudeAgentOptions (or compatible) for the client.
+                Typed as ``object`` to satisfy the slim cross-coder
+                ``SDKClientFactoryProtocol``; this concrete factory
+                privately treats it as ``ClaudeAgentOptions``.
 
         Returns:
             SDKClientProtocol wrapping a ClaudeSDKClient.
@@ -55,7 +65,7 @@ class SDKClientFactory:
         ensure_sigint_isolated_cli_transport()
         return cast(
             "SDKClientProtocol",
-            ClaudeSDKClient(options=cast("ClaudeAgentOptions", options)),
+            ClaudeSDKClient(options=cast("ClaudeAgentOptions", runtime)),
         )
 
     def create_options(
@@ -147,15 +157,15 @@ class SDKClientFactory:
 
         return HookMatcher(matcher=matcher, hooks=hooks)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
-    def with_resume(self, options: object, resume: str | None) -> object:
-        """Create a copy of options with a different resume session ID.
+    def with_resume(self, runtime: object, resume: str | None) -> object:
+        """Create a copy of the runtime with a different resume session ID.
 
         This is used to resume a prior session when retrying after idle timeout
         or review failures. The SDK's resume feature loads the prior conversation
         context before processing the next query.
 
         Args:
-            options: Existing ClaudeAgentOptions to clone.
+            runtime: Existing ClaudeAgentOptions to clone.
             resume: Session ID to resume from, or None to start fresh.
 
         Returns:
@@ -165,7 +175,7 @@ class SDKClientFactory:
         from dataclasses import fields
 
         # ClaudeAgentOptions is a dataclass - extract all field values
-        opts = options
+        opts = runtime
         if not isinstance(opts, ClaudeAgentOptions):
             raise TypeError(f"Expected ClaudeAgentOptions, got {type(opts)}")
 
