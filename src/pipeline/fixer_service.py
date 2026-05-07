@@ -226,8 +226,10 @@ class FixerService:
                         session_id=None if is_amp_provider else agent_id,
                     )
 
-                    async for message in client.receive_response():
-                        # Check for interrupt between messages
+                    from src.core.protocols.agent_event import to_agent_events
+
+                    async for event in to_agent_events(client.receive_response()):
+                        # Check for interrupt between events
                         if guard.is_interrupted():
                             return FixerResult(
                                 success=None,
@@ -235,9 +237,8 @@ class FixerService:
                                 log_path=current_log_path(),
                             )
 
-                        # Process message using duck typing
-                        self._process_message(
-                            message,
+                        self._process_event(
+                            event,
                             failure_context.attempt,
                             runtime,
                             pending_lint_commands,
@@ -259,56 +260,53 @@ class FixerService:
                 self._active_fixer_ids.remove(agent_id)
             cleanup_agent_locks(agent_id)
 
-    def _process_message(
+    def _process_event(
         self,
-        message: object,
+        event: object,
         attempt: int,
         runtime: object,
         pending_lint_commands: dict[str, tuple[str, str]],
     ) -> None:
-        """Process a message from the fixer agent.
-
-        Uses duck typing to avoid SDK imports.
+        """Process one ``AgentEvent`` from the fixer agent.
 
         Args:
-            message: Message from the SDK client.
+            event: ``AgentEvent`` produced by the adapter / translator.
             attempt: Current fixer attempt number.
             runtime: AgentRuntime with lint_cache.
             pending_lint_commands: Dict tracking pending lint command results.
         """
-        msg_type = type(message).__name__
-        if msg_type == "AssistantMessage":
-            content = getattr(message, "content", [])
-            for block in content:
-                block_type = type(block).__name__
-                if block_type == "TextBlock":
-                    text = getattr(block, "text", "")
-                    if self._event_sink is not None:
-                        self._event_sink.on_fixer_text(attempt, text)
-                elif block_type == "ToolUseBlock":
-                    name = getattr(block, "name", "")
-                    block_input = getattr(block, "input", {})
-                    if self._event_sink is not None:
-                        self._event_sink.on_fixer_tool_use(attempt, name, block_input)
-                    if name.lower() == "bash":
-                        cmd = block_input.get("command", "")
-                        # Access lint_cache via attribute
-                        lint_cache = getattr(runtime, "lint_cache", None)
-                        if lint_cache is not None:
-                            lint_type = lint_cache.detect_lint_command(cmd)
-                            if lint_type:
-                                block_id = getattr(block, "id", "")
-                                pending_lint_commands[block_id] = (lint_type, cmd)
-                elif block_type == "ToolResultBlock":
-                    tool_use_id = getattr(block, "tool_use_id", None)
-                    if tool_use_id in pending_lint_commands:
-                        lint_type, cmd = pending_lint_commands.pop(tool_use_id)
-                        if not getattr(block, "is_error", False):
-                            lint_cache = getattr(runtime, "lint_cache", None)
-                            if lint_cache is not None:
-                                lint_cache.mark_success(lint_type, cmd)
-        elif msg_type == "ResultMessage":
-            result = getattr(message, "result", "") or ""
+        kind = getattr(event, "kind", None)
+        if kind == "text":
+            if self._event_sink is not None:
+                text = getattr(event, "text", "")
+                self._event_sink.on_fixer_text(attempt, text)
+        elif kind == "tool_use":
+            name = getattr(event, "name", "")
+            block_input = getattr(event, "input", {}) or {}
+            if self._event_sink is not None:
+                self._event_sink.on_fixer_tool_use(attempt, name, block_input)
+            if isinstance(name, str) and name.lower() == "bash":
+                cmd = (
+                    block_input.get("command", "")
+                    if isinstance(block_input, dict)
+                    else ""
+                )
+                lint_cache = getattr(runtime, "lint_cache", None)
+                if lint_cache is not None:
+                    lint_type = lint_cache.detect_lint_command(cmd)
+                    if lint_type:
+                        block_id = getattr(event, "id", "")
+                        pending_lint_commands[block_id] = (lint_type, cmd)
+        elif kind == "tool_result":
+            tool_use_id = getattr(event, "tool_use_id", None)
+            if tool_use_id in pending_lint_commands:
+                lint_type, cmd = pending_lint_commands.pop(tool_use_id)
+                if not getattr(event, "is_error", False):
+                    lint_cache = getattr(runtime, "lint_cache", None)
+                    if lint_cache is not None:
+                        lint_cache.mark_success(lint_type, cmd)
+        elif kind == "result":
+            result = getattr(event, "result", "") or ""
             if self._event_sink is not None:
                 self._event_sink.on_fixer_completed(result)
 

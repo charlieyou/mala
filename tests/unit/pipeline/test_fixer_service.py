@@ -415,12 +415,12 @@ class TestFixerServiceInterrupt:
     @pytest.mark.asyncio
     async def test_run_fixer_interrupt_during_messages(self) -> None:
         """Verify run_fixer returns interrupted when event is set during processing."""
+        from src.core.protocols.agent_event import AgentTextEvent
+
         interrupt_event = asyncio.Event()
 
-        # Create a message that triggers interrupt check
-        mock_msg = MagicMock()
-        type(mock_msg).__name__ = "AssistantMessage"
-        mock_msg.content = []
+        # An event in the stream so the per-event interrupt check fires.
+        mock_msg = AgentTextEvent(text="working...")
 
         client = MockSDKClient(messages=[mock_msg])
         factory = make_mock_sdk_client_factory(client)
@@ -451,9 +451,9 @@ class TestFixerServiceInterrupt:
         self, tmp_path: Path
     ) -> None:
         """Amp interruptions report the actual tee path when available."""
-        mock_msg = MagicMock()
-        type(mock_msg).__name__ = "AssistantMessage"
-        mock_msg.content = []
+        from src.core.protocols.agent_event import AgentTextEvent
+
+        mock_msg = AgentTextEvent(text="working...")
 
         client = MockSDKClient(messages=[mock_msg])
         client.log_path = tmp_path / "T-fixer.jsonl"  # type: ignore[attr-defined]

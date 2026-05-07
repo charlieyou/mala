@@ -357,18 +357,17 @@ class TestFixerInterruptHandling:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.query = AsyncMock()
 
-        # First message is normal, but we set interrupt before second
-        first_message = MagicMock()
-        first_message.__class__.__name__ = "AssistantMessage"
-        type(first_message).__name__ = "AssistantMessage"
-        first_message.content = []
+        from src.core.protocols.agent_event import AgentTextEvent
 
-        async def mock_receive() -> AsyncGenerator[MagicMock, None]:
-            yield first_message
-            # Set interrupt after first message
+        # First event is normal, but we set interrupt before second
+        first_event = AgentTextEvent(text="working...")
+
+        async def mock_receive() -> AsyncGenerator[object, None]:
+            yield first_event
+            # Set interrupt after first event
             interrupt_event.set()
-            # This message should not be fully processed
-            yield MagicMock()
+            # This event should not be fully processed
+            yield AgentTextEvent(text="post-interrupt")
 
         mock_client.receive_response = mock_receive
         mock_sdk_client_factory.create.return_value = mock_client
@@ -408,17 +407,16 @@ class TestFixerInterruptHandling:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.query = AsyncMock()
 
-        # Receive first message, then set interrupt before second
-        assistant_message = MagicMock()
-        assistant_message.__class__.__name__ = "AssistantMessage"
-        type(assistant_message).__name__ = "AssistantMessage"
-        assistant_message.content = []
+        from src.core.protocols.agent_event import AgentTextEvent
 
-        async def mock_receive() -> AsyncGenerator[MagicMock, None]:
-            yield assistant_message
-            # Set interrupt after first message
+        # Receive first event, then set interrupt before second
+        assistant_event = AgentTextEvent(text="working...")
+
+        async def mock_receive() -> AsyncGenerator[object, None]:
+            yield assistant_event
+            # Set interrupt after first event
             interrupt_event.set()
-            yield MagicMock()
+            yield AgentTextEvent(text="post-interrupt")
 
         mock_client.receive_response = mock_receive
         mock_sdk_client_factory.create.return_value = mock_client

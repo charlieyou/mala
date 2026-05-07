@@ -5,12 +5,12 @@ Covers the test cases from the plan's Testing & Validation section
 
   * ``system(init)`` captures session/thread id and writes tee header.
   * ``assistant`` events with ``text``/``tool_use``/``thinking`` map to
-    a synthetic :class:`AssistantMessage` (thinking stripped in MVP).
-  * ``user`` events with ``tool_result`` map to a synthetic
-    :class:`AssistantMessage` containing :class:`ToolResultBlock` blocks.
+    :class:`AgentTextEvent` / :class:`AgentToolUseEvent` (thinking stripped
+    in MVP).
+  * ``user`` events with ``tool_result`` map to :class:`AgentToolResultEvent`.
   * ``result`` (success / error_during_execution / error_max_turns) maps
-    to a synthetic :class:`ResultMessage` with the right ``session_id``
-    and ``result``.
+    to :class:`AgentResultEvent` with the right ``session_id`` and
+    ``result``.
   * Stderr ring buffer is bounded; auth-error classification fires on
     ``unauthorized`` / ``401`` / ``forbidden``.
   * Subprocess lifecycle: spawn → write prompt to stdin → terminate on
@@ -42,18 +42,17 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from src.core.protocols.agent_event import (
+    AgentResultEvent,
+    AgentTextEvent,
+    AgentToolResultEvent,
+    AgentToolUseEvent,
+)
 from src.infra.clients.amp_client import (
     AmpClient,
     AmpClientError,
     AmpClientOptions,
     AmpStreamMissingInitError,
-)
-from src.infra.clients.amp_messages import (
-    AssistantMessage,
-    ResultMessage,
-    TextBlock,
-    ToolResultBlock,
-    ToolUseBlock,
 )
 
 if TYPE_CHECKING:
@@ -510,12 +509,9 @@ async def test_assistant_text_emits_assistant_message_with_textblock(
         await client.query("p")
         msgs = await _drain(client)
 
-    assistants = [m for m in msgs if isinstance(m, AssistantMessage)]
-    assert len(assistants) == 1
-    blocks = assistants[0].content
-    assert len(blocks) == 1
-    assert isinstance(blocks[0], TextBlock)
-    assert blocks[0].text == "hello world"
+    text_events = [m for m in msgs if isinstance(m, AgentTextEvent)]
+    assert len(text_events) == 1
+    assert text_events[0].text == "hello world"
 
 
 @pytest.mark.unit
@@ -538,12 +534,9 @@ async def test_assistant_tool_use_emits_tool_use_block(tmp_path: Path) -> None:
         await client.query("p")
         msgs = await _drain(client)
 
-    assistants = [m for m in msgs if isinstance(m, AssistantMessage)]
-    assert len(assistants) == 1
-    blocks = assistants[0].content
-    assert len(blocks) == 1
-    block = blocks[0]
-    assert isinstance(block, ToolUseBlock)
+    tool_use_events = [m for m in msgs if isinstance(m, AgentToolUseEvent)]
+    assert len(tool_use_events) == 1
+    block = tool_use_events[0]
     assert block.id == "t-7"
     assert block.name == "Bash"
     assert block.input == {"command": "ls -la"}
@@ -553,7 +546,7 @@ async def test_assistant_tool_use_emits_tool_use_block(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_assistant_thinking_block_is_stripped(tmp_path: Path) -> None:
     """Thinking blocks tee'd for diagnostics; not surfaced in MVP."""
-    # An assistant event containing ONLY thinking yields no AssistantMessage.
+    # An assistant event containing ONLY thinking yields no AgentTextEvent.
     script = _write_fake_amp(
         tmp_path,
         lines=[_system_init(), _assistant_thinking("…"), _result()],
@@ -567,15 +560,17 @@ async def test_assistant_thinking_block_is_stripped(tmp_path: Path) -> None:
         await client.query("p")
         msgs = await _drain(client)
 
-    assistants = [m for m in msgs if isinstance(m, AssistantMessage)]
-    assert assistants == []
-    # ResultMessage still produced.
-    assert any(isinstance(m, ResultMessage) for m in msgs)
+    text_events = [m for m in msgs if isinstance(m, AgentTextEvent)]
+    tool_use_events = [m for m in msgs if isinstance(m, AgentToolUseEvent)]
+    assert text_events == []
+    assert tool_use_events == []
+    # AgentResultEvent still produced.
+    assert any(isinstance(m, AgentResultEvent) for m in msgs)
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_user_tool_result_emits_assistant_message_with_tool_result_block(
+async def test_user_tool_result_emits_agent_tool_result_event(
     tmp_path: Path,
 ) -> None:
     script = _write_fake_amp(
@@ -595,12 +590,9 @@ async def test_user_tool_result_emits_assistant_message_with_tool_result_block(
         await client.query("p")
         msgs = await _drain(client)
 
-    assistants = [m for m in msgs if isinstance(m, AssistantMessage)]
-    assert len(assistants) == 1
-    blocks = assistants[0].content
-    assert len(blocks) == 1
-    block = blocks[0]
-    assert isinstance(block, ToolResultBlock)
+    tool_results = [m for m in msgs if isinstance(m, AgentToolResultEvent)]
+    assert len(tool_results) == 1
+    block = tool_results[0]
     assert block.tool_use_id == "t-9"
     assert block.content == "output"
     assert block.is_error is False
@@ -629,10 +621,9 @@ async def test_large_tool_result_line_exceeding_default_asyncio_limit(
         await client.query("p")
         msgs = await _drain(client)
 
-    assistants = [m for m in msgs if isinstance(m, AssistantMessage)]
-    assert len(assistants) == 1
-    block = assistants[0].content[0]
-    assert isinstance(block, ToolResultBlock)
+    tool_results = [m for m in msgs if isinstance(m, AgentToolResultEvent)]
+    assert len(tool_results) == 1
+    block = tool_results[0]
     assert block.tool_use_id == "t-large"
     assert block.content == content
 
@@ -648,7 +639,7 @@ async def test_large_tool_result_line_exceeding_default_asyncio_limit(
     "subtype",
     ["success", "error_during_execution", "error_max_turns"],
 )
-async def test_result_subtypes_emit_result_message(
+async def test_result_subtypes_emit_agent_result_event(
     tmp_path: Path, subtype: str
 ) -> None:
     script = _write_fake_amp(
@@ -667,7 +658,7 @@ async def test_result_subtypes_emit_result_message(
         await client.query("p")
         msgs = await _drain(client)
 
-    results = [m for m in msgs if isinstance(m, ResultMessage)]
+    results = [m for m in msgs if isinstance(m, AgentResultEvent)]
     assert len(results) == 1
     assert results[0].session_id == "T-zzz"
     assert results[0].result == "payload"
@@ -680,7 +671,7 @@ async def test_result_subtypes_emit_result_message(
 async def test_result_falls_back_to_subtype_when_result_field_missing(
     tmp_path: Path,
 ) -> None:
-    """Some Amp error subtypes omit ``result``; the synthetic ResultMessage
+    """Some Amp error subtypes omit ``result``; ``AgentResultEvent``
     surfaces ``subtype`` instead so the orchestrator can branch on a stable
     string."""
     raw = json.dumps(
@@ -696,7 +687,7 @@ async def test_result_falls_back_to_subtype_when_result_field_missing(
         await client.query("p")
         msgs = await _drain(client)
 
-    results = [m for m in msgs if isinstance(m, ResultMessage)]
+    results = [m for m in msgs if isinstance(m, AgentResultEvent)]
     assert len(results) == 1
     assert results[0].result == "error_max_turns"
     assert results[0].subtype == "error_max_turns"
@@ -728,7 +719,7 @@ async def test_error_result_preserves_subtype_and_human_error(
         await client.query("p")
         msgs = await _drain(client)
 
-    results = [m for m in msgs if isinstance(m, ResultMessage)]
+    results = [m for m in msgs if isinstance(m, AgentResultEvent)]
     assert len(results) == 1
     assert results[0].session_id == "T-error"
     assert results[0].result == "Response incomplete: stream ended unexpectedly"
@@ -763,7 +754,7 @@ async def test_unknown_event_type_does_not_crash(
             await client.query("p")
             msgs = await _drain(client)
 
-    assert any(isinstance(m, ResultMessage) for m in msgs)
+    assert any(isinstance(m, AgentResultEvent) for m in msgs)
     assert any("future_event" in rec.message for rec in caplog.records)
 
 
@@ -893,7 +884,7 @@ async def test_aexit_terminates_hanging_subprocess(tmp_path: Path) -> None:
         # Pull the assistant message, then abort the iterator while the
         # subprocess is still hanging.
         first = await asyncio.wait_for(gen.__anext__(), timeout=2.0)
-        assert isinstance(first, AssistantMessage)
+        assert isinstance(first, AgentTextEvent)
         await gen.aclose()
 
     proc = client._state.proc
@@ -1172,7 +1163,7 @@ async def test_preinit_amp_stdout_logfmt_warning_is_skipped(
 ) -> None:
     log_line = (
         'level=warn msg="failed to fetch metadata, retrying" '
-        'endpoint=https://actors.ampcode.com/ attempt=2 '
+        "endpoint=https://actors.ampcode.com/ attempt=2 "
         'error="Error: HTTP request error"'
     )
     script = _write_fake_amp(
@@ -1191,7 +1182,7 @@ async def test_preinit_amp_stdout_logfmt_warning_is_skipped(
         msgs = await _drain(client)
 
     assert client.session_id == "T-preinit-log"
-    assert [type(msg) for msg in msgs] == [ResultMessage]
+    assert [type(msg) for msg in msgs] == [AgentResultEvent]
     assert log_line in (tmp_path / "T-preinit-log.jsonl").read_text()
 
 
@@ -1296,7 +1287,7 @@ async def test_premature_exit_with_no_result_returns_no_result_message(
         await client.query("p")
         msgs = await _drain(client)
 
-    assert all(not isinstance(m, ResultMessage) for m in msgs)
+    assert all(not isinstance(m, AgentResultEvent) for m in msgs)
     assert client.session_id == "T-pe"
 
 

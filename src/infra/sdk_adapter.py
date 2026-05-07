@@ -8,6 +8,11 @@ Design principles:
 - All SDK imports are local (inside methods, not at module level)
 - Factory pattern enables dependency injection and testing
 - TYPE_CHECKING imports for SDK types avoid runtime dependency
+
+The Anthropic-message → ``AgentEvent`` translator lives in
+:mod:`src.core.protocols.agent_event` (``to_agent_events``); the pipeline
+imports it from there to satisfy the "SDK confined to infra" contract,
+since ``src.pipeline`` cannot transitively reach ``claude_agent_sdk``.
 """
 
 from __future__ import annotations

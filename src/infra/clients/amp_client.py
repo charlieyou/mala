@@ -4,10 +4,10 @@
 :class:`src.core.protocols.sdk.SDKClientProtocol` so the existing pipeline
 (``MessageStreamProcessor`` etc.) consumes it without provider-specific
 branches. It spawns ``amp --execute --stream-json`` as a child process,
-parses every JSON line from stdout into the synthetic Anthropic-shaped
-dataclasses defined in :mod:`src.infra.clients.amp_messages`, and tees
-every event verbatim to ``~/.config/mala/amp-sessions/{thread_id}.jsonl``
-so :class:`AmpLogProvider` (T010) can later parse validation evidence.
+parses every JSON line from stdout into coder-agnostic
+:class:`src.core.protocols.agent_event.AgentEvent` values, and tees every
+event verbatim to ``~/.config/mala/amp-sessions/{thread_id}.jsonl`` so
+:class:`AmpLogProvider` (T010) can later parse validation evidence.
 
 Key invariants:
   * Tee writes happen inline with stdout iteration. A crash mid-stream
@@ -44,12 +44,11 @@ import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from src.infra.clients.amp_messages import (
-    AssistantMessage,
-    ResultMessage,
-    TextBlock,
-    ToolResultBlock,
-    ToolUseBlock,
+from src.core.protocols.agent_event import (
+    AgentResultEvent,
+    AgentTextEvent,
+    AgentToolResultEvent,
+    AgentToolUseEvent,
 )
 
 if TYPE_CHECKING:
@@ -57,6 +56,8 @@ if TYPE_CHECKING:
     from pathlib import Path
     from types import TracebackType
     from typing import Self
+
+    from src.core.protocols.agent_event import AgentEventValue
 
 logger = logging.getLogger(__name__)
 
@@ -196,10 +197,10 @@ class AmpClient:
         for append.
       * ``await client.query(prompt)`` spawns the subprocess, writes the
         prompt to stdin, and closes stdin.
-      * ``async for msg in client.receive_response():`` parses stream-json
-        and yields synthetic ``AssistantMessage`` / ``ResultMessage``
-        instances. Tees every event line inline, before yielding, so a
-        crash mid-stream does not lose evidence already on disk.
+      * ``async for event in client.receive_response():`` parses stream-json
+        and yields :class:`AgentEvent` values (text / tool_use / tool_result
+        / result) directly. Tees every event line inline, before yielding,
+        so a crash mid-stream does not lose evidence already on disk.
       * ``__aexit__`` terminates the subprocess (SIGTERM → grace →
         SIGKILL), cancels the stderr collector task, and flushes/closes
         the tee file.
@@ -446,8 +447,8 @@ class AmpClient:
     # Stream parsing
     # ------------------------------------------------------------------
 
-    async def receive_response(self) -> AsyncIterator[object]:
-        """Yield synthetic messages parsed from ``amp`` stdout.
+    async def receive_response(self) -> AsyncIterator[AgentEventValue]:
+        """Yield :class:`AgentEvent`s parsed from ``amp`` stdout.
 
         Iterates stdout line-by-line. Every line is tee'd verbatim to the
         log path *before* the yield so a crash mid-stream cannot lose
@@ -482,9 +483,7 @@ class AmpClient:
                     if self._should_skip_preinit_stdout_log(
                         stripped, skipped_count=len(skipped_preinit_logs)
                     ):
-                        skipped_preinit_logs.append(
-                            stripped.decode(errors="replace")
-                        )
+                        skipped_preinit_logs.append(stripped.decode(errors="replace"))
                         continue
                     raise AmpClientError(
                         "AmpClient could not parse stream-json line: "
@@ -501,7 +500,9 @@ class AmpClient:
                 async for msg in self._dispatch(event):
                     yield msg
             if skipped_preinit_logs and not self._state.init_seen:
-                skipped = "\n".join(skipped_preinit_logs[-_MAX_PREINIT_STDOUT_LOG_LINES:])
+                skipped = "\n".join(
+                    skipped_preinit_logs[-_MAX_PREINIT_STDOUT_LOG_LINES:]
+                )
                 raise AmpClientError(
                     "amp subprocess exited before system(init) after skipping "
                     f"{len(skipped_preinit_logs)} pre-init stdout log line(s): "
@@ -532,8 +533,8 @@ class AmpClient:
             and _PREINIT_STDOUT_LOGFMT_RE.match(stripped) is not None
         )
 
-    async def _dispatch(self, event: dict[str, Any]) -> AsyncIterator[object]:
-        """Map one parsed event to zero or more synthetic messages."""
+    async def _dispatch(self, event: dict[str, Any]) -> AsyncIterator[AgentEventValue]:
+        """Map one parsed Amp event to zero or more :class:`AgentEvent`s."""
         event_type = event.get("type")
         if event_type == "system":
             self._handle_system(event)
@@ -542,13 +543,11 @@ class AmpClient:
         if not self._state.init_seen:
             self._raise_missing_init()
         if event_type == "assistant":
-            msg = self._build_assistant(event)
-            if msg is not None:
-                yield msg
+            for emitted in self._build_assistant_events(event):
+                yield emitted
         elif event_type == "user":
-            msg = self._build_tool_result(event)
-            if msg is not None:
-                yield msg
+            for emitted in self._build_tool_result_events(event):
+                yield emitted
         elif event_type == "result":
             await self._drain_configured_lock_events()
             yield self._build_result(event)
@@ -576,26 +575,23 @@ class AmpClient:
         if is_first and self._state.session_id is not None:
             self._maybe_finalize_tee_path()
 
-    def _build_assistant(self, event: dict[str, Any]) -> AssistantMessage | None:
+    def _build_assistant_events(self, event: dict[str, Any]) -> list[AgentEventValue]:
+        """Translate an Amp ``assistant`` event into ``AgentEvent``s."""
         message = event.get("message") or {}
         content = message.get("content") or []
-        blocks: list[object] = []
+        events: list[AgentEventValue] = []
         for raw in content:
             if not isinstance(raw, dict):
                 continue
             btype = raw.get("type")
             if btype == "text":
-                blocks.append(TextBlock(text=str(raw.get("text", ""))))
+                events.append(AgentTextEvent(text=str(raw.get("text", ""))))
             elif btype == "tool_use":
                 tool_id = str(raw.get("id", ""))
                 name = str(raw.get("name", ""))
                 tool_input = dict(raw.get("input") or {})
-                blocks.append(
-                    ToolUseBlock(
-                        id=tool_id,
-                        name=name,
-                        input=tool_input,
-                    )
+                events.append(
+                    AgentToolUseEvent(id=tool_id, name=name, input=tool_input)
                 )
             elif btype in ("thinking", "redacted_thinking"):
                 # MVP: thinking blocks are tee'd for diagnostics but not
@@ -606,32 +602,29 @@ class AmpClient:
                     "AmpClient: unknown assistant block type %r — skipping.",
                     btype,
                 )
-        if not blocks:
-            return None
-        return AssistantMessage(content=blocks)
+        return events
 
-    def _build_tool_result(self, event: dict[str, Any]) -> AssistantMessage | None:
+    def _build_tool_result_events(self, event: dict[str, Any]) -> list[AgentEventValue]:
+        """Translate an Amp ``user`` (tool_result) event into ``AgentEvent``s."""
         message = event.get("message") or {}
         content = message.get("content") or []
-        blocks: list[object] = []
+        events: list[AgentEventValue] = []
         for raw in content:
             if not isinstance(raw, dict):
                 continue
             if raw.get("type") != "tool_result":
                 continue
             tool_use_id = str(raw.get("tool_use_id", ""))
-            blocks.append(
-                ToolResultBlock(
+            events.append(
+                AgentToolResultEvent(
                     tool_use_id=tool_use_id,
                     is_error=bool(raw.get("is_error", False)),
                     content=raw.get("content"),
                 )
             )
-        if not blocks:
-            return None
-        return AssistantMessage(content=blocks)
+        return events
 
-    def _build_result(self, event: dict[str, Any]) -> ResultMessage:
+    def _build_result(self, event: dict[str, Any]) -> AgentResultEvent:
         sid = event.get("session_id") or self._state.session_id or ""
         subtype = str(event.get("subtype") or "")
         # Amp emits result/subtype values: success | error_during_execution |
@@ -643,7 +636,7 @@ class AmpClient:
             result = event.get("error")
         if result is None:
             result = subtype
-        return ResultMessage(
+        return AgentResultEvent(
             session_id=str(sid),
             result=result,
             subtype=subtype,
