@@ -53,6 +53,7 @@ class TestBaseEventSink:
         missing = protocol_methods - sink_methods
         assert not missing, f"BaseEventSink missing protocol methods: {missing}"
 
+
 class TestNullEventSink:
     """Tests for NullEventSink implementation."""
 
@@ -88,6 +89,7 @@ class TestNullEventSink:
         # All protocol methods should be in the sink
         missing = protocol_methods - sink_methods
         assert not missing, f"NullEventSink missing protocol methods: {missing}"
+
 
 class TestConsoleEventSink:
     """Tests for ConsoleEventSink implementation."""

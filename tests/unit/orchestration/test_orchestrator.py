@@ -230,7 +230,9 @@ class TestRunOrchestrationLoop:
             )
 
         with (
-            patch.object(orchestrator.beads, "get_ready_async", side_effect=get_ready_async),
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=get_ready_async
+            ),
             patch.object(
                 orchestrator.epic_verifier,
                 "verify_and_close_eligible",
@@ -299,7 +301,9 @@ class TestRunOrchestrationLoop:
             )
 
         with (
-            patch.object(orchestrator.beads, "get_ready_async", side_effect=get_ready_async),
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=get_ready_async
+            ),
             patch.object(orchestrator.beads, "claim_async", return_value=True),
             patch.object(orchestrator.beads, "close_async", return_value=True),
             patch.object(
@@ -432,7 +436,9 @@ class TestRunOrchestrationLoop:
             raise RuntimeError("verifier unavailable")
 
         with (
-            patch.object(orchestrator.beads, "get_ready_async", side_effect=get_ready_async),
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=get_ready_async
+            ),
             patch.object(
                 orchestrator.epic_verifier,
                 "verify_and_close_eligible",

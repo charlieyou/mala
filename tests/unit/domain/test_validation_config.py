@@ -1172,6 +1172,7 @@ class TestValidationTriggersConfig:
         )
         assert config.is_empty() is False
 
+
 class TestValidationTriggersConfigParsing:
     """Tests for parsing validation_triggers from YAML via config_loader."""
 

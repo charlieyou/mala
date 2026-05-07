@@ -1208,8 +1208,7 @@ class ValidationConfig:
                     "deep",
                 ):
                     raise ConfigError(
-                        "amp_mode must be 'smart', 'rush', or 'deep', "
-                        f"got {mode_val!r}"
+                        f"amp_mode must be 'smart', 'rush', or 'deep', got {mode_val!r}"
                     )
                 # Narrow Literal type for the type checker.
                 if mode_val == "rush":
@@ -1241,7 +1240,11 @@ class ValidationConfig:
                     )
                 effort = effort_val
         effective_amp_mode = amp_mode if amp_mode is not None else "deep"
-        if coder == "amp" and effective_amp_mode == "deep" and effort in {"high", "max"}:
+        if (
+            coder == "amp"
+            and effective_amp_mode == "deep"
+            and effort in {"high", "max"}
+        ):
             raise ConfigError(
                 "effort must be 'low', 'medium', or 'xhigh' when "
                 f"coder is 'amp' and amp_mode is 'deep', got {effort!r}"

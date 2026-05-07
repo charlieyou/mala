@@ -233,7 +233,9 @@ class TestReviewAdapterEmptyDiffSkip:
             _from_commit: str,
             _to_commit: str,
         ) -> bool:
-            raise AssertionError("should not check tree changes for interleaved commits")
+            raise AssertionError(
+                "should not check tree changes for interleaved commits"
+            )
 
         monkeypatch.setattr(
             infra_git_utils, "get_issue_commits_async", fake_get_issue_commits_async

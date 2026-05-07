@@ -426,9 +426,7 @@ class TestRunLoop:
 
             return asyncio.create_task(work())
 
-        async def finalize_callback(
-            issue_id: str, task: asyncio.Task[None]
-        ) -> None:
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
             nonlocal attempts
             attempts += 1
             if attempts == 1:
