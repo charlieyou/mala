@@ -77,9 +77,8 @@ class SDKClientFactoryProtocol(Protocol):
 
     Slimmed to the surface every coder backend (Claude, Amp, Codex) must
     expose: spawn a client and amend a runtime with a resume token.
-    Coder-specific knobs (Claude's ``create_options`` /
-    ``create_hook_matcher``) live on the concrete Claude factory class
-    (``src.infra.sdk_adapter.SDKClientFactory``) and never appear here.
+    Backend-specific knobs live on the concrete provider factory classes
+    and never appear here.
 
     The ``runtime`` argument is opaque: each provider's factory privately
     unpacks the runtime shape it produced from its own
