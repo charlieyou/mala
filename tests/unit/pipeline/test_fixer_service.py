@@ -58,10 +58,21 @@ class MockSDKClient:
         self.query_calls.append((prompt, session_id))
 
     async def receive_response(self) -> AsyncIterator[object]:
+        from src.core.protocols.agent_event import to_agent_events
+
         if self.raise_on_receive is not None:
             raise self.raise_on_receive
-        for msg in self.messages:
-            yield msg
+
+        async def _raw() -> AsyncIterator[object]:
+            for msg in self.messages:
+                yield msg
+
+        # Mirror production wrapped Claude/Amp clients: receive_response
+        # emits ``AgentEvent``s. Tests that pre-translate (e.g. yielding
+        # ``AgentTextEvent``) pass straight through; tests that yield
+        # Anthropic-shaped mocks are flattened by ``to_agent_events``.
+        async for event in to_agent_events(_raw()):
+            yield event
 
 
 def make_mock_sdk_client_factory(

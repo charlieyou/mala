@@ -215,16 +215,11 @@ async def _run_with_fake_git(
 
 
 def _make_result_message(session_id: str, *, result: str) -> object:
-    from claude_agent_sdk import ResultMessage
+    from src.core.protocols.agent_event import AgentResultEvent
 
-    return ResultMessage(
-        subtype="result",
+    return AgentResultEvent(
         session_id=session_id,
-        result=result,
-        duration_ms=1000,
-        duration_api_ms=800,
         is_error=False,
-        num_turns=1,
-        total_cost_usd=0.01,
-        usage=None,
+        subtype="result",
+        result=result,
     )

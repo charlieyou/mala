@@ -249,16 +249,20 @@ class TestFixerInterruptHandling:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.query = AsyncMock()
 
-        # Create a mock ResultMessage
-        result_message = MagicMock()
-        result_message.__class__.__name__ = "ResultMessage"
-        type(result_message).__name__ = "ResultMessage"
-        result_message.result = "Fixed!"
-        result_message.session_id = "test-session-123"
+        # Create the terminal ``AgentResultEvent`` (production wrapping
+        # translates Anthropic ``ResultMessage`` into this shape before the
+        # pipeline sees it).
+        from src.core.protocols.agent_event import AgentResultEvent
 
-        # Make receive_response return the result message
-        async def mock_receive() -> AsyncGenerator[MagicMock, None]:
-            yield result_message
+        result_event = AgentResultEvent(
+            session_id="test-session-123",
+            is_error=False,
+            subtype="result",
+            result="Fixed!",
+        )
+
+        async def mock_receive() -> AsyncGenerator[AgentResultEvent, None]:
+            yield result_event
 
         mock_client.receive_response = mock_receive
         mock_sdk_client_factory.create.return_value = mock_client
@@ -297,13 +301,17 @@ class TestFixerInterruptHandling:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.query = AsyncMock()
 
-        result_message = MagicMock()
-        result_message.__class__.__name__ = "ResultMessage"
-        type(result_message).__name__ = "ResultMessage"
-        result_message.result = "Fixed!"
+        from src.core.protocols.agent_event import AgentResultEvent
 
-        async def mock_receive() -> AsyncGenerator[MagicMock, None]:
-            yield result_message
+        result_event = AgentResultEvent(
+            session_id="",
+            is_error=False,
+            subtype="result",
+            result="Fixed!",
+        )
+
+        async def mock_receive() -> AsyncGenerator[AgentResultEvent, None]:
+            yield result_event
 
         mock_client.receive_response = mock_receive
         mock_sdk_client_factory.create.return_value = mock_client

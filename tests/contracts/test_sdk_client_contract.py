@@ -91,50 +91,50 @@ class TestFakeSDKClientBehavior:
 
     @pytest.mark.unit
     async def test_receive_response_yields_messages(self) -> None:
-        """receive_response() yields configured messages without SDK dependency."""
-        msg1 = {"type": "text", "content": "Hello"}
-        msg2 = {"type": "text", "content": "World"}
-        # Set result_message=None to avoid SDK import in unit test
+        """receive_response() yields configured ``AgentEvent``s without SDK dependency."""
+        from src.core.protocols.agent_event import AgentTextEvent
+
+        msg1 = AgentTextEvent(text="Hello")
+        msg2 = AgentTextEvent(text="World")
+        # Set result_message=None to suppress the default terminal event
         client = FakeSDKClient(messages=[msg1, msg2], result_message=None)
 
         messages = []
         async for msg in client.receive_response():
             messages.append(msg)
 
-        # Should have only configured messages (no ResultMessage)
         assert len(messages) == 2
         assert messages[0] == msg1
         assert messages[1] == msg2
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     async def test_receive_response_yields_default_result_message(self) -> None:
-        """receive_response() yields default ResultMessage when not configured.
+        """receive_response() yields a default ``AgentResultEvent`` when not configured."""
+        from src.core.protocols.agent_event import AgentResultEvent
 
-        Note: Marked as integration test because it requires claude_agent_sdk import.
-        """
         client = FakeSDKClient(messages=[])
 
         messages = []
         async for msg in client.receive_response():
             messages.append(msg)
 
-        # Should have one default ResultMessage
         assert len(messages) == 1
-        assert hasattr(messages[0], "subtype")
+        assert isinstance(messages[0], AgentResultEvent)
         assert messages[0].subtype == "result"
 
     @pytest.mark.unit
     async def test_receive_response_no_result_when_explicitly_none(self) -> None:
-        """receive_response() yields no ResultMessage when result_message=None."""
-        client = FakeSDKClient(messages=[{"type": "text"}], result_message=None)
+        """receive_response() yields no terminal event when result_message=None."""
+        from src.core.protocols.agent_event import AgentTextEvent
+
+        only_event = AgentTextEvent(text="hi")
+        client = FakeSDKClient(messages=[only_event], result_message=None)
 
         messages = []
         async for msg in client.receive_response():
             messages.append(msg)
 
-        # Should only have the configured message, no ResultMessage
-        assert len(messages) == 1
-        assert messages[0] == {"type": "text"}
+        assert messages == [only_event]
 
     @pytest.mark.unit
     async def test_disconnect_sets_flag(self) -> None:

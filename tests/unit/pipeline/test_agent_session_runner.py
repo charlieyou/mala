@@ -66,12 +66,23 @@ class FakeReviewResult:
     interrupted: bool = False
 
 
-@dataclass
-class ResultMessage:
-    """Minimal SDK result message recognized by MessageStreamProcessor."""
+def ResultMessage(session_id: str, result: str = "done") -> object:
+    """Construct a terminal ``AgentResultEvent`` for AgentSessionRunner tests.
 
-    session_id: str
-    result: str = "done"
+    Production wrapping (``_ClaudeAgentEventClient`` in
+    ``src.infra.sdk_adapter``) translates Anthropic ``ResultMessage`` into
+    this event before the pipeline sees it; tests yield it directly so the
+    stream processor can extract ``session_id`` / ``result`` without
+    depending on the Claude SDK shape.
+    """
+    from src.core.protocols.agent_event import AgentResultEvent
+
+    return AgentResultEvent(
+        session_id=session_id,
+        is_error=False,
+        subtype="result",
+        result=result,
+    )
 
 
 @dataclass

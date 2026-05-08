@@ -226,15 +226,13 @@ class IdleTimeoutRetryPolicy:
                         )
                     await client.query(pending_query)
 
-                    # Translate provider stream to AgentEvents, then wrap with
-                    # idle timeout handling. Amp emits AgentEvents directly;
-                    # the Anthropic SDK emits class-shaped messages that the
-                    # translator flattens.
-                    from src.core.protocols.agent_event import to_agent_events
-
-                    event_stream = to_agent_events(client.receive_response())
+                    # Wrap the provider's AgentEvent stream with idle timeout
+                    # handling. Both Claude (via the wrapped SDK client in
+                    # ``src.infra.sdk_adapter``) and Amp emit ``AgentEvent``s
+                    # directly, so no translation is needed at the pipeline
+                    # layer.
                     stream = IdleTimeoutStream(
-                        event_stream,
+                        client.receive_response(),
                         idle_timeout_seconds,
                         state.pending_tool_ids,
                     )

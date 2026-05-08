@@ -228,9 +228,11 @@ class FixerService:
                         session_id=None if is_amp_provider else agent_id,
                     )
 
-                    from src.core.protocols.agent_event import to_agent_events
-
-                    async for event in to_agent_events(client.receive_response()):
+                    # Both Claude (wrapped SDK client in
+                    # ``src.infra.sdk_adapter``) and Amp emit ``AgentEvent``s
+                    # directly, so the fixer iterates them without any
+                    # translation step.
+                    async for event in client.receive_response():
                         # Check for interrupt between events
                         if guard.is_interrupted():
                             return FixerResult(

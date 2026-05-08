@@ -16,6 +16,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Self
 
+from src.core.protocols.agent_event import AgentResultEvent
 from src.core.protocols.sdk import SDKClientFactoryProtocol, SDKClientProtocol
 
 if TYPE_CHECKING:
@@ -24,20 +25,16 @@ if TYPE_CHECKING:
 
 
 def _make_default_result_message() -> object:
-    """Create a default ResultMessage for completing SDK response iteration.
+    """Create a default terminal ``AgentResultEvent`` for response iteration.
 
-    Imports claude_agent_sdk lazily to avoid import errors in environments
-    where the SDK is not installed.
+    Returns the cross-coder event directly so the fake mirrors production
+    wrapped SDK clients (which emit ``AgentEvent`` values from
+    ``receive_response``) without depending on ``claude_agent_sdk``.
     """
-    from claude_agent_sdk import ResultMessage
-
-    return ResultMessage(
-        subtype="result",
-        duration_ms=0,
-        duration_api_ms=0,
-        is_error=False,
-        num_turns=1,
+    return AgentResultEvent(
         session_id="fake-session",
+        subtype="result",
+        is_error=False,
         result=None,
     )
 
@@ -105,20 +102,27 @@ class FakeSDKClient(SDKClientProtocol):
             raise self.query_error
 
     async def receive_response(self) -> AsyncIterator[Any]:
-        """Yield configured messages, then result_message.
+        """Yield configured messages, then ``result_message``.
 
-        If result_message was not configured, yields a default ResultMessage.
-        If result_message was explicitly set to None, yields nothing after messages.
+        Tests pass whatever shape they need: ``AgentEvent`` values for the
+        coder-agnostic pipeline path, or Anthropic-shaped messages
+        (``MagicMock`` / ``AssistantMessage`` / ``ResultMessage``) for
+        Claude-private callers (e.g. ``AgentSDKReviewer``). The fake never
+        rewrites the shape — production wrapping (``_ClaudeAgentEventClient``)
+        only happens on the real Claude pipeline factory path.
+
+        If ``result_message`` was not configured, yields the default
+        terminal :class:`AgentResultEvent` so pipeline consumers see a
+        recognised event without a ``claude_agent_sdk`` import.
+        If ``result_message`` is explicitly ``None``, nothing terminal is
+        yielded (protocol edge case).
         """
         for msg in self.messages:
             yield msg
         if self.result_message is _NO_RESULT_MESSAGE:
-            # Default: yield a minimal ResultMessage to complete iteration
             yield _make_default_result_message()
         elif self.result_message is not None:
-            # Explicitly configured result message
             yield self.result_message
-        # If result_message is None, end without ResultMessage (protocol edge case)
 
     async def disconnect(self) -> None:
         """Mark client as disconnected, optionally with delay."""

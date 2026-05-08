@@ -13,10 +13,14 @@ Design principles:
 - Factory pattern enables dependency injection and testing
 - TYPE_CHECKING imports for SDK types avoid runtime dependency
 
-The Anthropic-message → ``AgentEvent`` translator lives in
-:mod:`src.core.protocols.agent_event` (``to_agent_events``); the pipeline
-imports it from there to satisfy the "SDK confined to infra" contract,
-since ``src.pipeline`` cannot transitively reach ``claude_agent_sdk``.
+The Claude pipeline path returns a :class:`_ClaudeAgentEventClient`
+wrapper whose ``receive_response()`` emits coder-agnostic
+:class:`AgentEvent` values directly, mirroring
+:meth:`AmpClient.receive_response` and removing the per-call translation
+that previously lived in the pipeline. Claude-private callers that pass
+bare ``ClaudeAgentOptions`` (e.g. :class:`AgentSDKReviewer`, which
+consumes Anthropic ``ResultMessage`` fields like ``structured_output``
+directly) still receive the unwrapped SDK client.
 """
 
 from __future__ import annotations
@@ -24,7 +28,48 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+    from types import TracebackType
+    from typing import Self
+
+    from src.core.protocols.agent_event import AgentEventValue
     from src.core.protocols.sdk import SDKClientProtocol
+
+
+class _ClaudeAgentEventClient:
+    """Wrap :class:`ClaudeSDKClient` so ``receive_response()`` emits ``AgentEvent``s.
+
+    The pipeline only iterates ``receive_response()``; every other
+    method delegates verbatim to the inner SDK client so context-manager
+    entry/exit, ``query``, and ``disconnect`` retain their original
+    Anthropic-SDK semantics.
+    """
+
+    def __init__(self, inner: SDKClientProtocol) -> None:
+        self._inner = inner
+
+    async def __aenter__(self) -> Self:
+        await self._inner.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        await self._inner.__aexit__(exc_type, exc_val, exc_tb)
+
+    async def query(self, prompt: str, session_id: str | None = None) -> None:
+        await self._inner.query(prompt, session_id)
+
+    def receive_response(self) -> AsyncIterator[AgentEventValue]:
+        from src.core.protocols.agent_event import to_agent_events
+
+        return to_agent_events(self._inner.receive_response())
+
+    async def disconnect(self) -> None:
+        await self._inner.disconnect()
 
 
 class SDKClientFactory:
@@ -62,18 +107,30 @@ class SDKClientFactory:
                 convenience preserved here.
 
         Returns:
-            SDKClientProtocol wrapping a ClaudeSDKClient.
+            SDKClientProtocol. For pipeline (``AgentRuntime``) callers,
+            this is a :class:`_ClaudeAgentEventClient` wrapping a
+            ``ClaudeSDKClient`` so ``receive_response()`` yields
+            ``AgentEvent`` values directly. For Claude-private bare
+            ``ClaudeAgentOptions`` callers, the underlying
+            ``ClaudeSDKClient`` is returned unwrapped so they can
+            consume Anthropic-shaped ``ResultMessage`` fields
+            (``structured_output``, etc.) that have no AgentEvent
+            counterpart.
         """
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient  # noqa: TC002
+        from src.infra.agent_runtime import AgentRuntime
         from src.infra.sdk_transport import ensure_sigint_isolated_cli_transport
 
         options = getattr(runtime, "options", runtime)
 
         ensure_sigint_isolated_cli_transport()
-        return cast(
+        raw_client = cast(
             "SDKClientProtocol",
             ClaudeSDKClient(options=cast("ClaudeAgentOptions", options)),
         )
+        if isinstance(runtime, AgentRuntime):
+            return cast("SDKClientProtocol", _ClaudeAgentEventClient(raw_client))
+        return raw_client
 
     def create_options(
         self,
