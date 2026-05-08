@@ -99,10 +99,11 @@ _UNRESOLVED_SENTINEL = "<unresolved-write-target>"
 # heuristic does not need its actual value.
 _ANSI_C_PLACEHOLDER = "__MALA_ANSI_C_LITERAL__"
 
-# Placeholder emitted in place of a backtick command-substitution body.
-# Backtick bodies are extracted and processed as their own segments via
-# ``_extract_backtick_bodies`` before the main heuristic runs.
-_BACKTICK_PLACEHOLDER = "__MALA_BACKTICK_LITERAL__"
+# Placeholder emitted in place of a command-substitution body (either
+# legacy ```...``` or modern ``$(...)``). Bodies are extracted and
+# processed as their own segments via ``_extract_command_substitutions``
+# before the main heuristic runs.
+_CMDSUB_PLACEHOLDER = "__MALA_CMDSUB_LITERAL__"
 
 # Shell reserved words that introduce a compound-command body but are
 # never themselves a command word. ``_split_segments`` produces segments
@@ -321,6 +322,130 @@ def _strip_env_assignments(tokens: list[str]) -> list[str]:
     return tokens[i:]
 
 
+# POSIX execution wrappers that prefix the real command. Without
+# unwrapping, ``env touch unowned`` / ``sudo cp src dst`` /
+# ``command rm -rf foo`` are seen by the extractors as commands
+# named ``env`` / ``sudo`` / ``command`` and the inner mutating
+# utility is silently allowed.
+_EXECUTION_PREFIXES = frozenset(
+    {
+        "env",
+        "command",
+        "exec",
+        "sudo",
+        "doas",
+        "nice",
+        "nohup",
+        "timeout",
+        "stdbuf",
+        "ionice",
+        "chrt",
+        "taskset",
+        "setsid",
+        "unshare",
+    }
+)
+
+# Per-wrapper short-flag letters that consume the next token as a value.
+# Used by ``_unwrap_execution_prefix`` so ``sudo -u root touch f``
+# (where ``-u`` takes ``root`` as its value) does not treat ``root`` as
+# the inner command.
+_WRAPPER_VALUE_LETTERS: dict[str, frozenset[str]] = {
+    "env": frozenset({"u", "S", "C"}),
+    "sudo": frozenset({"u", "g", "h", "p", "A", "C", "D", "T", "U", "r", "t"}),
+    "doas": frozenset({"u", "C"}),
+    "exec": frozenset({"a"}),
+    "nice": frozenset({"n"}),
+    "stdbuf": frozenset({"i", "o", "e"}),
+    "ionice": frozenset({"c", "n", "p"}),
+    "chrt": frozenset({"p"}),
+    "taskset": frozenset({"p", "c"}),
+    "timeout": frozenset({"s", "k"}),
+    "unshare": frozenset({"u", "U"}),
+}
+
+
+def _command_basename_str(token: str) -> str:
+    """Return the basename of a single token (``/usr/bin/env`` → ``env``)."""
+    return os.path.basename(token) if token else token
+
+
+def _skip_wrapper_flag_args(tokens: list[str], wrapper: str) -> list[str]:
+    """Skip leading flag tokens (and their values) for ``wrapper``.
+
+    Returns the suffix of ``tokens`` starting at the first non-flag
+    token. Per-wrapper value-flag tables ensure ``sudo -u root cmd``
+    consumes ``root`` as the value of ``-u`` rather than treating it
+    as the inner command.
+    """
+    value_letters = _WRAPPER_VALUE_LETTERS.get(wrapper, frozenset())
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if not tok.startswith("-") or tok == "-":
+            break
+        if tok == "--":
+            # End-of-options marker; the next token is the cmd.
+            i += 1
+            break
+        # Long form ``--name=value``: token includes its value.
+        if tok.startswith("--") and "=" in tok:
+            i += 1
+            continue
+        # Long form ``--name VALUE``: heuristic — assume next token is
+        # the value unless it also starts with ``-``. Conservative
+        # over-skip here biases toward correctness for common flags.
+        if tok.startswith("--"):
+            if i + 1 < len(tokens) and not tokens[i + 1].startswith("-"):
+                i += 2
+                continue
+            i += 1
+            continue
+        # Short bundle. Look for any value-taking letter.
+        body = tok[1:]
+        consumed_value = False
+        for j, ch in enumerate(body):
+            if ch in value_letters:
+                if j == len(body) - 1:
+                    # Bundle ends with value-letter: next token is
+                    # the value (if not itself a flag).
+                    if i + 1 < len(tokens):
+                        consumed_value = True
+                # Else: rest of bundle is the attached value, no
+                # next-token consumption.
+                break
+        i += 2 if consumed_value else 1
+    return tokens[i:]
+
+
+def _unwrap_execution_prefix(tokens: list[str]) -> list[str]:
+    """Strip leading execution-wrapper prefixes recursively.
+
+    Walks past ``env``/``sudo``/``exec``/``command``/``nohup``/``timeout``/
+    etc., their flag args, and (for ``env``-style wrappers) leading
+    ``KEY=VALUE`` env-assignments, until the first token is the real
+    command. Loops to handle nested wrappers (``sudo env touch f``).
+    """
+    iterations = 0
+    while tokens and iterations < 10:
+        cmd = _command_basename_str(tokens[0])
+        if cmd not in _EXECUTION_PREFIXES:
+            break
+        new_tokens = tokens[1:]
+        new_tokens = _skip_wrapper_flag_args(new_tokens, cmd)
+        # Wrappers that allow ``KEY=VALUE`` before the inner cmd.
+        if cmd in {"env", "sudo", "doas"}:
+            new_tokens = _strip_env_assignments(new_tokens)
+        # ``timeout DURATION cmd`` — drop the duration positional.
+        if cmd == "timeout" and new_tokens:
+            new_tokens = new_tokens[1:]
+        if not new_tokens:
+            break
+        tokens = new_tokens
+        iterations += 1
+    return tokens
+
+
 def _strip_leading_reserved(tokens: list[str]) -> list[str]:
     """Drop leading shell reserved words (``if``/``then``/``do``/...).
 
@@ -335,21 +460,28 @@ def _strip_leading_reserved(tokens: list[str]) -> list[str]:
     return tokens
 
 
-def _extract_backtick_bodies(command: str) -> tuple[str, list[str]]:
-    """Replace backtick command substitutions with a placeholder.
+def _extract_command_substitutions(command: str) -> tuple[str, list[str]]:
+    """Replace ```...``` and ``$(...)`` with a placeholder, returning bodies.
 
     Returns ``(cleaned, bodies)`` — ``cleaned`` is the input string with
-    every ```body``` replaced by ``_BACKTICK_PLACEHOLDER``, and
-    ``bodies`` is the list of extracted body strings. Backticks inside
-    single quotes (``'...'``) are preserved verbatim — bash treats
-    them literally there. Inside double quotes, backticks still trigger
-    command substitution, so they ARE extracted.
+    every command-substitution block replaced by ``_CMDSUB_PLACEHOLDER``,
+    and ``bodies`` is the list of extracted body strings. Both legacy
+    backticks and modern ``$()`` substitutions are pulled out so the
+    inner command is processed by the recursive ``_extract_shell_write_paths``
+    call.
 
-    Without this preprocessing, ``echo `touch unowned```
-    tokenises with the backticks left attached (``['echo', '`touch',
-    'unowned`']``) and the inner ``touch`` is never seen by any
-    extractor — a documented standard shell-execution form, not a
-    residual obfuscation gap.
+    Inside single quotes (``'...'``) substitutions are preserved verbatim
+    — bash treats them literally there. Inside double quotes both forms
+    still trigger command substitution and ARE extracted.
+
+    ``$((arith))`` (arithmetic expansion) is detected by a leading
+    ``$((`` and skipped intact so its inner ``(`` / ``)`` don't confuse
+    the cmd-substitution body parser.
+
+    Without this preprocessing, ``echo `touch unowned``` and
+    ``echo "$(touch unowned)"`` would leave the inner ``touch`` invisible
+    to every extractor — both are standard shell-execution forms, not
+    residual obfuscation gaps.
     """
     out: list[str] = []
     bodies: list[str] = []
@@ -363,6 +495,7 @@ def _extract_backtick_bodies(command: str) -> tuple[str, list[str]]:
             out.append(command[i + 1])
             i += 2
             continue
+        # Legacy backtick command substitution.
         if c == "`" and quote != "'":
             j = i + 1
             while j < n:
@@ -374,10 +507,75 @@ def _extract_backtick_bodies(command: str) -> tuple[str, list[str]]:
                 j += 1
             if j < n:
                 bodies.append(command[i + 1 : j])
-                out.append(_BACKTICK_PLACEHOLDER)
+                out.append(_CMDSUB_PLACEHOLDER)
                 i = j + 1
                 continue
-            # Unmatched backtick: leave as literal.
+            # Unmatched: fall through.
+        # ``$(...)`` command substitution / ``$((...))`` arithmetic.
+        if c == "$" and quote != "'" and i + 1 < n and command[i + 1] == "(":
+            if i + 2 < n and command[i + 2] == "(":
+                # ``$(( arith ))`` — pass through verbatim by counting
+                # ``(`` / ``)`` balance from depth 2.
+                depth = 2
+                j = i + 3
+                inner_quote: str | None = None
+                while j < n and depth > 0:
+                    cj = command[j]
+                    if cj == "\\" and j + 1 < n and inner_quote != "'":
+                        j += 2
+                        continue
+                    if inner_quote is not None:
+                        if cj == inner_quote:
+                            inner_quote = None
+                        j += 1
+                        continue
+                    if cj in ('"', "'"):
+                        inner_quote = cj
+                        j += 1
+                        continue
+                    if cj == "(":
+                        depth += 1
+                    elif cj == ")":
+                        depth -= 1
+                    j += 1
+                if depth == 0:
+                    out.append(command[i:j])
+                    i = j
+                    continue
+                # Unmatched: fall through.
+            else:
+                # ``$( cmd )`` — find matching close paren, respecting
+                # nesting and quote state inside the body.
+                depth = 1
+                j = i + 2
+                inner_quote = None
+                while j < n and depth > 0:
+                    cj = command[j]
+                    if cj == "\\" and j + 1 < n and inner_quote != "'":
+                        j += 2
+                        continue
+                    if inner_quote is not None:
+                        if cj == inner_quote:
+                            inner_quote = None
+                        j += 1
+                        continue
+                    if cj in ('"', "'"):
+                        inner_quote = cj
+                        j += 1
+                        continue
+                    if cj == "(":
+                        depth += 1
+                    elif cj == ")":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    j += 1
+                if depth == 0:
+                    bodies.append(command[i + 2 : j])
+                    out.append(_CMDSUB_PLACEHOLDER)
+                    i = j + 1
+                    continue
+                # Unmatched: fall through.
         if quote is not None:
             out.append(c)
             if c == quote:
@@ -1375,37 +1573,76 @@ def _normalize_separators(command: str) -> str:
     return "".join(out)
 
 
-def _extract_shell_write_paths(command: str) -> list[str]:
+def _command_contains_cd(cleaned: str) -> bool:
+    """Cheap pre-scan: does ``cleaned`` contain a ``cd <dir>`` segment?
+
+    Used to propagate the cd-cwd-change effect into nested
+    command-substitution bodies. Without this propagation, a recursive
+    call on a backtick / ``$()`` body would not know the parent
+    pipeline already ran a ``cd``, and a relative write inside the
+    body would be lock-checked against the original payload ``cwd``.
+    """
+    try:
+        normalized = _normalize_separators(cleaned)
+        tokens = shlex.split(normalized, posix=True, comments=False)
+    except ValueError:
+        return False
+    for seg in _split_segments(tokens):
+        stripped = _strip_env_assignments(seg)
+        stripped = _strip_leading_reserved(stripped)
+        stripped = _unwrap_execution_prefix(stripped)
+        if stripped and _command_basename(stripped) == "cd":
+            return True
+    return False
+
+
+def _extract_shell_write_paths(
+    command: str, *, outer_cd_seen: bool = False
+) -> list[str]:
     """Apply the heuristic table to ``command`` and return all write targets.
 
     Best-effort: shlex parse errors return an empty list (the dangerous-
     command and disallowed-tool checks still run). Callers decide whether
     to deny based on the targets returned.
 
+    ``outer_cd_seen`` is used by recursive calls on command-substitution
+    bodies. If the parent pipeline ran a ``cd`` before the substitution,
+    the body's relative writes inherit that cwd change; the body
+    extractor runs with ``cd_seen`` pre-set so its relative targets are
+    treated as unresolved.
+
     Pre-processing:
 
-    1. Backtick command substitutions are extracted and processed
-       recursively. ``echo `touch unowned``` would otherwise leave the
-       inner ``touch`` invisible to every extractor.
+    1. Command substitutions (```...``` and ``$(...)``) are extracted
+       and processed recursively. ``echo `touch unowned``` and
+       ``echo "$(touch unowned)"`` would otherwise leave the inner
+       ``touch`` invisible to every extractor.
     2. The remainder is run through ``_normalize_separators`` to expose
        control operators that ``shlex.split`` would otherwise glue to
        adjacent tokens.
 
     Per-segment processing:
 
-    1. Leading env-assignments and reserved words (``then``/``do``/...)
-       are stripped so the extractor sees the real command word.
+    1. Leading env-assignments, reserved words (``then``/``do``/...),
+       and execution-wrapper prefixes (``env``/``sudo``/``exec``/...)
+       are stripped/unwrapped so the extractor sees the real command
+       word.
     2. ``cd <dir>`` segments mark all subsequent segments as
        cwd-changed; relative write targets after a ``cd`` are emitted
        as ``_UNRESOLVED_SENTINEL`` so the lock-check fails closed —
        the heuristic cannot reliably re-resolve relative paths once
        the shell's cwd has shifted.
     """
-    cleaned, backtick_bodies = _extract_backtick_bodies(command)
+    cleaned, sub_bodies = _extract_command_substitutions(command)
+
+    # If the outer pipeline already changed cwd, OR the cleaned outer
+    # command itself runs a cd, propagate that into the recursive
+    # processing of substitution bodies.
+    bodies_cd_seen = outer_cd_seen or _command_contains_cd(cleaned)
 
     out: list[str] = []
-    for body in backtick_bodies:
-        out.extend(_extract_shell_write_paths(body))
+    for body in sub_bodies:
+        out.extend(_extract_shell_write_paths(body, outer_cd_seen=bodies_cd_seen))
 
     normalized = _normalize_separators(cleaned)
     try:
@@ -1414,10 +1651,11 @@ def _extract_shell_write_paths(command: str) -> list[str]:
         # Unbalanced quotes etc. — fall through; other checks still apply.
         return out
 
-    cd_seen = False
+    cd_seen = outer_cd_seen
     for segment_raw in _split_segments(tokens):
         segment = _strip_env_assignments(segment_raw)
         segment = _strip_leading_reserved(segment)
+        segment = _unwrap_execution_prefix(segment)
         # Redirection scans the full segment regardless of cmd word.
         seg_targets: list[str] = list(_extract_redirection_targets(segment))
         if not segment:

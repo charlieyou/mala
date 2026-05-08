@@ -2187,3 +2187,180 @@ class TestBacktickCommandSubstitution:
         command = f"echo `touch {target}`"
         result = decide(make_payload("bash", {"command": command}))
         assert is_allow(result), result
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 8)
+# ---------------------------------------------------------------------------
+
+
+class TestExecutionWrappers:
+    """Regression: ``env``/``sudo``/``exec``/``command``/etc. wrap inner commands.
+
+    Before the fix, ``env touch unowned.py`` was dispatched with cmd
+    basename ``env``; no extractor matched and the unowned write was
+    silently allowed. Per AC #19, every shell-invoked write must be
+    lock-checked regardless of the wrapper used to invoke it.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "env touch {target}",
+            "env -i touch {target}",
+            "env FOO=bar touch {target}",
+            "env -u SECRET touch {target}",
+            "command touch {target}",
+            "command -p touch {target}",
+            "exec touch {target}",
+            "exec -a name touch {target}",
+            "sudo touch {target}",
+            "sudo -u root touch {target}",
+            "sudo FOO=bar touch {target}",
+            "nice touch {target}",
+            "nice -n 10 touch {target}",
+            "nohup touch {target}",
+            "timeout 5s touch {target}",
+            "timeout -s INT 5s touch {target}",
+            # Nested: sudo env touch
+            "sudo env touch {target}",
+            # Path-qualified wrapper
+            "/usr/bin/env touch {target}",
+        ],
+    )
+    def test_wrapper_inner_write_denied(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+    def test_wrapper_inner_allowed_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "out.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(
+            make_payload("bash", {"command": f"sudo -u root touch {target}"})
+        )
+        assert is_allow(result), result
+
+
+class TestDollarParenSubstitution:
+    """Regression: ``"$(touch f)"`` (command sub inside double quotes).
+
+    Before the fix, ``$()`` was only split into segments via the ``(``/
+    ``)`` separator path, which is bypassed inside double quotes. An
+    agent could ``echo "$(touch unowned.py)"`` and the inner ``touch``
+    was never seen because shlex returned ``$(touch unowned.py)`` as a
+    single token. ``$()`` is now extracted alongside backticks via
+    ``_extract_command_substitutions`` regardless of quote state.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            'echo "$(touch {target})"',
+            "echo $(touch {target})",
+            'x="$(touch {target})"',
+            # Nested $() inside $()
+            'echo "$(echo $(touch {target}))"',
+            # Mixed with backtick
+            'echo "`touch {target}`"',
+            # Inside single quotes — literal, NOT executed (covered below).
+        ],
+    )
+    def test_dollar_paren_inner_write_denied(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+    def test_dollar_paren_in_single_quotes_is_literal(
+        self, env: dict[str, str]
+    ) -> None:
+        # Inside single quotes, ``$()`` is literal — bash does NOT
+        # execute the inner command. The hook must NOT extract a write
+        # target.
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": "echo 'literal $(touch foo) text'"},
+            )
+        )
+        assert is_allow(result), result
+
+    def test_arithmetic_expansion_not_extracted(self, env: dict[str, str]) -> None:
+        # ``$((arith))`` is arithmetic, NOT command substitution. The
+        # body has no command to execute and must not be misclassified.
+        result = decide(make_payload("bash", {"command": "echo $((1 + 2))"}))
+        assert is_allow(result), result
+
+
+class TestOuterCdAffectsSubstitutions:
+    """Regression: ``cd pkg && echo `touch f``` (or ``$(touch f)``).
+
+    Backtick / ``$()`` subshells inherit the parent's current
+    directory. Before the fix, the recursive call to extract write
+    targets from the substitution body did not know that an outer
+    ``cd`` had already run, so the body's relative ``f`` was lock-
+    checked against the original payload ``cwd`` — letting an agent
+    holding the parent-level lock silently write to the unowned
+    subdirectory file.
+    """
+
+    def test_outer_cd_invalidates_backtick_relative(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        sub = repo / "pkg"
+        sub.mkdir()
+        # Lock root-level f.txt (would be matched if hook ignored cd).
+        assert try_lock(str(repo / "f.txt"), "agent-me", repo_namespace=str(repo))
+        command = "cd pkg && echo `touch f.txt`"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        # The cd invalidates resolution; touch in backtick body should
+        # also be flagged unresolved → deny.
+        assert is_deny(result), result
+
+    def test_outer_cd_invalidates_dollar_paren_relative(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        sub = repo / "pkg"
+        sub.mkdir()
+        assert try_lock(str(repo / "f.txt"), "agent-me", repo_namespace=str(repo))
+        command = "cd pkg && echo $(touch f.txt)"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+    def test_outer_cd_then_absolute_in_backtick_allowed(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # An ABSOLUTE path inside the backtick body is unambiguous;
+        # the hook should still allow it when the agent holds the lock.
+        target = repo / "out.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"cd /tmp && echo `touch {target}`"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_allow(result), result
+
+    def test_no_outer_cd_backtick_relative_resolves_normally(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Sanity: without an outer cd, relative paths inside backticks
+        # resolve against the payload cwd as before.
+        target = repo / "out.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = "echo `touch out.txt`"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_allow(result), result
