@@ -1801,19 +1801,42 @@ _PYTHON_PATH_WRITE_RE = re.compile(
     r"""Path\s*\(\s*(['"])([^'"]+)\1\s*\)\s*\.\s*write_(?:text|bytes)"""
 )
 _NODE_FS_WRITE_RE = re.compile(
-    r"""fs\.(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)\s*\(\s*(['"])([^'"]+)\1"""
+    # Boundary-aware bare-call match: ``writeFile``-family calls
+    # whether bound as ``fs.writeFile`` (CommonJS), ``writeFile`` (ESM
+    # ``import { writeFile } from 'node:fs'``), or via an arbitrary
+    # alias (``const fsp = require('fs/promises'); fsp.writeFile``).
+    # The leading ``(?:^|[^a-zA-Z0-9_$])`` allows the call to be
+    # preceded by ``.``, ``)``, whitespace, or ``;`` — i.e., any
+    # context that ends a JS identifier — without matching against
+    # an unrelated identifier whose suffix is ``writeFile`` (e.g.,
+    # ``myWriteFile``, ``customWriteFile``).
+    r"""(?:^|[^a-zA-Z0-9_$])"""
+    r"""(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)"""
+    r"""\s*\(\s*(['"])([^'"]+)\1"""
 )
-# ``require('fs').writeFileSync('path','x')`` — equivalent literal write
-# form that does not bind ``fs`` to a separate identifier. Without this
-# regex, ``node -e "require('fs').writeFileSync('unowned','x')"`` is a
-# static-target write but produces zero matches and is silently allowed.
-# Also covers the promise-based API (``require('fs/promises')``,
-# ``require('node:fs/promises')``) since ``fs/promises`` exposes the
-# same ``writeFile``/``appendFile`` write surface.
+# ``require('fs').writeFileSync('path','x')`` — kept as a defense-in-
+# depth match alongside ``_NODE_FS_WRITE_RE``. The bare-call regex
+# above already catches this form (matched on the ``).writeFile`` part);
+# this regex makes the require-chain intent explicit and covers
+# promise-based variants ``require('fs/promises')`` and
+# ``require('node:fs/promises')``.
 _NODE_REQUIRE_FS_WRITE_RE = re.compile(
     r"""require\s*\(\s*['"](?:node:)?fs(?:/promises)?['"]\s*\)\s*\.\s*"""
     r"""(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)"""
     r"""\s*\(\s*(['"])([^'"]+)\1"""
+)
+# ``fs.openSync('p', 'w')`` / ``openSync('p', 'wx')`` — file open with a
+# write-mode flag. Read-only ``openSync('p', 'r')`` is NOT a write
+# surface and is intentionally not matched. The flag char class
+# requires at least one of ``[wax+]`` so ``'r'`` alone fails to match
+# while any of ``w``/``wx``/``w+``/``a``/``ax``/``a+``/``r+``/``as``/
+# ``as+``/``wx+``/``ax+`` (all write-capable, per Node's fs flag
+# table) matches. Bare-call form covers ESM
+# ``import { openSync } from 'node:fs'`` bindings.
+_NODE_OPENSYNC_WRITE_RE = re.compile(
+    r"""(?:^|[^a-zA-Z0-9_$])openSync\s*\(\s*"""
+    r"""(['"])([^'"]+)\1\s*,\s*"""
+    r"""(['"])[waxrs+]*[wax+][waxrs+]*\3"""
 )
 _RUBY_WRITE_RE = re.compile(
     r"""(?:File\.(?:write|open)|IO\.write)\s*\(\s*(['"])([^'"]+)\1"""
@@ -1834,12 +1857,9 @@ _NODE_WRITE_HINTS = (
     "fs.writeFile",
     "fs.appendFile",
     "fs.createWriteStream",
-    # ``require('fs')`` and ``require("fs")`` — also covers
+    # CommonJS: ``require('fs')`` / ``require("fs")``, also
     # ``require('node:fs')`` and the promise-based variant
-    # ``require('fs/promises')`` (and its ``node:`` form). Without the
-    # ``/promises`` hints, ``node -e "const fsp=require('fs/promises');
-    # fsp.writeFile('/repo/unlocked','x')"`` produced zero matches and
-    # was silently allowed.
+    # ``require('fs/promises')`` (and its ``node:`` form).
     "require('fs')",
     'require("fs")',
     "require('node:fs')",
@@ -1848,6 +1868,38 @@ _NODE_WRITE_HINTS = (
     'require("fs/promises")',
     "require('node:fs/promises')",
     'require("node:fs/promises")',
+    # ESM static imports: ``import ... from 'fs'`` / ``from 'node:fs'``
+    # / ``from 'fs/promises'`` / ``from 'node:fs/promises'``. Without
+    # these hints, ``node --input-type=module -e "import { writeFile }
+    # from 'node:fs'; writeFile(dyn, 'x')"`` (with a non-literal
+    # target) bypassed the gate — no regex matched and no hint
+    # triggered the unresolved-sentinel deny.
+    "from 'fs'",
+    'from "fs"',
+    "from 'node:fs'",
+    'from "node:fs"',
+    "from 'fs/promises'",
+    'from "fs/promises"',
+    "from 'node:fs/promises'",
+    'from "node:fs/promises"',
+    # ESM dynamic imports: ``await import('fs')`` and friends.
+    "import('fs')",
+    'import("fs")',
+    "import('node:fs')",
+    'import("node:fs")',
+    "import('fs/promises')",
+    'import("fs/promises")',
+    "import('node:fs/promises')",
+    'import("node:fs/promises")',
+)
+# Regex hint for ``openSync`` calls with a write-mode flag where the
+# literal target is not statically extractable. Without this hint, an
+# agent could write ``fs.openSync(dyn, 'w')`` (dynamic target) and
+# bypass the gate. Read-only ``openSync(p, 'r')`` is NOT matched —
+# the flag char class requires at least one ``[wax+]``.
+_NODE_OPENSYNC_WRITE_HINT_RE = re.compile(
+    r"""(?:^|[^a-zA-Z0-9_$])openSync\s*\([^)]*?"""
+    r"""(['"])[waxrs+]*[wax+][waxrs+]*\1"""
 )
 _RUBY_WRITE_HINTS = (
     "File.write",
@@ -1994,7 +2046,11 @@ def _extract_oneliner_targets(tokens: list[str]) -> list[str]:
     if cmd in {"node", "nodejs"}:
         out.extend(m.group(2) for m in _NODE_FS_WRITE_RE.finditer(body))
         out.extend(m.group(2) for m in _NODE_REQUIRE_FS_WRITE_RE.finditer(body))
-        if not out and any(hint in body for hint in _NODE_WRITE_HINTS):
+        out.extend(m.group(2) for m in _NODE_OPENSYNC_WRITE_RE.finditer(body))
+        if not out and (
+            any(hint in body for hint in _NODE_WRITE_HINTS)
+            or _NODE_OPENSYNC_WRITE_HINT_RE.search(body) is not None
+        ):
             out.append(_UNRESOLVED_SENTINEL)
         return out
     if cmd == "ruby":
@@ -2028,16 +2084,43 @@ _GIT_GLOBAL_VALUE_FLAGS = frozenset(
 )
 
 
+def _compose_git_chdir(prev: str | None, value: str) -> str | None:
+    """Apply a single ``git -C <value>`` to the previously-composed path.
+
+    Per ``git --help`` / ``man git`` ("Run as if git was started in
+    <path>"): when multiple ``-C`` options are given, each subsequent
+    non-absolute path is interpreted relative to the preceding one; an
+    absolute path discards the previous value; an empty path is a
+    no-op.
+
+    Without composition, ``git -C pkg -C sub checkout file.py``
+    overwrote ``chdir_value`` with ``sub`` and the heuristic resolved
+    pathspecs against ``$cwd/sub/`` while git actually wrote into
+    ``$cwd/pkg/sub/``. An agent holding only ``$cwd/sub/file.py``
+    could mutate the unowned nested file under ``$cwd/pkg/sub/``.
+    """
+    if value == "":
+        return prev
+    if os.path.isabs(value):
+        return value
+    if prev is None:
+        return value
+    return os.path.join(prev, value)
+
+
 def _find_git_subcommand_info(
     tokens: list[str],
 ) -> tuple[int | None, str | None]:
     """Return ``(subcommand_index, -C_dir)`` for a git invocation.
 
-    Skips global options before the subcommand. Captures the value of
-    ``-C dir`` / ``--git-dir`` / ``--work-tree=`` so the caller can
-    resolve subcommand pathspecs against the right directory:
-    ``git -C pkg checkout file.py`` writes ``pkg/file.py``, NOT
-    ``file.py`` resolved against the original cwd.
+    Skips global options before the subcommand. Composes repeated
+    ``-C dir`` options cumulatively (per ``git`` semantics — see
+    ``_compose_git_chdir``). For ``--git-dir`` / ``--work-tree``,
+    keeps the last-set value (these flags do not compose; the last
+    one wins) so the caller can resolve subcommand pathspecs against
+    the right directory. ``git -C pkg checkout file.py`` writes
+    ``pkg/file.py``; ``git -C pkg -C sub checkout file.py`` writes
+    ``pkg/sub/file.py``.
     """
     chdir_value: str | None = None
     i = 1
@@ -2049,13 +2132,18 @@ def _find_git_subcommand_info(
         if tok.startswith("--") and "=" in tok:
             name, value = tok.split("=", 1)
             if name in {"--work-tree", "--git-dir"} and value:
+                # ``--work-tree`` / ``--git-dir`` do not compose; the
+                # last value wins.
                 chdir_value = value
             i += 1
             continue
         if tok in _GIT_GLOBAL_VALUE_FLAGS:
             if i + 1 < len(tokens):
-                if tok in {"-C", "--work-tree", "--git-dir"}:
-                    chdir_value = tokens[i + 1]
+                value = tokens[i + 1]
+                if tok == "-C":
+                    chdir_value = _compose_git_chdir(chdir_value, value)
+                elif tok in {"--work-tree", "--git-dir"}:
+                    chdir_value = value
                 i += 2
                 continue
             i += 1

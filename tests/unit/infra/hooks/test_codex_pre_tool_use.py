@@ -4756,3 +4756,193 @@ class TestBsdSedEmptySuffix:
         result = decide(make_payload("bash", {"command": command}))
         assert is_deny(result), result
         assert "data.txt" in deny_reason(result)
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 4 — P1 findings)
+# ---------------------------------------------------------------------------
+
+
+class TestNodeEsmImportBypass:
+    """Regression: ESM ``import { X } from 'node:fs'`` bindings must
+    surface to the heuristic's write-detection.
+
+    Before the fix, ``_NODE_FS_WRITE_RE`` required the ``fs.`` method-
+    chain prefix and the hint table only knew about ``require()``
+    forms. ``node --input-type=module -e "import { writeFileSync }
+    from 'node:fs'; writeFileSync('unowned', 'x')"`` matched no
+    regex and triggered no hint, so ``write_targets`` was empty and
+    ``decide()`` returned allow.
+    """
+
+    @pytest.mark.parametrize(
+        ("import_form", "module_quote"),
+        [
+            # Static named imports.
+            ("import { writeFileSync } from", "'"),
+            ("import { writeFileSync } from", '"'),
+            # Default import.
+            ("import fs from", "'"),
+            # Namespace import.
+            ("import * as fs from", "'"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "module_name",
+        ["fs", "node:fs", "fs/promises", "node:fs/promises"],
+    )
+    def test_esm_import_with_literal_target_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        import_form: str,
+        module_quote: str,
+        module_name: str,
+    ) -> None:
+        target = repo / "unlocked.txt"
+        # Build the body. For default and namespace imports use
+        # ``fs.writeFileSync``; for the named import use bare
+        # ``writeFileSync``.
+        if "{" in import_form:
+            call = f"writeFileSync('{target}','x')"
+        else:
+            call = f"fs.writeFileSync('{target}','x')"
+        body = f"{import_form} {module_quote}{module_name}{module_quote}; {call}"
+        command = f'node --input-type=module -e "{body}"'
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+        assert "unlocked.txt" in deny_reason(result)
+
+    def test_esm_import_with_dynamic_target_denies_via_hint(
+        self,
+        env: dict[str, str],
+        repo: Path,
+    ) -> None:
+        # Dynamic target — the literal-target regex cannot extract it,
+        # but the ``from 'node:fs'`` hint must trigger the
+        # unresolved-sentinel deny.
+        body = "import { writeFileSync } from 'node:fs'; writeFileSync(p, 'x')"
+        command = f'node --input-type=module -e "{body}"'
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+
+class TestNodeOpenSyncWrite:
+    """Regression: ``fs.openSync(path, 'w')`` must be detected.
+
+    Before the fix, the Node detector only looked for
+    ``writeFile``/``appendFile``/``createWriteStream`` and only
+    fell back to unresolved-deny for those hints. A standard
+    write-open such as ``fs.openSync('/repo/unlocked.txt', 'w')``
+    matched no regex and no hint, so the gate allowed it even
+    though ``openSync`` with a write-mode flag creates/truncates
+    the file.
+    """
+
+    @pytest.mark.parametrize(
+        "flag",
+        ["w", "wx", "w+", "a", "ax", "a+", "r+"],
+    )
+    def test_opensync_write_flag_with_literal_target_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        flag: str,
+    ) -> None:
+        target = repo / "unlocked.txt"
+        body = f"const fs=require('fs'); fs.openSync('{target}','{flag}')"
+        command = f'node -e "{body}"'
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+        assert "unlocked.txt" in deny_reason(result)
+
+    def test_esm_bare_opensync_write_denies(
+        self,
+        env: dict[str, str],
+        repo: Path,
+    ) -> None:
+        # ESM ``import { openSync } from 'node:fs'`` binds openSync
+        # directly. The bare-call regex with the write-mode check
+        # must still extract the literal target.
+        target = repo / "unlocked.txt"
+        body = f"import {{ openSync }} from 'node:fs'; openSync('{target}','w')"
+        command = f'node --input-type=module -e "{body}"'
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+    def test_opensync_write_flag_with_dynamic_target_denies_via_hint(
+        self,
+        env: dict[str, str],
+        repo: Path,
+    ) -> None:
+        # Dynamic target ``p`` — the literal regex cannot extract,
+        # but the openSync write-flag hint regex catches the call
+        # shape and triggers unresolved-sentinel deny.
+        body = "import { openSync } from 'node:fs'; openSync(p,'w')"
+        command = f'node --input-type=module -e "{body}"'
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+
+class TestGitChdirComposition:
+    """Regression: repeated ``git -C dir`` options must compose.
+
+    Per ``git`` semantics, multiple ``-C`` options accumulate: each
+    subsequent non-absolute ``-C`` is interpreted relative to the
+    preceding one; an absolute ``-C`` resets; an empty ``-C ""`` is
+    a no-op. Before the fix, ``_find_git_subcommand_info`` overwrote
+    ``chdir_value`` on each ``-C``, so ``git -C pkg -C sub checkout
+    file.py`` lock-checked ``$cwd/sub/file.py`` while git actually
+    wrote ``$cwd/pkg/sub/file.py``. An agent holding only
+    ``$cwd/sub/file.py`` could mutate the unowned nested file under
+    ``$cwd/pkg/sub/``.
+    """
+
+    def test_repeated_relative_dash_c_composes(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Lock only the wrong path the buggy parser would have
+        # picked: ``$repo/sub/file.py``. Pre-fix ALLOW; post-fix
+        # DENY because git actually writes ``$repo/pkg/sub/file.py``.
+        wrong = repo / "sub" / "file.py"
+        wrong.parent.mkdir(parents=True)
+        assert try_lock(str(wrong), "agent-me", repo_namespace=str(repo))
+        command = "git -C pkg -C sub checkout file.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+        # The deny reason must mention the *composed* path, not the
+        # wrong one.
+        reason = deny_reason(result)
+        assert "pkg/sub/file.py" in reason
+
+    def test_composed_path_lock_allows(self, env: dict[str, str], repo: Path) -> None:
+        # Sanity: locking the *composed* path lets the write through.
+        composed = repo / "pkg" / "sub" / "file.py"
+        composed.parent.mkdir(parents=True)
+        assert try_lock(str(composed), "agent-me", repo_namespace=str(repo))
+        command = "git -C pkg -C sub checkout file.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_allow(result), result
+
+    def test_absolute_dash_c_resets(self, env: dict[str, str], repo: Path) -> None:
+        # ``git -C pkg -C /abs checkout f`` discards ``pkg`` and
+        # resolves ``f`` relative to the absolute path. With the
+        # absolute path under tmp ``repo``, the resolved write is
+        # ``$abs/file.py``.
+        abs_dir = repo / "abs"
+        abs_dir.mkdir()
+        target = abs_dir / "file.py"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"git -C pkg -C {abs_dir} checkout file.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_allow(result), result
+
+    def test_empty_dash_c_is_noop(self, env: dict[str, str], repo: Path) -> None:
+        # ``git -C pkg -C '' checkout f`` keeps ``pkg`` and resolves
+        # to ``$cwd/pkg/file.py``.
+        target = repo / "pkg" / "file.py"
+        target.parent.mkdir(parents=True)
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = "git -C pkg -C '' checkout file.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_allow(result), result
