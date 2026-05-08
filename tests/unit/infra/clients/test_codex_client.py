@@ -19,8 +19,10 @@ Coverage:
     calls reuse the existing thread.
   * Resume: a runtime carrying ``resume_thread_id`` triggers
     ``thread_resume`` rather than ``thread_start`` (AC #8 partial).
-  * ``receive_response`` yields raw notifications from
-    ``TurnHandle.stream()`` verbatim (Phase D translates them).
+  * ``receive_response`` consumes ``TurnHandle.stream()`` and emits
+    coder-agnostic :class:`AgentEvent`s for the Phase C surface
+    (text deltas, ``turn/completed``, ``error``); Phase D extends the
+    item-level mappings.
   * ``disconnect`` calls ``TurnHandle.interrupt`` and the SDK
     ``__aexit__`` exactly once across repeat calls.
   * ``session_id`` reflects the started thread's id.
@@ -32,15 +34,22 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 import pytest
+
+from src.core.protocols.agent_event import (
+    AgentResultEvent,
+    AgentTextEvent,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from types import ModuleType
     from typing import Self
 
+    from src.core.protocols.agent_event import AgentEventValue
     from src.infra.clients.codex_runtime import CodexRuntime
 
 
@@ -402,16 +411,38 @@ async def test_query_before_aenter_raises(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# receive_response — yields raw notifications from TurnHandle.stream()
+# receive_response — emits AgentEvents from TurnHandle.stream() (Phase C AC-1)
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class _FakeNotification:
+    """Stand-in for ``codex_app_server.models.Notification``.
+
+    The real SDK ``Notification`` dataclass exposes ``method`` (string,
+    e.g. ``"item/agentMessage/delta"``) and ``payload`` (typed Pydantic
+    model, e.g. :class:`AgentMessageDeltaNotification`). The adapter in
+    :mod:`src.infra.clients.codex_client` only reads attributes by name,
+    so this minimal shape is sufficient.
+    """
+
+    method: str
+    payload: object
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_receive_response_yields_turn_stream_notifications(
+async def test_receive_response_maps_notifications_to_agent_events(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Phase C: notifications pass through verbatim. Phase D wraps them."""
+    """Phase C AC-1: ``receive_response`` emits :class:`AgentEvent` values.
+
+    Mirrors the plan's mapping table (``plans/2026-05-07-codex-provider-plan.md``
+    L746-L762) for the Phase C surface: ``item/agentMessage/delta`` →
+    :class:`AgentTextEvent`; ``turn/completed`` → :class:`AgentResultEvent`
+    with ``is_error`` derived from ``TurnStatus``. Phase D (T011) extends
+    the dispatch with the item-level mappings.
+    """
     from src.infra.clients.codex_client import CodexClient
 
     fake_codex = _install_fake_sdk(monkeypatch)
@@ -419,19 +450,186 @@ async def test_receive_response_yields_turn_stream_notifications(
     thread = _FakeThread(id="thr_stream")
     fake_codex.next_thread = thread
 
-    sentinel_notifications: list[object] = [
-        {"type": "agent_message_delta", "delta": "hi"},
-        {"type": "turn_completed", "status": "completed"},
+    notifications: list[object] = [
+        _FakeNotification(
+            method="item/agentMessage/delta",
+            payload=SimpleNamespace(
+                delta="hi",
+                item_id="item_1",
+                thread_id="thr_stream",
+                turn_id="turn_1",
+            ),
+        ),
+        _FakeNotification(
+            method="turn/completed",
+            payload=SimpleNamespace(
+                thread_id="thr_stream",
+                turn=SimpleNamespace(
+                    id="turn_1",
+                    status=SimpleNamespace(value="completed"),
+                    error=None,
+                ),
+            ),
+        ),
     ]
 
     async with CodexClient(runtime) as client:
         await client.query("stream test")
-        # Inject the notifications into the turn handle the fake created.
-        thread.turn_handles[0].notifications.extend(sentinel_notifications)
-        received: list[object] = []
-        async for note in client.receive_response():
-            received.append(note)
-        assert received == sentinel_notifications
+        thread.turn_handles[0].notifications.extend(notifications)
+        received: list[AgentEventValue] = []
+        async for event in client.receive_response():
+            received.append(event)
+
+    assert len(received) == 2
+    text_event = received[0]
+    assert isinstance(text_event, AgentTextEvent)
+    assert text_event.text == "hi"
+    assert text_event.kind == "text"
+
+    result_event = received[1]
+    assert isinstance(result_event, AgentResultEvent)
+    assert result_event.session_id == "thr_stream"
+    assert result_event.is_error is False
+    assert result_event.subtype == "completed"
+    assert result_event.kind == "result"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_receive_response_maps_failed_turn_to_error_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``turn/completed`` with non-``completed`` status surfaces as an error.
+
+    Without this, a Codex turn that ``TurnStatus.failed`` would close the
+    pipeline cleanly and the orchestrator would treat the run as a
+    success — masking provider failures (plan ``L761`` D6).
+    """
+    from src.infra.clients.codex_client import CodexClient
+
+    fake_codex = _install_fake_sdk(monkeypatch)
+    runtime = _build_runtime(tmp_path)
+    thread = _FakeThread(id="thr_failed")
+    fake_codex.next_thread = thread
+
+    failed_notification = _FakeNotification(
+        method="turn/completed",
+        payload=SimpleNamespace(
+            thread_id="thr_failed",
+            turn=SimpleNamespace(
+                id="turn_1",
+                status=SimpleNamespace(value="failed"),
+                error=SimpleNamespace(message="boom"),
+            ),
+        ),
+    )
+
+    async with CodexClient(runtime) as client:
+        await client.query("doomed turn")
+        thread.turn_handles[0].notifications.append(failed_notification)
+        received: list[AgentEventValue] = []
+        async for event in client.receive_response():
+            received.append(event)
+
+    assert len(received) == 1
+    result_event = received[0]
+    assert isinstance(result_event, AgentResultEvent)
+    assert result_event.is_error is True
+    assert result_event.subtype == "completed"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_receive_response_maps_error_notification_to_result_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``ErrorNotification`` becomes ``AgentResultEvent(is_error=True)``.
+
+    Plan ``L762`` D7: classify the error as a terminal failure so the
+    lifecycle does not stall on the missing ``turn/completed``.
+    """
+    from src.infra.clients.codex_client import CodexClient
+
+    fake_codex = _install_fake_sdk(monkeypatch)
+    runtime = _build_runtime(tmp_path)
+    thread = _FakeThread(id="thr_error")
+    fake_codex.next_thread = thread
+
+    error_payload = SimpleNamespace(message="429 rate limited")
+    error_notification = _FakeNotification(
+        method="error",
+        payload=SimpleNamespace(
+            error=error_payload,
+            thread_id="thr_error",
+            turn_id="turn_1",
+            will_retry=False,
+        ),
+    )
+
+    async with CodexClient(runtime) as client:
+        await client.query("rate-limited turn")
+        thread.turn_handles[0].notifications.append(error_notification)
+        received: list[AgentEventValue] = []
+        async for event in client.receive_response():
+            received.append(event)
+
+    assert len(received) == 1
+    result_event = received[0]
+    assert isinstance(result_event, AgentResultEvent)
+    assert result_event.is_error is True
+    assert result_event.subtype == "error"
+    assert result_event.session_id == "thr_error"
+    assert result_event.result is error_payload
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_receive_response_drops_unmapped_phase_d_notifications(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item-level + reasoning notifications are dropped until Phase D lands.
+
+    The pipeline must not crash on notification kinds the Phase C
+    surface doesn't yet map (``item/started``, ``item/completed``,
+    ``item/reasoning/delta``, ...). Phase D (T011) extends the dispatch.
+    """
+    from src.infra.clients.codex_client import CodexClient
+
+    fake_codex = _install_fake_sdk(monkeypatch)
+    runtime = _build_runtime(tmp_path)
+    thread = _FakeThread(id="thr_phase_d")
+    fake_codex.next_thread = thread
+
+    notifications: list[object] = [
+        _FakeNotification(
+            method="item/started",
+            payload=SimpleNamespace(
+                item=SimpleNamespace(id="item_1", type="commandExecution"),
+                thread_id="thr_phase_d",
+                turn_id="turn_1",
+            ),
+        ),
+        _FakeNotification(
+            method="item/reasoning/text/delta",
+            payload=SimpleNamespace(delta="thinking..."),
+        ),
+        _FakeNotification(
+            method="item/agentMessage/delta",
+            payload=SimpleNamespace(delta="hello"),
+        ),
+    ]
+
+    async with CodexClient(runtime) as client:
+        await client.query("phase d preview")
+        thread.turn_handles[0].notifications.extend(notifications)
+        received: list[AgentEventValue] = []
+        async for event in client.receive_response():
+            received.append(event)
+
+    # Only the agentMessage/delta survives the Phase C dispatch.
+    assert len(received) == 1
+    assert isinstance(received[0], AgentTextEvent)
+    assert received[0].text == "hello"
 
 
 @pytest.mark.unit

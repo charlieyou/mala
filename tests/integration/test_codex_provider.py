@@ -1,4 +1,4 @@
-"""Integration test: provider → runtime → client → fake notification stream (T010).
+"""Integration test: provider → runtime → client → AgentEvent stream (T010).
 
 Smokes the full Phase C wiring path with a fake ``codex_app_server``
 module installed via ``sys.modules``. Asserts that:
@@ -9,9 +9,9 @@ module installed via ``sys.modules``. Asserts that:
     :class:`CodexClient` bound to that runtime.
   * ``async with CodexClient(runtime)`` enters the SDK context and
     ``query()`` issues a fake ``thread_start`` + turn whose
-    notifications stream out unchanged through ``receive_response``
-    (Phase D / T011 wraps the raw stream into ``AgentEvent``s; this
-    test verifies the lifecycle wiring without that wrapping).
+    notifications are mapped to :class:`AgentEvent` values through
+    ``receive_response`` (Phase C AC-1, plan C3); Phase D (T011)
+    extends the adapter with item-level mappings.
 
 The fake SDK is intentionally minimal — the unit suite in
 ``tests/unit/infra/clients/test_codex_client.py`` covers fan-out
@@ -24,10 +24,12 @@ from __future__ import annotations
 import sys
 import types
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from src.core.protocols.agent_event import AgentResultEvent, AgentTextEvent
 from src.infra.clients.codex_provider import CodexAgentProvider
 from src.infra.clients.codex_runtime import CodexRuntime
 
@@ -36,6 +38,8 @@ if TYPE_CHECKING:
     from pathlib import Path
     from types import ModuleType
     from typing import Self
+
+    from src.core.protocols.agent_event import AgentEventValue
 
 
 @dataclass
@@ -139,15 +143,41 @@ def _empty_factory() -> Callable[..., dict[str, object]]:
     return factory
 
 
+@dataclass
+class _FakeNotification:
+    """Stand-in for ``codex_app_server.models.Notification`` (``method`` + ``payload``)."""
+
+    method: str
+    payload: object
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_provider_runtime_client_end_to_end_smoke(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Provider → runtime → client → fake notification stream."""
+    """Provider → runtime → client → AgentEvent stream (Phase C AC-1)."""
     seeded: list[object] = [
-        {"type": "agent_message_delta", "delta": "hi"},
-        {"type": "turn_completed", "status": "completed"},
+        _FakeNotification(
+            method="item/agentMessage/delta",
+            payload=SimpleNamespace(
+                delta="hi",
+                item_id="item_1",
+                thread_id="thr_integration",
+                turn_id="turn_1",
+            ),
+        ),
+        _FakeNotification(
+            method="turn/completed",
+            payload=SimpleNamespace(
+                thread_id="thr_integration",
+                turn=SimpleNamespace(
+                    id="turn_1",
+                    status=SimpleNamespace(value="completed"),
+                    error=None,
+                ),
+            ),
+        ),
     ]
     fake_codex = _install_fake_codex_app_server(
         monkeypatch, seeded_notifications=seeded
@@ -170,11 +200,14 @@ async def test_provider_runtime_client_end_to_end_smoke(
     }
 
     client = provider.client_factory.create(runtime)
-    received: list[object] = []
+    received: list[AgentEventValue] = []
     async with client:
         await client.query("smoke prompt")
-        async for note in client.receive_response():
-            received.append(note)
+        async for event in client.receive_response():
+            # ``SDKClientProtocol.receive_response`` is typed as
+            # ``AsyncIterator[object]`` for cross-coder generality;
+            # ``CodexClient`` narrows it to ``AsyncIterator[AgentEventValue]``.
+            received.append(cast("AgentEventValue", event))
         assert client.session_id == "thr_integration"  # ty:ignore[unresolved-attribute]
 
     # Lifecycle: thread_start fired with runtime params, no resume,
@@ -204,7 +237,15 @@ async def test_provider_runtime_client_end_to_end_smoke(
     assert config.env is not None
     assert config.env.get("MALA_AGENT_ID") == "agent-x"
     assert fake_codex.resumed_ids == []
-    assert received == seeded
+    assert len(received) == 2
+    text_event = received[0]
+    assert isinstance(text_event, AgentTextEvent)
+    assert text_event.text == "hi"
+    result_event = received[1]
+    assert isinstance(result_event, AgentResultEvent)
+    assert result_event.session_id == "thr_integration"
+    assert result_event.is_error is False
+    assert result_event.subtype == "completed"
     assert fake_codex.exit_calls == 1
 
 
