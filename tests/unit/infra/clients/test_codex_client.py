@@ -81,33 +81,51 @@ class _FakeThread:
     id: str
     turn_handles: list[_FakeTurnHandle] = field(default_factory=list)
     turn_inputs: list[_FakeTextInput] = field(default_factory=list)
+    turn_kwargs: list[dict[str, object]] = field(default_factory=list)
 
-    async def turn(self, text_input: _FakeTextInput) -> _FakeTurnHandle:
+    async def turn(
+        self, text_input: _FakeTextInput, **kwargs: object
+    ) -> _FakeTurnHandle:
         handle = _FakeTurnHandle()
         self.turn_handles.append(handle)
         self.turn_inputs.append(text_input)
+        self.turn_kwargs.append(dict(kwargs))
         return handle
+
+
+@dataclass
+class _FakeAppServerConfig:
+    """Stand-in for ``codex_app_server.AppServerConfig``.
+
+    The real SDK dataclass exposes ``codex_bin``, ``cwd``, ``env``, etc.
+    Tests assert on these fields after :class:`CodexClient.__aenter__`
+    constructs the config.
+    """
+
+    codex_bin: str | None = None
+    cwd: str | None = None
+    env: dict[str, str] | None = None
 
 
 @dataclass
 class _FakeAsyncCodex:
     """Stand-in for ``codex_app_server.AsyncCodex``.
 
-    Tracks every kwarg passed to the constructor, every ``thread_start``
-    /  ``thread_resume`` invocation, and the close lifecycle so tests can
-    assert on observable behavior (the issue's plan calls for the
-    cancellation path to interrupt the active turn and close
-    ``AsyncCodex`` exactly once).
+    The real SDK constructor is ``AsyncCodex(config=AppServerConfig(...))``.
+    Tracks the config, every ``thread_start`` / ``thread_resume``
+    invocation, and the close lifecycle so tests can assert on
+    observable behavior (the issue's plan calls for the cancellation
+    path to interrupt the active turn and close ``AsyncCodex`` exactly
+    once).
     """
 
-    init_kwargs: dict[str, object]
+    config: _FakeAppServerConfig | None = None
     threads_started: list[dict[str, object]] = field(default_factory=list)
     threads_resumed: list[str] = field(default_factory=list)
     enter_calls: int = 0
     exit_calls: int = 0
     next_thread: _FakeThread | None = None
     resumed_thread: _FakeThread | None = None
-    accept_env_kwarg: bool = True
 
     async def __aenter__(self) -> Self:
         self.enter_calls += 1
@@ -132,33 +150,30 @@ class _FakeAsyncCodex:
         return self.resumed_thread
 
 
-def _install_fake_sdk(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    accept_env_kwarg: bool = True,
-) -> _FakeAsyncCodex:
+def _install_fake_sdk(monkeypatch: pytest.MonkeyPatch) -> _FakeAsyncCodex:
     """Insert a fake ``codex_app_server`` module into ``sys.modules``.
 
     Returns the singleton :class:`_FakeAsyncCodex` the fake module's
     ``AsyncCodex`` factory will hand out, so tests can assert on the
-    captured kwargs / thread-start / interrupt / close calls.
-
-    The ``accept_env_kwarg`` toggle exercises the
-    ``CodexClient.__aenter__`` fallback that retries without ``env=``
-    when the SDK rejects the kwarg (Phase B/C spike contingency).
+    captured config / thread-start / interrupt / close calls.
     """
     import types
 
-    fake_codex = _FakeAsyncCodex(init_kwargs={}, accept_env_kwarg=accept_env_kwarg)
+    fake_codex = _FakeAsyncCodex()
 
-    def async_codex_factory(**kwargs: object) -> _FakeAsyncCodex:
-        if "env" in kwargs and not accept_env_kwarg:
-            raise TypeError("AsyncCodex() got unexpected keyword argument 'env'")
-        fake_codex.init_kwargs = dict(kwargs)
+    def async_codex_factory(
+        config: _FakeAppServerConfig | None = None, **kwargs: object
+    ) -> _FakeAsyncCodex:
+        if kwargs:
+            raise TypeError(
+                f"AsyncCodex() got unexpected keyword argument {next(iter(kwargs))!r}"
+            )
+        fake_codex.config = config
         return fake_codex
 
     fake_module: ModuleType = types.ModuleType("codex_app_server")
     fake_module.AsyncCodex = async_codex_factory  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
+    fake_module.AppServerConfig = _FakeAppServerConfig  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
     fake_module.TextInput = _FakeTextInput  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
     monkeypatch.setitem(sys.modules, "codex_app_server", fake_module)
     return fake_codex
@@ -224,10 +239,18 @@ print('PASS')
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_aenter_constructs_async_codex_with_runtime_env(
+async def test_aenter_constructs_async_codex_with_runtime_env_and_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``__aenter__`` lazy-constructs ``AsyncCodex`` with ``env=runtime.env``."""
+    """``__aenter__`` constructs ``AsyncCodex(config=AppServerConfig(...))``.
+
+    The real SDK shape (``codex_app_server.AsyncCodex.__init__``,
+    ``codex_app_server/api.py:291``) takes a single ``config`` arg with
+    the per-process env / cwd overlay on
+    :class:`AppServerConfig`. Without the env overlay, the bundled
+    Phase E hook would see no ``MALA_AGENT_ID`` and deny every shell
+    write fail-closed.
+    """
     from src.infra.clients.codex_client import CodexClient
 
     fake_codex = _install_fake_sdk(monkeypatch)
@@ -235,35 +258,33 @@ async def test_aenter_constructs_async_codex_with_runtime_env(
 
     async with CodexClient(runtime) as client:
         assert fake_codex.enter_calls == 1
-        # ``env`` kwarg passes the runtime's per-process env dict so the
-        # SDK can plumb ``MALA_*`` to its subprocess if it supports it.
-        assert "env" in fake_codex.init_kwargs
-        env_obj = fake_codex.init_kwargs["env"]
-        assert isinstance(env_obj, dict)
-        env_dict = cast("dict[str, str]", env_obj)
+        config = fake_codex.config
+        assert config is not None
+        assert config.cwd == str(tmp_path)
+        assert config.env is not None
+        env_dict = cast("dict[str, str]", config.env)
         assert env_dict["MALA_AGENT_ID"] == "agent-x"
+        assert env_dict["MALA_REPO_NAMESPACE"] == str(tmp_path)
         assert client is not None
     assert fake_codex.exit_calls == 1
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_aenter_falls_back_when_sdk_rejects_env_kwarg(
+async def test_aenter_honors_codex_binary_env_var(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When the SDK does not accept ``env=``, fall back to ``AsyncCodex()``.
-
-    Phase B/C spike contingency: the per-session state-file fallback
-    (Phase E) covers env propagation if the SDK rejects ``env=``.
-    """
+    """``CODEX_BINARY`` env var is plumbed through ``AppServerConfig.codex_bin``."""
     from src.infra.clients.codex_client import CodexClient
 
-    fake_codex = _install_fake_sdk(monkeypatch, accept_env_kwarg=False)
+    fake_codex = _install_fake_sdk(monkeypatch)
+    monkeypatch.setenv("CODEX_BINARY", "/opt/codex/bin/codex")
     runtime = _build_runtime(tmp_path)
 
     async with CodexClient(runtime):
-        assert fake_codex.enter_calls == 1
-        assert "env" not in fake_codex.init_kwargs
+        config = fake_codex.config
+        assert config is not None
+        assert config.codex_bin == "/opt/codex/bin/codex"
 
 
 # ---------------------------------------------------------------------------
@@ -278,11 +299,13 @@ async def test_query_starts_thread_with_runtime_settings(
 ) -> None:
     """``query(prompt)`` calls ``thread_start`` with runtime params + a turn.
 
-    Regression coverage for the Phase C reviewer findings: ``effort`` and
-    ``cwd`` from :class:`CodexRuntime` must reach ``thread_start`` so the
-    user-configured Codex effort (``MalaConfig.coder_options.codex.effort``)
-    is honored and the thread runs against the orchestrated repo path
-    rather than wherever the SDK app-server happened to be launched.
+    Regression coverage for Phase C reviewer findings: ``cwd`` from
+    :class:`CodexRuntime` must reach ``thread_start``; ``effort`` is
+    per-turn (lives on :meth:`AsyncThread.turn`, not ``thread_start``);
+    ``mcp_servers`` must NOT be passed to ``thread_start`` because the
+    real SDK signature does not accept it (``codex_app_server/api.py:336``)
+    — MCP servers ship through the bundled Codex plugin's
+    ``.mcp.json`` (Phase G3).
     """
     from src.infra.clients.codex_client import CodexClient
 
@@ -295,16 +318,17 @@ async def test_query_starts_thread_with_runtime_settings(
         assert len(fake_codex.threads_started) == 1
         kwargs = fake_codex.threads_started[0]
         assert kwargs["model"] == "gpt-5.5"
-        assert kwargs["effort"] == "medium"
         assert kwargs["sandbox"] == "danger-full-access"
         assert kwargs["approval_policy"] == "never"
-        assert kwargs["mcp_servers"] == {
-            "mala-locking": {"command": "mala-codex-mcp-locking"}
-        }
         assert kwargs["cwd"] == str(tmp_path)
+        # SDK shape contract — these MUST NOT be on thread_start.
+        assert "effort" not in kwargs
+        assert "mcp_servers" not in kwargs
         assert fake_codex.threads_resumed == []
         assert fake_codex.next_thread.turn_handles  # turn was issued
         assert fake_codex.next_thread.turn_inputs[0].prompt == "hello world"
+        # ``effort`` is forwarded per-turn instead.
+        assert fake_codex.next_thread.turn_kwargs[0].get("effort") == "medium"
         assert client.session_id == "thr_started"
 
 

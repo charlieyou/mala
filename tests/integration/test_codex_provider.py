@@ -60,15 +60,26 @@ class _FakeTurnHandle:
 class _FakeThread:
     id: str
     seeded_notifications: list[object] = field(default_factory=list)
+    turn_kwargs: list[dict[str, object]] = field(default_factory=list)
 
-    async def turn(self, text_input: _FakeTextInput) -> _FakeTurnHandle:
+    async def turn(
+        self, text_input: _FakeTextInput, **kwargs: object
+    ) -> _FakeTurnHandle:
         del text_input
+        self.turn_kwargs.append(dict(kwargs))
         return _FakeTurnHandle(notifications=list(self.seeded_notifications))
 
 
 @dataclass
+class _FakeAppServerConfig:
+    codex_bin: str | None = None
+    cwd: str | None = None
+    env: dict[str, str] | None = None
+
+
+@dataclass
 class _FakeAsyncCodex:
-    init_kwargs: dict[str, object]
+    config: _FakeAppServerConfig | None = None
     started_kwargs: list[dict[str, object]] = field(default_factory=list)
     resumed_ids: list[str] = field(default_factory=list)
     fixed_thread: _FakeThread | None = None
@@ -99,17 +110,20 @@ def _install_fake_codex_app_server(
     *,
     seeded_notifications: list[object],
 ) -> _FakeAsyncCodex:
-    fake_codex = _FakeAsyncCodex(init_kwargs={})
+    fake_codex = _FakeAsyncCodex()
     fake_codex.fixed_thread = _FakeThread(
         id="thr_integration", seeded_notifications=seeded_notifications
     )
 
-    def async_codex_factory(**kwargs: object) -> _FakeAsyncCodex:
-        fake_codex.init_kwargs = dict(kwargs)
+    def async_codex_factory(
+        config: _FakeAppServerConfig | None = None,
+    ) -> _FakeAsyncCodex:
+        fake_codex.config = config
         return fake_codex
 
     fake_module: ModuleType = types.ModuleType("codex_app_server")
     fake_module.AsyncCodex = async_codex_factory  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
+    fake_module.AppServerConfig = _FakeAppServerConfig  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
     fake_module.TextInput = _FakeTextInput  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
     monkeypatch.setitem(sys.modules, "codex_app_server", fake_module)
     return fake_codex
@@ -164,18 +178,31 @@ async def test_provider_runtime_client_end_to_end_smoke(
         assert client.session_id == "thr_integration"  # ty:ignore[unresolved-attribute]
 
     # Lifecycle: thread_start fired with runtime params, no resume,
-    # AsyncCodex closed exactly once on context exit. ``effort`` and
-    # ``cwd`` are explicitly asserted here because the Phase C reviewer
-    # flagged silent drops as P1/P2 — they must round-trip from
-    # ``MalaConfig.coder_options.codex.effort`` and from the orchestrated
-    # ``repo_path`` into ``thread_start``.
+    # AsyncCodex closed exactly once on context exit. SDK-shape contract
+    # (codex_app_server/api.py:336): ``thread_start`` accepts ``model``,
+    # ``approval_policy``, ``sandbox``, ``cwd``, ``base_instructions``;
+    # NOT ``effort`` (which is per-turn) and NOT ``mcp_servers``
+    # (which ships through the bundled Codex plugin's .mcp.json in
+    # Phase G3). The runtime-supplied env + cwd land on
+    # ``AppServerConfig`` instead.
     assert len(fake_codex.started_kwargs) == 1
     started = fake_codex.started_kwargs[0]
     assert started["model"] == "gpt-5.5-foo"
-    assert started["effort"] == "medium"
     assert started["sandbox"] == "danger-full-access"
     assert started["approval_policy"] == "never"
     assert started["cwd"] == str(tmp_path)
+    assert "effort" not in started
+    assert "mcp_servers" not in started
+    # ``effort`` is per-turn.
+    assert fake_codex.fixed_thread is not None
+    assert fake_codex.fixed_thread.turn_kwargs[0].get("effort") == "medium"
+    # AppServerConfig carried the per-process env so the Phase E hook
+    # can authenticate the agent.
+    config = fake_codex.config
+    assert config is not None
+    assert config.cwd == str(tmp_path)
+    assert config.env is not None
+    assert config.env.get("MALA_AGENT_ID") == "agent-x"
     assert fake_codex.resumed_ids == []
     assert received == seeded
     assert fake_codex.exit_calls == 1

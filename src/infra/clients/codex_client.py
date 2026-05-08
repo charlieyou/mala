@@ -110,30 +110,37 @@ class CodexClient:
     async def __aenter__(self) -> Self:
         """Lazy-construct ``AsyncCodex`` and enter its async context.
 
-        The lazy import is the lazy-import contract pivot point: any
-        caller that reaches here must have ``codex_app_server``
-        importable. Callers that want to test the wiring without the SDK
-        installed inject a fake module via ``sys.modules`` before this
-        call (see ``tests/unit/infra/clients/test_codex_client.py``).
+        The real SDK shape is ``AsyncCodex(config: AppServerConfig | None)``,
+        with the per-process env overlay living on
+        ``AppServerConfig.env`` (see ``codex_app_server/api.py:291`` and
+        ``client.py:125``). We bundle the runtime's per-process env dict
+        plus the orchestrated repo cwd into the config so the spawned
+        ``codex app-server`` subprocess inherits ``MALA_AGENT_ID`` /
+        ``MALA_REPO_NAMESPACE`` (parity with the Amp path's posture in
+        ``AmpRuntimeBuilder.build``, plan ``L815``). Without this, the
+        Phase E ``mala-codex-pre-tool-use`` hook would see the missing
+        ``MALA_AGENT_ID`` and deny every shell write fail-closed.
+
+        ``CODEX_BINARY`` is honored when set so users can point at an
+        external ``codex`` binary; otherwise the SDK's bundled
+        ``codex_cli_bin`` resolution applies (see the spike's
+        ``_resolve_codex_bin`` helper in
+        ``tests/spike/test_codex_thread_read_evidence.py``).
         """
+        import os
+
         from codex_app_server import (  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]
+            AppServerConfig,
             AsyncCodex,
         )
 
-        # ``AsyncCodex()`` accepts an optional ``env`` overlay per the
-        # plan's per-process env isolation contract; the runtime carries
-        # the per-process env dict ready for that path. The exact
-        # constructor argument name is confirmed by the Phase B/C spike
-        # (plan ``L1317``) — for Phase C we pass the env opportunistically
-        # via a kwarg the SDK will expose, and fall back to constructing
-        # ``AsyncCodex()`` without it if the SDK doesn't accept it (the
-        # Phase E state-file fallback covers the missing-env case).
-        try:
-            self._codex = AsyncCodex(env=dict(self._runtime.env))
-        except TypeError:
-            # SDK does not accept ``env=`` — Phase E state file is the
-            # transport instead. Tests cover both shapes.
-            self._codex = AsyncCodex()
+        codex_bin = os.environ.get("CODEX_BINARY") or None
+        config = AppServerConfig(
+            codex_bin=codex_bin,
+            cwd=str(self._runtime.cwd),
+            env=dict(self._runtime.env),
+        )
+        self._codex = AsyncCodex(config=config)
         await self._codex.__aenter__()
         return self
 
@@ -163,6 +170,18 @@ class CodexClient:
         resume thread id when no prior :meth:`with_resume` /
         ``runtime.resume_thread_id`` was set, mirroring the Amp adapter's
         contract.
+
+        SDK shape (``codex_app_server.AsyncCodex.thread_start``,
+        ``codex_app_server/api.py:336``) accepts ``model``,
+        ``approval_policy``, ``sandbox``, ``base_instructions``, ``cwd``,
+        and a config-override JsonObject — but NOT ``effort`` or
+        ``mcp_servers``. ``effort`` is a per-turn parameter on
+        :meth:`AsyncThread.turn` (``api.py:610``); MCP server
+        configuration ships through the bundled Codex plugin's
+        ``.mcp.json`` (Phase G3 / T016), not via this call. The
+        runtime's :attr:`mcp_servers` field is plumbed end-to-end for
+        forward-compat with Phase G but is intentionally NOT passed
+        here.
         """
         codex = self._codex
         if codex is None:
@@ -179,10 +198,8 @@ class CodexClient:
             else:
                 self._thread = await codex.thread_start(
                     model=self._runtime.model,
-                    effort=self._runtime.effort,
                     sandbox=self._runtime.sandbox,
                     approval_policy=self._runtime.approval_policy,
-                    mcp_servers=self._runtime.mcp_servers,
                     base_instructions=self._runtime.base_instructions,
                     cwd=str(self._runtime.cwd),
                 )
@@ -191,7 +208,9 @@ class CodexClient:
             TextInput,
         )
 
-        self._turn = await self._thread.turn(TextInput(prompt))
+        self._turn = await self._thread.turn(
+            TextInput(prompt), effort=self._runtime.effort
+        )
 
     async def receive_response(self) -> AsyncIterator[object]:
         """Yield raw ``codex_app_server`` notifications from the active turn.
