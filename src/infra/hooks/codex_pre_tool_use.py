@@ -53,9 +53,14 @@ SHELL_TOOL_NAMES = frozenset({"bash", "local-shell", "shell"} | set(BASH_TOOL_NA
 FILE_EDIT_TOOL_NAMES = frozenset({"apply_patch"})
 
 # Shell separators that end a "simple command" segment for heuristic
-# parsing. We treat ``|``/``&&``/``||`` as terminators so a write target
-# detected in one pipeline stage is not confused with another stage.
-SHELL_SEPARATORS = frozenset({";", "&&", "||", "|", "|&", "&", "\n"})
+# parsing. Includes pipeline operators (``|``/``&&``/``||``), control
+# operators (``;``/``&``/``\n``), and shell grouping delimiters
+# (``(``/``)``/``{``/``}``) so a write inside a subshell or brace group
+# is still seen by the per-segment extractor (``(touch unowned)`` and
+# ``{ touch unowned; }`` both run their inner commands).
+SHELL_SEPARATORS = frozenset(
+    {";", "&&", "||", "|", "|&", "&", "\n", "(", ")", "{", "}"}
+)
 
 # Redirection operators that consume the next token as a write target.
 REDIR_OPERATORS = frozenset(
@@ -87,6 +92,12 @@ GIT_WRITE_SUBCOMMANDS = frozenset({"checkout", "restore", "apply", "stash"})
 # Sentinel that always denies (used when a write expression is parseable
 # but the literal target cannot be statically extracted, per plan L846).
 _UNRESOLVED_SENTINEL = "<unresolved-write-target>"
+
+# Placeholder emitted in place of a bash ANSI-C-quoted string (``$'...'``)
+# so shlex.split treats the entire literal as a single token. The content
+# of an ANSI-C string is never a command word or write target, so the
+# heuristic does not need its actual value.
+_ANSI_C_PLACEHOLDER = "__MALA_ANSI_C_LITERAL__"
 
 
 # Deny-message templates (plan L854-L860). These strings are byte-identical
@@ -288,15 +299,20 @@ _FD_REF_RE = re.compile(r"^&[0-9\-]+$")
 # Pure fd-numeric / close-fd target. Used after a ``>&`` / ``n>&`` operator
 # to distinguish ``>&1`` (fd dup, skip) from ``>&file`` (write, lock-check).
 _FD_REF_TARGET_RE = re.compile(r"^[0-9]+$|^-$")
-# Whole-token redirection operators: any numeric-fd prefix + ``>`` / ``>>``,
-# optionally followed by ``&`` (legacy combined form) or ``|`` (force-clobber).
+# Whole-token redirection operators. Accepted fd prefixes:
+#   - numeric (``1``/``2``/``3``/...) — POSIX
+#   - ``&`` — combined stdout+stderr (``&>``, ``&>>``)
+#   - ``{varname}`` — bash 4.1+ variable-allocated fd (``{fd}>file``);
+#     bash auto-assigns a free fd to ``$varname`` and applies the redirect.
 # Examples it matches: ``>``, ``>>``, ``1>``, ``2>``, ``3>>``, ``&>``, ``&>>``,
-# ``>&``, ``2>&``, ``>|``.
-_REDIR_OP_TOKEN_RE = re.compile(r"^(?:[0-9]+|&)?>{1,2}[&|]?$")
+# ``>&``, ``2>&``, ``>|``, ``{fd}>``, ``{fd}>>``.
+_REDIR_FD_PREFIX = r"(?:[0-9]+|&|\{[A-Za-z_][A-Za-z0-9_]*\})"
+_REDIR_OP_TOKEN_RE = re.compile(rf"^{_REDIR_FD_PREFIX}?>{{1,2}}[&|]?$")
 # Prefix regex for combined-token forms like ``>file``, ``2>file``,
-# ``&>file``, ``>&file``, ``3>>file``. Greedy on the optional trailing
-# ``&`` so ``2>&1`` matches the prefix ``2>&`` (target ``1`` → fd dup).
-_COMBINED_REDIR_PREFIX_RE = re.compile(r"^(?:[0-9]+|&)?>{1,2}[&|]?")
+# ``&>file``, ``>&file``, ``3>>file``, ``{fd}>file``. Greedy on the
+# optional trailing ``&`` so ``2>&1`` matches the prefix ``2>&`` (target
+# ``1`` → fd dup).
+_COMBINED_REDIR_PREFIX_RE = re.compile(rf"^{_REDIR_FD_PREFIX}?>{{1,2}}[&|]?")
 
 
 def _extract_redirection_targets(tokens: list[str]) -> list[str]:
@@ -501,9 +517,18 @@ def _extract_awk_inplace_targets(tokens: list[str]) -> list[str]:
             skip_next = False
             i += 1
             continue
+        # ``-i inplace`` (separate tokens) — gawk's documented form.
         if tok == "-i" and i + 1 < len(tokens) and tokens[i + 1] == "inplace":
             found_inplace = True
             i += 2
+            continue
+        # ``-iinplace`` (attached value) — gawk also accepts this. Without
+        # this case, an agent can run ``awk -iinplace '{print}' file`` and
+        # the heuristic returns no targets, silently allowing the in-place
+        # mutation.
+        if tok == "-iinplace":
+            found_inplace = True
+            i += 1
             continue
         if tok.startswith("--"):
             name = tok.split("=", 1)[0]
@@ -584,17 +609,11 @@ def _extract_utility_targets(tokens: list[str]) -> list[str]:
     i = 0
     while i < len(args):
         tok = args[i]
-        # cp/mv/install/ln: ``-t DIR`` / ``-tDIR`` / ``--target-directory=DIR``
+        # cp/mv/install/ln: detect ``-t`` anywhere in a short flag bundle
+        # (``-t DIR``, ``-tDIR``, ``-fvt DIR``, ``-fvtDIR``) plus long
+        # forms. Without bundle-aware detection, ``cp -fvt dir src``
+        # misclassifies ``src`` as the destination.
         if cmd in {"cp", "mv", "install", "ln"}:
-            if tok == "-t":
-                if i + 1 < len(args):
-                    explicit_targets.append(args[i + 1])
-                    i += 2
-                    continue
-            if tok.startswith("-t") and len(tok) > 2 and not tok.startswith("--"):
-                explicit_targets.append(tok[2:])
-                i += 1
-                continue
             if tok in _TARGET_DIR_LONG_FLAGS:
                 if i + 1 < len(args):
                     explicit_targets.append(args[i + 1])
@@ -604,6 +623,24 @@ def _extract_utility_targets(tokens: list[str]) -> list[str]:
                 explicit_targets.append(tok[len("--target-directory=") :])
                 i += 1
                 continue
+            if tok.startswith("-") and not tok.startswith("--") and len(tok) >= 2:
+                body = tok[1:]
+                t_idx = body.find("t")
+                if t_idx >= 0:
+                    if t_idx == len(body) - 1:
+                        # ``-t`` at end of bundle: next token is the dest.
+                        if i + 1 < len(args):
+                            explicit_targets.append(args[i + 1])
+                            i += 2
+                            continue
+                        i += 1
+                        continue
+                    # ``-t`` followed by attached chars: those chars are
+                    # the destination directory (cp's documented behaviour
+                    # for ``-tDIR``).
+                    explicit_targets.append(body[t_idx + 1 :])
+                    i += 1
+                    continue
         # chmod/chown: ``--reference=FILE`` (or ``--reference FILE``) replaces
         # the leading mode/owner positional.
         if cmd in {"chmod", "chown"}:
@@ -826,13 +863,18 @@ _SEGMENT_EXTRACTORS = (
 def _normalize_separators(command: str) -> str:
     """Insert spaces around shell control operators outside quoted regions.
 
-    ``shlex.split`` does not split on ``;``/``&&``/``||``/``|``/``&``
-    unless the operators are already surrounded by whitespace, so an
-    agent-written ``true;touch unowned.py`` or ``touch out&`` previously
-    tokenized as a single token — no extractor saw the second command
-    and the write slipped past AC #19. This helper normalises the
-    command string so the downstream shlex split + segment-extractor
-    pipeline sees the pipeline boundaries.
+    ``shlex.split`` does not split on ``;``/``&&``/``||``/``|``/``&``/
+    newlines/``(``/``)`` unless the operators are already surrounded by
+    whitespace, so an agent-written ``true;touch unowned.py`` or
+    ``touch out&`` or ``(touch unowned.py)`` previously tokenized as a
+    single attached token — no extractor saw the inner command and the
+    write slipped past AC #19. This helper normalises the command string
+    so the downstream shlex split + segment-extractor pipeline sees the
+    pipeline boundaries.
+
+    Newlines (``\\n``) are converted to ``;`` so they survive
+    ``shlex.split`` (which would otherwise eat them as whitespace and
+    let ``true\\ntouch unowned`` collapse into a single segment).
 
     Quote tracking is required so a literal ``;``/``|``/``&`` inside a
     single- or double-quoted argument (e.g., ``echo 'a;b' > out``) is
@@ -845,10 +887,22 @@ def _normalize_separators(command: str) -> str:
     though bash treats ``\\"`` as a literal ``"`` and runs the second
     command at top level.
 
+    ANSI-C quoting (``$'...'``) supports backslash escapes inside what
+    looks like a single-quoted region. Without recognising ``$'``, the
+    parser miscounts quote toggles for inputs like ``$'\\''`` (an escaped
+    single-quote) and incorrectly treats subsequent control operators
+    as quoted, hiding them from the heuristic.
+
     Bare ``&`` is treated as a backgrounding operator (and split)
     EXCEPT when it follows ``>`` or ``digit+>`` (forming the fd
     redirect operators ``>&``/``n>&``). This catches ``touch out&``
     while still leaving ``2>&1`` intact for the redirection extractor.
+
+    ``(`` / ``)`` (subshell delimiters) are split outside quotes so
+    ``(touch unowned)`` becomes a segment whose first token is
+    ``touch``. ``{`` / ``}`` are left to the existing whitespace-based
+    tokenisation (bash already requires whitespace around brace-group
+    delimiters), and ``_split_segments`` treats them as separators.
     """
     out: list[str] = []
     i = 0
@@ -856,23 +910,55 @@ def _normalize_separators(command: str) -> str:
     quote: str | None = None
     while i < n:
         c = command[i]
-        # Backslash escape: outside single quotes, ``\<x>`` is literal
-        # ``<x>`` per POSIX. Pass both characters through verbatim so a
-        # quote character inside the escape does not toggle quote state.
-        if c == "\\" and i + 1 < n and quote != "'":
-            out.append(c)
-            out.append(command[i + 1])
-            i += 2
-            continue
+        # Backslash escape outside quotes / inside double quotes:
+        # ``\<x>`` is a literal pair. Inside regular single quotes the
+        # backslash is literal.
+        if c == "\\" and i + 1 < n:
+            if quote is None or quote == '"':
+                out.append(c)
+                out.append(command[i + 1])
+                i += 2
+                continue
         if quote is not None:
             out.append(c)
             if c == quote:
                 quote = None
             i += 1
             continue
+        # ANSI-C quoting: ``$'...'`` is a bash single-quoted region in
+        # which ``\<x>`` is an escape. shlex.split has no ANSI-C support,
+        # so a body containing ``\'`` (escaped single quote) tricks
+        # shlex's plain single-quote parser into thinking the escaped
+        # quote *closes* the region and the next ``'`` *opens* a new
+        # one — which then never closes (ValueError) or, worse, swallows
+        # subsequent control operators.
+        #
+        # We don't need the literal content of the ANSI-C string for
+        # write-path detection (it's a positional arg, not a write
+        # target). Skip the whole block and emit a placeholder identifier
+        # so shlex treats it as a single non-quote token.
+        if c == "$" and i + 1 < n and command[i + 1] == "'":
+            j = i + 2  # past ``$'``
+            while j < n:
+                if command[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if command[j] == "'":
+                    j += 1
+                    break
+                j += 1
+            out.append(_ANSI_C_PLACEHOLDER)
+            i = j
+            continue
         if c in ('"', "'"):
             out.append(c)
             quote = c
+            i += 1
+            continue
+        # Newlines are top-level command separators in shells; rewrite to
+        # ``;`` so ``shlex.split`` does not collapse them into whitespace.
+        if c == "\n":
+            out.append(" ; ")
             i += 1
             continue
         if i + 1 < n:
@@ -900,6 +986,14 @@ def _normalize_separators(command: str) -> str:
                 out.append(c)
                 i += 1
                 continue
+            out.append(" ")
+            out.append(c)
+            out.append(" ")
+            i += 1
+            continue
+        if c in ("(", ")"):
+            # Subshell delimiters are control operators in bash and
+            # always start/end a command segment.
             out.append(" ")
             out.append(c)
             out.append(" ")

@@ -1439,3 +1439,242 @@ class TestBareBackgroundOperator:
         command = f"cmd >{target} 2>&1 &"
         result = decide(make_payload("bash", {"command": command}))
         assert is_allow(result), result
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 5)
+# ---------------------------------------------------------------------------
+
+
+class TestShellGroupingOperators:
+    """Regression: ``(touch f)`` and ``{ touch f; }`` are subshell/group writes.
+
+    Before the fix, ``(touch unowned.py)`` tokenized as ``['(touch',
+    'unowned.py)']`` so no extractor saw ``touch`` and the unlocked
+    write was allowed. ``{ touch unowned.py; }`` had ``{`` as the first
+    segment token, which the utility extractor's basename matched
+    against the literal ``{`` (no match), again silently allowing the
+    write.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "(touch {target})",
+            "( touch {target} )",
+            "{{ touch {target}; }}",
+            "{{ touch {target} ; }}",
+            "true && (touch {target})",
+            "(true; touch {target})",
+        ],
+    )
+    def test_grouped_write_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "out.txt"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "out.txt" in deny_reason(result)
+
+    def test_subshell_allowed_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "out.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"(touch {target})"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+
+class TestVariableAllocatedFd:
+    """Regression: ``{fd}>file`` (bash 4.1+ var-allocated fd).
+
+    Before the fix, the redirection regex only accepted numeric or
+    ``&`` fd prefixes, so ``echo hi {myfd}>unlocked.txt`` produced no
+    write target. Bash creates/truncates ``unlocked.txt`` regardless,
+    so the unlocked write slipped past the gate.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "echo hi {{myfd}}>{target}",
+            "echo hi {{myfd}}>>{target}",
+            "echo hi {{fd_a}}>{target}",
+            "echo hi {{LOG_FD}}>{target}",
+            # Whole-token operator form (with space).
+            "echo hi {{myfd}}> {target}",
+        ],
+    )
+    def test_var_allocated_fd_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "out.log"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "out.log" in deny_reason(result)
+
+    def test_var_allocated_fd_allowed_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "out.log"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"echo hi {{myfd}}>{target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+
+class TestAttachedAwkInplace:
+    """Regression: ``awk -iinplace '{print}' file`` (attached arg).
+
+    Before the fix, the heuristic only matched ``-i inplace`` as two
+    separate tokens. gawk also accepts the attached short-flag form
+    ``-iinplace``, which collapsed the file detection: ``found_inplace``
+    stayed False and the heuristic returned no targets.
+    """
+
+    def test_awk_attached_inplace_denies_unlocked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "data.txt"
+        command = f"awk -iinplace '{{print}}' {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "data.txt" in deny_reason(result)
+
+    def test_gawk_attached_inplace_denies_unlocked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "data.txt"
+        command = f"gawk -iinplace '{{print}}' {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+
+    def test_awk_attached_inplace_allowed_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "data.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"awk -iinplace '{{print}}' {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+
+class TestBundledTargetDirFlag:
+    """Regression: ``cp -fvt dir src`` (bundled short flags).
+
+    Before the fix, ``-t`` was only recognised at the start of a flag
+    bundle (``tok == "-t"`` or ``tok.startswith("-t")``). When ``-t``
+    appeared anywhere else in a bundle (``-fvt``, ``-vt``, etc.), the
+    heuristic missed the target-directory flag and lock-checked the
+    source file instead — letting an agent who held the source lock
+    silently write to an unowned destination.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "cp -fvt {dest} src",
+            "cp -vt {dest} src",
+            "cp -ft {dest} src",
+            "mv -fvt {dest} src",
+            "install -m0644 -vt {dest} src",
+            # Bundled with attached value: -fvtDIR
+            "cp -fvt{dest} src",
+        ],
+    )
+    def test_bundled_target_dir_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        dest = repo / "outdir"
+        command = command_template.format(dest=dest)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "outdir" in deny_reason(result)
+
+    def test_bundled_target_dir_overrides_source_lock(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Holding the source lock must NOT satisfy the destination check.
+        src = repo / "src.py"
+        dest = repo / "outdir"
+        assert try_lock(str(src), "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("bash", {"command": f"cp -fvt {dest} {src}"}))
+        assert is_deny(result)
+        assert "outdir" in deny_reason(result)
+
+
+class TestAnsiCQuoting:
+    """Regression: ``$'\\''`` ANSI-C quote-toggle bypass.
+
+    Before the fix, the parser treated ``$'...'`` as a regular single-
+    quoted region without recognising backslash escapes inside it. For
+    ``$'\\''`` the parser saw three single quotes (``'``, ``'``, ``'``)
+    and concluded the *last* one opened a fresh quoted region, so a
+    trailing ``;`` looked quoted and was never split. The second
+    command then ran in bash but the heuristic never saw it.
+    """
+
+    def test_ansi_c_escaped_quote_does_not_invert_state(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "unowned.py"
+        # ``echo $'\\'' ; touch <unowned>`` — the inner ``\'`` is an
+        # ANSI-C escape for ``'``. The outer ``;`` must remain a
+        # top-level separator.
+        command = f"echo $'\\'' ; touch {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+    def test_ansi_c_string_does_not_break_redirect(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # An ANSI-C string as a normal positional argument should not
+        # affect later redirection-target detection.
+        target = repo / "out"
+        command = f"echo $'a\\nb' > {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result)
+        assert "out" in deny_reason(result)
+
+
+class TestNewlineSeparator:
+    """Regression: literal ``\\n`` in the command runs as a separator.
+
+    Before the fix, ``true\\ntouch unowned.py`` only got ``;``/``&&``/
+    etc. normalisation; ``\\n`` reached ``shlex.split`` as plain
+    whitespace and the entire input collapsed into a single segment
+    headed by ``true``. The heuristic never saw ``touch`` and the
+    unlocked write was allowed.
+    """
+
+    def test_newline_separates_commands(self, env: dict[str, str], repo: Path) -> None:
+        target = repo / "unowned.py"
+        command = f"true\ntouch {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+    def test_multiline_script_each_line_extracted(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # A multi-line bash body should still gate every line.
+        a = repo / "a.txt"
+        b = repo / "b.txt"
+        command = f"touch {a}\ntouch {b}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        # First missing lock fires the deny — either path is acceptable.
+        assert "a.txt" in deny_reason(result) or "b.txt" in deny_reason(result)
