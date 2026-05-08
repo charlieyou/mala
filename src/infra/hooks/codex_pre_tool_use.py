@@ -127,6 +127,10 @@ _SHELL_RESERVED_WORDS = frozenset(
         "in",
         "function",
         "!",
+        # ``coproc cmd`` runs cmd in a co-process; the inner cmd is
+        # what actually executes (and writes). Strip ``coproc`` so the
+        # extractor sees the real cmd word.
+        "coproc",
         # ``time`` is intentionally NOT a reserved word here — it's
         # handled as an execution-prefix wrapper instead so its options
         # (``time -p cmd``) and path-qualified form (``/usr/bin/time
@@ -2236,7 +2240,7 @@ def _command_contains_cd(cleaned: str) -> bool:
     """
     try:
         normalized = _normalize_separators(cleaned)
-        tokens = shlex.split(normalized, posix=True, comments=False)
+        tokens = shlex.split(normalized, posix=True, comments=True)
     except ValueError:
         return False
     for seg in _split_segments(tokens):
@@ -2300,9 +2304,15 @@ def _extract_shell_write_paths(
 
     normalized = _normalize_separators(cleaned)
     try:
-        tokens = shlex.split(normalized, posix=True, comments=False)
+        # ``comments=True`` matches bash's handling of ``#`` as
+        # comment-marker so an agent cannot bypass the gate by
+        # appending ``# "`` (which would otherwise raise ValueError on
+        # an unclosed quote and let the hook silently allow). On
+        # ValueError (genuinely malformed input) fail closed by
+        # appending the unresolved sentinel.
+        tokens = shlex.split(normalized, posix=True, comments=True)
     except ValueError:
-        # Unbalanced quotes etc. — fall through; other checks still apply.
+        out.append(_UNRESOLVED_SENTINEL)
         return out
 
     cd_seen = outer_cd_seen
@@ -2436,6 +2446,34 @@ def _detect_destructive_git_in_subtokens(toks: list[str]) -> str | None:
     if sub == "commit":
         if "--amend" in rest_set:
             return "git commit --amend"
+        # ``git commit -a`` / ``--all`` / bundled short flags
+        # containing ``a`` (mirrors block_dangerous_commands and the
+        # original substring check in _detect_dangerous_pattern).
+        if "--all" in rest_set:
+            return "git commit -a/--all"
+        for tok in rest:
+            if (
+                tok.startswith("-")
+                and not tok.startswith("--")
+                and len(tok) >= 2
+                and "a" in tok[1:]
+            ):
+                return "git commit -a/--all"
+    if sub == "push":
+        # ``--force-with-lease`` is the documented safer alternative
+        # and is allowed; only deny on the bare ``--force`` / ``-f``
+        # forms.
+        if "--force-with-lease" not in rest_set:
+            if "--force" in rest_set or "-f" in rest_set:
+                return "git push --force"
+            for tok in rest:
+                if (
+                    tok.startswith("-")
+                    and not tok.startswith("--")
+                    and len(tok) >= 2
+                    and "f" in tok[1:]
+                ):
+                    return "git push --force"
     if sub in {"merge", "cherry-pick"}:
         if "--abort" in rest_set:
             return f"git {sub} --abort"
@@ -2467,36 +2505,29 @@ def _detect_dangerous_pattern(command: str) -> str | None:
             return pattern
 
     # Tokenization-based git check: catches destructive subcommands
-    # even when global options shift the subcommand position
-    # (``git -C dir stash``, ``git --work-tree=. restore f``).
+    # (including commit -a, push --force, etc.) even when global
+    # options shift the subcommand position past the substring
+    # matcher's window. ``comments=True`` matches bash's treatment of
+    # ``#`` as comment marker so ``cmd # "`` doesn't ValueError out.
     try:
-        toks = shlex.split(command, posix=True, comments=False)
+        toks = shlex.split(command, posix=True, comments=True)
     except ValueError:
         toks = []
+    saw_git_add = False
     for i, tok in enumerate(toks):
         if _command_basename_str(tok) == "git":
             pattern = _detect_destructive_git_in_subtokens(toks[i:])
             if pattern is not None:
                 return pattern
-
-    # ``git commit -a``/``--all`` and atomic-add-commit (mirror
-    # ``block_dangerous_commands`` in ``dangerous_commands.py``).
-    command_lower = command.lower()
-    if "git commit" in command_lower:
-        if " --all" in command_lower or "git commit -a" in command_lower:
-            return "git commit -a/--all"
-        commit_index = command_lower.find("git commit")
-        add_index = command_lower.find("git add")
-        if add_index == -1 or add_index > commit_index:
-            return "git commit without prior git add"
-
-    # ``git push --force`` / ``-f`` (``--force-with-lease`` is the
-    # documented safer alternative and is allowed).
-    if "git push" in command:
-        if "--force-with-lease" in command:
-            pass
-        elif "--force" in command or "-f " in command:
-            return "git push --force"
+            # Track whether ``git add`` precedes any ``git commit``
+            # for the atomic-add-commit check below.
+            sub_idx, _ = _find_git_subcommand_info(toks[i:])
+            if sub_idx is not None:
+                sub = toks[i + sub_idx]
+                if sub == "add":
+                    saw_git_add = True
+                elif sub == "commit" and not saw_git_add:
+                    return "git commit without prior git add"
 
     return None
 

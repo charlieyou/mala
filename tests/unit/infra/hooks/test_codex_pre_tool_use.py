@@ -3921,3 +3921,136 @@ class TestGitGlobalOptionsDestructiveGate:
         # a missing-lock or other heuristic miss.
         reason = deny_reason(result)
         assert "git " in reason or "rebase" in reason or "stash" in reason
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 7, post-restart)
+# ---------------------------------------------------------------------------
+
+
+class TestCoprocReservedWord:
+    """Regression: ``coproc touch unowned`` runs touch in a co-process.
+
+    Before the fix, ``coproc`` was missing from both
+    ``_SHELL_RESERVED_WORDS`` and ``_EXECUTION_PREFIXES``. The segment
+    ``[coproc, touch, unowned.py]`` was dispatched with cmd basename
+    ``coproc`` — no extractor matched and the unowned write was
+    silently allowed.
+    """
+
+    def test_coproc_inner_write_denied(self, env: dict[str, str], repo: Path) -> None:
+        target = repo / "unowned.py"
+        command = f"coproc touch {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+
+class TestCommentBypass:
+    """Regression: ``cmd # "`` (comment with unclosed quote).
+
+    Before the fix, ``shlex.split`` was called with ``comments=False``,
+    so a trailing ``# "`` (which bash treats as a comment) raised
+    ValueError on the unclosed quote. The hook caught the ValueError
+    and silently returned an empty target list — letting ``touch
+    unowned.py # "`` slip past the gate.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            'touch {target} # "',
+            'touch {target} #unclosed"',
+            "touch {target} # 'still bad",
+            # Multiple commands separated by ; with a trailing comment
+            'true ; touch {target} # "',
+        ],
+    )
+    def test_comment_with_unclosed_quote_inner_write_denied(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+
+    def test_quoted_hash_is_literal(self, env: dict[str, str], repo: Path) -> None:
+        # Sanity: a quoted ``#`` is literal, not a comment marker.
+        # The quoted region preserves the ``#`` so the heuristic
+        # operates on the full command. Should still detect the
+        # touch as a write.
+        target = repo / "unowned.py"
+        command = f"touch '{target}' '# not a comment'"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result)
+        assert "unowned.py" in deny_reason(result)
+
+
+class TestGitGlobalOptionsCommitPushGuards:
+    """Regression: ``git -C dir commit -a`` and ``git -c k=v push --force``.
+
+    Before the fix, the dangerous-cmd gate's ``git commit -a`` and
+    ``git push --force`` checks used substring matching against the
+    full command. Global options spliced into the command broke the
+    substring match: ``git -C dir commit -a -m x`` does not contain
+    ``git commit -a``, so the substring detector missed it.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # commit -a / --all with global options
+            "git -C /tmp commit -a -m x",
+            "git -C /tmp commit --all -m x",
+            "git -C /tmp commit -am x",
+            "git -c key=val commit -a -m x",
+            "git --git-dir=.git/ commit --all -m x",
+            "git --work-tree=. commit -a",
+            # commit without prior git add (atomic-add-commit)
+            "git -C /tmp commit -m x",
+            "git -c k=v commit -m x",
+            # push --force with global options
+            "git -C /tmp push --force origin main",
+            "git -c k=v push --force",
+            "git -C /tmp push -f origin",
+            "git --git-dir=.git/ push --force",
+        ],
+    )
+    def test_global_options_commit_push_destructive_denied(
+        self, env: dict[str, str], command: str
+    ) -> None:
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        reason = deny_reason(result)
+        # Reason must reference a git destructive pattern — not a
+        # missing-lock or heuristic miss.
+        assert any(
+            keyword in reason for keyword in ("git commit", "git push", "git add")
+        ), reason
+
+    def test_global_options_force_with_lease_allowed(self, env: dict[str, str]) -> None:
+        # ``--force-with-lease`` is the documented safer alternative
+        # and must be allowed even with global options.
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": "git -C /tmp push --force-with-lease origin main"},
+            )
+        )
+        assert is_allow(result)
+
+    def test_atomic_add_commit_with_global_options_allows(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``git add f && git -C /tmp commit -m x`` — git add precedes
+        # the commit, so the atomic-add check must pass.
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": "git add f.py && git -C /tmp commit -m x"},
+            )
+        )
+        assert is_allow(result)
