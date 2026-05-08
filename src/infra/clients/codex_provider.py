@@ -250,19 +250,26 @@ combined with ``<plugin_id>``. Our hooks.json is bundled at
 records is therefore ``.codex-plugin/hooks.json``.
 """
 
-_DEFAULT_PLUGIN_MARKETPLACE = "local"
-"""Default marketplace name the plugin is installed under. Codex's
-``PluginId.as_key()`` returns ``<plugin_name>@<marketplace_name>``
-(``codex-rs/plugin/src/plugin_id.rs:45``). Without a confirmed
-marketplace name from the Phase E spike, the auto-trust write keys on
-``mala-safety@local`` which matches the conventional name for
-locally-registered marketplaces (per
-``codex-rs/skills/src/assets/samples/plugin-creator/references/plugin-json-spec.md``
-``~/.agents/plugins/marketplace.json`` example). If Codex ends up
-picking a different marketplace name, the auto-trust write lands at the
-wrong key and the selftest probe surfaces ``TRUSTED_HASH_MISMATCH``
-(documented one-time interactive trust fallback per plan E6).
-"""
+
+def _default_marketplace() -> str:
+    """Marketplace name the plugin is installed under.
+
+    Imported lazily from the installer so the two stay in lockstep — the
+    installer's ``PLUGIN_MARKETPLACE`` constant drives both the
+    on-disk cache path
+    (``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/``)
+    and the user-config plugin key (``[plugins."<plugin>@<marketplace>"]``).
+    Codex's ``PluginId.as_key()`` returns ``<plugin_name>@<marketplace_name>``
+    (``codex-rs/plugin/src/plugin_id.rs:45``); using the literal
+    ``local`` matches Codex's ``DEFAULT_PLUGIN_VERSION`` /
+    local-marketplace convention.
+    """
+    from src.infra.clients.codex_plugin_installer import PLUGIN_MARKETPLACE
+
+    return PLUGIN_MARKETPLACE
+
+
+_DEFAULT_PLUGIN_MARKETPLACE = _default_marketplace()
 
 
 def _resolve_codex_home() -> Path:
@@ -350,42 +357,49 @@ def _compute_normalized_hook_hash() -> str:
     return f"sha256:{hashlib.sha256(serialized).hexdigest()}"
 
 
-def _write_trusted_hash(
+def _write_codex_plugin_config(
     *,
     codex_home: Path,
     marketplace: str = _DEFAULT_PLUGIN_MARKETPLACE,
 ) -> None:
-    """Fail-closed write of the bundled hook's ``trusted_hash`` to Codex's config.
+    """Fail-closed write of the plugin-enable + trusted_hash entries to ``config.toml``.
 
-    Codex's hook-state for plugin hooks lives in
-    ``$CODEX_HOME/config.toml`` under
-    ``[hooks.state."<plugin_id>:<rel-path>:pre_tool_use:0:0"]`` (per
-    ``codex-rs/core/tests/common/hooks.rs``). The function preserves
-    any pre-existing top-level config tables and rewrites only the
-    matching ``[hooks.state."<key>"]`` block.
+    Codex requires TWO config-side preconditions for the bundled
+    PreToolUse hook to fire:
 
-    Auto-trust is the safety-critical bridge between "plugin installed"
-    and "Codex actually loads the hook" (decision #16). If we cannot
-    mkdir / read / write ``config.toml``, Codex will run with the hook
-    in ``Untrusted`` state — discovered but never invoked
-    (``codex-rs/hooks/src/engine/discovery.rs::hook_trust_status``) —
-    and the orchestrator would proceed under ``danger-full-access`` /
-    ``approval_policy=never`` without the safety gate. Therefore I/O
-    failures here raise :class:`CodexHookNotActiveError(TRUSTED_HASH_MISMATCH)`
-    so :meth:`install_prerequisites` aborts the run; the documented
+      * The plugin is enabled in user config: ``[plugins."<id>"] enabled = true``
+        (per ``codex-rs/core-plugins/src/manager.rs::configured_plugins_from_stack``
+        — only ``[plugins."<key>"]`` entries are surfaced as "configured
+        plugins" and only those whose ``enabled`` is True are loaded).
+      * The hook is marked trusted: ``[hooks.state."<id>:<rel>:pre_tool_use:0:0"]``
+        with ``enabled = true`` and the matching ``trusted_hash`` (per
+        ``codex-rs/hooks/src/engine/discovery.rs::hook_trust_status``).
+
+    Without either entry, Codex would discover the cached plugin tree
+    (``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/``)
+    yet still skip the hook on PreToolUse — the orchestrator would
+    proceed under ``danger-full-access`` / ``approval_policy=never``
+    without the safety gate. Auto-trust is therefore the safety-critical
+    bridge between "plugin tree on disk" and "hook actually loaded"
+    (decision #16). I/O failures here raise
+    :class:`CodexHookNotActiveError(TRUSTED_HASH_MISMATCH)` so
+    :meth:`install_prerequisites` aborts the run; the documented
     one-time interactive trust fallback (plan E6) covers users whose
     ``CODEX_HOME`` is read-only.
 
-    The "already correct" short-circuit (when the on-disk content
-    already declares the same trusted_hash) returns without writing,
-    which is fine — the dormant-hook risk only exists when the entry
-    is missing or stale.
+    The "already correct" short-circuit (when both blocks already match
+    the desired content) returns without writing.
     """
-    section_header = f'[hooks.state."{_hook_state_key(marketplace=marketplace)}"]'
+    plugin_id = _plugin_id(marketplace)
+    plugin_section = f'[plugins."{plugin_id}"]'
+    plugin_block = f"{plugin_section}\nenabled = true\n"
+
+    state_section = f'[hooks.state."{_hook_state_key(marketplace=marketplace)}"]'
     trusted_hash_value = _compute_normalized_hook_hash()
-    new_block = (
-        f'{section_header}\nenabled = true\ntrusted_hash = "{trusted_hash_value}"\n'
+    state_block = (
+        f'{state_section}\nenabled = true\ntrusted_hash = "{trusted_hash_value}"\n'
     )
+
     target = codex_home / _HOOK_CONFIG_FILENAME
 
     try:
@@ -393,9 +407,9 @@ def _write_trusted_hash(
     except OSError as exc:
         raise CodexHookNotActiveError(
             f"Cannot create Codex home directory {codex_home} to write the "
-            f"hook's trusted_hash ({exc}). Auto-trust is the bridge that "
-            "lets Codex load the bundled safety hook; without it Codex "
-            "marks the hook untrusted and never invokes it.",
+            f"plugin enable + trusted_hash entries ({exc}). Auto-trust is "
+            "the bridge that lets Codex load the bundled safety hook; "
+            "without it Codex marks the hook untrusted and never invokes it.",
             reason=CodexHookNotActiveReason.TRUSTED_HASH_MISMATCH,
         ) from exc
 
@@ -403,39 +417,44 @@ def _write_trusted_hash(
         existing = target.read_text(encoding="utf-8") if target.exists() else ""
     except OSError as exc:
         raise CodexHookNotActiveError(
-            f"Cannot read Codex config file {target} to update the hook's "
-            f"trusted_hash ({exc}).",
+            f"Cannot read Codex config file {target} to update the plugin "
+            f"enable + trusted_hash entries ({exc}).",
             reason=CodexHookNotActiveReason.TRUSTED_HASH_MISMATCH,
         ) from exc
 
-    rewritten = _rewrite_hook_state_block(
-        existing, section_header=section_header, new_block=new_block
+    rewritten = _rewrite_toml_block(
+        existing, section_header=plugin_section, new_block=plugin_block
+    )
+    rewritten = _rewrite_toml_block(
+        rewritten, section_header=state_section, new_block=state_block
     )
     if rewritten == existing:
-        return  # nothing to do (already correct)
+        return  # both blocks already correct
 
     try:
         target.write_text(rewritten, encoding="utf-8")
     except OSError as exc:
         raise CodexHookNotActiveError(
-            f"Cannot write hook trusted_hash to {target} ({exc}). The "
-            "bundled safety hook would remain Untrusted and Codex would "
-            "skip it on PreToolUse; refusing to run under "
-            "danger-full-access without the safety gate.",
+            f"Cannot write Codex plugin/hook config to {target} ({exc}). "
+            "The bundled safety hook would remain disabled or untrusted; "
+            "refusing to run under danger-full-access without the safety gate.",
             reason=CodexHookNotActiveReason.TRUSTED_HASH_MISMATCH,
         ) from exc
 
 
-def _rewrite_hook_state_block(
-    existing: str, *, section_header: str, new_block: str
-) -> str:
+def _rewrite_toml_block(existing: str, *, section_header: str, new_block: str) -> str:
     """Return ``existing`` with ``section_header``'s block replaced by ``new_block``.
 
     Pure-text rewrite (no TOML round-trip) so the function can run
     without a third-party TOML writer. The replacement is bounded to
-    the ``[hooks.state."<key>"]`` table only: every line up to the next
-    top-level ``[...]`` header (or EOF) is dropped and ``new_block``
-    is spliced in.
+    one ``[<section>]`` table at a time: every line from the matching
+    header up to the next top-level ``[...]`` header (or EOF) is
+    dropped and ``new_block`` is spliced in.
+
+    Used for both ``[plugins."<id>"]`` and ``[hooks.state."<key>"]``
+    blocks; the contract is identical (a single bracketed header
+    followed by simple ``key = value`` lines, terminated by the next
+    top-level table header).
     """
     lines = existing.splitlines(keepends=True)
     if not lines:
@@ -489,7 +508,8 @@ def _default_selftest_probe(
     wrong-command failure modes that the up-front structural checks
     (SDK importable, codex on PATH, hook script on PATH) leave open:
 
-      * Plugin manifest at ``$CODEX_HOME/plugins/mala-safety/.codex-plugin/plugin.json``
+      * Plugin manifest at
+        ``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/.codex-plugin/plugin.json``
         exists, parses as JSON, and points at ``./.codex-plugin/hooks.json``.
         Failure → :class:`CodexHookNotActiveError(PLUGIN_DISABLED)`.
       * Installed hooks.json exists, parses, and declares a PreToolUse
@@ -514,9 +534,17 @@ def _default_selftest_probe(
     del repo_path, expected_hash
     import json as _json
 
+    from src.infra.clients.codex_plugin_installer import (
+        PLUGIN_DIRNAME,
+        plugin_root_dir,
+    )
+
     codex_home_str = env_overlay.get("CODEX_HOME")
     codex_home = Path(codex_home_str) if codex_home_str else _resolve_codex_home()
-    plugin_dir = codex_home / "plugins" / "mala-safety" / ".codex-plugin"
+    # Plugin tree must be under Codex's PluginStore cache root
+    # (``codex-rs/core-plugins/src/store.rs::PluginStore``); the manifest
+    # lives in ``.codex-plugin/`` inside that cache root.
+    plugin_dir = plugin_root_dir(codex_home) / PLUGIN_DIRNAME
     manifest_path = plugin_dir / "plugin.json"
     hooks_json_path = plugin_dir / "hooks.json"
 
@@ -786,16 +814,21 @@ class CodexAgentProvider:
           2. Verify the ``codex`` binary is on ``PATH`` (raise
              :class:`CodexHookNotActiveError(CODEX_BINARY_MISSING)`).
           3. Run :class:`CodexPluginInstaller` to copy the bundled plugin
-             tree into ``$CODEX_HOME/plugins/mala-safety/.codex-plugin/``.
+             tree into Codex's PluginStore cache at
+             ``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/.codex-plugin/``
+             (per ``codex-rs/core-plugins/src/store.rs::PluginStore.plugin_root``).
           4. Verify the ``mala-codex-pre-tool-use`` console script is on
              ``PATH`` (raise
              :class:`CodexHookNotActiveError(SCRIPT_MISSING)`).
-          5. Auto-write the bundled plugin's ``trusted_hash`` to
-             ``$CODEX_HOME/config.toml`` under
+          5. Auto-write both Codex-config preconditions to
+             ``$CODEX_HOME/config.toml`` (decision #16):
+             ``[plugins."<plugin_id>"] enabled = true`` so Codex's
+             ``configured_plugins_from_stack`` enumerates the plugin,
+             and
              ``[hooks.state."<plugin_id>:.codex-plugin/hooks.json:pre_tool_use:0:0"]``
-             (decision #16). On read-only ``CODEX_HOME`` the write is
-             logged and skipped — the selftest catches the dormant
-             hook either way.
+             with ``enabled = true`` + ``trusted_hash`` so the hook is
+             marked Trusted. I/O failures raise
+             :class:`CodexHookNotActiveError(TRUSTED_HASH_MISMATCH)`.
           6. Run the selftest probe (default: structural verification
              of the installed plugin tree at the install target); it
              raises :class:`CodexHookNotActiveError` on
@@ -878,15 +911,14 @@ class CodexAgentProvider:
                 reason=CodexHookNotActiveReason.SCRIPT_MISSING,
             )
 
-        # 5. Trusted-hash auto-trust (decision #16). The marketplace
-        # name component of Codex's hook-state key depends on how the
-        # plugin is registered; we default to ``local`` (matching the
-        # ``~/.agents/plugins/marketplace.json`` convention) and let
-        # the selftest probe surface ``TRUSTED_HASH_MISMATCH`` when
-        # the actual marketplace name differs — that triggers the
-        # documented one-time interactive trust fallback per E6.
+        # 5. Auto-write the plugin-enable + trusted_hash entries to
+        # config.toml (decision #16). Codex requires BOTH for the hook
+        # to fire: a ``[plugins."<id>"] enabled = true`` entry to
+        # surface the plugin via ``configured_plugins_from_stack``, and
+        # a ``[hooks.state."<id>:..."]`` entry with the matching
+        # ``trusted_hash`` to mark the hook Trusted.
         codex_home = _resolve_codex_home()
-        _write_trusted_hash(codex_home=codex_home)
+        _write_codex_plugin_config(codex_home=codex_home)
 
         # 6. Cache key + selftest. The key matches the Amp provider's
         # ``(coder_version, plugin_hash)`` shape; ``"unknown"`` carries

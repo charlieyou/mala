@@ -21,7 +21,9 @@ import pytest
 from src.infra.clients.codex_plugin_installer import (
     PLUGIN_DIRNAME,
     PLUGIN_FILENAMES,
+    PLUGIN_MARKETPLACE,
     PLUGIN_NAME,
+    PLUGIN_VERSION,
     CodexPluginInstaller,
     CodexPluginInstallError,
     InstallResult,
@@ -29,6 +31,7 @@ from src.infra.clients.codex_plugin_installer import (
     _combined_hash,
     _read_source_files,
     default_plugin_target_dir,
+    plugin_root_dir,
 )
 
 
@@ -149,24 +152,60 @@ def test_resolver_prefers_wheel_data_dir_when_present(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_default_target_directory_honors_codex_home(
+def test_default_target_directory_lands_in_codex_plugin_store_cache(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """``default_plugin_target_dir`` reads ``CODEX_HOME`` at call time so
-    a redirected env var lands in ``tmp_path``."""
+    """Regression: the install target must match Codex's PluginStore cache
+    layout (``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/``)
+    plus the ``.codex-plugin/`` manifest sub-directory.
+
+    Codex's loader (``codex-rs/core-plugins/src/store.rs::PluginStore``)
+    only resolves plugin roots from this exact path; installing into
+    ``$CODEX_HOME/plugins/<plugin>/.codex-plugin/`` (the pre-fix
+    location) would leave the bundled hook invisible to discovery —
+    Codex's ``active_plugin_root`` would return None even though the
+    files are physically on disk.
+    """
     fake_home = tmp_path / "codex-home"
     monkeypatch.setenv("CODEX_HOME", str(fake_home))
-    expected = fake_home / "plugins" / PLUGIN_NAME / PLUGIN_DIRNAME
+    expected = (
+        fake_home
+        / "plugins"
+        / "cache"
+        / PLUGIN_MARKETPLACE
+        / PLUGIN_NAME
+        / PLUGIN_VERSION
+        / PLUGIN_DIRNAME
+    )
     assert default_plugin_target_dir() == expected
+
+
+@pytest.mark.unit
+def test_plugin_root_dir_matches_plugin_store_active_root_layout(
+    tmp_path: Path,
+) -> None:
+    """Regression-pin for the cache-path contract Codex's
+    ``PluginStore.plugin_root`` enforces."""
+    home = tmp_path / "codex-home"
+    expected = home / "plugins" / "cache" / "local" / "mala-safety" / "local"
+    assert plugin_root_dir(home) == expected
 
 
 @pytest.mark.unit
 def test_default_target_directory_falls_back_to_user_home(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No ``CODEX_HOME`` → ``~/.codex/plugins/mala-safety/.codex-plugin``."""
+    """No ``CODEX_HOME`` → ``~/.codex/plugins/cache/local/mala-safety/local/.codex-plugin``."""
     monkeypatch.delenv("CODEX_HOME", raising=False)
-    expected = Path("~/.codex").expanduser() / "plugins" / PLUGIN_NAME / PLUGIN_DIRNAME
+    expected = (
+        Path("~/.codex").expanduser()
+        / "plugins"
+        / "cache"
+        / PLUGIN_MARKETPLACE
+        / PLUGIN_NAME
+        / PLUGIN_VERSION
+        / PLUGIN_DIRNAME
+    )
     assert default_plugin_target_dir() == expected
 
 
@@ -189,6 +228,48 @@ def test_first_call_creates_target_dir_and_writes_files(
     for name in PLUGIN_FILENAMES:
         assert (target_dir / name).is_file()
         assert (target_dir / name).read_bytes() == (fake_source / name).read_bytes()
+
+
+@pytest.mark.unit
+def test_default_install_lands_at_plugin_store_active_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regression: a default ``install()`` call must land where Codex's
+    ``PluginStore.active_plugin_root`` would resolve to, so the bundled
+    plugin appears in ``configured_plugins_from_stack`` and its
+    PreToolUse hook fires.
+
+    The pre-fix install path
+    (``$CODEX_HOME/plugins/<plugin>/.codex-plugin/``) put the manifest
+    on disk but outside Codex's PluginStore cache; ``active_plugin_root``
+    returned None and the hook was never invoked. This test exercises
+    the real bundled source so the cross-test contract — manifest
+    bytes + filesystem path — both match the install Codex actually
+    discovers.
+    """
+    fake_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(fake_home))
+
+    inst = CodexPluginInstaller()
+    result = inst.install()  # default target dir
+
+    expected_root = (
+        fake_home
+        / "plugins"
+        / "cache"
+        / PLUGIN_MARKETPLACE
+        / PLUGIN_NAME
+        / PLUGIN_VERSION
+    )
+    expected_dir = expected_root / PLUGIN_DIRNAME
+    assert result.target_dir == expected_dir
+    assert (expected_dir / "plugin.json").is_file()
+    assert (expected_dir / "hooks.json").is_file()
+    assert (expected_dir / ".mcp.json").is_file()
+    # PluginStore.active_plugin_version reads version dirs under
+    # plugin_base_root and prefers ``local`` when present — verifies
+    # the plugin is at the path Codex's discovery would land on.
+    assert plugin_root_dir(fake_home) == expected_root
 
 
 @pytest.mark.unit

@@ -350,7 +350,15 @@ def test_install_prerequisites_accepts_sdk_bundled_codex_runtime(
     # Plugin tree must be installed and config.toml must carry the
     # trusted_hash entry — the happy path completed end-to-end without
     # an external codex binary.
-    plugin_dir = codex_home / "plugins" / "mala-safety" / ".codex-plugin"
+    plugin_dir = (
+        codex_home
+        / "plugins"
+        / "cache"
+        / "local"
+        / "mala-safety"
+        / "local"
+        / ".codex-plugin"
+    )
     assert (plugin_dir / "plugin.json").is_file()
     assert "trusted_hash" in (codex_home / "config.toml").read_text(encoding="utf-8")
 
@@ -377,7 +385,15 @@ def test_install_prerequisites_accepts_codex_binary_env_override(
     provider = CodexAgentProvider()
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
-    plugin_dir = codex_home / "plugins" / "mala-safety" / ".codex-plugin"
+    plugin_dir = (
+        codex_home
+        / "plugins"
+        / "cache"
+        / "local"
+        / "mala-safety"
+        / "local"
+        / ".codex-plugin"
+    )
     assert (plugin_dir / "plugin.json").is_file()
 
 
@@ -439,7 +455,10 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     fake_mcp_factory: Callable[..., dict[str, object]],
     tmp_path: Path,
 ) -> None:
-    """Happy path: plugin tree installed, ``config.toml`` gets ``[hooks.state.<key>]``."""
+    """Happy path: plugin tree installed at Codex's cache path, both
+    config.toml entries (``[plugins."<id>"]`` + ``[hooks.state."<key>"]``)
+    written.
+    """
     codex_home, bin_dir = fake_codex_env
     _install_fake_sdk(monkeypatch, present=True)
     _make_executable(bin_dir / "codex")
@@ -448,16 +467,27 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     provider = CodexAgentProvider()
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
-    plugin_dir = codex_home / "plugins" / "mala-safety" / ".codex-plugin"
+    plugin_dir = (
+        codex_home
+        / "plugins"
+        / "cache"
+        / "local"
+        / "mala-safety"
+        / "local"
+        / ".codex-plugin"
+    )
     assert (plugin_dir / "plugin.json").is_file()
     assert (plugin_dir / "hooks.json").is_file()
     assert (plugin_dir / ".mcp.json").is_file()
 
     config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
-    # The state key follows Codex's plugin-hook key shape:
-    # ``<plugin_id>:<source_relative_path>:pre_tool_use:0:0`` per
-    # ``codex-rs/hooks/src/declarations.rs::plugin_hook_key_source``. Marketplace
-    # name defaults to ``local`` until the Phase E spike confirms it.
+    # Codex requires BOTH preconditions for the bundled hook to fire
+    # (``codex-rs/core-plugins/src/manager.rs::configured_plugins_from_stack``
+    # filters to ``[plugins."<key>"]`` with ``enabled = true``;
+    # ``codex-rs/hooks/src/engine/discovery.rs::hook_trust_status``
+    # gates on the matching ``trusted_hash``).
+    assert '[plugins."mala-safety@local"]' in config_toml
+    assert "enabled = true" in config_toml
     expected_key = (
         '[hooks.state."mala-safety@local:.codex-plugin/hooks.json:pre_tool_use:0:0"]'
     )
@@ -559,7 +589,15 @@ def test_default_probe_raises_plugin_disabled_when_manifest_paths_wrong(
     from src.infra.clients.codex_provider import _default_selftest_probe
 
     codex_home, _bin_dir = fake_codex_env
-    plugin_dir = codex_home / "plugins" / "mala-safety" / ".codex-plugin"
+    plugin_dir = (
+        codex_home
+        / "plugins"
+        / "cache"
+        / "local"
+        / "mala-safety"
+        / "local"
+        / ".codex-plugin"
+    )
     plugin_dir.mkdir(parents=True)
     # Write a plugin.json that points at the WRONG (pre-fix) hooks path.
     (plugin_dir / "plugin.json").write_text(
@@ -592,7 +630,15 @@ def test_default_probe_raises_hook_marker_missing_when_command_absent(
     import json as _json
 
     codex_home, _bin_dir = fake_codex_env
-    plugin_dir = codex_home / "plugins" / "mala-safety" / ".codex-plugin"
+    plugin_dir = (
+        codex_home
+        / "plugins"
+        / "cache"
+        / "local"
+        / "mala-safety"
+        / "local"
+        / ".codex-plugin"
+    )
     plugin_dir.mkdir(parents=True)
     (plugin_dir / "plugin.json").write_text(
         _json.dumps(
@@ -632,7 +678,15 @@ def test_install_prerequisites_reinstall_replaces_stale_plugin(
     _make_executable(bin_dir / "codex")
     _make_executable(bin_dir / "mala-codex-pre-tool-use")
 
-    plugin_dir = codex_home / "plugins" / "mala-safety" / ".codex-plugin"
+    plugin_dir = (
+        codex_home
+        / "plugins"
+        / "cache"
+        / "local"
+        / "mala-safety"
+        / "local"
+        / ".codex-plugin"
+    )
     plugin_dir.mkdir(parents=True)
     (plugin_dir / "plugin.json").write_text("// stale\n", encoding="utf-8")
     (plugin_dir / "hooks.json").write_text("// stale\n", encoding="utf-8")

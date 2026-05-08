@@ -1,11 +1,14 @@
 """Idempotent installer for the bundled ``mala-safety`` Codex plugin (T015).
 
 Copies the source-tree at ``plugins/codex/mala-safety/.codex-plugin/`` into
-the user's Codex plugin directory (default
-``~/.codex/plugins/mala-safety/.codex-plugin/``) so that Codex discovers
-the plugin on every run. The installer is concurrent-safe (per-file
-write-temp-then-rename) and idempotent (SHA-256 content comparison
-per file).
+Codex's PluginStore cache at
+``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/.codex-plugin/``
+(default ``~/.codex/plugins/cache/local/mala-safety/local/.codex-plugin/``)
+so Codex's loader discovers the plugin on every run via its standard
+discovery path
+(``codex-rs/core-plugins/src/store.rs::PluginStore.active_plugin_root``).
+The installer is concurrent-safe (per-file write-temp-then-rename) and
+idempotent (SHA-256 content comparison per file).
 
 Layout shipped (fixed, regardless of the Phase E spike outcome — the
 installer is a straight copy with no path translation):
@@ -15,20 +18,20 @@ installer is a straight copy with no path translation):
     hooks.json    - PreToolUse command-hook registration
     .mcp.json     - mala-locking MCP launcher (T016 finalizes wire shape)
 
-Companion ``CodexAgentProvider.install_prerequisites()`` (Phase E5)
-spawns a Codex one-shot turn against the installed plugin and verifies
-the bundled hook actually runs; the on-disk content guarantee here is
-necessary but not sufficient (parity with ``AmpPluginInstaller`` →
-``_run_selftest_subprocess`` split, which is the reference pattern).
+The on-disk install location alone is necessary but not sufficient for
+the safety hook to fire: Codex also requires a
+``[plugins."<plugin>@<marketplace>"] enabled = true`` entry in
+``$CODEX_HOME/config.toml`` (``configured_plugins_from_stack``), plus a
+matching ``[hooks.state."<key>"] enabled = true, trusted_hash = ...``
+entry to flip the hook from Untrusted to Trusted
+(``hook_trust_status``). Both auto-trust writes are owned by
+``CodexAgentProvider.install_prerequisites()``; the installer here only
+guarantees the bytes-on-disk side of the contract.
 
-Trusted-hash auto-trust (Phase E6, decision #16) is also computed here:
-``installed_plugin_hash`` returns a 16-hex-char SHA-256 prefix of the
-bundled source bytes (the manifest + hook config + mcp config combined).
-The provider writes that value into Codex's hook-state file
-(``~/.codex/hooks.toml`` via ``HookStateToml.trusted_hash`` per
-``codex-rs/config/src/hook_config.rs``) so Codex loads the hook without
-an interactive trust prompt; if the spike outcome is that interactive
-trust is mandatory, the documented one-time prompt fallback applies.
+The 16-hex-char digest exposed via :meth:`installed_plugin_hash` is
+useful for diagnostics / logging — callers compose Codex's trusted_hash
+themselves from the normalized hook identity (the provider's
+``_compute_normalized_hook_hash``), not from the plugin file bytes.
 """
 
 from __future__ import annotations
@@ -54,6 +57,32 @@ Order is deterministic so :meth:`CodexPluginInstaller.installed_plugin_hash`
 returns a stable hash across runs.
 """
 
+PLUGIN_MARKETPLACE = "local"
+"""Marketplace component of the Codex ``PluginId.as_key()``. Codex's
+``DEFAULT_PLUGIN_VERSION`` constant is ``"local"`` (per
+``codex-rs/core-plugins/src/store.rs:14``); the same string is also the
+canonical marketplace name for plugins installed without a remote
+catalog. Using ``local`` for both segments keeps the installed cache
+path and the user-config plugin key consistent with Codex's
+local-plugin convention."""
+
+PLUGIN_VERSION = "local"
+"""Plugin version directory under
+``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/``.
+
+``codex-rs/core-plugins/src/store.rs:91`` ``active_plugin_root``
+selects the active version via ``active_plugin_version`` which prefers
+the literal ``"local"`` over any other value when present, then falls
+back to the lexicographically-largest version directory. Installing
+under ``local`` therefore keeps the active version stable across
+mala upgrades — there is no version-bump churn that would drop
+trusted-hash state in user config."""
+
+PLUGIN_ID_KEY = f"{PLUGIN_NAME}@{PLUGIN_MARKETPLACE}"
+"""``PluginId.as_key()`` value Codex uses for ``[plugins."<key>"]`` and
+``[hooks.state."<key>:..."]`` entries (per
+``codex-rs/plugin/src/plugin_id.rs:45``)."""
+
 DEFAULT_CODEX_HOME = Path("~/.codex").expanduser()
 """Codex configuration directory (per ``codex_utils_home_dir::find_codex_home``).
 
@@ -75,17 +104,42 @@ def _resolve_codex_home() -> Path:
     return DEFAULT_CODEX_HOME
 
 
-def default_plugin_target_dir() -> Path:
-    """Resolve the default Codex plugin directory at call time.
+def plugin_root_dir(codex_home: Path | None = None) -> Path:
+    """Return the plugin root Codex's ``PluginStore.active_plugin_root`` resolves to.
 
-    Honors ``CODEX_HOME`` so tests pointing the env var at ``tmp_path``
-    install into the redirected Codex home. The plan's open question on
-    the exact discovery path (``~/.codex/plugins/`` vs. another
-    location) is captured here; the installer is a straight copy with
-    no path translation, so a different default — once the spike
-    confirms it — is a one-line change.
+    Layout (per ``codex-rs/core-plugins/src/store.rs::PluginStore``):
+
+      ``<codex_home>/plugins/cache/<marketplace>/<plugin>/<version>/``
+
+    The ``.codex-plugin/`` manifest directory lives one level below
+    this; see :func:`default_plugin_target_dir`.
     """
-    return _resolve_codex_home() / "plugins" / PLUGIN_NAME / PLUGIN_DIRNAME
+    home = codex_home if codex_home is not None else _resolve_codex_home()
+    return (
+        home / "plugins" / "cache" / PLUGIN_MARKETPLACE / PLUGIN_NAME / PLUGIN_VERSION
+    )
+
+
+def default_plugin_target_dir() -> Path:
+    """Resolve the default Codex plugin manifest directory at call time.
+
+    Lands at
+    ``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/.codex-plugin/``
+    (per ``codex-rs/core-plugins/src/store.rs::PluginStore.plugin_root``)
+    so Codex's ``active_plugin_root`` discovery path
+    (``store.rs:91``) and ``configured_plugins_from_stack``
+    enumeration (``manager.rs:1976``) both find the bundled plugin.
+    Honors ``CODEX_HOME`` so tests pointing the env var at ``tmp_path``
+    install into the redirected Codex home.
+
+    Note: the install location alone is not sufficient for Codex to
+    load the plugin's hooks — the user must also have
+    ``[plugins."<plugin>@<marketplace>"] enabled = true`` in
+    ``$CODEX_HOME/config.toml``. That config-write is the
+    :class:`CodexAgentProvider.install_prerequisites`'s responsibility
+    (it runs after this installer).
+    """
+    return plugin_root_dir() / PLUGIN_DIRNAME
 
 
 _VERSION_MARKER_HEX_CHARS = 16
