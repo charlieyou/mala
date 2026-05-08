@@ -1008,6 +1008,12 @@ class MalaOrchestrator:
             review_runner=adapters.review_runner,
             session_lifecycle=adapters.session_lifecycle,
             event_sink=self.event_sink,
+            # Use the orchestrator-level provider (which respects
+            # ``OrchestratorDependencies.evidence_provider``) so the
+            # readiness gate resolves the same log path the lifecycle
+            # uses, even when ``agent_provider.evidence_provider`` was
+            # not overridden alongside it.
+            evidence_provider=self.evidence_provider,
         )
         tracer = self.telemetry_provider.create_span(
             issue_id,

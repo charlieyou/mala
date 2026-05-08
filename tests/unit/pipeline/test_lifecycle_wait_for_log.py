@@ -238,3 +238,55 @@ class TestHandleLogWaiting:
         assert result.effect == Effect.RUN_GATE
         # Provider blocked for ~50ms; allow generous slack for slow CI.
         assert elapsed >= 0.04
+
+    @pytest.mark.asyncio
+    async def test_explicit_evidence_provider_overrides_agent_provider(
+        self, tmp_path: Path
+    ) -> None:
+        """Injected ``evidence_provider`` is used over ``agent_provider``'s.
+
+        Mirrors the orchestrator wiring where
+        ``OrchestratorDependencies.evidence_provider`` is supplied without
+        overriding ``agent_provider``. Readiness must use the injected
+        provider (which the session lifecycle also uses for log-path
+        resolution) rather than the agent provider's default.
+        """
+        log_path = tmp_path / "session.jsonl"
+        injected = StubEvidenceProvider(log_path=log_path)
+        agent_default = StubEvidenceProvider(log_path=log_path, raise_timeout=True)
+
+        config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=300,
+            prompts=_make_prompts(),
+            review_enabled=False,
+        )
+        runner = AgentSessionRunner(
+            config=config,
+            agent_provider=FakeAgentProvider(
+                FakeSDKClientFactory(),
+                evidence_provider=cast("EvidenceProvider", agent_default),
+            ),
+            gate_runner=StubGateRunner(),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(log_path=log_path),
+            evidence_provider=cast("EvidenceProvider", injected),
+        )
+
+        ctx = LifecycleContext(session_id="sess-1")
+        lifecycle = _lifecycle_in_awaiting_log(ctx)
+
+        new_log_path, result = await runner._handle_log_waiting(
+            "sess-1",
+            "issue-1",
+            None,
+            lifecycle,
+            ctx,
+            log_file_wait_timeout=10.0,
+            log_file_poll_interval=0.5,
+        )
+
+        assert new_log_path == log_path
+        assert result.effect == Effect.RUN_GATE
+        assert injected.calls == [(tmp_path, "sess-1", 10.0, 0.5)]
+        assert agent_default.calls == []

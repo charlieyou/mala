@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.agent_provider import AgentProvider
+    from src.core.protocols.evidence import EvidenceProvider
     from src.core.protocols.lifecycle import ISessionLifecycle
     from src.core.protocols.review import IReviewRunner
     from src.core.protocols.validation import IGateRunner
@@ -342,6 +343,13 @@ class AgentSessionRunner:
         gate_runner: Protocol for gate checking operations (required).
         review_runner: Protocol for review operations (required).
         session_lifecycle: Protocol for session lifecycle operations (required).
+        evidence_provider: EvidenceProvider used for the readiness gate
+            (``Effect.WAIT_FOR_LOG``). Defaults to
+            ``agent_provider.evidence_provider`` when not supplied; callers
+            that inject a custom evidence provider (e.g. orchestrators
+            wired via ``OrchestratorDependencies.evidence_provider``)
+            must pass it explicitly so readiness resolves the same log
+            location the lifecycle uses for log-path computation.
     """
 
     config: AgentSessionConfig
@@ -350,11 +358,14 @@ class AgentSessionRunner:
     review_runner: IReviewRunner
     session_lifecycle: ISessionLifecycle
     event_sink: MalaEventSink | None = None
+    evidence_provider: EvidenceProvider | None = None
     _retry_policy: IdleTimeoutRetryPolicy = field(init=False, repr=False)
     _effect_handler: LifecycleEffectHandler = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Initialize derived components."""
+        if self.evidence_provider is None:
+            self.evidence_provider = self.agent_provider.evidence_provider
         # Initialize retry policy with stream processor factory
         retry_config = RetryConfig(
             max_idle_retries=self.config.max_idle_retries,
@@ -892,8 +903,16 @@ class AgentSessionRunner:
         if self.event_sink is not None:
             self.event_sink.on_log_waiting(issue_id)
 
+        # ``evidence_provider`` is normalized by ``__post_init__`` so this
+        # attribute is always set by the time we reach the readiness gate.
+        # When the orchestrator was constructed with a custom
+        # ``OrchestratorDependencies.evidence_provider`` (without overriding
+        # ``agent_provider``), the injected provider is what the session
+        # lifecycle uses to compute the log path; routing readiness through
+        # the same instance keeps both halves of the gate aligned.
+        assert self.evidence_provider is not None
         try:
-            await self.agent_provider.evidence_provider.wait_for_session_ready(
+            await self.evidence_provider.wait_for_session_ready(
                 self.config.repo_path,
                 session_id,
                 timeout=log_file_wait_timeout,
