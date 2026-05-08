@@ -167,6 +167,129 @@ class TestSpawnAgent:
             )
 
 
+class TestCoderTelemetryAttribute:
+    """Audit tests for AC-2: ``coder`` is propagated to telemetry surfaces.
+
+    Per plan ``2026-05-07-codex-provider-plan.md`` AC-2, the telemetry
+    ``coder`` attribute domain must include ``"codex"`` end-to-end. The
+    base sink signature was widened earlier in the epic; these tests
+    cover the orchestrator side: ``on_agent_started`` and the
+    telemetry span metadata must both carry the active provider name.
+    """
+
+    @pytest.mark.asyncio
+    async def test_spawn_agent_passes_coder_to_on_agent_started(
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """spawn_agent should emit on_agent_started with coder=<provider name>."""
+        from tests.fakes.event_sink import FakeEventSink
+
+        fake_issues = FakeIssueProvider(
+            {"claimable-issue": FakeIssue(id="claimable-issue", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        event_sink = FakeEventSink()
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            issue_provider=fake_issues,
+            event_sink=event_sink,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
+
+        async def fake_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id="test-agent",
+                success=True,
+                summary="done",
+            )
+
+        monkeypatch.setattr(orchestrator, "run_implementer", fake_run_implementer)
+        task = await orchestrator.spawn_agent("claimable-issue")
+        assert task is not None
+        await task
+
+        started = event_sink.get_events("agent_started")
+        assert len(started) == 1
+        assert started[0].kwargs.get("coder") == orchestrator._agent_provider.name
+
+    @pytest.mark.asyncio
+    async def test_run_implementer_records_coder_in_telemetry_span(
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+    ) -> None:
+        """run_implementer must include coder in TelemetryProvider.create_span metadata."""
+        from typing import Any
+
+        from src.infra.telemetry import NullSpan
+        from src.pipeline.agent_session_runner import AgentSessionOutput
+        from tests.fakes.event_sink import FakeEventSink
+
+        captured_metadata: dict[str, Any] | None = None
+
+        class CapturingTelemetryProvider:
+            def is_enabled(self) -> bool:
+                return False
+
+            def create_span(
+                self, name: str, metadata: dict[str, Any] | None = None
+            ) -> NullSpan:
+                nonlocal captured_metadata
+                captured_metadata = metadata
+                return NullSpan()
+
+            def flush(self) -> None:
+                pass
+
+        fake_issues = FakeIssueProvider(
+            {"test-issue": FakeIssue(id="test-issue", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            issue_provider=fake_issues,
+            event_sink=FakeEventSink(),
+            telemetry_provider=CapturingTelemetryProvider(),
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
+
+        async def mock_run_session(
+            input,  # noqa: ANN001
+            tracer=None,  # noqa: ANN001
+            interrupt_event: asyncio.Event | None = None,
+        ) -> AgentSessionOutput:
+            return AgentSessionOutput(
+                success=True,
+                summary="done",
+                agent_id="mock-agent",
+                session_id="mock-session",
+            )
+
+        with patch("src.orchestration.orchestrator.AgentSessionRunner") as MockRunner:
+            mock_runner_instance = AsyncMock()
+            mock_runner_instance.run_session = mock_run_session
+            MockRunner.return_value = mock_runner_instance
+
+            await orchestrator.run_implementer("test-issue")
+
+        assert captured_metadata is not None
+        assert captured_metadata.get("coder") == orchestrator._agent_provider.name
+
+
 class TestRunOrchestrationLoop:
     """Test the main run() orchestration loop."""
 

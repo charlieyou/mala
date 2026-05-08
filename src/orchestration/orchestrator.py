@@ -1019,6 +1019,7 @@ class MalaOrchestrator:
             issue_id,
             metadata={
                 "agent_id": temp_agent_id,
+                "coder": self._agent_provider.name,
                 "mala_version": __version__,
                 "project_dir": self.repo_path.name,
                 "git_branch": await get_git_branch_async(self.repo_path),
@@ -1084,7 +1085,9 @@ class MalaOrchestrator:
             return None
 
         task = asyncio.create_task(self.run_implementer(issue_id, flow=flow))
-        self.event_sink.on_agent_started(issue_id, issue_id)
+        self.event_sink.on_agent_started(
+            issue_id, issue_id, coder=self._agent_provider.name
+        )
         return task
 
     async def _run_main_loop(
