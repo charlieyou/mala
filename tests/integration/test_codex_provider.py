@@ -29,7 +29,12 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from src.core.protocols.agent_event import AgentResultEvent, AgentTextEvent
+from src.core.protocols.agent_event import (
+    AgentResultEvent,
+    AgentTextEvent,
+    AgentToolResultEvent,
+    AgentToolUseEvent,
+)
 from src.infra.clients.codex_provider import CodexAgentProvider
 from src.infra.clients.codex_runtime import CodexRuntime
 
@@ -278,3 +283,107 @@ async def test_provider_with_resume_runtime_resumes_thread(
 
     assert fake_codex.resumed_ids == ["thr_resume_me"]
     assert fake_codex.started_kwargs == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_provider_emits_phase_d_tool_use_and_result_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase D (T011): item-level Codex notifications surface as tool events.
+
+    Drives the full provider → runtime → client → adapter →
+    :class:`AgentEvent` path with a representative D2 scenario:
+    ``item/started`` and ``item/completed`` carrying a
+    ``CommandExecutionThreadItem`` (bash command) plus a paired
+    ``turn/completed``. The test asserts the consumed events match the
+    plan's mapping (``plans/2026-05-07-codex-provider-plan.md``
+    L749-L762, D2): ``AgentToolUseEvent("bash", ...)`` followed by
+    ``AgentToolResultEvent`` keyed by item id, then the terminal
+    ``AgentResultEvent`` from ``turn/completed``. Without this wiring
+    the lint cache cannot recognise Codex bash commands and
+    :class:`MessageStreamProcessor` would never see the matched
+    tool-use ↔ tool-result pair (AC #15 regression).
+    """
+    seeded: list[object] = [
+        _FakeNotification(
+            method="item/started",
+            payload=SimpleNamespace(
+                item=SimpleNamespace(
+                    root=SimpleNamespace(
+                        id="cmd_42",
+                        type="commandExecution",
+                        command="ruff check .",
+                        cwd="/repo",
+                        status=SimpleNamespace(value="in_progress"),
+                        exit_code=None,
+                        aggregated_output=None,
+                    )
+                ),
+                thread_id="thr_phase_d",
+                turn_id="turn_1",
+            ),
+        ),
+        _FakeNotification(
+            method="item/completed",
+            payload=SimpleNamespace(
+                item=SimpleNamespace(
+                    root=SimpleNamespace(
+                        id="cmd_42",
+                        type="commandExecution",
+                        command="ruff check .",
+                        cwd="/repo",
+                        status=SimpleNamespace(value="completed"),
+                        exit_code=0,
+                        aggregated_output="ok\n",
+                    )
+                ),
+                thread_id="thr_phase_d",
+                turn_id="turn_1",
+            ),
+        ),
+        _FakeNotification(
+            method="turn/completed",
+            payload=SimpleNamespace(
+                thread_id="thr_phase_d",
+                turn=SimpleNamespace(
+                    id="turn_1",
+                    status=SimpleNamespace(value="completed"),
+                    error=None,
+                ),
+            ),
+        ),
+    ]
+    _install_fake_codex_app_server(monkeypatch, seeded_notifications=seeded)
+
+    provider = CodexAgentProvider()
+    runtime = provider.runtime_builder(
+        tmp_path, "agent-x", mcp_server_factory=_empty_factory()
+    ).build()
+    client = provider.client_factory.create(runtime)
+    received: list[AgentEventValue] = []
+    async with client:
+        await client.query("run lint")
+        async for event in client.receive_response():
+            received.append(cast("AgentEventValue", event))
+
+    assert len(received) == 3
+
+    tool_use = received[0]
+    assert isinstance(tool_use, AgentToolUseEvent)
+    assert tool_use.id == "cmd_42"
+    assert tool_use.name == "bash"
+    assert tool_use.input["command"] == "ruff check ."
+    assert tool_use.input["cwd"] == "/repo"
+
+    tool_result = received[1]
+    assert isinstance(tool_result, AgentToolResultEvent)
+    assert tool_result.tool_use_id == "cmd_42"
+    assert tool_result.is_error is False
+    assert tool_result.content == "ok\n"
+
+    result = received[2]
+    assert isinstance(result, AgentResultEvent)
+    assert result.session_id == "thr_phase_d"
+    assert result.is_error is False
+    assert result.subtype == "completed"

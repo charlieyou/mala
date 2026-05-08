@@ -1,4 +1,4 @@
-"""Codex SDK client (Phase C, T010).
+"""Codex SDK client (Phase C/D, T010 + T011).
 
 :class:`CodexClient` conforms structurally to
 :class:`src.core.protocols.sdk.SDKClientProtocol`, backed by
@@ -23,12 +23,11 @@ Phase C scope (plan ``L723-L740``):
     via ``AsyncThread.turn(TextInput(prompt))`` and stashes the
     ``AsyncTurnHandle``.
   * ``receive_response()``: consumes ``TurnHandle.stream()`` and emits
-    coder-agnostic :class:`AgentEvent`s (plan C3). Phase C handles the
-    lifecycle surface — text deltas, ``turn/completed``, ``error`` —
-    so the pipeline's :class:`IdleTimeoutStream` consumes provider-neutral
-    events without provider-specific branches. Phase D (T011) extends
-    the adapter with command-execution / file-change / MCP-tool-call
-    item mappings per the plan table (``L746-L762``).
+    coder-agnostic :class:`AgentEvent`s (plan C3 / D1-D7).
+    :class:`CodexEventAdapter` owns the per-turn translation state (it
+    needs to dedup ``AgentMessage`` deltas vs the matching
+    ``ItemCompleted`` carrying the same text), so a fresh adapter is
+    constructed for each :meth:`query` turn.
   * ``with_resume(thread_id)``: stores a resume token consumed on the
     next :meth:`query`.
   * ``disconnect()``: idempotent; calls ``AsyncTurnHandle.interrupt()``
@@ -40,10 +39,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from src.core.protocols.agent_event import (
-    AgentResultEvent,
-    AgentTextEvent,
-)
+from src.infra.clients.codex_event_adapter import CodexEventAdapter
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -54,63 +50,6 @@ if TYPE_CHECKING:
     from src.infra.clients.codex_runtime import CodexRuntime
 
 logger = logging.getLogger(__name__)
-
-
-def _notification_to_events(notification: object) -> list[AgentEventValue]:
-    """Map one Codex ``Notification`` → zero or more :class:`AgentEvent`s.
-
-    Phase C covers the lifecycle-critical subset; Phase D (T011) extends
-    this dispatch with the item-level mappings (``item/started`` /
-    ``item/completed`` carrying ``CommandExecutionThreadItem`` /
-    ``FileChangeThreadItem`` / ``McpToolCallThreadItem``) per the plan
-    table (``L746-L762``). Reasoning notifications stay dropped per
-    decision #12; unknown methods are skipped silently so SDK additions
-    do not crash a running turn.
-    """
-    method = getattr(notification, "method", None)
-    payload = getattr(notification, "payload", None)
-    if not isinstance(method, str) or payload is None:
-        return []
-
-    if method == "item/agentMessage/delta":
-        delta = getattr(payload, "delta", "") or ""
-        return [AgentTextEvent(text=str(delta))]
-
-    if method == "turn/completed":
-        thread_id = str(getattr(payload, "thread_id", "") or "")
-        turn_obj = getattr(payload, "turn", None)
-        status_obj = getattr(turn_obj, "status", None)
-        # ``TurnStatus`` is a ``StrEnum``; tolerate plain-string fakes too.
-        status_value = getattr(status_obj, "value", None)
-        if status_value is None and status_obj is not None:
-            status_value = str(status_obj)
-        is_error = bool(status_value) and status_value != "completed"
-        # Plan L761 D6 specifies ``result=TurnStatus`` (the status string).
-        # ``MessageStreamProcessor._handle_result_event`` copies this into
-        # ``lifecycle_ctx.final_result`` and exposes it as
-        # ``AgentSessionOutput.summary`` for retry author context, so the
-        # whole ``Turn`` object would surface as an opaque repr.
-        return [
-            AgentResultEvent(
-                session_id=thread_id,
-                is_error=is_error,
-                subtype="completed",
-                result=status_value or "",
-            )
-        ]
-
-    if method == "error":
-        thread_id = str(getattr(payload, "thread_id", "") or "")
-        return [
-            AgentResultEvent(
-                session_id=thread_id,
-                is_error=True,
-                subtype="error",
-                result=getattr(payload, "error", None),
-            )
-        ]
-
-    return []
 
 
 class CodexClient:
@@ -133,6 +72,11 @@ class CodexClient:
         # after the runtime was built (parity with
         # :meth:`AmpClient.with_resume`).
         self._resume_thread_id: str | None = runtime.resume_thread_id
+        # The adapter holds per-turn dedup state (D1: agent message
+        # delta vs completed item). A fresh instance is bound when each
+        # :meth:`query` issues a new turn so state never leaks across
+        # turns on the same client.
+        self._event_adapter: CodexEventAdapter | None = None
 
     # ------------------------------------------------------------------
     # Properties used by the orchestrator + tests
@@ -279,25 +223,35 @@ class CodexClient:
         self._turn = await self._thread.turn(
             TextInput(prompt), effort=self._runtime.effort
         )
+        # Reset per-turn dedup state. Without this a second turn on the
+        # same client would mistakenly suppress the first
+        # ``ItemCompleted`` that happens to reuse an item id seen on
+        # the prior turn.
+        self._event_adapter = CodexEventAdapter()
 
     async def receive_response(self) -> AsyncIterator[AgentEventValue]:
         """Yield :class:`AgentEvent`s parsed from the active turn's stream.
 
         Each ``codex_app_server`` ``Notification`` (``method`` + ``payload``)
-        is mapped through :func:`_notification_to_events` before reaching
-        the pipeline's :class:`IdleTimeoutStream`. Phase C covers the
-        notification surface needed for lifecycle correctness:
+        is run through :class:`CodexEventAdapter`, which implements the
+        Phase D mapping table (plan ``L749-L762``):
 
-          * ``item/agentMessage/delta`` → :class:`AgentTextEvent`.
+          * ``item/agentMessage/delta`` → :class:`AgentTextEvent`,
+            with the matching ``item/completed`` carrying
+            ``AgentMessageThreadItem`` deduplicated against the deltas.
+          * ``item/started`` carrying ``CommandExecutionThreadItem`` /
+            ``FileChangeThreadItem`` / ``McpToolCallThreadItem`` →
+            :class:`AgentToolUseEvent`; the matching ``item/completed``
+            → paired :class:`AgentToolResultEvent` keyed by item id.
           * ``turn/completed`` → :class:`AgentResultEvent` with
             ``is_error`` derived from ``TurnStatus``.
           * ``error`` → :class:`AgentResultEvent` with ``is_error=True``
             so a mid-turn provider error surfaces as a terminal failure
             rather than an idle hang.
-
-        Other Codex notifications (item-level command-execution,
-        file-change, MCP-tool-call, reasoning, etc.) are dropped here
-        until Phase D (T011) lands the full mapping table.
+          * ``item/reasoning/*`` (and reasoning items via
+            ``item/completed``) → no event (decision #12); reasoning is
+            tee'd to disk by Phase F (T013), not surfaced to the
+            pipeline.
         """
         turn = self._turn
         if turn is None:
@@ -305,8 +259,15 @@ class CodexClient:
                 "CodexClient.receive_response() called before query(); no "
                 "active TurnHandle to stream from."
             )
+        adapter = self._event_adapter
+        if adapter is None:
+            # Defensive: ``query()`` always installs an adapter, but if
+            # a caller wires up ``receive_response`` from a fresh
+            # client they should still get a usable iterator.
+            adapter = CodexEventAdapter()
+            self._event_adapter = adapter
         async for notification in turn.stream():
-            for event in _notification_to_events(notification):
+            for event in adapter.to_events(notification):
                 yield event
 
     async def disconnect(self) -> None:

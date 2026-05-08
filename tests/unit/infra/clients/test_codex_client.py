@@ -626,14 +626,15 @@ async def test_receive_response_maps_error_notification_to_result_event(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_receive_response_drops_unmapped_phase_d_notifications(
+async def test_receive_response_drops_reasoning_and_unknown_methods(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Item-level + reasoning notifications are dropped until Phase D lands.
+    """Reasoning notifications + unknown methods produce no runtime events.
 
-    The pipeline must not crash on notification kinds the Phase C
-    surface doesn't yet map (``item/started``, ``item/completed``,
-    ``item/reasoning/delta``, ...). Phase D (T011) extends the dispatch.
+    Phase D (T011) wires up the item-level dispatch, but reasoning
+    items still drop on the floor (decision #12) and unknown
+    notification methods must be ignored so an SDK schema addition
+    cannot crash a running turn.
     """
     from src.infra.clients.codex_client import CodexClient
 
@@ -644,20 +645,21 @@ async def test_receive_response_drops_unmapped_phase_d_notifications(
 
     notifications: list[object] = [
         _FakeNotification(
-            method="item/started",
+            method="item/reasoning/textDelta",
             payload=SimpleNamespace(
-                item=SimpleNamespace(id="item_1", type="commandExecution"),
+                delta="thinking...",
+                item_id="r_1",
                 thread_id="thr_phase_d",
                 turn_id="turn_1",
             ),
         ),
         _FakeNotification(
-            method="item/reasoning/text/delta",
-            payload=SimpleNamespace(delta="thinking..."),
+            method="some/future/method",
+            payload=SimpleNamespace(),
         ),
         _FakeNotification(
             method="item/agentMessage/delta",
-            payload=SimpleNamespace(delta="hello"),
+            payload=SimpleNamespace(delta="hello", item_id="msg_1"),
         ),
     ]
 
@@ -668,7 +670,7 @@ async def test_receive_response_drops_unmapped_phase_d_notifications(
         async for event in client.receive_response():
             received.append(event)
 
-    # Only the agentMessage/delta survives the Phase C dispatch.
+    # Only the agentMessage/delta produces an event.
     assert len(received) == 1
     assert isinstance(received[0], AgentTextEvent)
     assert received[0].text == "hello"
