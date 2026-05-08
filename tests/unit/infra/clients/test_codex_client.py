@@ -276,7 +276,14 @@ async def test_aenter_falls_back_when_sdk_rejects_env_kwarg(
 async def test_query_starts_thread_with_runtime_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``query(prompt)`` calls ``thread_start`` with runtime params + a turn."""
+    """``query(prompt)`` calls ``thread_start`` with runtime params + a turn.
+
+    Regression coverage for the Phase C reviewer findings: ``effort`` and
+    ``cwd`` from :class:`CodexRuntime` must reach ``thread_start`` so the
+    user-configured Codex effort (``MalaConfig.coder_options.codex.effort``)
+    is honored and the thread runs against the orchestrated repo path
+    rather than wherever the SDK app-server happened to be launched.
+    """
     from src.infra.clients.codex_client import CodexClient
 
     fake_codex = _install_fake_sdk(monkeypatch)
@@ -288,11 +295,13 @@ async def test_query_starts_thread_with_runtime_settings(
         assert len(fake_codex.threads_started) == 1
         kwargs = fake_codex.threads_started[0]
         assert kwargs["model"] == "gpt-5.5"
+        assert kwargs["effort"] == "medium"
         assert kwargs["sandbox"] == "danger-full-access"
         assert kwargs["approval_policy"] == "never"
         assert kwargs["mcp_servers"] == {
             "mala-locking": {"command": "mala-codex-mcp-locking"}
         }
+        assert kwargs["cwd"] == str(tmp_path)
         assert fake_codex.threads_resumed == []
         assert fake_codex.next_thread.turn_handles  # turn was issued
         assert fake_codex.next_thread.turn_inputs[0].prompt == "hello world"

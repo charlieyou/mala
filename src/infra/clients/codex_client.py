@@ -179,10 +179,12 @@ class CodexClient:
             else:
                 self._thread = await codex.thread_start(
                     model=self._runtime.model,
+                    effort=self._runtime.effort,
                     sandbox=self._runtime.sandbox,
                     approval_policy=self._runtime.approval_policy,
                     mcp_servers=self._runtime.mcp_servers,
                     base_instructions=self._runtime.base_instructions,
+                    cwd=str(self._runtime.cwd),
                 )
 
         from codex_app_server import (  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]

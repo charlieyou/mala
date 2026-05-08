@@ -164,12 +164,18 @@ async def test_provider_runtime_client_end_to_end_smoke(
         assert client.session_id == "thr_integration"  # ty:ignore[unresolved-attribute]
 
     # Lifecycle: thread_start fired with runtime params, no resume,
-    # AsyncCodex closed exactly once on context exit.
+    # AsyncCodex closed exactly once on context exit. ``effort`` and
+    # ``cwd`` are explicitly asserted here because the Phase C reviewer
+    # flagged silent drops as P1/P2 — they must round-trip from
+    # ``MalaConfig.coder_options.codex.effort`` and from the orchestrated
+    # ``repo_path`` into ``thread_start``.
     assert len(fake_codex.started_kwargs) == 1
     started = fake_codex.started_kwargs[0]
     assert started["model"] == "gpt-5.5-foo"
+    assert started["effort"] == "medium"
     assert started["sandbox"] == "danger-full-access"
     assert started["approval_policy"] == "never"
+    assert started["cwd"] == str(tmp_path)
     assert fake_codex.resumed_ids == []
     assert received == seeded
     assert fake_codex.exit_calls == 1

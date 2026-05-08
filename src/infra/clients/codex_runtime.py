@@ -219,20 +219,17 @@ class CodexRuntimeBuilder:
                 self._mcp_server_factory(self._agent_id, self._repo_path, None)
             )
 
+        # ``MALA_LOCK_DIR`` is inherited verbatim from ``os.environ`` via
+        # the spread above when set there (parity with the Amp path
+        # behavior at ``src/infra/clients/amp_provider.py:127``); when
+        # unset, the bundled hook + MCP launcher fall through to
+        # ``src.infra.tools.env.get_lock_dir`` for the default location.
         env: dict[str, str] = {
             **os.environ,
             "MALA_AGENT_ID": self._agent_id,
             "MALA_REPO_NAMESPACE": str(self._repo_path),
             **self._env_extra,
         }
-        # Forward the orchestrator's lock dir when one is configured so
-        # the bundled hook (and its locking MCP) reads from the same
-        # directory the rest of the run uses. Falling through to the
-        # env.py default when the var is unset matches the Amp path's
-        # behavior (``src/infra/clients/amp_provider.py:127``).
-        lock_dir = os.environ.get("MALA_LOCK_DIR")
-        if lock_dir and "MALA_LOCK_DIR" not in env:
-            env["MALA_LOCK_DIR"] = lock_dir
 
         # Lazy import to keep ``codex_runtime`` free of a hard
         # ``src.infra.hooks`` dep at module-load time; the import-linter

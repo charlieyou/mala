@@ -165,6 +165,24 @@ def test_env_carries_parent_environ_plus_mala_overlays(
 
 
 @pytest.mark.unit
+def test_env_omits_mala_lock_dir_when_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``MALA_LOCK_DIR`` is inherited from ``os.environ`` only when set there.
+
+    Regression for the Phase C reviewer's P3 dead-code finding: the
+    builder used to re-add ``MALA_LOCK_DIR`` after the ``**os.environ``
+    spread, which was always a no-op. The bundled hook + MCP launcher
+    falls through to ``src.infra.tools.env.get_lock_dir`` when the var
+    is unset; this test pins that contract so a regression that
+    silently fabricates a value would fail here.
+    """
+    monkeypatch.delenv("MALA_LOCK_DIR", raising=False)
+    runtime = _make_builder(tmp_path).build()
+    assert "MALA_LOCK_DIR" not in runtime.env
+
+
+@pytest.mark.unit
 def test_with_env_overlays_extra(tmp_path: Path) -> None:
     runtime = _make_builder(tmp_path).with_env({"MALA_DISALLOWED_TOOLS": "rm"}).build()
     assert runtime.env.get("MALA_DISALLOWED_TOOLS") == "rm"
