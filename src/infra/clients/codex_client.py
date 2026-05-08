@@ -232,10 +232,13 @@ class CodexClient:
         new turn — Codex threads accept multiple turns and the per-issue
         lifecycle never opens a fresh thread mid-session.
 
-        ``session_id`` (from :class:`SDKClientProtocol`) is treated as a
-        resume thread id when no prior :meth:`with_resume` /
-        ``runtime.resume_thread_id`` was set, mirroring the Amp adapter's
-        contract.
+        ``session_id`` (from :class:`SDKClientProtocol`) is intentionally
+        ignored: Codex resume tokens are wired through
+        :meth:`with_resume` / ``runtime.resume_thread_id`` (e.g. via
+        ``client_factory.with_resume(...)``). Callers such as
+        :class:`FixerService` pass an opaque agent id (e.g.
+        ``fixer-abcd1234``) here, which is not a Codex thread id
+        (``thr_...``) and must not be misread as a resume token.
 
         SDK shape (``codex_app_server.AsyncCodex.thread_start``,
         ``codex_app_server/api.py:336``) accepts ``model``,
@@ -249,14 +252,13 @@ class CodexClient:
         forward-compat with Phase G but is intentionally NOT passed
         here.
         """
+        del session_id  # see docstring: not a Codex resume token
         codex = self._codex
         if codex is None:
             raise RuntimeError(
                 "CodexClient.query() called before __aenter__; the "
                 "AsyncCodex context must be entered first."
             )
-        if session_id is not None and self._resume_thread_id is None:
-            self._resume_thread_id = session_id
 
         if self._thread is None:
             if self._resume_thread_id is not None:

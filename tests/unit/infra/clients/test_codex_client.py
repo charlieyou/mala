@@ -408,6 +408,36 @@ async def test_with_resume_overrides_runtime_resume_id(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_query_session_id_is_not_treated_as_resume_thread_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``query(session_id=...)`` must not trigger ``thread_resume``.
+
+    Codex resume tokens flow through :meth:`with_resume` /
+    ``runtime.resume_thread_id`` (wired via
+    ``client_factory.with_resume(...)``). The
+    :class:`SDKClientProtocol` ``session_id`` parameter is an opaque
+    caller-supplied id — :class:`FixerService` passes the agent id
+    (e.g. ``fixer-abcd1234``) for non-Amp providers — and is not a
+    Codex thread id (``thr_...``). Treating it as a resume token would
+    make the first Codex fixer query attempt to resume a nonexistent
+    thread instead of starting a fresh one.
+    """
+    from src.infra.clients.codex_client import CodexClient
+
+    fake_codex = _install_fake_sdk(monkeypatch)
+    runtime = _build_runtime(tmp_path)
+    fake_codex.next_thread = _FakeThread(id="thr_fresh")
+
+    async with CodexClient(runtime) as client:
+        await client.query("hello", session_id="fixer-abcd1234")
+        assert fake_codex.threads_resumed == []
+        assert len(fake_codex.threads_started) == 1
+        assert client.session_id == "thr_fresh"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_query_before_aenter_raises(tmp_path: Path) -> None:
     from src.infra.clients.codex_client import CodexClient
 
