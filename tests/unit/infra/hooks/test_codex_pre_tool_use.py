@@ -542,3 +542,376 @@ class TestOutputShape:
         spec = result["hookSpecificOutput"]
         assert spec["permissionDecision"] == "deny"
         assert spec["permissionDecisionReason"]
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 2 — P1/P2 findings)
+# ---------------------------------------------------------------------------
+
+
+class TestRedirectionDigitPreservation:
+    """Regression: ``>2026-log.txt`` (no space) must keep the leading digits.
+
+    Before the fix, ``tok.lstrip("&012>")`` ate any leading 0/1/2/&/> chars
+    from the *filename*, so ``>2026-log.txt`` was lock-checked against
+    ``6-log.txt`` — a different path, allowing the real write to slip past
+    the gate. Pin the digit-preserving behavior.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "echo hi >{target}",
+            "echo hi >>{target}",
+            "ls 2>{target}",
+            "cmd &>{target}",
+        ],
+    )
+    def test_digit_filenames_locked_correctly(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "2026-log.txt"
+        # Lock the *correct* path (with leading digits intact).
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = command_template.format(target=str(target))
+
+        result = decide(make_payload("bash", {"command": command}))
+
+        assert is_allow(result), (
+            f"Lock on the digit-leading filename should match the "
+            f"redirection target, got: {result}"
+        )
+
+    def test_digit_filename_unlocked_denies_correct_path(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # No lock on /repo/2026-log.txt; locking only the digit-stripped
+        # path 6-log.txt would have made the buggy implementation allow.
+        wrong_path = repo / "6-log.txt"
+        assert try_lock(str(wrong_path), "agent-me", repo_namespace=str(repo))
+        target = repo / "2026-log.txt"
+        command = f"echo hi >{target}"
+
+        result = decide(make_payload("bash", {"command": command}))
+
+        assert is_deny(result), (
+            f"Lock on the digit-stripped path must NOT satisfy the "
+            f"actual write target's lock requirement: {result}"
+        )
+        assert "2026-log.txt" in deny_reason(result)
+
+
+class TestCwdResolution:
+    """Regression: shell relative paths resolve against the payload cwd.
+
+    Before the fix, ``cwd=/repo/pkg`` + ``command='touch generated.py'``
+    lock-checked ``/repo/generated.py`` (namespace root) instead of
+    ``/repo/pkg/generated.py``, so a root-level lock allowed an unowned
+    write inside the subdirectory. Pin the cwd-resolved behavior.
+    """
+
+    def test_relative_path_resolves_against_cwd(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        sub = repo / "pkg"
+        sub.mkdir()
+        target = sub / "generated.py"
+        # Lock only the cwd-resolved path; the namespace-root path stays
+        # unlocked. The hook should consult the cwd-resolved path.
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": "touch generated.py"},
+                cwd=sub,
+            )
+        )
+
+        assert is_allow(result), result
+
+    def test_root_lock_does_not_satisfy_subdir_write(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        sub = repo / "pkg"
+        sub.mkdir()
+        # Lock /repo/generated.py (namespace root) but the command runs
+        # in /repo/pkg, so the actual write is /repo/pkg/generated.py —
+        # which is *not* locked.
+        assert try_lock(
+            str(repo / "generated.py"), "agent-me", repo_namespace=str(repo)
+        )
+
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": "touch generated.py"},
+                cwd=sub,
+            )
+        )
+
+        assert is_deny(result), (
+            f"Root-level lock must not satisfy the cwd-resolved write target: {result}"
+        )
+
+
+class TestSedLongInplace:
+    """Regression: ``sed --in-place`` long form must be detected."""
+
+    def test_sed_long_inplace_denied_when_unlocked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "long.txt"
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": f"sed --in-place s/a/b/ {target}"},
+            )
+        )
+        assert is_deny(result)
+
+    def test_sed_long_inplace_with_eq_value_denied(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "long.txt"
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": f"sed --in-place=.bak s/a/b/ {target}"},
+            )
+        )
+        assert is_deny(result)
+
+    def test_sed_long_inplace_allowed_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "long.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": f"sed --in-place s/a/b/ {target}"},
+            )
+        )
+        assert is_allow(result)
+
+
+class TestAwkInplaceProgramFlag:
+    """Regression: ``awk -i inplace -f script.awk file`` must lock-check ``file``.
+
+    Before the fix, the heuristic always dropped the first positional as
+    "the inline awk program", so the only positional (the actual file
+    target) was discarded and the heuristic returned an empty list,
+    silently allowing the in-place edit.
+    """
+
+    def test_awk_with_program_file_denies_when_unlocked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "data.txt"
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": f"awk -i inplace -f script.awk {target}"},
+            )
+        )
+        assert is_deny(result)
+        assert "has no active lock" in deny_reason(result)
+
+    def test_awk_with_program_file_allows_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "data.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": f"awk -i inplace -f script.awk {target}"},
+            )
+        )
+        assert is_allow(result)
+
+
+class TestExtendedDangerousGitGuards:
+    """Regression: parity with ``block_dangerous_commands`` for git commit/push.
+
+    Before the fix, ``git commit -a``, ``git commit`` without prior
+    ``git add``, and ``git push --force`` all returned ``allow`` from
+    the Codex hook because the detector only looped over the static
+    ``DANGEROUS_PATTERNS``/``DESTRUCTIVE_GIT_PATTERNS`` lists. AC #9
+    requires the Codex hook to mirror the Claude hook's full coverage.
+    """
+
+    @pytest.mark.parametrize(
+        "command,expected_substring",
+        [
+            ("git commit -a -m 'wip'", "git commit -a"),
+            ("git commit --all -m 'wip'", "git commit -a/--all"),
+            ("git commit -m 'wip'", "git commit without prior git add"),
+            ("git push --force origin main", "git push --force"),
+            ("git push -f origin main", "git push --force"),
+        ],
+    )
+    def test_extended_git_guards_deny(
+        self,
+        env: dict[str, str],
+        command: str,
+        expected_substring: str,
+    ) -> None:
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), result
+        assert expected_substring in deny_reason(result), deny_reason(result)
+
+    def test_force_with_lease_allowed(self, env: dict[str, str]) -> None:
+        # ``--force-with-lease`` is the documented safer alternative.
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": "git push --force-with-lease origin main"},
+            )
+        )
+        assert is_allow(result)
+
+    def test_atomic_add_commit_allowed(self, env: dict[str, str], repo: Path) -> None:
+        # ``git add <file> && git commit -m ...`` is the required pattern.
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": "git add f.py && git commit -m 'msg'"},
+            )
+        )
+        assert is_allow(result)
+
+
+class TestApplyPatchPatchBody:
+    """Regression: apply_patch with embedded patch body parses headers.
+
+    Codex apply_patch surfaces the patch content under
+    ``tool_input.command`` (or ``input``/``patch`` etc.) rather than as a
+    structured ``path`` field. Before the fix, the hook returned an empty
+    target list and the *next* gate was a no-op, so the call was allowed
+    without any lock check — defeating AC #9 entirely under the dominant
+    Codex shape.
+    """
+
+    def test_envelope_add_file_extracted(self, env: dict[str, str], repo: Path) -> None:
+        body = (
+            "*** Begin Patch\n"
+            "*** Add File: src/new.py\n"
+            "+def f():\n"
+            "+    return 1\n"
+            "*** End Patch\n"
+        )
+        result = decide(
+            make_payload(
+                "apply_patch",
+                {"command": body},
+                cwd=repo,
+            )
+        )
+        assert is_deny(result), result
+        assert "src/new.py" in deny_reason(result)
+
+    def test_envelope_update_file_extracted(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        body = "*** Update File: src/foo.py\n@@\n-old\n+new\n"
+        result = decide(
+            make_payload(
+                "apply_patch",
+                {"input": body},
+                cwd=repo,
+            )
+        )
+        assert is_deny(result)
+        assert "src/foo.py" in deny_reason(result)
+
+    def test_unified_diff_header_extracted(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        body = (
+            "diff --git a/src/foo.py b/src/foo.py\n"
+            "--- a/src/foo.py\n"
+            "+++ b/src/foo.py\n"
+            "@@\n-x\n+y\n"
+        )
+        result = decide(
+            make_payload(
+                "apply_patch",
+                {"patch": body},
+                cwd=repo,
+            )
+        )
+        assert is_deny(result)
+        assert "src/foo.py" in deny_reason(result)
+
+    def test_envelope_locked_path_allowed(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Lock the cwd-resolved path; apply_patch should allow.
+        target = repo / "src" / "new.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        body = "*** Begin Patch\n*** Add File: src/new.py\n+x\n*** End Patch\n"
+        result = decide(
+            make_payload(
+                "apply_patch",
+                {"command": body},
+                cwd=repo,
+            )
+        )
+        assert is_allow(result), result
+
+    def test_apply_patch_no_extractable_paths_denies(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # No ``path``/``paths``-style keys, no parseable patch headers.
+        # Must deny fail-closed (Amp parity: mala-safety.ts L1329-L1339).
+        result = decide(
+            make_payload(
+                "apply_patch",
+                {"command": "this is not a patch body at all"},
+                cwd=repo,
+            )
+        )
+        assert is_deny(result)
+        assert "no extractable target paths" in deny_reason(result)
+
+
+class TestEmptyEnvOverridesStateFile:
+    """Regression: ``MALA_DISALLOWED_TOOLS=""`` clears the state-file value.
+
+    Before the fix, ``if env_val:`` treated an explicitly-empty env as
+    absent and silently fell back to the state file, so an operator
+    could not unset a stale state-file disallowed-tools list without
+    deleting the file.
+    """
+
+    def test_empty_env_clears_state_disallowed_tools(
+        self,
+        repo: Path,
+        lock_dir: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fake_home = tmp_path / "home"
+        state_dir = fake_home / ".config" / "mala" / "agent-state"
+        state_dir.mkdir(parents=True)
+        session_id = "thr_clear"
+        (state_dir / f"{session_id}.env").write_text(
+            "MALA_AGENT_ID=agent-me\n"
+            f"MALA_LOCK_DIR={lock_dir}\n"
+            f"MALA_REPO_NAMESPACE={repo}\n"
+            "MALA_DISALLOWED_TOOLS=TodoWrite\n"
+        )
+        monkeypatch.setenv("HOME", str(fake_home))
+        # Explicitly-empty env should clear the state-file value.
+        monkeypatch.setenv("MALA_DISALLOWED_TOOLS", "")
+
+        # TodoWrite was disallowed by the state file but env clears it.
+        result = decide(make_payload("TodoWrite", {}, session_id=session_id))
+
+        assert is_allow(result), result

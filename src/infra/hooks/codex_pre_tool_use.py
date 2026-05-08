@@ -179,7 +179,10 @@ def _resolve_env(session_id: str) -> dict[str, str]:
     out: dict[str, str] = {}
     for key in keys:
         env_val = os.environ.get(key)
-        if env_val:
+        if env_val is not None:
+            # Env wins on conflict, even when explicitly empty: an
+            # operator setting ``MALA_DISALLOWED_TOOLS=""`` means "clear
+            # the state-file value", not "fall back to it".
             out[key] = env_val
         elif key in state:
             out[key] = state[key]
@@ -191,13 +194,40 @@ def _disallowed_tools(env: dict[str, str]) -> set[str]:
     return {t.strip() for t in raw.split(",") if t.strip()}
 
 
+def _resolve_against_cwd(target: str, cwd: str | None) -> str:
+    """Resolve a relative ``target`` against the payload ``cwd``.
+
+    Shell commands (and patch headers) write paths relative to the
+    process cwd, not to the repo namespace root. Without this resolution,
+    a hook input with ``cwd=/repo/pkg`` and ``command='touch generated.py'``
+    would lock-check ``/repo/generated.py`` (namespace-root) and let an
+    unowned write to ``/repo/pkg/generated.py`` slip past whenever the
+    agent happens to hold the root-level lock.
+    """
+    if not target or target == _UNRESOLVED_SENTINEL:
+        return target
+    p = Path(target)
+    if p.is_absolute():
+        return target
+    if not cwd:
+        return target
+    return str(Path(cwd) / target)
+
+
 def _check_lock(
-    target: str, agent_id: str, lock_dir: str, repo_namespace: str
+    target: str,
+    agent_id: str,
+    lock_dir: str,
+    repo_namespace: str,
+    cwd: str | None,
 ) -> dict[str, Any] | None:
     """Look up the lock holder for ``target`` and return a deny dict if blocked.
 
-    The unresolved-target sentinel always denies (plan L846: deny on
-    parseable-but-unresolved write expressions).
+    Relative ``target`` paths are resolved against the payload ``cwd``
+    before lock-key derivation so the lock-check path matches the path
+    the shell would actually write to. The unresolved-target sentinel
+    always denies (plan L846: deny on parseable-but-unresolved write
+    expressions).
     """
     if target == _UNRESOLVED_SENTINEL:
         return _deny(_msg_no_lock(target, agent_id))
@@ -208,7 +238,11 @@ def _check_lock(
     # before the env is resolved.
     from ..tools.locking import get_lock_holder
 
-    holder = get_lock_holder(target, repo_namespace=repo_namespace)
+    resolved = _resolve_against_cwd(target, cwd)
+    holder = get_lock_holder(resolved, repo_namespace=repo_namespace)
+    # Deny messages keep the original (caller-visible) target string for
+    # readability, even when the lock-key was computed from the cwd-
+    # resolved absolute path.
     if holder is None:
         return _deny(_msg_no_lock(target, agent_id))
     if holder != agent_id:
@@ -245,22 +279,34 @@ def _strip_env_assignments(tokens: list[str]) -> list[str]:
     return tokens[i:]
 
 
+_PREFIX_REDIR_RE = re.compile(r"^(?:&|[012])?>{1,2}\|?")
+_DEV_NULL_LIKE = frozenset({"/dev/null", "/dev/stderr", "/dev/stdout", "/dev/tty"})
+
+
 def _extract_redirection_targets(tokens: list[str]) -> list[str]:
-    """Find ``>``/``>>``/etc. targets in a token stream."""
+    """Find ``>``/``>>``/etc. targets in a token stream.
+
+    Handles both space-separated forms (``cmd > file`` → ``['cmd', '>', 'file']``)
+    and combined-token forms (``cmd >file`` → ``['cmd', '>file']``). The
+    combined form is parsed with a strict prefix regex so digits and
+    ampersands inside the *filename* are preserved (the previous
+    ``lstrip("&012>")`` ate any leading digit, e.g. ``>2026-log.txt``
+    became ``6-log.txt``).
+    """
     out: list[str] = []
     for i, tok in enumerate(tokens):
         if tok in REDIR_OPERATORS and i + 1 < len(tokens):
             target = tokens[i + 1]
-            # Skip /dev/null and friends; these are not real lock targets.
-            if target in {"/dev/null", "/dev/stderr", "/dev/stdout", "/dev/tty"}:
+            if target in _DEV_NULL_LIKE:
                 continue
             out.append(target)
-        # Combined forms like ">file" (no space). shlex normally splits them
-        # but defensive handling keeps the heuristic robust.
-        elif tok.startswith((">", "&>", "1>", "2>")) and len(tok) > 2:
-            stripped = tok.lstrip("&012>")
-            if stripped:
-                out.append(stripped)
+            continue
+        # Combined forms like ``>file``, ``>>file``, ``2>file``, ``&>file``.
+        m = _PREFIX_REDIR_RE.match(tok)
+        if m and m.end() < len(tok):
+            target = tok[m.end() :]
+            if target and target not in _DEV_NULL_LIKE:
+                out.append(target)
     return out
 
 
@@ -276,15 +322,18 @@ def _extract_tee_targets(tokens: list[str]) -> list[str]:
 
 
 def _has_inplace_flag(tokens: list[str], inplace_short: str = "i") -> bool:
-    """True if any token is a ``-`` flag bundle containing ``i`` (e.g., ``-i.bak``)."""
+    """True if a sed/perl token signals in-place edit (``-i``/``--in-place``)."""
     for tok in tokens[1:]:
-        if not tok.startswith("-") or tok.startswith("--"):
+        if not tok.startswith("-"):
             continue
-        # Strip leading dashes; check for 'i' anywhere in the bundle.
+        # Long-form: ``--in-place`` and ``--in-place=.bak``. Must be
+        # checked before the ``--`` short-circuit so it is reachable.
+        if tok == "--in-place" or tok.startswith("--in-place="):
+            return True
+        if tok.startswith("--"):
+            continue
         body = tok.lstrip("-")
         if inplace_short in body:
-            return True
-        if tok in ("--in-place",):
             return True
     return False
 
@@ -322,13 +371,19 @@ def _extract_inplace_targets(tokens: list[str]) -> list[str]:
 
 
 def _extract_awk_inplace_targets(tokens: list[str]) -> list[str]:
-    """``awk -i inplace`` / ``gawk -i inplace`` file args."""
+    """``awk -i inplace`` / ``gawk -i inplace`` file args.
+
+    When the awk program is supplied via ``-f script.awk`` (rather than as
+    the first positional), every positional is a file target. Otherwise
+    the first positional is the inline program and the rest are files.
+    """
     if not tokens:
         return []
     cmd = tokens[0]
     if cmd not in {"awk", "gawk"}:
         return []
     found_inplace = False
+    has_program_flag = False
     i = 1
     positionals: list[str] = []
     while i < len(tokens):
@@ -338,8 +393,9 @@ def _extract_awk_inplace_targets(tokens: list[str]) -> list[str]:
             i += 2
             continue
         if tok.startswith("-"):
-            # Flag with value
             if tok in {"-f", "-v", "-F"} and i + 1 < len(tokens):
+                if tok == "-f":
+                    has_program_flag = True
                 i += 2
                 continue
             i += 1
@@ -348,7 +404,8 @@ def _extract_awk_inplace_targets(tokens: list[str]) -> list[str]:
         i += 1
     if not found_inplace:
         return []
-    # First positional is the awk program; rest are file targets.
+    if has_program_flag:
+        return positionals
     return positionals[1:] if len(positionals) > 1 else []
 
 
@@ -563,12 +620,40 @@ def _extract_shell_write_paths(command: str) -> list[str]:
 
 
 def _detect_dangerous_pattern(command: str) -> str | None:
+    """Mirror :func:`block_dangerous_commands` for parity with the Claude hook.
+
+    Returns the matched pattern label (for ``_msg_dangerous``) or ``None``.
+    Coverage must include every gate the Claude path applies, so AC #9
+    ("dangerous shell commands are denied") holds for Codex too: dangerous
+    patterns, destructive git patterns, ``git commit -a``/``--all``,
+    atomic-add-commit requirement, and ``git push --force``.
+    """
     for pattern in DANGEROUS_PATTERNS:
         if pattern in command:
             return pattern
     for pattern in DESTRUCTIVE_GIT_PATTERNS:
         if pattern in command:
             return pattern
+
+    # ``git commit -a``/``--all`` and atomic-add-commit (mirror
+    # ``block_dangerous_commands`` in ``dangerous_commands.py``).
+    command_lower = command.lower()
+    if "git commit" in command_lower:
+        if " --all" in command_lower or "git commit -a" in command_lower:
+            return "git commit -a/--all"
+        commit_index = command_lower.find("git commit")
+        add_index = command_lower.find("git add")
+        if add_index == -1 or add_index > commit_index:
+            return "git commit without prior git add"
+
+    # ``git push --force`` / ``-f`` (``--force-with-lease`` is the
+    # documented safer alternative and is allowed).
+    if "git push" in command:
+        if "--force-with-lease" in command:
+            pass
+        elif "--force" in command or "-f " in command:
+            return "git push --force"
+
     return None
 
 
@@ -592,8 +677,36 @@ def _command_string(tool_input: dict[str, Any]) -> str:
     return ""
 
 
+# Codex apply_patch envelope headers: ``*** {Update,Add,Delete,Move} File: path``.
+# Move headers also carry ``*** Move to: path`` for the destination.
+_APPLY_PATCH_ENVELOPE_RE = re.compile(
+    r"^\*\*\*\s+(?:Update|Add|Delete|Move(?:\s+to)?)\s+File:\s+(.+?)\s*$",
+    re.MULTILINE,
+)
+# Unified-diff destination header. ``b/`` prefix is the conventional
+# git-format prefix; the regex tolerates either form.
+_DIFF_DEST_HEADER_RE = re.compile(r"^\+\+\+\s+(?:b/)?(.+?)\s*$", re.MULTILINE)
+_DIFF_SRC_HEADER_RE = re.compile(r"^---\s+(?:a/)?(.+?)\s*$", re.MULTILINE)
+
+
 def _apply_patch_paths(tool_input: dict[str, Any]) -> list[str]:
-    """Best-effort path extraction for the apply_patch / file-edit branch."""
+    """Extract write-target paths for the apply_patch / file-edit branch.
+
+    Accepts both shapes Codex emits in practice:
+
+    1. Direct path keys (``path``/``file_path``/``filename``/``target``/``paths``).
+    2. An embedded patch body under ``command``/``input``/``patch``/
+       ``patch_text``/``body``. The body uses Codex envelope headers
+       (``*** Update File: path``, etc.) and/or unified-diff headers
+       (``+++ b/path``, ``--- a/path``); both are parsed and the target
+       paths are returned.
+
+    Parity reference: ``plugins/amp/mala-safety.ts`` (L307-L313, L1329-L1339)
+    parses the same patch shapes for the Amp ``apply_patch`` tool. Codex
+    must match this surface so AC #9 ("unowned file edits are denied")
+    holds even when the caller does not split the patch out into a
+    structured ``path`` field.
+    """
     out: list[str] = []
     for key in ("path", "file_path", "filename", "target"):
         val = tool_input.get(key)
@@ -604,7 +717,35 @@ def _apply_patch_paths(tool_input: dict[str, Any]) -> list[str]:
         for p in paths:
             if isinstance(p, str) and p:
                 out.append(p)
-    return out
+
+    for key in ("command", "input", "patch", "patch_text", "body", "diff"):
+        body = tool_input.get(key)
+        if not isinstance(body, str) or not body:
+            continue
+        for m in _APPLY_PATCH_ENVELOPE_RE.finditer(body):
+            target = m.group(1).strip()
+            if target:
+                out.append(target)
+        for m in _DIFF_DEST_HEADER_RE.finditer(body):
+            target = m.group(1).strip()
+            # ``+++ /dev/null`` marks a delete; pair it with the ``---``
+            # source path below.
+            if target and target != "/dev/null":
+                out.append(target)
+        for m in _DIFF_SRC_HEADER_RE.finditer(body):
+            target = m.group(1).strip()
+            if target and target != "/dev/null":
+                out.append(target)
+
+    # Dedup while preserving order so deny messages reference the first
+    # matched form.
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for p in out:
+        if p not in seen:
+            seen.add(p)
+            deduped.append(p)
+    return deduped
 
 
 def _gate_write_targets(
@@ -613,10 +754,11 @@ def _gate_write_targets(
     agent_id: str,
     lock_dir: str,
     repo_namespace: str,
+    cwd: str | None,
 ) -> dict[str, Any] | None:
     """Run the lock check on each target; return the first deny."""
     for target in targets:
-        deny = _check_lock(target, agent_id, lock_dir, repo_namespace)
+        deny = _check_lock(target, agent_id, lock_dir, repo_namespace, cwd)
         if deny is not None:
             return deny
     return None
@@ -633,6 +775,8 @@ def decide(input_payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(tool_input, dict):
         tool_input = {}
     session_id = str(input_payload.get("session_id") or "")
+    cwd = input_payload.get("cwd")
+    cwd_str: str | None = cwd if isinstance(cwd, str) and cwd else None
 
     env = _resolve_env(session_id)
     disallowed = _disallowed_tools(env)
@@ -642,7 +786,6 @@ def decide(input_payload: dict[str, Any]) -> dict[str, Any]:
         return _deny(_msg_disallowed(tool_name))
 
     # Branches that need lock evaluation require all three env vars.
-    needs_lock_env = tool_name in SHELL_TOOL_NAMES or tool_name in FILE_EDIT_TOOL_NAMES
     agent_id = env.get("MALA_AGENT_ID")
     lock_dir = env.get("MALA_LOCK_DIR")
     repo_namespace = env.get("MALA_REPO_NAMESPACE")
@@ -664,26 +807,34 @@ def decide(input_payload: dict[str, Any]) -> dict[str, Any]:
             agent_id=agent_id,
             lock_dir=lock_dir,
             repo_namespace=repo_namespace,
+            cwd=cwd_str,
         )
         return deny if deny is not None else _allow()
 
     if tool_name in FILE_EDIT_TOOL_NAMES:
-        targets = _apply_patch_paths(tool_input)
-        if not targets:
-            return _allow()
         if not (agent_id and lock_dir and repo_namespace):
             return _deny(_MSG_ENV_MISSING)
+        targets = _apply_patch_paths(tool_input)
+        if not targets:
+            # Fail-closed: with sandbox=danger-full-access this hook is
+            # the single safety gate, so an apply_patch payload that the
+            # heuristic cannot decode must not be silently allowed.
+            # Parity: ``plugins/amp/mala-safety.ts`` L1329-L1339.
+            return _deny(
+                "apply_patch payload has no extractable target paths; "
+                "refusing fail-open"
+            )
         deny = _gate_write_targets(
             targets,
             agent_id=agent_id,
             lock_dir=lock_dir,
             repo_namespace=repo_namespace,
+            cwd=cwd_str,
         )
         return deny if deny is not None else _allow()
 
     # MCP tools and any other tool name: only the disallowed-tools check
     # applied (handled above). Allow otherwise.
-    del needs_lock_env  # documented above; left for readability
     return _allow()
 
 
