@@ -55,17 +55,22 @@ def _command_completed(
     command: str,
     aggregated_output: str = "",
     status: str = "completed",
+    *,
+    exit_code: int | None = 0,
 ) -> dict[str, object]:
+    item: dict[str, object] = {
+        "type": "commandExecution",
+        "id": item_id,
+        "command": command,
+        "aggregated_output": aggregated_output,
+        "status": status,
+    }
+    if exit_code is not None:
+        item["exit_code"] = exit_code
     return {
         "method": "item/completed",
         "payload": {
-            "item": {
-                "type": "commandExecution",
-                "id": item_id,
-                "command": command,
-                "aggregated_output": aggregated_output,
-                "status": status,
-            },
+            "item": item,
             "thread_id": "thr_resume_test",
             "turn_id": "turn_x",
         },
@@ -265,6 +270,60 @@ def test_iter_thread_evidence_yields_full_history_across_three_invocations(
         for _id, command in provider.extract_bash_commands(entry):
             seen_via_session.append(command)
     assert seen_via_session == ["uvx ruff check .", "uvx ty check"]
+
+
+def test_failed_pytest_is_routed_to_failed_commands(tmp_path: Path) -> None:
+    """Regression: a non-zero exit on a "completed" pytest must fail the gate.
+
+    Review-2 P1: Codex marks a ``commandExecution`` item as
+    ``status="completed"`` whenever the shell finished, regardless of
+    return code. If :class:`CodexEvidenceProvider.extract_tool_results`
+    only checked ``status``, a failed ``uv run pytest -q`` (status=
+    completed, exit_code=1) would propagate through
+    :meth:`EvidenceCheck.parse_validation_evidence_with_spec` as
+    ``is_error=False``, the spec'd TEST kind would never land in
+    ``failed_commands``, and the gate would silently pass on a failed
+    test run.
+
+    This integration test wires the real :class:`CodexEvidenceProvider`
+    into a real :class:`EvidenceCheck` and asserts that the failing
+    pytest IS reported in ``failed_commands`` — i.e., the gate does
+    NOT silently pass.
+    """
+    sessions_dir = tmp_path / "codex-sessions"
+    log_path = sessions_dir / "thr_resume_test.jsonl"
+
+    _write_jsonl(
+        log_path,
+        [
+            _command_completed(
+                "item-pytest-fail",
+                "uv run pytest -q",
+                "1 failed",
+                "completed",
+                exit_code=1,
+            ),
+        ],
+    )
+
+    provider = CodexEvidenceProvider(sessions_dir=sessions_dir)
+    check = EvidenceCheck(
+        repo_path=tmp_path,
+        evidence_provider=provider,
+        command_runner=cast("CommandRunnerPort", _NoopRunner()),
+    )
+
+    evidence = check.parse_validation_evidence_with_spec(
+        log_path,
+        _spec_with_lint_test_typecheck(),
+    )
+
+    assert evidence.commands_ran[CommandKind.TEST] is True
+    assert "uv run pytest -q" in evidence.failed_commands, (
+        "Failed pytest with status=completed + exit_code=1 must be "
+        "tracked in failed_commands; otherwise the gate silently passes "
+        "on a real test failure."
+    )
 
 
 def test_codex_provider_evidence_surface_reads_codex_sessions_dir() -> None:

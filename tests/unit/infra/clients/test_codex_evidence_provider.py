@@ -53,18 +53,29 @@ def _command_completed(
     command: str,
     aggregated_output: str = "",
     status: str = "completed",
+    *,
+    exit_code: int | None = 0,
 ) -> dict[str, object]:
-    """``item/completed`` notification for a ``CommandExecutionThreadItem``."""
+    """``item/completed`` notification for a ``CommandExecutionThreadItem``.
+
+    Codex marks a command as ``status="completed"`` whenever the shell
+    finished — even on non-zero exits — so tests pin ``exit_code``
+    explicitly. Default 0 (clean exit) so existing fixtures keep their
+    success semantics.
+    """
+    item: dict[str, object] = {
+        "type": "commandExecution",
+        "id": item_id,
+        "command": command,
+        "aggregated_output": aggregated_output,
+        "status": status,
+    }
+    if exit_code is not None:
+        item["exit_code"] = exit_code
     return {
         "method": "item/completed",
         "payload": {
-            "item": {
-                "type": "commandExecution",
-                "id": item_id,
-                "command": command,
-                "aggregated_output": aggregated_output,
-                "status": status,
-            },
+            "item": item,
             "thread_id": "thr_test",
             "turn_id": "turn_1",
         },
@@ -267,6 +278,102 @@ def test_extract_tool_results_pairs_item_id_with_status(tmp_path: Path) -> None:
         ("item-ok", False),
         ("item-fail", True),
         ("item-edit", False),
+    ]
+
+
+@pytest.mark.unit
+def test_command_with_completed_status_but_nonzero_exit_is_error(
+    tmp_path: Path,
+) -> None:
+    """Codex command items with ``status=completed`` + ``exit_code != 0`` are errors.
+
+    Regression for the review-2 P1: Codex marks a ``commandExecution``
+    item as ``status="completed"`` whenever the shell process *finished*,
+    even if the command exited non-zero. If
+    :meth:`CodexEvidenceProvider.extract_tool_results` only checked
+    ``status``, a failed ``uv run pytest`` (status=completed, exit_code=1)
+    would surface as ``(item_id, False)``,
+    :meth:`EvidenceCheck.parse_validation_evidence_with_spec` would skip
+    adding it to ``failed_commands``, and the validation gate would
+    silently pass on a failed test/lint/typecheck run.
+
+    Mirrors :meth:`CodexEventAdapter._command_completed`'s exit-code rule
+    (``src/infra/clients/codex_event_adapter.py:343-347``) so the live
+    pipeline and the evidence-replay path classify identically.
+    """
+    log_path = tmp_path / "thr_test.jsonl"
+    _write_jsonl(
+        log_path,
+        [
+            _command_completed(
+                "item-pytest-fail",
+                "uv run pytest -q",
+                "1 failed",
+                "completed",
+                exit_code=1,
+            ),
+            _command_completed(
+                "item-pytest-ok",
+                "uv run pytest -q",
+                "1 passed",
+                "completed",
+                exit_code=0,
+            ),
+            # Missing ``exit_code`` key entirely (older SDK shape /
+            # not-yet-populated): treat as success rather than crash.
+            _command_completed(
+                "item-no-exit-code",
+                "echo missing",
+                "ok",
+                "completed",
+                exit_code=None,
+            ),
+        ],
+    )
+
+    provider = CodexEvidenceProvider(sessions_dir=tmp_path)
+    results: list[tuple[str, bool]] = []
+    for entry in provider.iter_session_events(log_path):
+        results.extend(provider.extract_tool_results(entry))
+
+    assert results == [
+        ("item-pytest-fail", True),
+        ("item-pytest-ok", False),
+        ("item-no-exit-code", False),
+    ]
+
+
+@pytest.mark.unit
+def test_non_command_items_ignore_exit_code(tmp_path: Path) -> None:
+    """``fileChange`` / ``mcpToolCall`` / ``agentMessage`` use status only.
+
+    Codex's non-command items do not carry an ``exit_code`` field; the
+    error signal lives in ``status``. Verify the type-discrimination
+    branch in ``extract_tool_results`` does not accidentally apply the
+    command-only ``exit_code`` rule to other item types — which would
+    treat all ``status=completed`` non-command items as success
+    (correct), but a future drift to a different default could silently
+    flip them.
+    """
+    log_path = tmp_path / "thr_test.jsonl"
+    _write_jsonl(
+        log_path,
+        [
+            _agent_message_completed("msg-1", "hello"),
+            _file_change_completed("edit-ok", [{"path": "/x"}], status="completed"),
+            _file_change_completed("edit-fail", [{"path": "/x"}], status="failed"),
+        ],
+    )
+
+    provider = CodexEvidenceProvider(sessions_dir=tmp_path)
+    results: list[tuple[str, bool]] = []
+    for entry in provider.iter_session_events(log_path):
+        results.extend(provider.extract_tool_results(entry))
+
+    assert results == [
+        ("msg-1", False),
+        ("edit-ok", False),
+        ("edit-fail", True),
     ]
 
 

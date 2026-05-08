@@ -301,11 +301,23 @@ class CodexEvidenceProvider:
     def extract_tool_results(self, entry: JsonlEntryProtocol) -> list[tuple[str, bool]]:
         """Extract ``(item_id, is_error)`` tuples for completed items.
 
-        ``is_error`` is true when the item's ``status`` is one of
-        ``failed`` / ``error`` / ``cancelled``; ``completed`` is treated as
-        success. Covers ``commandExecution``, ``fileChange``, and
-        ``mcpToolCall`` items uniformly so the gate's "did this Bash tool
-        result error?" check works on Codex without a type discriminator.
+        For ``commandExecution`` items, ``is_error`` consults the shell
+        ``exit_code`` in addition to ``status``: Codex marks a command as
+        ``status="completed"`` whenever the shell process *finished*, even
+        if it exited non-zero. Without the exit-code check, a failed
+        ``uv run pytest`` (status=completed, exit_code=1) would surface as
+        ``(tool_id, False)``,
+        :meth:`EvidenceCheck.parse_validation_evidence_with_spec` would
+        skip adding it to ``failed_commands``, and the validation gate
+        would silently pass on a failed test/lint/typecheck run. Mirrors
+        :meth:`CodexEventAdapter._command_completed` (the live-pipeline
+        path uses the same exit-code rule, plan ``L754``).
+
+        For ``fileChange`` / ``mcpToolCall`` / ``agentMessage`` items the
+        Codex SDK does not surface an ``exit_code`` field, so ``status``
+        is the sole signal: ``failed`` / ``error`` / ``cancelled`` →
+        ``is_error=True``; anything else (notably ``completed``) is
+        success.
 
         Returns:
             List of ``(item_id, is_error)`` tuples. Empty list if the
@@ -318,7 +330,16 @@ class CodexEvidenceProvider:
         if not item_id:
             return []
         status = self._str_field(item, "status").lower()
-        is_error = status in _FAILED_STATUSES
+        item_type = self._str_field(item, "type")
+        if status in _FAILED_STATUSES:
+            is_error = True
+        elif item_type == _BASH_ITEM_TYPE:
+            # status="completed" means the shell ran to exit; consult
+            # exit_code so a non-zero return classifies as a failure.
+            exit_code = item.get("exit_code")
+            is_error = exit_code not in (None, 0)
+        else:
+            is_error = False
         return [(item_id, is_error)]
 
     def extract_assistant_text_blocks(self, entry: JsonlEntryProtocol) -> list[str]:
