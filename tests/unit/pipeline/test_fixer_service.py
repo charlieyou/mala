@@ -93,12 +93,16 @@ def install_mock_runtime_builder(
     ``agent_provider.runtime_builder(...)``.
     """
     mock_builder = MagicMock()
-    mock_builder.with_hooks.return_value = mock_builder
     mock_builder.with_agent_timeout.return_value = mock_builder
     mock_builder.with_env.return_value = mock_builder
     mock_builder.with_mcp.return_value = mock_builder
-    mock_builder.with_disallowed_tools.return_value = mock_builder
     mock_builder.with_lint_tools.return_value = mock_builder
+    mock_builder.with_resume.return_value = mock_builder
+    # Claude-private hooks: ``FixerService`` only invokes ``with_hooks`` on
+    # ``ClaudeAgentRuntimeBuilder`` instances after an ``isinstance`` check,
+    # but the MagicMock fluent shape still needs the attribute for the
+    # rare test that pre-binds the spec to a Claude builder.
+    mock_builder.with_hooks.return_value = mock_builder
     mock_builder.build.return_value = runtime or make_mock_runtime()
     provider.runtime_builder = MagicMock(return_value=mock_builder)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
     return mock_builder

@@ -1,6 +1,6 @@
 """Agent runtime configuration builder.
 
-This module provides AgentRuntimeBuilder for centralized agent runtime setup.
+This module provides ClaudeAgentRuntimeBuilder for centralized agent runtime setup.
 It consolidates duplicated configuration logic from AgentSessionRunner and
 RunCoordinator into a single, testable builder.
 
@@ -32,7 +32,7 @@ class _Unset(Enum):
 _UNSET = _Unset.TOKEN
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping, Set as AbstractSet
     from pathlib import Path
 
     from src.core.models import LockEvent
@@ -48,7 +48,7 @@ class ClaudeSDKClientFactoryProtocol(Protocol):
     Exposes the slim cross-coder surface (``create`` / ``with_resume``)
     plus the Claude-only knobs (``create_options`` /
     ``create_hook_matcher``) consumed by Claude-specific wiring code
-    (``AgentRuntimeBuilder``, ``AgentSDKReviewer``). Declared next to
+    (``ClaudeAgentRuntimeBuilder``, ``AgentSDKReviewer``). Declared next to
     its Claude-side consumers — and pointedly NOT alongside the
     cross-coder ``SDKClientFactoryProtocol`` in ``core/protocols/sdk.py``
     — so the cross-coder protocol stays free of Claude vocabulary
@@ -118,23 +118,20 @@ class AgentRuntime:
     stop_hooks: list[object] = field(default_factory=list)
 
 
-class AgentRuntimeBuilder:
-    """Builder for agent runtime configuration.
+class ClaudeAgentRuntimeBuilder:
+    """Claude-private builder for agent runtime configuration.
 
-    Provides a fluent API for configuring agent sessions. Each .with_*()
-    method returns self for chaining. Call .build() to create the
-    AgentRuntime with all configured components.
+    Conforms structurally to
+    :class:`src.core.protocols.agent_provider.CoderRuntimeBuilder` (the
+    cross-coder fluent surface) and additionally exposes Claude-only
+    configuration (``with_hooks`` for SDK PreToolUse / Stop / PostToolUse
+    hook gating; ``with_disallowed_tools`` for MALA_DISALLOWED_TOOLS).
+    Cross-coder pipeline code interacts only with the protocol surface;
+    Claude-private callers (e.g. :class:`FixerService` for fixer-specific
+    hook flags) downcast to this class via ``isinstance``.
 
-    Example:
-        runtime = (
-            AgentRuntimeBuilder(repo_path, agent_id, factory)
-            .with_hooks(deadlock_monitor=monitor)
-            .with_env()
-            .with_mcp()
-            .with_disallowed_tools()
-            .build()
-        )
-        # Use runtime.options to create SDK client
+    Each ``with_*`` method returns self for chaining. Call ``.build()`` to
+    create the :class:`AgentRuntime` with all configured components.
 
     Attributes:
         repo_path: Path to the repository root.
@@ -150,6 +147,7 @@ class AgentRuntimeBuilder:
         mcp_server_factory: McpServerFactory | None = None,
         setting_sources: list[str] | None = None,
         effort: str | None = None,
+        deadlock_monitor: DeadlockMonitorProtocol | None = None,
     ) -> None:
         """Initialize the builder.
 
@@ -166,6 +164,10 @@ class AgentRuntimeBuilder:
                 leaves the SDK default in place; reviewer / epic-verifier
                 option construction is intentionally not routed through this
                 builder.
+            deadlock_monitor: Optional deadlock monitor whose ``handle_event``
+                is wired into a Claude SDK PostToolUse hook. Threaded through
+                :meth:`AgentProvider.runtime_builder` (plan A6) so the
+                cross-coder pipeline does not need to call ``with_hooks``.
         """
         self._repo_path = repo_path
         self._agent_id = agent_id
@@ -178,35 +180,42 @@ class AgentRuntimeBuilder:
         self._effort: str | None = effort
 
         # Lint tools configuration
-        self._lint_tools: set[str] | frozenset[str] | None = None
+        self._lint_tools: AbstractSet[str] | None = None
 
         # Hook configuration
-        self._deadlock_monitor: DeadlockMonitorProtocol | None = None
+        self._deadlock_monitor: DeadlockMonitorProtocol | None = deadlock_monitor
         self._include_stop_hook: bool = True
         self._include_mala_disallowed_tools_hook: bool = True
         self._include_lock_enforcement_hook: bool = True
 
-        # Environment and options
+        # Environment and options. ``_disallowed_tools`` defaults to the
+        # standard MALA_DISALLOWED_TOOLS list so coder-agnostic pipeline
+        # callers (which no longer call ``with_disallowed_tools()``) get
+        # the expected restrictions.
+        from src.infra.tool_config import MALA_DISALLOWED_TOOLS
+
         self._env: dict[str, str] | None = None
         self._mcp_servers: object | None = None
-        self._disallowed_tools: list[str] | None = None
+        self._disallowed_tools: list[str] | None = list(MALA_DISALLOWED_TOOLS)
         self._agent_timeout_seconds: float | None = None
+        self._resume_id: str | None = None
 
     def with_hooks(
         self,
         *,
-        deadlock_monitor: DeadlockMonitorProtocol | None | _Unset = _UNSET,
         include_stop_hook: bool | _Unset = _UNSET,
         include_mala_disallowed_tools_hook: bool | _Unset = _UNSET,
         include_lock_enforcement_hook: bool | _Unset = _UNSET,
-    ) -> AgentRuntimeBuilder:
-        """Configure hook behavior.
+    ) -> ClaudeAgentRuntimeBuilder:
+        """Configure Claude-only hook behavior (Claude-private).
 
         Only parameters that are explicitly provided will be updated;
-        omitted parameters preserve their current state.
+        omitted parameters preserve their current state. Not part of the
+        cross-coder :class:`CoderRuntimeBuilder` protocol — Claude-private
+        callers (e.g. :class:`FixerService` for fixer agents) call this
+        after downcasting via ``isinstance``.
 
         Args:
-            deadlock_monitor: Optional DeadlockMonitor for lock event hooks.
             include_stop_hook: Whether to include stop hook. Omit to preserve
                 current state (initially True).
             include_mala_disallowed_tools_hook: Whether to include the
@@ -221,8 +230,6 @@ class AgentRuntimeBuilder:
         Returns:
             Self for chaining.
         """
-        if deadlock_monitor is not _UNSET:
-            self._deadlock_monitor = deadlock_monitor
         if include_stop_hook is not _UNSET:
             self._include_stop_hook = include_stop_hook
         if include_mala_disallowed_tools_hook is not _UNSET:
@@ -233,7 +240,21 @@ class AgentRuntimeBuilder:
             self._include_lock_enforcement_hook = include_lock_enforcement_hook
         return self
 
-    def with_agent_timeout(self, timeout_seconds: float | None) -> AgentRuntimeBuilder:
+    def with_resume(self, resume_id: str | None) -> ClaudeAgentRuntimeBuilder:
+        """Configure session resumption for the next :meth:`build` call.
+
+        ``None`` (the default) means no resumption. The resume id is
+        forwarded to ``create_options(resume=...)``. Pipeline code may
+        also apply resumption via
+        :meth:`SDKClientFactory.with_resume(runtime, resume)` after
+        ``build()``; both pathways converge on the same SDK option.
+        """
+        self._resume_id = resume_id
+        return self
+
+    def with_agent_timeout(
+        self, timeout_seconds: float | None
+    ) -> ClaudeAgentRuntimeBuilder:
         """Configure the per-agent timeout used for MCP tool calls.
 
         Mala's session timeout is in seconds; SDK MCP timeouts are configured
@@ -244,7 +265,9 @@ class AgentRuntimeBuilder:
             self._env["MCP_TIMEOUT"] = format_mcp_timeout_ms(timeout_seconds)
         return self
 
-    def with_env(self, extra: dict[str, str] | None = None) -> AgentRuntimeBuilder:
+    def with_env(
+        self, extra: Mapping[str, str] | None = None
+    ) -> ClaudeAgentRuntimeBuilder:
         """Configure environment variables.
 
         Builds standard environment with PATH, LOCK_DIR, AGENT_ID, etc.
@@ -271,10 +294,10 @@ class AgentRuntimeBuilder:
 
     def with_mcp(
         self,
-        servers: object | None = None,
+        servers: Mapping[str, object] | None = None,
         *,
         emit_lock_event: Callable[[LockEvent], object] | _Unset | None = _UNSET,
-    ) -> AgentRuntimeBuilder:
+    ) -> ClaudeAgentRuntimeBuilder:
         """Configure MCP servers.
 
         Args:
@@ -298,8 +321,13 @@ class AgentRuntimeBuilder:
 
     def with_disallowed_tools(
         self, tools: list[str] | None = None
-    ) -> AgentRuntimeBuilder:
-        """Configure disallowed tools.
+    ) -> ClaudeAgentRuntimeBuilder:
+        """Configure disallowed tools (Claude-private).
+
+        Not part of the cross-coder :class:`CoderRuntimeBuilder` protocol;
+        Amp does not honor SDK-level ``disallowed_tools``. The constructor
+        already defaults this to ``MALA_DISALLOWED_TOOLS``; call this
+        method only to override (e.g., disable for tests).
 
         Args:
             tools: List of disallowed tool names. If None, uses MALA_DISALLOWED_TOOLS.
@@ -316,8 +344,8 @@ class AgentRuntimeBuilder:
         return self
 
     def with_lint_tools(
-        self, lint_tools: set[str] | frozenset[str] | None = None
-    ) -> AgentRuntimeBuilder:
+        self, lint_tools: AbstractSet[str] | None = None
+    ) -> ClaudeAgentRuntimeBuilder:
         """Configure lint tools for cache.
 
         Args:
@@ -347,7 +375,8 @@ class AgentRuntimeBuilder:
                 "MCP server factory is required. Either provide mcp_server_factory "
                 "or explicitly provide servers via with_mcp(servers={...}). "
                 "If your custom servers don't include locking tools, also call "
-                "with_hooks(include_lock_enforcement_hook=False)."
+                "with_hooks(include_lock_enforcement_hook=False) on the "
+                "Claude-private builder."
             )
             raise ValueError(msg)
 
@@ -497,6 +526,7 @@ class AgentRuntimeBuilder:
             setting_sources=self._setting_sources,
             settings='{"autoCompactEnabled": true}',
             effort=self._effort,
+            resume=self._resume_id,
         )
 
         return AgentRuntime(

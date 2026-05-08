@@ -1,4 +1,4 @@
-"""Unit tests for AgentRuntimeBuilder.
+"""Unit tests for ClaudeAgentRuntimeBuilder.
 
 Tests the centralized agent runtime configuration builder.
 """
@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from src.infra.agent_runtime import AgentRuntime, AgentRuntimeBuilder
+from src.infra.agent_runtime import AgentRuntime, ClaudeAgentRuntimeBuilder
 from src.infra.hooks import (
     LintCache,
     block_dangerous_commands,
@@ -51,8 +51,8 @@ def _create_mcp_server_factory() -> McpServerFactory:
     return factory
 
 
-class TestAgentRuntimeBuilder:
-    """Tests for AgentRuntimeBuilder."""
+class TestClaudeAgentRuntimeBuilder:
+    """Tests for ClaudeAgentRuntimeBuilder."""
 
     @pytest.fixture
     def repo_path(self, tmp_path: Path) -> Path:
@@ -70,7 +70,7 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """build() returns AgentRuntime with all components."""
         runtime = (
-            AgentRuntimeBuilder(repo_path, "test-agent-123", factory)
+            ClaudeAgentRuntimeBuilder(repo_path, "test-agent-123", factory)
             .with_env()
             .with_mcp(servers={})  # Explicitly disable locking for test
             .with_disallowed_tools()
@@ -90,7 +90,7 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """with_env() includes PATH, LOCK_DIR, AGENT_ID, REPO_NAMESPACE."""
         runtime = (
-            AgentRuntimeBuilder(repo_path, "agent-xyz", factory)
+            ClaudeAgentRuntimeBuilder(repo_path, "agent-xyz", factory)
             .with_env()
             .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
@@ -108,7 +108,7 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """with_agent_timeout() converts seconds to MCP timeout milliseconds."""
         runtime = (
-            AgentRuntimeBuilder(repo_path, "agent-xyz", factory)
+            ClaudeAgentRuntimeBuilder(repo_path, "agent-xyz", factory)
             .with_agent_timeout(1800)
             .with_env()
             .with_mcp(servers={})
@@ -123,7 +123,7 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """with_agent_timeout() also applies when with_env() ran first."""
         runtime = (
-            AgentRuntimeBuilder(repo_path, "agent-xyz", factory)
+            ClaudeAgentRuntimeBuilder(repo_path, "agent-xyz", factory)
             .with_env(extra={"MCP_TIMEOUT": "1"})
             .with_agent_timeout(1800)
             .with_mcp(servers={})
@@ -139,7 +139,7 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """with_env(extra) merges extra variables."""
         runtime = (
-            AgentRuntimeBuilder(repo_path, "agent-1", factory)
+            ClaudeAgentRuntimeBuilder(repo_path, "agent-1", factory)
             .with_env(extra={"CUSTOM_VAR": "value123"})
             .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
@@ -153,7 +153,7 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """Each with_* method returns self for chaining."""
-        builder = AgentRuntimeBuilder(repo_path, "agent-chain", factory)
+        builder = ClaudeAgentRuntimeBuilder(repo_path, "agent-chain", factory)
 
         result1 = builder.with_hooks()
         assert result1 is builder
@@ -179,7 +179,7 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """Pre-tool hooks are in correct order (order matters for security)."""
         runtime = (
-            AgentRuntimeBuilder(repo_path, "agent-hooks", factory)
+            ClaudeAgentRuntimeBuilder(repo_path, "agent-hooks", factory)
             .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
         )
@@ -200,7 +200,7 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """Stop hook is included by default."""
         runtime = (
-            AgentRuntimeBuilder(repo_path, "agent-stop", factory)
+            ClaudeAgentRuntimeBuilder(repo_path, "agent-stop", factory)
             .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
         )
@@ -213,7 +213,7 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """with_hooks(include_stop_hook=False) excludes stop hook."""
         runtime = (
-            AgentRuntimeBuilder(repo_path, "agent-no-stop", factory)
+            ClaudeAgentRuntimeBuilder(repo_path, "agent-no-stop", factory)
             .with_hooks(include_stop_hook=False)
             .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
@@ -225,12 +225,16 @@ class TestAgentRuntimeBuilder:
     def test_deadlock_monitor_adds_hooks(
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
-        """with_hooks(deadlock_monitor=...) adds lock event hooks."""
+        """deadlock_monitor constructor arg adds lock event hooks (plan A6)."""
         monitor = FakeDeadlockMonitor()
 
         runtime = (
-            AgentRuntimeBuilder(repo_path, "agent-deadlock", factory)
-            .with_hooks(deadlock_monitor=monitor)
+            ClaudeAgentRuntimeBuilder(
+                repo_path,
+                "agent-deadlock",
+                factory,
+                deadlock_monitor=monitor,
+            )
             .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
         )
@@ -247,7 +251,7 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """with_lint_tools() configures lint cache."""
         runtime = (
-            AgentRuntimeBuilder(repo_path, "agent-lint", factory)
+            ClaudeAgentRuntimeBuilder(repo_path, "agent-lint", factory)
             .with_lint_tools({"ruff", "mypy"})
             .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
@@ -261,9 +265,9 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """with_mcp(servers) passes servers to options."""
-        mock_servers = [{"name": "test-server"}]
+        mock_servers: dict[str, object] = {"test-server": {"command": "x"}}
 
-        AgentRuntimeBuilder(repo_path, "agent-mcp", factory).with_mcp(
+        ClaudeAgentRuntimeBuilder(repo_path, "agent-mcp", factory).with_mcp(
             servers=mock_servers
         ).build()
 
@@ -279,7 +283,7 @@ class TestAgentRuntimeBuilder:
         tools = ["dangerous_tool", "another_tool"]
 
         (
-            AgentRuntimeBuilder(repo_path, "agent-disallow", factory)
+            ClaudeAgentRuntimeBuilder(repo_path, "agent-disallow", factory)
             .with_disallowed_tools(tools)
             .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
@@ -293,7 +297,7 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """Claude coder sessions request the 1M context Opus model."""
-        AgentRuntimeBuilder(repo_path, "agent-model", factory).with_mcp(
+        ClaudeAgentRuntimeBuilder(repo_path, "agent-model", factory).with_mcp(
             servers={}
         ).build()
 
@@ -314,9 +318,9 @@ class TestAgentRuntimeBuilder:
         ``ClaudeAgentOptions.effort``. The model field stays ``opus[1m]`` so
         unrelated reviewer / epic model configuration is not affected.
         """
-        AgentRuntimeBuilder(repo_path, "agent-effort", factory, effort=effort).with_mcp(
-            servers={}
-        ).build()
+        ClaudeAgentRuntimeBuilder(
+            repo_path, "agent-effort", factory, effort=effort
+        ).with_mcp(servers={}).build()
 
         assert len(factory.created_options) == 1
         opts = factory.created_options[0]
@@ -329,7 +333,7 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """Without an explicit effort the SDK default is preserved (``None``)."""
-        AgentRuntimeBuilder(repo_path, "agent-noeffort", factory).with_mcp(
+        ClaudeAgentRuntimeBuilder(repo_path, "agent-noeffort", factory).with_mcp(
             servers={}
         ).build()
         assert factory.created_options[0]["effort"] is None
@@ -340,7 +344,7 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """Hooks dict has correct structure for SDK."""
         (
-            AgentRuntimeBuilder(repo_path, "agent-struct", factory)
+            ClaudeAgentRuntimeBuilder(repo_path, "agent-struct", factory)
             .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
         )
@@ -359,7 +363,7 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """build() creates env even if with_env() not called."""
         runtime = (
-            AgentRuntimeBuilder(repo_path, "agent-default", factory)
+            ClaudeAgentRuntimeBuilder(repo_path, "agent-default", factory)
             .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
         )
@@ -374,12 +378,12 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """Locking MCP server is registered even without deadlock monitor."""
         # Build without deadlock monitor (the default)
-        AgentRuntimeBuilder(
+        ClaudeAgentRuntimeBuilder(
             repo_path,
             "agent-no-monitor",
             factory,
             mcp_server_factory=_create_mcp_server_factory(),
-        ).with_hooks(deadlock_monitor=None).build()
+        ).build()
 
         assert len(factory.created_options) == 1
         mcp_servers = factory.created_options[0]["mcp_servers"]
@@ -394,12 +398,13 @@ class TestAgentRuntimeBuilder:
         """Locking MCP server is registered with deadlock monitor."""
         monitor = FakeDeadlockMonitor()
 
-        AgentRuntimeBuilder(
+        ClaudeAgentRuntimeBuilder(
             repo_path,
             "agent-with-monitor",
             factory,
             mcp_server_factory=_create_mcp_server_factory(),
-        ).with_hooks(deadlock_monitor=monitor).build()
+            deadlock_monitor=monitor,
+        ).build()
 
         assert len(factory.created_options) == 1
         mcp_servers = factory.created_options[0]["mcp_servers"]
@@ -418,7 +423,7 @@ class TestAgentRuntimeBuilder:
         import logging
 
         with caplog.at_level(logging.INFO):
-            AgentRuntimeBuilder(
+            ClaudeAgentRuntimeBuilder(
                 repo_path,
                 "agent-settings",
                 factory,
@@ -438,7 +443,7 @@ class TestAgentRuntimeBuilder:
         import logging
 
         with caplog.at_level(logging.WARNING):
-            AgentRuntimeBuilder(
+            ClaudeAgentRuntimeBuilder(
                 repo_path,
                 "agent-warn",
                 factory,
@@ -464,7 +469,7 @@ class TestAgentRuntimeBuilder:
         (repo_path / ".claude" / "settings.local.json").write_text("{}")
 
         with caplog.at_level(logging.WARNING):
-            AgentRuntimeBuilder(
+            ClaudeAgentRuntimeBuilder(
                 repo_path,
                 "agent-no-warn",
                 factory,
@@ -482,7 +487,7 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """setting_sources is passed to sdk_client_factory.create_options()."""
-        AgentRuntimeBuilder(
+        ClaudeAgentRuntimeBuilder(
             repo_path,
             "agent-adapter",
             factory,
@@ -503,7 +508,7 @@ class TestAgentRuntimeBuilder:
         import logging
 
         with caplog.at_level(logging.INFO):
-            AgentRuntimeBuilder(
+            ClaudeAgentRuntimeBuilder(
                 repo_path,
                 "agent-defaults",
                 factory,
@@ -528,7 +533,7 @@ class TestAgentRuntimeBuilder:
         import logging
 
         with caplog.at_level(logging.INFO):
-            AgentRuntimeBuilder(
+            ClaudeAgentRuntimeBuilder(
                 repo_path,
                 "agent-empty-sources",
                 factory,

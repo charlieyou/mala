@@ -4,34 +4,36 @@ The pipeline classes (``AgentSessionRunner``, ``FixerService``,
 ``RunCoordinator``) consume an ``AgentProvider`` rather than the legacy
 ``SDKClientFactoryProtocol``. Most tests still want to inject a
 ``FakeSDKClientFactory`` to control SDK responses; this fake bundles a
-factory + ``AgentRuntimeBuilder`` + ``FileSystemLogProvider`` so existing
-tests can swap one parameter (``sdk_client_factory=`` -> ``agent_provider=``)
-without rewriting their setup.
+factory + ``ClaudeAgentRuntimeBuilder`` + ``FileSystemLogProvider`` so
+existing tests can swap one parameter (``sdk_client_factory=`` ->
+``agent_provider=``) without rewriting their setup.
 
 The injected factory is typed as the Claude-private
 :class:`ClaudeSDKClientFactoryProtocol` because the bundled
-:class:`AgentRuntimeBuilder` is Claude-flavored and consumes the Claude
-knobs (``create_options``, ``create_hook_matcher``); test fakes
+:class:`ClaudeAgentRuntimeBuilder` is Claude-flavored and consumes the
+Claude knobs (``create_options``, ``create_hook_matcher``); test fakes
 already implement the full Claude surface.
 
 The fake is identifier-as-claude (``name="claude"``) by default because the
 fluent runtime builder it returns is the Claude-flavored
-:class:`AgentRuntimeBuilder` and the test pipeline assumes Claude-shaped
-options. Tests that exercise Amp selection should construct a real
-``AmpAgentProvider`` (see ``tests/unit/orchestration/test_factory_provider_selection.py``).
+:class:`ClaudeAgentRuntimeBuilder` and the test pipeline assumes
+Claude-shaped options. Tests that exercise Amp selection should construct
+a real ``AmpAgentProvider`` (see
+``tests/unit/orchestration/test_factory_provider_selection.py``).
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
-from src.infra.agent_runtime import AgentRuntimeBuilder
+from src.infra.agent_runtime import ClaudeAgentRuntimeBuilder
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.agent_provider import CoderRuntimeBuilder
     from src.core.protocols.evidence import EvidenceProvider
+    from src.core.protocols.lifecycle import DeadlockMonitorProtocol
     from src.core.protocols.sdk import McpServerFactory, SDKClientFactoryProtocol
     from src.infra.agent_runtime import ClaudeSDKClientFactoryProtocol
 
@@ -92,13 +94,15 @@ class FakeAgentProvider:
         agent_id: str,
         *,
         mcp_server_factory: McpServerFactory,
+        deadlock_monitor: DeadlockMonitorProtocol | None = None,
     ) -> CoderRuntimeBuilder:
-        return AgentRuntimeBuilder(
+        return ClaudeAgentRuntimeBuilder(
             repo_path,
             agent_id,
             self._claude_factory,
             mcp_server_factory=mcp_server_factory,
             setting_sources=self._setting_sources,
+            deadlock_monitor=deadlock_monitor,
         )
 
     def mcp_server_factory(self) -> McpServerFactory:

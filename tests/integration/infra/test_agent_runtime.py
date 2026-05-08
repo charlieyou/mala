@@ -1,4 +1,4 @@
-"""Integration tests for AgentRuntimeBuilder hook registration."""
+"""Integration tests for ClaudeAgentRuntimeBuilder hook registration."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from src.infra.agent_runtime import AgentRuntimeBuilder
+from src.infra.agent_runtime import ClaudeAgentRuntimeBuilder
 from tests.fakes import FakeSDKClientFactory
 
 if TYPE_CHECKING:
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 class TestPreCompactHookRegistration:
-    """Tests for PreCompact hook registration in AgentRuntimeBuilder."""
+    """Tests for PreCompact hook registration in ClaudeAgentRuntimeBuilder."""
 
     @pytest.fixture
     def repo_path(self, tmp_path: Path) -> Path:
@@ -31,7 +31,7 @@ class TestPreCompactHookRegistration:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """PreCompact hook is registered in the hooks dict passed to SDK options."""
-        builder = AgentRuntimeBuilder(repo_path, "test-agent-precompact", factory)
+        builder = ClaudeAgentRuntimeBuilder(repo_path, "test-agent-precompact", factory)
         builder.with_mcp(servers={})  # Disable locking MCP for test
         builder.build()
 
@@ -54,7 +54,7 @@ class TestPreCompactHookRegistration:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """PreCompact hook matcher contains a callable hook."""
-        builder = AgentRuntimeBuilder(repo_path, "test-agent-callable", factory)
+        builder = ClaudeAgentRuntimeBuilder(repo_path, "test-agent-callable", factory)
         builder.with_mcp(servers={})
         builder.build()
 
@@ -74,7 +74,7 @@ class TestPreCompactHookRegistration:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """PreCompact hook stub returns empty dict (allows compaction)."""
-        builder = AgentRuntimeBuilder(repo_path, "test-agent-stub", factory)
+        builder = ClaudeAgentRuntimeBuilder(repo_path, "test-agent-stub", factory)
         builder.with_mcp(servers={})
         builder.build()
 

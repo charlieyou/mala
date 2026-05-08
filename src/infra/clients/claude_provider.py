@@ -1,7 +1,7 @@
 """Claude :class:`AgentProvider` implementation.
 
 Binds the existing Claude-side pieces (:class:`SDKClientFactory`,
-:class:`AgentRuntimeBuilder`, :class:`FileSystemLogProvider`) into a single
+:class:`ClaudeAgentRuntimeBuilder`, :class:`FileSystemLogProvider`) into a single
 object that conforms to :class:`src.core.protocols.agent_provider.AgentProvider`.
 
 Behavior is identical to the pre-refactor Claude path - this module is purely
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
-from src.infra.agent_runtime import AgentRuntimeBuilder
+from src.infra.agent_runtime import ClaudeAgentRuntimeBuilder
 from src.infra.io.session_log_parser import FileSystemLogProvider
 from src.infra.sdk_adapter import SDKClientFactory
 
@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.agent_provider import CoderRuntimeBuilder
+    from src.core.protocols.lifecycle import DeadlockMonitorProtocol
     from src.core.protocols.sdk import McpServerFactory
 
 
@@ -84,7 +85,7 @@ class ClaudeAgentProvider:
         Args:
             setting_sources: Optional list of Claude settings sources (e.g.
                 ``["local", "project"]``) threaded into every per-session
-                :class:`AgentRuntimeBuilder`. Mirrors the existing
+                :class:`ClaudeAgentRuntimeBuilder`. Mirrors the existing
                 ``claude_settings_sources`` resolver wiring.
             effort: Optional Mala-level reasoning effort, forwarded to
                 ``ClaudeAgentOptions.effort`` for every per-session coder
@@ -107,21 +108,23 @@ class ClaudeAgentProvider:
         agent_id: str,
         *,
         mcp_server_factory: McpServerFactory,
+        deadlock_monitor: DeadlockMonitorProtocol | None = None,
     ) -> CoderRuntimeBuilder:
-        """Construct a per-session :class:`AgentRuntimeBuilder`.
+        """Construct a per-session :class:`ClaudeAgentRuntimeBuilder`.
 
         The returned builder structurally conforms to
-        :class:`CoderRuntimeBuilder` (it exposes ``build()``); pipeline code
-        further configures it via the existing fluent ``with_*`` methods
-        before calling ``build()``.
+        :class:`CoderRuntimeBuilder` (cross-coder fluent surface);
+        Claude-private callers that need ``with_hooks`` / ``with_disallowed_tools``
+        downcast via ``isinstance(builder, ClaudeAgentRuntimeBuilder)``.
         """
-        return AgentRuntimeBuilder(
+        return ClaudeAgentRuntimeBuilder(
             repo_path,
             agent_id,
             self.client_factory,
             mcp_server_factory=mcp_server_factory,
             setting_sources=self._setting_sources,
             effort=self._effort,
+            deadlock_monitor=deadlock_monitor,
         )
 
     def mcp_server_factory(self) -> McpServerFactory:

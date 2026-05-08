@@ -176,12 +176,14 @@ class TestFixerInterruptHandling:
         builder class directly.
         """
         mock_builder = MagicMock()
-        mock_builder.with_hooks.return_value = mock_builder
         mock_builder.with_agent_timeout.return_value = mock_builder
         mock_builder.with_env.return_value = mock_builder
         mock_builder.with_mcp.return_value = mock_builder
-        mock_builder.with_disallowed_tools.return_value = mock_builder
         mock_builder.with_lint_tools.return_value = mock_builder
+        mock_builder.with_resume.return_value = mock_builder
+        # Claude-private hooks: kept for tests that exercise the
+        # ``FixerService``'s ``isinstance`` downcast path.
+        mock_builder.with_hooks.return_value = mock_builder
         mock_builder.build.return_value = runtime
         provider.runtime_builder = MagicMock(return_value=mock_builder)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         return mock_builder

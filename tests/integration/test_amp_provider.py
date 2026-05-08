@@ -21,7 +21,7 @@ binary on PATH:
     the fluent surface on :class:`AmpRuntimeBuilder` and added
     ``lint_cache`` on :class:`AmpRuntime`, this path raised
     ``AttributeError: 'AmpRuntimeBuilder' object has no attribute
-    'with_hooks'`` before any Amp client could run. The test pins that
+    fluent surface before any Amp client could run. The test pins that
     regression: a passing assertion here means the Claude pipeline can
     consume the Amp runtime through the same fluent chain.
 """
@@ -213,9 +213,9 @@ async def test_run_implementer_drives_per_issue_lifecycle_through_amp_pipeline(
 ) -> None:
     """AC#6 regression: ``run_implementer`` can drive an Amp session.
 
-    Until T013 grew :class:`AmpRuntimeBuilder` the same fluent surface
-    the pipeline calls (``with_hooks`` / ``with_env`` / ``with_mcp`` /
-    ``with_disallowed_tools`` / ``with_lint_tools``) and exposed
+    Until T013 grew :class:`AmpRuntimeBuilder` the cross-coder fluent
+    surface the pipeline calls (``with_agent_timeout`` / ``with_env`` /
+    ``with_mcp`` / ``with_lint_tools``) and exposed
     ``options``/``lint_cache`` on :class:`AmpRuntime`,
     ``AgentSessionRunner._build_session`` raised ``AttributeError`` on
     the very first Amp issue session — AC#6 (per-issue lifecycle works

@@ -3,7 +3,7 @@
 These tests are the regression guard for T006 (the Claude-path refactor):
 
 - The bundled pieces round-trip through the existing Claude pipeline call
-  sites: ``runtime_builder`` returns an :class:`AgentRuntimeBuilder`
+  sites: ``runtime_builder`` returns an :class:`ClaudeAgentRuntimeBuilder`
   configured with the provider's client factory.
 - Importing the Claude provider does NOT pull in any
   ``src.infra.clients.amp_*`` adapter module - this protects the
@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from src.infra.agent_runtime import AgentRuntimeBuilder
+from src.infra.agent_runtime import ClaudeAgentRuntimeBuilder
 from src.infra.clients.claude_provider import ClaudeAgentProvider
 
 if TYPE_CHECKING:
@@ -45,7 +45,7 @@ def _mcp_server_factory() -> Callable[..., dict[str, object]]:
 
 
 # ---------------------------------------------------------------------------
-# runtime_builder: returns an AgentRuntimeBuilder wired to the provider's
+# runtime_builder: returns an ClaudeAgentRuntimeBuilder wired to the provider's
 # client factory.
 # ---------------------------------------------------------------------------
 
@@ -55,7 +55,7 @@ def test_runtime_builder_returns_agent_runtime_builder(tmp_path: Path) -> None:
     builder = provider.runtime_builder(
         tmp_path, "agent-1", mcp_server_factory=_mcp_server_factory()
     )
-    assert isinstance(builder, AgentRuntimeBuilder)
+    assert isinstance(builder, ClaudeAgentRuntimeBuilder)
 
 
 def test_runtime_builder_uses_provider_client_factory(tmp_path: Path) -> None:

@@ -15,8 +15,9 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
+from src.infra.agent_runtime import ClaudeAgentRuntimeBuilder
 from src.infra.sigint_guard import InterruptGuard
 from src.infra.tools.env import get_claude_log_path
 from src.infra.tools.locking import cleanup_agent_locks
@@ -30,7 +31,6 @@ if TYPE_CHECKING:
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.sdk import McpServerFactory
     from src.domain.validation.spec import ValidationSpec
-    from src.infra.agent_runtime import AgentRuntimeBuilder
 
 
 def _noop_mcp_server_factory(
@@ -165,40 +165,41 @@ class FixerService:
 
         fixer_cwd = self._config.repo_path
 
-        # Build runtime via the AgentProvider's runtime builder so fixers
-        # follow the main coder. The fluent ``with_*`` calls are the Claude
-        # builder's surface; the Amp builder will expose equivalent shaping
-        # in T009. In T007, the stub Amp client_factory raises before this
-        # runtime is consumed, so fixer-on-Amp surfaces NotImplementedError.
+        # Build runtime via the AgentProvider's runtime builder. The
+        # cross-coder chain only uses :class:`CoderRuntimeBuilder` methods
+        # (plan A6); Claude-only fixer hook flags (which are noops on Amp)
+        # are applied by downcasting to
+        # :class:`ClaudeAgentRuntimeBuilder` via ``isinstance``.
         lint_tools = extract_lint_tools_from_spec(failure_context.spec)
         mcp_factory = self._config.mcp_server_factory or _noop_mcp_server_factory
-        raw_builder = self._agent_provider.runtime_builder(
+        builder = self._agent_provider.runtime_builder(
             fixer_cwd,
             agent_id,
             mcp_server_factory=mcp_factory,
+            deadlock_monitor=None,
         )
-        builder = (
-            cast("AgentRuntimeBuilder", raw_builder)
-            .with_hooks(
-                deadlock_monitor=None,
-                include_stop_hook=True,
-                include_mala_disallowed_tools_hook=False,
-            )
-            .with_agent_timeout(self._config.timeout_seconds)
-            .with_env(extra={"MALA_SDK_FLOW": "fixer"})
-            .with_disallowed_tools()
+        builder = builder.with_agent_timeout(self._config.timeout_seconds).with_env(
+            extra={"MALA_SDK_FLOW": "fixer"}
         )
         # Configure MCP: use factory if available, otherwise empty (no MCP tools)
         if self._config.mcp_server_factory is not None:
             builder = builder.with_mcp()
         else:
             # No MCP tools means no lock_acquire - disable lock enforcement
-            builder = builder.with_mcp(servers={}).with_hooks(
-                include_lock_enforcement_hook=False
-            )
+            builder = builder.with_mcp(servers={})
+            if isinstance(builder, ClaudeAgentRuntimeBuilder):
+                builder.with_hooks(include_lock_enforcement_hook=False)
         # Only set lint_tools if we have them; otherwise use builder defaults
         if lint_tools is not None:
             builder = builder.with_lint_tools(lint_tools)
+        # Apply Claude-private fixer hook flags. Amp does not honor SDK
+        # hooks (its safety lives in the bundled plugin); the no-op was
+        # dropped in plan A6, so we conditionally cast for Claude only.
+        if isinstance(builder, ClaudeAgentRuntimeBuilder):
+            builder.with_hooks(
+                include_stop_hook=True,
+                include_mala_disallowed_tools_hook=False,
+            )
         runtime = builder.build()
         client = self._agent_provider.client_factory.create(runtime)
 

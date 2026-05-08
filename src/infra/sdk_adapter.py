@@ -33,7 +33,7 @@ class SDKClientFactory:
     Conforms to the slim cross-coder ``SDKClientFactoryProtocol``
     (``create`` / ``with_resume``) and additionally exposes the
     Claude-only knobs ``create_options`` and ``create_hook_matcher``
-    used by Claude-specific wiring code (``AgentRuntimeBuilder``,
+    used by Claude-specific wiring code (``ClaudeAgentRuntimeBuilder``,
     ``AgentSDKReviewer``). The Claude knobs intentionally do not appear
     on the cross-coder protocol so Amp / Codex backends are not forced
     to provide ``NotImplementedError`` walls for them.
@@ -53,7 +53,7 @@ class SDKClientFactory:
         Args:
             runtime: Opaque Claude-shaped runtime. Either an
                 :class:`AgentRuntime` produced by
-                :class:`AgentRuntimeBuilder.build`, in which case its
+                :class:`ClaudeAgentRuntimeBuilder.build`, in which case its
                 ``options`` field carries the ``ClaudeAgentOptions``, or a
                 bare ``ClaudeAgentOptions`` for Claude-private callers
                 (e.g. :class:`AgentSDKReviewer`) that build options

@@ -58,7 +58,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.agent_provider import AgentProvider
-    from src.infra.agent_runtime import AgentRuntimeBuilder
     from src.core.protocols.lifecycle import ISessionLifecycle
     from src.core.protocols.review import IReviewRunner
     from src.core.protocols.validation import IGateRunner
@@ -411,28 +410,21 @@ class AgentSessionRunner:
         lifecycle_ctx.retry_state.baseline_timestamp = baseline_timestamp
 
         # Build session components via the AgentProvider's runtime builder.
-        # The fluent ``with_*`` calls below are Claude-specific - the Amp
-        # provider's builder will eventually expose the same surface, but
-        # that path is not exercised here in T007 (the stub Amp provider
-        # raises before we ever reach the client.create() call). We cast
-        # to AgentRuntimeBuilder for type-checking the fluent chain; at
-        # runtime the call only succeeds when the active provider's
-        # builder structurally supports it.
+        # The chain below uses only the cross-coder
+        # :class:`CoderRuntimeBuilder` fluent surface (plan A6); deadlock
+        # monitor wiring is threaded through ``runtime_builder()`` because
+        # the SDK-hook side of it is Claude-private.
         mcp_factory = self.config.mcp_server_factory or _noop_mcp_server_factory
-        builder = cast(
-            "AgentRuntimeBuilder",
-            self.agent_provider.runtime_builder(
-                self.config.repo_path,
-                agent_id,
-                mcp_server_factory=mcp_factory,
-            ),
+        builder = self.agent_provider.runtime_builder(
+            self.config.repo_path,
+            agent_id,
+            mcp_server_factory=mcp_factory,
+            deadlock_monitor=self.config.deadlock_monitor,
         )
         runtime = (
-            builder.with_hooks(deadlock_monitor=self.config.deadlock_monitor)
-            .with_agent_timeout(self.config.timeout_seconds)
+            builder.with_agent_timeout(self.config.timeout_seconds)
             .with_env(extra={"MALA_SDK_FLOW": input.flow})
             .with_mcp()
-            .with_disallowed_tools()
             .with_lint_tools(self.config.lint_tools)
             .build()
         )
@@ -457,7 +449,7 @@ class AgentSessionRunner:
         session_config = SessionConfig(
             agent_id=agent_id,
             runtime=session_runtime,
-            lint_cache=runtime.lint_cache,
+            lint_cache=cast("LintCache", runtime.lint_cache),  # ty:ignore[unresolved-attribute]
             log_file_wait_timeout=self.config.log_file_wait_timeout,
             log_file_poll_interval=0.5,
             idle_timeout_seconds=idle_timeout_seconds,

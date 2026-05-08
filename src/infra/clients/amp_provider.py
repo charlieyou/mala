@@ -60,6 +60,7 @@ if TYPE_CHECKING:
 
     from src.core.protocols.agent_provider import CoderRuntimeBuilder
     from src.core.protocols.evidence import EvidenceProvider
+    from src.core.protocols.lifecycle import DeadlockMonitorProtocol
     from src.core.protocols.sdk import (
         McpServerFactory,
         SDKClientFactoryProtocol,
@@ -716,6 +717,7 @@ class AmpAgentProvider:
         agent_id: str,
         *,
         mcp_server_factory: McpServerFactory,
+        deadlock_monitor: DeadlockMonitorProtocol | None = None,
     ) -> CoderRuntimeBuilder:
         """Construct an :class:`AmpRuntimeBuilder` for one Amp session."""
         return AmpRuntimeBuilder(
@@ -724,6 +726,7 @@ class AmpAgentProvider:
             mcp_server_factory,
             mode=self._mode,
             effort=self._effort,
+            deadlock_monitor=deadlock_monitor,
         )
 
     def mcp_server_factory(self) -> McpServerFactory:
