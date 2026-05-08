@@ -88,6 +88,7 @@ class _FakeAsyncCodex:
     resumed_ids: list[str] = field(default_factory=list)
     fixed_thread: _FakeThread | None = None
     exit_calls: int = 0
+    close_calls: int = 0
 
     async def __aenter__(self) -> Self:
         return self
@@ -97,6 +98,9 @@ class _FakeAsyncCodex:
     ) -> None:
         del exc_type, exc_val, exc_tb
         self.exit_calls += 1
+
+    async def close(self) -> None:
+        self.close_calls += 1
 
     async def thread_start(self, **kwargs: object) -> _FakeThread:
         self.started_kwargs.append(dict(kwargs))
@@ -246,7 +250,8 @@ async def test_provider_runtime_client_end_to_end_smoke(
     assert result_event.session_id == "thr_integration"
     assert result_event.is_error is False
     assert result_event.subtype == "completed"
-    assert fake_codex.exit_calls == 1
+    assert fake_codex.close_calls == 1
+    assert fake_codex.exit_calls == 0
 
 
 @pytest.mark.integration

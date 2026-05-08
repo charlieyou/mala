@@ -24,7 +24,9 @@ Coverage:
     (text deltas, ``turn/completed``, ``error``); Phase D extends the
     item-level mappings.
   * ``disconnect`` calls ``TurnHandle.interrupt`` and the SDK
-    ``__aexit__`` exactly once across repeat calls.
+    ``close()`` exactly once across repeat calls (plan L732 AC-3).
+  * SIGINT mid-turn cancellation reaches ``disconnect`` and invokes
+    ``TurnHandle.interrupt`` + ``AsyncCodex.close`` exactly once.
   * ``session_id`` reflects the started thread's id.
 """
 
@@ -133,6 +135,7 @@ class _FakeAsyncCodex:
     threads_resumed: list[str] = field(default_factory=list)
     enter_calls: int = 0
     exit_calls: int = 0
+    close_calls: int = 0
     next_thread: _FakeThread | None = None
     resumed_thread: _FakeThread | None = None
 
@@ -145,6 +148,9 @@ class _FakeAsyncCodex:
     ) -> None:
         del exc_type, exc_val, exc_tb
         self.exit_calls += 1
+
+    async def close(self) -> None:
+        self.close_calls += 1
 
     async def thread_start(self, **kwargs: object) -> _FakeThread:
         self.threads_started.append(dict(kwargs))
@@ -275,7 +281,8 @@ async def test_aenter_constructs_async_codex_with_runtime_env_and_cwd(
         assert env_dict["MALA_AGENT_ID"] == "agent-x"
         assert env_dict["MALA_REPO_NAMESPACE"] == str(tmp_path)
         assert client is not None
-    assert fake_codex.exit_calls == 1
+    assert fake_codex.close_calls == 1
+    assert fake_codex.exit_calls == 0
 
 
 @pytest.mark.unit
@@ -670,18 +677,21 @@ async def test_disconnect_interrupts_active_turn_and_closes_async_codex_once(
     await client.query("hi")
     turn = thread.turn_handles[0]
 
-    # Disconnect twice: must be idempotent. interrupt() and exit() should
-    # each fire exactly once.
+    # Disconnect twice: must be idempotent. interrupt() and close() should
+    # each fire exactly once. The plan-backed AC-3 contract names
+    # AsyncCodex.close() specifically, so we assert close() is called and
+    # __aexit__ is not the teardown primitive used here.
     await client.disconnect()
     await client.disconnect()
 
     assert turn.interrupt_calls == 1
-    assert fake_codex.exit_calls == 1
+    assert fake_codex.close_calls == 1
+    assert fake_codex.exit_calls == 0
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_disconnect_swallows_sdk_exit_errors(
+async def test_disconnect_swallows_sdk_close_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Errors from the SDK teardown must not propagate from ``disconnect``.
@@ -693,10 +703,10 @@ async def test_disconnect_swallows_sdk_exit_errors(
 
     fake_codex = _install_fake_sdk(monkeypatch)
 
-    async def boom_exit(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError("simulated SDK teardown error")
+    async def boom_close(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("simulated SDK close error")
 
-    fake_codex.__aexit__ = boom_exit  # type: ignore[method-assign,assignment]  # ty:ignore[invalid-assignment]
+    fake_codex.close = boom_close  # type: ignore[method-assign,assignment]  # ty:ignore[invalid-assignment]
     runtime = _build_runtime(tmp_path)
 
     client = CodexClient(runtime)
@@ -704,6 +714,45 @@ async def test_disconnect_swallows_sdk_exit_errors(
     await client.query("hi")
     # Should not raise.
     await client.disconnect()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sigint_mid_turn_cancellation_invokes_interrupt_and_close_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-3 regression: SIGINT mid-turn → interrupt + close exactly once.
+
+    Simulates the production cancellation chain (lifecycle controller's
+    abort mode cancels the active task → ``async with CodexClient``
+    unwinds via ``CancelledError`` → ``__aexit__`` → ``disconnect()``).
+    The ``CancelledError`` raised inside the ``async with`` block models
+    the runtime adapter's cancellation point; the CodexClient's
+    ``__aexit__`` must reach the SDK's ``close()`` primitive named in
+    plan L732, not just unwind the codex async-context.
+    """
+    import asyncio
+
+    from src.infra.clients.codex_client import CodexClient
+
+    fake_codex = _install_fake_sdk(monkeypatch)
+    runtime = _build_runtime(tmp_path)
+    thread = _FakeThread(id="thr_sigint")
+    fake_codex.next_thread = thread
+
+    with pytest.raises(asyncio.CancelledError):
+        async with CodexClient(runtime) as client:
+            await client.query("mid-turn prompt")
+            # Cancellation is delivered while the turn is active and the
+            # adapter is still inside the ``async with`` block.
+            raise asyncio.CancelledError
+
+    turn = thread.turn_handles[0]
+    assert turn.interrupt_calls == 1
+    assert fake_codex.close_calls == 1
+    # __aexit__ on the SDK must not also fire — close() is the named
+    # AC-3 teardown primitive.
+    assert fake_codex.exit_calls == 0
 
 
 # ---------------------------------------------------------------------------

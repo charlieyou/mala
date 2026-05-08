@@ -306,10 +306,16 @@ class CodexClient:
         """Idempotently interrupt the active turn and close ``AsyncCodex``.
 
         Calls ``AsyncTurnHandle.interrupt()`` and ``AsyncCodex.close()``
-        at most once per client (plan ``L732``). Errors from the SDK
-        teardown are logged at debug level rather than raised so a
-        failing close path does not mask the original error that drove
-        ``disconnect`` (e.g., ``CancelledError`` from SIGINT).
+        at most once per client (plan ``L732``). The SDK's
+        ``AsyncCodex.__aexit__`` delegates to ``close()`` (see
+        ``codex_app_server/api.py:301``), but we invoke ``close()``
+        directly so the SIGINT cancellation path explicitly satisfies
+        the AC-3 contract regardless of whether disconnect is reached
+        via ``async with`` unwinding or an explicit out-of-band call.
+        Errors from the SDK teardown are logged at debug level rather
+        than raised so a failing close path does not mask the original
+        error that drove ``disconnect`` (e.g., ``CancelledError`` from
+        SIGINT).
         """
         if self._closed:
             return
@@ -329,10 +335,10 @@ class CodexClient:
         codex = self._codex
         if codex is not None:
             try:
-                await codex.__aexit__(None, None, None)
+                await codex.close()
             except Exception as exc:
                 logger.debug(
-                    "CodexClient: AsyncCodex teardown raised on disconnect: %s",
+                    "CodexClient: AsyncCodex.close raised on disconnect: %s",
                     exc,
                 )
             self._codex = None
