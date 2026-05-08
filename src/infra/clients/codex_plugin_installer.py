@@ -283,12 +283,31 @@ class CodexPluginInstaller:
     by :meth:`CodexAgentProvider.install_prerequisites` (T015). The
     default ``source_dir`` resolves the bundled plugin tree inside the
     mala source tree; tests pass a custom directory to drive variants.
+
+    ``mcp_json_override`` lets the caller substitute the bundled
+    ``.mcp.json`` bytes with a merged user+bundled payload (Phase G3 /
+    AC-3). The installer remains the **sole writer** of the plugin
+    tree's files: routing the merged content through the same
+    atomic-write + hash-check pipeline keeps idempotency intact (a
+    rerun with the same merged bytes short-circuits at
+    ``action="skipped"``) and prevents the cross-process race a
+    separate post-install rewrite would introduce — without the
+    override, Process A's render of the merged file would be silently
+    overwritten by Process B's installer reverting to the bundled-only
+    static file (``coder_options.codex.mcp_servers`` would not become
+    effective at runtime).
     """
 
-    def __init__(self, source_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        source_dir: Path | None = None,
+        *,
+        mcp_json_override: bytes | None = None,
+    ) -> None:
         self._source_dir: Path = (
             source_dir if source_dir is not None else _bundled_source_dir()
         )
+        self._mcp_json_override: bytes | None = mcp_json_override
 
     @property
     def source_dir(self) -> Path:
@@ -296,15 +315,30 @@ class CodexPluginInstaller:
         return self._source_dir
 
     def installed_plugin_hash(self) -> str:
-        """Return the 16-hex-char trusted-hash for the bundled plugin tree.
+        """Return the 16-hex-char trusted-hash for the effective plugin tree.
 
-        Computed from the **bundled** source bytes (not the on-disk
-        copy); a successful :meth:`install` guarantees the on-disk
-        bytes match. The value is suitable as the ``trusted_hash``
-        Codex's hook-state file expects (Phase E6, decision #16).
+        Computed from the **effective** source bytes (the bundled tree
+        with any ``mcp_json_override`` substituted in); a successful
+        :meth:`install` guarantees the on-disk bytes match. The value
+        is suitable as the ``trusted_hash`` Codex's hook-state file
+        expects (Phase E6, decision #16).
+        """
+        payload = self._effective_source_payload()
+        return _combined_hash(payload)[:_VERSION_MARKER_HEX_CHARS]
+
+    def _effective_source_payload(self) -> dict[str, bytes]:
+        """Return the source payload, applying any ``mcp_json_override``.
+
+        Without an override this is the bundled tree as-is; with an
+        override the ``.mcp.json`` entry is replaced so the rest of the
+        installer (hash check, atomic write, post-rename verify) treats
+        the merged bytes as the source of truth — there is no second
+        writer that could drift the on-disk file off the recorded hash.
         """
         payload = _read_source_files(self._source_dir)
-        return _combined_hash(payload)[:_VERSION_MARKER_HEX_CHARS]
+        if self._mcp_json_override is not None:
+            payload[".mcp.json"] = self._mcp_json_override
+        return payload
 
     def install(self, target_dir: Path | None = None) -> InstallResult:
         """Install the plugin tree into ``target_dir``, idempotently.
@@ -314,16 +348,18 @@ class CodexPluginInstaller:
           * ``mkdir -p target_dir`` (the user's Codex home may not have
             a plugins directory yet).
           * If every existing file at ``target_dir`` already matches
-            the bundled bytes, return ``action="skipped"`` without
+            the effective source bytes (bundled tree + any
+            ``mcp_json_override``), return ``action="skipped"`` without
             writing.
-          * Otherwise, write each bundled file via temp-then-rename
-            (atomic on POSIX) and verify the final hash matches.
+          * Otherwise, write each effective-source file via
+            temp-then-rename (atomic on POSIX) and verify the final
+            hash matches.
 
         Concurrent invocations are safe per file (each writer takes its
         own ``NamedTemporaryFile`` and ``os.replace`` is atomic); last
         writer wins, but every writer wrote identical bytes from the
-        same bundled source, so the post-rename tree always matches the
-        bundled hash.
+        same effective source, so the post-rename tree always matches
+        the recorded hash.
 
         Args:
             target_dir: Directory to install into. Defaults to
@@ -350,7 +386,7 @@ class CodexPluginInstaller:
                 f"Cannot create or access Codex plugin directory {target_dir}: {exc}"
             ) from exc
 
-        source_payload = _read_source_files(self._source_dir)
+        source_payload = self._effective_source_payload()
         source_hash = _combined_hash(source_payload)
         version_hash = source_hash[:_VERSION_MARKER_HEX_CHARS]
 

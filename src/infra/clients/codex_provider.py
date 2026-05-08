@@ -177,27 +177,28 @@ def _build_bundled_codex_mcp_spec(agent_id: str, repo_path: Path) -> dict[str, o
     }
 
 
-_INSTALLED_MCP_FILENAME = ".mcp.json"
-"""Filename Codex's plugin loader reads from
-``<plugin>/.codex-plugin/.mcp.json`` per the manifest's ``mcpServers``
-field (``plugins/codex/mala-safety/.codex-plugin/plugin.json``)."""
-
-
-def _render_codex_plugin_mcp_json(
-    target_dir: Path,
+def _build_merged_codex_plugin_mcp_json(
     user_mcp_servers: tuple[tuple[str, object], ...] = (),
-) -> None:
-    """Render the installed plugin's ``.mcp.json`` to merge user MCP servers
-    with the bundled ``mala-locking`` entry (Phase G3 / AC-3).
+) -> bytes:
+    """Build the ``.mcp.json`` payload that merges user MCP servers with
+    the bundled ``mala-locking`` entry (Phase G3 / AC-3).
 
     User-supplied entries from ``coder_options.codex.mcp_servers`` are
-    written first; the bundled ``mala-locking`` key is written **last**
+    placed first; the bundled ``mala-locking`` key is written **last**
     so any clashing user override is silently replaced by the bundled
     launcher (G3: bundled is mandatory, never replaced). Without this
-    write, the static plugin file installed by
-    :class:`CodexPluginInstaller` only carries ``mala-locking``, and
-    user MCP servers configured via ``mala.yaml`` would never reach
-    Codex at runtime.
+    merge, the static plugin file would only carry ``mala-locking`` and
+    non-conflicting user MCP servers configured via ``mala.yaml`` would
+    never reach Codex at runtime.
+
+    Returned bytes are routed through :class:`CodexPluginInstaller` via
+    its ``mcp_json_override`` constructor argument so the installer
+    remains the sole writer of the plugin tree. Routing through a
+    single writer is what closes the cross-process race a separate
+    post-install rewrite would expose: without it, Process B's
+    installer would silently revert Process A's render to the
+    bundled-only file, dropping ``coder_options.codex.mcp_servers``
+    entries from Codex's effective config.
 
     The bundled spec on disk uses the **static** shape (empty
     ``args``/``env``) — the launcher inherits ``MALA_AGENT_ID`` /
@@ -205,14 +206,8 @@ def _render_codex_plugin_mcp_json(
     :class:`AppServerConfig.env`), so per-session values do not need to
     be embedded in the plugin file (which would otherwise race
     concurrent agents under ``--max-agents > 1``).
-
-    Atomic write via temp-then-rename so a partial write cannot leave
-    the plugin in a half-rendered state. I/O failures raise
-    :class:`CodexHookNotActiveError(PLUGIN_DISABLED)` so callers can fail
-    closed when the user's MCP wiring cannot be persisted.
     """
     import json as _json
-    import tempfile as _tempfile
 
     merged: dict[str, object] = dict(user_mcp_servers)
     merged[CODEX_BUNDLED_MCP_SERVER_NAME] = {
@@ -220,31 +215,7 @@ def _render_codex_plugin_mcp_json(
         "args": [],
         "env": {},
     }
-    serialized = _json.dumps({"mcpServers": merged}, indent=2) + "\n"
-    target_path = target_dir / _INSTALLED_MCP_FILENAME
-
-    try:
-        with _tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=target_dir,
-            prefix=".mala-mcp.",
-            suffix=".tmp",
-            delete=False,
-        ) as tmp:
-            tmp_path = Path(tmp.name)
-            tmp.write(serialized)
-            tmp.flush()
-            os.fsync(tmp.fileno())
-        os.replace(tmp_path, target_path)
-    except OSError as exc:
-        raise CodexHookNotActiveError(
-            f"Cannot render Codex plugin {_INSTALLED_MCP_FILENAME} at "
-            f"{target_path} ({exc}). User-supplied "
-            "``coder_options.codex.mcp_servers`` would not become "
-            "effective at runtime.",
-            reason=CodexHookNotActiveReason.PLUGIN_DISABLED,
-        ) from exc
+    return (_json.dumps({"mcpServers": merged}, indent=2) + "\n").encode("utf-8")
 
 
 def _create_codex_mcp_server_factory(
@@ -260,14 +231,15 @@ def _create_codex_mcp_server_factory(
     Codex itself does not consume this map inline — :meth:`CodexClient.query`
     intentionally does NOT pass ``mcp_servers`` to ``AsyncCodex.thread_start``
     (per the SDK shape comment at ``codex_client.py:266-276``); MCP wiring
-    flows through the bundled plugin's ``.mcp.json``, which
-    :func:`_render_codex_plugin_mcp_json` rewrites at install time with
-    the same merge (user entries first, bundled ``mala-locking`` last)
-    so the same map reaches Codex via the plugin's static file. The
-    runtime's :attr:`CodexRuntime.mcp_servers` field carries the merged
-    map for forward-compat / inspection so callers (telemetry, tests,
-    future SDK versions that accept inline specs) see the resolved
-    configuration the bundled plugin ultimately presents to Codex.
+    flows through the bundled plugin's ``.mcp.json``, whose effective
+    bytes are produced by :func:`_build_merged_codex_plugin_mcp_json`
+    and handed to :class:`CodexPluginInstaller` via its
+    ``mcp_json_override`` argument so the installer is the sole writer
+    of the merged file. The runtime's :attr:`CodexRuntime.mcp_servers`
+    field carries the merged map for forward-compat / inspection so
+    callers (telemetry, tests, future SDK versions that accept inline
+    specs) see the resolved configuration the bundled plugin ultimately
+    presents to Codex.
     """
 
     def factory(
@@ -1534,8 +1506,23 @@ class CodexAgentProvider:
             CodexPluginInstaller,
         )
 
+        # Build the merged ``.mcp.json`` payload (Phase G3 / AC-3) and
+        # hand it to the installer as ``mcp_json_override`` so the
+        # installer is the sole writer of the plugin tree. Routing the
+        # merge through the installer keeps idempotency intact (a rerun
+        # with the same merged bytes short-circuits at
+        # ``action="skipped"``) and closes the cross-process race a
+        # separate post-install rewrite would open: without the
+        # override, Process B's installer would silently revert Process
+        # A's render to the bundled-only static file, dropping
+        # ``coder_options.codex.mcp_servers`` entries from Codex's
+        # effective config (plan ``L954``: bundled is mandatory, never
+        # replaced; non-conflicting user keys pass through).
+        mcp_json_override = _build_merged_codex_plugin_mcp_json(self._mcp_servers)
         try:
-            install_result = CodexPluginInstaller().install()
+            install_result = CodexPluginInstaller(
+                mcp_json_override=mcp_json_override
+            ).install()
         except CodexPluginInstallError as exc:
             raise CodexHookNotActiveError(
                 f"Codex plugin install failed: {exc}",
@@ -1543,16 +1530,6 @@ class CodexAgentProvider:
             ) from exc
 
         plugin_hash = install_result.plugin_hash
-
-        # 4b. Render the installed plugin's ``.mcp.json`` to merge user
-        # MCP servers from ``coder_options.codex.mcp_servers`` with the
-        # bundled ``mala-locking`` entry (Phase G3 / AC-3). The static
-        # file the installer just copied carries only ``mala-locking``;
-        # without this rewrite, non-conflicting user MCP servers would
-        # never reach Codex at runtime. The bundled key is always written
-        # last so a user attempt to override ``mala-locking`` is silently
-        # replaced (plan ``L954``: bundled is mandatory, never replaced).
-        _render_codex_plugin_mcp_json(install_result.target_dir, self._mcp_servers)
 
         # 5. Hook script must be on PATH so Codex can launch it via
         # ``"command": "mala-codex-pre-tool-use"`` from hooks.json.

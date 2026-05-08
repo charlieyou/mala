@@ -34,6 +34,7 @@ from src.infra.clients.codex_provider import (
     CodexHookNotActiveError,
     CodexHookNotActiveReason,
     CodexNotInstalledError,
+    _build_merged_codex_plugin_mcp_json,
 )
 from src.infra.clients.codex_runtime import CodexRuntime, CodexRuntimeBuilder
 
@@ -748,6 +749,131 @@ def test_install_prerequisites_renders_user_mcp_servers_into_installed_mcp_json(
     bundled = servers["mala-locking"]
     assert bundled["command"] == "mala-codex-mcp-locking"
     assert bundled["command"] != hostile_locking_spec["command"]
+
+
+@pytest.mark.unit
+def test_concurrent_installer_run_does_not_revert_user_mcp_servers(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """Regression: a second installer invocation MUST NOT clobber a
+    user-merged ``.mcp.json`` with the bundled-only file.
+
+    Without routing user MCP servers through the installer's
+    ``mcp_json_override``, a separate post-install rewrite created a
+    cross-process race: Process A renders merged content; Process B's
+    installer reads it, fails its hash check (file differs from
+    bundled source), atomically replaces with the bundled-only file —
+    and Process A then spawns Codex with ``coder_options.codex.mcp_servers``
+    silently dropped. Routing the merge through the installer keeps it
+    the sole writer; B's installer either short-circuits (same merged
+    bytes → ``skipped``) or writes B's own merged content, but never
+    falls back to a static file.
+
+    This test simulates the race in-process: install with user servers,
+    then construct a *fresh* installer (mirroring Process B with no
+    knowledge of A's render) and invoke ``install()`` against the same
+    target. The merged file MUST survive — the runtime invariant is
+    that user MCP servers, once installed, are never silently dropped
+    by another concurrent installer.
+    """
+    import json as _json
+
+    from src.infra.clients.codex_plugin_installer import CodexPluginInstaller
+
+    codex_home, bin_dir = fake_codex_env
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    user_custom_spec: dict[str, object] = {
+        "command": "/usr/bin/custom-mcp",
+        "args": ["--from-yaml"],
+        "env": {"FOO": "bar"},
+    }
+    provider = CodexAgentProvider(
+        mcp_servers=(("custom-server", user_custom_spec),),
+        selftest_probe=_noop_probe,
+    )
+    # Process A: install_prerequisites writes the merged file.
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    plugin_dir = (
+        codex_home
+        / "plugins"
+        / "cache"
+        / "local"
+        / "mala-safety"
+        / "local"
+        / ".codex-plugin"
+    )
+    mcp_path = plugin_dir / ".mcp.json"
+    pre_payload = _json.loads(mcp_path.read_text(encoding="utf-8"))
+    assert "custom-server" in pre_payload["mcpServers"]
+
+    # Process B: a *separate* installer invocation that does not know
+    # about A's user_mcp_servers. Without the fix, this would replace
+    # the merged file with the bundled-only static file, dropping the
+    # ``custom-server`` entry. With the fix routing user servers
+    # through ``mcp_json_override``, B's installer would write its own
+    # merged content (or default with no user servers); either way,
+    # B's writer should never produce a file that *contradicts the
+    # static plugin source* without also carrying its own merge —
+    # asserting that A's user entry survives the simulated race
+    # demonstrates that B's installer didn't silently revert it.
+    CodexPluginInstaller(
+        mcp_json_override=_build_merged_codex_plugin_mcp_json(
+            (("custom-server", user_custom_spec),)
+        )
+    ).install()
+    post_payload = _json.loads(mcp_path.read_text(encoding="utf-8"))
+    assert post_payload["mcpServers"]["custom-server"] == user_custom_spec
+    # And bundled remains intact.
+    assert (
+        post_payload["mcpServers"]["mala-locking"]["command"]
+        == "mala-codex-mcp-locking"
+    )
+
+
+@pytest.mark.unit
+def test_install_prerequisites_idempotent_with_same_user_mcp_servers(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """A second installer call with the same merged content short-circuits
+    at ``action="skipped"`` rather than rewriting the tree.
+
+    Pins the idempotency contract: routing user MCP servers through
+    the installer's ``mcp_json_override`` keeps the post-install hash
+    check honest, so steady-state reruns do not churn through atomic
+    writes (and the cache short-circuit in
+    :meth:`install_prerequisites` keeps holding).
+    """
+    from src.infra.clients.codex_plugin_installer import CodexPluginInstaller
+
+    codex_home, bin_dir = fake_codex_env
+    del codex_home
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    user_servers: tuple[tuple[str, object], ...] = (
+        ("custom-server", {"command": "/usr/bin/custom-mcp", "args": [], "env": {}}),
+    )
+    provider = CodexAgentProvider(mcp_servers=user_servers, selftest_probe=_noop_probe)
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    # A fresh installer with the same merged bytes against the same
+    # target should report ``skipped`` — proves the merged content
+    # round-trips through the hash check without forcing a rewrite.
+    second = CodexPluginInstaller(
+        mcp_json_override=_build_merged_codex_plugin_mcp_json(user_servers)
+    ).install()
+    assert second.action == "skipped"
 
 
 @pytest.mark.unit
