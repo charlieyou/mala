@@ -279,13 +279,24 @@ def _strip_env_assignments(tokens: list[str]) -> list[str]:
     return tokens[i:]
 
 
-_PREFIX_REDIR_RE = re.compile(r"^(?:&|[012])?>{1,2}\|?")
 _DEV_NULL_LIKE = frozenset({"/dev/null", "/dev/stderr", "/dev/stdout", "/dev/tty"})
-# File-descriptor duplications: ``&1``, ``&2``, ``&-`` (close).
-# These are not write targets — they redirect to an existing fd or close it,
-# so locking them produces false positives like denying ``cmd > out 2>&1``
-# even when ``out`` is owned by the agent.
+# File-descriptor duplications: leading-``&`` form (``&1`` / ``&-``).
+# These appear as the *post-prefix* tail when the operator regex consumed
+# only a leading-``&``-less prefix (e.g. ``2>`` from ``2>&1``); the residue
+# ``&1`` is an fd reference, not a filesystem path.
 _FD_REF_RE = re.compile(r"^&[0-9\-]+$")
+# Pure fd-numeric / close-fd target. Used after a ``>&`` / ``n>&`` operator
+# to distinguish ``>&1`` (fd dup, skip) from ``>&file`` (write, lock-check).
+_FD_REF_TARGET_RE = re.compile(r"^[0-9]+$|^-$")
+# Whole-token redirection operators: any numeric-fd prefix + ``>`` / ``>>``,
+# optionally followed by ``&`` (legacy combined form) or ``|`` (force-clobber).
+# Examples it matches: ``>``, ``>>``, ``1>``, ``2>``, ``3>>``, ``&>``, ``&>>``,
+# ``>&``, ``2>&``, ``>|``.
+_REDIR_OP_TOKEN_RE = re.compile(r"^(?:[0-9]+|&)?>{1,2}[&|]?$")
+# Prefix regex for combined-token forms like ``>file``, ``2>file``,
+# ``&>file``, ``>&file``, ``3>>file``. Greedy on the optional trailing
+# ``&`` so ``2>&1`` matches the prefix ``2>&`` (target ``1`` → fd dup).
+_COMBINED_REDIR_PREFIX_RE = re.compile(r"^(?:[0-9]+|&)?>{1,2}[&|]?")
 
 
 def _extract_redirection_targets(tokens: list[str]) -> list[str]:
@@ -298,31 +309,66 @@ def _extract_redirection_targets(tokens: list[str]) -> list[str]:
     ``lstrip("&012>")`` ate any leading digit, e.g. ``>2026-log.txt``
     became ``6-log.txt``).
 
-    Fd duplications (``2>&1``, ``>&2``, ``>&-``) are recognised and skipped
-    — they redirect to a numbered fd or close one, not to a filesystem
-    path, so the lock-check would deny common idioms like
-    ``cmd >out.log 2>&1`` even when ``out.log`` is locked correctly.
+    Recognised forms — POSIX shells accept ANY numeric fd prefix, not just
+    ``1``/``2``, and the legacy ``>&file`` operator is equivalent to
+    ``> file 2> file`` (write both stdout and stderr to ``file``):
+
+    - ``>file`` / ``>>file`` / ``n>file`` / ``n>>file`` — write to file
+    - ``&>file`` / ``&>>file`` — write stdout+stderr (modern syntax)
+    - ``>&file`` / ``n>&file`` — write stdout+stderr (legacy syntax)
+    - ``>&n`` / ``n>&m`` / ``>&-`` — fd duplication / close (NOT writes)
+
+    Fd duplications and close-fd are skipped so common idioms like
+    ``cmd >out.log 2>&1`` don't false-deny when ``out.log`` is locked.
     """
     out: list[str] = []
     for i, tok in enumerate(tokens):
-        if tok in REDIR_OPERATORS and i + 1 < len(tokens):
+        # Whole-token operator: next token is the redirect target.
+        if _REDIR_OP_TOKEN_RE.match(tok) and i + 1 < len(tokens):
             target = tokens[i + 1]
-            if target in _DEV_NULL_LIKE or _FD_REF_RE.match(target):
+            # ``>&`` / ``n>&`` followed by a numeric/dash word is fd dup.
+            if tok.endswith("&") and _FD_REF_TARGET_RE.match(target):
+                continue
+            if target in _DEV_NULL_LIKE:
                 continue
             out.append(target)
             continue
-        # Combined forms like ``>file``, ``>>file``, ``2>file``, ``&>file``,
-        # but NOT ``2>&1``/``>&2``/``>&-`` (fd duplications).
-        m = _PREFIX_REDIR_RE.match(tok)
+        # Combined form: prefix + target embedded in the same token.
+        m = _COMBINED_REDIR_PREFIX_RE.match(tok)
         if m and m.end() < len(tok):
+            prefix = m.group(0)
             target = tok[m.end() :]
-            if target and target not in _DEV_NULL_LIKE and not _FD_REF_RE.match(target):
-                out.append(target)
+            # ``2>&1`` etc.: greedy regex captured ``2>&``, target ``1`` is
+            # a numeric fd → fd dup, not a write.
+            if prefix.endswith("&") and _FD_REF_TARGET_RE.match(target):
+                continue
+            if target in _DEV_NULL_LIKE:
+                continue
+            # Defensive: legacy form where the prefix didn't consume the
+            # trailing ``&`` (e.g., a hand-written variant) and the target
+            # is a leading-``&`` fd ref. Skip those too.
+            if _FD_REF_RE.match(target):
+                continue
+            out.append(target)
     return out
 
 
+def _command_basename(tokens: list[str]) -> str:
+    """Return the basename of ``tokens[0]`` (or ``""`` for empty input).
+
+    Path-qualified invocations (``/usr/bin/touch``, ``./bin/sed``, etc.)
+    must dispatch to the same extractor as the bare command name; without
+    basename normalisation, ``/usr/bin/touch unowned.py`` bypasses every
+    utility/in-place/oneliner/git/patch extractor and the write slips
+    past AC #19.
+    """
+    if not tokens:
+        return ""
+    return os.path.basename(tokens[0])
+
+
 def _extract_tee_targets(tokens: list[str]) -> list[str]:
-    if not tokens or tokens[0] != "tee":
+    if _command_basename(tokens) != "tee":
         return []
     out: list[str] = []
     for tok in tokens[1:]:
@@ -380,7 +426,7 @@ def _extract_inplace_targets(tokens: list[str]) -> list[str]:
     """
     if not tokens:
         return []
-    cmd = tokens[0]
+    cmd = _command_basename(tokens)
     if cmd not in {"sed", "perl"}:
         return []
     if not _has_inplace_flag(tokens):
@@ -441,7 +487,7 @@ def _extract_awk_inplace_targets(tokens: list[str]) -> list[str]:
     """
     if not tokens:
         return []
-    cmd = tokens[0]
+    cmd = _command_basename(tokens)
     if cmd not in {"awk", "gawk"}:
         return []
     found_inplace = False
@@ -490,11 +536,34 @@ def _extract_awk_inplace_targets(tokens: list[str]) -> list[str]:
     return positionals[1:] if len(positionals) > 1 else []
 
 
+# GNU coreutils flags that change argument-position semantics. Without
+# tracking these, ``cp -t dir src`` lock-checks ``src`` (the source) and
+# allows an unowned write to ``dir``; ``chmod --reference=R target``
+# discards ``target`` as the "mode positional" and skips the lock-check
+# entirely.
+_TARGET_DIR_LONG_FLAGS = frozenset({"--target-directory"})
+_REFERENCE_LONG_FLAGS = frozenset({"--reference"})
+
+
 def _extract_utility_targets(tokens: list[str]) -> list[str]:
-    """File-mutation utilities (cp/mv/rm/...): extract destination args."""
+    """File-mutation utilities (cp/mv/rm/...): extract destination args.
+
+    Honours GNU coreutils flags that override the positional-argument
+    layout:
+
+    - ``cp/mv/install -t DIR src``, ``cp -tDIR src``,
+      ``cp --target-directory=DIR src`` — the destination directory is
+      supplied via the flag, not as the trailing positional. Without
+      this, the heuristic would lock-check ``src`` and miss ``DIR``.
+    - ``chmod --reference=R target`` / ``chown --reference=R target`` —
+      the mode/owner is supplied via the flag, so ``target`` is the
+      first (and only) positional file. Without this, the
+      ``skip_first_positional`` strategy would discard the file as the
+      "mode positional" and the lock-check would never run.
+    """
     if not tokens:
         return []
-    cmd = tokens[0]
+    cmd = _command_basename(tokens)
     strategy = UTILITY_STRATEGIES.get(cmd)
     if strategy is None:
         return []
@@ -508,13 +577,63 @@ def _extract_utility_targets(tokens: list[str]) -> list[str]:
                     out.append(target)
         return out
 
-    positionals = [t for t in tokens[1:] if not t.startswith("-")]
+    explicit_targets: list[str] = []
+    has_reference_flag = False
+    positionals: list[str] = []
+    args = tokens[1:]
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        # cp/mv/install/ln: ``-t DIR`` / ``-tDIR`` / ``--target-directory=DIR``
+        if cmd in {"cp", "mv", "install", "ln"}:
+            if tok == "-t":
+                if i + 1 < len(args):
+                    explicit_targets.append(args[i + 1])
+                    i += 2
+                    continue
+            if tok.startswith("-t") and len(tok) > 2 and not tok.startswith("--"):
+                explicit_targets.append(tok[2:])
+                i += 1
+                continue
+            if tok in _TARGET_DIR_LONG_FLAGS:
+                if i + 1 < len(args):
+                    explicit_targets.append(args[i + 1])
+                    i += 2
+                    continue
+            if tok.startswith("--target-directory="):
+                explicit_targets.append(tok[len("--target-directory=") :])
+                i += 1
+                continue
+        # chmod/chown: ``--reference=FILE`` (or ``--reference FILE``) replaces
+        # the leading mode/owner positional.
+        if cmd in {"chmod", "chown"}:
+            if tok in _REFERENCE_LONG_FLAGS:
+                has_reference_flag = True
+                i += 2 if i + 1 < len(args) else 1
+                continue
+            if tok.startswith("--reference="):
+                has_reference_flag = True
+                i += 1
+                continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        positionals.append(tok)
+        i += 1
+
+    # ``-t``/``--target-directory`` overrides every other source: the
+    # destinations are the only writes the command will perform.
+    if explicit_targets:
+        return explicit_targets
 
     if strategy == "last_positional":
         return positionals[-1:] if len(positionals) >= 1 else []
     if strategy == "all_positional":
         return positionals
     if strategy == "skip_first_positional":
+        if has_reference_flag:
+            # Mode/owner came from ``--reference``; every positional is a file.
+            return positionals
         return positionals[1:] if len(positionals) > 1 else []
 
     return []
@@ -603,7 +722,7 @@ def _extract_oneliner_targets(tokens: list[str]) -> list[str]:
     """
     if not tokens:
         return []
-    cmd = tokens[0]
+    cmd = _command_basename(tokens)
     script_flag = _ONELINER_SCRIPT_FLAGS.get(cmd)
     if script_flag is None:
         return []
@@ -642,7 +761,7 @@ def _extract_oneliner_targets(tokens: list[str]) -> list[str]:
 
 def _extract_git_targets(tokens: list[str]) -> list[str]:
     """git checkout/restore/apply/stash apply/pop write-path extraction."""
-    if not tokens or tokens[0] != "git" or len(tokens) < 2:
+    if not tokens or _command_basename(tokens) != "git" or len(tokens) < 2:
         return []
     sub = tokens[1]
     if sub not in GIT_WRITE_SUBCOMMANDS:
@@ -687,7 +806,7 @@ def _extract_git_targets(tokens: list[str]) -> list[str]:
 
 def _extract_patch_targets(tokens: list[str]) -> list[str]:
     """``patch < file`` / ``patch -p1 < file`` — diff body writes."""
-    if not tokens or tokens[0] != "patch":
+    if not tokens or _command_basename(tokens) != "patch":
         return []
     return [_UNRESOLVED_SENTINEL]
 
@@ -707,18 +826,29 @@ _SEGMENT_EXTRACTORS = (
 def _normalize_separators(command: str) -> str:
     """Insert spaces around shell control operators outside quoted regions.
 
-    ``shlex.split`` does not split on ``;``/``&&``/``||``/``|`` unless the
-    operators are already surrounded by whitespace, so an agent-written
-    ``true;touch unowned.py`` previously tokenized as
-    ``['true;touch', 'unowned.py']`` — no extractor saw ``touch`` and the
-    write slipped past AC #19. This helper normalises the command string
-    so the downstream shlex split + segment-extractor pipeline sees the
-    pipeline boundaries.
+    ``shlex.split`` does not split on ``;``/``&&``/``||``/``|``/``&``
+    unless the operators are already surrounded by whitespace, so an
+    agent-written ``true;touch unowned.py`` or ``touch out&`` previously
+    tokenized as a single token — no extractor saw the second command
+    and the write slipped past AC #19. This helper normalises the
+    command string so the downstream shlex split + segment-extractor
+    pipeline sees the pipeline boundaries.
 
     Quote tracking is required so a literal ``;``/``|``/``&`` inside a
-    single- or double-quoted argument (e.g., ``echo 'a;b' > out``) is not
-    treated as a control operator. Bare ``&`` is left alone (ambiguous
-    between backgrounding and fd duplications such as ``2>&1``).
+    single- or double-quoted argument (e.g., ``echo 'a;b' > out``) is
+    not treated as a control operator.
+
+    Backslash handling is required so an agent cannot hide control
+    operators by escaping a quote outside an actual quoted region.
+    Without it, ``echo \\";touch f`` would look quoted to the parser,
+    leave ``;`` un-split, and silently allow the unowned write — even
+    though bash treats ``\\"`` as a literal ``"`` and runs the second
+    command at top level.
+
+    Bare ``&`` is treated as a backgrounding operator (and split)
+    EXCEPT when it follows ``>`` or ``digit+>`` (forming the fd
+    redirect operators ``>&``/``n>&``). This catches ``touch out&``
+    while still leaving ``2>&1`` intact for the redirection extractor.
     """
     out: list[str] = []
     i = 0
@@ -726,6 +856,14 @@ def _normalize_separators(command: str) -> str:
     quote: str | None = None
     while i < n:
         c = command[i]
+        # Backslash escape: outside single quotes, ``\<x>`` is literal
+        # ``<x>`` per POSIX. Pass both characters through verbatim so a
+        # quote character inside the escape does not toggle quote state.
+        if c == "\\" and i + 1 < n and quote != "'":
+            out.append(c)
+            out.append(command[i + 1])
+            i += 2
+            continue
         if quote is not None:
             out.append(c)
             if c == quote:
@@ -746,6 +884,22 @@ def _normalize_separators(command: str) -> str:
                 i += 2
                 continue
         if c in (";", "|"):
+            out.append(" ")
+            out.append(c)
+            out.append(" ")
+            i += 1
+            continue
+        if c == "&":
+            # Don't split if this ``&`` is part of an fd-redirect
+            # operator (``>&`` or ``digit+>&``). Walk back over digits;
+            # if the preceding non-digit char is ``>``, it's a redirect.
+            j = i - 1
+            while j >= 0 and command[j].isdigit():
+                j -= 1
+            if j >= 0 and command[j] == ">":
+                out.append(c)
+                i += 1
+                continue
             out.append(" ")
             out.append(c)
             out.append(" ")

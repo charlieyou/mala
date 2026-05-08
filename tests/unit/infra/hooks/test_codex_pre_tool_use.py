@@ -1150,3 +1150,292 @@ class TestApplyPatchMoveDestination:
         assert try_lock(str(repo / "new.py"), "agent-me", repo_namespace=str(repo))
         result = decide(make_payload("apply_patch", {"command": body}, cwd=repo))
         assert is_allow(result), result
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 4)
+# ---------------------------------------------------------------------------
+
+
+class TestArbitraryFdRedirections:
+    """Regression: POSIX shells accept any numeric fd as a redirect prefix.
+
+    Previously the regex hardcoded ``[012]?>`` which only recognised fd
+    0/1/2. ``echo hi 3>file`` truncates ``file`` before the command
+    runs, but the heuristic returned no targets and the unowned write
+    slipped past the lock check.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "echo hi 3>{target}",
+            "cmd 4>>{target}",
+            "cmd 9>{target}",
+            # Space-separated form for the same higher fds.
+            "echo hi 3> {target}",
+            "cmd 5>> {target}",
+        ],
+    )
+    def test_high_fd_redirect_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "out.log"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "out.log" in deny_reason(result)
+
+
+class TestLegacyCombinedRedirection:
+    """Regression: ``>&file`` (legacy) writes both stdout and stderr to file.
+
+    Before the fix, the prefix regex only matched ``>``, leaving the
+    target as ``&file``. An agent could lock the literal path ``&file``
+    (a junk lock-key) and the hook would allow the command — but bash
+    actually writes to ``file``. Pin the legacy form.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "cmd >&{target}",
+            "cmd 2>&{target}",
+            "cmd >& {target}",
+            "cmd 2>& {target}",
+        ],
+    )
+    def test_legacy_redirect_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "out.log"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "out.log" in deny_reason(result)
+
+    def test_legacy_redirect_allowed_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "out.log"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"cmd >&{target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+    def test_fd_dup_in_combined_form_still_skipped(self, env: dict[str, str]) -> None:
+        # Sanity: the legacy fix must not regress the fd-dup skip.
+        # ``>&1`` and ``2>&1`` are fd dups, not writes. With no other
+        # write target, the command must allow.
+        result = decide(make_payload("bash", {"command": "cmd >&1 2>&1"}))
+        assert is_allow(result), result
+
+
+class TestUtilityGNUFlags:
+    """Regression: ``cp -t DIR src`` and ``chmod --reference=R target``.
+
+    GNU-specific flags reorder the positional argument layout. Before
+    the fix:
+    - ``cp -t dir src`` lock-checked ``src`` (the source) and allowed
+      writing to the unowned ``dir``.
+    - ``chmod --reference=R target`` discarded ``target`` as the "mode
+      positional" and skipped the lock-check entirely.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "cp -t {dest_dir} /tmp/src",
+            "cp -t{dest_dir} /tmp/src",
+            "cp --target-directory={dest_dir} /tmp/src",
+            "cp --target-directory {dest_dir} /tmp/src",
+            "mv -t {dest_dir} /tmp/src",
+            "install -t {dest_dir} -m 0644 /tmp/src",
+        ],
+    )
+    def test_target_directory_flag_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        dest = repo / "outdir"
+        command = command_template.format(dest_dir=dest)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "outdir" in deny_reason(result)
+
+    def test_target_directory_overrides_source_lock(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Holding the SOURCE lock must NOT satisfy the destination check.
+        src = repo / "src.py"
+        dest = repo / "outdir"
+        assert try_lock(str(src), "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("bash", {"command": f"cp -t {dest} {src}"}))
+        assert is_deny(result)
+        assert "outdir" in deny_reason(result)
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "chmod --reference=/tmp/ref {target}",
+            "chmod --reference /tmp/ref {target}",
+            "chown --reference=/tmp/ref {target}",
+            "chown --reference /tmp/ref {target}",
+        ],
+    )
+    def test_reference_flag_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "data.txt"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "data.txt" in deny_reason(result)
+
+
+class TestPathQualifiedCommandNames:
+    """Regression: ``/usr/bin/touch`` dispatches the same as ``touch``.
+
+    Before the fix, every extractor compared ``tokens[0]`` literally to
+    the command name, so any absolute or relative path invocation
+    (``/usr/bin/touch``, ``./bin/sed``) bypassed the heuristic.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "/usr/bin/touch {target}",
+            "/bin/cp /tmp/src {target}",
+            "/usr/bin/sed -i s/a/b/ {target}",
+            "/usr/bin/awk -i inplace '{{print}}' {target}",
+            "./scripts/touch {target}",
+        ],
+    )
+    def test_path_qualified_dispatches_correctly(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "out.txt"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+
+    def test_path_qualified_oneliner_dispatches(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "out.txt"
+        command = f"/usr/bin/python -c \"open('{target}','w').write('x')\""
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result)
+
+    def test_path_qualified_git_dispatches(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "f.py"
+        command = f"/usr/bin/git checkout {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result)
+
+
+class TestEscapedQuotesInNormalizer:
+    """Regression: ``\\"`` outside quotes must not flip quote state.
+
+    Bash treats ``\\"`` (backslash-quote) at the top level as a literal
+    ``"`` character — it does NOT open a quoted region. Before the fix,
+    ``echo \\";touch f`` made the parser think ``"`` opened a quote, so
+    the trailing ``;`` was treated as quoted and never split. The
+    second command ran at top level in bash but the heuristic never saw
+    it.
+    """
+
+    def test_escaped_quote_does_not_hide_separator(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "unowned.py"
+        # ``echo \";touch <unowned>`` — the \" is a literal " so ; is a
+        # top-level separator. The second command must be detected.
+        command = f'echo \\";touch {target}'
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+    def test_escaped_separator_inside_quotes_still_quoted(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Sanity: a ``;`` inside a real quoted region is still quoted.
+        # ``echo "a;b" > out`` — ; is inside quotes; only ``out`` is a
+        # write target.
+        target = repo / "out"
+        command = f'echo "a;b" > {target}'
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result)
+        assert "out" in deny_reason(result)
+
+    def test_single_quotes_treat_backslash_literally(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Inside single quotes, backslash is literal — \" does NOT
+        # escape anything. ``echo 'a\";b' > out`` — the ; is inside
+        # single quotes, no split.
+        target = repo / "out"
+        command = f"echo 'a\\\";b' > {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result)
+        assert "out" in deny_reason(result)
+
+
+class TestBareBackgroundOperator:
+    """Regression: ``touch out&`` is backgrounded, not a write to ``out&``.
+
+    Before the fix, bare ``&`` was never split, so ``touch out&``
+    tokenized as ``['touch', 'out&']`` and the heuristic added the
+    junk path ``out&`` as the write target. An agent could lock the
+    literal ``out&`` and the hook would allow the command — while bash
+    runs ``touch out`` and writes the unlocked file in the background.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "touch {target}&",
+            "touch {target} &",
+            "true & touch {target}",
+            "true&touch {target}",
+        ],
+    )
+    def test_bare_background_separator_split(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "out.txt"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "out.txt" in deny_reason(result)
+
+    def test_fd_dup_with_trailing_background_split(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``cmd >out 2>&1 &`` — the trailing ``&`` is backgrounding,
+        # but the inner ``2>&1`` is fd dup. Both must be classified
+        # correctly: ``out`` is the only write target.
+        target = repo / "out.log"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"cmd >{target} 2>&1 &"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
