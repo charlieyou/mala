@@ -289,11 +289,12 @@ async def test_idle_timeout_resumes_same_codex_thread(
 
     state = MessageIterationState()
     lifecycle_ctx = LifecycleContext()
-    # The policy first reads from the live client (CodexClient.session_id)
-    # before falling back to lifecycle_ctx; pre-seeding lifecycle_ctx
-    # ensures the retry succeeds even if a future regression breaks the
-    # client-side capture path.
-    lifecycle_ctx.session_id = "thr_idle_codex"
+    # Intentionally NOT pre-seeding lifecycle_ctx.session_id: a mid-turn
+    # idle timeout fires before MessageStreamProcessor handles a terminal
+    # result event, so in production the only place the resume id can
+    # come from is the live CodexClient.session_id. Seeding lifecycle_ctx
+    # here would mask a regression where that client-side capture path
+    # breaks.
 
     result = await policy.execute_iteration(
         query="Initial Codex prompt",
