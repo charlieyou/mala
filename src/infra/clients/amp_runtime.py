@@ -84,13 +84,13 @@ class AmpRuntime:
     resume_thread_id: str | None = None
     lock_event_log_path: Path | None = None
     """Path the stdio locking MCP server writes lock-event JSONL to when
-    a deadlock monitor was wired via :meth:`AmpRuntimeBuilder.with_hooks`.
-    The Amp client factory forwards this verbatim into
-    :class:`AmpClientOptions`."""
+    a deadlock monitor was passed via the ``deadlock_monitor`` parameter
+    of :meth:`AgentProvider.runtime_builder`. The Amp client factory
+    forwards this verbatim into :class:`AmpClientOptions`."""
     lock_event_callback: Callable[[object], object] | None = None
     """Async-or-sync handler invoked for each parsed lock event. Sourced
     from the deadlock monitor's ``handle_event`` method when
-    :meth:`AmpRuntimeBuilder.with_hooks` received a monitor."""
+    :meth:`AgentProvider.runtime_builder` received a ``deadlock_monitor``."""
 
 
 AMP_LOCK_EVENTS_DIR: Path = USER_CONFIG_DIR / "amp-lock-events"
