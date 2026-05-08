@@ -3367,3 +3367,179 @@ class TestShellGlobMetacharacters:
         assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
         result = decide(make_payload("bash", {"command": f"touch {target}"}))
         assert is_allow(result), result
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 3, post-restart)
+# ---------------------------------------------------------------------------
+
+
+class TestTildeAndParameterExpansion:
+    """Regression: ``~/foo`` and ``$VAR`` cannot be statically resolved.
+
+    Before the fix, ``touch ~/unowned.py`` had its target lock-checked
+    against the literal ``~/unowned.py`` (resolved against cwd). An
+    agent could acquire a lock on that exact string while bash
+    expanded ``~`` to ``/home/user`` at runtime — writing to a file
+    that was never lock-checked.
+
+    Same shape for ``$VAR`` parameter expansion and command-
+    substitution placeholders.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # Tilde expansion at start of path.
+            "touch ~/unowned.py",
+            "touch ~/.bashrc",
+            "rm ~/unowned.py",
+            "cp /tmp/src ~/dest.py",
+            # Mid-path tilde (bash does NOT expand here, but we deny
+            # conservatively since we cannot tell if the original was
+            # quoted).
+            "touch /tmp/~/foo",
+            # Parameter expansion.
+            "touch $TARGET",
+            "touch $HOME/foo",
+            "touch ${VAR}",
+            "touch ${VAR}/path",
+            "rm $1",
+            "echo hi > $OUT",
+            # Command-substitution placeholder reaching the lock-check.
+            # ``cp src $(echo dest)`` — the $(...) was extracted as a
+            # body, the surrounding token has the placeholder.
+            "cp src $(echo dest)",
+            "touch `echo dest`",
+        ],
+    )
+    def test_expansion_target_always_denies(
+        self, env: dict[str, str], repo: Path, command: str
+    ) -> None:
+        # Even if the agent acquires a lock on the literal expansion
+        # string, the hook must still deny.
+        from src.infra.tools.locking import try_lock as try_lock_
+
+        for tok in command.split():
+            if any(c in tok for c in "$~"):
+                try_lock_(tok, "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), f"command: {command!r} → {result}"
+
+    def test_dollar_at_in_filename_still_denied(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Even ``touch $$.tmp`` (bash $$ = PID) denies.
+        result = decide(make_payload("bash", {"command": "touch $$.tmp"}, cwd=repo))
+        assert is_deny(result)
+
+
+class TestPatchHeaderTimestamp:
+    """Regression: ``+++ b/path\\t2026-05-08`` header includes timestamp.
+
+    Before the fix, ``_DIFF_DEST_HEADER_RE`` captured ``path\\t2026-05-08``
+    as the path string. An agent could lock that literal junk string
+    while ``patch(1)`` ignored everything after the tab and wrote to
+    ``path``.
+    """
+
+    def test_diff_header_with_timestamp_extracts_path_only(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        body = (
+            "diff --git a/src/foo.py b/src/foo.py\n"
+            "--- a/src/foo.py\t2026-05-08 12:00:00.000\n"
+            "+++ b/src/foo.py\t2026-05-08 12:00:01.000\n"
+            "@@\n-x\n+y\n"
+        )
+        # Lock the actual file (without timestamp). If the heuristic
+        # extracted ``src/foo.py\t2026-05-08...`` it would deny here.
+        target = repo / "src" / "foo.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("apply_patch", {"patch": body}, cwd=repo))
+        assert is_allow(result), result
+
+    def test_diff_header_with_timestamp_unlocked_denies_real_path(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # No locks; deny message must reference the real path, not
+        # ``path\t2026-...``.
+        body = (
+            "--- a/src/foo.py\t2026-05-08\n+++ b/src/foo.py\t2026-05-08\n@@\n-x\n+y\n"
+        )
+        result = decide(make_payload("apply_patch", {"patch": body}, cwd=repo))
+        assert is_deny(result)
+        assert "src/foo.py" in deny_reason(result)
+        assert "2026-05-08" not in deny_reason(result)
+
+    def test_envelope_header_with_tab_extracts_path_only(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Codex apply_patch envelope header tolerant of trailing tab/text.
+        body = "*** Update File: src/foo.py\textra-data\n@@\n-x\n+y\n"
+        target = repo / "src" / "foo.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("apply_patch", {"command": body}, cwd=repo))
+        assert is_allow(result), result
+
+
+class TestAttachedFdPrefix:
+    """Regression: ``unowned_dir123>out`` keeps ``123`` in the filename.
+
+    Before the fix, ``_strip_fd_prefix_from_output`` unconditionally
+    popped trailing digits from the output buffer when emitting a
+    redirect operator. For ``cp src -t unowned_dir123>out``, the ``123``
+    was stripped and treated as an fd prefix, leaving the heuristic
+    to lock-check ``unowned_dir`` and ``out`` separately while bash
+    silently created the unowned ``unowned_dir123``.
+    """
+
+    def test_attached_digit_prefix_stays_in_filename(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "unowned_dir123"
+        # Attempt to lock the WRONG digit-stripped path; the real
+        # write surface ``unowned_dir123`` should still deny.
+        from src.infra.tools.locking import try_lock as try_lock_
+
+        try_lock_(str(repo / "unowned_dir"), "agent-me", repo_namespace=str(repo))
+        command = f"cp src -t {target}"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        # Must deny: the agent only locked ``unowned_dir``, not
+        # ``unowned_dir123``.
+        assert is_deny(result), result
+        assert "unowned_dir123" in deny_reason(result)
+
+    def test_attached_digit_with_redirect_still_correct(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``echo hi >file123`` — no space between operator and file.
+        # The ``123`` is part of the filename, not an fd prefix.
+        target = repo / "file123"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"echo hi >{target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+    def test_word_then_digits_then_redirect(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``echo word123 >out`` — the word123 is an arg, not an fd.
+        target = repo / "out"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"echo word123 >{target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+    def test_real_fd_prefix_with_whitespace_still_works(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Sanity: ``echo hi 2>file`` with `2>` separated from prior
+        # word by whitespace is a real fd redirect.
+        target = repo / "stderr.log"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"echo hi 2>{target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result

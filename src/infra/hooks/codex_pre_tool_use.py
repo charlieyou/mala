@@ -260,12 +260,20 @@ def _resolve_against_cwd(target: str, cwd: str | None) -> str:
     return str(Path(cwd) / target)
 
 
-# Shell glob and brace-expansion metacharacters. When any of these
-# appear in an extracted write-target, the actual files bash will
-# operate on cannot be statically resolved — and the agent could
-# acquire a lock on the literal pattern (``$cwd/*.py``) to bypass the
-# gate. Treat such targets as unresolved (always-deny).
-_SHELL_GLOB_RE = re.compile(r"[*?\[\]{}]")
+# Shell glob, brace-expansion, and parameter-expansion metacharacters.
+# When any of these appear in an extracted write-target, the actual
+# files bash will operate on cannot be statically resolved — and the
+# agent could acquire a lock on the literal pattern (``$cwd/*.py`` or
+# ``~/foo`` or ``$VAR``) while bash expands to a different file at
+# runtime. Treat such targets as unresolved (always-deny).
+#
+# Includes: glob (``*``, ``?``, ``[``, ``]``), brace expansion (``{``,
+# ``}``), parameter/command substitution (``$``), and tilde expansion
+# (``~``). Backticks (`` ` ``) are already extracted as
+# command-substitution bodies before the lock-check; any backtick
+# reaching this gate has been preserved inside single quotes (literal)
+# and is not a write surface.
+_SHELL_EXPANSION_RE = re.compile(r"[*?\[\]{}$~]")
 
 
 def _check_lock(
@@ -281,14 +289,19 @@ def _check_lock(
     before lock-key derivation so the lock-check path matches the path
     the shell would actually write to. The unresolved-target sentinel
     always denies (plan L846: deny on parseable-but-unresolved write
-    expressions). Targets containing shell glob/brace expansion
-    metacharacters also always deny — bash expands them at runtime to
-    one or more files we cannot enumerate, and locking the literal
-    pattern (e.g. ``*.py``) would be a trivial bypass.
+    expressions). Targets containing shell glob, brace, parameter, or
+    tilde expansion metacharacters also always deny — bash expands
+    them at runtime, and locking the literal pattern would be a
+    trivial bypass. Tokens that contain a command-substitution
+    placeholder (the ``__MALA_CMDSUB_LITERAL__`` / ``__MALA_ANSI_C_
+    LITERAL__`` markers from preprocessing) also deny because the
+    real path is whatever bash produces from the substitution.
     """
     if target == _UNRESOLVED_SENTINEL:
         return _deny(_msg_no_lock(target, agent_id))
-    if _SHELL_GLOB_RE.search(target):
+    if _CMDSUB_PLACEHOLDER in target or _ANSI_C_PLACEHOLDER in target:
+        return _deny(_msg_no_lock(target, agent_id))
+    if _SHELL_EXPANSION_RE.search(target):
         return _deny(_msg_no_lock(target, agent_id))
     # Ensure the locking module reads from the configured lock dir even
     # when MALA_LOCK_DIR was sourced from the state-file fallback.
@@ -1721,7 +1734,7 @@ _SEGMENT_EXTRACTORS = (
 
 def _strip_fd_prefix_from_output(out: list[str]) -> str:
     """Strip a contiguous fd prefix (digits, ``&``, or ``{varname}``) from
-    the end of ``out`` and return it.
+    the end of ``out`` IFF it is preceded by whitespace (or starts ``out``).
 
     Used by ``_normalize_separators`` when emitting a redirect operator:
     the fd prefix that should belong to the operator was already
@@ -1729,7 +1742,17 @@ def _strip_fd_prefix_from_output(out: list[str]) -> str:
     pop it off so the emitted operator (with surrounding spaces) carries
     its prefix in a single token (``2>``/``&>``/``{fd}>``) for shlex.
 
-    Returns ``""`` if the trailing chars don't form a valid fd prefix.
+    The whitespace boundary is critical: bash only treats a numeric
+    prefix as an fd selector when it stands as a separate word (or at
+    the start of the redirect). Attached to a word it is part of the
+    filename — ``cp src -t unowned_dir123>out`` writes to
+    ``unowned_dir123``, NOT to fd 123. Without the boundary check the
+    heuristic stripped ``123`` and lock-checked ``unowned_dir`` and
+    ``out`` separately while bash silently created the unowned
+    ``unowned_dir123``.
+
+    Returns ``""`` if the trailing chars don't form a valid fd prefix
+    or are attached to a non-whitespace previous char.
     """
     if not out:
         return ""
@@ -1738,10 +1761,12 @@ def _strip_fd_prefix_from_output(out: list[str]) -> str:
     # never an fd prefix.
     if len(last) != 1:
         return ""
+
+    # Locate the start index of the candidate prefix span. We don't
+    # mutate ``out`` until we've validated the whitespace boundary.
     if last == "&":
-        out.pop()
-        return "&"
-    if last == "}":
+        start = len(out) - 1
+    elif last == "}":
         # ``{varname}`` form. Walk back through varname chars to ``{``.
         j = len(out) - 2
         while j >= 0:
@@ -1763,15 +1788,25 @@ def _strip_fd_prefix_from_output(out: list[str]) -> str:
         first = out[j + 1]
         if not (len(first) == 1 and (first.isalpha() or first == "_")):
             return ""
-        prefix = "".join(out[j:])
-        del out[j:]
-        return prefix
-    if last.isdigit():
-        digits: list[str] = []
-        while out and len(out[-1]) == 1 and out[-1].isdigit():
-            digits.append(out.pop())
-        return "".join(reversed(digits))
-    return ""
+        start = j
+    elif last.isdigit():
+        j = len(out) - 1
+        while j >= 0 and len(out[j]) == 1 and out[j].isdigit():
+            j -= 1
+        start = j + 1
+    else:
+        return ""
+
+    # Whitespace boundary: the prefix must stand alone (start of out
+    # or preceded by a whitespace char). Otherwise it's part of a word.
+    if start > 0:
+        prev = out[start - 1]
+        if not (len(prev) == 1 and prev.isspace()):
+            return ""
+
+    prefix = "".join(out[start:])
+    del out[start:]
+    return prefix
 
 
 def _normalize_separators(command: str) -> str:
@@ -2188,8 +2223,13 @@ def _command_string(tool_input: dict[str, Any]) -> str:
 
 # Codex apply_patch envelope headers — source-of-truth file:
 # ``*** Update File: path`` / ``*** Add File: path`` / ``*** Delete File: path``.
+# Path capture uses ``[^\t\r\n]+`` so a trailing tab-separated diff
+# timestamp (``+++ b/path\t2026-05-08 ...``) does NOT get folded into
+# the path — Amp parity (mala-safety.ts uses the same boundary) and a
+# bypass otherwise: an agent could lock the literal ``path\t2026-...``
+# while ``patch`` writes to ``path``.
 _APPLY_PATCH_ENVELOPE_RE = re.compile(
-    r"^\*\*\*\s+(?:Update|Add|Delete|Move)\s+File:\s+(.+?)\s*$",
+    r"^\*\*\*\s+(?:Update|Add|Delete|Move)\s+File:\s+([^\t\r\n]+)",
     re.MULTILINE,
 )
 # Codex apply_patch rename destination — paired with a preceding
@@ -2198,13 +2238,16 @@ _APPLY_PATCH_ENVELOPE_RE = re.compile(
 # moves it to ``new.py`` writes BOTH paths. Without this, holding the
 # ``old.py`` lock would let the agent create an unowned ``new.py``.
 _APPLY_PATCH_MOVE_TO_RE = re.compile(
-    r"^\*\*\*\s+Move\s+to:\s+(.+?)\s*$",
+    r"^\*\*\*\s+Move\s+to:\s+([^\t\r\n]+)",
     re.MULTILINE,
 )
 # Unified-diff destination header. ``b/`` prefix is the conventional
-# git-format prefix; the regex tolerates either form.
-_DIFF_DEST_HEADER_RE = re.compile(r"^\+\+\+\s+(?:b/)?(.+?)\s*$", re.MULTILINE)
-_DIFF_SRC_HEADER_RE = re.compile(r"^---\s+(?:a/)?(.+?)\s*$", re.MULTILINE)
+# git-format prefix; the regex tolerates either form. Tab-stop boundary
+# matches ``patch(1)`` behavior — patch ignores everything after the
+# first tab on the header line, so ``+++ b/file\t2026-05-08`` writes to
+# ``file``, not ``file\t2026-05-08``.
+_DIFF_DEST_HEADER_RE = re.compile(r"^\+\+\+\s+(?:b/)?([^\t\r\n]+)", re.MULTILINE)
+_DIFF_SRC_HEADER_RE = re.compile(r"^---\s+(?:a/)?([^\t\r\n]+)", re.MULTILINE)
 
 
 def _apply_patch_paths(tool_input: dict[str, Any]) -> list[str]:
