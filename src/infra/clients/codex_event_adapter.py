@@ -49,6 +49,7 @@ churning and a future addition must not crash a running turn.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from src.core.protocols.agent_event import (
@@ -90,26 +91,30 @@ _AUTH_HTTP_STATUSES = frozenset({401, 403})
 _RATE_LIMIT_HTTP_STATUSES = frozenset({429})
 _OVERLOAD_HTTP_STATUSES = frozenset({500, 502, 503, 504, 529})
 
-_AUTH_MESSAGE_MARKERS: tuple[str, ...] = (
+_AUTH_MESSAGE_PHRASES: tuple[str, ...] = (
     "unauthorized",
-    "401",
     "forbidden",
     "invalid api key",
 )
-_RATE_LIMIT_MESSAGE_MARKERS: tuple[str, ...] = (
+_RATE_LIMIT_MESSAGE_PHRASES: tuple[str, ...] = (
     "rate limit",
     "rate-limit",
     "ratelimit",
     "usage limit",
-    "429",
 )
-_OVERLOAD_MESSAGE_MARKERS: tuple[str, ...] = (
+_OVERLOAD_MESSAGE_PHRASES: tuple[str, ...] = (
     "overloaded",
     "server busy",
     "service unavailable",
-    "503",
-    "529",
 )
+
+# Word-bounded numeric matchers. Bare ``"429" in text`` would falsely
+# match unrelated identifiers like ``"task 1429"`` or ``"trace 14290"``;
+# the ``\b`` boundary keeps the digit run from absorbing neighbouring
+# characters so only standalone HTTP-status mentions classify.
+_AUTH_HTTP_MESSAGE_RE = re.compile(r"\b(?:401|403)\b")
+_RATE_LIMIT_HTTP_MESSAGE_RE = re.compile(r"\b429\b")
+_OVERLOAD_HTTP_MESSAGE_RE = re.compile(r"\b(?:500|502|503|504|529)\b")
 
 
 def _enum_value(obj: object) -> str | None:
@@ -152,9 +157,7 @@ def _extract_http_status(obj: object, depth: int = 3) -> int | None:
         return code
     if isinstance(obj, dict):
         for key, value in obj.items():
-            if key in ("http_status_code", "httpStatusCode") and isinstance(
-                value, int
-            ):
+            if key in ("http_status_code", "httpStatusCode") and isinstance(value, int):
                 return value
             found = _extract_http_status(value, depth - 1)
             if found is not None:
@@ -206,11 +209,17 @@ def _classify_codex_error(error_payload: object) -> str:
 
     message = str(getattr(error_payload, "message", "") or "")
     lowered = message.lower()
-    if any(marker in lowered for marker in _AUTH_MESSAGE_MARKERS):
+    if any(phrase in lowered for phrase in _AUTH_MESSAGE_PHRASES) or (
+        _AUTH_HTTP_MESSAGE_RE.search(lowered) is not None
+    ):
         return "error_auth"
-    if any(marker in lowered for marker in _RATE_LIMIT_MESSAGE_MARKERS):
+    if any(phrase in lowered for phrase in _RATE_LIMIT_MESSAGE_PHRASES) or (
+        _RATE_LIMIT_HTTP_MESSAGE_RE.search(lowered) is not None
+    ):
         return "error_rate_limit"
-    if any(marker in lowered for marker in _OVERLOAD_MESSAGE_MARKERS):
+    if any(phrase in lowered for phrase in _OVERLOAD_MESSAGE_PHRASES) or (
+        _OVERLOAD_HTTP_MESSAGE_RE.search(lowered) is not None
+    ):
         return "error_overload"
 
     return "error"

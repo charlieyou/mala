@@ -684,6 +684,20 @@ def test_error_notification_surfaces_terminal_failure() -> None:
             "error_overload",
             id="message_overloaded",
         ),
+        # Regression: bare numeric substrings must not absorb neighbouring
+        # digits. Without word boundaries, ``"task 1429"`` would falsely
+        # classify as ``error_rate_limit`` (gemini review-2 P1) and a
+        # legitimate failure would be masked behind a retry/backoff path.
+        pytest.param(
+            SimpleNamespace(message="Failed to process task 1429"),
+            "error",
+            id="bare_digits_substring_does_not_match",
+        ),
+        pytest.param(
+            SimpleNamespace(message="Trace id 50301 timed out"),
+            "error",
+            id="bare_digits_503_substring_does_not_match",
+        ),
     ],
 )
 def test_error_notification_classifies_subtype(
