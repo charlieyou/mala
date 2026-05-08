@@ -25,8 +25,10 @@ Method names follow the Phase A5 spec
 The supporting methods (:meth:`get_log_path`, :meth:`get_end_offset`, the
 extractors) match the prior LogProvider surface verbatim so this rename
 keeps validation behavior unchanged (issue ``mala-b18dd.5.1`` AC#10).
-Phase A7 (T007) extends this protocol with ``wait_for_session_ready``;
-A5 deliberately stops at the rename.
+Phase A7 (T007, ``mala-b18dd.5.3``) extends this protocol with
+:meth:`EvidenceProvider.wait_for_session_ready`, which decouples
+``Effect.WAIT_FOR_LOG`` from filesystem assumptions so Codex (Phase H) can
+return immediately while Claude/Amp keep polling JSONL existence.
 """
 
 from __future__ import annotations
@@ -76,6 +78,9 @@ class EvidenceProvider(Protocol):
         iter_thread_evidence: Cross-attempt evidence read for validation
             gates; offset ignored on multi-invocation log files.
         get_end_offset: Lightweight byte-offset reader for retry scoping.
+        wait_for_session_ready: Async readiness gate consumed by the
+            ``Effect.WAIT_FOR_LOG`` handler; providers implement the
+            wait however their backend exposes session state.
         extract_bash_commands / extract_tool_results /
         extract_assistant_text_blocks / extract_tool_result_content:
         Typed extractors over a single parsed entry.
@@ -154,6 +159,37 @@ class EvidenceProvider(Protocol):
         Yields:
             JsonlEntryProtocol objects for each successfully parsed JSON
             line.
+        """
+        ...
+
+    async def wait_for_session_ready(
+        self,
+        log_path: Path,
+        *,
+        timeout: float,
+        poll_interval: float = 0.5,
+    ) -> None:
+        """Block until the provider can serve session evidence.
+
+        Consumed by :class:`AgentSessionRunner._handle_log_waiting` when
+        the lifecycle emits ``Effect.WAIT_FOR_LOG``. Replaces the prior
+        in-runner filesystem poll so providers whose evidence is not on
+        disk (Phase H Codex, which reads via ``Thread.read``) can return
+        immediately, while filesystem-backed providers preserve their
+        existing polling behavior.
+
+        Args:
+            log_path: Path the runner has chosen for this session via
+                :meth:`get_log_path`. Filesystem-backed providers poll
+                this path for existence; providers whose readiness is
+                not file-based ignore the argument.
+            timeout: Maximum seconds to wait. Implementations MUST raise
+                ``TimeoutError`` when this elapses without readiness.
+            poll_interval: Polling cadence for filesystem-backed
+                providers; ignored by providers that do not poll.
+
+        Raises:
+            TimeoutError: If ``timeout`` elapses before readiness.
         """
         ...
 

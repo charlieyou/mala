@@ -27,6 +27,7 @@ for the lifetime of the run.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -278,6 +279,31 @@ class AmpLogProvider:
         read — matches :class:`FileSystemLogProvider` semantics.
         """
         return self._parser.get_log_end_offset(log_path, start_offset)
+
+    async def wait_for_session_ready(
+        self,
+        log_path: Path,
+        *,
+        timeout: float,
+        poll_interval: float = 0.5,
+    ) -> None:
+        """Wait for the Amp tee'd / native JSONL to appear on disk.
+
+        Polls ``log_path`` for existence on a fixed cadence, matching the
+        prior in-runner filesystem poll. The Amp tee'd path appears once
+        :class:`AmpClient` finishes the rename triggered by the
+        ``system(init)`` event; a native log directory has the same
+        appearance semantic, so the same poll covers both.
+
+        Raises:
+            TimeoutError: If the file does not appear within ``timeout``.
+        """
+        wait_elapsed = 0.0
+        while not log_path.exists():
+            if wait_elapsed >= timeout:
+                raise TimeoutError(f"Session log missing after timeout: {log_path}")
+            await asyncio.sleep(poll_interval)
+            wait_elapsed += poll_interval
 
     def extract_bash_commands(self, entry: JsonlEntryProtocol) -> list[tuple[str, str]]:
         """Delegate to :meth:`SessionLogParser.extract_bash_commands`."""

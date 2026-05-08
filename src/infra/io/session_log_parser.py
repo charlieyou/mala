@@ -17,6 +17,7 @@ Claude SDK's filesystem storage at ~/.claude/projects/{encoded-path}/.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -491,6 +492,29 @@ class FileSystemLogProvider:
             doesn't exist or can't be read.
         """
         return self._parser.get_log_end_offset(log_path, start_offset)
+
+    async def wait_for_session_ready(
+        self,
+        log_path: Path,
+        *,
+        timeout: float,
+        poll_interval: float = 0.5,
+    ) -> None:
+        """Wait for the Claude session JSONL to appear on disk.
+
+        Polls ``log_path`` for existence on a fixed cadence — the same
+        behavior the lifecycle previously implemented inline in
+        ``AgentSessionRunner._handle_log_waiting``.
+
+        Raises:
+            TimeoutError: If the file does not appear within ``timeout``.
+        """
+        wait_elapsed = 0.0
+        while not log_path.exists():
+            if wait_elapsed >= timeout:
+                raise TimeoutError(f"Session log missing after timeout: {log_path}")
+            await asyncio.sleep(poll_interval)
+            wait_elapsed += poll_interval
 
     def extract_bash_commands(self, entry: JsonlEntryProtocol) -> list[tuple[str, str]]:
         """Extract Bash tool_use commands from an entry.

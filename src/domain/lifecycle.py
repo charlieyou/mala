@@ -194,7 +194,11 @@ class Effect(Enum):
 
     # Continue processing SDK messages
     CONTINUE = auto()
-    # Wait for log file to appear
+    # Wait for the active provider's evidence surface to become readable.
+    # Semantics are owned by ``EvidenceProvider.wait_for_session_ready``
+    # (Phase A7 / ``mala-b18dd.5.3``): filesystem-backed providers
+    # (Claude, Amp) poll the on-disk JSONL; Codex returns immediately
+    # because ``Thread.read`` is always available once the thread starts.
     WAIT_FOR_LOG = auto()
     # Run quality gate check
     RUN_GATE = auto()

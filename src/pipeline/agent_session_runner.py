@@ -855,7 +855,14 @@ class AgentSessionRunner:
         log_file_wait_timeout: float,
         log_file_poll_interval: float = 0.5,
     ) -> tuple[Path | None, TransitionResult]:
-        """Handle WAIT_FOR_LOG effect - wait for log file to become available.
+        """Handle ``Effect.WAIT_FOR_LOG`` — block until the provider is ready.
+
+        Delegates the readiness gate to
+        :meth:`EvidenceProvider.wait_for_session_ready` (issue
+        ``mala-b18dd.5.3`` / Phase A7) so the runner no longer probes the
+        filesystem directly. Claude/Amp providers preserve the prior
+        polling behavior; Codex (Phase H) returns immediately because
+        ``Thread.read`` is always available once the thread is started.
 
         Args:
             session_id: Current SDK session ID.
@@ -863,8 +870,10 @@ class AgentSessionRunner:
             log_path: Current log path (may be None).
             lifecycle: Lifecycle state machine.
             lifecycle_ctx: Lifecycle context.
-            log_file_wait_timeout: Max seconds to wait for log file.
-            log_file_poll_interval: Seconds between poll attempts.
+            log_file_wait_timeout: Max seconds to wait for readiness.
+            log_file_poll_interval: Polling cadence forwarded to
+                filesystem-backed providers; ignored by providers that do
+                not poll.
 
         Returns:
             Tuple of (updated log_path, TransitionResult from log ready/timeout).
@@ -891,20 +900,20 @@ class AgentSessionRunner:
         if self.event_sink is not None:
             self.event_sink.on_log_waiting(issue_id)
 
-        # Wait for log file
-        wait_elapsed = 0.0
-        while not log_path.exists():
-            if wait_elapsed >= log_file_wait_timeout:
-                result = lifecycle.on_log_timeout(lifecycle_ctx, str(log_path))
-                if self.event_sink is not None:
-                    self.event_sink.on_log_timeout(issue_id, str(log_path))
-                return log_path, result
-            await asyncio.sleep(log_file_poll_interval)
-            wait_elapsed += log_file_poll_interval
-
-        if log_path.exists():
+        try:
+            await self.agent_provider.evidence_provider.wait_for_session_ready(
+                log_path,
+                timeout=log_file_wait_timeout,
+                poll_interval=log_file_poll_interval,
+            )
+        except TimeoutError:
+            result = lifecycle.on_log_timeout(lifecycle_ctx, str(log_path))
             if self.event_sink is not None:
-                self.event_sink.on_log_ready(issue_id)
+                self.event_sink.on_log_timeout(issue_id, str(log_path))
+            return log_path, result
+
+        if self.event_sink is not None:
+            self.event_sink.on_log_ready(issue_id)
         result = lifecycle.on_log_ready(lifecycle_ctx)
         return log_path, result
 
