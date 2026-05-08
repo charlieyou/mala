@@ -2591,3 +2591,270 @@ class TestUtilityValueFlagSkip:
         )
         assert is_deny(result)
         assert "unowned-dir" in deny_reason(result)
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 10)
+# ---------------------------------------------------------------------------
+
+
+class TestTimeWrapper:
+    """Regression: ``time -p touch f`` and ``/usr/bin/time touch f``.
+
+    ``time`` was previously in ``_SHELL_RESERVED_WORDS`` (stripped
+    from segment heads). That handled the bare ``time touch f`` form
+    but failed for both ``time -p touch f`` (which left ``-p`` as the
+    cmd basename) and ``/usr/bin/time touch f`` (path-qualified, so
+    the reserved-word check never matched the basename). Moved
+    ``time`` to ``_EXECUTION_PREFIXES`` with proper option handling.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "time touch {target}",
+            "time -p touch {target}",
+            "time -v touch {target}",
+            "time --portability touch {target}",
+            "time --verbose touch {target}",
+            # Path-qualified — only catches with execution-prefix
+            # unwrapping (basename match against _EXECUTION_PREFIXES).
+            "/usr/bin/time touch {target}",
+            "/usr/bin/time -p touch {target}",
+            # ``time -o file -a cmd`` consumes the output file path.
+            "time -o /tmp/timing.log touch {target}",
+            "time --output=/tmp/timing.log touch {target}",
+        ],
+    )
+    def test_time_wrapper_inner_write_denied(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+    def test_time_wrapper_inner_allowed_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "out.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("bash", {"command": f"time -p touch {target}"}))
+        assert is_allow(result), result
+
+
+class TestWrapperChdirOption:
+    """Regression: ``env -C dir cmd`` and ``env --chdir=dir cmd``.
+
+    Coreutils 8.32+'s ``env -C dir`` runs the inner command with
+    cwd=``dir``. Before the fix, ``_unwrap_execution_prefix`` stripped
+    the option silently and the inner command's relative writes
+    resolved against the original payload cwd — letting an agent
+    holding the parent-level lock write to the unowned subdirectory
+    file.
+    """
+
+    def test_env_chdir_short_form_invalidates_relative(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # The agent holds the lock on cwd-level f.txt but env -C pkg
+        # changes cwd to repo/pkg before running touch.
+        sub = repo / "pkg"
+        sub.mkdir()
+        assert try_lock(
+            str(repo / "generated.py"), "agent-me", repo_namespace=str(repo)
+        )
+        command = "env -C pkg touch generated.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+    def test_env_chdir_long_form_invalidates_relative(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        sub = repo / "pkg"
+        sub.mkdir()
+        assert try_lock(
+            str(repo / "generated.py"), "agent-me", repo_namespace=str(repo)
+        )
+        command = "env --chdir pkg touch generated.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+    def test_env_chdir_eq_long_form_invalidates_relative(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        sub = repo / "pkg"
+        sub.mkdir()
+        assert try_lock(
+            str(repo / "generated.py"), "agent-me", repo_namespace=str(repo)
+        )
+        command = "env --chdir=pkg touch generated.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+    def test_env_no_chdir_relative_resolves_normally(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Sanity: ``env touch f`` (no chdir flag) still resolves
+        # against the payload cwd.
+        target = repo / "out.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = "env touch out.txt"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_allow(result), result
+
+
+class TestRedirectToDigitFilenameThenBackground:
+    """Regression: ``echo hi >123&`` writes ``123``, then backgrounds.
+
+    Before the fix, the normalizer's ``&`` look-back walked through
+    digits and matched the ``>`` of a normal redirect, treating the
+    ``&`` as part of an fd-redirect operator. The literal filename
+    ``123`` then absorbed the trailing ``&`` (no surrounding spaces)
+    and the lock was looked up for the bogus path ``123&`` — which an
+    agent could lock as a junk path while bash silently wrote to
+    ``123`` in the background.
+    """
+
+    def test_digit_filename_with_trailing_background(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "123"
+        # Lock the REAL file (123); junk lock on "123&" would have
+        # bypassed the gate before the fix.
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"echo hi >{target}&"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+    def test_digit_filename_with_trailing_background_unlocked_denies(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "123"
+        command = f"echo hi >{target}&"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result)
+        # The deny must reference the actual file, not a junk "123&"
+        # path.
+        assert "/123" in deny_reason(result)
+        assert "123&" not in deny_reason(result)
+
+    def test_real_fd_redirect_still_recognised(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Sanity: ``cmd 2>&1`` is fd dup, must still allow.
+        target = repo / "out.log"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"cmd >{target} 2>&1"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+
+class TestEndOfOptionsMarker:
+    """Regression: ``touch -- -owned.py`` writes ``-owned.py``.
+
+    Before the fix, every later token starting with ``-`` was treated
+    as an option. After ``--``, dash-prefixed tokens are operands —
+    bash writes to ``-owned.py`` but the heuristic skipped it as a
+    flag and emitted no targets, allowing the unlocked write.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "touch -- {target}",
+            "rm -- {target}",
+            "mkdir -- {target}",
+            "cp /tmp/src -- {target}",
+            "mv /tmp/src -- {target}",
+        ],
+    )
+    def test_dash_prefixed_operand_after_dashdash_denies(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "-owned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "-owned.py" in deny_reason(result)
+
+    def test_dashdash_operand_allowed_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "-owned.py"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"touch -- {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+
+class TestUtilityLongValueFlags:
+    """P2: ``touch --date "2026-01-01" file`` and ``mkdir --mode 755 dir``.
+
+    Before the fix, long flags were skipped (``i += 1``) but their
+    separate-token values were left in the stream and added to
+    ``positionals``. For all_positional utilities this caused a
+    false-positive lock-check on the value literal.
+    """
+
+    def test_touch_long_date_flag_does_not_lock_check_value(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "f.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": f'touch --date "2026-01-01" {target}'},
+            )
+        )
+        assert is_allow(result), result
+
+    def test_mkdir_long_mode_flag_does_not_lock_check_value(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "newdir"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": f"mkdir --mode 755 {target}"},
+            )
+        )
+        assert is_allow(result), result
+
+    def test_touch_long_reference_flag_does_not_lock_check_value(
+        self, env: dict[str, str], repo: Path, tmp_path: Path
+    ) -> None:
+        target = repo / "f.txt"
+        ref = tmp_path / "ref"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": f"touch --reference {ref} {target}"},
+            )
+        )
+        assert is_allow(result), result
+
+    def test_mkdir_long_mode_eq_form_works(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``--mode=755`` (with =) — value embedded, no separate-token
+        # consumption. The existing ``= in tok`` branch handles this.
+        target = repo / "newdir"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": f"mkdir --mode=755 {target}"},
+            )
+        )
+        assert is_allow(result), result
