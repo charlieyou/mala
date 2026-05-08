@@ -117,13 +117,19 @@ def _require_runtime() -> Any:  # noqa: ANN401 — SDK is optional dep; staticly
         )
 
 
-def _require_codex_binary() -> None:
-    binary = os.environ.get("CODEX_BINARY") or shutil.which("codex")
-    if binary is None:
-        pytest.skip(
-            "codex binary not found on PATH and CODEX_BINARY unset — runtime "
-            "path unverifiable; recorded spike outcome stands."
-        )
+def _resolve_codex_bin() -> str | None:
+    """Return an explicit ``codex`` binary path or ``None`` to use SDK default.
+
+    Honours ``CODEX_BINARY`` first (operator override), then ``PATH``. Falling
+    back to ``None`` lets ``AppServerConfig`` use its bundled
+    ``codex_cli_bin`` resolution — important so the spike still runs in
+    environments where Codex is installed only via the SDK extras package.
+    """
+    explicit = os.environ.get("CODEX_BINARY")
+    if explicit:
+        return explicit
+    path_lookup = shutil.which("codex")
+    return path_lookup
 
 
 def _new_codex(codex_app_server: Any) -> Any:  # noqa: ANN401 — SDK is optional dep; staticly type-erased
@@ -134,20 +140,39 @@ def _new_codex(codex_app_server: Any) -> Any:  # noqa: ANN401 — SDK is optiona
     of the Phase I auth-detection Open Question — for the spike, any startup
     failure surfaces as "runtime not available, skip and trust the recorded
     finding."
+
+    The SDK does **not** read ``CODEX_BINARY`` or ``PATH``; the default
+    resolver returns the bundled ``codex_cli_bin`` runtime package. If we
+    found an external binary in :func:`_resolve_codex_bin`, plumb it through
+    ``AppServerConfig.codex_bin`` (per
+    ``codex_app_server.client.resolve_codex_bin``), otherwise let the SDK use
+    its bundled default.
     """
     codex_cls = codex_app_server.Codex
+    config_cls = codex_app_server.AppServerConfig
+    codex_bin = _resolve_codex_bin()
+    config = config_cls(codex_bin=codex_bin) if codex_bin else None
     try:
-        client = codex_cls()
+        client = codex_cls(config) if config is not None else codex_cls()
     except Exception as exc:
         pytest.skip(f"Codex client construction failed (auth/runtime?): {exc!r}")
     return client
 
 
 def _items_of(thread_read_response: Any) -> list:  # noqa: ANN401 — see _new_codex
-    """Flatten ``ThreadReadResponse.thread.turns[*].items`` into one list."""
+    """Flatten ``ThreadReadResponse.thread.turns[*].items`` into a list of *unwrapped* items.
+
+    ``Turn.items`` carries the wrapper :class:`codex_app_server.ThreadItem`
+    (a Pydantic ``RootModel``); the concrete variant
+    (:class:`CommandExecutionThreadItem`, :class:`FileChangeThreadItem`,
+    etc.) lives under ``.root``. Without unwrapping, downstream
+    ``getattr(item, "type", ...)`` checks would never match because the
+    wrapper does not expose those fields directly.
+    """
     items: list = []
     for turn in thread_read_response.thread.turns or []:
-        items.extend(turn.items or [])
+        for wrapper in turn.items or []:
+            items.append(getattr(wrapper, "root", wrapper))
     return items
 
 
@@ -171,6 +196,50 @@ def _file_change_items(items: list) -> list:
     ]
 
 
+def test_items_of_unwraps_root_model_wrappers() -> None:
+    """Regression: ``_items_of`` must dereference Pydantic ``RootModel.root``.
+
+    ``codex_app_server.ThreadItem`` is a ``RootModel`` whose concrete variant
+    lives at ``.root``; without unwrapping, downstream
+    ``getattr(item, "type", ...)`` filters silently match nothing and the
+    spike would falsely "disconfirm" a working SDK path. This test runs
+    without the SDK by mirroring the wrapper shape (a stand-in object whose
+    ``.root`` carries the real fields) and asserting ``_items_of`` returns
+    the inner object.
+    """
+    from dataclasses import dataclass
+
+    @dataclass
+    class _StubCommand:
+        type: str
+        aggregated_output: str | None
+
+    @dataclass
+    class _StubWrapper:
+        root: _StubCommand
+
+    @dataclass
+    class _StubTurn:
+        items: list
+
+    @dataclass
+    class _StubThread:
+        turns: list
+
+    @dataclass
+    class _StubResponse:
+        thread: _StubThread
+
+    inner = _StubCommand(type="commandExecution", aggregated_output="hello\n")
+    response = _StubResponse(
+        thread=_StubThread(turns=[_StubTurn(items=[_StubWrapper(root=inner)])])
+    )
+
+    flattened = _items_of(response)
+    assert flattened == [inner]
+    assert _command_items_with_aggregated_output(flattened) == [inner]
+
+
 def test_aggregated_output_present_for_bash_command() -> None:
     """Finding (1): ``CommandExecutionThreadItem.aggregated_output`` is populated.
 
@@ -183,7 +252,6 @@ def test_aggregated_output_present_for_bash_command() -> None:
     pass without the spike needing to be rewritten.
     """
     sdk = _require_runtime()
-    _require_codex_binary()
     with _new_codex(sdk) as codex:
         thread = codex.thread_start()
         thread.run(
@@ -211,7 +279,6 @@ def test_thread_read_latency_baseline_under_repeat() -> None:
     (something is catastrophically wrong if a single read takes longer).
     """
     sdk = _require_runtime()
-    _require_codex_binary()
     samples_ms: list[float] = []
     with _new_codex(sdk) as codex:
         thread = codex.thread_start()
@@ -246,7 +313,6 @@ def test_cross_resume_completeness_with_bash_and_file_edit(tmp_path: Any) -> Non
     not just exec events.
     """
     sdk = _require_runtime()
-    _require_codex_binary()
     edit_target = tmp_path / f"spike-edit-{uuid.uuid4().hex}.txt"
     pre_thread_id: str
     with _new_codex(sdk) as codex:
