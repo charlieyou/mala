@@ -140,6 +140,29 @@ def _unwrap_item(raw_item: object) -> object:
     return getattr(raw_item, "root", raw_item)
 
 
+def _patch_change_kind_value(kind: object) -> str:
+    """Coerce a Codex ``PatchChangeKind`` to its string variant tag.
+
+    Real-SDK ``FileUpdateChange.kind`` is a ``PatchChangeKind`` ``RootModel``
+    whose useful value is the ``type`` literal ("add" / "update" / "delete")
+    on its ``root`` variant — not a ``.value`` enum. Falling back to
+    :func:`str` would emit the pydantic repr instead of the tag, which would
+    break tool-use consumers expecting the normalized ``changes`` shape from
+    D3. Test fakes use a ``SimpleNamespace(value=...)`` look-alike, so we
+    accept that shape too.
+    """
+    if kind is None:
+        return ""
+    inner = _unwrap_item(kind)
+    type_value = getattr(inner, "type", None)
+    if isinstance(type_value, str):
+        return type_value
+    enum_value = _enum_value(kind)
+    if enum_value is not None:
+        return enum_value
+    return ""
+
+
 def _extract_http_status(obj: object, depth: int = 3) -> int | None:
     """Walk a ``CodexErrorInfo`` variant looking for ``http_status_code``.
 
@@ -376,8 +399,7 @@ class CodexEventAdapter:
                 {
                     "path": str(getattr(change, "path", "") or ""),
                     "diff": str(getattr(change, "diff", "") or ""),
-                    "kind": _enum_value(getattr(change, "kind", None))
-                    or str(getattr(change, "kind", "") or ""),
+                    "kind": _patch_change_kind_value(getattr(change, "kind", None)),
                 }
             )
         return [

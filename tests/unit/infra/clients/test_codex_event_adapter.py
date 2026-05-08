@@ -356,6 +356,42 @@ def test_file_change_started_emits_file_change_tool_use() -> None:
 
 
 @pytest.mark.unit
+def test_file_change_started_unwraps_patch_change_kind_root_model() -> None:
+    # Real-SDK ``FileUpdateChange.kind`` is a ``PatchChangeKind`` RootModel
+    # whose value is the ``type`` literal on its ``root`` variant; the
+    # normalized ``changes`` payload must surface "update" rather than the
+    # pydantic repr that ``str(kind)`` would produce.
+    adapter = CodexEventAdapter()
+    item = _make_file_change_item(
+        item_id="fc_root",
+        status="in_progress",
+        changes=[
+            SimpleNamespace(
+                path="src/bar.py",
+                diff="@@ -1 +1 @@\n-old\n+new",
+                kind=SimpleNamespace(root=SimpleNamespace(type="update")),
+            )
+        ],
+    )
+    events = adapter.to_events(
+        _Notification(
+            method="item/started",
+            payload=SimpleNamespace(
+                item=_wrap_root(item),
+                thread_id="thr_1",
+                turn_id="turn_1",
+            ),
+        )
+    )
+    assert len(events) == 1
+    tool_use = events[0]
+    assert isinstance(tool_use, AgentToolUseEvent)
+    changes = tool_use.input.get("changes")
+    assert isinstance(changes, list)
+    assert changes[0]["kind"] == "update"
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("status", "is_error"),
     [
