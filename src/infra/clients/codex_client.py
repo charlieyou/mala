@@ -1,4 +1,4 @@
-"""Codex SDK client (Phase C/D, T010 + T011).
+"""Codex SDK client (Phase C/D/F, T010 + T011 + T013).
 
 :class:`CodexClient` conforms structurally to
 :class:`src.core.protocols.sdk.SDKClientProtocol`, backed by
@@ -6,8 +6,15 @@
 The Codex SDK manages its own ``codex app-server`` subprocess; mala does
 not spawn ``codex`` directly the way :class:`AmpClient` spawns ``amp``.
 Implication: most adapter complexity from the Amp path (process group,
-SIGTERM/SIGKILL grace, stderr ring buffer, tee'd JSONL bootstrap) does
-not recur — the SDK owns the subprocess lifecycle.
+SIGTERM/SIGKILL grace, stderr ring buffer) does not recur — the SDK owns
+the subprocess lifecycle. The one piece of Amp parity that DOES recur is
+tee'd JSONL: the F1 spike (T012, see
+``tests/spike/test_codex_thread_read_evidence.py``) disconfirmed
+decision #11's native ``Thread.read(include_turns=True)`` because Codex's
+app-server hardcodes ``EventPersistenceMode::Limited`` and filters
+``ExecCommandEnd`` out of the rollout, so :class:`CodexEvidenceProvider`
+reads from a per-thread tee at
+``~/.config/mala/codex-sessions/{thread_id}.jsonl`` (plan F3).
 
 Lazy-import contract (plan ``L733``): importing this module must NOT
 transitively pull ``codex_app_server`` so a Claude-only or Amp-only run
@@ -27,22 +34,31 @@ Phase C scope (plan ``L723-L740``):
     :class:`CodexEventAdapter` owns the per-turn translation state (it
     needs to dedup ``AgentMessage`` deltas vs the matching
     ``ItemCompleted`` carrying the same text), so a fresh adapter is
-    constructed for each :meth:`query` turn.
+    constructed for each :meth:`query` turn. Each notification is also
+    tee'd verbatim to the per-thread JSONL so
+    :class:`CodexEvidenceProvider` can replay validation evidence
+    across resumes (Phase F / T013).
   * ``with_resume(thread_id)``: stores a resume token consumed on the
     next :meth:`query`.
-  * ``disconnect()``: idempotent; calls ``AsyncTurnHandle.interrupt()``
-    if a turn is active and tears down ``AsyncCodex`` exactly once.
+  * ``disconnect()``: idempotent; calls ``AsyncTurnHandle.interrupt()``,
+    flushes/closes the tee file, and tears down ``AsyncCodex`` exactly
+    once.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import logging
+import os
 from typing import TYPE_CHECKING, Any
 
 from src.infra.clients.codex_event_adapter import CodexEventAdapter
+from src.infra.clients.codex_evidence_provider import CODEX_SESSIONS_DIR
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+    from pathlib import Path
     from types import TracebackType
     from typing import Self
 
@@ -50,6 +66,61 @@ if TYPE_CHECKING:
     from src.infra.clients.codex_runtime import CodexRuntime
 
 logger = logging.getLogger(__name__)
+
+
+_TEE_DIR_ENV_VAR = "MALA_CODEX_SESSIONS_DIR"
+"""Optional override for the per-thread tee'd-JSONL directory.
+
+Tests set this to a ``tmp_path`` so they do not pollute
+``~/.config/mala/codex-sessions/``; production runs leave it unset and the
+client tees to :data:`CODEX_SESSIONS_DIR`.
+"""
+
+
+def _resolve_tee_dir() -> Path:
+    """Return the directory CodexClient should tee per-thread JSONL into.
+
+    Honors :data:`_TEE_DIR_ENV_VAR` so tests can redirect tee writes to a
+    ``tmp_path`` without touching :data:`CODEX_SESSIONS_DIR` itself
+    (mirrors how :class:`CodexEvidenceProvider` accepts ``sessions_dir=``
+    for the same reason).
+    """
+    from pathlib import Path as _Path
+
+    override = os.environ.get(_TEE_DIR_ENV_VAR)
+    if override:
+        return _Path(override)
+    return CODEX_SESSIONS_DIR
+
+
+class _NotificationJSONEncoder(json.JSONEncoder):
+    """JSON encoder for Codex ``Notification`` objects + their payloads.
+
+    Codex notifications are Pydantic models in production and
+    :class:`types.SimpleNamespace` / dataclass stand-ins under test. The
+    encoder walks all three shapes — ``model_dump`` (Pydantic), ``asdict``
+    (dataclass), then ``vars`` (SimpleNamespace / plain object) — so the
+    tee'd JSONL line shape is identical regardless of how the notification
+    was constructed. Falls back to ``str(obj)`` for anything still opaque
+    (``StrEnum`` instances, slotted classes without ``__dict__``) so a
+    single un-serializable field does not poison the entire tee write.
+    """
+
+    def default(self, o: object) -> object:  # type: ignore[override]
+        model_dump = getattr(o, "model_dump", None)
+        if callable(model_dump):
+            try:
+                return model_dump(mode="json")
+            except TypeError:
+                # Older Pydantic / non-Pydantic ``model_dump`` callables
+                # may not accept ``mode``; retry without it.
+                return model_dump()
+        if dataclasses.is_dataclass(o) and not isinstance(o, type):
+            return dataclasses.asdict(o)
+        obj_dict = getattr(o, "__dict__", None)
+        if isinstance(obj_dict, dict):
+            return {k: v for k, v in obj_dict.items() if not k.startswith("_")}
+        return str(o)
 
 
 class CodexClient:
@@ -77,6 +148,14 @@ class CodexClient:
         # :meth:`query` issues a new turn so state never leaks across
         # turns on the same client.
         self._event_adapter: CodexEventAdapter | None = None
+        # Per-thread tee'd JSONL handle (Phase F / T013). Opened lazily
+        # on the first :meth:`receive_response` notification because
+        # ``self._thread.id`` is only stable after ``thread_start`` /
+        # ``thread_resume`` returns; closed in :meth:`disconnect`.
+        self._tee_path: Path | None = None
+        self._tee_file: Any = (
+            None  # binary file handle; typed Any to avoid IO[...] noise
+        )
 
     # ------------------------------------------------------------------
     # Properties used by the orchestrator + tests
@@ -267,8 +346,127 @@ class CodexClient:
             adapter = CodexEventAdapter()
             self._event_adapter = adapter
         async for notification in turn.stream():
+            self._tee_notification(notification)
             for event in adapter.to_events(notification):
                 yield event
+
+    # ------------------------------------------------------------------
+    # Tee'd-JSONL evidence stream (Phase F / T013, F3 fallback)
+    # ------------------------------------------------------------------
+
+    def _ensure_tee_open(self) -> None:
+        """Open the per-thread tee file in append mode the first time.
+
+        Append-mode is correct for both fresh threads (first turn — file
+        does not exist) and resumed threads (the prior invocation's tee
+        file already carries invocation 1's evidence and the new turn
+        appends behind it). The cross-resume invariant in
+        :meth:`CodexEvidenceProvider.iter_thread_evidence` depends on
+        this: every notification for ``thr_X`` lands in the same
+        ``thr_X.jsonl`` regardless of how many ``thread_resume`` calls
+        intervene.
+
+        Resolves the directory at open time via :func:`_resolve_tee_dir`
+        so a test setting :data:`_TEE_DIR_ENV_VAR` after import sees the
+        override take effect; production runs leave the env var unset
+        and tee to :data:`CODEX_SESSIONS_DIR`.
+
+        Failures (filesystem permissions, missing parent that cannot be
+        created) are logged at warning level and the tee is silently
+        disabled — the rest of the run continues without evidence rather
+        than crashing the active turn. This mirrors the AmpClient's tee
+        write tolerance.
+        """
+        if self._tee_file is not None:
+            return
+        thread = self._thread
+        if thread is None:
+            return
+        thread_id_obj = getattr(thread, "id", None)
+        if thread_id_obj is None:
+            return
+        thread_id = str(thread_id_obj)
+        if not thread_id:
+            return
+
+        tee_dir = _resolve_tee_dir()
+        try:
+            tee_dir.mkdir(parents=True, exist_ok=True)
+            tee_path = tee_dir / f"{thread_id}.jsonl"
+            self._tee_file = tee_path.open("ab")
+            self._tee_path = tee_path
+        except OSError as exc:
+            logger.warning(
+                "CodexClient: could not open tee file under %s for thread %s: %s",
+                tee_dir,
+                thread_id,
+                exc,
+            )
+            self._tee_file = None
+            self._tee_path = None
+
+    def _tee_notification(self, notification: object) -> None:
+        """Append one notification verbatim to the per-thread tee file.
+
+        Serializes as ``{"method": <str>, "payload": <obj>}`` through
+        :class:`_NotificationJSONEncoder` so Pydantic, dataclass, and
+        SimpleNamespace shapes all flatten to the same JSON line shape
+        :class:`CodexEvidenceProvider` expects. Notifications without a
+        string ``method`` attribute are skipped — those are upstream
+        protocol drift and would silently corrupt the tee'd stream if
+        passed through.
+
+        Errors are warn-logged and swallowed. A single bad write must
+        not crash the iterator; gate-loop runs that depend on this
+        evidence will surface the failure as missing-evidence rather
+        than a crashed turn (parity with AmpClient's tee tolerance).
+        """
+        self._ensure_tee_open()
+        tee_file = self._tee_file
+        if tee_file is None:
+            return
+        method = getattr(notification, "method", None)
+        if not isinstance(method, str):
+            return
+        payload = getattr(notification, "payload", None)
+        try:
+            line = json.dumps(
+                {"method": method, "payload": payload},
+                cls=_NotificationJSONEncoder,
+            )
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                "CodexClient: tee serialization failed for method %r: %s",
+                method,
+                exc,
+            )
+            return
+        try:
+            tee_file.write(line.encode("utf-8"))
+            tee_file.write(b"\n")
+            tee_file.flush()
+        except OSError as exc:
+            logger.warning(
+                "CodexClient: tee write failed (%s); evidence stream will be "
+                "incomplete for this thread.",
+                exc,
+            )
+
+    def _close_tee(self) -> None:
+        """Flush + close the tee handle; safe to call multiple times."""
+        tee_file = self._tee_file
+        if tee_file is None:
+            return
+        try:
+            try:
+                tee_file.flush()
+            except OSError as exc:
+                logger.debug("CodexClient: tee flush on close raised: %s", exc)
+            tee_file.close()
+        except OSError as exc:
+            logger.debug("CodexClient: tee close raised: %s", exc)
+        finally:
+            self._tee_file = None
 
     async def disconnect(self) -> None:
         """Idempotently interrupt the active turn and close ``AsyncCodex``.
@@ -312,11 +510,19 @@ class CodexClient:
                         exc,
                     )
         finally:
-            if codex is not None:
-                try:
-                    await codex.close()
-                except Exception as exc:
-                    logger.debug(
-                        "CodexClient: AsyncCodex.close raised on disconnect: %s",
-                        exc,
-                    )
+            try:
+                if codex is not None:
+                    try:
+                        await codex.close()
+                    except Exception as exc:
+                        logger.debug(
+                            "CodexClient: AsyncCodex.close raised on disconnect: %s",
+                            exc,
+                        )
+            finally:
+                # Close tee file last so a bad SDK teardown does not strand
+                # a buffered final write on disk; the inner ``finally``
+                # ensures ``codex.close()`` runs even if the tee close
+                # raises (it shouldn't, but the ordering is the safer of
+                # the two).
+                self._close_tee()

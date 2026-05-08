@@ -1,4 +1,4 @@
-"""Unit tests for :class:`CodexAgentProvider` (Phase C, T010).
+"""Unit tests for :class:`CodexAgentProvider` (Phase C T010, Phase F T013).
 
 Covers:
   * Conformance to :class:`AgentProvider` runtime protocol.
@@ -8,9 +8,10 @@ Covers:
   * ``runtime_builder(...).build()`` returns a real :class:`CodexRuntime`
     carrying the resolved options (integration-path evidence for AC #4).
   * ``with_resume`` populates ``runtime.resume_thread_id``.
-  * Stub fail-closed semantics for entry points that still belong to
-    later phases (``evidence_provider`` → Phase F / T013;
-    ``install_prerequisites`` → Phase E + I / T014, T020).
+  * ``evidence_provider`` returns a real :class:`CodexEvidenceProvider`
+    that reads tee'd JSONL (Phase F / T013).
+  * Stub fail-closed semantics for ``install_prerequisites`` (still
+    Phase E + I / T014, T020).
   * Lazy-import contract: importing ``codex_provider`` does NOT pull in
     ``codex_app_server``.
 """
@@ -161,20 +162,35 @@ def test_runtime_builder_records_resume_token(
 
 
 @pytest.mark.unit
-def test_evidence_provider_is_fail_closed_stub(tmp_path: Path) -> None:
-    """The Codex evidence provider stub raises on every method.
+def test_evidence_provider_is_codex_evidence_provider(tmp_path: Path) -> None:
+    """``evidence_provider`` returns a real :class:`CodexEvidenceProvider`.
 
-    Phase F (T013) replaces this with the native ``Thread.read``
-    adapter; until then any caller asking for evidence under
-    ``coder=codex`` should hit a clear "not yet implemented" failure
-    rather than crashing later inside a half-built code path.
+    Phase F (T013) replaces the prior fail-closed stub with the tee
+    fallback adapter (decision #11 disconfirmed by the F1 spike — see
+    ``tests/spike/test_codex_thread_read_evidence.py``). The provider
+    reads ``~/.config/mala/codex-sessions/{thread_id}.jsonl`` via the
+    standard :class:`EvidenceProvider` surface; assert that
+    ``get_log_path`` resolves there and that the cached instance is
+    returned on repeat access.
     """
+    from src.core.protocols.evidence import EvidenceProvider
+    from src.infra.clients.codex_evidence_provider import (
+        CODEX_SESSIONS_DIR,
+        CodexEvidenceProvider,
+    )
+
     provider = CodexAgentProvider()
     evidence = provider.evidence_provider
-    with pytest.raises(CodexNotImplementedError):
-        evidence.get_log_path(tmp_path, "thr_x")
-    with pytest.raises(CodexNotImplementedError):
-        evidence.get_end_offset(tmp_path / "x.jsonl")
+    assert isinstance(evidence, CodexEvidenceProvider)
+    assert isinstance(evidence, EvidenceProvider)
+    # Cached: a second access returns the same instance.
+    assert provider.evidence_provider is evidence
+    log_path = evidence.get_log_path(tmp_path, "thr_x")
+    assert log_path == CODEX_SESSIONS_DIR / "thr_x.jsonl"
+    # ``get_end_offset`` on a non-existent file returns the start offset
+    # rather than raising — parity with FileSystemLogProvider /
+    # AmpLogProvider so missing tee files do not break gate replay.
+    assert evidence.get_end_offset(tmp_path / "missing.jsonl") == 0
 
 
 @pytest.mark.unit

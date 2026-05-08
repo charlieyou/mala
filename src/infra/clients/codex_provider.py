@@ -1,11 +1,11 @@
-"""Codex :class:`AgentProvider` (Phase C, T010).
+"""Codex :class:`AgentProvider` (Phase C T010, Phase F T013).
 
 Wires :class:`CodexAgentProvider` to the real :class:`CodexClient` /
 :class:`CodexRuntime` / :class:`CodexRuntimeBuilder` shipped in Phase C
-(T010). Replaces the Phase B stub's ``client_factory`` / ``runtime_builder``
-implementations with concrete ones; ``evidence_provider`` and
-``install_prerequisites`` remain fail-closed stubs until Phase F (T013)
-and Phase E + I (T014, T020) respectively.
+(T010) and to the real :class:`CodexEvidenceProvider` shipped in Phase F
+(T013). Replaces the Phase B stub's ``client_factory`` / ``runtime_builder``
+implementations with concrete ones; ``install_prerequisites`` remains a
+fail-closed stub until Phase E + I (T014, T020).
 
 Lazy-import contract (plan ``L733``): importing this module does NOT
 transitively import ``codex_app_server``. The SDK is referenced only
@@ -13,6 +13,8 @@ inside :class:`CodexClient.__aenter__` / :meth:`CodexClient.query` (and
 even those uses are guarded by ``try/except TypeError`` for backward
 compatibility); :class:`CodexClient` itself is imported lazily by
 :meth:`_CodexClientFactory.create` so module-load remains SDK-free.
+:class:`CodexEvidenceProvider` does not pull the SDK either — it reads
+tee'd JSONL only — so eager construction is safe.
 """
 
 from __future__ import annotations
@@ -24,12 +26,13 @@ from src.core.constants import (
     DEFAULT_CODEX_MODEL,
     DEFAULT_CODEX_SANDBOX,
 )
+from src.infra.clients.codex_evidence_provider import CodexEvidenceProvider
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.agent_provider import CoderRuntimeBuilder
-    from src.core.protocols.evidence import EvidenceProvider, JsonlEntryProtocol
+    from src.core.protocols.evidence import EvidenceProvider
     from src.core.protocols.lifecycle import DeadlockMonitorProtocol
     from src.core.protocols.sdk import (
         McpServerFactory,
@@ -40,8 +43,9 @@ if TYPE_CHECKING:
 
 _STUB_MESSAGE = (
     "CodexAgentProvider stub: full implementation lands in Phases C-I. "
-    "Phase C (T010) wires client_factory + runtime_builder; this entry "
-    "point is still a stub and lands in a later phase."
+    "Phase C (T010) wires client_factory + runtime_builder; Phase F (T013) "
+    "wires evidence_provider; this entry point is still a stub and lands "
+    "in a later phase."
 )
 
 
@@ -49,8 +53,8 @@ class CodexNotImplementedError(NotImplementedError):
     """Raised when an unfinished Codex provider entry point is exercised.
 
     Phase C (T010) wires ``client_factory`` and ``runtime_builder`` to
-    real implementations; ``evidence_provider`` (Phase F / T013) and
-    ``install_prerequisites`` (Phase E + I / T014, T020) still raise
+    real implementations; Phase F (T013) wires ``evidence_provider``;
+    ``install_prerequisites`` (Phase E + I / T014, T020) still raises
     this so a Codex run aborts cleanly with an actionable error
     instead of routing to a half-built pipeline.
     """
@@ -132,66 +136,6 @@ class _CodexClientFactory:
 
 
 # ---------------------------------------------------------------------------
-# Stub evidence provider (Phase F replaces)
-# ---------------------------------------------------------------------------
-
-
-class _CodexStubEvidenceProvider:
-    """:class:`EvidenceProvider` stub for the Codex coder.
-
-    Every call raises :class:`CodexNotImplementedError`; Phase F (T013)
-    replaces this with the native ``Thread.read(include_turns=True)``
-    adapter (or the tee fallback if the F1 spike disconfirms native
-    viability).
-    """
-
-    def get_log_path(self, repo_path: Path, session_id: str) -> Path:
-        del repo_path, session_id
-        raise CodexNotImplementedError(_STUB_MESSAGE)
-
-    def iter_session_events(self, log_path: Path, offset: int = 0) -> object:
-        del log_path, offset
-        raise CodexNotImplementedError(_STUB_MESSAGE)
-
-    def iter_thread_evidence(self, log_path: Path, offset: int = 0) -> object:
-        del log_path, offset
-        raise CodexNotImplementedError(_STUB_MESSAGE)
-
-    async def wait_for_session_ready(
-        self,
-        repo_path: Path,
-        session_id: str,
-        *,
-        timeout: float,
-        poll_interval: float = 0.5,
-    ) -> None:
-        del repo_path, session_id, timeout, poll_interval
-        raise CodexNotImplementedError(_STUB_MESSAGE)
-
-    def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
-        del log_path, start_offset
-        raise CodexNotImplementedError(_STUB_MESSAGE)
-
-    def extract_bash_commands(self, entry: JsonlEntryProtocol) -> list[tuple[str, str]]:
-        del entry
-        raise CodexNotImplementedError(_STUB_MESSAGE)
-
-    def extract_tool_results(self, entry: JsonlEntryProtocol) -> list[tuple[str, bool]]:
-        del entry
-        raise CodexNotImplementedError(_STUB_MESSAGE)
-
-    def extract_assistant_text_blocks(self, entry: JsonlEntryProtocol) -> list[str]:
-        del entry
-        raise CodexNotImplementedError(_STUB_MESSAGE)
-
-    def extract_tool_result_content(
-        self, entry: JsonlEntryProtocol
-    ) -> list[tuple[str, str]]:
-        del entry
-        raise CodexNotImplementedError(_STUB_MESSAGE)
-
-
-# ---------------------------------------------------------------------------
 # Provider
 # ---------------------------------------------------------------------------
 
@@ -201,17 +145,19 @@ class CodexAgentProvider:
 
     Conforms structurally to
     :class:`src.core.protocols.agent_provider.AgentProvider`. After T010
-    (this issue) ``client_factory`` and ``runtime_builder`` are real;
-    ``evidence_provider`` (Phase F / T013) and ``install_prerequisites``
-    (Phase E + I / T014, T020) are still fail-closed stubs.
+    ``client_factory`` and ``runtime_builder`` are real; after T013 (this
+    issue) ``evidence_provider`` is real (reads tee'd JSONL from
+    ``~/.config/mala/codex-sessions/{thread_id}.jsonl``).
+    ``install_prerequisites`` (Phase E + I / T014, T020) is still a
+    fail-closed stub.
 
     Attributes:
         name: Provider identifier (always ``"codex"``).
         client_factory: :class:`SDKClientFactoryProtocol` whose
             ``create`` returns a :class:`CodexClient` bound to the
             given :class:`CodexRuntime`.
-        evidence_provider: Stub :class:`EvidenceProvider` whose methods
-            all raise :class:`CodexNotImplementedError`.
+        evidence_provider: :class:`CodexEvidenceProvider` reading the
+            per-thread tee'd notification stream.
     """
 
     name: Literal["codex"] = "codex"
@@ -247,7 +193,7 @@ class CodexAgentProvider:
             sandbox
         )
         self._client_factory_cached: _CodexClientFactory | None = None
-        self._evidence_provider_cached: _CodexStubEvidenceProvider | None = None
+        self._evidence_provider_cached: CodexEvidenceProvider | None = None
 
     # ------------------------------------------------------------------
     # AgentProvider protocol surface
@@ -262,7 +208,7 @@ class CodexAgentProvider:
     @property
     def evidence_provider(self) -> EvidenceProvider:
         if self._evidence_provider_cached is None:
-            self._evidence_provider_cached = _CodexStubEvidenceProvider()
+            self._evidence_provider_cached = CodexEvidenceProvider()
         return cast("EvidenceProvider", self._evidence_provider_cached)
 
     @property

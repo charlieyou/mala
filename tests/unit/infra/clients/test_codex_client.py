@@ -194,6 +194,27 @@ def _install_fake_sdk(monkeypatch: pytest.MonkeyPatch) -> _FakeAsyncCodex:
     return fake_codex
 
 
+@pytest.fixture(autouse=True)
+def _redirect_codex_tee_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Redirect :class:`CodexClient`'s tee'd-JSONL dir to a per-test tmp path.
+
+    Phase F (T013) added per-thread tee'd-JSONL evidence at
+    ``~/.config/mala/codex-sessions/{thread_id}.jsonl``; without this
+    autouse fixture every test that reaches
+    :meth:`CodexClient.receive_response` would pollute the developer's
+    real config dir with ``thr_fake_*.jsonl`` artifacts. Setting
+    ``MALA_CODEX_SESSIONS_DIR`` overrides the default tee directory at
+    tee-open time (see :func:`src.infra.clients.codex_client._resolve_tee_dir`),
+    so each test gets an isolated path under its own ``tmp_path``.
+
+    Returns the tee directory so tests that want to assert on the tee'd
+    bytes can read it back.
+    """
+    tee_dir = tmp_path / "codex-tee"
+    monkeypatch.setenv("MALA_CODEX_SESSIONS_DIR", str(tee_dir))
+    return tee_dir
+
+
 def _build_runtime(
     tmp_path: Path, *, resume_thread_id: str | None = None
 ) -> CodexRuntime:
@@ -689,6 +710,172 @@ async def test_receive_response_before_query_raises(
         with pytest.raises(RuntimeError, match="before query"):
             async for _ in client.receive_response():
                 pass
+
+
+# ---------------------------------------------------------------------------
+# Tee'd-JSONL evidence stream (Phase F / T013 — F3 fallback)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_receive_response_tees_notifications_to_per_thread_jsonl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _redirect_codex_tee_dir: Path,
+) -> None:
+    """Each Codex notification lands as one JSON line in ``{thread_id}.jsonl``.
+
+    Phase F (T013) regression: :class:`CodexEvidenceProvider` reads the
+    tee'd JSONL the client writes here. If the wire shape diverges (e.g.,
+    missing ``method``, payload encoded differently), the provider's
+    :meth:`extract_bash_commands` returns nothing and the gate loops on a
+    passing build. Locking the shape down via this test means provider
+    + writer can be evolved together with a single test failure if either
+    side drifts.
+    """
+    from src.infra.clients.codex_client import CodexClient
+
+    fake_codex = _install_fake_sdk(monkeypatch)
+    runtime = _build_runtime(tmp_path)
+    thread = _FakeThread(id="thr_tee_test")
+    fake_codex.next_thread = thread
+
+    notifications: list[object] = [
+        _FakeNotification(
+            method="item/agentMessage/delta",
+            payload=SimpleNamespace(
+                delta="hi", item_id="msg_1", thread_id="thr_tee_test"
+            ),
+        ),
+        _FakeNotification(
+            method="item/completed",
+            payload=SimpleNamespace(
+                item=SimpleNamespace(
+                    type="commandExecution",
+                    id="cmd_1",
+                    command="uv run pytest -q",
+                    aggregated_output="5 passed",
+                    status="completed",
+                ),
+                thread_id="thr_tee_test",
+                turn_id="turn_1",
+            ),
+        ),
+        _FakeNotification(
+            method="turn/completed",
+            payload=SimpleNamespace(
+                thread_id="thr_tee_test",
+                turn=SimpleNamespace(id="turn_1", status="completed"),
+            ),
+        ),
+    ]
+
+    async with CodexClient(runtime) as client:
+        await client.query("hi")
+        thread.turn_handles[0].notifications.extend(notifications)
+        async for _ in client.receive_response():
+            pass
+
+    tee_path = _redirect_codex_tee_dir / "thr_tee_test.jsonl"
+    assert tee_path.exists(), f"expected tee file at {tee_path}"
+
+    import json as _json
+
+    lines = tee_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 3
+    parsed = [_json.loads(line) for line in lines]
+    methods = [entry["method"] for entry in parsed]
+    assert methods == ["item/agentMessage/delta", "item/completed", "turn/completed"]
+
+    # The CodexEvidenceProvider extracts bash commands from the
+    # ``item/completed`` row; verify the on-disk shape carries the
+    # fields it depends on.
+    completed = parsed[1]
+    assert completed["payload"]["item"]["type"] == "commandExecution"
+    assert completed["payload"]["item"]["command"] == "uv run pytest -q"
+    assert completed["payload"]["item"]["aggregated_output"] == "5 passed"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_tee_appends_across_resume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _redirect_codex_tee_dir: Path,
+) -> None:
+    """Append-mode tee survives a thread_resume (cross-resume invariant).
+
+    AC #7 cross-resume bullet: evidence stream includes events from all
+    turns regardless of resume count. Two clients on the same thread id
+    must share the same JSONL file (append-mode), or the gate's
+    :meth:`CodexEvidenceProvider.iter_thread_evidence` would lose
+    invocation 1's bash items after invocation 2's client opens its own
+    file.
+    """
+    from src.infra.clients.codex_client import CodexClient
+
+    fake_codex = _install_fake_sdk(monkeypatch)
+    runtime_inv1 = _build_runtime(tmp_path)
+    thread_inv1 = _FakeThread(id="thr_resume_tee")
+    fake_codex.next_thread = thread_inv1
+
+    async with CodexClient(runtime_inv1) as client:
+        await client.query("first")
+        thread_inv1.turn_handles[0].notifications.append(
+            _FakeNotification(
+                method="item/completed",
+                payload=SimpleNamespace(
+                    item=SimpleNamespace(
+                        type="commandExecution",
+                        id="inv1-pytest",
+                        command="uv run pytest",
+                        aggregated_output="ok",
+                        status="completed",
+                    ),
+                    thread_id="thr_resume_tee",
+                ),
+            )
+        )
+        async for _ in client.receive_response():
+            pass
+
+    # Second client resumes the same thread id; SDK returns a fresh
+    # _FakeThread but with the same id, mirroring how a real
+    # ``thread_resume`` would route us back to the persisted thread.
+    fake_codex_2 = _install_fake_sdk(monkeypatch)
+    runtime_inv2 = _build_runtime(tmp_path, resume_thread_id="thr_resume_tee")
+    thread_inv2 = _FakeThread(id="thr_resume_tee")
+    fake_codex_2.resumed_thread = thread_inv2
+
+    async with CodexClient(runtime_inv2) as client:
+        await client.query("second")
+        thread_inv2.turn_handles[0].notifications.append(
+            _FakeNotification(
+                method="item/completed",
+                payload=SimpleNamespace(
+                    item=SimpleNamespace(
+                        type="commandExecution",
+                        id="inv2-ruff",
+                        command="uvx ruff check .",
+                        aggregated_output="ok",
+                        status="completed",
+                    ),
+                    thread_id="thr_resume_tee",
+                ),
+            )
+        )
+        async for _ in client.receive_response():
+            pass
+
+    tee_path = _redirect_codex_tee_dir / "thr_resume_tee.jsonl"
+    lines = tee_path.read_text(encoding="utf-8").splitlines()
+    # Both invocations' notifications are present in file order.
+    assert len(lines) == 2
+    import json as _json
+
+    item_ids = [_json.loads(line)["payload"]["item"]["id"] for line in lines]
+    assert item_ids == ["inv1-pytest", "inv2-ruff"]
 
 
 # ---------------------------------------------------------------------------
