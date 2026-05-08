@@ -1947,3 +1947,243 @@ class TestForceClobberRedirect:
         # Either deny — the point is that the segment got split and
         # the tee target was extracted (not ``y|tee``).
         assert is_deny(result)
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 7)
+# ---------------------------------------------------------------------------
+
+
+class TestCdInvalidatesRelativeResolution:
+    """Regression: ``cd pkg && touch f`` writes to ``cwd/pkg/f``, not ``cwd/f``.
+
+    Before the fix, the hook always resolved relative targets against
+    the payload ``cwd``. An agent could ``cd`` into a subdirectory and
+    write to a path the hook lock-checked against the parent — letting
+    the agent hold the parent-level lock and silently mutate the
+    subdirectory file.
+    """
+
+    def test_cd_then_relative_write_denies(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # The agent holds the lock on ``cwd/generated.py`` (root file)
+        # but the actual write is to ``cwd/pkg/generated.py`` after cd.
+        sub = repo / "pkg"
+        sub.mkdir()
+        assert try_lock(
+            str(repo / "generated.py"), "agent-me", repo_namespace=str(repo)
+        )
+        command = "cd pkg && touch generated.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        # The cd invalidates relative-path resolution — must deny.
+        assert is_deny(result), result
+
+    def test_cd_then_absolute_write_uses_absolute(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # An absolute path after ``cd`` is unambiguous; the hook should
+        # still lock-check it normally (no over-deny).
+        target = repo / "out.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"cd /tmp && touch {target}"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_allow(result), result
+
+    def test_no_cd_relative_write_resolves_normally(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Sanity: without a ``cd``, the existing cwd-resolution path
+        # still works.
+        target = repo / "generated.py"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = "touch generated.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_allow(result), result
+
+
+class TestAttachedOnelinerScript:
+    """Regression: ``python -c"open('f','w')"`` (attached body).
+
+    Before the fix, ``_find_oneliner_body`` only matched
+    ``tokens[i] == "-c"`` and returned ``None`` for the attached form.
+    shlex tokenises ``python -c"..."`` as ``['python', '-c<body>']``,
+    so the body was never inspected and the unowned write slipped past
+    the heuristic.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "python -c\"open('{target}','w').write('x')\"",
+            "python3 -c\"open('{target}','a').write('x')\"",
+            # bash -c with attached redirect
+            'bash -c"echo y > {target}"',
+            # ruby/node attached -e
+            "ruby -e\"File.write('{target}', 'x')\"",
+            "node -e\"fs.writeFileSync('{target}','x')\"",
+        ],
+    )
+    def test_attached_oneliner_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "out.txt"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+
+    def test_attached_oneliner_does_not_match_long_flag(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``python --check`` starts with ``-c`` but is a long flag —
+        # MUST NOT be treated as the script flag. With no real script
+        # body, no write target is detected, command should allow.
+        result = decide(make_payload("bash", {"command": "python --check foo.py"}))
+        assert is_allow(result), result
+
+
+class TestUnspacedRedirection:
+    """Regression: ``cmd>file`` and ``cat>|file`` (no space before ``>``).
+
+    Before the fix, the normalizer never padded ``>``, so ``shlex.split``
+    produced one combined token (``echo hi>file`` →
+    ``['echo', 'hi>file']``). The combined-prefix regex requires the
+    token to START with the operator/fd-prefix, so ``hi>file`` produced
+    no target and the unowned write slipped past the gate.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "echo hi>{target}",
+            "echo hi>>{target}",
+            "echo hi>|{target}",
+            # No space before fd prefix either: ``cmd2>file`` is real bash.
+            # (However bash usually treats trailing digits as part of the
+            #  preceding word; we still want to handle the safer
+            #  ``cmd 2>file`` form.)
+            "ls 2>{target}",
+            "cat <>{target}",
+            "exec 3>{target}",
+        ],
+    )
+    def test_unspaced_redirect_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "out.log"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "out.log" in deny_reason(result)
+
+    def test_unspaced_redirect_allowed_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "out.log"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"echo hi>{target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+
+class TestReservedWordSegments:
+    """Regression: reserved words leave the real cmd behind a non-cmd token.
+
+    Before the fix, ``if true; then touch unowned.py; fi`` produced a
+    segment ``['then', 'touch', 'unowned.py']`` whose first token was
+    not the command. The utility extractor saw ``then`` (no match)
+    and emitted no targets.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "if true; then touch {target}; fi",
+            "for x in 1 2; do touch {target}; done",
+            "while false; do touch {target}; done",
+            "until true; do touch {target}; done",
+            # ``elif`` body
+            "if false; then :; elif true; then touch {target}; fi",
+            # ``else`` body
+            "if false; then :; else touch {target}; fi",
+            # leading ``!`` negation — strip and process inner command
+            "! touch {target}",
+            # ``time touch`` (time is a reserved word)
+            "time touch {target}",
+        ],
+    )
+    def test_compound_command_inner_write_denied(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+
+class TestBacktickCommandSubstitution:
+    """Regression: ``echo `touch unowned.py``` runs the inner ``touch``.
+
+    Before the fix, backticks were not preprocessed and shlex left them
+    glued to surrounding tokens (``['echo', '`touch', 'unowned.py`']``).
+    No extractor matched the backtick-prefixed token, and the unowned
+    write slipped past the gate. This is a standard shell-execution
+    form, not one of the documented residual obfuscation gaps.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "echo `touch {target}`",
+            "echo `touch {target}` more",
+            "x=`touch {target}`",
+            # Inside double quotes (still substitutes in bash)
+            'echo "result: `touch {target}`"',
+            # Multiple backtick blocks
+            "echo `true` `touch {target}`",
+        ],
+    )
+    def test_backtick_inner_write_denied(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+    def test_backtick_in_single_quotes_is_literal(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Inside single quotes, backticks are literal — bash does NOT
+        # execute the inner command. The hook must NOT extract a write
+        # target from a literal-quoted backtick.
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": "echo 'literal `touch foo` text'"},
+            )
+        )
+        assert is_allow(result), result
+
+    def test_backtick_inner_allowed_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "out.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"echo `touch {target}`"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result

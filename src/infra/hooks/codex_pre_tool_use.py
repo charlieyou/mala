@@ -99,6 +99,37 @@ _UNRESOLVED_SENTINEL = "<unresolved-write-target>"
 # heuristic does not need its actual value.
 _ANSI_C_PLACEHOLDER = "__MALA_ANSI_C_LITERAL__"
 
+# Placeholder emitted in place of a backtick command-substitution body.
+# Backtick bodies are extracted and processed as their own segments via
+# ``_extract_backtick_bodies`` before the main heuristic runs.
+_BACKTICK_PLACEHOLDER = "__MALA_BACKTICK_LITERAL__"
+
+# Shell reserved words that introduce a compound-command body but are
+# never themselves a command word. ``_split_segments`` produces segments
+# headed by these tokens (``[..., 'then', 'touch', 'unowned']``); we
+# strip them so the inner extractors see the actual command word.
+_SHELL_RESERVED_WORDS = frozenset(
+    {
+        "if",
+        "then",
+        "else",
+        "elif",
+        "fi",
+        "for",
+        "while",
+        "do",
+        "done",
+        "until",
+        "case",
+        "esac",
+        "select",
+        "in",
+        "function",
+        "time",
+        "!",
+    }
+)
+
 
 # Deny-message templates (plan L854-L860). These strings are byte-identical
 # across the apply_patch branch and the bash write-path branch so reviewers
@@ -288,6 +319,79 @@ def _strip_env_assignments(tokens: list[str]) -> list[str]:
     while i < len(tokens) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[i]):
         i += 1
     return tokens[i:]
+
+
+def _strip_leading_reserved(tokens: list[str]) -> list[str]:
+    """Drop leading shell reserved words (``if``/``then``/``do``/...).
+
+    Compound commands (``if ...; then touch f; fi``) leave the actual
+    command word behind a non-mutating reserved word in the resulting
+    segment. Without stripping, the utility extractor sees ``then`` as
+    the basename and emits no targets, silently allowing the unowned
+    write that follows.
+    """
+    while tokens and tokens[0] in _SHELL_RESERVED_WORDS:
+        tokens = tokens[1:]
+    return tokens
+
+
+def _extract_backtick_bodies(command: str) -> tuple[str, list[str]]:
+    """Replace backtick command substitutions with a placeholder.
+
+    Returns ``(cleaned, bodies)`` — ``cleaned`` is the input string with
+    every ```body``` replaced by ``_BACKTICK_PLACEHOLDER``, and
+    ``bodies`` is the list of extracted body strings. Backticks inside
+    single quotes (``'...'``) are preserved verbatim — bash treats
+    them literally there. Inside double quotes, backticks still trigger
+    command substitution, so they ARE extracted.
+
+    Without this preprocessing, ``echo `touch unowned```
+    tokenises with the backticks left attached (``['echo', '`touch',
+    'unowned`']``) and the inner ``touch`` is never seen by any
+    extractor — a documented standard shell-execution form, not a
+    residual obfuscation gap.
+    """
+    out: list[str] = []
+    bodies: list[str] = []
+    i = 0
+    n = len(command)
+    quote: str | None = None
+    while i < n:
+        c = command[i]
+        if c == "\\" and i + 1 < n and quote != "'":
+            out.append(c)
+            out.append(command[i + 1])
+            i += 2
+            continue
+        if c == "`" and quote != "'":
+            j = i + 1
+            while j < n:
+                if command[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if command[j] == "`":
+                    break
+                j += 1
+            if j < n:
+                bodies.append(command[i + 1 : j])
+                out.append(_BACKTICK_PLACEHOLDER)
+                i = j + 1
+                continue
+            # Unmatched backtick: leave as literal.
+        if quote is not None:
+            out.append(c)
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c in ('"', "'"):
+            out.append(c)
+            quote = c
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out), bodies
 
 
 _DEV_NULL_LIKE = frozenset({"/dev/null", "/dev/stderr", "/dev/stdout", "/dev/tty"})
@@ -799,18 +903,40 @@ _ONELINER_SCRIPT_FLAGS: dict[str, str] = {
 
 
 def _find_oneliner_body(tokens: list[str], script_flag: str) -> str | None:
-    """Locate the script body for ``cmd ... -c BODY`` even with leading flags.
+    """Locate the script body for ``cmd ... -c BODY`` even with leading flags
+    or attached body.
+
+    Recognises three forms:
+
+    - separate-token: ``-c BODY`` (next token is the body)
+    - attached short: ``-cBODY`` (body glued to the flag in the same token)
+    - leading interpreter flags before ``-c``/``-e`` (``python -u -c ...``)
 
     Returns the body string, or ``None`` if no script flag is present.
-    Skips ahead past leading flags (``python -u -c "..."``, ``bash -x -c
-    "..."``, ``node --experimental-modules -e "..."``) so the heuristic
-    is not bypassed by trivial reordering.
+    Without the attached-form branch, ``python -c"open('f','w')"`` (which
+    shlex tokenises as ``['python', "-copen('f','w')"]``) silently
+    bypasses the heuristic — the strict ``tokens[i] == script_flag``
+    check never matches and ``None`` is returned.
     """
-    if not tokens or len(tokens) < 3:
+    if not tokens or len(tokens) < 2:
         return None
-    for i in range(1, len(tokens) - 1):
-        if tokens[i] == script_flag:
-            return tokens[i + 1]
+    is_short_flag = len(script_flag) == 2 and not script_flag.startswith("--")
+    for i in range(1, len(tokens)):
+        tok = tokens[i]
+        if tok == script_flag:
+            if i + 1 < len(tokens):
+                return tokens[i + 1]
+            return None
+        # Attached short-flag form (``-c<body>`` / ``-e<body>``). Restrict
+        # to single-dash short flags so ``--check`` (which starts with
+        # ``-c``) is NOT matched against ``-c``.
+        if (
+            is_short_flag
+            and tok.startswith(script_flag)
+            and len(tok) > len(script_flag)
+            and not tok.startswith("--")
+        ):
+            return tok[len(script_flag) :]
     return None
 
 
@@ -985,6 +1111,61 @@ _SEGMENT_EXTRACTORS = (
 )
 
 
+def _strip_fd_prefix_from_output(out: list[str]) -> str:
+    """Strip a contiguous fd prefix (digits, ``&``, or ``{varname}``) from
+    the end of ``out`` and return it.
+
+    Used by ``_normalize_separators`` when emitting a redirect operator:
+    the fd prefix that should belong to the operator was already
+    appended char-by-char as part of the surrounding word. We need to
+    pop it off so the emitted operator (with surrounding spaces) carries
+    its prefix in a single token (``2>``/``&>``/``{fd}>``) for shlex.
+
+    Returns ``""`` if the trailing chars don't form a valid fd prefix.
+    """
+    if not out:
+        return ""
+    last = out[-1]
+    # Handle multi-char appends (placeholders, escape pairs): they are
+    # never an fd prefix.
+    if len(last) != 1:
+        return ""
+    if last == "&":
+        out.pop()
+        return "&"
+    if last == "}":
+        # ``{varname}`` form. Walk back through varname chars to ``{``.
+        j = len(out) - 2
+        while j >= 0:
+            ch = out[j]
+            if len(ch) != 1:
+                return ""
+            if ch == "{":
+                break
+            if not (ch.isalnum() or ch == "_"):
+                return ""
+            j -= 1
+        else:
+            return ""
+        if j < 0 or out[j] != "{":
+            return ""
+        # Body must start with letter or ``_`` (varname rule).
+        if j + 1 >= len(out) - 1:
+            return ""
+        first = out[j + 1]
+        if not (len(first) == 1 and (first.isalpha() or first == "_")):
+            return ""
+        prefix = "".join(out[j:])
+        del out[j:]
+        return prefix
+    if last.isdigit():
+        digits: list[str] = []
+        while out and len(out[-1]) == 1 and out[-1].isdigit():
+            digits.append(out.pop())
+        return "".join(reversed(digits))
+    return ""
+
+
 def _normalize_separators(command: str) -> str:
     """Insert spaces around shell control operators outside quoted regions.
 
@@ -1118,9 +1299,17 @@ def _normalize_separators(command: str) -> str:
             i += 1
             continue
         if c == "&":
-            # Don't split if this ``&`` is part of an fd-redirect
-            # operator (``>&`` or ``digit+>&``). Walk back over digits;
-            # if the preceding non-digit char is ``>``, it's a redirect.
+            # ``&`` followed by ``>`` is the start of the ``&>`` redirect
+            # operator. Append the ``&`` so the upcoming ``>`` handler
+            # picks it up via ``_strip_fd_prefix_from_output`` and emits
+            # the full operator together.
+            if i + 1 < n and command[i + 1] == ">":
+                out.append(c)
+                i += 1
+                continue
+            # ``&`` following ``>`` or ``digit+>`` is the trailing half of
+            # a fd redirect (``>&``/``n>&``). Walk back over digits in
+            # the input and check for ``>``.
             j = i - 1
             while j >= 0 and command[j].isdigit():
                 j -= 1
@@ -1141,6 +1330,46 @@ def _normalize_separators(command: str) -> str:
             out.append(" ")
             i += 1
             continue
+        if c == ">":
+            # Pad redirect operators so ``shlex.split`` (which does not
+            # tokenise on ``>``) splits them off from adjacent words.
+            # ``echo hi>file`` tokenises as the single token
+            # ``hi>file``; without padding, the redirection extractor's
+            # combined-prefix regex never matches and the unowned write
+            # to ``file`` slips past the gate.
+            #
+            # The fd prefix (digits, ``&``, or ``{varname}``) is part of
+            # the operator and was already appended to ``out``; strip it
+            # back, build the full operator (including any trailing
+            # ``>`` / ``&`` / ``|``), and emit it space-padded.
+            prefix = _strip_fd_prefix_from_output(out)
+            op = ">"
+            next_i = i + 1
+            if next_i < n and command[next_i] == ">":
+                op += ">"
+                next_i += 1
+            if next_i < n and command[next_i] in "&|":
+                op += command[next_i]
+                next_i += 1
+            out.append(" ")
+            if prefix:
+                out.append(prefix)
+            out.append(op)
+            out.append(" ")
+            i = next_i
+            continue
+        if c == "<" and i + 1 < n and command[i + 1] == ">":
+            # ``<>`` (POSIX read-write open) is a write surface — bash
+            # creates the file if missing. Pad so the extractor sees it
+            # as a separate token.
+            prefix = _strip_fd_prefix_from_output(out)
+            out.append(" ")
+            if prefix:
+                out.append(prefix)
+            out.append("<>")
+            out.append(" ")
+            i += 2
+            continue
         out.append(c)
         i += 1
     return "".join(out)
@@ -1152,26 +1381,82 @@ def _extract_shell_write_paths(command: str) -> list[str]:
     Best-effort: shlex parse errors return an empty list (the dangerous-
     command and disallowed-tool checks still run). Callers decide whether
     to deny based on the targets returned.
+
+    Pre-processing:
+
+    1. Backtick command substitutions are extracted and processed
+       recursively. ``echo `touch unowned``` would otherwise leave the
+       inner ``touch`` invisible to every extractor.
+    2. The remainder is run through ``_normalize_separators`` to expose
+       control operators that ``shlex.split`` would otherwise glue to
+       adjacent tokens.
+
+    Per-segment processing:
+
+    1. Leading env-assignments and reserved words (``then``/``do``/...)
+       are stripped so the extractor sees the real command word.
+    2. ``cd <dir>`` segments mark all subsequent segments as
+       cwd-changed; relative write targets after a ``cd`` are emitted
+       as ``_UNRESOLVED_SENTINEL`` so the lock-check fails closed —
+       the heuristic cannot reliably re-resolve relative paths once
+       the shell's cwd has shifted.
     """
-    normalized = _normalize_separators(command)
+    cleaned, backtick_bodies = _extract_backtick_bodies(command)
+
+    out: list[str] = []
+    for body in backtick_bodies:
+        out.extend(_extract_shell_write_paths(body))
+
+    normalized = _normalize_separators(cleaned)
     try:
         tokens = shlex.split(normalized, posix=True, comments=False)
     except ValueError:
         # Unbalanced quotes etc. — fall through; other checks still apply.
-        return []
+        return out
 
-    out: list[str] = []
+    cd_seen = False
     for segment_raw in _split_segments(tokens):
         segment = _strip_env_assignments(segment_raw)
-        # Redirection scans the full segment (not just the command word).
-        out.extend(_extract_redirection_targets(segment))
+        segment = _strip_leading_reserved(segment)
+        # Redirection scans the full segment regardless of cmd word.
+        seg_targets: list[str] = list(_extract_redirection_targets(segment))
         if not segment:
+            if seg_targets:
+                _append_targets_with_cd(out, seg_targets, cd_seen)
+            continue
+        # ``cd <dir>`` is not itself a write but invalidates relative-
+        # path resolution for following segments.
+        if _command_basename(segment) == "cd":
+            cd_seen = True
+            if seg_targets:
+                _append_targets_with_cd(out, seg_targets, cd_seen)
             continue
         for extractor in _SEGMENT_EXTRACTORS:
             if extractor is _extract_redirection_targets:
                 continue
-            out.extend(extractor(segment))
+            seg_targets.extend(extractor(segment))
+        if seg_targets:
+            _append_targets_with_cd(out, seg_targets, cd_seen)
     return out
+
+
+def _append_targets_with_cd(out: list[str], targets: list[str], cd_seen: bool) -> None:
+    """Append ``targets`` to ``out``, replacing relative paths with the
+    unresolved sentinel when a ``cd`` has been seen earlier in the pipeline.
+
+    Once ``cd <dir>`` runs, the shell's effective cwd no longer matches
+    the payload ``cwd`` the hook receives. Resolving a subsequent
+    relative path against the original cwd would lock-check the wrong
+    file, so we deny conservatively.
+    """
+    if not cd_seen:
+        out.extend(targets)
+        return
+    for target in targets:
+        if target == _UNRESOLVED_SENTINEL or os.path.isabs(target):
+            out.append(target)
+        else:
+            out.append(_UNRESOLVED_SENTINEL)
 
 
 # ---------------------------------------------------------------------------
