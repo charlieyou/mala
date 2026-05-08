@@ -1853,20 +1853,29 @@ _PERL_OPEN_WRITE_RE = re.compile(
     r"""['"][>]+['"]\s*,\s*"""  # mode literal containing `>` only
     r"""(['"])([^'"]+)\1"""  # path literal
 )
-# Hint regex: any ``open`` call that contains a write-mode marker
-# (``'>'``-prefixed string, ``q(>...)``, ``qq(>...)``) before the
-# next statement terminator. Triggers the unresolved-sentinel deny
-# when the literal regex above fails (dynamic path, 2-arg
-# ``open FH, '>file'`` mode-in-path form, or quote-like operator).
-# A read-mode ``open FH, '<', '/path'`` does NOT contain ``>`` and
-# correctly does not match.
+# Hint regex: ``open`` call whose *mode argument* (the token after the
+# filehandle and its trailing comma) is a write-mode marker — a
+# ``>``-prefixed quoted string or ``q(>...)``/``qq(>...)`` quote-like
+# operator. Triggers the unresolved-sentinel deny when the literal
+# regex above fails (dynamic path, 2-arg ``open FH, '>file'``
+# mode-in-path form, or quote-like operator).
+#
+# Anchoring to the mode slot (rather than scanning everywhere before
+# the next terminator) avoids a false positive on read-mode opens
+# whose statement happens to contain an unrelated ``>``-prefixed
+# token, e.g. ``open my $fh, '<', $path or die '>'`` — the unrelated
+# ``'>'`` after ``die`` previously triggered the hint and forced a
+# deny on a read-only command.
 #
 # ``\s*`` after the bracket/quote handles Perl's leading-whitespace
 # tolerance in the mode string — ``open(my $fh, " > ", $p)`` and
 # 2-arg ``open FH, " >file"`` both have whitespace between the
 # opening quote and ``>``, and Perl silently strips it before
 # evaluating the mode. Without ``\s*`` the hint missed those forms.
-_PERL_OPEN_WRITE_HINT_RE = re.compile(r"""\bopen\b[^;\n]*?[\(\[\{'"]\s*[>]+""")
+_PERL_OPEN_WRITE_HINT_RE = re.compile(
+    r"""\bopen\b\s*\(?\s*[^,]+?,\s*"""  # open + optional ( + filehandle + ,
+    r"""(?:qq?\s*[\(\[\{]|['"])\s*[>]"""  # mode arg quote/q-like with `>`
+)
 
 # Marks that suggest a write call whose target literal we cannot resolve
 # statically — used to trigger the unresolved-sentinel deny per plan L846.

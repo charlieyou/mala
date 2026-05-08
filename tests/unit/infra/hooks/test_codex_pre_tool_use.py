@@ -5026,13 +5026,27 @@ class TestPerlBareOpenWrite:
         result = decide(make_payload("bash", {"command": command}, cwd=repo))
         assert is_deny(result), result
 
+    @pytest.mark.parametrize(
+        "body",
+        [
+            # Sanity: read-mode ``open my $fh, '<', '/path'`` has no
+            # ``>`` marker and must NOT be flagged as a write.
+            "open my $fh, '<', '/tmp/file'; my $line = <$fh>",
+            # Read-mode dynamic open whose statement happens to
+            # contain a ``>``-prefixed token *outside* the mode slot
+            # (here: a ``die`` message). The hint must be scoped to
+            # the mode argument and not match the unrelated ``'>'``.
+            "open my $fh, '<', $path or die '>'; my $line = <$fh>",
+            # Read-mode 3-arg parens form with ``>`` elsewhere in the
+            # statement.
+            "open(my $fh, '<', $path) or warn '>>>'; my $line = <$fh>",
+        ],
+    )
     def test_perl_read_open_does_not_trigger(
         self,
         env: dict[str, str],
+        body: str,
     ) -> None:
-        # Sanity: read-mode ``open my $fh, '<', '/path'`` has no ``>``
-        # marker and must NOT be flagged as a write.
-        body = "open my $fh, '<', '/tmp/file'; my $line = <$fh>"
         command = f'perl -e "{body}"'
         result = decide(make_payload("bash", {"command": command}))
         assert is_allow(result), result
