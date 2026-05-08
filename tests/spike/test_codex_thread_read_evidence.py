@@ -8,8 +8,9 @@ runtime and reporting:
    turns (so Mala lint/build evidence is observable).
 2. Per-call ``thread/read`` latency, repeated in a tight loop, as a baseline for
    gate-loop polling cost.
-3. Cross-resume completeness — items from both pre- and post-``thread_resume``
-   turns are present in a single ``Thread.read(include_turns=True)`` response.
+3. Cross-resume completeness — items from pre-resume turns (one bash, one file
+   edit) and a post-resume bash turn are all present in a single
+   ``Thread.read(include_turns=True)`` response.
 
 Skip semantics
 --------------
@@ -23,13 +24,21 @@ The runtime path requires:
 When any of those is missing the test module is skipped, leaving the recorded
 spike outcome (see the *Spike result* section below and the Phase F1 entry in
 plans/2026-05-07-codex-provider-plan.md Open Questions) as the authoritative
-finding for blocking T013. The test is reachable in CI / locally once the
-dependencies land — it is intentionally e2e-marked so it does not run in the
-default ``unit or integration`` selector.
+finding for blocking T013.
+
+The tests carry the ``integration`` marker so the issue verification command
+``uv run pytest tests/spike/test_codex_thread_read_evidence.py`` collects them
+under the repo's default ``-m 'unit or integration'`` filter; module-level
+``importorskip`` then skips when the SDK/runtime is absent. Conceptually the
+spike is end-to-end (real upstream runtime when present), but ``e2e`` would be
+deselected by the default filter and silently fail the verification step — the
+``integration`` label keeps the path-based invocation honest while preserving
+"skip when tools absent" semantics. With SDK absent (the current repo state),
+all three tests collect as one module skip and consume no runtime budget.
 
 Invocation::
 
-    uv run pytest tests/spike/test_codex_thread_read_evidence.py -m e2e
+    uv run pytest tests/spike/test_codex_thread_read_evidence.py
 
 Spike result
 ------------
@@ -51,6 +60,11 @@ landing). Summary:
   ``ExecCommandEndEvent.aggregated_output``; the Begin event sets it to
   ``None``. With End events filtered, replay yields ``aggregated_output: None``
   for every completed bash turn.
+* File edits land via ``EventMsg::PatchApplyEnd`` which IS in
+  ``EventPersistenceMode::Limited`` (``rollout/src/policy.rs:99``), so
+  ``FileChangeThreadItem.changes`` *should* survive — but the spike still
+  asserts this directly because absence of regressions there is a separate
+  invariant from the bash-aggregation gap that drives the F3 fallback.
 * Cross-resume: the ``ThreadRollbackResponse.thread`` schema docstring states
   items are "lossy since we explicitly do not persist all agent interactions,
   such as command executions. This is the same behavior as ``thread/resume``."
@@ -66,25 +80,41 @@ re-enables Extended persistence — or any equivalent — would let us revisit).
 
 from __future__ import annotations
 
+import importlib
 import os
 import shutil
 import time
+import uuid
 from typing import Any
 
 import pytest
 
-pytestmark = pytest.mark.e2e
-
-codex_app_server = pytest.importorskip(
-    "codex_app_server",
-    reason="codex_app_server SDK not installed — recorded spike outcome stands "
-    "(see module docstring 'Spike result' section).",
-)
+pytestmark = pytest.mark.integration
 
 
 _LATENCY_SAMPLE_COUNT = 5
 _HELLO_PAYLOAD = "spike-hello-aggregated-output"
 _RESUME_PAYLOAD = "spike-second-turn-after-resume"
+_FILE_EDIT_PAYLOAD = "spike-file-edit-marker"
+
+
+def _require_runtime() -> Any:  # noqa: ANN401 — SDK is optional dep; staticly type-erased
+    """Per-test SDK + binary probe; skip cleanly if anything required is missing.
+
+    Per-test (rather than module-level ``importorskip``) so the verification
+    command ``uv run pytest tests/spike/test_codex_thread_read_evidence.py``
+    collects three tests and reports ``3 skipped`` (exit 0) instead of ``no
+    tests collected`` (exit 5) when the SDK/runtime is absent. Returns the
+    imported ``codex_app_server`` module so callers can read class symbols
+    without a top-level import.
+    """
+    try:
+        return importlib.import_module("codex_app_server")
+    except ImportError:
+        pytest.skip(
+            "codex_app_server SDK not installed — recorded spike outcome "
+            "stands (see module docstring 'Spike result' section)."
+        )
 
 
 def _require_codex_binary() -> None:
@@ -96,7 +126,7 @@ def _require_codex_binary() -> None:
         )
 
 
-def _new_codex() -> Any:  # noqa: ANN401 — SDK is optional dep; staticly type-erased
+def _new_codex(codex_app_server: Any) -> Any:  # noqa: ANN401 — SDK is optional dep; staticly type-erased
     """Construct a synchronous ``Codex`` client; skip on auth-not-ready errors.
 
     The SDK constructor or ``__enter__`` raises an auth error class when no
@@ -131,6 +161,16 @@ def _command_items_with_aggregated_output(items: list) -> list:
     ]
 
 
+def _file_change_items(items: list) -> list:
+    """Items that are ``FileChangeThreadItem`` with at least one change recorded."""
+    return [
+        item
+        for item in items
+        if getattr(item, "type", None) == "fileChange"
+        and getattr(item, "changes", None)
+    ]
+
+
 def test_aggregated_output_present_for_bash_command() -> None:
     """Finding (1): ``CommandExecutionThreadItem.aggregated_output`` is populated.
 
@@ -142,12 +182,12 @@ def test_aggregated_output_present_for_bash_command() -> None:
     future SDK that re-enables Extended persistence would flip this test to
     pass without the spike needing to be rewritten.
     """
+    sdk = _require_runtime()
     _require_codex_binary()
-    with _new_codex() as codex:
+    with _new_codex(sdk) as codex:
         thread = codex.thread_start()
-        codex.turn_start(
-            thread.id,
-            input=f"Run this single bash command and nothing else: echo {_HELLO_PAYLOAD}",
+        thread.run(
+            input=f"Run this single bash command and nothing else: echo {_HELLO_PAYLOAD}"
         )
         response = thread.read(include_turns=True)
 
@@ -170,11 +210,12 @@ def test_thread_read_latency_baseline_under_repeat() -> None:
     plan. We only fail if any call exceeds a deliberately-loose 10s budget
     (something is catastrophically wrong if a single read takes longer).
     """
+    sdk = _require_runtime()
     _require_codex_binary()
     samples_ms: list[float] = []
-    with _new_codex() as codex:
+    with _new_codex(sdk) as codex:
         thread = codex.thread_start()
-        codex.turn_start(thread.id, input=f"echo {_HELLO_PAYLOAD}")
+        thread.run(input=f"echo {_HELLO_PAYLOAD}")
         for _ in range(_LATENCY_SAMPLE_COUNT):
             t0 = time.monotonic()
             thread.read(include_turns=True)
@@ -193,36 +234,58 @@ def test_thread_read_latency_baseline_under_repeat() -> None:
     )
 
 
-def test_cross_resume_completeness() -> None:
-    """Finding (3): post-``thread_resume`` ``Thread.read`` includes pre-resume items.
+def test_cross_resume_completeness_with_bash_and_file_edit(tmp_path: Any) -> None:  # noqa: ANN401 — pytest fixture stub
+    """Finding (3): post-``thread_resume`` ``Thread.read`` includes pre-resume bash + file edit.
 
-    Expected outcome: items from the pre-resume turn that depended on
-    ``ExecCommandEnd`` payload (i.e. ``aggregated_output``) are missing,
-    matching the schema-documented "ThreadItems stored in each Turn are lossy
-    ... same behavior as thread/resume" caveat on
-    :class:`ThreadRollbackResponse`. The test asserts the lossless ideal so a
-    future SDK fix would pass; under current semantics it fails and confirms
-    the disconfirmation.
+    Combines all three issue-mandated coverage points (bash, file edit,
+    resume) in one thread so a single ``Thread.read(include_turns=True)``
+    response can be inspected for completeness. Under current SDK semantics
+    the bash assertion fails (see Finding 1); the file-edit assertion
+    *should* pass because ``PatchApplyEnd`` IS in Limited persistence mode —
+    if it ever fails, the F3 tee fallback design must also tee patch events,
+    not just exec events.
     """
+    sdk = _require_runtime()
     _require_codex_binary()
-    with _new_codex() as codex:
-        thread = codex.thread_start()
-        codex.turn_start(thread.id, input=f"echo {_HELLO_PAYLOAD}")
-        thread_id = thread.id
+    edit_target = tmp_path / f"spike-edit-{uuid.uuid4().hex}.txt"
+    pre_thread_id: str
+    with _new_codex(sdk) as codex:
+        thread = codex.thread_start(cwd=str(tmp_path))
+        thread.run(
+            input=(
+                f"Run exactly this bash command and nothing else: echo {_HELLO_PAYLOAD}"
+            )
+        )
+        thread.run(
+            input=(
+                "Create a new file using the apply_patch tool. The file path "
+                f"is {edit_target}. The file's contents must be exactly the "
+                f"single line: {_FILE_EDIT_PAYLOAD}"
+            )
+        )
+        pre_thread_id = thread.id
 
-    with _new_codex() as codex:
-        resumed = codex.thread_resume(thread_id)
-        codex.turn_start(resumed.thread.id, input=f"echo {_RESUME_PAYLOAD}")
-        response = resumed.thread.read(include_turns=True)
+    with _new_codex(sdk) as codex:
+        resumed = codex.thread_resume(pre_thread_id)
+        resumed.run(input=f"Run exactly this bash command: echo {_RESUME_PAYLOAD}")
+        response = resumed.read(include_turns=True)
 
     items = _items_of(response)
     aggregated_blobs = [
         getattr(item, "aggregated_output", None) or "" for item in items
     ]
-    pre_present = any(_HELLO_PAYLOAD in blob for blob in aggregated_blobs)
-    post_present = any(_RESUME_PAYLOAD in blob for blob in aggregated_blobs)
-    assert pre_present and post_present, (
+    pre_bash_present = any(_HELLO_PAYLOAD in blob for blob in aggregated_blobs)
+    post_bash_present = any(_RESUME_PAYLOAD in blob for blob in aggregated_blobs)
+    file_change_items = _file_change_items(items)
+    file_edit_present = any(
+        any(_FILE_EDIT_PAYLOAD in str(change) for change in (item.changes or []))
+        for item in file_change_items
+    )
+
+    assert pre_bash_present and post_bash_present and file_edit_present, (
         "F1 disconfirmed: cross-resume Thread.read missed at least one of "
-        f"(pre={pre_present}, post={post_present}). Decision #11 must reverse "
-        "to F3 tee fallback so evidence survives thread_resume."
+        f"(pre_bash={pre_bash_present}, post_bash={post_bash_present}, "
+        f"file_edit={file_edit_present}). Decision #11 must reverse to F3 tee "
+        "fallback so evidence survives thread_resume; if file_edit is the "
+        "only failure, F3 must tee patch events too."
     )
