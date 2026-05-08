@@ -3,7 +3,7 @@ __pycache__/
 .venv/
 .ruff_cache/
 .pytest_cache/
-.coverage
+.coverage*
 uv.lock
 
 .env
@@ -15,4 +15,3 @@ uv.lock
 dist/
 
 coverage.xml
-.coverage
