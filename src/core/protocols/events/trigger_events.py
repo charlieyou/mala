@@ -197,13 +197,13 @@ class TriggerEvents(Protocol):
         self,
         issue_id: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         """Called when session_end processing starts for an issue.
 
         Args:
             issue_id: The issue ID for which session_end processing started.
-            coder: Active coder backend (``claude`` or ``amp``).
+            coder: Active coder backend (``claude``, ``amp``, or ``codex``).
         """
         ...
 
@@ -212,14 +212,14 @@ class TriggerEvents(Protocol):
         issue_id: str,
         result: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         """Called when session_end processing completes for an issue.
 
         Args:
             issue_id: The issue ID for which session_end processing completed.
             result: The result (pass, fail, timeout, interrupted).
-            coder: Active coder backend (``claude`` or ``amp``).
+            coder: Active coder backend (``claude``, ``amp``, or ``codex``).
         """
         ...
 
@@ -228,13 +228,13 @@ class TriggerEvents(Protocol):
         issue_id: str,
         reason: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         """Called when session_end processing is skipped for an issue.
 
         Args:
             issue_id: The issue ID for which session_end processing was skipped.
             reason: The reason for skipping (gate_failed, not_configured).
-            coder: Active coder backend (``claude`` or ``amp``).
+            coder: Active coder backend (``claude``, ``amp``, or ``codex``).
         """
         ...

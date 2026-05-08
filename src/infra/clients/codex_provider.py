@@ -293,6 +293,44 @@ def _codex_runtime_resolvable() -> bool:
     return spec is not None
 
 
+_CODEX_AUTH_ENV_VARS: tuple[str, ...] = (
+    "OPENAI_API_KEY",
+    "CODEX_API_KEY",
+    "CODEX_ACCESS_TOKEN",
+)
+"""Env vars Codex's auth manager treats as a valid credential source
+(``codex-rs/login/src/auth/manager.rs:465-489``). A non-empty value in
+any of these short-circuits the on-disk ``auth.json`` lookup, so an
+auth probe that ignores them would falsely fail when a CI environment
+injects ``OPENAI_API_KEY`` directly."""
+
+
+def _codex_auth_present() -> bool:
+    """Return True iff Codex has a usable credential at session-start.
+
+    Mirrors the credential discovery order Codex itself walks
+    (``codex-rs/login/src/auth/manager.rs``): a non-empty
+    ``OPENAI_API_KEY`` / ``CODEX_API_KEY`` / ``CODEX_ACCESS_TOKEN`` env
+    var is accepted directly, otherwise the on-disk
+    ``$CODEX_HOME/auth.json`` written by ``codex login`` is the source
+    of truth (``codex-rs/login/src/auth/auth_tests.rs:57-114``).
+    Returning False fails closed via
+    :class:`CodexNotInstalledError` so unattended ``coder=codex`` runs
+    do not silently spawn ``codex app-server`` only to crash on the
+    first turn.
+
+    The probe is non-invasive: it does not import the Codex SDK,
+    spawn a subprocess, or trigger an interactive ``Sign in with
+    ChatGPT`` flow. That matters because ``install_prerequisites`` is
+    called on the orchestrator's hot path before any thread starts;
+    side effects there would race concurrent agents.
+    """
+    for var in _CODEX_AUTH_ENV_VARS:
+        if (os.environ.get(var) or "").strip():
+            return True
+    return (_resolve_codex_home() / "auth.json").is_file()
+
+
 # ---------------------------------------------------------------------------
 # Trusted-hash auto-trust helpers (Phase E6, decision #16)
 # ---------------------------------------------------------------------------
@@ -1307,14 +1345,23 @@ class CodexAgentProvider:
              :class:`CodexNotInstalledError` if absent).
           2. Verify the ``codex`` binary is on ``PATH`` (raise
              :class:`CodexHookNotActiveError(CODEX_BINARY_MISSING)`).
-          3. Run :class:`CodexPluginInstaller` to copy the bundled plugin
+          3. Verify Codex auth state is present — either an
+             ``OPENAI_API_KEY`` / ``CODEX_API_KEY`` /
+             ``CODEX_ACCESS_TOKEN`` env var is set, or
+             ``$CODEX_HOME/auth.json`` exists (raise
+             :class:`CodexNotInstalledError` pointing at ``codex login``
+             otherwise). Plan I1 / decision #8: missing auth fails
+             closed before any ``codex app-server`` spawn so unattended
+             runs never trip an interactive ``Sign in with ChatGPT``
+             prompt.
+          4. Run :class:`CodexPluginInstaller` to copy the bundled plugin
              tree into Codex's PluginStore cache at
              ``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/.codex-plugin/``
              (per ``codex-rs/core-plugins/src/store.rs::PluginStore.plugin_root``).
-          4. Verify the ``mala-codex-pre-tool-use`` console script is on
+          5. Verify the ``mala-codex-pre-tool-use`` console script is on
              ``PATH`` (raise
              :class:`CodexHookNotActiveError(SCRIPT_MISSING)`).
-          5. Auto-write the five Codex-config preconditions to
+          6. Auto-write the five Codex-config preconditions to
              ``$CODEX_HOME/config.toml`` (decision #16):
              ``[features] plugins = true`` to override an opt-out
              setting that would short-circuit plugin loading entirely
@@ -1333,7 +1380,7 @@ class CodexAgentProvider:
              with ``enabled = true`` + ``trusted_hash`` so the hook is
              marked Trusted. I/O failures raise
              :class:`CodexHookNotActiveError(TRUSTED_HASH_MISMATCH)`.
-          6. Run the selftest probe (default: structural verification
+          7. Run the selftest probe (default: structural verification
              of the installed plugin tree at the install target); it
              raises :class:`CodexHookNotActiveError` on
              ``HOOK_MARKER_MISSING`` / ``VERSION_MISMATCH`` /
@@ -1348,7 +1395,8 @@ class CodexAgentProvider:
                 that matches a real session's MCP wiring.
 
         Raises:
-            CodexNotInstalledError: When the Codex SDK is not importable.
+            CodexNotInstalledError: When the Codex SDK is not
+                importable or when no Codex credential is detectable.
             CodexHookNotActiveError: When any structural or runtime
                 fail-closed signature fires.
         """
@@ -1389,7 +1437,25 @@ class CodexAgentProvider:
                 reason=CodexHookNotActiveReason.CODEX_BINARY_MISSING,
             )
 
-        # 3. Run the plugin installer (idempotent on its own).
+        # 3. Codex auth state. Without a credential the spawned
+        # ``codex app-server`` would either fail the first turn with an
+        # opaque RPC error or — worse, on a fresh machine — pop the
+        # interactive ``Sign in with ChatGPT`` flow. Both are
+        # unacceptable on the unattended orchestrator path; fail closed
+        # here with the install-and-login command per decision #8 / AC
+        # #14.
+        if not _codex_auth_present():
+            raise CodexNotInstalledError(
+                "Codex auth missing: none of `OPENAI_API_KEY`, "
+                "`CODEX_API_KEY`, or `CODEX_ACCESS_TOKEN` is set, and "
+                f"`{_resolve_codex_home() / 'auth.json'}` does not exist. "
+                "Run `codex login` (Sign in with ChatGPT) or set "
+                "`OPENAI_API_KEY` to an OpenAI API key, then rerun mala. "
+                "See https://developers.openai.com/codex/auth for the "
+                "full auth setup."
+            )
+
+        # 4. Run the plugin installer (idempotent on its own).
         from src.infra.clients.codex_plugin_installer import (
             CodexPluginInstallError,
             CodexPluginInstaller,
@@ -1405,7 +1471,7 @@ class CodexAgentProvider:
 
         plugin_hash = install_result.plugin_hash
 
-        # 4. Hook script must be on PATH so Codex can launch it via
+        # 5. Hook script must be on PATH so Codex can launch it via
         # ``"command": "mala-codex-pre-tool-use"`` from hooks.json.
         if shutil.which("mala-codex-pre-tool-use") is None:
             raise CodexHookNotActiveError(
@@ -1415,7 +1481,7 @@ class CodexAgentProvider:
                 reason=CodexHookNotActiveReason.SCRIPT_MISSING,
             )
 
-        # 5. Auto-write the five config-side preconditions to
+        # 6. Auto-write the five config-side preconditions to
         # config.toml (decision #16). Codex requires ALL FIVE for the
         # hook to fire: ``[features] plugins = true`` to override an
         # opt-out user config that early-returns from
@@ -1430,7 +1496,7 @@ class CodexAgentProvider:
         codex_home = _resolve_codex_home()
         _write_codex_plugin_config(codex_home=codex_home)
 
-        # 6. Cache key + selftest. The key matches the Amp provider's
+        # 7. Cache key + selftest. The key matches the Amp provider's
         # ``(coder_version, plugin_hash)`` shape; ``"unknown"`` carries
         # the placeholder until a reliable ``codex --version`` parse is
         # added (parity with the Amp path's posture).

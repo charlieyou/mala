@@ -95,7 +95,7 @@ class FakeEventSink(MalaEventSink):
         agent_id: str,
         issue_id: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         self._record("agent_started", agent_id=agent_id, issue_id=issue_id, coder=coder)
 
@@ -107,7 +107,7 @@ class FakeEventSink(MalaEventSink):
         duration_seconds: float,
         summary: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         self._record(
             "agent_completed",
@@ -282,7 +282,7 @@ class FakeEventSink(MalaEventSink):
         attempt: int,
         max_attempts: int,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         self._record(
             "fixer_started", attempt=attempt, max_attempts=max_attempts, coder=coder
@@ -292,7 +292,7 @@ class FakeEventSink(MalaEventSink):
         self,
         result: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         self._record("fixer_completed", result=result, coder=coder)
 
@@ -300,7 +300,7 @@ class FakeEventSink(MalaEventSink):
         self,
         reason: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         self._record("fixer_failed", reason=reason, coder=coder)
 
@@ -313,7 +313,7 @@ class FakeEventSink(MalaEventSink):
         agent_id: str,
         issue_id: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         self._record("issue_closed", agent_id=agent_id, issue_id=issue_id, coder=coder)
 
@@ -325,7 +325,7 @@ class FakeEventSink(MalaEventSink):
         duration_seconds: float,
         summary: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         self._record(
             "issue_completed",
@@ -684,7 +684,7 @@ class FakeEventSink(MalaEventSink):
         self,
         issue_id: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         self._record("session_end_started", issue_id=issue_id, coder=coder)
 
@@ -693,7 +693,7 @@ class FakeEventSink(MalaEventSink):
         issue_id: str,
         result: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         self._record(
             "session_end_completed",
@@ -707,7 +707,7 @@ class FakeEventSink(MalaEventSink):
         issue_id: str,
         reason: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         self._record(
             "session_end_skipped",

@@ -63,7 +63,7 @@ class BaseEventSink:
         agent_id: str,
         issue_id: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         pass
 
@@ -75,7 +75,7 @@ class BaseEventSink:
         duration_seconds: float,
         summary: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         pass
 
@@ -193,7 +193,7 @@ class BaseEventSink:
         attempt: int,
         max_attempts: int,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         pass
 
@@ -201,7 +201,7 @@ class BaseEventSink:
         self,
         result: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         pass
 
@@ -209,7 +209,7 @@ class BaseEventSink:
         self,
         reason: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         pass
 
@@ -222,7 +222,7 @@ class BaseEventSink:
         agent_id: str,
         issue_id: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         pass
 
@@ -234,7 +234,7 @@ class BaseEventSink:
         duration_seconds: float,
         summary: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         pass
 
@@ -482,7 +482,7 @@ class BaseEventSink:
         self,
         issue_id: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         pass
 
@@ -491,7 +491,7 @@ class BaseEventSink:
         issue_id: str,
         result: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         pass
 
@@ -500,7 +500,7 @@ class BaseEventSink:
         issue_id: str,
         reason: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         pass
 

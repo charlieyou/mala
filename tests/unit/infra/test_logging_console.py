@@ -389,9 +389,9 @@ def test_log_with_issue_id_no_agent_id_uses_cyan(
     assert "\033[96m" in output
 
 
-@pytest.mark.parametrize("coder", ["claude", "amp"])
+@pytest.mark.parametrize("coder", ["claude", "amp", "codex"])
 def test_console_sink_per_issue_header_includes_coder(
-    coder: Literal["claude", "amp"],
+    coder: Literal["claude", "amp", "codex"],
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

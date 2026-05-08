@@ -68,12 +68,26 @@ def fake_codex_env(
     Returns ``(codex_home, bin_dir)``. The bin_dir is empty by default so
     individual tests can drop scripts (codex / mala-codex-pre-tool-use)
     into it as needed.
+
+    Also writes a stub ``$CODEX_HOME/auth.json`` so the provider's auth
+    probe (T018) treats this fixture as a logged-in environment by
+    default. Tests that exercise the auth-missing failure mode delete
+    the file or override the env vars explicitly.
     """
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir()
+    (codex_home / "auth.json").write_text(
+        '{"OPENAI_API_KEY":"sk-test","tokens":null,"last_refresh":null}\n',
+        encoding="utf-8",
+    )
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    # Clear auth env vars so the on-disk auth.json is the active source
+    # for the auth probe; tests opting into the env-var path set them
+    # back explicitly.
+    for var in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
     sh_path = shutil.which("sh")
     extra = "/usr/bin" if sh_path else ""
     monkeypatch.setenv("PATH", f"{bin_dir}:{extra}")
@@ -359,6 +373,111 @@ def test_install_prerequisites_raises_codex_binary_missing(
             Path("/tmp"), mcp_server_factory=fake_mcp_factory
         )
     assert excinfo.value.reason is CodexHookNotActiveReason.CODEX_BINARY_MISSING
+
+
+@pytest.mark.unit
+def test_install_prerequisites_raises_codex_not_installed_when_auth_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """No auth env var and no ``$CODEX_HOME/auth.json`` → :class:`CodexNotInstalledError`.
+
+    Codex's auth manager (``codex-rs/login/src/auth/manager.rs:465-489``)
+    treats ``OPENAI_API_KEY``/``CODEX_API_KEY``/``CODEX_ACCESS_TOKEN``
+    or an on-disk ``auth.json`` as the credential source. Without one
+    of those, ``codex app-server`` would either fail the first turn or
+    pop the interactive ``Sign in with ChatGPT`` flow. Plan I1 /
+    decision #8: the provider must fail closed before the spawn with
+    an actionable ``codex login`` message.
+    """
+    codex_home, bin_dir = fake_codex_env
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+    # Remove the fixture's seeded auth.json so the probe sees an
+    # un-authenticated home.
+    (codex_home / "auth.json").unlink()
+    for var in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+
+    provider = CodexAgentProvider()
+    with pytest.raises(CodexNotInstalledError) as excinfo:
+        provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+    msg = str(excinfo.value)
+    assert "codex login" in msg
+    assert "auth.json" in msg
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "auth_env_var", ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"]
+)
+def test_install_prerequisites_accepts_auth_env_var(
+    auth_env_var: str,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """Any of the three auth env vars is sufficient — no ``auth.json`` required.
+
+    Mirrors Codex's auth manager: a non-empty
+    ``OPENAI_API_KEY`` / ``CODEX_API_KEY`` / ``CODEX_ACCESS_TOKEN`` short-circuits
+    the on-disk ``auth.json`` lookup. CI environments commonly inject
+    ``OPENAI_API_KEY`` directly without writing the file, and the
+    provider must accept that path.
+    """
+    codex_home, bin_dir = fake_codex_env
+    # Drop the fixture's seeded auth.json so the env var is the only
+    # credential source visible to the probe.
+    (codex_home / "auth.json").unlink()
+    monkeypatch.setenv(auth_env_var, "sk-fake-test-key")
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    plugin_dir = (
+        codex_home
+        / "plugins"
+        / "cache"
+        / "local"
+        / "mala-safety"
+        / "local"
+        / ".codex-plugin"
+    )
+    assert (plugin_dir / "plugin.json").is_file()
+
+
+@pytest.mark.unit
+def test_install_prerequisites_treats_blank_auth_env_var_as_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """A whitespace-only auth env var must NOT count as a credential.
+
+    Codex's ``read_non_empty_env_var`` (``manager.rs:484-489``) trims
+    and rejects blank values. The provider mirrors that: an empty
+    ``OPENAI_API_KEY`` left over from a misconfigured CI shell must
+    fail closed with the same actionable message a fully-missing
+    credential surfaces, not look authenticated.
+    """
+    codex_home, bin_dir = fake_codex_env
+    (codex_home / "auth.json").unlink()
+    monkeypatch.setenv("OPENAI_API_KEY", "   ")
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    provider = CodexAgentProvider()
+    with pytest.raises(CodexNotInstalledError, match="codex login"):
+        provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
 
 @pytest.mark.unit

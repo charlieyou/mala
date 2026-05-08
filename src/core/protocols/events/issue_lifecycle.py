@@ -25,14 +25,14 @@ class IssueLifecycleEvents(Protocol):
         agent_id: str,
         issue_id: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         """Called when an issue is closed after successful completion.
 
         Args:
             agent_id: Agent that completed the issue.
             issue_id: Issue that was closed.
-            coder: Active coder backend (``claude`` or ``amp``).
+            coder: Active coder backend (``claude``, ``amp``, or ``codex``).
         """
         ...
 
@@ -44,7 +44,7 @@ class IssueLifecycleEvents(Protocol):
         duration_seconds: float,
         summary: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         """Called when an issue implementation completes (success or failure).
 
@@ -57,7 +57,7 @@ class IssueLifecycleEvents(Protocol):
             success: Whether the issue was successfully implemented.
             duration_seconds: Total time spent on the issue.
             summary: Result summary or error message.
-            coder: Active coder backend (``claude`` or ``amp``).
+            coder: Active coder backend (``claude``, ``amp``, or ``codex``).
         """
         ...
 
@@ -164,15 +164,15 @@ class IssueLifecycleEvents(Protocol):
         attempt: int,
         max_attempts: int,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         """Called when a fixer agent is spawned.
 
         Args:
             attempt: Current fixer attempt number.
             max_attempts: Maximum fixer attempts.
-            coder: Active coder backend (``claude`` or ``amp``); fixers
-                follow the main run's coder.
+            coder: Active coder backend (``claude``, ``amp``, or
+                ``codex``); fixers follow the main run's coder.
         """
         ...
 
@@ -180,13 +180,13 @@ class IssueLifecycleEvents(Protocol):
         self,
         result: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         """Called when a fixer agent completes.
 
         Args:
             result: Brief result description.
-            coder: Active coder backend (``claude`` or ``amp``).
+            coder: Active coder backend (``claude``, ``amp``, or ``codex``).
         """
         ...
 
@@ -194,13 +194,13 @@ class IssueLifecycleEvents(Protocol):
         self,
         reason: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         """Called when a fixer agent fails.
 
         Args:
             reason: Failure reason (e.g., "timeout", "error").
-            coder: Active coder backend (``claude`` or ``amp``).
+            coder: Active coder backend (``claude``, ``amp``, or ``codex``).
         """
         ...
 

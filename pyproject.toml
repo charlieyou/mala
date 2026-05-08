@@ -35,6 +35,22 @@ mala-codex-pre-tool-use = "src.infra.hooks.codex_pre_tool_use:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0", "pytest-asyncio>=0.24.0", "pytest-cov>=5.0.0"]
+# `mala[codex]` opts a user into the Codex coder backend without making
+# the SDK a hard dependency for Claude/Amp-only installs (plan I1 /
+# decision #8 + L1334). The Codex SDK package
+# (``openai-codex-app-server-sdk``) is currently published only as a
+# pre-release wheel (``0.116.0a1`` upstream); pinning a stable range
+# here would force every uv-sync to resolve a non-existent stable
+# release. The unsatisfiable marker ``python_version < '0'`` keeps the
+# extra declared (so ``uv pip install 'mala-agent[codex]'`` discovers
+# it and surfaces an actionable error pointing users at the upstream
+# install instructions) without breaking ``uv sync`` for Claude/Amp-only
+# installs. Replace the marker with the resolved version range once the
+# SDK ships a stable PyPI release. The platform-specific
+# ``openai-codex-cli-bin`` runtime is a separate install (each platform
+# ships its own wheel and the SDK pulls it in transitively when
+# requested upstream).
+codex = ["openai-codex-app-server-sdk; python_version < '0'"]
 
 [build-system]
 requires = ["hatchling"]
