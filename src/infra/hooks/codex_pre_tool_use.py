@@ -749,15 +749,30 @@ def _extract_command_substitutions(command: str) -> tuple[str, list[str]]:
         # Legacy backtick command substitution.
         if c == "`" and quote != "'":
             j = i + 1
+            body_chars: list[str] = []
             while j < n:
+                if command[j] == "\\" and j + 1 < n and command[j + 1] == "`":
+                    # Escaped inner backtick (`\``). bash treats this
+                    # as a literal backtick in the OUTER body but as a
+                    # nested-substitution delimiter when the body is
+                    # re-parsed. Unescape here so the recursive call
+                    # to ``_extract_command_substitutions`` on the
+                    # extracted body sees real backticks and pulls
+                    # the nested ``touch f`` out as its own segment.
+                    body_chars.append("`")
+                    j += 2
+                    continue
                 if command[j] == "\\" and j + 1 < n:
+                    body_chars.append(command[j])
+                    body_chars.append(command[j + 1])
                     j += 2
                     continue
                 if command[j] == "`":
                     break
+                body_chars.append(command[j])
                 j += 1
             if j < n:
-                bodies.append(command[i + 1 : j])
+                bodies.append("".join(body_chars))
                 out.append(_CMDSUB_PLACEHOLDER)
                 i = j + 1
                 continue
@@ -765,8 +780,14 @@ def _extract_command_substitutions(command: str) -> tuple[str, list[str]]:
         # ``$(...)`` command substitution / ``$((...))`` arithmetic.
         if c == "$" and quote != "'" and i + 1 < n and command[i + 1] == "(":
             if i + 2 < n and command[i + 2] == "(":
-                # ``$(( arith ))`` — pass through verbatim by counting
-                # ``(`` / ``)`` balance from depth 2.
+                # ``$(( arith ))`` — arithmetic expansion. The OUTER
+                # value is numeric so the surrounding token is not a
+                # write surface, but bash STILL evaluates command
+                # substitutions and backticks inside the arithmetic
+                # body before computing the result. ``echo $(( $(touch
+                # unowned) + 1 ))`` runs ``touch unowned`` for real;
+                # passing the entire ``$((...))`` block through
+                # verbatim would silently allow it.
                 depth = 2
                 j = i + 3
                 inner_quote: str | None = None
@@ -791,6 +812,11 @@ def _extract_command_substitutions(command: str) -> tuple[str, list[str]]:
                     j += 1
                 if depth == 0:
                     out.append(command[i:j])
+                    # Recursively pull any cmd substitutions out of the
+                    # arithmetic body so their writes are gated.
+                    arith_body = command[i + 3 : j - 2]
+                    _, inner_bodies = _extract_command_substitutions(arith_body)
+                    bodies.extend(inner_bodies)
                     i = j
                     continue
                 # Unmatched: fall through.
@@ -2242,12 +2268,15 @@ _APPLY_PATCH_MOVE_TO_RE = re.compile(
     re.MULTILINE,
 )
 # Unified-diff destination header. ``b/`` prefix is the conventional
-# git-format prefix; the regex tolerates either form. Tab-stop boundary
-# matches ``patch(1)`` behavior — patch ignores everything after the
-# first tab on the header line, so ``+++ b/file\t2026-05-08`` writes to
-# ``file``, not ``file\t2026-05-08``.
-_DIFF_DEST_HEADER_RE = re.compile(r"^\+\+\+\s+(?:b/)?([^\t\r\n]+)", re.MULTILINE)
-_DIFF_SRC_HEADER_RE = re.compile(r"^---\s+(?:a/)?([^\t\r\n]+)", re.MULTILINE)
+# git-format prefix; the regex tolerates either form. The ``\S+`` body
+# matches ``patch(1)``'s behaviour: patch truncates the path at the
+# first whitespace (covering both tab-separated AND space-separated
+# trailing timestamps — ``+++ b/file 2026-05-08`` writes to ``file``,
+# not ``file 2026-05-08``). Trade-off: paths with literal whitespace
+# in unquoted diff headers are not supported here, which matches what
+# ``git diff`` produces (it quotes such paths).
+_DIFF_DEST_HEADER_RE = re.compile(r"^\+\+\+\s+(?:b/)?(\S+)", re.MULTILINE)
+_DIFF_SRC_HEADER_RE = re.compile(r"^---\s+(?:a/)?(\S+)", re.MULTILINE)
 
 
 def _apply_patch_paths(tool_input: dict[str, Any]) -> list[str]:

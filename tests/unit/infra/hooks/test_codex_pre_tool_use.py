@@ -3499,16 +3499,29 @@ class TestAttachedFdPrefix:
     def test_attached_digit_prefix_stays_in_filename(
         self, env: dict[str, str], repo: Path
     ) -> None:
-        target = repo / "unowned_dir123"
-        # Attempt to lock the WRONG digit-stripped path; the real
-        # write surface ``unowned_dir123`` should still deny.
+        # Trigger the buggy code path: ``cp src -t {target}>out``
+        # invokes ``_strip_fd_prefix_from_output`` (only fires when
+        # the normalizer emits a ``>`` operator). The bug stripped
+        # the trailing ``123`` from ``unowned_dir123`` and emitted
+        # the operator as ``123>``; the heuristic then lock-checked
+        # ``unowned_dir`` (the digit-stripped name) and ``out``
+        # (the redirect target). Pre-locking BOTH of those wrong
+        # paths would have allowed the command — but the actual
+        # write goes to ``unowned_dir123``.
         from src.infra.tools.locking import try_lock as try_lock_
 
+        target = repo / "unowned_dir123"
+        out_file = repo / "out"
+        # Lock the digit-stripped (WRONG) name and the redirect
+        # target, simulating an agent that has misidentified the
+        # write surfaces. Before the fix, both would match and the
+        # command would be allowed.
         try_lock_(str(repo / "unowned_dir"), "agent-me", repo_namespace=str(repo))
-        command = f"cp src -t {target}"
+        try_lock_(str(out_file), "agent-me", repo_namespace=str(repo))
+        command = f"cp src -t {target}>{out_file}"
         result = decide(make_payload("bash", {"command": command}, cwd=repo))
-        # Must deny: the agent only locked ``unowned_dir``, not
-        # ``unowned_dir123``.
+        # Must deny: ``unowned_dir123`` is the real ``-t`` destination,
+        # and the agent did NOT lock that path.
         assert is_deny(result), result
         assert "unowned_dir123" in deny_reason(result)
 
@@ -3543,3 +3556,96 @@ class TestAttachedFdPrefix:
         command = f"echo hi 2>{target}"
         result = decide(make_payload("bash", {"command": command}))
         assert is_allow(result), result
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 4, post-restart)
+# ---------------------------------------------------------------------------
+
+
+class TestNestedBacktickSubstitutions:
+    """Regression: ``echo \\`echo \\\\`touch unowned\\\\`\\``` (nested backticks).
+
+    Before the fix, the outer backtick body was extracted with the
+    inner ``\\``` escapes preserved. The recursive call then treated
+    those backslashes as literal escapes and skipped the inner
+    backticks, missing the nested ``touch`` entirely.
+    """
+
+    def test_nested_backticks_inner_write_denied(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "unowned.py"
+        # Outer backticks contain escaped inner backticks: `... \`...\` ...`
+        command = f"echo `echo \\`touch {target}\\``"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+
+class TestArithmeticContainsCmdSub:
+    """Regression: ``echo $(( $(touch unowned) + 1 ))`` runs touch.
+
+    Before the fix, ``$((arith))`` was passed through verbatim by the
+    cmd-substitution preprocessor. Bash, however, evaluates command
+    substitutions and backticks INSIDE the arithmetic body before
+    computing the result — so the inner ``touch`` runs.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            # Modern $() inside arithmetic
+            "echo $(( $(touch {target}) + 1 ))",
+            # Backtick inside arithmetic
+            "echo $(( `touch {target}; echo 1` + 1 ))",
+            # Nested arithmetic with cmd sub
+            "echo $(( 2 * $(touch {target}; echo 3) ))",
+        ],
+    )
+    def test_arithmetic_inner_cmd_sub_denied(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+
+class TestDiffHeaderSpaceTimestamp:
+    """P2: ``+++ b/file 2026-05-08`` (space-separated timestamp).
+
+    GNU patch truncates the path at the first whitespace. Before the
+    fix, the regex captured the whole ``file 2026-05-08`` string; an
+    agent could lock that literal junk while patch wrote to ``file``.
+    """
+
+    def test_diff_header_with_space_timestamp_extracts_path_only(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        body = (
+            "diff --git a/src/foo.py b/src/foo.py\n"
+            "--- a/src/foo.py 2026-05-08 12:00:00\n"
+            "+++ b/src/foo.py 2026-05-08 12:00:01\n"
+            "@@\n-x\n+y\n"
+        )
+        target = repo / "src" / "foo.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("apply_patch", {"patch": body}, cwd=repo))
+        assert is_allow(result), result
+
+    def test_diff_header_space_timestamp_unlocked_denies_real_path(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        body = "--- a/src/foo.py 2026-05-08\n+++ b/src/foo.py 2026-05-08\n@@\n-x\n+y\n"
+        result = decide(make_payload("apply_patch", {"patch": body}, cwd=repo))
+        assert is_deny(result)
+        assert "src/foo.py" in deny_reason(result)
+        # The deny reason must reference the real path, not the
+        # date-suffixed string.
+        assert "2026-05-08" not in deny_reason(result)
