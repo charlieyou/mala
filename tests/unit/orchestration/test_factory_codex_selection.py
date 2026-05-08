@@ -8,8 +8,8 @@ time).
 Phase B does not yet drive a real Codex turn; instead, every test asserts
 that the resolved ``MalaConfig`` flows through ``_create_agent_provider``
 into a :class:`CodexAgentProvider` whose options match the configured
-values. The downstream ``CodexNotImplementedError`` propagation is covered
-in :mod:`tests.unit.infra.clients.test_codex_provider`.
+values. The downstream ``CodexNotInstalledError`` / ``CodexHookNotActiveError``
+propagation is covered in :mod:`tests.unit.infra.clients.test_codex_provider`.
 """
 
 import importlib
@@ -25,7 +25,7 @@ import src.orchestration.factory
 from src.domain.validation.config import ConfigError
 from src.infra.clients.codex_provider import (
     CodexAgentProvider,
-    CodexNotImplementedError,
+    CodexNotInstalledError,
 )
 from src.infra.io.config import CodexOptions, CoderOptions, MalaConfig
 from src.orchestration.factory import _create_agent_provider
@@ -75,15 +75,24 @@ def test_factory_threads_resolved_codex_options_to_provider() -> None:
     assert provider.sandbox == "workspace-write"
 
 
-def test_codex_provider_install_prerequisites_raises_not_implemented() -> None:
-    """End-to-end fail-closed: invoking the stub provider raises clearly.
+def test_codex_provider_install_prerequisites_fails_closed_without_sdk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end fail-closed: invoking the provider without the SDK raises.
 
-    The integration-path test for AC #1: every CLI/env/yaml resolution
-    that selects ``coder=codex`` reaches the stub's
+    The integration-path test for AC #1 + AC #14: every CLI/env/yaml
+    resolution that selects ``coder=codex`` reaches
     ``install_prerequisites`` (called once per run from
     ``create_orchestrator``), which raises
-    :class:`CodexNotImplementedError`.
+    :class:`CodexNotInstalledError` when ``codex_app_server`` is
+    unimportable. The unit suite in
+    ``tests/unit/infra/clients/test_codex_provider.py`` exercises every
+    other fail-closed signature.
     """
+    import importlib.util as _import_util
+
+    monkeypatch.setattr(_import_util, "find_spec", lambda name: None)
+
     provider = CodexAgentProvider()
 
     def factory(
@@ -94,7 +103,7 @@ def test_codex_provider_install_prerequisites_raises_not_implemented() -> None:
         del agent_id, repo_path, emit_lock_event
         return {}
 
-    with pytest.raises(CodexNotImplementedError, match="Phases C-I"):
+    with pytest.raises(CodexNotInstalledError, match="codex_app_server"):
         provider.install_prerequisites(Path("/tmp"), mcp_server_factory=factory)
 
 

@@ -50,6 +50,13 @@ include = ["src/domain/validation/presets/*.yaml"]
 # AmpPluginInstaller's resolver prefers this wheel-data path and falls back
 # to the repo-root plugins/amp/ location for source/editable installs.
 "plugins/amp/mala-safety.ts" = "src/infra/clients/_amp_plugin_data/mala-safety.ts"
+# Ship the bundled Codex safety plugin tree inside the wheel next to the
+# installer module so CodexPluginInstaller can resolve it after
+# `uv tool install`. The resolver prefers this wheel-data path and falls
+# back to the repo-root plugins/codex/ location for source/editable installs.
+"plugins/codex/mala-safety/.codex-plugin/plugin.json" = "src/infra/clients/_codex_plugin_data/plugin.json"
+"plugins/codex/mala-safety/.codex-plugin/hooks.json" = "src/infra/clients/_codex_plugin_data/hooks.json"
+"plugins/codex/mala-safety/.codex-plugin/.mcp.json" = "src/infra/clients/_codex_plugin_data/.mcp.json"
 
 [tool.ty.src]
 # Exclude test fixtures (standalone test projects with their own structure)

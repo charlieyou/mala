@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mala-locking": {
+      "command": "mala-codex-mcp-locking",
+      "args": [],
+      "env": {}
+    }
+  }
+}

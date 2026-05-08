@@ -128,10 +128,10 @@ def test_create_agent_provider_threads_amp_mode() -> None:
 
 
 def test_create_agent_provider_picks_codex_stub() -> None:
-    """Phase B wires ``coder=codex`` selection through to the Codex stub
-    provider. ``_create_agent_provider`` now returns a real
-    :class:`CodexAgentProvider` instance whose downstream methods raise
-    :class:`CodexNotImplementedError` (covered separately in
+    """Phase B wires ``coder=codex`` selection through to the Codex provider.
+    ``_create_agent_provider`` returns a real :class:`CodexAgentProvider`
+    instance whose ``install_prerequisites`` is fail-closed on missing
+    SDK / runtime / plugin (covered separately in
     :mod:`tests.unit.infra.clients.test_codex_provider`)."""
     from src.infra.clients.codex_provider import CodexAgentProvider
 
