@@ -1860,7 +1860,13 @@ _PERL_OPEN_WRITE_RE = re.compile(
 # ``open FH, '>file'`` mode-in-path form, or quote-like operator).
 # A read-mode ``open FH, '<', '/path'`` does NOT contain ``>`` and
 # correctly does not match.
-_PERL_OPEN_WRITE_HINT_RE = re.compile(r"""\bopen\b[^;\n]*?[\(\[\{'"][>]+""")
+#
+# ``\s*`` after the bracket/quote handles Perl's leading-whitespace
+# tolerance in the mode string — ``open(my $fh, " > ", $p)`` and
+# 2-arg ``open FH, " >file"`` both have whitespace between the
+# opening quote and ``>``, and Perl silently strips it before
+# evaluating the mode. Without ``\s*`` the hint missed those forms.
+_PERL_OPEN_WRITE_HINT_RE = re.compile(r"""\bopen\b[^;\n]*?[\(\[\{'"]\s*[>]+""")
 
 # Marks that suggest a write call whose target literal we cannot resolve
 # statically — used to trigger the unresolved-sentinel deny per plan L846.

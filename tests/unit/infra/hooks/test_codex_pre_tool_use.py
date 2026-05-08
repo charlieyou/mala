@@ -5003,6 +5003,13 @@ class TestPerlBareOpenWrite:
             "open my $fh, q(>), q(/tmp/unowned.txt); print $fh q(x)",
             # ``qq(>)`` with double-quote semantics: hint must trigger.
             "open my $fh, qq(>), qq(/tmp/unowned.txt); print $fh qq(x)",
+            # 3-arg form with whitespace inside the mode literal.
+            # Perl strips leading whitespace from the mode, so this
+            # opens for write — the hint must trigger even though
+            # the literal extractor's strict mode pattern does not.
+            "open(my $fh, ' > ', '/tmp/unowned.txt'); print $fh 'x'",
+            # 2-arg form with whitespace before the ``>`` marker.
+            "open FH, ' >/tmp/unowned.txt'; print FH 'x'",
         ],
     )
     def test_perl_open_write_hint_triggers_unresolved(
