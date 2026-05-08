@@ -241,6 +241,10 @@ def _build_amp_env(env: AmpMcpEnv) -> dict[str, str]:
     spawned["HOME"] = str(env.home_dir)
     spawned["XDG_CONFIG_HOME"] = str(env.home_dir / ".config")
     spawned["PLUGINS"] = "all"
+    # ``mala-safety.ts`` short-circuits unless ``AMP_MALA=true`` (gating
+    # commit 2676014a); production sets this in
+    # ``AmpRuntimeBuilder.build`` (``src/infra/clients/amp_runtime.py:296``).
+    spawned["AMP_MALA"] = "true"
     spawned["MALA_AGENT_ID"] = _AGENT_ID
     spawned["MALA_LOCK_DIR"] = str(env.lock_dir)
     spawned["MALA_REPO_NAMESPACE"] = str(env.repo_path)
