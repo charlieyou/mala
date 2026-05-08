@@ -4190,3 +4190,172 @@ class TestUnspacedControlOperatorDangerCheck:
             )
         )
         assert is_allow(result)
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 9, post-restart)
+# ---------------------------------------------------------------------------
+
+
+class TestTimeWrapperEnvAssignments:
+    """Regression: ``time VAR=1 touch f`` runs touch with VAR=1.
+
+    Before the fix, ``time`` was an execution prefix but missing from
+    the env-assignment-stripping wrapper set. ``time VAR=1 touch f``
+    left ``VAR=1`` as the cmd basename — no extractor matched and the
+    write was silently allowed.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "time VAR=1 touch {target}",
+            "time -p VAR=1 FOO=bar touch {target}",
+            "time --portability VAR=1 touch {target}",
+            "/usr/bin/time VAR=1 touch {target}",
+            # nested wrappers: env outer, time inner, then assign
+            "env time VAR=1 touch {target}",
+        ],
+    )
+    def test_time_with_env_assignment_inner_write_denied(
+        self, env: dict[str, str], repo: Path, command_template: str
+    ) -> None:
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+
+class TestNewlineCommentBypass:
+    """Regression: ``# foo\\ntouch unowned`` (comment on first line).
+
+    Before the fix, ``_normalize_separators`` replaced every ``\\n``
+    with ``;`` BEFORE shlex's comment handling. With ``comments=True``
+    shlex only terminates a comment at the next ``\\n``; since all
+    newlines were rewritten, the ``#`` opened a comment that consumed
+    the entire remainder of the input — a zero-token segment list
+    and a silent allow.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "# leading comment\ntouch {target}",
+            "# multi-line comment\n# second line\ntouch {target}",
+            "echo hi # trailing comment\ntouch {target}",
+            # First line ends in `;`, then comment, then second cmd.
+            ":; # comment\ntouch {target}",
+        ],
+    )
+    def test_comment_then_newline_does_not_swallow_next_command(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+    def test_quoted_hash_with_newline_not_a_comment(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``echo "# not a comment"`` — the ``#`` is inside quotes, so
+        # it's a literal char, NOT a comment marker. Even though there's
+        # no newline, the heuristic must not eat the rest of the input.
+        target = repo / "unowned.py"
+        command = f'echo "# not a comment" ; touch {target}'
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result)
+        assert "unowned.py" in deny_reason(result)
+
+
+class TestEscapedRedirectBeforePipe:
+    """Regression: ``\\>|`` and ``\\>&`` (escaped redirect).
+
+    Before the fix, the ``|`` and ``&`` handlers checked if the
+    immediately preceding char in ``out`` (or input) was ``>``, but
+    didn't verify the ``>`` was unescaped. ``cmd \\>| tee unowned``
+    has ``\\>`` (literal ``>``) followed by a real pipeline ``| tee``
+    — but the heuristic glued ``|`` to the literal ``>`` as if it
+    were a redirect operator and left ``unowned`` as a passive arg
+    that no extractor saw.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "cmd \\>| tee {target}",
+            "cmd \\>& touch {target}",
+            "echo \\> | tee {target}",
+        ],
+    )
+    def test_escaped_redirect_does_not_hide_pipe(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+    def test_unescaped_force_clobber_still_works(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Sanity: real ``>|`` (force-clobber redirect) is still
+        # recognised as a redirect operator.
+        target = repo / "out.log"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"echo hi >| {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+
+class TestDangerousCmdsInsideSubstitution:
+    """Regression: destructive git inside backticks/$() bypasses gate.
+
+    Before the fix, ``_detect_dangerous_pattern`` ran only on the
+    outer command (post-substitution-extraction). ``echo `git -C
+    /tmp stash``` had its dangerous body extracted as a substitution
+    body but only ``_extract_shell_write_paths`` saw it; that
+    extractor returns no write targets for ``git stash`` and the
+    shell branch fell through to allow.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            # backticks
+            "echo `git -C /tmp stash`",
+            "x=`git -C /tmp commit -a -m x`",
+            "echo `git push --force origin main`",
+            # $() form
+            "echo $(git -C /tmp stash)",
+            'echo "$(git --git-dir=.git/ rebase main)"',
+            # Nested
+            "echo $(echo $(git -C /tmp stash))",
+            # Unspaced control op inside body
+            "echo $(true;git -C /tmp stash)",
+        ],
+    )
+    def test_dangerous_inside_substitution_denied(
+        self, env: dict[str, str], command_template: str
+    ) -> None:
+        result = decide(make_payload("bash", {"command": command_template}))
+        assert is_deny(result), f"command: {command_template!r} → {result}"
+        reason = deny_reason(result)
+        assert any(
+            keyword in reason
+            for keyword in (
+                "git push",
+                "git commit",
+                "git stash",
+                "git rebase",
+            )
+        ), reason

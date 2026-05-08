@@ -677,7 +677,13 @@ def _unwrap_execution_prefix(
         wrapper_writes.extend(sub_writes)
         wrapper_bodies.extend(sub_bodies)
         # Wrappers that allow ``KEY=VALUE`` before the inner cmd.
-        if cmd in {"env", "sudo", "doas"}:
+        # ``time``, like the bash reserved-word ``time``, accepts
+        # ``KEY=VALUE`` env-assignments before the inner command. We
+        # added ``time`` here (not as a reserved word) so its options
+        # and path-qualified form are unwrapped; without env-assign
+        # stripping, ``time VAR=1 touch f`` leaves ``VAR=1`` as the
+        # cmd basename and the inner ``touch`` is silently allowed.
+        if cmd in {"env", "sudo", "doas", "time"}:
             new_tokens = _strip_env_assignments(new_tokens)
         # Wrappers that take a leading positional (DURATION/PRIORITY/
         # MASK) before the inner cmd:
@@ -2112,6 +2118,21 @@ def _normalize_separators(command: str) -> str:
             quote = c
             i += 1
             continue
+        # ``#`` comment: from ``#`` (when starting a word — i.e.,
+        # preceded by whitespace, separator, or start-of-input) up to
+        # the next newline. Must be handled BEFORE the newline-to-``;``
+        # rewrite below: otherwise ``# foo\ntouch f`` becomes
+        # ``# foo ; touch f``, and shlex's comment handling (which
+        # only terminates at a newline) treats the entire remainder as
+        # comment — silently dropping the second command.
+        if c == "#" and (
+            i == 0
+            or command[i - 1].isspace()
+            or command[i - 1] in (";", "&", "|", "(", ")")
+        ):
+            while i < n and command[i] != "\n":
+                i += 1
+            continue
         # Newlines are top-level command separators in shells; rewrite to
         # ``;`` so ``shlex.split`` does not collapse them into whitespace.
         if c == "\n":
@@ -2140,7 +2161,14 @@ def _normalize_separators(command: str) -> str:
             # and the destination silently becomes a separate token
             # that no extractor can lock-check. Multi-char ``||``/``|&``
             # are already handled by the lookahead above.
-            if out and out[-1] == ">":
+            #
+            # The ``>`` must be unescaped — the unescaped ``>|``
+            # operator is normally consumed by the ``>`` handler
+            # above, so any ``>`` left in ``out`` for the ``|``
+            # handler to see was preserved by the escape branch
+            # (``\>``). In that case the ``>`` is literal text and
+            # the ``|`` is a real pipeline operator that MUST split.
+            if out and out[-1] == ">" and not (len(out) >= 2 and out[-2] == "\\"):
                 out.append(c)
                 i += 1
                 continue
@@ -2159,15 +2187,15 @@ def _normalize_separators(command: str) -> str:
                 i += 1
                 continue
             # ``&`` is the trailing half of an fd redirect ONLY when it
-            # IMMEDIATELY follows ``>`` (``>&``, ``n>&``). The digits in
-            # ``n>&`` are BEFORE the ``>``, not between ``>`` and ``&``,
-            # so we check the byte immediately preceding without walking
-            # through the filename digits. Earlier code walked back
-            # through digits and matched ``>123&`` as a redirect — but
-            # bash treats that as ``> 123`` (write to file ``123``)
-            # followed by ``&`` (background), and our normalizer's ``>``
-            # handler already emitted the ``> `` operator pair.
-            if i > 0 and command[i - 1] == ">":
+            # IMMEDIATELY follows an UNESCAPED ``>``. ``\>&`` (escaped
+            # ``>``) is literal-``>`` followed by backgrounding ``&``;
+            # treating it as a redirect would split off ``&`` as part
+            # of the operator and the real backgrounding op is lost.
+            if (
+                i > 0
+                and command[i - 1] == ">"
+                and not (i >= 2 and command[i - 2] == "\\")
+            ):
                 out.append(c)
                 i += 1
                 continue
@@ -2561,6 +2589,35 @@ def _detect_dangerous_pattern(command: str) -> str | None:
     return None
 
 
+def _detect_dangerous_pattern_recursive(command: str) -> str | None:
+    """Run dangerous-pattern detection on ``command`` AND every nested
+    substitution body (backticks, ``$()``).
+
+    A destructive git invocation hidden inside a backtick body — e.g.
+    ``echo `git -C /tmp stash``` — runs for real when bash evaluates
+    the substitution, so the dangerous-cmd gate must inspect the
+    body too. Without this recursion the outer token-walk only sees
+    the placeholder ``__MALA_CMDSUB_LITERAL__`` and the destructive
+    git command silently slips through.
+    """
+    seen: set[str] = set()
+    pending = [command]
+    while pending:
+        body = pending.pop()
+        if body in seen:
+            continue
+        seen.add(body)
+        pattern = _detect_dangerous_pattern(body)
+        if pattern is not None:
+            return pattern
+        try:
+            _, sub_bodies = _extract_command_substitutions(body)
+        except Exception:
+            continue
+        pending.extend(sub_bodies)
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Main decision logic
 # ---------------------------------------------------------------------------
@@ -2721,7 +2778,11 @@ def decide(input_payload: dict[str, Any]) -> dict[str, Any]:
     if tool_name in SHELL_TOOL_NAMES:
         command = _command_string(tool_input)
         # 1. Dangerous-command detection (does not require lock env).
-        dangerous = _detect_dangerous_pattern(command)
+        # Also walks into backtick / ``$()`` substitution bodies — the
+        # outer command's substring/token check would otherwise miss a
+        # destructive ``git`` invocation hidden inside a substitution
+        # (``echo `git -C /tmp stash``` runs the inner stash for real).
+        dangerous = _detect_dangerous_pattern_recursive(command)
         if dangerous is not None:
             return _deny(_msg_dangerous(dangerous))
         # 2. Heuristic write-path detection.
