@@ -30,6 +30,7 @@ Repository = "https://github.com/charlieyou/mala"
 [project.scripts]
 mala = "src.cli.main:app"
 mala-amp-mcp-locking = "src.infra.tools.locking_mcp_stdio:main"
+mala-codex-pre-tool-use = "src.infra.hooks.codex_pre_tool_use:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0", "pytest-asyncio>=0.24.0", "pytest-cov>=5.0.0"]
