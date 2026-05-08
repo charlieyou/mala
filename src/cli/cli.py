@@ -471,7 +471,9 @@ app = typer.Typer(
     add_completion=False,
 )
 
-_CODER_HELP = "Coder backend to drive issue execution (claude or amp). Default: amp."
+_CODER_HELP = (
+    "Coder backend to drive issue execution (claude, amp, or codex). Default: amp."
+)
 _AMP_MODE_HELP = (
     "Amp execution mode: smart, rush, or deep. Only consulted when coder=amp. "
     "Default: deep."

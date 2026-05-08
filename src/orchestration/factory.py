@@ -122,7 +122,11 @@ def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
 
     Args:
         mala_config: Configuration carrying ``coder`` and ``coder_options``.
-            ``coder`` is one of ``"amp"`` (default) or ``"claude"``.
+            ``coder`` is one of ``"amp"`` (default), ``"claude"``, or
+            ``"codex"``. The Codex provider is not yet wired (Phase B);
+            selecting it here raises :class:`NotImplementedError` so the
+            enum widening in A8 stays observable while the actual provider
+            stub lands later.
 
     Returns:
         An :class:`AgentProvider` for the selected backend. The Amp provider
@@ -137,6 +141,12 @@ def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
                 mode=mala_config.coder_options.amp.mode,
                 effort=mala_config.effort,
             ),
+        )
+
+    if mala_config.coder == "codex":
+        raise NotImplementedError(
+            "Codex provider is not yet implemented (coder='codex'); "
+            "the enum is widened in Phase A8 but the provider lands in Phase B."
         )
 
     from src.infra.clients.claude_provider import ClaudeAgentProvider
@@ -154,7 +164,7 @@ def load_yaml_coder_resolution(
     repo_path: Path,
 ) -> tuple[
     tuple[str, ...] | None,
-    Literal["claude", "amp"] | None,
+    Literal["claude", "amp", "codex"] | None,
     Literal["smart", "rush", "deep"] | None,
     str | None,
 ]:
@@ -1079,7 +1089,7 @@ def create_orchestrator(
     # Load ValidationConfig once from mala.yaml for all settings that need to flow
     # to MalaConfig and reviewer configuration (avoids redundant I/O and parsing)
     yaml_claude_settings_sources: tuple[str, ...] | None = None
-    yaml_coder: Literal["claude", "amp"] | None = None
+    yaml_coder: Literal["claude", "amp", "codex"] | None = None
     yaml_amp_mode: Literal["smart", "rush", "deep"] | None = None
     yaml_effort: str | None = None
     reviewer_config = _ReviewerConfig()  # Default

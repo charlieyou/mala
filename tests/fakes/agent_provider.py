@@ -56,7 +56,7 @@ class FakeAgentProvider:
             :class:`FileSystemLogProvider`.
     """
 
-    name: Literal["claude", "amp"] = "claude"
+    name: Literal["claude", "amp", "codex"] = "claude"
 
     def __init__(
         self,
@@ -64,7 +64,7 @@ class FakeAgentProvider:
         *,
         evidence_provider: EvidenceProvider | None = None,
         install_prerequisites_count: int = 0,
-        name: Literal["claude", "amp"] = "claude",
+        name: Literal["claude", "amp", "codex"] = "claude",
         setting_sources: list[str] | None = None,
     ) -> None:
         # ``client_factory`` is annotated as the slim cross-coder protocol

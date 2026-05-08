@@ -892,7 +892,7 @@ class ValidationConfig:
     # Coder selection (validated above as strict enum). Stored here so the
     # orchestrator can flow yaml values through to MalaConfig.from_env's
     # yaml_coder / yaml_amp_mode parameters (CLI > env > yaml > default).
-    coder: Literal["claude", "amp"] | None = None
+    coder: Literal["claude", "amp", "codex"] | None = None
     amp_mode: Literal["smart", "rush", "deep"] | None = None
     # Mala-level reasoning effort. Strict-enum validated below as
     # ``low | medium | high | xhigh | max``. Forwarded by the orchestrator
@@ -1173,12 +1173,12 @@ class ValidationConfig:
                     is_per_issue_review=True,
                 )
 
-        # Validate coder (optional, strict enum: claude | amp). Resolver
-        # precedence is handled in src/infra/io/config.py (see
+        # Validate coder (optional, strict enum: claude | amp | codex).
+        # Resolver precedence is handled in src/infra/io/config.py (see
         # plans/2026-04-29-amp-provider-plan.md L194-L215); this block
         # fails fast on invalid YAML and stores the parsed value so the
         # orchestrator can flow it into MalaConfig.from_env.
-        coder: Literal["claude", "amp"] | None = None
+        coder: Literal["claude", "amp", "codex"] | None = None
         if "coder" in data:
             fields_set.add("coder")
             coder_val = data["coder"]
@@ -1186,12 +1186,18 @@ class ValidationConfig:
                 if not isinstance(coder_val, str) or coder_val not in (
                     "claude",
                     "amp",
+                    "codex",
                 ):
                     raise ConfigError(
-                        f"coder must be 'claude' or 'amp', got {coder_val!r}"
+                        f"coder must be 'claude', 'amp', or 'codex', got {coder_val!r}"
                     )
                 # Narrow Literal type for the type checker.
-                coder = "amp" if coder_val == "amp" else "claude"
+                if coder_val == "amp":
+                    coder = "amp"
+                elif coder_val == "codex":
+                    coder = "codex"
+                else:
+                    coder = "claude"
 
         # Validate amp_mode (optional, strict enum: smart | rush | deep).
         # Top-level YAML key; only meaningful when coder == 'amp'. The

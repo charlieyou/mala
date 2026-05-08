@@ -35,18 +35,20 @@ DEFAULT_AMP_EFFORT_BY_MODE: dict[Literal["smart", "rush", "deep"], str | None] =
 
 def default_effort_for(
     *,
-    coder: Literal["claude", "amp"],
+    coder: Literal["claude", "amp", "codex"],
     mode: Literal["smart", "rush", "deep"],
 ) -> str | None:
     """Return mala's default reasoning effort for the selected backend."""
     if coder == "claude":
         return DEFAULT_CLAUDE_EFFORT
+    if coder == "codex":
+        return None
     return DEFAULT_AMP_EFFORT_BY_MODE[mode]
 
 
 def validate_amp_effort_for_mode(
     *,
-    coder: Literal["claude", "amp"],
+    coder: Literal["claude", "amp", "codex"],
     mode: Literal["smart", "rush", "deep"],
     effort: str | None,
     source: str,

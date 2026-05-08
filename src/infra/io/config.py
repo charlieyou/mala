@@ -43,9 +43,9 @@ from src.core.constants import (
 
 _logger = logging.getLogger(__name__)
 
-VALID_CODERS: frozenset[str] = frozenset({"claude", "amp"})
+VALID_CODERS: frozenset[str] = frozenset({"claude", "amp", "codex"})
 VALID_AMP_MODES: frozenset[str] = frozenset({"smart", "rush", "deep"})
-DEFAULT_CODER: Literal["claude", "amp"] = "amp"
+DEFAULT_CODER: Literal["claude", "amp", "codex"] = "amp"
 DEFAULT_AMP_MODE: Literal["smart", "rush", "deep"] = "deep"
 
 
@@ -133,12 +133,14 @@ def parse_claude_settings_sources(
     return tuple(sources)
 
 
-def parse_coder(raw: str | None, *, source: str) -> Literal["claude", "amp"] | None:
+def parse_coder(
+    raw: str | None, *, source: str
+) -> Literal["claude", "amp", "codex"] | None:
     """Parse a coder selection string.
 
     Args:
-        raw: Raw value, "claude" or "amp" (after strip; case-sensitive to
-            match the strict-enum YAML schema in
+        raw: Raw value, "claude", "amp", or "codex" (after strip; case-sensitive
+            to match the strict-enum YAML schema in
             src/domain/validation/config.py).
         source: Source name for error messages (e.g., "MALA_CODER", "CLI").
 
@@ -159,6 +161,8 @@ def parse_coder(raw: str | None, *, source: str) -> Literal["claude", "amp"] | N
     # Narrow Literal type for the type checker.
     if stripped == "amp":
         return "amp"
+    if stripped == "codex":
+        return "codex"
     return "claude"
 
 
@@ -361,7 +365,7 @@ class MalaConfig:
     # Coder selection (which agent backend to drive issue execution)
     # Mirrors claude_settings_sources resolver pattern: env > yaml > default here;
     # CLI override is layered on top in build_resolved_config().
-    coder: Literal["claude", "amp"] = DEFAULT_CODER
+    coder: Literal["claude", "amp", "codex"] = DEFAULT_CODER
     coder_options: CoderOptions = field(default_factory=CoderOptions)
 
     # Mala-level reasoning effort. Forwarded to ``ClaudeAgentOptions.effort``
@@ -426,7 +430,7 @@ class MalaConfig:
         *,
         validate: bool = True,
         yaml_claude_settings_sources: tuple[str, ...] | None = None,
-        yaml_coder: Literal["claude", "amp"] | None = None,
+        yaml_coder: Literal["claude", "amp", "codex"] | None = None,
         yaml_amp_mode: Literal["smart", "rush", "deep"] | None = None,
         yaml_effort: str | None = None,
     ) -> MalaConfig:
@@ -438,7 +442,7 @@ class MalaConfig:
             - CLAUDE_CONFIG_DIR: Claude SDK config directory (optional)
             - MALA_TRACK_REVIEW_ISSUES: Create beads issues for P2/P3 findings (deprecated)
             - MALA_CLAUDE_SETTINGS_SOURCES: Comma-separated Claude settings sources (optional)
-            - MALA_CODER: Coder selection ("claude" or "amp") (optional)
+            - MALA_CODER: Coder selection ("claude", "amp", or "codex") (optional)
             - MALA_AMP_MODE: Amp execution mode ("smart", "rush", "deep") (optional)
             - LLM_API_KEY: API key for LLM calls (optional)
             - LLM_BASE_URL: Base URL for LLM API (optional)
@@ -527,7 +531,7 @@ class MalaConfig:
         except ValueError as exc:
             parse_errors.append(str(exc))
             env_coder = None
-        resolved_coder: Literal["claude", "amp"] = (
+        resolved_coder: Literal["claude", "amp", "codex"] = (
             env_coder
             if env_coder is not None
             else (yaml_coder if yaml_coder is not None else DEFAULT_CODER)
@@ -736,7 +740,7 @@ class ResolvedConfig:
     claude_settings_sources: tuple[str, ...]
 
     # Coder selection
-    coder: Literal["claude", "amp"]
+    coder: Literal["claude", "amp", "codex"]
     coder_options: CoderOptions
     effort: str | None
 
@@ -823,7 +827,7 @@ def build_resolved_config(
     # Apply coder override (CLI > env > yaml > default)
     # base_config already has env > yaml > default applied
     cli_coder = parse_coder(overrides.coder, source="CLI")
-    coder: Literal["claude", "amp"] = (
+    coder: Literal["claude", "amp", "codex"] = (
         cli_coder if cli_coder is not None else base_config.coder
     )
 

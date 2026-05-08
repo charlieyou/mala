@@ -89,7 +89,7 @@ class AgentProvider(Protocol):
     on the repo path and per-issue ``agent_id``.
     """
 
-    name: Literal["claude", "amp"]
+    name: Literal["claude", "amp", "codex"]
     client_factory: SDKClientFactoryProtocol
     evidence_provider: EvidenceProvider
 

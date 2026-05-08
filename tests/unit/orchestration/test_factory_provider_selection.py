@@ -127,6 +127,21 @@ def test_create_agent_provider_threads_amp_mode() -> None:
     assert "rush" in runtime.argv  # ty:ignore[unresolved-attribute]
 
 
+def test_create_agent_provider_rejects_codex_until_phase_b() -> None:
+    """A8 widens the ``coder`` enum to include ``"codex"`` but does not yet
+    wire the Codex provider (Phase B). Constructing :class:`MalaConfig` with
+    ``coder="codex"`` succeeds; resolving an :class:`AgentProvider` for it
+    raises :class:`NotImplementedError` so the gap is observable."""
+    config = MalaConfig(
+        runs_dir=Path("/tmp/runs"),
+        lock_dir=Path("/tmp/locks"),
+        coder="codex",
+    )
+    assert config.coder == "codex"
+    with pytest.raises(NotImplementedError, match="Codex"):
+        _create_agent_provider(config)
+
+
 def test_create_agent_provider_threads_claude_settings_sources() -> None:
     """Claude provider receives the configured settings sources so the run's
     ``claude_settings_sources`` precedence (env > yaml > default) is honored."""
