@@ -232,6 +232,9 @@ ignore_imports = [
     # path's AgentRuntimeBuilder, which lives outside src.infra.clients
     # and so does not need an exception.
     "src.infra.clients.amp_runtime -> src.infra.hooks.lint_cache",
+    # CodexRuntime carries a LintCache for the same cross-coder parity
+    # reason (plan 2026-05-07-codex-provider-plan.md L429).
+    "src.infra.clients.codex_runtime -> src.infra.hooks.lint_cache",
 ]
 
 # -----------------------------------------------------------------------------
@@ -441,6 +444,9 @@ ignore_imports = [
     # path's AgentRuntimeBuilder, which lives outside src.infra.clients
     # and so does not need an exception.
     "src.infra.clients.amp_runtime -> src.infra.hooks.lint_cache",
+    # CodexRuntime carries a LintCache for the same cross-coder parity
+    # reason (plan 2026-05-07-codex-provider-plan.md L429).
+    "src.infra.clients.codex_runtime -> src.infra.hooks.lint_cache",
 ]
 
 [[tool.importlinter.contracts]]
