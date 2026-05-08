@@ -98,6 +98,34 @@ def test_default_source_resolves_to_repo_plugin_in_source_checkout() -> None:
 
 
 @pytest.mark.unit
+def test_bundled_manifest_points_at_dot_codex_plugin_paths() -> None:
+    """Regression: ``plugin.json`` must reference paths under
+    ``./.codex-plugin/`` so Codex resolves them to the actual install
+    location.
+
+    Codex's ``resolve_manifest_path``
+    (``codex-rs/core-plugins/src/manifest.rs:397``) joins the manifest
+    string against the plugin root (the directory CONTAINING
+    ``.codex-plugin/``). A bare ``./hooks.json`` would resolve to
+    ``<plugin_root>/hooks.json``, which we never install, so the hook
+    + MCP would silently not load while the manifest itself parses
+    fine.
+    """
+    import json as _json
+
+    manifest_path = _REAL_BUNDLED_DIR / "plugin.json"
+    manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["hooks"] == "./.codex-plugin/hooks.json", (
+        "plugin.json hooks path must include the .codex-plugin/ prefix; "
+        "Codex resolves manifest paths relative to the plugin root, not "
+        "the .codex-plugin/ directory itself."
+    )
+    assert manifest["mcpServers"] == "./.codex-plugin/.mcp.json", (
+        "plugin.json mcpServers path must include the .codex-plugin/ prefix."
+    )
+
+
+@pytest.mark.unit
 def test_resolver_prefers_wheel_data_dir_when_present(tmp_path: Path) -> None:
     """Simulate a wheel-installed layout: the installer module sits inside
     ``site-packages/src/infra/clients/`` and a ``_codex_plugin_data/``

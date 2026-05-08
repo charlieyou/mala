@@ -203,11 +203,37 @@ class _CodexClientFactory:
 # ---------------------------------------------------------------------------
 
 
-_HOOK_STATE_FILENAME = "hooks.toml"
-"""Codex hook-state file relative to ``CODEX_HOME``. Per
-``codex-rs/config/src/hook_config.rs::HooksToml``: ``state.<hook-key>``
-holds ``{enabled, trusted_hash}``. The user's ``hooks.toml`` is the
-on-disk shape that Codex reads at startup."""
+_HOOK_CONFIG_FILENAME = "config.toml"
+"""Codex's user config file relative to ``CODEX_HOME``. Hook trust state
+lives in ``[hooks.state."<key>"]`` tables here per
+``codex-rs/core/tests/common/hooks.rs::trusted_config_layer_stack``: that
+test fixture is the source-of-truth for how Codex marks discovered
+plugin hooks as trusted. The schema's flat ``[state."<key>"]`` form (in
+a standalone ``hooks.toml``) deserializes the same data, but the
+canonical install path Codex reads on startup is ``config.toml``.
+"""
+
+_PLUGIN_SOURCE_RELATIVE_PATH = ".codex-plugin/hooks.json"
+"""Codex's hook-key uses the plugin-relative path of the hooks file
+(``codex-rs/hooks/src/declarations.rs:35`` ``plugin_hook_key_source``)
+combined with ``<plugin_id>``. Our hooks.json is bundled at
+``mala-safety/.codex-plugin/hooks.json``; the relative path Codex
+records is therefore ``.codex-plugin/hooks.json``.
+"""
+
+_DEFAULT_PLUGIN_MARKETPLACE = "local"
+"""Default marketplace name the plugin is installed under. Codex's
+``PluginId.as_key()`` returns ``<plugin_name>@<marketplace_name>``
+(``codex-rs/plugin/src/plugin_id.rs:45``). Without a confirmed
+marketplace name from the Phase E spike, the auto-trust write keys on
+``mala-safety@local`` which matches the conventional name for
+locally-registered marketplaces (per
+``codex-rs/skills/src/assets/samples/plugin-creator/references/plugin-json-spec.md``
+``~/.agents/plugins/marketplace.json`` example). If Codex ends up
+picking a different marketplace name, the auto-trust write lands at the
+wrong key and the selftest probe surfaces ``TRUSTED_HASH_MISMATCH``
+(documented one-time interactive trust fallback per plan E6).
+"""
 
 
 def _resolve_codex_home() -> Path:
@@ -218,50 +244,110 @@ def _resolve_codex_home() -> Path:
     return Path("~/.codex").expanduser()
 
 
-def _hook_state_key(hooks_json_path: Path) -> str:
+def _plugin_id(marketplace: str = _DEFAULT_PLUGIN_MARKETPLACE) -> str:
+    """Return the Codex ``PluginId.as_key()`` value for our plugin."""
+    return f"mala-safety@{marketplace}"
+
+
+def _hook_state_key(*, marketplace: str = _DEFAULT_PLUGIN_MARKETPLACE) -> str:
     """Compute the Codex hook-state key for the bundled PreToolUse entry.
 
-    Format mirrors the Codex test fixture
-    (``codex-rs/config/src/hooks_tests.rs:91``): ``"<hooks.json path>:pre_tool_use:0:0"``.
-    The first index is the matcher group; the second is the handler
-    inside that group. Our ``hooks.json`` ships exactly one PreToolUse
-    matcher with one command handler, so ``(0, 0)`` is correct.
+    Mirrors ``codex-rs/hooks/src/declarations.rs::plugin_hook_key_source`` +
+    ``codex-rs/hooks/src/lib.rs::hook_key``: for plugin hooks the key
+    is ``<plugin_id>:<source_relative_path>:<event>:<group>:<handler>``.
+    Our hooks.json declares exactly one PreToolUse matcher with one
+    command handler, so the indices are ``0:0``.
     """
-    return f"{hooks_json_path}:pre_tool_use:0:0"
+    return f"{_plugin_id(marketplace)}:{_PLUGIN_SOURCE_RELATIVE_PATH}:pre_tool_use:0:0"
 
 
-def _format_trusted_hash_value(plugin_hash: str) -> str:
-    """Codex stores trusted hashes prefixed with ``sha256:`` (per
-    ``hooks_tests.rs:93``: ``trusted_hash = "sha256:abc123"``)."""
-    return f"sha256:{plugin_hash}"
+def _normalized_hook_identity_value() -> object:
+    """Build the ``NormalizedHookIdentity`` payload Codex hashes for ``current_hash``.
+
+    Source-of-truth: ``codex-rs/hooks/src/engine/discovery.rs::command_hook_hash``
+    serializes the struct to TOML, then ``codex-rs/config/src/fingerprint.rs::version_for_toml``
+    canonicalizes the JSON and returns ``"sha256:<hex>"``. The struct is
+    ``{event_name, **MatcherGroup}`` with ``MatcherGroup = {matcher, hooks: [HookHandlerConfig]}``.
+    Our hook is a single command handler with no matcher; Codex
+    normalizes the timeout to 600 (``unwrap_or(600).max(1)``,
+    ``discovery.rs:409``) and emits ``async`` / ``status_message`` /
+    ``timeout`` per the ``HookHandlerConfig::Command`` serde shape
+    (``hook_config.rs:123-135``: rename ``timeout_sec`` → ``timeout``,
+    ``status_message`` → ``statusMessage``). ``Option::None`` fields are
+    not present in the TOML round-trip used by the hash routine.
+    """
+    return {
+        "event_name": "pre_tool_use",
+        "hooks": [
+            {
+                "type": "command",
+                "command": "mala-codex-pre-tool-use",
+                "timeout": 600,
+                "async": False,
+            }
+        ],
+    }
+
+
+def _canonical_json(value: object) -> object:
+    """Canonical-JSON normalization: dict keys sorted, lists left in order.
+
+    Mirrors ``codex-rs/config/src/fingerprint.rs::canonical_json``.
+    """
+    if isinstance(value, dict):
+        return {k: _canonical_json(value[k]) for k in sorted(value.keys())}
+    if isinstance(value, list):
+        return [_canonical_json(item) for item in value]
+    return value
+
+
+def _compute_normalized_hook_hash() -> str:
+    """Compute the ``sha256:<hex>`` ``current_hash`` Codex assigns the bundled hook.
+
+    The Rust path serializes the struct to TOML, canonicalizes it, and
+    JSON-encodes it before hashing. We approximate that by serializing
+    the equivalent structure as canonical JSON (``json.dumps`` with
+    ``sort_keys=True``, separators tightly packed). The TOML→JSON
+    round-trip in the Rust pipeline happens to land on the same JSON
+    shape Python's ``json.dumps`` produces for plain types (string,
+    int, bool, list, dict), so the hex digest matches in practice for
+    our minimal command-hook payload.
+    """
+    import hashlib
+    import json as _json
+
+    canonical = _canonical_json(_normalized_hook_identity_value())
+    serialized = _json.dumps(canonical, separators=(",", ":")).encode("utf-8")
+    return f"sha256:{hashlib.sha256(serialized).hexdigest()}"
 
 
 def _write_trusted_hash(
     *,
     codex_home: Path,
-    hooks_json_path: Path,
-    plugin_hash: str,
+    marketplace: str = _DEFAULT_PLUGIN_MARKETPLACE,
 ) -> None:
-    """Best-effort write of the bundled hook's ``trusted_hash`` to ``hooks.toml``.
+    """Best-effort write of the bundled hook's ``trusted_hash`` to Codex's config.
 
-    Codex's hook-state lives in a separate ``[state."<key>"]`` table —
-    NOT inside the hook handler entry — so this function preserves any
-    existing top-level event tables (``[[PreToolUse]]`` etc.) when the
-    file already exists. The implementation appends a fresh
-    ``[state."<key>"]`` section if one is absent and rewrites the
-    existing one in place when present.
+    Codex's hook-state for plugin hooks lives in
+    ``$CODEX_HOME/config.toml`` under ``[hooks.state."<plugin_id>:<rel-path>:pre_tool_use:0:0"]``
+    (per ``codex-rs/core/tests/common/hooks.rs``). The function preserves
+    any pre-existing top-level config tables and rewrites only the
+    matching ``[hooks.state."<key>"]`` block.
 
     Failures are logged at warning level rather than raised: if the
-    user's ``CODEX_HOME`` is read-only, the selftest will catch the
-    dormant hook and surface :class:`CodexHookNotActiveError` with a
-    structured reason; we don't want a Codex-home permissions issue to
+    user's ``CODEX_HOME`` is read-only or the marketplace name turns
+    out to differ, the selftest probe catches the dormant hook and
+    surfaces :class:`CodexHookNotActiveError` with a structured reason
+    (TRUSTED_HASH_MISMATCH or HOOK_MARKER_MISSING) — we don't want a
+    Codex-home permissions issue or an unconfirmed marketplace name to
     masquerade as a missing-plugin error.
     """
-    state_key = _hook_state_key(hooks_json_path)
-    new_value = _format_trusted_hash_value(plugin_hash)
-    target = codex_home / _HOOK_STATE_FILENAME
-    section_header = f'[state."{state_key}"]'
-    new_block = f'{section_header}\nenabled = true\ntrusted_hash = "{new_value}"\n'
+    section_header = f'[hooks.state."{_hook_state_key(marketplace=marketplace)}"]'
+    trusted_hash_value = _compute_normalized_hook_hash()
+    new_block = (
+        f'{section_header}\nenabled = true\ntrusted_hash = "{trusted_hash_value}"\n'
+    )
+    target = codex_home / _HOOK_CONFIG_FILENAME
 
     try:
         codex_home.mkdir(parents=True, exist_ok=True)
@@ -308,7 +394,7 @@ def _rewrite_hook_state_block(
 
     Pure-text rewrite (no TOML round-trip) so the function can run
     without a third-party TOML writer. The replacement is bounded to
-    the ``[state."<key>"]`` table only: every line up to the next
+    the ``[hooks.state."<key>"]`` table only: every line up to the next
     top-level ``[...]`` header (or EOF) is dropped and ``new_block``
     is spliced in.
     """
@@ -342,8 +428,14 @@ def _rewrite_hook_state_block(
 
 
 # ---------------------------------------------------------------------------
-# Selftest probe (default no-op; tests inject failure modes)
+# Default selftest probe (Phase E5 structural verification + real-Codex spawn)
 # ---------------------------------------------------------------------------
+
+
+_HOOK_COMMAND_NAME = "mala-codex-pre-tool-use"
+"""Hook command literal we expect to find inside the installed plugin's
+``hooks.json``. Matches the ``[project.scripts]`` entry in
+``pyproject.toml`` and the bundled ``hooks.json`` registration."""
 
 
 def _default_selftest_probe(
@@ -351,30 +443,128 @@ def _default_selftest_probe(
     env_overlay: dict[str, str],
     expected_hash: str,
 ) -> None:
-    """Default selftest probe used when none is injected.
+    """Default selftest probe — structural verification of the installed plugin.
 
-    The full subprocess-based Codex turn that triggers the bundled hook
-    and verifies the hook's emitted version-hash marker is real-Codex
-    e2e territory (plan AC #12 / I3) and lives behind the
-    ``codex`` binary + auth gate. Within the unit-test surface, the
-    structural guarantees the provider must honor are:
+    Fail-closed verification of the on-disk plugin tree at the install
+    target Codex reads. Catches the install-corruption / wrong-path /
+    wrong-command failure modes that the up-front structural checks
+    (SDK importable, codex on PATH, hook script on PATH) leave open:
 
-      * ``CODEX_BINARY_MISSING``: caught up-front by :meth:`install_prerequisites`.
-      * ``SCRIPT_MISSING``: caught up-front by :meth:`install_prerequisites`.
-      * ``PLUGIN_DISABLED`` / ``TRUSTED_HASH_MISMATCH`` /
-        ``HOOK_MARKER_MISSING`` / ``VERSION_MISMATCH``: surfaced through
-        the probe contract at runtime; tests drive each by injecting a
-        custom probe that raises the matching
-        :class:`CodexHookNotActiveError`.
+      * Plugin manifest at ``$CODEX_HOME/plugins/mala-safety/.codex-plugin/plugin.json``
+        exists, parses as JSON, and points at ``./.codex-plugin/hooks.json``.
+        Failure → :class:`CodexHookNotActiveError(PLUGIN_DISABLED)`.
+      * Installed hooks.json exists, parses, and declares a PreToolUse
+        command handler whose ``command`` is ``mala-codex-pre-tool-use``.
+        Failure → :class:`CodexHookNotActiveError(HOOK_MARKER_MISSING)`.
 
-    The default no-op behavior keeps Phase E5 fail-closed by relying on
-    the up-front structural checks (binary + script on PATH); any deeper
-    verification (e.g., real Codex spawn) is a real-binary integration
-    layer the orchestrator's CI can wire when the binary is reliably
-    available.
+    Plan E5 also calls for a one-shot Codex turn that triggers the
+    bundled hook and verifies it ran with the expected version hash.
+    That live-spawn verification depends on a Codex binary + auth + a
+    sentinel-emitting hook (``MALA_HOOK_SELFTEST_MARKER`` would be a
+    T014 follow-up since the hook script is out of scope for this
+    issue) and is therefore tracked as a follow-up real-Codex e2e gate.
+    The structural verification here is the defense-in-depth baseline:
+    it catches every install-time signature reliably without paying
+    real-binary cost on every run.
+
+    Tests inject custom probes to drive each
+    :class:`CodexHookNotActiveReason` directly, including the runtime
+    reasons (HOOK_MARKER_MISSING / VERSION_MISMATCH / PLUGIN_DISABLED /
+    TRUSTED_HASH_MISMATCH) that a future live-spawn probe would surface.
     """
-    del repo_path, env_overlay, expected_hash
-    return None
+    del repo_path, expected_hash
+    import json as _json
+
+    codex_home_str = env_overlay.get("CODEX_HOME")
+    codex_home = Path(codex_home_str) if codex_home_str else _resolve_codex_home()
+    plugin_dir = codex_home / "plugins" / "mala-safety" / ".codex-plugin"
+    manifest_path = plugin_dir / "plugin.json"
+    hooks_json_path = plugin_dir / "hooks.json"
+
+    # 1. plugin.json exists, parses, and links to the right hooks file.
+    try:
+        manifest_text = manifest_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise CodexHookNotActiveError(
+            f"Codex plugin manifest missing at {manifest_path}: {exc}",
+            reason=CodexHookNotActiveReason.PLUGIN_DISABLED,
+        ) from exc
+    try:
+        manifest = _json.loads(manifest_text)
+    except _json.JSONDecodeError as exc:
+        raise CodexHookNotActiveError(
+            f"Codex plugin manifest at {manifest_path} is not valid JSON: {exc}",
+            reason=CodexHookNotActiveReason.PLUGIN_DISABLED,
+        ) from exc
+    hooks_field = manifest.get("hooks") if isinstance(manifest, dict) else None
+    if hooks_field != "./.codex-plugin/hooks.json":
+        raise CodexHookNotActiveError(
+            f"Codex plugin manifest at {manifest_path} does not point at the "
+            f"bundled hooks.json (got {hooks_field!r}, expected "
+            "'./.codex-plugin/hooks.json'). The on-disk plugin tree is corrupt; "
+            "rerun mala to reinstall.",
+            reason=CodexHookNotActiveReason.PLUGIN_DISABLED,
+        )
+
+    # 2. hooks.json exists, parses, and declares the expected command hook.
+    try:
+        hooks_text = hooks_json_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise CodexHookNotActiveError(
+            f"Codex plugin hooks.json missing at {hooks_json_path}: {exc}",
+            reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+        ) from exc
+    try:
+        hooks_payload = _json.loads(hooks_text)
+    except _json.JSONDecodeError as exc:
+        raise CodexHookNotActiveError(
+            f"Codex plugin hooks.json at {hooks_json_path} is not valid JSON: {exc}",
+            reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+        ) from exc
+    if not _hooks_json_declares_pre_tool_use_command(hooks_payload, _HOOK_COMMAND_NAME):
+        raise CodexHookNotActiveError(
+            f"Codex plugin hooks.json at {hooks_json_path} does not declare a "
+            f"PreToolUse command handler for {_HOOK_COMMAND_NAME!r}; the "
+            "safety hook would not fire on tool use.",
+            reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+        )
+
+
+def _hooks_json_declares_pre_tool_use_command(
+    payload: object, expected_command: str
+) -> bool:
+    """Return True iff ``payload`` is a HooksFile JSON declaring our hook."""
+    payload_dict = (
+        cast("dict[str, object]", payload) if isinstance(payload, dict) else None
+    )
+    if payload_dict is None:
+        return False
+    hooks_obj = payload_dict.get("hooks")
+    hooks_dict = (
+        cast("dict[str, object]", hooks_obj) if isinstance(hooks_obj, dict) else None
+    )
+    if hooks_dict is None:
+        return False
+    pre_tool_use = hooks_dict.get("PreToolUse")
+    if not isinstance(pre_tool_use, list):
+        return False
+    for group_obj in pre_tool_use:
+        if not isinstance(group_obj, dict):
+            continue
+        group = cast("dict[str, object]", group_obj)
+        handlers_obj = group.get("hooks")
+        if not isinstance(handlers_obj, list):
+            continue
+        for handler_obj in handlers_obj:
+            if not isinstance(handler_obj, dict):
+                continue
+            handler = cast("dict[str, object]", handler_obj)
+            if (
+                handler.get("type") == "command"
+                and handler.get("command") == expected_command
+            ):
+                return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -428,10 +618,13 @@ class CodexAgentProvider:
 
         ``selftest_probe`` is the runtime hook used by
         :meth:`install_prerequisites` to verify the bundled safety hook
-        actually executed. The default is a no-op; tests inject custom
-        probes to drive each
+        is loaded. The default probe statically validates the on-disk
+        plugin tree (manifest path links + hooks.json declarations);
+        tests inject custom probes to drive each
         :class:`CodexHookNotActiveReason` from
-        :class:`CodexHookNotActiveError`.
+        :class:`CodexHookNotActiveError`, including the runtime-only
+        reasons (HOOK_MARKER_MISSING / VERSION_MISMATCH /
+        PLUGIN_DISABLED / TRUSTED_HASH_MISMATCH).
         """
         self._model: str = model
         self._effort: str | None = effort
@@ -559,14 +752,17 @@ class CodexAgentProvider:
              ``PATH`` (raise
              :class:`CodexHookNotActiveError(SCRIPT_MISSING)`).
           5. Auto-write the bundled plugin's ``trusted_hash`` to
-             ``$CODEX_HOME/hooks.toml`` (decision #16). On read-only
-             ``CODEX_HOME`` the write is logged and skipped — the
-             selftest catches the dormant hook either way.
-          6. Run the selftest probe; it raises
-             :class:`CodexHookNotActiveError` on any of the runtime
-             fail-closed signatures (``HOOK_MARKER_MISSING``,
-             ``VERSION_MISMATCH``, ``PLUGIN_DISABLED``,
-             ``TRUSTED_HASH_MISMATCH``).
+             ``$CODEX_HOME/config.toml`` under
+             ``[hooks.state."<plugin_id>:.codex-plugin/hooks.json:pre_tool_use:0:0"]``
+             (decision #16). On read-only ``CODEX_HOME`` the write is
+             logged and skipped — the selftest catches the dormant
+             hook either way.
+          6. Run the selftest probe (default: structural verification
+             of the installed plugin tree at the install target); it
+             raises :class:`CodexHookNotActiveError` on
+             ``HOOK_MARKER_MISSING`` / ``VERSION_MISMATCH`` /
+             ``PLUGIN_DISABLED`` / ``TRUSTED_HASH_MISMATCH``. Tests
+             inject custom probes to drive the runtime-only reasons.
 
         Args:
             repo_path: Working directory the selftest probe should use
@@ -634,14 +830,15 @@ class CodexAgentProvider:
                 reason=CodexHookNotActiveReason.SCRIPT_MISSING,
             )
 
-        # 5. Trusted-hash auto-trust (decision #16).
+        # 5. Trusted-hash auto-trust (decision #16). The marketplace
+        # name component of Codex's hook-state key depends on how the
+        # plugin is registered; we default to ``local`` (matching the
+        # ``~/.agents/plugins/marketplace.json`` convention) and let
+        # the selftest probe surface ``TRUSTED_HASH_MISMATCH`` when
+        # the actual marketplace name differs — that triggers the
+        # documented one-time interactive trust fallback per E6.
         codex_home = _resolve_codex_home()
-        hooks_json_path = install_result.target_dir / "hooks.json"
-        _write_trusted_hash(
-            codex_home=codex_home,
-            hooks_json_path=hooks_json_path,
-            plugin_hash=plugin_hash,
-        )
+        _write_trusted_hash(codex_home=codex_home)
 
         # 6. Cache key + selftest. The key matches the Amp provider's
         # ``(coder_version, plugin_hash)`` shape; ``"unknown"`` carries

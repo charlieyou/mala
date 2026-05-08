@@ -328,7 +328,7 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     fake_mcp_factory: Callable[..., dict[str, object]],
     tmp_path: Path,
 ) -> None:
-    """Happy path: plugin tree installed, hook-state file gets ``trusted_hash``."""
+    """Happy path: plugin tree installed, ``config.toml`` gets ``[hooks.state.<key>]``."""
     codex_home, bin_dir = fake_codex_env
     _install_fake_sdk(monkeypatch, present=True)
     _make_executable(bin_dir / "codex")
@@ -342,13 +342,25 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     assert (plugin_dir / "hooks.json").is_file()
     assert (plugin_dir / ".mcp.json").is_file()
 
-    hooks_toml = (codex_home / "hooks.toml").read_text(encoding="utf-8")
-    assert "trusted_hash" in hooks_toml
-    assert "sha256:" in hooks_toml
-    # The state key is the hooks.json absolute path. Codex stores per-hook
-    # trust keyed by the file location so different installs of the same
-    # plugin (e.g., system + user) don't collide.
-    assert str(plugin_dir / "hooks.json") in hooks_toml
+    config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
+    # The state key follows Codex's plugin-hook key shape:
+    # ``<plugin_id>:<source_relative_path>:pre_tool_use:0:0`` per
+    # ``codex-rs/hooks/src/declarations.rs::plugin_hook_key_source``. Marketplace
+    # name defaults to ``local`` until the Phase E spike confirms it.
+    expected_key = (
+        '[hooks.state."mala-safety@local:.codex-plugin/hooks.json:pre_tool_use:0:0"]'
+    )
+    assert expected_key in config_toml
+    assert "trusted_hash" in config_toml
+    # ``current_hash`` is a 64-hex sha256 of the canonical-JSON of the
+    # normalized hook identity per
+    # ``codex-rs/config/src/fingerprint.rs::version_for_toml`` — not a
+    # 16-char prefix of the plugin file content.
+    import re as _re
+
+    match = _re.search(r'trusted_hash = "(sha256:[0-9a-f]+)"', config_toml)
+    assert match is not None, config_toml
+    assert len(match.group(1)) == len("sha256:") + 64
 
 
 @pytest.mark.unit
@@ -419,6 +431,81 @@ def test_install_prerequisites_propagates_probe_failures(
     with pytest.raises(CodexHookNotActiveError) as excinfo:
         provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
     assert excinfo.value.reason is reason
+
+
+@pytest.mark.unit
+def test_default_probe_raises_plugin_disabled_when_manifest_paths_wrong(
+    fake_codex_env: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Regression: manifest paths must point at ``./.codex-plugin/...`` so
+    Codex resolves them to the actual install location. If a stale or
+    hand-edited plugin.json points at top-level ``./hooks.json`` (the
+    pre-fix shape), the default structural probe surfaces
+    ``PLUGIN_DISABLED`` rather than caching success.
+    """
+    import json as _json
+
+    from src.infra.clients.codex_provider import _default_selftest_probe
+
+    codex_home, _bin_dir = fake_codex_env
+    plugin_dir = codex_home / "plugins" / "mala-safety" / ".codex-plugin"
+    plugin_dir.mkdir(parents=True)
+    # Write a plugin.json that points at the WRONG (pre-fix) hooks path.
+    (plugin_dir / "plugin.json").write_text(
+        _json.dumps({"name": "mala-safety", "hooks": "./hooks.json"}),
+        encoding="utf-8",
+    )
+    (plugin_dir / "hooks.json").write_text(
+        '{"hooks": {"PreToolUse": [{"hooks": [{"type":"command","command":"mala-codex-pre-tool-use"}]}]}}',
+        encoding="utf-8",
+    )
+    (plugin_dir / ".mcp.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _default_selftest_probe(
+            tmp_path,
+            {"CODEX_HOME": str(codex_home)},
+            "deadbeef",
+        )
+    assert excinfo.value.reason is CodexHookNotActiveReason.PLUGIN_DISABLED
+    assert "./.codex-plugin/hooks.json" in str(excinfo.value)
+
+
+@pytest.mark.unit
+def test_default_probe_raises_hook_marker_missing_when_command_absent(
+    fake_codex_env: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Default probe surfaces ``HOOK_MARKER_MISSING`` when hooks.json
+    declares no command handler for ``mala-codex-pre-tool-use``.
+    """
+    import json as _json
+
+    codex_home, _bin_dir = fake_codex_env
+    plugin_dir = codex_home / "plugins" / "mala-safety" / ".codex-plugin"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.json").write_text(
+        _json.dumps(
+            {
+                "name": "mala-safety",
+                "hooks": "./.codex-plugin/hooks.json",
+                "mcpServers": "./.codex-plugin/.mcp.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    # hooks.json declares no PreToolUse handler — hook silently dormant.
+    (plugin_dir / "hooks.json").write_text(_json.dumps({"hooks": {}}), encoding="utf-8")
+    (plugin_dir / ".mcp.json").write_text("{}", encoding="utf-8")
+
+    from src.infra.clients.codex_provider import _default_selftest_probe
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _default_selftest_probe(
+            tmp_path,
+            {"CODEX_HOME": str(codex_home)},
+            "deadbeef",
+        )
+    assert excinfo.value.reason is CodexHookNotActiveReason.HOOK_MARKER_MISSING
 
 
 @pytest.mark.unit
