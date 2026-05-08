@@ -814,6 +814,65 @@ def _strip_leading_reserved(tokens: list[str]) -> list[str]:
     return tokens
 
 
+def _strip_shell_comments(command: str) -> str:
+    """Remove unquoted ``#``-comments from ``command``.
+
+    Comments run from a word-starting ``#`` (preceded by whitespace,
+    a separator, or start-of-input) up to the next newline. The
+    newline itself is preserved so it can later be rewritten to ``;``
+    by ``_normalize_separators`` and split into a fresh segment.
+
+    Used as a pre-pass before ``_extract_command_substitutions`` so a
+    substitution inside a comment (``# $(touch unowned)\\necho ok``)
+    is NOT extracted as if bash would execute it. Also used by the
+    dangerous-cmd recursive detector for the same reason.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(command)
+    quote: str | None = None
+    while i < n:
+        c = command[i]
+        # Backslash escape outside single quotes consumes the next
+        # char verbatim — including a ``#`` so ``\\#`` is literal.
+        if c == "\\" and i + 1 < n and quote != "'":
+            out.append(c)
+            out.append(command[i + 1])
+            i += 2
+            continue
+        if quote is not None:
+            out.append(c)
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        # ``$'...'`` ANSI-C — track as quoted region; backslash is
+        # an escape there.
+        if c == "$" and i + 1 < n and command[i + 1] == "'":
+            out.append(c)
+            out.append("'")
+            quote = "'"
+            i += 2
+            continue
+        if c in ('"', "'"):
+            out.append(c)
+            quote = c
+            i += 1
+            continue
+        # Word-starting ``#`` outside quotes: skip to next newline.
+        if c == "#" and (
+            i == 0
+            or command[i - 1].isspace()
+            or command[i - 1] in (";", "&", "|", "(", ")")
+        ):
+            while i < n and command[i] != "\n":
+                i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _extract_command_substitutions(command: str) -> tuple[str, list[str]]:
     """Replace ```...``` and ``$(...)`` with a placeholder, returning bodies.
 
@@ -1067,7 +1126,17 @@ def _extract_tee_targets(tokens: list[str]) -> list[str]:
     if _command_basename(tokens) != "tee":
         return []
     out: list[str] = []
+    options_ended = False
     for tok in tokens[1:]:
+        if not options_ended and tok == "--":
+            options_ended = True
+            continue
+        if options_ended:
+            # After ``--``, every token is an operand even if it
+            # starts with ``-``. ``tee -- -owned.py`` writes to the
+            # literal file ``-owned.py``.
+            out.append(tok)
+            continue
         if tok.startswith("-"):
             continue
         out.append(tok)
@@ -1290,6 +1359,20 @@ def _extract_awk_inplace_targets(tokens: list[str]) -> list[str]:
 _TARGET_DIR_LONG_FLAGS = frozenset({"--target-directory"})
 _REFERENCE_LONG_FLAGS = frozenset({"--reference"})
 
+# chmod symbolic-mode pattern: ``[ugoa]*([-+=][rwxXstugo]*)+(,...)*``.
+# Matches mode operands like ``-w``, ``+x``, ``=rw``, ``u-r``,
+# ``ugo+w``, ``u+rwx,g-x`` — distinguishing them from chmod flags
+# (``-R``, ``-v``, ``-c``, ``-f``) which don't contain mode letters
+# after the operator. Without this, ``chmod -w unowned.py`` is
+# misclassified: ``-w`` is skipped as a flag and the only positional
+# is then dropped by the ``skip_first_positional`` strategy, silently
+# allowing the write.
+_CHMOD_SYMBOLIC_MODE_RE = re.compile(
+    r"^[ugoa]*[+\-=][rwxXstugo]*"
+    r"(?:[+\-=][rwxXstugo]*)*"
+    r"(?:,[ugoa]*[+\-=][rwxXstugo]*(?:[+\-=][rwxXstugo]*)*)*$"
+)
+
 # Per-utility short value-taking flags (excluding ``t``). When one of
 # these letters appears in a flag bundle, it consumes the rest of the
 # bundle as its argument. Without this, ``cp -St dir src dest`` would
@@ -1483,6 +1566,19 @@ def _extract_utility_targets(tokens: list[str]) -> list[str]:
                 has_reference_flag = True
                 i += 1
                 continue
+        # chmod symbolic-mode operands start with ``-``/``+``/``=`` and
+        # MUST be treated as the mode positional, not as flags. Without
+        # this branch ``chmod -w unowned.py`` skips ``-w`` as a flag
+        # and the remaining single positional is dropped by the
+        # ``skip_first_positional`` strategy — silently allowing the
+        # write. The pattern matches ``-w``, ``+x``, ``=rw``, ``u-r``,
+        # ``ugo+w``, ``u+rwx,g-x`` etc. — distinguishing from real
+        # chmod flags like ``-R`` (recursive), ``-v`` (verbose), ``-c``
+        # (changes), ``-f`` (silent) which don't contain mode letters.
+        if cmd == "chmod" and _CHMOD_SYMBOLIC_MODE_RE.match(tok):
+            positionals.append(tok)
+            i += 1
+            continue
         if tok.startswith("-"):
             # Long form ``--name=value``: token includes its value.
             if tok.startswith("--") and "=" in tok:
@@ -2319,6 +2415,10 @@ def _extract_shell_write_paths(
        the heuristic cannot reliably re-resolve relative paths once
        the shell's cwd has shifted.
     """
+    # Strip ``#`` comments BEFORE substitution extraction so a
+    # commented-out substitution (``# $(touch unowned)\\necho ok``)
+    # is NOT extracted and processed as if bash would execute it.
+    command = _strip_shell_comments(command)
     cleaned, sub_bodies = _extract_command_substitutions(command)
 
     # If the outer pipeline already changed cwd, OR the cleaned outer
@@ -2601,7 +2701,9 @@ def _detect_dangerous_pattern_recursive(command: str) -> str | None:
     git command silently slips through.
     """
     seen: set[str] = set()
-    pending = [command]
+    # Strip comments at every level so commented-out destructive
+    # commands (``# git -C /tmp stash``) are not flagged.
+    pending = [_strip_shell_comments(command)]
     while pending:
         body = pending.pop()
         if body in seen:
@@ -2611,7 +2713,7 @@ def _detect_dangerous_pattern_recursive(command: str) -> str | None:
         if pattern is not None:
             return pattern
         try:
-            _, sub_bodies = _extract_command_substitutions(body)
+            _, sub_bodies = _extract_command_substitutions(_strip_shell_comments(body))
         except Exception:
             continue
         pending.extend(sub_bodies)

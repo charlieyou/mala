@@ -4359,3 +4359,127 @@ class TestDangerousCmdsInsideSubstitution:
                 "git rebase",
             )
         ), reason
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 10, post-restart)
+# ---------------------------------------------------------------------------
+
+
+class TestTeeDashDashOperand:
+    """Regression: ``tee -- -owned.py`` writes to a dash-prefixed file.
+
+    Before the fix, ``_extract_tee_targets`` skipped every
+    dash-prefixed token including operands after ``--``. The write
+    target list was empty and the bash branch allowed the command.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "echo x | tee -- {target}",
+            "echo x | tee -a -- {target}",
+            "echo x | tee --append -- {target}",
+        ],
+    )
+    def test_tee_dash_dash_operand_denied(
+        self, env: dict[str, str], repo: Path, command_template: str
+    ) -> None:
+        target = repo / "-owned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "-owned.py" in deny_reason(result)
+
+
+class TestChmodSymbolicMode:
+    """Regression: ``chmod -w unowned.py`` is a symbolic-mode chmod.
+
+    Before the fix, ``_extract_utility_targets`` treated every
+    dash-prefixed token as a flag. For ``chmod -w f``, ``-w`` was
+    skipped, leaving ``[f]`` as the only positional. The
+    ``skip_first_positional`` strategy then dropped ``f`` as the
+    "mode" — silently allowing the chmod against the unlocked file.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "chmod -w {target}",
+            "chmod -r {target}",
+            "chmod -x {target}",
+            "chmod +w {target}",
+            "chmod +x {target}",
+            "chmod =rw {target}",
+            "chmod u-w {target}",
+            "chmod ugo+r {target}",
+            "chmod u+rwx,g-x {target}",
+            # With a real flag mixed in
+            "chmod -R -w {target}",
+            "chmod -v -w {target}",
+        ],
+    )
+    def test_chmod_symbolic_mode_denied(
+        self, env: dict[str, str], repo: Path, command_template: str
+    ) -> None:
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+    def test_chmod_symbolic_mode_allowed_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "f.py"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("bash", {"command": f"chmod -w {target}"}))
+        assert is_allow(result), result
+
+    def test_chmod_real_flags_still_skip(self, env: dict[str, str], repo: Path) -> None:
+        # Sanity: real chmod flags (-R, -v, -c, -f) without a
+        # symbolic mode are still skipped (and the numeric-mode form
+        # ``chmod 644 f`` still uses skip_first_positional).
+        target = repo / "f.py"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("bash", {"command": f"chmod -R 644 {target}"}))
+        assert is_allow(result), result
+
+
+class TestCommentedSubstitutionsNotExtracted:
+    """P2: ``# $(touch unowned)`` is commented out — must NOT extract.
+
+    Before the fix, ``_extract_command_substitutions`` ran on the raw
+    command BEFORE comments were stripped. A commented-out
+    substitution body was extracted and processed as if bash would
+    execute it — false-positive deny on a no-op command.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "# $(touch unowned.py)\necho ok",
+            "echo ok # `touch unowned.py`",
+            "# `touch unowned.py`\necho ok",
+            'echo ok # outer "$(touch unowned.py)"',
+        ],
+    )
+    def test_commented_substitution_does_not_deny(
+        self, env: dict[str, str], command: str
+    ) -> None:
+        # Bash does not execute the commented substitution — the hook
+        # must not deny on the inner write that never runs.
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), f"command: {command!r} → {result}"
+
+    def test_uncommented_substitution_still_denied(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Sanity: a real substitution in a non-comment context is
+        # still detected and denied.
+        target = repo / "unowned.py"
+        result = decide(
+            make_payload("bash", {"command": f"echo $(touch {target})"}, cwd=repo)
+        )
+        assert is_deny(result)
+        assert "unowned.py" in deny_reason(result)
