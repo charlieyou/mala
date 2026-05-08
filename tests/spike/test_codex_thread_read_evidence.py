@@ -76,6 +76,16 @@ landing). Summary:
 Open Questions. The runtime checks below remain so the finding can be
 reconfirmed against future Codex SDK releases (an upstream change that
 re-enables Extended persistence — or any equivalent — would let us revisit).
+
+The two known-disconfirmed assertions (aggregated_output, cross-resume) are
+marked ``@pytest.mark.xfail(strict=True)`` so a developer/CI image with the
+SDK + binary + auth running plain ``uv run pytest`` sees them as XFAIL (not
+a failure) under current SDK behavior, while an upstream fix flips them to
+XPASS — strict mode then fails the suite, alerting us that decision #11
+should be revisited and T013's F3 tee fallback may be retire-able. The
+latency check is *not* xfail-marked: it should genuinely pass when the
+runtime is available; it is the single signal that ``thread/read`` itself
+is functionally healthy.
 """
 
 from __future__ import annotations
@@ -240,16 +250,27 @@ def test_items_of_unwraps_root_model_wrappers() -> None:
     assert _command_items_with_aggregated_output(flattened) == [inner]
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Decision #11 DISCONFIRMED — see module docstring 'Spike result'. "
+        "App-server hardcodes EventPersistenceMode::Limited and ExecCommandEnd "
+        "is filtered out, so aggregated_output is always None. Marked "
+        "strict=True so an upstream SDK fix flips this to XPASS and alerts us "
+        "to revisit T013's F3 tee fallback."
+    ),
+)
 def test_aggregated_output_present_for_bash_command() -> None:
     """Finding (1): ``CommandExecutionThreadItem.aggregated_output`` is populated.
 
     Expected outcome under current Codex SDK semantics: this assertion FAILS
     because ``persist_extended_history`` is hardcoded-Limited and
     ``ExecCommandEnd`` is filtered out of the rollout (see module docstring
-    Spike result). When that fails, the spike is disconfirmed and T013 must
-    use the F3 tee fallback. The assertion is intentionally written so a
-    future SDK that re-enables Extended persistence would flip this test to
-    pass without the spike needing to be rewritten.
+    Spike result). The test is marked ``xfail(strict=True)`` so it does not
+    break ``uv run pytest`` for users who happen to have the SDK + binary +
+    auth available, while still flipping to a noisy XPASS failure when the
+    upstream SDK starts surfacing aggregated output (our cue to revisit
+    decision #11 / T013).
     """
     sdk = _require_runtime()
     with _new_codex(sdk) as codex:
@@ -301,6 +322,15 @@ def test_thread_read_latency_baseline_under_repeat() -> None:
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Decision #11 DISCONFIRMED — cross-resume bash aggregated_output is "
+        "lossy (per ThreadRollbackResponse schema docstring 'same behavior as "
+        "thread/resume'). Marked strict=True so an upstream SDK fix flips this "
+        "to XPASS and alerts us to revisit T013's F3 tee fallback."
+    ),
+)
 def test_cross_resume_completeness_with_bash_and_file_edit(tmp_path: Any) -> None:  # noqa: ANN401 — pytest fixture stub
     """Finding (3): post-``thread_resume`` ``Thread.read`` includes pre-resume bash + file edit.
 
@@ -310,7 +340,10 @@ def test_cross_resume_completeness_with_bash_and_file_edit(tmp_path: Any) -> Non
     the bash assertion fails (see Finding 1); the file-edit assertion
     *should* pass because ``PatchApplyEnd`` IS in Limited persistence mode —
     if it ever fails, the F3 tee fallback design must also tee patch events,
-    not just exec events.
+    not just exec events. xfail(strict=True) at the test level (not per
+    assertion) because all three checks are AND-ed: a single missing piece
+    keeps the test in XFAIL; only when all three become observable does the
+    test XPASS — exactly when we want to be alerted.
     """
     sdk = _require_runtime()
     edit_target = tmp_path / f"spike-edit-{uuid.uuid4().hex}.txt"
