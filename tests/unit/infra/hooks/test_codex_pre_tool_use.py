@@ -4054,3 +4054,139 @@ class TestGitGlobalOptionsCommitPushGuards:
             )
         )
         assert is_allow(result)
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 8, post-restart)
+# ---------------------------------------------------------------------------
+
+
+class TestAnsiCBypassesGitDangerCheck:
+    """Regression: ``git ... $'\\''`` must not bypass token-based git checks.
+
+    Before the fix, ``_detect_dangerous_pattern`` called
+    ``shlex.split(command, ...)`` directly on the raw command string.
+    An ANSI-C quoted region with an escaped single quote (``$'\\''``)
+    raised ValueError, the token-walk was skipped, and the global-
+    option destructive git rules silently allowed the command.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "git -C /repo push --force origin main {ansic}",
+            "git -c k=v commit -a -m x {ansic}",
+            "git -C /tmp stash {ansic}",
+            "git --git-dir=.git/ rebase main {ansic}",
+        ],
+    )
+    def test_ansi_c_quoted_string_does_not_bypass(
+        self,
+        env: dict[str, str],
+        command_template: str,
+    ) -> None:
+        # Inject an ANSI-C string with an escaped single quote.
+        ansic = "$'\\''"
+        command = command_template.format(ansic=ansic)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        # Reason must reference the destructive git pattern.
+        reason = deny_reason(result)
+        assert any(
+            keyword in reason
+            for keyword in (
+                "git push",
+                "git commit",
+                "git stash",
+                "git rebase",
+                "git add",
+            )
+        ), reason
+
+
+class TestBranchDashDFToken:
+    """Regression: ``git -C dir branch -d -f feat`` deletes a branch by force.
+
+    Before the fix, the token-aware detector only matched ``-D`` and
+    the substring detector only matched the literal ``git branch -d -f``.
+    With global options spliced in, the substring missed and the
+    detector returned None — the shell branch then allowed the force
+    branch deletion.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git -C /tmp branch -d -f feature",
+            "git -c k=v branch -d -f feat",
+            "git --git-dir=.git/ branch -d -f feat",
+            # Bundled short flags
+            "git -C /tmp branch -df feature",
+            "git -C /tmp branch -fd feature",
+            # Long form
+            "git -C /tmp branch --delete --force feat",
+            "git -C /tmp branch --force --delete feat",
+        ],
+    )
+    def test_branch_dash_d_f_with_global_opts_denied(
+        self, env: dict[str, str], command: str
+    ) -> None:
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "git branch" in deny_reason(result)
+
+
+class TestUnspacedControlOperatorDangerCheck:
+    """Regression: ``git add f;git commit -a -m x`` (no spaces around ``;``).
+
+    Before the fix, ``_detect_dangerous_pattern`` tokenized the raw
+    command without first running ``_normalize_separators``. shlex
+    treats ``f;git`` as a single token, so the second ``git``
+    invocation was never seen by the token-walk. The destructive
+    commit-with-all-flag check missed the command.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # No spaces around ;
+            "git add f;git commit -a -m x",
+            "true;git push --force origin main",
+            "true;git stash",
+            # No spaces around &&
+            "git add f&&git commit -a -m x",
+            "true&&git -C /tmp commit -m x",
+            # No spaces around control operator with global option
+            "true;git -C /tmp push --force origin",
+            # Newline as separator
+            "true\ngit commit -a",
+        ],
+    )
+    def test_unspaced_separator_destructive_git_denied(
+        self, env: dict[str, str], command: str
+    ) -> None:
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        reason = deny_reason(result)
+        assert any(
+            keyword in reason
+            for keyword in (
+                "git push",
+                "git commit",
+                "git stash",
+                "git add",
+            )
+        ), reason
+
+    def test_unspaced_atomic_add_commit_with_add_first_allowed(
+        self, env: dict[str, str]
+    ) -> None:
+        # Sanity: ``git add f;git commit -m x`` (with leading add)
+        # must still be allowed.
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": "git add f;git commit -m x"},
+            )
+        )
+        assert is_allow(result)

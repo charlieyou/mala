@@ -2443,6 +2443,22 @@ def _detect_destructive_git_in_subtokens(toks: list[str]) -> str | None:
     if sub == "branch":
         if "-D" in rest_set:
             return "git branch -D"
+        # ``git branch -d -f`` / ``--delete --force`` (and bundled
+        # short forms ``-df`` / ``-fd``) is the explicit alternative
+        # to ``-D`` and is equally destructive.
+        has_delete = "-d" in rest_set or "--delete" in rest_set
+        has_force = "-f" in rest_set or "--force" in rest_set
+        if has_delete and has_force:
+            return "git branch -d -f"
+        for tok in rest:
+            if (
+                tok.startswith("-")
+                and not tok.startswith("--")
+                and len(tok) >= 2
+                and "d" in tok[1:]
+                and "f" in tok[1:]
+            ):
+                return "git branch -d -f"
     if sub == "commit":
         if "--amend" in rest_set:
             return "git commit --amend"
@@ -2509,8 +2525,21 @@ def _detect_dangerous_pattern(command: str) -> str | None:
     # options shift the subcommand position past the substring
     # matcher's window. ``comments=True`` matches bash's treatment of
     # ``#`` as comment marker so ``cmd # "`` doesn't ValueError out.
+    #
+    # ``_normalize_separators`` is applied first for two reasons:
+    #
+    # 1. Control operators (``;``/``&&``/``||``/``|``/``&``/``\n``)
+    #    need surrounding whitespace before ``shlex.split`` will treat
+    #    them as separators. Without normalization, ``git add f;git
+    #    commit -a`` tokenizes as ``['git', 'add', 'f;git', 'commit',
+    #    '-a']`` — the second ``git`` is glued to the ``;`` and the
+    #    token-walk misses the destructive commit.
+    # 2. ANSI-C quoting (``$'...'``) is replaced with a placeholder
+    #    so an escaped single-quote like ``$'\\''`` does not raise
+    #    ValueError, which would silently bypass every token-based
+    #    destructive-git check below.
     try:
-        toks = shlex.split(command, posix=True, comments=True)
+        toks = shlex.split(_normalize_separators(command), posix=True, comments=True)
     except ValueError:
         toks = []
     saw_git_add = False
