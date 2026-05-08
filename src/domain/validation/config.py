@@ -28,6 +28,9 @@ from src.core.constants import (
     DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS,
     DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS,
     VALID_CLAUDE_SETTINGS_SOURCES,
+    VALID_CODEX_APPROVAL_POLICIES,
+    VALID_CODEX_SANDBOXES,
+    validate_codex_effort,
 )
 
 # Regex for valid custom command names: starts with letter or underscore,
@@ -842,6 +845,180 @@ class EvidenceCheckConfig:
     required: tuple[str, ...] = field(default_factory=tuple)
 
 
+_CODER_OPTIONS_KEYS: frozenset[str] = frozenset({"codex"})
+_CODEX_OPTIONS_KEYS: frozenset[str] = frozenset(
+    {"model", "effort", "approval_policy", "sandbox", "mcp_servers"}
+)
+
+
+def _parse_codex_options_block(raw: object) -> CodexOptionsConfig:
+    """Parse the inner ``coder_options.codex`` block.
+
+    Strict-validates ``model``, ``effort``, ``approval_policy``, ``sandbox``
+    and (shape-only) ``mcp_servers``. Raises :class:`ConfigError` on any
+    unknown key, wrong type, or invalid enum value (AC #13).
+    """
+    if raw is None:
+        return CodexOptionsConfig()
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            f"coder_options.codex must be an object, got {type(raw).__name__}"
+        )
+    value = cast("dict[str, object]", raw)
+    unknown = set(value.keys()) - _CODEX_OPTIONS_KEYS
+    if unknown:
+        first = sorted(str(k) for k in unknown)[0]
+        raise ConfigError(f"Unknown field '{first}' in coder_options.codex")
+
+    model: str | None = None
+    if "model" in value:
+        model_val = value["model"]
+        if model_val is not None:
+            if not isinstance(model_val, str) or not model_val.strip():
+                raise ConfigError(
+                    "coder_options.codex.model must be a non-empty string"
+                )
+            model = model_val
+
+    effort: str | None = None
+    if "effort" in value:
+        effort_val = value["effort"]
+        if effort_val is not None:
+            if not isinstance(effort_val, str):
+                raise ConfigError(
+                    "coder_options.codex.effort must be a string, got "
+                    f"{type(effort_val).__name__}"
+                )
+            try:
+                validate_codex_effort(effort_val, source="coder_options.codex.effort")
+            except ValueError as exc:
+                raise ConfigError(str(exc)) from exc
+            effort = effort_val
+
+    approval_policy: (
+        Literal["never", "on-request", "on-failure", "untrusted"] | None
+    ) = None
+    if "approval_policy" in value:
+        ap_val = value["approval_policy"]
+        if ap_val is not None:
+            if (
+                not isinstance(ap_val, str)
+                or ap_val not in VALID_CODEX_APPROVAL_POLICIES
+            ):
+                valid = ", ".join(sorted(VALID_CODEX_APPROVAL_POLICIES))
+                raise ConfigError(
+                    "coder_options.codex.approval_policy must be one of "
+                    f"{valid}, got {ap_val!r}"
+                )
+            # Narrow Literal type for the type checker.
+            if ap_val == "on-request":
+                approval_policy = "on-request"
+            elif ap_val == "on-failure":
+                approval_policy = "on-failure"
+            elif ap_val == "untrusted":
+                approval_policy = "untrusted"
+            else:
+                approval_policy = "never"
+
+    sandbox: Literal["read-only", "workspace-write", "danger-full-access"] | None = None
+    if "sandbox" in value:
+        sb_val = value["sandbox"]
+        if sb_val is not None:
+            if not isinstance(sb_val, str) or sb_val not in VALID_CODEX_SANDBOXES:
+                valid = ", ".join(sorted(VALID_CODEX_SANDBOXES))
+                raise ConfigError(
+                    "coder_options.codex.sandbox must be one of "
+                    f"{valid}, got {sb_val!r}"
+                )
+            if sb_val == "read-only":
+                sandbox = "read-only"
+            elif sb_val == "workspace-write":
+                sandbox = "workspace-write"
+            else:
+                sandbox = "danger-full-access"
+
+    mcp_servers: tuple[tuple[str, object], ...] = ()
+    if "mcp_servers" in value:
+        ms_val = value["mcp_servers"]
+        if ms_val is not None:
+            if not isinstance(ms_val, dict):
+                raise ConfigError(
+                    "coder_options.codex.mcp_servers must be an object, got "
+                    f"{type(ms_val).__name__}"
+                )
+            ms_dict = cast("dict[str, object]", ms_val)
+            entries: list[tuple[str, object]] = []
+            for key in ms_dict:
+                if not isinstance(key, str):
+                    raise ConfigError(
+                        "coder_options.codex.mcp_servers keys must be strings, "
+                        f"got {type(key).__name__}"
+                    )
+                entries.append((key, ms_dict[key]))
+            mcp_servers = tuple(entries)
+
+    return CodexOptionsConfig(
+        model=model,
+        effort=effort,
+        approval_policy=approval_policy,
+        sandbox=sandbox,
+        mcp_servers=mcp_servers,
+    )
+
+
+def _parse_coder_options(raw: object) -> CodexOptionsConfig | None:
+    """Parse the top-level ``coder_options`` block.
+
+    Only ``coder_options.codex`` is supported; ``coder_options.amp`` was
+    flattened into top-level ``amp_mode`` and is rejected here so the
+    legacy YAML shape fails fast (regression coverage in
+    ``tests/unit/domain/validation/test_coder_schema.py``).
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ConfigError(f"coder_options must be an object, got {type(raw).__name__}")
+    value = cast("dict[str, object]", raw)
+    unknown = set(value.keys()) - _CODER_OPTIONS_KEYS
+    if unknown:
+        first = sorted(str(k) for k in unknown)[0]
+        raise ConfigError(
+            f"Unknown field '{first}' in coder_options. "
+            "Only 'codex' is supported under coder_options; amp options live at "
+            "top-level 'amp_mode'."
+        )
+    if "codex" not in value:
+        return CodexOptionsConfig()
+    return _parse_codex_options_block(value["codex"])
+
+
+@dataclass(frozen=True)
+class CodexOptionsConfig:
+    """Yaml-side container for ``coder_options.codex.*`` (Phase B).
+
+    Mirrors :class:`src.infra.io.config.CodexOptions` but holds optional
+    fields so the orchestrator can detect "user supplied X" vs. "use the
+    default" when threading values into :meth:`MalaConfig.from_env`.
+
+    Attributes:
+        model: Codex model identifier (e.g. ``gpt-5.5``). ``None`` means
+            "user did not specify"; the resolver falls back to default.
+        effort: Codex ``ReasoningEffort`` value. ``None`` means "use SDK
+            default"; non-None values are validated at parse time.
+        approval_policy: Codex turn approval policy.
+        sandbox: Codex sandbox mode.
+        mcp_servers: Optional pre-merged MCP server map (Phase G3 merges).
+    """
+
+    model: str | None = None
+    effort: str | None = None
+    approval_policy: (
+        Literal["never", "on-request", "on-failure", "untrusted"] | None
+    ) = None
+    sandbox: Literal["read-only", "workspace-write", "danger-full-access"] | None = None
+    mcp_servers: tuple[tuple[str, object], ...] = field(default_factory=tuple)
+
+
 @dataclass(frozen=True)
 class ValidationConfig:
     """Top-level configuration from mala.yaml.
@@ -899,6 +1076,9 @@ class ValidationConfig:
     # to ``MalaConfig.from_env(yaml_effort=...)``; the resolver layer in
     # src/infra/io/config.py applies CLI > env > yaml > default precedence.
     effort: str | None = None
+    # Codex coder options (Phase B). Strict-validated at YAML parse time.
+    # Flowed by the orchestrator into MalaConfig.from_env(yaml_codex_options=...).
+    codex_options: CodexOptionsConfig | None = None
     _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
@@ -1256,6 +1436,12 @@ class ValidationConfig:
                 f"coder is 'amp' and amp_mode is 'deep', got {effort!r}"
             )
 
+        # Validate coder_options.codex.* (strict-enum, AC #13).
+        codex_options: CodexOptionsConfig | None = None
+        if "coder_options" in data:
+            fields_set.add("coder_options")
+            codex_options = _parse_coder_options(data["coder_options"])
+
         return cls(
             preset=preset,
             commands=commands,
@@ -1279,6 +1465,7 @@ class ValidationConfig:
             coder=coder,
             amp_mode=amp_mode,
             effort=effort,
+            codex_options=codex_options,
             _fields_set=frozenset(fields_set),
         )
 

@@ -372,6 +372,32 @@ def _validate_effort_option(value: str | None) -> str | None:
     return parsed
 
 
+def _validate_codex_model_option(value: str | None) -> str | None:
+    """Typer callback for --codex-model (shape-only validation)."""
+    from src.infra.io.config import parse_codex_model
+
+    if value is None:
+        return None
+    try:
+        parsed = parse_codex_model(value, source="--codex-model")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+    return parsed
+
+
+def _validate_codex_effort_option(value: str | None) -> str | None:
+    """Typer callback validating --codex-effort against the SDK enum."""
+    from src.infra.io.config import parse_codex_effort
+
+    if value is None:
+        return None
+    try:
+        parsed = parse_codex_effort(value, source="--codex-effort")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+    return parsed
+
+
 def _apply_cli_overrides(
     config: MalaConfig,
     *,
@@ -379,6 +405,8 @@ def _apply_cli_overrides(
     coder: str | None,
     amp_mode: str | None,
     effort: str | None,
+    codex_model: str | None = None,
+    codex_effort: str | None = None,
 ) -> MalaConfig:
     """Apply CLI overrides to MalaConfig.
 
@@ -390,6 +418,8 @@ def _apply_cli_overrides(
         and coder is None
         and amp_mode is None
         and effort is None
+        and codex_model is None
+        and codex_effort is None
     ):
         return config
 
@@ -400,6 +430,8 @@ def _apply_cli_overrides(
         coder=coder,
         amp_mode=amp_mode,
         effort=effort,
+        codex_model=codex_model,
+        codex_effort=codex_effort,
     )
     resolved = build_resolved_config(config, overrides)
 
@@ -486,6 +518,13 @@ _RUN_EFFORT_HELP = (
     f"{_EFFORT_HELP} Forwarded to ClaudeAgentOptions.effort for coder=claude "
     "and to `amp --effort <value>` for coder=amp (smart/deep modes only; "
     "Amp smart accepts medium, high, or xhigh; Amp deep accepts low, medium, or xhigh)."
+)
+_CODEX_MODEL_HELP = (
+    "Codex model identifier. Only consulted when coder=codex. Default: gpt-5.5."
+)
+_CODEX_EFFORT_HELP = (
+    "Codex reasoning effort. Validated against the Codex SDK ReasoningEffort "
+    "enum at parse time. Only consulted when coder=codex. Default: SDK default."
 )
 
 
@@ -629,6 +668,24 @@ def run(
             rich_help_panel="Coder",
         ),
     ] = None,
+    codex_model: Annotated[
+        str | None,
+        typer.Option(
+            "--codex-model",
+            help=_CODEX_MODEL_HELP,
+            callback=_validate_codex_model_option,
+            rich_help_panel="Coder",
+        ),
+    ] = None,
+    codex_effort: Annotated[
+        str | None,
+        typer.Option(
+            "--codex-effort",
+            help=_CODEX_EFFORT_HELP,
+            callback=_validate_codex_effort_option,
+            rich_help_panel="Coder",
+        ),
+    ] = None,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
@@ -715,9 +772,15 @@ def run(
     # Load yaml coder selection so the base MalaConfig honors the
     # CLI > env > yaml > default precedence (AC-3) before CLI overrides
     # are layered on. ConfigError propagates so invalid mala.yaml fails fast.
-    yaml_css, yaml_coder, yaml_amp_mode, yaml_effort = _lazy(
-        "load_yaml_coder_resolution"
-    )(repo_path)
+    (
+        yaml_css,
+        yaml_coder,
+        yaml_amp_mode,
+        yaml_effort,
+        yaml_codex_options,
+    ) = _lazy("load_yaml_coder_resolution")(repo_path)
+
+    from ..orchestration.factory import _resolve_yaml_codex_options
 
     # Build and configure MalaConfig from environment
     config = _lazy("MalaConfig").from_env(
@@ -726,9 +789,11 @@ def run(
         yaml_coder=yaml_coder,
         yaml_amp_mode=yaml_amp_mode,
         yaml_effort=yaml_effort,
+        yaml_codex_options=_resolve_yaml_codex_options(yaml_codex_options),
     )
 
-    # Apply CLI overrides (claude_settings_sources, coder, amp_mode, effort)
+    # Apply CLI overrides (claude_settings_sources, coder, amp_mode, effort,
+    # codex_model, codex_effort)
     try:
         config = _apply_cli_overrides(
             config,
@@ -736,6 +801,8 @@ def run(
             coder=coder,
             amp_mode=amp_mode,
             effort=effort,
+            codex_model=codex_model,
+            codex_effort=codex_effort,
         )
     except ValueError as exc:
         log("✗", str(exc), Colors.RED)
@@ -865,6 +932,24 @@ def epic_verify(
             rich_help_panel="Coder",
         ),
     ] = None,
+    codex_model: Annotated[
+        str | None,
+        typer.Option(
+            "--codex-model",
+            help=_CODEX_MODEL_HELP,
+            callback=_validate_codex_model_option,
+            rich_help_panel="Coder",
+        ),
+    ] = None,
+    codex_effort: Annotated[
+        str | None,
+        typer.Option(
+            "--codex-effort",
+            help=_CODEX_EFFORT_HELP,
+            callback=_validate_codex_effort_option,
+            rich_help_panel="Coder",
+        ),
+    ] = None,
 ) -> None:
     """Verify a single epic and optionally close it without running tasks."""
     set_verbose(verbose)
@@ -880,9 +965,15 @@ def epic_verify(
 
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-    yaml_css, yaml_coder, yaml_amp_mode, yaml_effort = _lazy(
-        "load_yaml_coder_resolution"
-    )(repo_path)
+    (
+        yaml_css,
+        yaml_coder,
+        yaml_amp_mode,
+        yaml_effort,
+        yaml_codex_options,
+    ) = _lazy("load_yaml_coder_resolution")(repo_path)
+
+    from ..orchestration.factory import _resolve_yaml_codex_options
 
     config = _lazy("MalaConfig").from_env(
         validate=False,
@@ -890,6 +981,7 @@ def epic_verify(
         yaml_coder=yaml_coder,
         yaml_amp_mode=yaml_amp_mode,
         yaml_effort=yaml_effort,
+        yaml_codex_options=_resolve_yaml_codex_options(yaml_codex_options),
     )
 
     try:
@@ -899,6 +991,8 @@ def epic_verify(
             coder=coder,
             amp_mode=amp_mode,
             effort=effort,
+            codex_model=codex_model,
+            codex_effort=codex_effort,
         )
     except ValueError as exc:
         log("✗", str(exc), Colors.RED)

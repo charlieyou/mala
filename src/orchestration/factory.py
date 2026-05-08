@@ -81,7 +81,7 @@ if TYPE_CHECKING:
         ValidationConfig,
         VerificationRetryPolicy,
     )
-    from src.infra.io.config import MalaConfig
+    from src.infra.io.config import CodexOptions, MalaConfig
     from src.infra.telemetry import TelemetryProvider
 
     from .orchestrator import MalaOrchestrator
@@ -105,6 +105,49 @@ class _ReviewerConfig:
     agent_sdk_review_timeout: int = DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS
     agent_sdk_reviewer_model: str = "opus"
     cerberus_config: CerberusConfig | None = None
+
+
+def _resolve_yaml_codex_options(
+    yaml_codex_options: object | None,
+) -> CodexOptions | None:
+    """Convert :class:`CodexOptionsConfig` (yaml) to :class:`CodexOptions` (runtime).
+
+    Returns ``None`` when the yaml block is absent or all fields are unset
+    (so :meth:`MalaConfig.from_env` keeps using its defaults). Otherwise
+    fills in defaults for any fields the user did not specify.
+    """
+    if yaml_codex_options is None:
+        return None
+    from src.domain.validation.config import CodexOptionsConfig
+    from src.infra.io.config import CodexOptions
+
+    if not isinstance(yaml_codex_options, CodexOptionsConfig):
+        return None
+
+    has_value = (
+        yaml_codex_options.model is not None
+        or yaml_codex_options.effort is not None
+        or yaml_codex_options.approval_policy is not None
+        or yaml_codex_options.sandbox is not None
+        or bool(yaml_codex_options.mcp_servers)
+    )
+    if not has_value:
+        return None
+
+    base = CodexOptions()
+    return CodexOptions(
+        model=yaml_codex_options.model
+        if yaml_codex_options.model is not None
+        else base.model,
+        effort=yaml_codex_options.effort,
+        approval_policy=yaml_codex_options.approval_policy
+        if yaml_codex_options.approval_policy is not None
+        else base.approval_policy,
+        sandbox=yaml_codex_options.sandbox
+        if yaml_codex_options.sandbox is not None
+        else base.sandbox,
+        mcp_servers=yaml_codex_options.mcp_servers,
+    )
 
 
 def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
@@ -144,9 +187,17 @@ def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
         )
 
     if mala_config.coder == "codex":
-        raise NotImplementedError(
-            "Codex provider is not yet implemented (coder='codex'); "
-            "the enum is widened in Phase A8 but the provider lands in Phase B."
+        from src.infra.clients.codex_provider import CodexAgentProvider
+
+        codex = mala_config.coder_options.codex
+        return cast(
+            "AgentProvider",
+            CodexAgentProvider(
+                model=codex.model,
+                effort=codex.effort,
+                approval_policy=codex.approval_policy,
+                sandbox=codex.sandbox,
+            ),
         )
 
     from src.infra.clients.claude_provider import ClaudeAgentProvider
@@ -167,18 +218,20 @@ def load_yaml_coder_resolution(
     Literal["claude", "amp", "codex"] | None,
     Literal["smart", "rush", "deep"] | None,
     str | None,
+    object | None,
 ]:
     """Load yaml-derived inputs for the coder-selection precedence chain.
 
     Returns
-    ``(yaml_claude_settings_sources, yaml_coder, yaml_amp_mode, yaml_effort)``
-    so callers can feed them into :meth:`MalaConfig.from_env`. This is the
-    bridge that lets the CLI honor ``mala.yaml`` ``coder:`` /
-    ``amp_mode:`` / ``effort:`` under the documented
+    ``(yaml_claude_settings_sources, yaml_coder, yaml_amp_mode,
+    yaml_effort, yaml_codex_options)`` so callers can feed them into
+    :meth:`MalaConfig.from_env`. This is the bridge that lets the CLI
+    honor ``mala.yaml`` ``coder:`` / ``amp_mode:`` / ``effort:`` /
+    ``coder_options.codex.*`` under the documented
     CLI > env > yaml > default precedence (AC-3 of the Amp provider epic
-    and the unified-effort issue).
+    and AC #3/#4 of the Codex provider epic).
 
-    When ``mala.yaml`` is missing, returns ``(None, None, None, None)`` so
+    When ``mala.yaml`` is missing, returns ``(None, ..., None)`` so
     ``from_env`` falls back to env / defaults.
 
     Raises:
@@ -193,7 +246,7 @@ def load_yaml_coder_resolution(
     try:
         user_config = load_config(repo_path)
     except ConfigMissingError:
-        return (None, None, None, None)
+        return (None, None, None, None, None)
 
     if user_config.preset is not None:
         preset_config = PresetRegistry().get(user_config.preset)
@@ -206,6 +259,7 @@ def load_yaml_coder_resolution(
         validation_config.coder,
         validation_config.amp_mode,
         validation_config.effort,
+        validation_config.codex_options,
     )
 
 
@@ -1092,6 +1146,7 @@ def create_orchestrator(
     yaml_coder: Literal["claude", "amp", "codex"] | None = None
     yaml_amp_mode: Literal["smart", "rush", "deep"] | None = None
     yaml_effort: str | None = None
+    yaml_codex_options: object | None = None
     reviewer_config = _ReviewerConfig()  # Default
     validation_config = None
     validation_config_missing = False
@@ -1108,6 +1163,7 @@ def create_orchestrator(
         yaml_coder = validation_config.coder
         yaml_amp_mode = validation_config.amp_mode
         yaml_effort = validation_config.effort
+        yaml_codex_options = validation_config.codex_options
         reviewer_config = _extract_reviewer_config(validation_config)
     except ConfigMissingError:
         # mala.yaml not present - use defaults
@@ -1124,6 +1180,7 @@ def create_orchestrator(
             yaml_coder=yaml_coder,
             yaml_amp_mode=yaml_amp_mode,
             yaml_effort=yaml_effort,
+            yaml_codex_options=_resolve_yaml_codex_options(yaml_codex_options),
         )
 
     # Derive computed configuration

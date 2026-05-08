@@ -134,7 +134,9 @@ class TestEndToEndViaLoadConfig:
         self, tmp_path: Path
     ) -> None:
         """The pre-flatten YAML shape (`coder_options.amp.mode`) is no longer
-        supported. The top-level allow-list rejects it as an unknown field."""
+        supported. ``coder_options`` is reserved for codex options
+        (Phase B); placing ``amp`` under it must fail with a clear
+        message pointing at top-level ``amp_mode``."""
         repo = self._write_yaml(
             tmp_path,
             "preset: python-uv\ncoder: amp\ncoder_options:\n  amp:\n    mode: deep\n",

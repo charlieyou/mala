@@ -127,19 +127,23 @@ def test_create_agent_provider_threads_amp_mode() -> None:
     assert "rush" in runtime.argv  # ty:ignore[unresolved-attribute]
 
 
-def test_create_agent_provider_rejects_codex_until_phase_b() -> None:
-    """A8 widens the ``coder`` enum to include ``"codex"`` but does not yet
-    wire the Codex provider (Phase B). Constructing :class:`MalaConfig` with
-    ``coder="codex"`` succeeds; resolving an :class:`AgentProvider` for it
-    raises :class:`NotImplementedError` so the gap is observable."""
+def test_create_agent_provider_picks_codex_stub() -> None:
+    """Phase B wires ``coder=codex`` selection through to the Codex stub
+    provider. ``_create_agent_provider`` now returns a real
+    :class:`CodexAgentProvider` instance whose downstream methods raise
+    :class:`CodexNotImplementedError` (covered separately in
+    :mod:`tests.unit.infra.clients.test_codex_provider`)."""
+    from src.infra.clients.codex_provider import CodexAgentProvider
+
     config = MalaConfig(
         runs_dir=Path("/tmp/runs"),
         lock_dir=Path("/tmp/locks"),
         coder="codex",
     )
     assert config.coder == "codex"
-    with pytest.raises(NotImplementedError, match="Codex"):
-        _create_agent_provider(config)
+    provider = _create_agent_provider(config)
+    assert isinstance(provider, CodexAgentProvider)
+    assert provider.name == "codex"
 
 
 def test_create_agent_provider_threads_claude_settings_sources() -> None:
