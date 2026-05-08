@@ -3174,3 +3174,196 @@ class TestBuiltinCdAndPushd:
         command = command_template
         result = decide(make_payload("bash", {"command": command}, cwd=repo))
         assert is_deny(result), f"command: {command!r} → {result}"
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 2, post-restart)
+# ---------------------------------------------------------------------------
+
+
+class TestBooleanWrapperFlags:
+    """Regression: ``sudo -A`` and ``unshare --user`` are BOOLEAN.
+
+    Before the fix, both wrappers had these boolean flags listed in
+    their value-flag tables. The flags would consume the inner cmd as
+    their "value" and the heuristic would see e.g. ``unowned.py`` as
+    the cmd basename — silently allowing the unowned write.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            # sudo boolean flags: -A askpass, -b background, -E preserve-env,
+            # -H set-home, -i login, -K kill-timestamp, -k reset-timestamp,
+            # -l list, -n non-interactive, -P preserve-groups, -S stdin,
+            # -s shell, -V version, -v validate
+            "sudo -A touch {target}",
+            "sudo -b touch {target}",
+            "sudo -E touch {target}",
+            "sudo -H touch {target}",
+            "sudo -n touch {target}",
+            "sudo -S touch {target}",
+            # unshare boolean namespace flags: -u uts, -i ipc, -m mount,
+            # -n net, -p pid, -U user, -r map-root, -T time, -C cgroup,
+            # -l ipc/list (deprecated short for some)
+            "unshare --user touch {target}",
+            "unshare -U touch {target}",
+            "unshare -u touch {target}",
+            "unshare --mount touch {target}",
+            "unshare -m touch {target}",
+            "unshare -n touch {target}",
+            "unshare --net touch {target}",
+            "unshare -p touch {target}",
+            "unshare --pid touch {target}",
+            "unshare -r touch {target}",
+            "unshare --map-root-user touch {target}",
+        ],
+    )
+    def test_boolean_wrapper_flag_inner_write_denied(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+    def test_unshare_value_flag_still_consumes(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``--setuid 0`` IS value-taking; the inner cmd then dispatches
+        # correctly.
+        target = repo / "unowned.py"
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": f"unshare --setuid 0 touch {target}"},
+            )
+        )
+        assert is_deny(result)
+        assert "unowned.py" in deny_reason(result)
+
+
+class TestChrtTasksetWrapper:
+    """Regression: ``chrt`` and ``taskset`` need their leading positional dropped.
+
+    ``chrt PRIORITY cmd`` and ``taskset MASK cmd`` put a numeric/hex
+    positional before the inner command. Before the fix, only
+    ``timeout DURATION cmd`` had its leading positional dropped, so
+    ``chrt 10 touch f`` and ``taskset 0x1 touch f`` left ``10`` and
+    ``0x1`` as the cmd basename — no extractor matched.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "chrt 10 touch {target}",
+            "chrt --rr 5 touch {target}",
+            "taskset 0x1 touch {target}",
+            "taskset --cpu-list 0,2 touch {target}",
+            # Nested with another wrapper.
+            "sudo chrt 10 touch {target}",
+        ],
+    )
+    def test_chrt_taskset_inner_write_denied(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+
+class TestInstallBackupOptionalArg:
+    """Regression: ``install --backup`` takes an OPTIONAL argument.
+
+    Before the fix, ``--backup`` was in install's value-long-flag
+    table, so ``install -d --backup dir1 dir2`` would consume ``dir1``
+    as the backup-control value — the heuristic then only saw
+    ``dir2`` and missed the lock-check on the unowned ``dir1``.
+    """
+
+    def test_install_backup_does_not_swallow_dir(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``--backup`` alone has no value; ``dir1 dir2`` are both
+        # positional dirs to create. Locking only ``dir2`` should
+        # still deny because ``dir1`` is unowned.
+        a = repo / "dir1"
+        b = repo / "dir2"
+        assert try_lock(str(b), "agent-me", repo_namespace=str(repo))
+        command = f"install -d --backup {a} {b}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), result
+        assert "dir1" in deny_reason(result)
+
+    def test_install_backup_with_eq_value_still_works(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``--backup=numbered`` has the value embedded in the same
+        # token; the heuristic must NOT consume the next token.
+        a = repo / "dir1"
+        b = repo / "dir2"
+        for p in (a, b):
+            assert try_lock(str(p), "agent-me", repo_namespace=str(repo))
+        command = f"install -d --backup=numbered {a} {b}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+
+class TestShellGlobMetacharacters:
+    """Regression: ``rm *.py`` cannot be statically resolved to files.
+
+    Before the fix, the heuristic treated the literal ``*.py`` as a
+    write target. An agent could acquire a lock on the literal pattern
+    (``$cwd/*.py``) — the lock-check would succeed and the hook would
+    allow ``rm *.py`` while bash expanded it to every matching .py
+    file at runtime.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "rm *.py",
+            "rm /tmp/*.log",
+            "touch a.txt b.txt c[0-9].txt",
+            "touch {a,b,c}.txt",
+            "cp src *.bak",
+            "cp src ?.txt",
+            "mkdir test[12]",
+        ],
+    )
+    def test_glob_target_always_denies(
+        self, env: dict[str, str], repo: Path, command: str
+    ) -> None:
+        # Even if the agent acquires a lock on the literal pattern,
+        # the hook must still deny — the actual files bash expands
+        # cannot be enumerated statically.
+        # Pre-acquire a junk lock on the pattern to prove that
+        # locking the literal does NOT bypass the gate.
+        from src.infra.tools.locking import try_lock as try_lock_
+
+        # Try locking the most likely-relevant glob pattern from the
+        # command (best-effort; we don't parse it ourselves here).
+        for tok in command.split():
+            if any(g in tok for g in "*?[]{}"):
+                try_lock_(tok, "agent-me", repo_namespace=str(repo))
+                break
+
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), f"command: {command!r} → {result}"
+
+    def test_non_glob_path_unchanged(self, env: dict[str, str], repo: Path) -> None:
+        # Sanity: a plain literal path with NO globs flows through
+        # normally (locked → allow, unlocked → deny).
+        target = repo / "plain.py"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("bash", {"command": f"touch {target}"}))
+        assert is_allow(result), result

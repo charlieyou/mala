@@ -260,6 +260,14 @@ def _resolve_against_cwd(target: str, cwd: str | None) -> str:
     return str(Path(cwd) / target)
 
 
+# Shell glob and brace-expansion metacharacters. When any of these
+# appear in an extracted write-target, the actual files bash will
+# operate on cannot be statically resolved — and the agent could
+# acquire a lock on the literal pattern (``$cwd/*.py``) to bypass the
+# gate. Treat such targets as unresolved (always-deny).
+_SHELL_GLOB_RE = re.compile(r"[*?\[\]{}]")
+
+
 def _check_lock(
     target: str,
     agent_id: str,
@@ -273,9 +281,14 @@ def _check_lock(
     before lock-key derivation so the lock-check path matches the path
     the shell would actually write to. The unresolved-target sentinel
     always denies (plan L846: deny on parseable-but-unresolved write
-    expressions).
+    expressions). Targets containing shell glob/brace expansion
+    metacharacters also always deny — bash expands them at runtime to
+    one or more files we cannot enumerate, and locking the literal
+    pattern (e.g. ``*.py``) would be a trivial bypass.
     """
     if target == _UNRESOLVED_SENTINEL:
+        return _deny(_msg_no_lock(target, agent_id))
+    if _SHELL_GLOB_RE.search(target):
         return _deny(_msg_no_lock(target, agent_id))
     # Ensure the locking module reads from the configured lock dir even
     # when MALA_LOCK_DIR was sourced from the state-file fallback.
@@ -360,7 +373,13 @@ _EXECUTION_PREFIXES = frozenset(
 # the inner command.
 _WRAPPER_VALUE_LETTERS: dict[str, frozenset[str]] = {
     "env": frozenset({"u", "S", "C"}),
-    "sudo": frozenset({"u", "g", "h", "p", "A", "C", "D", "T", "U", "r", "t"}),
+    # NOTE: ``sudo -A`` (askpass), ``-b`` (background), ``-E`` (preserve-
+    # env), ``-H`` (set-home), ``-i`` (login), ``-l`` (list), ``-n``
+    # (non-interactive), ``-P`` (preserve-groups), ``-S`` (stdin), ``-s``
+    # (shell), ``-V`` (version), ``-v`` (validate), ``-K``/``-k`` are
+    # all BOOLEAN and intentionally NOT listed here. Listing them as
+    # value letters would consume the inner cmd as the flag value.
+    "sudo": frozenset({"u", "g", "h", "p", "C", "D", "T", "U", "r", "t"}),
     "doas": frozenset({"u", "C"}),
     "exec": frozenset({"a"}),
     "nice": frozenset({"n"}),
@@ -369,7 +388,12 @@ _WRAPPER_VALUE_LETTERS: dict[str, frozenset[str]] = {
     "chrt": frozenset({"p"}),
     "taskset": frozenset({"p", "c"}),
     "timeout": frozenset({"s", "k"}),
-    "unshare": frozenset({"u", "U"}),
+    # NOTE: ``unshare`` namespace flags (``-i``/``-m``/``-n``/``-p``/
+    # ``-u``/``-U``/``-r``/``-T``/``-C``/``-l``/``-c``) are BOOLEAN —
+    # they enable a namespace, they don't take a value. Only
+    # ``-S/--setuid``, ``-G/--setgid``, ``-w/--wd``, ``-R/--root`` are
+    # value-taking shorts.
+    "unshare": frozenset({"S", "G", "w", "R"}),
     # ``time -p`` (POSIX format) and ``time -v`` (verbose, GNU) are
     # boolean flags. ``time -o file -a cmd`` is value-taking.
     "time": frozenset({"o", "f"}),
@@ -412,11 +436,14 @@ _WRAPPER_VALUE_LONG_FLAGS: dict[str, frozenset[str]] = {
             "--map-group",
             "--map-users",
             "--map-groups",
-            "--user",
+            # NOTE: ``--user``/``--ipc``/``--mount``/``--net``/``--pid``/
+            # ``--time``/``--cgroup``/``--uts`` are BOOLEAN namespace
+            # toggles in unshare and intentionally NOT listed here.
             "--setuid",
             "--setgid",
             "--propagation",
             "--root",
+            "--wd",
         }
     ),
     "time": frozenset({"--output", "--format"}),
@@ -437,6 +464,20 @@ _WRAPPER_CWD_CHANGE_LONG_FLAGS: dict[str, frozenset[str]] = {
     "env": frozenset({"--chdir"}),
     "sudo": frozenset({"--chdir"}),
 }
+
+# Patterns for the leading-positional argument of each wrapper. Used by
+# ``_unwrap_execution_prefix`` to decide whether to drop the next token
+# as the wrapper's mandatory positional. Without these patterns, a
+# command like ``taskset --cpu-list 0,2 touch f`` (where the mask was
+# supplied via the flag) would have ``touch`` dropped as if it were the
+# mask, leaving the heuristic with just ``f`` and the inner write
+# silently allowed.
+_TIMEOUT_DURATION_RE = re.compile(r"^[0-9]+(\.[0-9]+)?[smhdSMHD]?$|^infinity$|^inf$")
+_PRIORITY_RE = re.compile(r"^[0-9]+$")
+_TASKSET_MASK_RE = re.compile(
+    r"^(0[xX][0-9a-fA-F]+|[0-9]+(,[0-9]+)*|[0-9]+-[0-9]+(,[0-9]+(-[0-9]+)?)*)$"
+)
+
 
 # Per-wrapper short flag letters whose VALUE is itself a write target.
 # When the wrapper is unwrapped, these values are added to the segment's
@@ -572,8 +613,24 @@ def _unwrap_execution_prefix(
         # Wrappers that allow ``KEY=VALUE`` before the inner cmd.
         if cmd in {"env", "sudo", "doas"}:
             new_tokens = _strip_env_assignments(new_tokens)
-        # ``timeout DURATION cmd`` — drop the duration positional.
-        if cmd == "timeout" and new_tokens:
+        # Wrappers that take a leading positional (DURATION/PRIORITY/
+        # MASK) before the inner cmd:
+        #   timeout DURATION cmd
+        #   chrt PRIORITY cmd
+        #   taskset MASK cmd
+        # Drop only when the next token actually looks like the
+        # expected positional. ``taskset --cpu-list 0,2 cmd`` already
+        # consumed the mask via the flag; the next token is the cmd
+        # itself and must NOT be dropped.
+        if (
+            cmd == "timeout"
+            and new_tokens
+            and _TIMEOUT_DURATION_RE.match(new_tokens[0])
+        ):
+            new_tokens = new_tokens[1:]
+        elif cmd == "chrt" and new_tokens and _PRIORITY_RE.match(new_tokens[0]):
+            new_tokens = new_tokens[1:]
+        elif cmd == "taskset" and new_tokens and _TASKSET_MASK_RE.match(new_tokens[0]):
             new_tokens = new_tokens[1:]
         if not new_tokens:
             break
@@ -1148,7 +1205,12 @@ _UTILITY_FLAG_VALUE_LONG_FLAGS: dict[str, frozenset[str]] = {
             "--group",
             "--strip-program",
             "--context",
-            "--backup",
+            # NOTE: ``--backup`` takes an OPTIONAL argument. Only the
+            # ``--backup=CONTROL`` form has a value; ``--backup`` alone
+            # uses the default control. Listing it here would
+            # incorrectly swallow the next token (e.g. ``install -d
+            # --backup dir1 dir2`` would consume ``dir1`` as the
+            # backup-control value, losing dir1 from the lock-check).
         }
     ),
     "rm": frozenset(),
