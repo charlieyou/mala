@@ -1678,3 +1678,272 @@ class TestNewlineSeparator:
         assert is_deny(result), f"command: {command!r} → {result}"
         # First missing lock fires the deny — either path is acceptable.
         assert "a.txt" in deny_reason(result) or "b.txt" in deny_reason(result)
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 6)
+# ---------------------------------------------------------------------------
+
+
+class TestAwkLongIncludeInplace:
+    """Regression: ``gawk --include inplace`` long-form activates in-place.
+
+    Before the fix, the heuristic only matched ``-i inplace`` and
+    ``-iinplace``. ``gawk --include inplace '{print}' file`` was
+    treated as a generic flag, ``found_inplace`` stayed False, and the
+    in-place mutation slipped past the gate.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "gawk --include inplace '{{print}}' {target}",
+            "gawk --include=inplace '{{print}}' {target}",
+            "awk --include inplace '{{print}}' {target}",
+            "awk --include=inplace '{{print}}' {target}",
+        ],
+    )
+    def test_include_inplace_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "data.txt"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "data.txt" in deny_reason(result)
+
+    def test_include_inplace_allowed_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "data.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"gawk --include inplace '{{print}}' {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+    def test_include_non_inplace_value_does_not_activate(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``--include readfile`` includes a gawk library named ``readfile``
+        # — it does NOT enable in-place mode. Without explicit handling,
+        # the value would land in ``positionals`` and confuse the heuristic.
+        # The command should NOT deny on lock-mismatch (no in-place active).
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": "gawk --include readfile '{print}' some-arg"},
+            )
+        )
+        assert is_allow(result), result
+
+
+class TestReadWriteRedirection:
+    """Regression: ``<>file`` and ``n<>file`` (POSIX read-write open).
+
+    Before the fix, the redirection regex only matched the ``>`` family.
+    ``: <>unlocked.txt`` and ``exec 3<>unlocked.txt`` open ``unlocked.txt``
+    for read+write and create it if missing — both clear write surfaces —
+    yet the heuristic returned no targets and the unlocked write was
+    silently allowed.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            ": <>{target}",
+            ": <> {target}",
+            "exec 3<>{target}",
+            "exec 3<> {target}",
+            "exec 9<>{target}",
+        ],
+    )
+    def test_read_write_redirect_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "out.log"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "out.log" in deny_reason(result)
+
+    def test_read_only_redirect_does_not_deny(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``<file`` opens for reading only — NOT a write surface. Must
+        # not falsely trigger the lock check.
+        target = repo / "input.txt"
+        result = decide(make_payload("bash", {"command": f"cat <{target}"}))
+        assert is_allow(result), result
+
+
+class TestBundledValueFlagBeforeT:
+    """Regression: ``cp -St dir src dest`` (-S consumes ``t`` as suffix).
+
+    Before the fix, the heuristic blindly scanned the bundle for ``t``
+    and treated it as ``-t`` regardless of preceding value-taking flags.
+    For ``cp -St dir src dst``, GNU cp parses ``-S t`` (suffix=``t``)
+    and ``dest=dst``, but the heuristic extracted ``dir`` as the
+    destination. An agent holding ``dir``'s lock could silently write
+    to the unowned ``dst``.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template,suffix_arg,expected_substr",
+        [
+            # -S<arg> via bundle: -S consumes 't' (no -t flag at all)
+            ("cp -St dir src {dest}", None, "out"),
+            ("mv -St dir src {dest}", None, "out"),
+            # -S<arg> attached: -Sbak still allows -t recognition only
+            # when ``t`` is NOT after the S-bundle.
+            # Reverse order (`-tS`) is genuinely target-dir taking ``S``.
+            # ``-vSt`` — S consumes the rest of the bundle (``t``).
+            ("cp -vSt dir src {dest}", None, "out"),
+            ("install -mSt dir src {dest}", None, "out"),
+        ],
+    )
+    def test_value_flag_before_t_extracts_real_dest(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+        suffix_arg: str | None,
+        expected_substr: str,
+    ) -> None:
+        del suffix_arg  # placeholder for future params
+        dest = repo / "out.txt"
+        command = command_template.format(dest=dest)
+        result = decide(make_payload("bash", {"command": command}))
+        # Real destination is the trailing positional ``out.txt``, not
+        # the ``dir`` arg consumed by ``-S``.
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert expected_substr in deny_reason(result), deny_reason(result)
+
+    def test_t_before_s_still_extracts_target_dir(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``-tS dir src`` — cp parses ``-t S`` (target-dir=``S``). The
+        # heuristic should match cp's interpretation: extract ``S`` as
+        # the destination value.
+        # Run with no lock anywhere; the heuristic deny on the literal
+        # ``S`` proves it dispatched correctly to the target-dir branch.
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": "cp -tS dir src extra"},
+            )
+        )
+        # ``-tS`` is treated as ``-t`` with attached value ``S``; a
+        # nonexistent ``S`` lock-check denies.
+        assert is_deny(result), result
+        assert "'S'" in deny_reason(result)
+
+
+class TestGitGlobalOptions:
+    """Regression: git global options before the subcommand.
+
+    Before the fix, the subcommand position was hardcoded to
+    ``tokens[1]``. Global options like ``-C /repo``, ``-c k=v``,
+    ``--git-dir=...``, ``--work-tree=.`` shifted the real subcommand
+    later in the token stream. The flag landed in the
+    ``GIT_WRITE_SUBCOMMANDS`` lookup, found no match, and the unlocked
+    write slipped past the gate.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "git -C /tmp checkout {target}",
+            "git --git-dir=/tmp/.git checkout {target}",
+            "git --work-tree=. checkout {target}",
+            "git -c core.editor=vi checkout {target}",
+            "git --no-pager checkout {target}",
+            "git -c k=v -C /tmp checkout {target}",
+        ],
+    )
+    def test_global_options_before_subcommand_denies(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "f.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+
+    def test_global_options_before_apply_denies(self, env: dict[str, str]) -> None:
+        # ``git apply patch`` returns the unresolved sentinel which
+        # always denies. With global options, the subcommand finder
+        # must still locate ``apply``.
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": "git --work-tree=. apply some.patch"},
+            )
+        )
+        assert is_deny(result)
+
+    def test_non_write_subcommand_allowed(self, env: dict[str, str]) -> None:
+        # ``git status`` is not a write subcommand — even with global
+        # options, the heuristic must not deny.
+        result = decide(make_payload("bash", {"command": "git -C /tmp status"}))
+        assert is_allow(result)
+
+
+class TestForceClobberRedirect:
+    """Regression: ``>|`` (force-clobber) preserved through normalization.
+
+    Before the fix, ``_normalize_separators`` split every ``|``
+    including the one inside ``>|``. ``echo hi >| unlocked.txt`` got
+    rewritten to ``echo hi >  |  unlocked.txt``, the redirection
+    extractor saw ``>`` followed by ``|`` (not a target), and the
+    write to ``unlocked.txt`` slipped past the lock check.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "echo hi >|{target}",
+            "echo hi >| {target}",
+            "cmd 2>|{target}",
+        ],
+    )
+    def test_force_clobber_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "out.log"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "out.log" in deny_reason(result)
+
+    def test_force_clobber_allowed_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "out.log"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"echo hi >| {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+    def test_pipe_alone_still_split(self, env: dict[str, str]) -> None:
+        # Sanity: a regular ``|`` (not preceded by ``>``) must still
+        # split into separate segments.
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": "echo y|tee /tmp/should-not-exist-xyz"},
+            )
+        )
+        # Either deny — the point is that the segment got split and
+        # the tee target was extracted (not ``y|tee``).
+        assert is_deny(result)

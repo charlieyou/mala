@@ -304,15 +304,23 @@ _FD_REF_TARGET_RE = re.compile(r"^[0-9]+$|^-$")
 #   - ``&`` — combined stdout+stderr (``&>``, ``&>>``)
 #   - ``{varname}`` — bash 4.1+ variable-allocated fd (``{fd}>file``);
 #     bash auto-assigns a free fd to ``$varname`` and applies the redirect.
-# Examples it matches: ``>``, ``>>``, ``1>``, ``2>``, ``3>>``, ``&>``, ``&>>``,
-# ``>&``, ``2>&``, ``>|``, ``{fd}>``, ``{fd}>>``.
+#
+# Recognised operator forms:
+#   - ``>``/``>>``/``n>``/``n>>`` — write
+#   - ``&>``/``&>>``/``>&``/``n>&`` — combined / legacy combined
+#   - ``>|`` / ``n>|`` — force-clobber write
+#   - ``<>`` / ``n<>`` — POSIX read-write open (creates file if missing,
+#     so it IS a write surface)
+# ``<`` alone (read-only), ``<<`` (here-doc), and ``<<<`` (here-string)
+# are deliberately excluded — they don't open a file for writing.
 _REDIR_FD_PREFIX = r"(?:[0-9]+|&|\{[A-Za-z_][A-Za-z0-9_]*\})"
-_REDIR_OP_TOKEN_RE = re.compile(rf"^{_REDIR_FD_PREFIX}?>{{1,2}}[&|]?$")
+_REDIR_TAIL = r"(?:<>|>{1,2}[&|]?)"
+_REDIR_OP_TOKEN_RE = re.compile(rf"^{_REDIR_FD_PREFIX}?{_REDIR_TAIL}$")
 # Prefix regex for combined-token forms like ``>file``, ``2>file``,
-# ``&>file``, ``>&file``, ``3>>file``, ``{fd}>file``. Greedy on the
-# optional trailing ``&`` so ``2>&1`` matches the prefix ``2>&`` (target
-# ``1`` → fd dup).
-_COMBINED_REDIR_PREFIX_RE = re.compile(rf"^{_REDIR_FD_PREFIX}?>{{1,2}}[&|]?")
+# ``&>file``, ``>&file``, ``3>>file``, ``{fd}>file``, ``<>file``,
+# ``3<>file``. Greedy on the optional trailing ``&`` so ``2>&1`` matches
+# the prefix ``2>&`` (target ``1`` → fd dup).
+_COMBINED_REDIR_PREFIX_RE = re.compile(rf"^{_REDIR_FD_PREFIX}?{_REDIR_TAIL}")
 
 
 def _extract_redirection_targets(tokens: list[str]) -> list[str]:
@@ -530,6 +538,28 @@ def _extract_awk_inplace_targets(tokens: list[str]) -> list[str]:
             found_inplace = True
             i += 1
             continue
+        # ``--include inplace`` (separate) and ``--include=inplace``
+        # (attached) are gawk's long-form equivalents of ``-i inplace``.
+        # Must be checked BEFORE the generic ``--`` long-flag handling
+        # below so the in-place activation is not silently dropped.
+        if tok == "--include" and i + 1 < len(tokens) and tokens[i + 1] == "inplace":
+            found_inplace = True
+            i += 2
+            continue
+        if tok == "--include=inplace":
+            found_inplace = True
+            i += 1
+            continue
+        # Other ``--include <lib>`` / ``--include=<lib>`` (gawk include
+        # of a non-inplace library): consume the value but do NOT mark
+        # in-place. Without explicit handling, the value would be left
+        # in the positional list and miscategorised as a file.
+        if tok == "--include" and i + 1 < len(tokens):
+            i += 2
+            continue
+        if tok.startswith("--include="):
+            i += 1
+            continue
         if tok.startswith("--"):
             name = tok.split("=", 1)[0]
             if name in _AWK_PROGRAM_LONG_FLAGS:
@@ -568,6 +598,48 @@ def _extract_awk_inplace_targets(tokens: list[str]) -> list[str]:
 # entirely.
 _TARGET_DIR_LONG_FLAGS = frozenset({"--target-directory"})
 _REFERENCE_LONG_FLAGS = frozenset({"--reference"})
+
+# Per-utility short value-taking flags (excluding ``t``). When one of
+# these letters appears in a flag bundle, it consumes the rest of the
+# bundle as its argument. Without this, ``cp -St dir src dest`` would
+# match ``t`` in the bundle and extract ``dir`` as the destination —
+# but cp actually parses ``-S t dir src dest`` (suffix=``t``, dest=
+# ``dest``), so the heuristic would lock-check the wrong path.
+_UTILITY_VALUE_LETTERS: dict[str, frozenset[str]] = {
+    "cp": frozenset({"S"}),
+    "mv": frozenset({"S"}),
+    "ln": frozenset({"S"}),
+    "install": frozenset({"S", "m", "o", "g"}),
+}
+
+
+def _scan_short_bundle_for_target_dir(
+    body: str, cmd: str
+) -> tuple[str, str | None] | None:
+    """Scan a short-flag bundle for the ``-t`` (target-directory) flag.
+
+    Returns:
+        ``("next_token", None)`` if the bundle ends with ``t`` (next
+        argv token is the destination), ``("attached", value)`` if ``t``
+        is followed by attached chars (those chars are the destination),
+        or ``None`` if no ``-t`` is present (or it is consumed by a
+        value-taking flag earlier in the bundle).
+    """
+    value_letters = _UTILITY_VALUE_LETTERS.get(cmd, frozenset())
+    j = 0
+    while j < len(body):
+        ch = body[j]
+        if ch == "t":
+            if j == len(body) - 1:
+                return ("next_token", None)
+            return ("attached", body[j + 1 :])
+        if ch in value_letters:
+            # Earlier value-taking flag absorbs the rest of the bundle
+            # (including any ``t`` that appears after it). The ``t`` is
+            # part of that flag's value, not a separate ``-t``.
+            return None
+        j += 1
+    return None
 
 
 def _extract_utility_targets(tokens: list[str]) -> list[str]:
@@ -625,22 +697,20 @@ def _extract_utility_targets(tokens: list[str]) -> list[str]:
                 continue
             if tok.startswith("-") and not tok.startswith("--") and len(tok) >= 2:
                 body = tok[1:]
-                t_idx = body.find("t")
-                if t_idx >= 0:
-                    if t_idx == len(body) - 1:
-                        # ``-t`` at end of bundle: next token is the dest.
+                scan = _scan_short_bundle_for_target_dir(body, cmd)
+                if scan is not None:
+                    kind, attached = scan
+                    if kind == "next_token":
                         if i + 1 < len(args):
                             explicit_targets.append(args[i + 1])
                             i += 2
                             continue
                         i += 1
                         continue
-                    # ``-t`` followed by attached chars: those chars are
-                    # the destination directory (cp's documented behaviour
-                    # for ``-tDIR``).
-                    explicit_targets.append(body[t_idx + 1 :])
-                    i += 1
-                    continue
+                    if kind == "attached" and attached is not None:
+                        explicit_targets.append(attached)
+                        i += 1
+                        continue
         # chmod/chown: ``--reference=FILE`` (or ``--reference FILE``) replaces
         # the leading mode/owner positional.
         if cmd in {"chmod", "chown"}:
@@ -796,13 +866,68 @@ def _extract_oneliner_targets(tokens: list[str]) -> list[str]:
     return []
 
 
+# Git global options that take a separate-token value. Long forms
+# (``--git-dir=...``, etc.) are handled by ``=`` detection in
+# ``_find_git_subcommand_index`` and don't need explicit listing here.
+_GIT_GLOBAL_VALUE_FLAGS = frozenset(
+    {
+        "-C",
+        "-c",
+        "--git-dir",
+        "--work-tree",
+        "--namespace",
+        "--super-prefix",
+        "--exec-path",
+        "--config-env",
+    }
+)
+
+
+def _find_git_subcommand_index(tokens: list[str]) -> int | None:
+    """Return the index of the first non-global-option token after ``git``.
+
+    Skips global options that come before the subcommand. Without this,
+    ``git -C /repo checkout f`` evaluates ``-C`` as the subcommand,
+    finds no match in ``GIT_WRITE_SUBCOMMANDS``, and silently allows
+    the unowned write. ``git --work-tree=. apply patch`` has the same
+    bypass via the long-form ``--key=value`` shape.
+    """
+    i = 1
+    while i < len(tokens):
+        tok = tokens[i]
+        if not tok.startswith("-"):
+            return i
+        # Long form with attached value: ``--git-dir=/abs``
+        if tok.startswith("--") and "=" in tok:
+            i += 1
+            continue
+        if tok in _GIT_GLOBAL_VALUE_FLAGS:
+            i += 2
+            continue
+        # Other short/long flags that take no value (``-h``, ``--help``,
+        # ``--version``, ``--no-pager``, ``--paginate``, ``--bare``,
+        # ``--literal-pathspecs``, ``--glob-pathspecs``, etc.).
+        i += 1
+    return None
+
+
 def _extract_git_targets(tokens: list[str]) -> list[str]:
-    """git checkout/restore/apply/stash apply/pop write-path extraction."""
+    """git checkout/restore/apply/stash apply/pop write-path extraction.
+
+    Honours git global options that come before the subcommand
+    (``git -C /repo checkout f``, ``git --work-tree=. apply p``) so the
+    subcommand-position heuristic doesn't get fooled into matching a
+    flag against ``GIT_WRITE_SUBCOMMANDS``.
+    """
     if not tokens or _command_basename(tokens) != "git" or len(tokens) < 2:
         return []
-    sub = tokens[1]
+    sub_idx = _find_git_subcommand_index(tokens)
+    if sub_idx is None:
+        return []
+    sub = tokens[sub_idx]
     if sub not in GIT_WRITE_SUBCOMMANDS:
         return []
+    rest = tokens[sub_idx + 1 :]
 
     if sub in {"checkout", "restore"}:
         # All positional path args after `--` (or after subcommand for
@@ -810,7 +935,7 @@ def _extract_git_targets(tokens: list[str]) -> list[str]:
         # start with `-` and is not a known revision name.
         out: list[str] = []
         seen_dash_dash = False
-        for tok in tokens[2:]:
+        for tok in rest:
             if tok == "--":
                 seen_dash_dash = True
                 continue
@@ -834,7 +959,7 @@ def _extract_git_targets(tokens: list[str]) -> list[str]:
         return [_UNRESOLVED_SENTINEL]
 
     if sub == "stash":
-        if len(tokens) >= 3 and tokens[2] in {"apply", "pop"}:
+        if rest and rest[0] in {"apply", "pop"}:
             return [_UNRESOLVED_SENTINEL]
         return []
 
@@ -969,7 +1094,24 @@ def _normalize_separators(command: str) -> str:
                 out.append(" ")
                 i += 2
                 continue
-        if c in (";", "|"):
+        if c == ";":
+            out.append(" ")
+            out.append(c)
+            out.append(" ")
+            i += 1
+            continue
+        if c == "|":
+            # Preserve ``>|`` (force-clobber redirect): if the previous
+            # output char is ``>`` we must NOT split the ``|`` away from
+            # it. Splitting breaks the operator into ``>`` and ``|``,
+            # the redirection regex no longer recognises the operator,
+            # and the destination silently becomes a separate token
+            # that no extractor can lock-check. Multi-char ``||``/``|&``
+            # are already handled by the lookahead above.
+            if out and out[-1] == ">":
+                out.append(c)
+                i += 1
+                continue
             out.append(" ")
             out.append(c)
             out.append(" ")
