@@ -523,6 +523,61 @@ class TestStateFileFallback:
         assert is_deny(result)
         assert "missing" in deny_reason(result)
 
+    def test_stale_env_agent_id_does_not_merge_with_state_file_coords(
+        self,
+        repo: Path,
+        lock_dir: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression: source selection is atomic, not per-key (plan L820).
+
+        Merging a stale ``MALA_AGENT_ID`` from the parent ``os.environ``
+        with ``MALA_LOCK_DIR``/``MALA_REPO_NAMESPACE`` from the current
+        session's state file would let a Codex agent be evaluated as the
+        wrong identity against the correct lock store, allowing a write
+        to a path the leaked agent happens to own. The atomic-source fix
+        denies (env path is taken because ``MALA_AGENT_ID`` is set, but
+        the env path lacks the lock-store coordinates -> "missing").
+        """
+        fake_home = tmp_path / "home"
+        state_dir = fake_home / ".config" / "mala" / "agent-state"
+        state_dir.mkdir(parents=True)
+        session_id = "thr_no_merge"
+        # State file describes the *current* session's identity and
+        # lock-store coords.
+        (state_dir / f"{session_id}.env").write_text(
+            f"MALA_AGENT_ID=fresh-agent\n"
+            f"MALA_LOCK_DIR={lock_dir}\n"
+            f"MALA_REPO_NAMESPACE={repo}\n"
+        )
+        monkeypatch.setenv("HOME", str(fake_home))
+        # The leaked agent happens to hold the lock on the target. The
+        # ``lock_dir`` fixture has already set MALA_LOCK_DIR in env so
+        # try_lock writes into the same lock store the state file
+        # references; we drop MALA_LOCK_DIR / MALA_REPO_NAMESPACE from
+        # env *after* acquiring the lock so the hook is forced to source
+        # them from the state file. Under a per-key merge this would
+        # ALLOW the write (stale identity + correct coords); the
+        # atomic-source contract DENIES it.
+        target = repo / "src.py"
+        assert try_lock(str(target), "stale-agent", repo_namespace=str(repo))
+        # A *stale* MALA_AGENT_ID has leaked into env from a parent
+        # process. LOCK_DIR / REPO_NAMESPACE are NOT in env. A naive
+        # per-key merge would build {AGENT_ID=stale, LOCK_DIR=...,
+        # REPO_NAMESPACE=...} from env+state and evaluate the lock
+        # store as 'stale-agent'.
+        monkeypatch.setenv("MALA_AGENT_ID", "stale-agent")
+        monkeypatch.delenv("MALA_LOCK_DIR", raising=False)
+        monkeypatch.delenv("MALA_REPO_NAMESPACE", raising=False)
+
+        result = decide(
+            make_payload("apply_patch", {"path": str(target)}, session_id=session_id)
+        )
+
+        assert is_deny(result), result
+        assert "missing" in deny_reason(result)
+
 
 # ---------------------------------------------------------------------------
 # Output-shape contract

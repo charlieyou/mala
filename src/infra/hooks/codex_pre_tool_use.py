@@ -215,27 +215,44 @@ def _load_state_file(session_id: str) -> dict[str, str]:
 def _resolve_env(session_id: str) -> dict[str, str]:
     """Resolve MALA_* values from os.environ, falling back to state file.
 
-    Env takes precedence over the state file when both are set, per plan
-    L825. Returns the merged view of ``MALA_AGENT_ID``,
-    ``MALA_LOCK_DIR``, ``MALA_REPO_NAMESPACE``, ``MALA_DISALLOWED_TOOLS``.
+    The lock-ownership identity bundle (``MALA_AGENT_ID``,
+    ``MALA_LOCK_DIR``, ``MALA_REPO_NAMESPACE``) is sourced **atomically**,
+    keyed off ``MALA_AGENT_ID`` per plan L820: if ``MALA_AGENT_ID`` is
+    present in ``os.environ``, the hook uses env values for the bundle
+    (the env-injection path); otherwise it falls back to the per-session
+    state file as a single source for the bundle.
+
+    Per-key merging across the identity bundle is unsafe. Identity
+    (``MALA_AGENT_ID``) and lock-store coordinates (``MALA_LOCK_DIR`` /
+    ``MALA_REPO_NAMESPACE``) must come from the same emitter; a stale
+    ``MALA_AGENT_ID`` leaked from the parent process combined with the
+    current session's ``MALA_LOCK_DIR``/``MALA_REPO_NAMESPACE`` from the
+    state file would cause this Codex agent to be evaluated as the
+    wrong identity against the correct lock store, allowing a write to
+    a path the leaked agent happens to own.
+
+    ``MALA_DISALLOWED_TOOLS`` is independent operator policy (not
+    identity-bound) and retains per-key precedence: env wins over the
+    state file when set, even when explicitly empty (so an operator can
+    clear a stale state-file value with ``MALA_DISALLOWED_TOOLS=""``).
     """
-    keys = (
-        "MALA_AGENT_ID",
-        "MALA_LOCK_DIR",
-        "MALA_REPO_NAMESPACE",
-        "MALA_DISALLOWED_TOOLS",
-    )
     state = _load_state_file(session_id)
     out: dict[str, str] = {}
-    for key in keys:
-        env_val = os.environ.get(key)
-        if env_val is not None:
-            # Env wins on conflict, even when explicitly empty: an
-            # operator setting ``MALA_DISALLOWED_TOOLS=""`` means "clear
-            # the state-file value", not "fall back to it".
-            out[key] = env_val
-        elif key in state:
-            out[key] = state[key]
+    bundle = ("MALA_AGENT_ID", "MALA_LOCK_DIR", "MALA_REPO_NAMESPACE")
+    if "MALA_AGENT_ID" in os.environ:
+        for key in bundle:
+            env_val = os.environ.get(key)
+            if env_val is not None:
+                out[key] = env_val
+    else:
+        for key in bundle:
+            if key in state:
+                out[key] = state[key]
+    disallowed_env = os.environ.get("MALA_DISALLOWED_TOOLS")
+    if disallowed_env is not None:
+        out["MALA_DISALLOWED_TOOLS"] = disallowed_env
+    elif "MALA_DISALLOWED_TOOLS" in state:
+        out["MALA_DISALLOWED_TOOLS"] = state["MALA_DISALLOWED_TOOLS"]
     return out
 
 
