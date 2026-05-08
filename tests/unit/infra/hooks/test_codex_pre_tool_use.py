@@ -915,3 +915,238 @@ class TestEmptyEnvOverridesStateFile:
         result = decide(make_payload("TodoWrite", {}, session_id=session_id))
 
         assert is_allow(result), result
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 3)
+# ---------------------------------------------------------------------------
+
+
+class TestRedirectionFdDuplications:
+    """Regression: ``2>&1``/``>&2``/``>&-`` are fd refs, not write paths.
+
+    The previous regex (this iteration) treated ``2>&1`` as a write to
+    ``&1``. ``cmd > out.log 2>&1`` then denied even when ``out.log`` was
+    locked correctly, because the bogus ``&1`` target failed the lock
+    check first. Pin the fd-ref skip behaviour.
+    """
+
+    def test_stderr_to_stdout_fd_dup_does_not_block(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "out.log"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        # ``2>&1`` must not be lock-checked as ``&1``.
+        result = decide(make_payload("bash", {"command": f"cmd >{target} 2>&1"}))
+        assert is_allow(result), result
+
+    def test_close_fd_does_not_block(self, env: dict[str, str], repo: Path) -> None:
+        target = repo / "out.log"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        # ``>&-`` closes a fd. Same false-positive risk as ``2>&1``.
+        result = decide(make_payload("bash", {"command": f"cmd >{target} >&-"}))
+        assert is_allow(result), result
+
+    def test_fd_dup_alone_with_unlocked_redirect_still_denies(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # The lock-check still applies to the *real* redirect target.
+        target = repo / "unlocked.log"
+        result = decide(make_payload("bash", {"command": f"cmd >{target} 2>&1"}))
+        assert is_deny(result)
+        assert "unlocked.log" in deny_reason(result)
+
+
+class TestSedAttachedAndLongScriptFlags:
+    """Regression: attached/long script-flag forms keep the file target.
+
+    Before the fix, ``sed -es/a/b/ file`` was tokenized as
+    ``['sed', '-es/a/b/', 'file']`` and the only positional ``file`` was
+    discarded as the "inline script", so the heuristic emitted no
+    targets and the in-place edit slipped past the gate. Same shape for
+    ``sed --expression=... file`` and ``awk --source=... file``.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            # Short attached form: -e<script> (no space).
+            "sed -i -es/a/b/ {target}",
+            # Long form with `=` value.
+            "sed --in-place --expression=s/a/b/ {target}",
+            # Long form with separate value token.
+            "sed --in-place --expression s/a/b/ {target}",
+            # Bundled in-place + expression: -ies<script>.
+            "sed -ies/a/b/ {target}",
+        ],
+    )
+    def test_sed_attached_or_long_script_flag_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "data.txt"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "has no active lock" in deny_reason(result)
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "sed -i -es/a/b/ {target}",
+            "sed --in-place --expression=s/a/b/ {target}",
+        ],
+    )
+    def test_sed_attached_or_long_allowed_when_locked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "data.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), f"command: {command!r} → {result}"
+
+
+class TestAwkLongSourceFlag:
+    """Regression: ``awk --source=...`` keeps the file target.
+
+    Same shape as the sed/perl long-form bug. Before the fix,
+    ``awk -i inplace --source='{print}' file`` had only ``file`` as a
+    positional, which was discarded as "the inline program".
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "awk -i inplace --source='{{print}}' {target}",
+            "awk -i inplace --source '{{print}}' {target}",
+        ],
+    )
+    def test_awk_long_source_flag_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "data.txt"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "has no active lock" in deny_reason(result)
+
+
+class TestOnelinerLeadingFlags:
+    """Regression: leading interpreter flags don't bypass the heuristic.
+
+    Before the fix, ``flag = tokens[1]; body = tokens[2]`` hardcoded the
+    script-flag position, so ``python -u -c "open(...)"`` (with the
+    unbuffered ``-u`` flag before ``-c``) had ``flag == "-u"`` and the
+    heuristic returned ``[]``, allowing the unowned write.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            # python with -u (unbuffered) before -c.
+            "python -u -c \"open('{target}','w').write('x')\"",
+            # python3 with -B (no .pyc) before -c.
+            "python3 -B -c \"open('{target}','w').write('x')\"",
+            # node with --no-warnings before -e.
+            "node --no-warnings -e \"fs.writeFileSync('{target}','x')\"",
+            # bash with -x (xtrace) before -c.
+            "bash -x -c 'echo y > {target}'",
+        ],
+    )
+    def test_leading_flags_do_not_bypass(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "out.txt"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+
+
+class TestControlOperatorsWithoutSpaces:
+    """Regression: ``;`` / ``&&`` / ``||`` / ``|`` without surrounding spaces.
+
+    Before the fix, ``shlex.split`` returned ``true;touch f`` as a single
+    token ``true;touch`` plus ``f``, no extractor saw ``touch``, the
+    write-target list was empty, and the hook allowed the unowned write.
+    Pin the normalized-separator behaviour.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "true;touch {target}",
+            "true&&touch {target}",
+            "false||touch {target}",
+            "echo y|tee {target}",
+        ],
+    )
+    def test_control_op_without_spaces_denies_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "out.txt"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "has no active lock" in deny_reason(result)
+
+    def test_quoted_separator_not_split(self, env: dict[str, str], repo: Path) -> None:
+        # Literal ``;`` inside single quotes must NOT be treated as a
+        # control operator. ``echo 'a;b' > out`` should detect ``out``
+        # as the only target and deny only on that path.
+        target = repo / "out"
+        command = f"echo 'a;b' > {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result)
+        assert "out" in deny_reason(result)
+
+
+class TestApplyPatchMoveDestination:
+    """Regression: ``*** Move to: <new>`` is a write target.
+
+    Before the fix, the regex only matched headers ending in ``File:``
+    so ``*** Move to: new.py`` was ignored. A patch that updated
+    ``old.py`` and renamed it to ``new.py`` lock-checked only ``old.py``;
+    holding the source lock allowed creating an unowned ``new.py``.
+    """
+
+    def test_move_to_destination_extracted(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        body = (
+            "*** Begin Patch\n"
+            "*** Update File: old.py\n"
+            "*** Move to: new.py\n"
+            "@@\n-x\n+y\n"
+            "*** End Patch\n"
+        )
+        # Lock only the SOURCE; the destination is unlocked. The hook
+        # must lock-check the destination too and deny.
+        assert try_lock(str(repo / "old.py"), "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("apply_patch", {"command": body}, cwd=repo))
+        assert is_deny(result), result
+        assert "new.py" in deny_reason(result)
+
+    def test_move_to_destination_locked_allowed(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        body = "*** Update File: old.py\n*** Move to: new.py\n@@\n-x\n+y\n"
+        # Lock both source and destination.
+        assert try_lock(str(repo / "old.py"), "agent-me", repo_namespace=str(repo))
+        assert try_lock(str(repo / "new.py"), "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("apply_patch", {"command": body}, cwd=repo))
+        assert is_allow(result), result

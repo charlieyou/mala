@@ -281,6 +281,11 @@ def _strip_env_assignments(tokens: list[str]) -> list[str]:
 
 _PREFIX_REDIR_RE = re.compile(r"^(?:&|[012])?>{1,2}\|?")
 _DEV_NULL_LIKE = frozenset({"/dev/null", "/dev/stderr", "/dev/stdout", "/dev/tty"})
+# File-descriptor duplications: ``&1``, ``&2``, ``&-`` (close).
+# These are not write targets — they redirect to an existing fd or close it,
+# so locking them produces false positives like denying ``cmd > out 2>&1``
+# even when ``out`` is owned by the agent.
+_FD_REF_RE = re.compile(r"^&[0-9\-]+$")
 
 
 def _extract_redirection_targets(tokens: list[str]) -> list[str]:
@@ -292,20 +297,26 @@ def _extract_redirection_targets(tokens: list[str]) -> list[str]:
     ampersands inside the *filename* are preserved (the previous
     ``lstrip("&012>")`` ate any leading digit, e.g. ``>2026-log.txt``
     became ``6-log.txt``).
+
+    Fd duplications (``2>&1``, ``>&2``, ``>&-``) are recognised and skipped
+    — they redirect to a numbered fd or close one, not to a filesystem
+    path, so the lock-check would deny common idioms like
+    ``cmd >out.log 2>&1`` even when ``out.log`` is locked correctly.
     """
     out: list[str] = []
     for i, tok in enumerate(tokens):
         if tok in REDIR_OPERATORS and i + 1 < len(tokens):
             target = tokens[i + 1]
-            if target in _DEV_NULL_LIKE:
+            if target in _DEV_NULL_LIKE or _FD_REF_RE.match(target):
                 continue
             out.append(target)
             continue
-        # Combined forms like ``>file``, ``>>file``, ``2>file``, ``&>file``.
+        # Combined forms like ``>file``, ``>>file``, ``2>file``, ``&>file``,
+        # but NOT ``2>&1``/``>&2``/``>&-`` (fd duplications).
         m = _PREFIX_REDIR_RE.match(tok)
         if m and m.end() < len(tok):
             target = tok[m.end() :]
-            if target and target not in _DEV_NULL_LIKE:
+            if target and target not in _DEV_NULL_LIKE and not _FD_REF_RE.match(target):
                 out.append(target)
     return out
 
@@ -338,8 +349,35 @@ def _has_inplace_flag(tokens: list[str], inplace_short: str = "i") -> bool:
     return False
 
 
+# Short-flag letters whose presence in a sed/perl flag bundle means the
+# script body is consumed by the flag (either as the next token, when the
+# letter is the last one in the bundle, or attached, when it is followed
+# by more characters in the same token). The letter set differs per tool.
+_SED_VALUE_LETTERS = frozenset({"e", "f"})
+_PERL_VALUE_LETTERS = frozenset({"e", "f", "I", "M", "P"})
+# Long-form sed flags that take a script value (with ``--name=value`` or
+# ``--name value`` syntax).
+_SED_LONG_VALUE_FLAGS = frozenset({"--expression", "--file", "--regexp"})
+# Perl rarely uses long-form value flags in practice; keep the set narrow.
+_PERL_LONG_VALUE_FLAGS: frozenset[str] = frozenset()
+
+
 def _extract_inplace_targets(tokens: list[str]) -> list[str]:
-    """Trailing positional file args after a ``-i`` flag for sed/perl."""
+    """Trailing positional file args after a ``-i`` flag for sed/perl.
+
+    Honours every documented form of the script flag so a misclassified
+    flag does not leak the file target as the "inline script":
+
+    - bare short ``-e SCRIPT`` (next token is the value)
+    - attached short ``-eSCRIPT`` / ``-iesSCRIPT`` (script embedded in the
+      same token, after the value-taking letter)
+    - long form ``--expression=SCRIPT`` (value embedded after ``=``)
+    - long form ``--expression SCRIPT`` (next token is the value)
+
+    When any value-taking flag is detected, every positional is treated
+    as a file target. Otherwise the first positional is the inline script
+    and the rest are files (e.g., ``sed -i 's/x/y/' f``).
+    """
     if not tokens:
         return []
     cmd = tokens[0]
@@ -347,10 +385,9 @@ def _extract_inplace_targets(tokens: list[str]) -> list[str]:
         return []
     if not _has_inplace_flag(tokens):
         return []
-    # Walk flags; collect positionals. If a value-taking flag like ``-e``
-    # is present, it has already consumed the script body, so every
-    # positional is a file target. Otherwise the first positional is the
-    # script and the rest are file targets (e.g., ``sed -i 's/x/y/' f``).
+    short_value_letters = _SED_VALUE_LETTERS if cmd == "sed" else _PERL_VALUE_LETTERS
+    long_value_flags = _SED_LONG_VALUE_FLAGS if cmd == "sed" else _PERL_LONG_VALUE_FLAGS
+
     positionals: list[str] = []
     skip_next = False
     has_value_flag = False
@@ -358,11 +395,24 @@ def _extract_inplace_targets(tokens: list[str]) -> list[str]:
         if skip_next:
             skip_next = False
             continue
-        if tok.startswith("-"):
-            # Bare flags that take a value as the next token.
-            if tok in {"-e", "-f", "-l", "-I", "-M", "-P"} and len(tok) == 2:
-                skip_next = True
+        if tok.startswith("--"):
+            name = tok.split("=", 1)[0]
+            if name in long_value_flags:
                 has_value_flag = True
+                if "=" not in tok:
+                    skip_next = True
+            continue
+        if tok.startswith("-") and len(tok) >= 2:
+            body = tok[1:]
+            for j, ch in enumerate(body):
+                if ch in short_value_letters:
+                    has_value_flag = True
+                    if j == len(body) - 1:
+                        # Letter is the last char in the bundle; the
+                        # script value is the next token.
+                        skip_next = True
+                    # Else: value is embedded later in the same token.
+                    break
             continue
         positionals.append(tok)
     if has_value_flag:
@@ -370,12 +420,24 @@ def _extract_inplace_targets(tokens: list[str]) -> list[str]:
     return positionals[1:] if len(positionals) > 1 else []
 
 
+# Awk flags that consume the program (so subsequent positionals are files).
+_AWK_PROGRAM_LETTERS = frozenset({"f"})
+_AWK_PROGRAM_LONG_FLAGS = frozenset({"--source", "--file"})
+# Awk flags that take some other value (variable assignment, FS) and must
+# not absorb a positional as if it were the program. Tracked separately so
+# attached forms like ``-vFOO=bar`` don't trigger ``has_program_flag``.
+_AWK_VALUE_LETTERS = frozenset({"v", "F"})
+
+
 def _extract_awk_inplace_targets(tokens: list[str]) -> list[str]:
     """``awk -i inplace`` / ``gawk -i inplace`` file args.
 
-    When the awk program is supplied via ``-f script.awk`` (rather than as
-    the first positional), every positional is a file target. Otherwise
-    the first positional is the inline program and the rest are files.
+    The awk program may be supplied as the first inline positional, via
+    short ``-f script.awk`` / attached ``-fscript.awk``, or via long form
+    ``--source=...`` / ``--file=...``. When any program-supplying flag is
+    detected, every positional is a file target. Other value-taking
+    flags (``-v`` assignment, ``-F`` field separator) consume a value but
+    do not displace the inline program.
     """
     if not tokens:
         return []
@@ -384,20 +446,39 @@ def _extract_awk_inplace_targets(tokens: list[str]) -> list[str]:
         return []
     found_inplace = False
     has_program_flag = False
-    i = 1
+    skip_next = False
     positionals: list[str] = []
+    i = 1
     while i < len(tokens):
         tok = tokens[i]
+        if skip_next:
+            skip_next = False
+            i += 1
+            continue
         if tok == "-i" and i + 1 < len(tokens) and tokens[i + 1] == "inplace":
             found_inplace = True
             i += 2
             continue
-        if tok.startswith("-"):
-            if tok in {"-f", "-v", "-F"} and i + 1 < len(tokens):
-                if tok == "-f":
+        if tok.startswith("--"):
+            name = tok.split("=", 1)[0]
+            if name in _AWK_PROGRAM_LONG_FLAGS:
+                has_program_flag = True
+                if "=" not in tok:
+                    skip_next = True
+            i += 1
+            continue
+        if tok.startswith("-") and len(tok) >= 2:
+            body = tok[1:]
+            for j, ch in enumerate(body):
+                if ch in _AWK_PROGRAM_LETTERS:
                     has_program_flag = True
-                i += 2
-                continue
+                    if j == len(body) - 1:
+                        skip_next = True
+                    break
+                if ch in _AWK_VALUE_LETTERS:
+                    if j == len(body) - 1:
+                        skip_next = True
+                    break
             i += 1
             continue
         positionals.append(tok)
@@ -478,6 +559,35 @@ _RUBY_WRITE_HINTS = (
 )
 
 
+# Language one-liner: cmd → script-flag mapping.
+_ONELINER_SCRIPT_FLAGS: dict[str, str] = {
+    "bash": "-c",
+    "sh": "-c",
+    "python": "-c",
+    "python3": "-c",
+    "node": "-e",
+    "nodejs": "-e",
+    "ruby": "-e",
+    "perl": "-e",
+}
+
+
+def _find_oneliner_body(tokens: list[str], script_flag: str) -> str | None:
+    """Locate the script body for ``cmd ... -c BODY`` even with leading flags.
+
+    Returns the body string, or ``None`` if no script flag is present.
+    Skips ahead past leading flags (``python -u -c "..."``, ``bash -x -c
+    "..."``, ``node --experimental-modules -e "..."``) so the heuristic
+    is not bypassed by trivial reordering.
+    """
+    if not tokens or len(tokens) < 3:
+        return None
+    for i in range(1, len(tokens) - 1):
+        if tokens[i] == script_flag:
+            return tokens[i + 1]
+    return None
+
+
 def _extract_oneliner_targets(tokens: list[str]) -> list[str]:
     """Language one-liner ``-c``/``-e`` write-path detection.
 
@@ -486,35 +596,42 @@ def _extract_oneliner_targets(tokens: list[str]) -> list[str]:
     best-effort literal scan for ``open(<lit>, 'w')`` and friends. If a
     write hint is present but no literal can be extracted, returns the
     unresolved-sentinel so the caller denies conservatively (plan L846).
+
+    The script flag is located by scanning ``tokens[1:]`` rather than
+    pinning it to ``tokens[1]`` so leading interpreter flags (``python -u
+    -c ...``, ``bash -x -c ...``) do not bypass the heuristic.
     """
-    if not tokens or len(tokens) < 3:
+    if not tokens:
         return []
     cmd = tokens[0]
-    flag = tokens[1]
-    body = tokens[2]
+    script_flag = _ONELINER_SCRIPT_FLAGS.get(cmd)
+    if script_flag is None:
+        return []
+    body = _find_oneliner_body(tokens, script_flag)
+    if body is None:
+        return []
 
-    if cmd in {"bash", "sh"} and flag == "-c":
-        # Recurse: the body is itself a shell command.
+    if cmd in {"bash", "sh"}:
         return _extract_shell_write_paths(body)
 
     out: list[str] = []
-    if cmd in {"python", "python3"} and flag == "-c":
+    if cmd in {"python", "python3"}:
         out.extend(m.group(2) for m in _PYTHON_OPEN_RE.finditer(body))
         out.extend(m.group(2) for m in _PYTHON_PATH_WRITE_RE.finditer(body))
         if not out and any(hint in body for hint in _PYTHON_WRITE_HINTS):
             out.append(_UNRESOLVED_SENTINEL)
         return out
-    if cmd in {"node", "nodejs"} and flag == "-e":
+    if cmd in {"node", "nodejs"}:
         out.extend(m.group(2) for m in _NODE_FS_WRITE_RE.finditer(body))
         if not out and any(hint in body for hint in _NODE_WRITE_HINTS):
             out.append(_UNRESOLVED_SENTINEL)
         return out
-    if cmd == "ruby" and flag == "-e":
+    if cmd == "ruby":
         out.extend(m.group(2) for m in _RUBY_WRITE_RE.finditer(body))
         if not out and any(hint in body for hint in _RUBY_WRITE_HINTS):
             out.append(_UNRESOLVED_SENTINEL)
         return out
-    if cmd == "perl" and flag == "-e":
+    if cmd == "perl":
         out.extend(m.group(2) for m in _PERL_OPEN_WRITE_RE.finditer(body))
         if not out and "open(" in body:
             out.append(_UNRESOLVED_SENTINEL)
@@ -587,6 +704,58 @@ _SEGMENT_EXTRACTORS = (
 )
 
 
+def _normalize_separators(command: str) -> str:
+    """Insert spaces around shell control operators outside quoted regions.
+
+    ``shlex.split`` does not split on ``;``/``&&``/``||``/``|`` unless the
+    operators are already surrounded by whitespace, so an agent-written
+    ``true;touch unowned.py`` previously tokenized as
+    ``['true;touch', 'unowned.py']`` — no extractor saw ``touch`` and the
+    write slipped past AC #19. This helper normalises the command string
+    so the downstream shlex split + segment-extractor pipeline sees the
+    pipeline boundaries.
+
+    Quote tracking is required so a literal ``;``/``|``/``&`` inside a
+    single- or double-quoted argument (e.g., ``echo 'a;b' > out``) is not
+    treated as a control operator. Bare ``&`` is left alone (ambiguous
+    between backgrounding and fd duplications such as ``2>&1``).
+    """
+    out: list[str] = []
+    i = 0
+    n = len(command)
+    quote: str | None = None
+    while i < n:
+        c = command[i]
+        if quote is not None:
+            out.append(c)
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c in ('"', "'"):
+            out.append(c)
+            quote = c
+            i += 1
+            continue
+        if i + 1 < n:
+            two = command[i : i + 2]
+            if two in ("&&", "||", "|&", ";;"):
+                out.append(" ")
+                out.append(two)
+                out.append(" ")
+                i += 2
+                continue
+        if c in (";", "|"):
+            out.append(" ")
+            out.append(c)
+            out.append(" ")
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _extract_shell_write_paths(command: str) -> list[str]:
     """Apply the heuristic table to ``command`` and return all write targets.
 
@@ -594,8 +763,9 @@ def _extract_shell_write_paths(command: str) -> list[str]:
     command and disallowed-tool checks still run). Callers decide whether
     to deny based on the targets returned.
     """
+    normalized = _normalize_separators(command)
     try:
-        tokens = shlex.split(command, posix=True, comments=False)
+        tokens = shlex.split(normalized, posix=True, comments=False)
     except ValueError:
         # Unbalanced quotes etc. — fall through; other checks still apply.
         return []
@@ -677,10 +847,19 @@ def _command_string(tool_input: dict[str, Any]) -> str:
     return ""
 
 
-# Codex apply_patch envelope headers: ``*** {Update,Add,Delete,Move} File: path``.
-# Move headers also carry ``*** Move to: path`` for the destination.
+# Codex apply_patch envelope headers — source-of-truth file:
+# ``*** Update File: path`` / ``*** Add File: path`` / ``*** Delete File: path``.
 _APPLY_PATCH_ENVELOPE_RE = re.compile(
-    r"^\*\*\*\s+(?:Update|Add|Delete|Move(?:\s+to)?)\s+File:\s+(.+?)\s*$",
+    r"^\*\*\*\s+(?:Update|Add|Delete|Move)\s+File:\s+(.+?)\s*$",
+    re.MULTILINE,
+)
+# Codex apply_patch rename destination — paired with a preceding
+# ``*** Update File: <old>`` block. The destination is what gets written,
+# so it MUST be lock-checked too: a patch that updates ``old.py`` and
+# moves it to ``new.py`` writes BOTH paths. Without this, holding the
+# ``old.py`` lock would let the agent create an unowned ``new.py``.
+_APPLY_PATCH_MOVE_TO_RE = re.compile(
+    r"^\*\*\*\s+Move\s+to:\s+(.+?)\s*$",
     re.MULTILINE,
 )
 # Unified-diff destination header. ``b/`` prefix is the conventional
@@ -723,6 +902,10 @@ def _apply_patch_paths(tool_input: dict[str, Any]) -> list[str]:
         if not isinstance(body, str) or not body:
             continue
         for m in _APPLY_PATCH_ENVELOPE_RE.finditer(body):
+            target = m.group(1).strip()
+            if target:
+                out.append(target)
+        for m in _APPLY_PATCH_MOVE_TO_RE.finditer(body):
             target = m.group(1).strip()
             if target:
                 out.append(target)
