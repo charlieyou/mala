@@ -1880,8 +1880,15 @@ _PERL_OPEN_WRITE_RE = re.compile(
 # 2-arg ``open FH, " >file"`` both have whitespace between the
 # opening quote and ``>``, and Perl silently strips it before
 # evaluating the mode. Without ``\s*`` the hint missed those forms.
+#
+# The filehandle class ``[^,;\n]+?`` excludes statement terminators
+# (``;`` / newline) so an ``open`` token with no trailing comma in
+# its own statement (1-arg ``open FH;`` or method-call ``$x->open();``)
+# cannot greedily span into a *later* statement's comma+``>`` token.
+# Without this bound the hint would falsely deny commands like
+# ``perl -e "open FH; print STDERR, '>'"``.
 _PERL_OPEN_WRITE_HINT_RE = re.compile(
-    r"""\bopen\b\s*\(?\s*[^,]+?,\s*"""  # open + optional ( + filehandle + ,
+    r"""\bopen\b\s*\(?\s*[^,;\n]+?,\s*"""  # open + optional ( + filehandle + ,
     r"""(?:qq?\s*[\(\[\{]|['"])\s*[>]"""  # mode arg quote/q-like with `>`
 )
 

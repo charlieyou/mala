@@ -5042,6 +5042,18 @@ class TestPerlBareOpenWrite:
             # Read-mode 3-arg parens form with ``>`` elsewhere in the
             # statement.
             "open(my $fh, '<', $path) or warn '>>>'; my $line = <$fh>",
+            # 1-arg ``open FH;`` with NO trailing comma in its own
+            # statement, followed by a *later* statement that has
+            # ``,`` + ``'>'``. The filehandle group must stop at
+            # ``;`` and not span into the next statement's comma.
+            "open FH; print STDERR, '>'",
+            # ``open()`` with 0 args followed by a list literal that
+            # contains ``,`` + ``'>'``.
+            "open(); my @x = ('foo', '>')",
+            # Method call ``$x->open()`` is matched by ``\\bopen\\b``;
+            # the trailing ``;`` must terminate the filehandle group
+            # so the next statement's ``,`` + ``'>'`` is not consumed.
+            "$app->open(); foo('bar', '>')",
         ],
     )
     def test_perl_read_open_does_not_trigger(
