@@ -212,37 +212,16 @@ def test_items_of_unwraps_root_model_wrappers() -> None:
     ``codex_app_server.ThreadItem`` is a ``RootModel`` whose concrete variant
     lives at ``.root``; without unwrapping, downstream
     ``getattr(item, "type", ...)`` filters silently match nothing and the
-    spike would falsely "disconfirm" a working SDK path. This test runs
-    without the SDK by mirroring the wrapper shape (a stand-in object whose
-    ``.root`` carries the real fields) and asserting ``_items_of`` returns
-    the inner object.
+    spike would falsely "disconfirm" a working SDK path. This test mirrors
+    the wrapper shape with ``SimpleNamespace`` stand-ins (no SDK required)
+    and asserts ``_items_of`` returns the inner object.
     """
-    from dataclasses import dataclass
+    from types import SimpleNamespace
 
-    @dataclass
-    class _StubCommand:
-        type: str
-        aggregated_output: str | None
-
-    @dataclass
-    class _StubWrapper:
-        root: _StubCommand
-
-    @dataclass
-    class _StubTurn:
-        items: list
-
-    @dataclass
-    class _StubThread:
-        turns: list
-
-    @dataclass
-    class _StubResponse:
-        thread: _StubThread
-
-    inner = _StubCommand(type="commandExecution", aggregated_output="hello\n")
-    response = _StubResponse(
-        thread=_StubThread(turns=[_StubTurn(items=[_StubWrapper(root=inner)])])
+    inner = SimpleNamespace(type="commandExecution", aggregated_output="hello\n")
+    wrapper = SimpleNamespace(root=inner)
+    response = SimpleNamespace(
+        thread=SimpleNamespace(turns=[SimpleNamespace(items=[wrapper])])
     )
 
     flattened = _items_of(response)
