@@ -2364,3 +2364,230 @@ class TestOuterCdAffectsSubstitutions:
         command = "echo `touch out.txt`"
         result = decide(make_payload("bash", {"command": command}, cwd=repo))
         assert is_allow(result), result
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 9)
+# ---------------------------------------------------------------------------
+
+
+class TestBooleanLongWrapperFlags:
+    """Regression: boolean wrapper long flags must NOT consume the inner cmd.
+
+    Before the fix, ``_skip_wrapper_flag_args`` heuristically treated
+    every ``--flag`` (without ``=``) as consuming the next non-``-``
+    token. Boolean long flags like ``sudo --preserve-env`` or
+    ``env --ignore-environment`` then swallowed the inner ``touch``,
+    leaving the heuristic with the trailing args (``unowned.py``)
+    headed by what it thought was the cmd — no extractor matched and
+    the unlocked write slipped past the gate.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "sudo --preserve-env touch {target}",
+            "sudo --background touch {target}",
+            "sudo --login touch {target}",
+            "sudo --remove-timestamp touch {target}",
+            "env --ignore-environment touch {target}",
+            "env -i touch {target}",
+            "env --null touch {target}",
+            "exec --cleanup touch {target}",
+            # Mixed: long boolean + short value
+            "sudo --preserve-env -u root touch {target}",
+        ],
+    )
+    def test_boolean_long_wrapper_flag_inner_write_denied(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+    def test_value_long_wrapper_flag_still_consumes_value(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``sudo --user root touch f`` — ``--user`` IS in the value-long
+        # table and should still consume ``root``. The inner ``touch``
+        # then dispatches correctly and (with no lock) denies.
+        target = repo / "unowned.py"
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": f"sudo --user root touch {target}"},
+            )
+        )
+        assert is_deny(result)
+        assert "unowned.py" in deny_reason(result)
+
+    def test_value_long_wrapper_flag_with_eq_consumes_inline(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``sudo --user=root touch f`` — value embedded in the same
+        # token; no separate-token consumption. Inner ``touch`` runs.
+        target = repo / "unowned.py"
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": f"sudo --user=root touch {target}"},
+            )
+        )
+        assert is_deny(result)
+        assert "unowned.py" in deny_reason(result)
+
+
+class TestNodeRequireFsWrite:
+    """Regression: ``node -e "require('fs').writeFileSync(...)"``.
+
+    Before the fix, the Node oneliner regex only matched calls
+    starting with ``fs.`` (after ``const fs = require('fs')``). The
+    ``require('fs').writeFileSync(...)`` literal-write form had a
+    static target but matched neither the regex nor the hint list, so
+    the heuristic returned no targets and the unowned write was
+    silently allowed.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "node -e \"require('fs').writeFileSync('{target}','x')\"",
+            'node -e "require(\\"fs\\").writeFileSync(\\"{target}\\",\\"x\\")"',
+            "node -e \"require('fs').appendFileSync('{target}','x')\"",
+            "node -e \"require('fs').createWriteStream('{target}')\"",
+            # node:fs prefix
+            "node -e \"require('node:fs').writeFileSync('{target}','x')\"",
+            # nodejs alias
+            "nodejs -e \"require('fs').writeFileSync('{target}','x')\"",
+        ],
+    )
+    def test_require_fs_write_denied_unlocked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "out.txt"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "out.txt" in deny_reason(result)
+
+    def test_require_fs_dynamic_target_denied(self, env: dict[str, str]) -> None:
+        # Dynamic target (variable) — heuristic detects the require()
+        # hint and emits the unresolved sentinel → deny.
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": ("node -e \"require('fs').writeFileSync(VAR,'x')\"")},
+            )
+        )
+        assert is_deny(result)
+
+
+class TestQuotedRedirectArgNotFalseDenied:
+    """P2: ``echo ">foo"`` is a positional arg, NOT a redirect.
+
+    Before the fix, ``_extract_redirection_targets`` applied a combined-
+    prefix fallback regex that matched the leading ``>`` of any token
+    and treated the rest as a write target. That false-positive denied
+    legitimate commands that pass ``>``-prefixed arguments to a tool
+    (printing them, grepping for them, etc.). After the normalizer pads
+    real unquoted redirects, any ``>file``-shaped token reaching the
+    extractor must have been quoted/escaped — so the combined fallback
+    is removed.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'echo ">foo"',
+            'echo ">>foo"',
+            'echo "&>foo"',
+            'echo "<>foo"',
+            "grep '>5' file.txt",
+            'printf "%s\\n" ">file"',
+        ],
+    )
+    def test_quoted_redirect_literal_does_not_false_deny(
+        self, env: dict[str, str], command: str
+    ) -> None:
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), f"command: {command!r} → {result}"
+
+    def test_real_unquoted_redirect_still_denied(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Sanity: an actual unquoted redirect must still be detected.
+        # The normalizer pads it before shlex sees it.
+        target = repo / "unowned.txt"
+        result = decide(make_payload("bash", {"command": f"echo hi>{target}"}))
+        assert is_deny(result)
+        assert "unowned.txt" in deny_reason(result)
+
+
+class TestUtilityValueFlagSkip:
+    """P2: ``mkdir -m 755 dir`` and ``touch -d "time" file`` value-flag values.
+
+    Before the fix, ``-m`` / ``-d`` / ``-r`` / ``-t`` (touch) were
+    treated as plain flags and SKIPPED, but the next token (``755``,
+    ``"time"``, ``ref``) was added to ``positionals`` and lock-checked
+    by the ``all_positional`` strategy — guaranteeing a false-positive
+    deny on a legit, fully-locked command.
+    """
+
+    def test_mkdir_with_mode_does_not_lock_check_mode(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "newdir"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("bash", {"command": f"mkdir -m 755 {target}"}))
+        assert is_allow(result), result
+
+    def test_touch_with_date_flag_does_not_lock_check_date(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "f.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": f'touch -d "2026-01-01" {target}'},
+            )
+        )
+        assert is_allow(result), result
+
+    def test_touch_with_reference_flag_does_not_lock_check_ref(
+        self, env: dict[str, str], repo: Path, tmp_path: Path
+    ) -> None:
+        # ``touch -r ref-file target`` — ``-r`` consumes ``ref-file``;
+        # only ``target`` is the write surface.
+        target = repo / "f.txt"
+        ref = tmp_path / "ref"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": f"touch -r {ref} {target}"},
+            )
+        )
+        assert is_allow(result), result
+
+    def test_mkdir_with_value_flag_still_denies_target(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Sanity: the value-flag skip must NOT cause the actual target
+        # to be missed.
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": "mkdir -m 755 unowned-dir"},
+            )
+        )
+        assert is_deny(result)
+        assert "unowned-dir" in deny_reason(result)

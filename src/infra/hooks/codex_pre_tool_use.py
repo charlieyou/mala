@@ -364,6 +364,52 @@ _WRAPPER_VALUE_LETTERS: dict[str, frozenset[str]] = {
     "unshare": frozenset({"u", "U"}),
 }
 
+# Per-wrapper LONG-form flags that consume the next token as a value.
+# Default (long flags not in this table) is BOOLEAN — they do NOT
+# consume the next token. Without this table, ``sudo --preserve-env
+# touch f`` would consume ``touch`` as the value of ``--preserve-env``
+# and the inner mutating command would never be seen by the heuristic
+# (a P1 bypass surfaced by the eighth review).
+_WRAPPER_VALUE_LONG_FLAGS: dict[str, frozenset[str]] = {
+    "env": frozenset({"--unset", "--chdir", "--split-string"}),
+    "sudo": frozenset(
+        {
+            "--user",
+            "--group",
+            "--host",
+            "--prompt",
+            "--auth-type",
+            "--chdir",
+            "--type",
+            "--role",
+            "--login-class",
+            "--other-user",
+            "--close-from",
+        }
+    ),
+    "doas": frozenset({"--user"}),
+    "exec": frozenset({"--name"}),
+    "nice": frozenset({"--adjustment"}),
+    "stdbuf": frozenset({"--input", "--output", "--error"}),
+    "ionice": frozenset({"--class", "--classdata", "--pid"}),
+    "chrt": frozenset({"--pid"}),
+    "taskset": frozenset({"--pid", "--cpu-list"}),
+    "timeout": frozenset({"--signal", "--kill-after"}),
+    "unshare": frozenset(
+        {
+            "--map-user",
+            "--map-group",
+            "--map-users",
+            "--map-groups",
+            "--user",
+            "--setuid",
+            "--setgid",
+            "--propagation",
+            "--root",
+        }
+    ),
+}
+
 
 def _command_basename_str(token: str) -> str:
     """Return the basename of a single token (``/usr/bin/env`` → ``env``)."""
@@ -374,11 +420,18 @@ def _skip_wrapper_flag_args(tokens: list[str], wrapper: str) -> list[str]:
     """Skip leading flag tokens (and their values) for ``wrapper``.
 
     Returns the suffix of ``tokens`` starting at the first non-flag
-    token. Per-wrapper value-flag tables ensure ``sudo -u root cmd``
-    consumes ``root`` as the value of ``-u`` rather than treating it
-    as the inner command.
+    token. Per-wrapper short and long value-flag tables ensure
+    ``sudo -u root cmd`` consumes ``root`` as the value of ``-u`` and
+    ``sudo --preserve-env cmd`` does NOT consume ``cmd`` (since
+    ``--preserve-env`` is boolean).
+
+    Default for unknown long flags is BOOLEAN — only flags listed in
+    ``_WRAPPER_VALUE_LONG_FLAGS`` consume the next token. The previous
+    "consume next non-flag token" heuristic was a P1 bypass: any
+    boolean long flag would swallow the inner command word.
     """
     value_letters = _WRAPPER_VALUE_LETTERS.get(wrapper, frozenset())
+    long_value_flags = _WRAPPER_VALUE_LONG_FLAGS.get(wrapper, frozenset())
     i = 0
     while i < len(tokens):
         tok = tokens[i]
@@ -392,11 +445,10 @@ def _skip_wrapper_flag_args(tokens: list[str], wrapper: str) -> list[str]:
         if tok.startswith("--") and "=" in tok:
             i += 1
             continue
-        # Long form ``--name VALUE``: heuristic — assume next token is
-        # the value unless it also starts with ``-``. Conservative
-        # over-skip here biases toward correctness for common flags.
+        # Long form. Only consume the next token when this flag is in
+        # the wrapper's value-long-flag table; otherwise treat as boolean.
         if tok.startswith("--"):
-            if i + 1 < len(tokens) and not tokens[i + 1].startswith("-"):
+            if tok in long_value_flags and i + 1 < len(tokens):
                 i += 2
                 continue
             i += 1
@@ -628,12 +680,14 @@ _COMBINED_REDIR_PREFIX_RE = re.compile(rf"^{_REDIR_FD_PREFIX}?{_REDIR_TAIL}")
 def _extract_redirection_targets(tokens: list[str]) -> list[str]:
     """Find ``>``/``>>``/etc. targets in a token stream.
 
-    Handles both space-separated forms (``cmd > file`` → ``['cmd', '>', 'file']``)
-    and combined-token forms (``cmd >file`` → ``['cmd', '>file']``). The
-    combined form is parsed with a strict prefix regex so digits and
-    ampersands inside the *filename* are preserved (the previous
-    ``lstrip("&012>")`` ate any leading digit, e.g. ``>2026-log.txt``
-    became ``6-log.txt``).
+    Operates on tokens AFTER ``_normalize_separators`` has padded every
+    unquoted redirect operator with surrounding whitespace; the
+    extractor therefore only needs to recognise WHOLE-token operators.
+    A ``>file`` token that survives shlex unchanged was either inside
+    quotes (``echo ">file"``) or escaped (``grep \\>5``) — both are
+    legitimate positional arguments, not redirects, so we no longer
+    apply the combined-prefix fallback (which used to false-positive
+    deny on those quoted args).
 
     Recognised forms — POSIX shells accept ANY numeric fd prefix, not just
     ``1``/``2``, and the legacy ``>&file`` operator is equivalent to
@@ -643,6 +697,7 @@ def _extract_redirection_targets(tokens: list[str]) -> list[str]:
     - ``&>file`` / ``&>>file`` — write stdout+stderr (modern syntax)
     - ``>&file`` / ``n>&file`` — write stdout+stderr (legacy syntax)
     - ``>&n`` / ``n>&m`` / ``>&-`` — fd duplication / close (NOT writes)
+    - ``<>file`` / ``n<>file`` — POSIX read-write open (creates file)
 
     Fd duplications and close-fd are skipped so common idioms like
     ``cmd >out.log 2>&1`` don't false-deny when ``out.log`` is locked.
@@ -659,23 +714,10 @@ def _extract_redirection_targets(tokens: list[str]) -> list[str]:
                 continue
             out.append(target)
             continue
-        # Combined form: prefix + target embedded in the same token.
-        m = _COMBINED_REDIR_PREFIX_RE.match(tok)
-        if m and m.end() < len(tok):
-            prefix = m.group(0)
-            target = tok[m.end() :]
-            # ``2>&1`` etc.: greedy regex captured ``2>&``, target ``1`` is
-            # a numeric fd → fd dup, not a write.
-            if prefix.endswith("&") and _FD_REF_TARGET_RE.match(target):
-                continue
-            if target in _DEV_NULL_LIKE:
-                continue
-            # Defensive: legacy form where the prefix didn't consume the
-            # trailing ``&`` (e.g., a hand-written variant) and the target
-            # is a leading-``&`` fd ref. Skip those too.
-            if _FD_REF_RE.match(target):
-                continue
-            out.append(target)
+        # The combined-prefix fallback (``>file`` as a single token) is
+        # intentionally NOT applied here — see the docstring above. Any
+        # ``>file``-shaped token reaching this point is quoted/escaped
+        # and is not a real redirect surface.
     return out
 
 
@@ -914,6 +956,29 @@ _UTILITY_VALUE_LETTERS: dict[str, frozenset[str]] = {
     "install": frozenset({"S", "m", "o", "g"}),
 }
 
+# Per-utility short flag letters that consume the following positional
+# token as a value (``mkdir -m 755 dir``, ``touch -d "time" file``,
+# ``touch -r ref file``). Without this table, the value-token (``755``,
+# ``"time"``, ``ref``) is added to ``positionals`` and lock-checked,
+# producing false-positive denials for legitimate commands.
+#
+# ``cp``/``mv``/``ln``/``install`` have their own separate handling
+# above (target-directory, suffix); the letters listed here are the
+# remaining value-flags that ``_extract_utility_targets`` must skip.
+_UTILITY_FLAG_VALUE_LETTERS: dict[str, frozenset[str]] = {
+    "touch": frozenset({"d", "r", "t"}),
+    "mkdir": frozenset({"m", "Z"}),
+    "chmod": frozenset(),
+    "chown": frozenset(),
+    "cp": frozenset({"S"}),
+    "mv": frozenset({"S"}),
+    "ln": frozenset({"S"}),
+    "install": frozenset({"S", "m", "o", "g"}),
+    "rm": frozenset(),
+    "rmdir": frozenset(),
+    "dd": frozenset(),
+}
+
 
 def _scan_short_bundle_for_target_dir(
     body: str, cmd: str
@@ -1025,6 +1090,26 @@ def _extract_utility_targets(tokens: list[str]) -> list[str]:
                 i += 1
                 continue
         if tok.startswith("-"):
+            # Short bundle whose last letter consumes the next token as
+            # a value (``mkdir -m 755 dir``, ``touch -d "time" file``).
+            # Without this skip, ``755`` / ``"time"`` would be added to
+            # ``positionals`` and the ``all_positional`` strategy would
+            # lock-check them — guaranteeing a false-positive deny.
+            if not tok.startswith("--") and len(tok) >= 2:
+                value_letters = _UTILITY_FLAG_VALUE_LETTERS.get(cmd, frozenset())
+                body = tok[1:]
+                consumes_next = False
+                for j, ch in enumerate(body):
+                    if ch in value_letters:
+                        if j == len(body) - 1:
+                            # Bundle ends with value-letter: next token
+                            # is the value (if any).
+                            if i + 1 < len(args):
+                                consumes_next = True
+                        # Else: rest of bundle is the attached value.
+                        break
+                i += 2 if consumes_next else 1
+                continue
             i += 1
             continue
         positionals.append(tok)
@@ -1058,7 +1143,16 @@ _PYTHON_PATH_WRITE_RE = re.compile(
     r"""Path\s*\(\s*(['"])([^'"]+)\1\s*\)\s*\.\s*write_(?:text|bytes)"""
 )
 _NODE_FS_WRITE_RE = re.compile(
-    r"""fs\.(?:writeFile|writeFileSync|appendFile|appendFileSync)\s*\(\s*(['"])([^'"]+)\1"""
+    r"""fs\.(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)\s*\(\s*(['"])([^'"]+)\1"""
+)
+# ``require('fs').writeFileSync('path','x')`` — equivalent literal write
+# form that does not bind ``fs`` to a separate identifier. Without this
+# regex, ``node -e "require('fs').writeFileSync('unowned','x')"`` is a
+# static-target write but produces zero matches and is silently allowed.
+_NODE_REQUIRE_FS_WRITE_RE = re.compile(
+    r"""require\s*\(\s*['"](?:node:)?fs['"]\s*\)\s*\.\s*"""
+    r"""(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)"""
+    r"""\s*\(\s*(['"])([^'"]+)\1"""
 )
 _RUBY_WRITE_RE = re.compile(
     r"""(?:File\.(?:write|open)|IO\.write)\s*\(\s*(['"])([^'"]+)\1"""
@@ -1079,6 +1173,11 @@ _NODE_WRITE_HINTS = (
     "fs.writeFile",
     "fs.appendFile",
     "fs.createWriteStream",
+    # ``require('fs')`` and ``require("fs")`` — also covers ``require('node:fs')``.
+    "require('fs')",
+    'require("fs")',
+    "require('node:fs')",
+    'require("node:fs")',
 )
 _RUBY_WRITE_HINTS = (
     "File.write",
@@ -1173,6 +1272,7 @@ def _extract_oneliner_targets(tokens: list[str]) -> list[str]:
         return out
     if cmd in {"node", "nodejs"}:
         out.extend(m.group(2) for m in _NODE_FS_WRITE_RE.finditer(body))
+        out.extend(m.group(2) for m in _NODE_REQUIRE_FS_WRITE_RE.finditer(body))
         if not out and any(hint in body for hint in _NODE_WRITE_HINTS):
             out.append(_UNRESOLVED_SENTINEL)
         return out
