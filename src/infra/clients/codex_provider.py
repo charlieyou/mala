@@ -124,15 +124,77 @@ class CodexHookNotActiveError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-def _create_codex_mcp_server_factory() -> McpServerFactory:
-    """Stub Codex-shaped MCP factory.
+CODEX_BUNDLED_MCP_SERVER_NAME = "mala-locking"
+"""Server key the bundled Codex plugin's ``.mcp.json`` references.
 
-    Phase G wires the bundled ``mala-locking`` launcher inside the Codex
-    plugin (`plans/2026-05-07-codex-provider-plan.md` G1-G3); for Phase C
-    the factory still returns an empty map so :meth:`AgentProvider.mcp_server_factory`
-    has a callable to hand back. The runtime carries this dict through
-    to ``AsyncCodex.thread_start(mcp_servers=...)`` unchanged so Phase G
-    is a one-line factory swap.
+Mirrors the Amp factory's ``mala-locking`` key (``amp_provider.py:131``)
+so the cross-coder lock-key derivation in
+:mod:`src.infra.tools.locking_mcp_stdio` produces identical
+``<hash>.lock`` fixtures regardless of which coder spawned the launcher.
+The bundled plugin's ``.mcp.json`` declares this exact key (plan G1) and
+the merge logic below pins it to the bundled stdio launch spec — user
+``coder_options.codex.mcp_servers`` cannot override it (plan G3).
+"""
+
+CODEX_BUNDLED_MCP_LAUNCHER_COMMAND = "mala-codex-mcp-locking"
+"""Console-script registered in ``[project.scripts]``.
+
+Sibling of ``mala-amp-mcp-locking``; both back :func:`src.infra.tools.locking_mcp_stdio.main`.
+The two entry-point names exist so the bundled Amp plugin (which already
+references the Amp name in its ``.mcp.json``) keeps working unchanged
+while the new Codex plugin gets its own stable name. A unified
+``mala-mcp-locking`` rename is out of scope (plan ``L1335``).
+"""
+
+
+def _build_bundled_codex_mcp_spec(agent_id: str, repo_path: Path) -> dict[str, object]:
+    """Codex-shaped stdio launch spec for the bundled ``mala-locking`` server.
+
+    Mirrors :func:`src.infra.clients.amp_provider._create_amp_mcp_server_factory`'s
+    payload shape — ``command`` + ``args`` + ``env`` — so the same
+    :mod:`src.infra.tools.locking_mcp_stdio` launcher serves both coders
+    and the produced ``<hash>.lock`` fixtures interoperate. ``MALA_LOCK_DIR``
+    is forwarded from the orchestrator's environment when set; when unset
+    the launcher falls through to :func:`src.infra.tools.env.get_lock_dir`.
+    """
+    env: dict[str, str] = {
+        "MALA_AGENT_ID": agent_id,
+        "MALA_REPO_NAMESPACE": str(repo_path),
+    }
+    lock_dir = os.environ.get("MALA_LOCK_DIR")
+    if lock_dir:
+        env["MALA_LOCK_DIR"] = lock_dir
+
+    return {
+        "command": CODEX_BUNDLED_MCP_LAUNCHER_COMMAND,
+        "args": [
+            "--agent-id",
+            agent_id,
+            "--repo-namespace",
+            str(repo_path),
+        ],
+        "env": env,
+    }
+
+
+def _create_codex_mcp_server_factory(
+    user_mcp_servers: tuple[tuple[str, object], ...] = (),
+) -> McpServerFactory:
+    """Codex-shaped MCP server factory returning the bundled-plus-user merge.
+
+    The bundled ``mala-locking`` launch spec is **mandatory** and **never
+    overridden** by user config (plan G3): user-supplied entries are
+    overlaid first, then the bundled key is written last so any clashing
+    user key is replaced. Non-clashing user keys pass through unchanged.
+
+    Codex itself does not consume this map inline — :meth:`CodexClient.query`
+    intentionally does NOT pass ``mcp_servers`` to ``AsyncCodex.thread_start``
+    (per the SDK shape comment at ``codex_client.py:266-276``); MCP wiring
+    flows through the bundled plugin's ``.mcp.json``. The runtime's
+    :attr:`CodexRuntime.mcp_servers` field carries the merged map for
+    forward-compat / inspection so callers (telemetry, tests, future SDK
+    versions that accept inline specs) see the resolved configuration the
+    bundled plugin ultimately presents to Codex.
     """
 
     def factory(
@@ -140,8 +202,12 @@ def _create_codex_mcp_server_factory() -> McpServerFactory:
         repo_path: Path,
         emit_lock_event: object,
     ) -> dict[str, object]:
-        del agent_id, repo_path, emit_lock_event
-        return {}
+        del emit_lock_event
+        merged: dict[str, object] = dict(user_mcp_servers)
+        merged[CODEX_BUNDLED_MCP_SERVER_NAME] = _build_bundled_codex_mcp_spec(
+            agent_id, repo_path
+        )
+        return merged
 
     return cast("McpServerFactory", factory)
 
@@ -1091,6 +1157,7 @@ class CodexAgentProvider:
         sandbox: Literal[
             "read-only", "workspace-write", "danger-full-access"
         ] = DEFAULT_CODEX_SANDBOX,
+        mcp_servers: tuple[tuple[str, object], ...] = (),
         selftest_probe: Callable[[Path, dict[str, str], str], None] | None = None,
     ) -> None:
         """Initialize the provider.
@@ -1121,6 +1188,7 @@ class CodexAgentProvider:
         self._sandbox: Literal["read-only", "workspace-write", "danger-full-access"] = (
             sandbox
         )
+        self._mcp_servers: tuple[tuple[str, object], ...] = mcp_servers
         self._selftest_probe: Callable[[Path, dict[str, str], str], None] = (
             selftest_probe if selftest_probe is not None else _default_selftest_probe
         )
@@ -1212,8 +1280,14 @@ class CodexAgentProvider:
         )
 
     def mcp_server_factory(self) -> McpServerFactory:
-        """Return the Codex-shaped MCP server factory (Phase G3 stub)."""
-        return _create_codex_mcp_server_factory()
+        """Return the Codex-shaped MCP server factory (Phase G3, T016).
+
+        The factory closes over ``self._mcp_servers`` (user-supplied
+        ``coder_options.codex.mcp_servers``) and merges them with the
+        bundled ``mala-locking`` launch spec; the bundled key is always
+        last-wins so user config cannot override it (plan G3).
+        """
+        return _create_codex_mcp_server_factory(self._mcp_servers)
 
     def install_prerequisites(
         self,

@@ -30,6 +30,7 @@ Repository = "https://github.com/charlieyou/mala"
 [project.scripts]
 mala = "src.cli.main:app"
 mala-amp-mcp-locking = "src.infra.tools.locking_mcp_stdio:main"
+mala-codex-mcp-locking = "src.infra.tools.locking_mcp_stdio:main"
 mala-codex-pre-tool-use = "src.infra.hooks.codex_pre_tool_use:main"
 
 [project.optional-dependencies]
