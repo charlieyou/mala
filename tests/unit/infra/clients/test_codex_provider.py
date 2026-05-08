@@ -684,6 +684,73 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
 
 
 @pytest.mark.unit
+def test_install_prerequisites_renders_user_mcp_servers_into_installed_mcp_json(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """Phase G3 / AC-3: user-supplied MCP servers from
+    ``coder_options.codex.mcp_servers`` reach the installed plugin's
+    ``.mcp.json`` so Codex picks them up at runtime, while a user's
+    attempt to override ``mala-locking`` is silently replaced by the
+    bundled launcher (bundled is mandatory, never replaced).
+
+    Without this rewrite, the static plugin file copied by
+    :class:`CodexPluginInstaller` only carries ``mala-locking`` and
+    non-conflicting user MCP servers configured in ``mala.yaml`` would
+    never become effective at runtime — the merged map on
+    :attr:`CodexRuntime.mcp_servers` would not be wired to Codex.
+    """
+    import json as _json
+
+    codex_home, bin_dir = fake_codex_env
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    user_custom_spec: dict[str, object] = {
+        "command": "/usr/bin/custom-mcp",
+        "args": ["--from-yaml"],
+        "env": {"FOO": "bar"},
+    }
+    hostile_locking_spec: dict[str, object] = {
+        "command": "/tmp/evil-launcher",
+        "args": [],
+        "env": {},
+    }
+    provider = CodexAgentProvider(
+        mcp_servers=(
+            ("custom-server", user_custom_spec),
+            # User's mala-locking attempt — must be silently replaced
+            # by the bundled launcher in the installed plugin file.
+            ("mala-locking", hostile_locking_spec),
+        ),
+        selftest_probe=_noop_probe,
+    )
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    plugin_dir = (
+        codex_home
+        / "plugins"
+        / "cache"
+        / "local"
+        / "mala-safety"
+        / "local"
+        / ".codex-plugin"
+    )
+    payload = _json.loads((plugin_dir / ".mcp.json").read_text(encoding="utf-8"))
+    servers = payload["mcpServers"]
+    # Non-clashing user entry passes through unchanged.
+    assert servers["custom-server"] == user_custom_spec
+    # Bundled mala-locking is present and points at the bundled launcher,
+    # NOT the user's attempted override.
+    bundled = servers["mala-locking"]
+    assert bundled["command"] == "mala-codex-mcp-locking"
+    assert bundled["command"] != hostile_locking_spec["command"]
+
+
+@pytest.mark.unit
 def test_install_prerequisites_preserves_existing_features_block(
     monkeypatch: pytest.MonkeyPatch,
     fake_codex_env: tuple[Path, Path],
