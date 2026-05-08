@@ -825,6 +825,15 @@ immediately; any wall-clock time past this bound implies it's hung
 closed."""
 
 
+_HOOK_SELFTEST_MARKER_ENV = "MALA_CODEX_HOOK_SELFTEST_MARKER"
+"""Env var the live-hook step sets so the hook writes a presence /
+version marker to a known temp path. Mirrored verbatim from
+:data:`src.infra.hooks.codex_pre_tool_use.SELFTEST_MARKER_ENV` —
+import-linter forbids ``src.infra.clients`` from importing
+``src.infra.hooks`` directly, so the literal is duplicated and the
+equality is pinned by a unit test."""
+
+
 _HOOK_IDENTITY_MODULES: tuple[str, ...] = (
     # The PreToolUse hook entry-point (top-level decide / main).
     "src.infra.hooks.codex_pre_tool_use",
@@ -978,16 +987,32 @@ def _default_selftest_probe(
     every safety-critical dependency catches *any* logic difference,
     including ones not exercised by a single sentinel input.
 
-    Plan E5 also asks for a real Codex turn that triggers the bundled
-    hook end-to-end. That live-spawn path is out of scope for this
-    issue (depends on a sentinel-emit mode in T014's hook script and a
-    real Codex binary + auth) and remains tracked as follow-up; the
-    module-hash check here gives the same identity guarantee without
-    requiring Codex itself to be available.
+      * Live-hook invocation: after the structural + module-identity
+        checks pass, the on-PATH hook script is spawned with a synthetic
+        Codex-shape PreToolUse payload on stdin and
+        :data:`SELFTEST_MARKER_ENV` set to a temp file path. The hook
+        emits ``{"mala_codex_hook": "loaded", "version": "<sha256>"}``
+        before processing the payload (see
+        :func:`src.infra.hooks.codex_pre_tool_use._emit_selftest_marker_if_requested`).
+        The probe asserts the marker file is present, parses, and its
+        ``version`` field equals our combined identity hash. Failure
+        modes:
+
+          * Script crashes / times out / writes no marker →
+            :class:`CodexHookNotActiveError(HOOK_MARKER_MISSING)`.
+          * Marker present but its ``version`` does not match →
+            :class:`CodexHookNotActiveError(VERSION_MISMATCH)`.
+
+        This closes the gap pure module-identity hashing left open
+        (plan AC-5 / E5): an importable module whose ``main()`` raises
+        before emitting the marker, a packaging shape that prevents
+        the script from spawning, or an interpreter where
+        :func:`os.environ.get` / file I/O is broken — none of which
+        the static hash probe would catch — all fail closed here.
 
     Tests inject custom probes to drive each
     :class:`CodexHookNotActiveReason` directly, including the runtime
-    reasons that a future live-spawn probe would surface.
+    reasons the live-hook step surfaces.
     """
     del expected_hash  # superseded by the combined module-source hash below
     import json as _json
@@ -1143,6 +1168,101 @@ def _default_selftest_probe(
             "environment that owns the hook script.",
             reason=CodexHookNotActiveReason.VERSION_MISMATCH,
         )
+
+    # 4. Live-hook invocation — drive the on-PATH ``mala-codex-pre-tool-use``
+    # entry-point end-to-end with a Codex-shape PreToolUse payload and a
+    # selftest marker env var. The hook emits a JSON marker before
+    # processing the payload (see
+    # ``src.infra.hooks.codex_pre_tool_use._emit_selftest_marker_if_requested``);
+    # the marker proves ``main()`` actually executed and the hook's own
+    # identity-hash computation produced the same digest the
+    # module-identity probe above produced. Plan AC-5 / E5: the prior
+    # structural + identity checks proved the BYTES on PATH are correct,
+    # but did not prove the script can be invoked end-to-end (e.g. an
+    # interpreter where ``main()`` raises before emitting any output, a
+    # shebang the kernel rejects at exec time, or a packaging shape
+    # that drops the entry-point). Without this step the selftest could
+    # cache success while real Codex turns fail at the first PreToolUse.
+    selftest_payload = _json.dumps({"tool_name": "noop", "tool_input": {}})
+    with tempfile.TemporaryDirectory(prefix="mala-codex-hook-selftest-") as marker_dir:
+        marker_path = Path(marker_dir) / "marker.json"
+        # Inherit the current process env so the hook's interpreter can
+        # find its site-packages, then overlay the marker env var. The
+        # ``noop`` tool name routes through the hook's
+        # neither-shell-nor-file-edit branch so the lock-env vars
+        # (``MALA_AGENT_ID`` etc.) are not consulted; we do not need to
+        # scrub them and a real run's env is the most representative
+        # test surface.
+        live_env = dict(os.environ)
+        live_env[_HOOK_SELFTEST_MARKER_ENV] = str(marker_path)
+        try:
+            live_result = _subprocess.run(
+                [hook_path],
+                input=selftest_payload,
+                capture_output=True,
+                text=True,
+                timeout=_HOOK_PROBE_TIMEOUT_SECONDS,
+                check=False,
+                env=live_env,
+            )
+        except _subprocess.TimeoutExpired as exc:
+            raise CodexHookNotActiveError(
+                f"On-PATH {_HOOK_COMMAND_NAME!r} ({hook_path}) did not "
+                f"respond within {_HOOK_PROBE_TIMEOUT_SECONDS:.0f}s "
+                "during the live selftest invocation; Codex would "
+                "block on the same timeout at PreToolUse.",
+                reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+            ) from exc
+        except OSError as exc:
+            raise CodexHookNotActiveError(
+                f"Cannot spawn on-PATH {_HOOK_COMMAND_NAME!r} "
+                f"({hook_path}) during the live selftest invocation: "
+                f"{exc}.",
+                reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+            ) from exc
+
+        if live_result.returncode != 0:
+            raise CodexHookNotActiveError(
+                f"On-PATH {_HOOK_COMMAND_NAME!r} ({hook_path}) exited "
+                f"{live_result.returncode} during the live selftest "
+                f"invocation; stderr: {live_result.stderr[:512]!r}.",
+                reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+            )
+
+        try:
+            marker_text = marker_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise CodexHookNotActiveError(
+                f"On-PATH {_HOOK_COMMAND_NAME!r} ({hook_path}) did not "
+                f"write the live selftest marker at {marker_path}: "
+                f"{exc}. The hook entry-point did not run end-to-end; "
+                "Codex would not be able to invoke the hook on PreToolUse.",
+                reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+            ) from exc
+
+        try:
+            marker_data = _json.loads(marker_text)
+        except _json.JSONDecodeError as exc:
+            raise CodexHookNotActiveError(
+                f"On-PATH {_HOOK_COMMAND_NAME!r} ({hook_path}) wrote a "
+                f"malformed live selftest marker: {exc}. Marker text: "
+                f"{marker_text[:512]!r}.",
+                reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+            ) from exc
+
+        marker_version = (
+            marker_data.get("version") if isinstance(marker_data, dict) else None
+        )
+        if marker_version != our_hash:
+            raise CodexHookNotActiveError(
+                f"On-PATH {_HOOK_COMMAND_NAME!r} ({hook_path}) emitted a "
+                f"live selftest marker whose version {marker_version!r} "
+                f"does not match this process's expected hash "
+                f"{our_hash!r}. The hook ran but computed a divergent "
+                "identity — its embedded module list or hash logic "
+                "differs from this mala install.",
+                reason=CodexHookNotActiveReason.VERSION_MISMATCH,
+            )
 
 
 def _resolve_hook_interpreter(hook_path: str) -> str:

@@ -5232,3 +5232,102 @@ def test_selftest_sentinel_allow_shape_is_stable() -> None:
         },
     }
     assert decide(sentinel_input) == expected
+
+
+# ---------------------------------------------------------------------------
+# Selftest marker (Phase E5 / AC-5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_main_emits_selftest_marker_when_env_var_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``main()`` writes the live-hook marker to ``SELFTEST_MARKER_ENV``
+    *and* still produces normal hook output, so the provider's selftest
+    can both observe the marker and the JSON allow/deny decision.
+    """
+    import json as _json
+
+    from src.infra.hooks.codex_pre_tool_use import (
+        SELFTEST_MARKER_ENV,
+        _compute_selftest_identity_hash,
+        main,
+    )
+
+    marker_path = tmp_path / "marker.json"
+    monkeypatch.setenv(SELFTEST_MARKER_ENV, str(marker_path))
+    monkeypatch.setattr(
+        "sys.stdin",
+        type(
+            "FakeStdin",
+            (),
+            {"read": staticmethod(lambda: _json.dumps({"tool_name": "noop"}))},
+        )(),
+    )
+
+    rc = main()
+    assert rc == 0
+
+    payload = _json.loads(marker_path.read_text(encoding="utf-8"))
+    assert payload["mala_codex_hook"] == "loaded"
+    assert payload["version"] == _compute_selftest_identity_hash()
+
+    # main() still wrote a JSON decision to stdout — the marker emit
+    # must not short-circuit normal hook processing.
+    captured = capsys.readouterr().out.strip()
+    decision = _json.loads(captured)
+    assert "hookSpecificOutput" in decision
+
+
+@pytest.mark.unit
+def test_main_does_not_emit_marker_when_env_var_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When ``SELFTEST_MARKER_ENV`` is not set, the hook does not write
+    any marker. Real Codex tool calls must not leave stray files."""
+    import json as _json
+
+    from src.infra.hooks.codex_pre_tool_use import SELFTEST_MARKER_ENV, main
+
+    monkeypatch.delenv(SELFTEST_MARKER_ENV, raising=False)
+    monkeypatch.setattr(
+        "sys.stdin",
+        type(
+            "FakeStdin",
+            (),
+            {"read": staticmethod(lambda: _json.dumps({"tool_name": "noop"}))},
+        )(),
+    )
+
+    main()
+
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.unit
+def test_main_swallows_marker_write_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unwritable marker path must not break the hook's primary
+    decision flow — the provider's selftest reads the absence of the
+    marker as the fail-closed signal."""
+    import json as _json
+
+    from src.infra.hooks.codex_pre_tool_use import SELFTEST_MARKER_ENV, main
+
+    # Point at a path under a non-existent directory so write fails.
+    bad_path = tmp_path / "missing-dir" / "marker.json"
+    monkeypatch.setenv(SELFTEST_MARKER_ENV, str(bad_path))
+    monkeypatch.setattr(
+        "sys.stdin",
+        type(
+            "FakeStdin",
+            (),
+            {"read": staticmethod(lambda: _json.dumps({"tool_name": "noop"}))},
+        )(),
+    )
+
+    rc = main()
+    assert rc == 0
+    assert not bad_path.exists()

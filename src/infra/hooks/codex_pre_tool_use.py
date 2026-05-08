@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
-__all__ = ["decide", "main"]
+__all__ = ["SELFTEST_MARKER_ENV", "decide", "main"]
 
 
 # Codex shell tool name candidates. ``bash`` is the public Codex tool name;
@@ -3229,8 +3229,105 @@ def decide(input_payload: dict[str, Any]) -> dict[str, Any]:
     return _allow()
 
 
+# ---------------------------------------------------------------------------
+# Selftest marker (Phase E5 / AC-5 live-hook proof)
+# ---------------------------------------------------------------------------
+
+SELFTEST_MARKER_ENV = "MALA_CODEX_HOOK_SELFTEST_MARKER"
+"""Env var the Codex provider's selftest sets to a writable file path.
+
+When this variable is present the hook writes a JSON marker
+``{"mala_codex_hook": "loaded", "version": "<sha256>"}`` to that path
+before processing the payload. The marker is the live-hook proof the
+provider's selftest reads back to confirm Codex actually invoked
+``mala-codex-pre-tool-use`` end-to-end (not just that the script
+hashed correctly via the module-identity probe). Mirrors Amp's
+``session.start`` sentinel marker posture in
+``src/infra/clients/amp_provider.py``.
+"""
+
+
+SELFTEST_IDENTITY_MODULES: tuple[str, ...] = (
+    "src.infra.hooks.codex_pre_tool_use",
+    "src.infra.hooks.dangerous_commands",
+    "src.infra.tool_config",
+    "src.infra.tools.locking",
+    "src.infra.tools.env",
+)
+"""Modules whose source bytes form this hook's identity.
+
+Mirrors :data:`src.infra.clients.codex_provider._HOOK_IDENTITY_MODULES`
+exactly so the marker emitted here matches the expected hash the
+provider's selftest computes. The two tuples must stay in lockstep
+(import-linter forbids the provider from importing this hook module
+directly, so we duplicate intentionally and pin the equality in tests).
+"""
+
+
+def _compute_selftest_identity_hash() -> str | None:
+    """Return the combined SHA-256 over the identity modules, or ``None``.
+
+    Mirrors :func:`src.infra.clients.codex_provider._compute_combined_module_hash`'s
+    iteration / length-prefix scheme byte-for-byte so the same five
+    module files yield the same digest in both processes. Returns
+    ``None`` when any module cannot be located or read so a
+    constrained interpreter (locked-down site-packages, missing
+    dependency module) does not raise mid-hook — the provider treats
+    a marker without a matching version field as
+    :class:`CodexHookNotActiveReason.VERSION_MISMATCH`.
+    """
+    import hashlib
+    import importlib.util
+
+    digest = hashlib.sha256()
+    for name in SELFTEST_IDENTITY_MODULES:
+        spec = importlib.util.find_spec(name)
+        if spec is None or spec.origin is None:
+            return None
+        try:
+            data = Path(spec.origin).read_bytes()
+        except OSError:
+            return None
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(len(data).to_bytes(8, "big"))
+        digest.update(data)
+    return digest.hexdigest()
+
+
+def _emit_selftest_marker_if_requested() -> None:
+    """Write the live-hook marker when ``SELFTEST_MARKER_ENV`` is set.
+
+    Best-effort: I/O errors are swallowed so a misconfigured marker
+    path on a real Codex run does not break the hook's primary
+    decision flow. The provider's selftest treats an absent / unreadable
+    marker as the fail-closed signal
+    (:class:`CodexHookNotActiveReason.HOOK_MARKER_MISSING`), so silent
+    swallow here just lets that classification fire without
+    accidentally denying real tool calls.
+    """
+    marker_path = os.environ.get(SELFTEST_MARKER_ENV)
+    if not marker_path:
+        return
+    payload = {
+        "mala_codex_hook": "loaded",
+        "version": _compute_selftest_identity_hash(),
+    }
+    try:
+        Path(marker_path).write_text(json.dumps(payload), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def main() -> int:
     """CLI entry-point: read JSON stdin, write JSON stdout, exit 0."""
+    # Emit the selftest marker FIRST so the provider's live-hook check
+    # observes a marker even if the JSON payload that follows is
+    # malformed. Without this ordering, a fail-closed deny on bad input
+    # would still skip the marker and the selftest could not
+    # distinguish "hook ran on a malformed test payload" from "hook
+    # never ran at all."
+    _emit_selftest_marker_if_requested()
     try:
         raw = sys.stdin.read()
         payload = json.loads(raw) if raw.strip() else {}

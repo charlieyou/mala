@@ -1751,6 +1751,160 @@ def test_default_probe_raises_hook_marker_missing_when_interpreter_crashes(
 
 
 @pytest.mark.unit
+def test_selftest_marker_env_constant_matches_hook_module() -> None:
+    """The provider and hook duplicate the marker env-var literal because
+    import-linter forbids ``src.infra.clients`` from importing
+    ``src.infra.hooks``. Pin equality so they cannot drift.
+    """
+    from src.infra.clients.codex_provider import _HOOK_SELFTEST_MARKER_ENV
+    from src.infra.hooks.codex_pre_tool_use import SELFTEST_MARKER_ENV
+
+    assert _HOOK_SELFTEST_MARKER_ENV == SELFTEST_MARKER_ENV
+
+
+@pytest.mark.unit
+def test_selftest_identity_modules_match_provider_list() -> None:
+    """The hook computes its own marker hash over the same module list
+    the provider expects. Drift would surface as a runtime
+    ``VERSION_MISMATCH`` from the live-hook step, but pinning the
+    equality here makes the regression visible directly."""
+    from src.infra.clients.codex_provider import _HOOK_IDENTITY_MODULES
+    from src.infra.hooks.codex_pre_tool_use import SELFTEST_IDENTITY_MODULES
+
+    assert SELFTEST_IDENTITY_MODULES == _HOOK_IDENTITY_MODULES
+
+
+@pytest.mark.unit
+def test_default_probe_raises_hook_marker_missing_when_live_hook_writes_no_marker(
+    fake_codex_env: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Live-hook step regression: a hook script whose interpreter passes
+    the module-identity probe but whose ``main()`` never emits the
+    selftest marker (e.g. a stale install where the entry-point bytes
+    happen to match but the marker-emit hook is missing) must surface
+    ``HOOK_MARKER_MISSING``.
+
+    The shim used here delegates the module-identity probe to our
+    embedded module (so step 3 passes) but bypasses ``main()`` and
+    emits valid hook output without writing the marker — exactly the
+    shape a regression that drops the marker-emit call would produce.
+    """
+    from src.infra.clients.codex_provider import _default_selftest_probe
+
+    codex_home, bin_dir = fake_codex_env
+    _install_valid_plugin_tree(codex_home)
+    hook_path = bin_dir / "mala-codex-pre-tool-use"
+    body = (
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        "sys.stdin.read()\n"
+        'sys.stdout.write(json.dumps({"hookSpecificOutput": '
+        '{"hookEventName": "PreToolUse", "permissionDecision": "allow"}}))\n'
+        "sys.stdout.write('\\n')\n"
+        "raise SystemExit(0)\n"
+    )
+    hook_path.write_text(body, encoding="utf-8")
+    hook_path.chmod(0o755)
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _default_selftest_probe(
+            tmp_path,
+            {"CODEX_HOME": str(codex_home)},
+            "deadbeef",
+        )
+    assert excinfo.value.reason is CodexHookNotActiveReason.HOOK_MARKER_MISSING
+    msg = str(excinfo.value)
+    assert "live selftest marker" in msg
+
+
+@pytest.mark.unit
+def test_default_probe_raises_version_mismatch_when_live_marker_hash_diverges(
+    fake_codex_env: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Live-hook step: a marker whose ``version`` field does not match
+    the provider's expected hash surfaces ``VERSION_MISMATCH``.
+
+    Catches the case where the on-PATH hook script runs end-to-end and
+    emits a marker, but the marker's identity hash diverges from the
+    provider's — implying the hook's identity-module list (or hash
+    logic) drifted from the provider's. Belt-and-suspenders gate on
+    top of step 3's static module-bytes hash.
+    """
+    from src.infra.clients.codex_provider import _default_selftest_probe
+
+    codex_home, bin_dir = fake_codex_env
+    _install_valid_plugin_tree(codex_home)
+    hook_path = bin_dir / "mala-codex-pre-tool-use"
+    # The shim delegates the module-identity probe to our embedded
+    # module (so step 3 passes), then writes a marker with a
+    # deliberately wrong version field on the live invocation path.
+    body = (
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        'marker = os.environ.get("MALA_CODEX_HOOK_SELFTEST_MARKER")\n'
+        "if marker:\n"
+        "    with open(marker, 'w', encoding='utf-8') as fp:\n"
+        '        json.dump({"mala_codex_hook": "loaded", "version": "deadbeef"}, fp)\n'
+        "sys.stdin.read()\n"
+        'sys.stdout.write(json.dumps({"hookSpecificOutput": '
+        '{"hookEventName": "PreToolUse", "permissionDecision": "allow"}}))\n'
+        "sys.stdout.write('\\n')\n"
+        "raise SystemExit(0)\n"
+    )
+    hook_path.write_text(body, encoding="utf-8")
+    hook_path.chmod(0o755)
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _default_selftest_probe(
+            tmp_path,
+            {"CODEX_HOME": str(codex_home)},
+            "deadbeef",
+        )
+    assert excinfo.value.reason is CodexHookNotActiveReason.VERSION_MISMATCH
+    msg = str(excinfo.value)
+    assert "live selftest marker" in msg
+    assert "deadbeef" in msg
+
+
+@pytest.mark.unit
+def test_default_probe_raises_hook_marker_missing_when_live_hook_exits_nonzero(
+    fake_codex_env: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Live-hook step: a hook script that survives the module-identity
+    probe but exits non-zero on the live invocation surfaces
+    ``HOOK_MARKER_MISSING``.
+
+    Codex would observe the same crash at PreToolUse and either deny
+    fail-closed or skip the hook depending on its config; either way
+    the safety guarantee the orchestrator depends on is gone, so the
+    selftest must catch it.
+    """
+    from src.infra.clients.codex_provider import _default_selftest_probe
+
+    codex_home, bin_dir = fake_codex_env
+    _install_valid_plugin_tree(codex_home)
+    hook_path = bin_dir / "mala-codex-pre-tool-use"
+    body = (
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "sys.stderr.write('boom\\n')\n"
+        "raise SystemExit(7)\n"
+    )
+    hook_path.write_text(body, encoding="utf-8")
+    hook_path.chmod(0o755)
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _default_selftest_probe(
+            tmp_path,
+            {"CODEX_HOME": str(codex_home)},
+            "deadbeef",
+        )
+    assert excinfo.value.reason is CodexHookNotActiveReason.HOOK_MARKER_MISSING
+    msg = str(excinfo.value)
+    assert "exited 7" in msg
+
+
+@pytest.mark.unit
 def test_install_prerequisites_reinstall_replaces_stale_plugin(
     monkeypatch: pytest.MonkeyPatch,
     fake_codex_env: tuple[Path, Path],
