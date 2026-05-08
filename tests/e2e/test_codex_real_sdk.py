@@ -65,6 +65,21 @@ _RATE_LIMIT_BACKOFF_SECONDS = 30.0
 """Brief pause before the single retry on a rate-limit terminal error."""
 
 
+_TURN_TIMEOUT_SECONDS = 180.0
+"""Per-attempt upper bound for one full Codex turn (start + stream + terminal).
+
+Bounds the SDK-drift canary so a stalled or non-terminating
+``AsyncCodex`` notification stream times out into a test failure /
+``TimeoutError`` rather than hanging the CI job indefinitely. There is
+no global pytest timeout configured; without this wrapper, a missing
+terminal notification (the very SDK drift this canary is designed to
+catch) would manifest as an indefinite hang. Generous bound — a
+one-line ``echo`` turn typically completes in well under 60s, but the
+ceiling absorbs cold-start jitter on the SDK's bundled
+``codex_cli_bin`` runtime.
+"""
+
+
 _RATE_LIMIT_HINTS: tuple[str, ...] = (
     "rate limit",
     "rate_limit",
@@ -270,7 +285,10 @@ async def test_codex_real_sdk_one_line_prompt_round_trip(
         text_events,
         tool_use_events,
         tool_result_events,
-    ) = await _run_one_codex_turn(provider, repo_path, agent_id, _E2E_PROMPT)
+    ) = await asyncio.wait_for(
+        _run_one_codex_turn(provider, repo_path, agent_id, _E2E_PROMPT),
+        timeout=_TURN_TIMEOUT_SECONDS,
+    )
 
     # Retry-on-rate-limit (plan I3 risk-mitigation): one short backoff +
     # one retry, then skip-with-message so a transient quota throttle
@@ -288,8 +306,9 @@ async def test_codex_real_sdk_one_line_prompt_round_trip(
             text_events,
             tool_use_events,
             tool_result_events,
-        ) = await _run_one_codex_turn(
-            provider, repo_path, agent_id + "-retry", _E2E_PROMPT
+        ) = await asyncio.wait_for(
+            _run_one_codex_turn(provider, repo_path, agent_id + "-retry", _E2E_PROMPT),
+            timeout=_TURN_TIMEOUT_SECONDS,
         )
         if result_event is not None and _looks_like_rate_limit(result_event):
             pytest.skip(
@@ -312,8 +331,13 @@ async def test_codex_real_sdk_one_line_prompt_round_trip(
         "CodexClient.session_id was empty after a completed turn; the SDK "
         "did not surface a usable thread id."
     )
-    assert thread_id.startswith("thr_") or thread_id, (
-        f"Codex thread id has unexpected shape: {thread_id!r}"
+    # Codex thread ids are documented as ``thr_<...>`` (see
+    # ``codex_app_server`` Thread.id); a prefix change is itself SDK-drift
+    # the canary should surface, so assert it strictly rather than
+    # short-circuiting through an ``or thread_id`` clause that would
+    # silently accept any non-empty string.
+    assert thread_id.startswith("thr_"), (
+        f"Codex thread id has unexpected shape: {thread_id!r} (expected `thr_` prefix)"
     )
     print(
         f"[codex-e2e] thread_id={thread_id}; "
