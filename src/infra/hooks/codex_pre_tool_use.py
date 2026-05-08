@@ -863,13 +863,25 @@ def _strip_shell_comments(command: str) -> str:
                 quote = None
             i += 1
             continue
-        # ``$'...'`` ANSI-C — track as quoted region; backslash is
-        # an escape there.
-        if c == "$" and i + 1 < n and command[i + 1] == "'":
-            out.append(c)
-            out.append("'")
-            quote = "'"
-            i += 2
+        # ``$'...'`` ANSI-C: skip the entire block and emit a
+        # placeholder so the quote tracker stays in sync. The previous
+        # implementation tracked ANSI-C as a regular single-quoted
+        # region, which desynced on inputs like ``$'\\''`` (it treated
+        # the escaped ``\\'`` as the closer and the third ``'`` as a
+        # fresh opener). The body is never a comment and never a write
+        # target, so a placeholder is sufficient.
+        if c == "$" and quote is None and i + 1 < n and command[i + 1] == "'":
+            j = i + 2
+            while j < n:
+                if command[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if command[j] == "'":
+                    j += 1
+                    break
+                j += 1
+            out.append(_ANSI_C_PLACEHOLDER)
+            i = j
             continue
         if c in ('"', "'"):
             out.append(c)
@@ -924,6 +936,31 @@ def _extract_command_substitutions(command: str) -> tuple[str, list[str]]:
             out.append(c)
             out.append(command[i + 1])
             i += 2
+            continue
+        # ANSI-C quoting (``$'...'``) outside other quoted regions: skip
+        # the entire block and emit ``_ANSI_C_PLACEHOLDER`` so the
+        # quote/sub tracker stays in sync. Without this, an escaped
+        # single quote (``$'\\''``) desyncs the parser — it treats the
+        # escaped ``\\'`` as the closer and the third ``'`` as a fresh
+        # opener, so any backtick / ``$()`` substitution that follows is
+        # seen as "inside single quotes" and never extracted into
+        # ``bodies``. Concrete bypass before this fix:
+        # ``echo $'\\'' `touch unowned.py``` left the inner ``touch``
+        # invisible to every extractor and the hook returned allow.
+        # (Inside ``"..."`` bash treats ``$'...'`` literally, so the
+        # ANSI-C skip is gated on ``quote is None``.)
+        if c == "$" and quote is None and i + 1 < n and command[i + 1] == "'":
+            j = i + 2
+            while j < n:
+                if command[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if command[j] == "'":
+                    j += 1
+                    break
+                j += 1
+            out.append(_ANSI_C_PLACEHOLDER)
+            i = j
             continue
         # Legacy backtick command substitution.
         if c == "`" and quote != "'":
@@ -1081,6 +1118,39 @@ _REDIR_OP_TOKEN_RE = re.compile(rf"^{_REDIR_FD_PREFIX}?{_REDIR_TAIL}$")
 _COMBINED_REDIR_PREFIX_RE = re.compile(rf"^{_REDIR_FD_PREFIX}?{_REDIR_TAIL}")
 
 
+def _drop_redirections(tokens: list[str]) -> list[str]:
+    """Return ``tokens`` with redirect operators and their targets removed.
+
+    Used by non-redirect segment extractors so a redirect operator+target
+    that appears in the middle of an argument list (between the command
+    word and the trailing positional, or after it) does not become a
+    positional that the utility/oneliner extractors mistakenly treat as
+    a write surface.
+
+    Without this, ``cp owned dst >out`` left ``>`` and ``out`` in cp's
+    positional list and ``last_positional`` returned ``out`` instead
+    of ``dst``, so the real cp destination was never lock-checked.
+    Combined with the ``&>`` split fix in ``_normalize_separators``,
+    ``cp owned unowned&>out`` now lock-checks the real ``unowned``
+    instead of leaking to a redirect target the agent legitimately
+    holds.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(tokens)
+    while i < n:
+        tok = tokens[i]
+        if _REDIR_OP_TOKEN_RE.match(tok):
+            # Operator + its target word are both removed; ``cmd > out``
+            # becomes ``cmd``. fd-dup target words (``2>&1``) are also
+            # removed — fine, they aren't write surfaces.
+            i += 2
+            continue
+        out.append(tok)
+        i += 1
+    return out
+
+
 def _extract_redirection_targets(tokens: list[str]) -> list[str]:
     """Find ``>``/``>>``/etc. targets in a token stream.
 
@@ -1220,7 +1290,7 @@ def _extract_inplace_targets(tokens: list[str]) -> list[str]:
     skip_next = False
     has_value_flag = False
     options_ended = False
-    for tok in tokens[1:]:
+    for idx, tok in enumerate(tokens[1:], start=1):
         if skip_next:
             skip_next = False
             continue
@@ -1241,6 +1311,29 @@ def _extract_inplace_targets(tokens: list[str]) -> list[str]:
             continue
         if tok.startswith("-") and len(tok) >= 2:
             body = tok[1:]
+            # BSD sed (macOS) requires ``-i SUFFIX`` as a separate
+            # token, with an EMPTY suffix written ``-i ''``. shlex
+            # leaves the empty as a positional. Without this skip,
+            # ``sed -i '' 's/a/b/' file`` collected positionals
+            # ``['', 's/a/b/', 'file']``; the script-positional logic
+            # dropped only the empty, returning ``s/a/b/`` plus
+            # ``file`` as write targets — a false-deny that broke
+            # routine macOS sed usage even when the agent held a
+            # lock on the real file. Detect ``-i`` (last/only letter
+            # in the bundle) followed by an empty token and treat
+            # the empty as the BSD suffix value. Trade-off: GNU
+            # ``sed -i '' file`` (empty script no-op rewrite of
+            # ``file``) is now under-detected, which is acceptable
+            # — that idiom is degenerate and rarely used while
+            # ``sed -i '' SCRIPT file`` is the macOS dev default.
+            if (
+                cmd == "sed"
+                and body.endswith("i")
+                and idx + 1 < len(tokens)
+                and tokens[idx + 1] == ""
+            ):
+                skip_next = True
+                continue
             for j, ch in enumerate(body):
                 if ch in short_value_letters:
                     has_value_flag = True
@@ -1714,8 +1807,11 @@ _NODE_FS_WRITE_RE = re.compile(
 # form that does not bind ``fs`` to a separate identifier. Without this
 # regex, ``node -e "require('fs').writeFileSync('unowned','x')"`` is a
 # static-target write but produces zero matches and is silently allowed.
+# Also covers the promise-based API (``require('fs/promises')``,
+# ``require('node:fs/promises')``) since ``fs/promises`` exposes the
+# same ``writeFile``/``appendFile`` write surface.
 _NODE_REQUIRE_FS_WRITE_RE = re.compile(
-    r"""require\s*\(\s*['"](?:node:)?fs['"]\s*\)\s*\.\s*"""
+    r"""require\s*\(\s*['"](?:node:)?fs(?:/promises)?['"]\s*\)\s*\.\s*"""
     r"""(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)"""
     r"""\s*\(\s*(['"])([^'"]+)\1"""
 )
@@ -1738,11 +1834,20 @@ _NODE_WRITE_HINTS = (
     "fs.writeFile",
     "fs.appendFile",
     "fs.createWriteStream",
-    # ``require('fs')`` and ``require("fs")`` — also covers ``require('node:fs')``.
+    # ``require('fs')`` and ``require("fs")`` — also covers
+    # ``require('node:fs')`` and the promise-based variant
+    # ``require('fs/promises')`` (and its ``node:`` form). Without the
+    # ``/promises`` hints, ``node -e "const fsp=require('fs/promises');
+    # fsp.writeFile('/repo/unlocked','x')"`` produced zero matches and
+    # was silently allowed.
     "require('fs')",
     'require("fs")',
     "require('node:fs')",
     'require("node:fs")',
+    "require('fs/promises')",
+    'require("fs/promises")',
+    "require('node:fs/promises')",
+    'require("node:fs/promises")',
 )
 _RUBY_WRITE_HINTS = (
     "File.write",
@@ -2292,10 +2397,20 @@ def _normalize_separators(command: str) -> str:
             continue
         if c == "&":
             # ``&`` followed by ``>`` is the start of the ``&>`` redirect
-            # operator. Append the ``&`` so the upcoming ``>`` handler
+            # operator. Pad the ``&`` with a leading space so it is
+            # detached from any preceding word (``&`` is a bash
+            # metacharacter and always terminates a word, even without
+            # whitespace), then append it so the upcoming ``>`` handler
             # picks it up via ``_strip_fd_prefix_from_output`` and emits
-            # the full operator together.
+            # the full operator together. Without the leading pad,
+            # ``cp owned unowned&>out`` left ``unowned&`` glued in
+            # ``out``; ``_strip_fd_prefix_from_output`` then refused to
+            # strip the ``&`` (no whitespace boundary), so the cp
+            # destination was lock-checked as the literal ``unowned&``
+            # — an agent locking that junk path would be allowed to
+            # write while bash actually wrote to ``unowned``.
             if i + 1 < n and command[i + 1] == ">":
+                out.append(" ")
                 out.append(c)
                 i += 1
                 continue
@@ -2510,10 +2625,21 @@ def _extract_shell_write_paths(
             if seg_targets:
                 _append_targets_with_cd(out, seg_targets, cd_seen)
             continue
+        # Strip redirect operators+targets before passing to the
+        # non-redirect extractors. ``_extract_redirection_targets``
+        # already collected the redirect surfaces above; the non-
+        # redirect extractors should not see those tokens or they
+        # leak into utility/oneliner positional lists. ``cp owned
+        # unowned&>out`` would otherwise have its cp-destination
+        # lock-check delegated to the redirect target ``out`` (last
+        # positional after surviving ``&>`` token), letting an agent
+        # bypass by locking a redirect target it owns while bash
+        # writes to the unowned ``unowned``.
+        non_redirect_segment = _drop_redirections(segment)
         for extractor in _SEGMENT_EXTRACTORS:
             if extractor is _extract_redirection_targets:
                 continue
-            seg_targets.extend(extractor(segment))
+            seg_targets.extend(extractor(non_redirect_segment))
         if seg_targets:
             _append_targets_with_cd(out, seg_targets, cd_seen)
     return out

@@ -4538,3 +4538,221 @@ class TestCommentedSubstitutionsNotExtracted:
         )
         assert is_deny(result)
         assert "unowned.py" in deny_reason(result)
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 3 — P1 findings)
+# ---------------------------------------------------------------------------
+
+
+class TestAnsiCBacktickBypass:
+    """Regression: ``$'\\''`` must not desync the cmd-sub extractor.
+
+    Before the fix, ``_extract_command_substitutions`` lacked ANSI-C
+    handling. The escaped single quote inside ``$'\\''`` toggled its
+    plain-quote tracker into a stuck "inside-single-quotes" state, so
+    any backtick substitution that followed was treated as quoted and
+    NOT extracted as a separate segment. The bash command
+    ``echo $'\\'' `touch unowned.py``` then produced no extracted
+    targets; ``decide()`` returned allow while bash actually executed
+    the inner ``touch``.
+    """
+
+    def test_backtick_after_ansi_c_is_extracted(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "unowned.py"
+        # Inner ``touch unowned.py`` is a real write target that bash
+        # will execute. The hook must extract the backtick body and
+        # deny on the missing lock.
+        command = f"echo $'\\'' `touch {target}`"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+        assert "unowned.py" in deny_reason(result)
+
+    def test_dollar_paren_after_ansi_c_is_extracted(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``$()`` was already rescued by separator splitting on
+        # ``(``/``)``; pin it so a future regression in that path is
+        # caught.
+        target = repo / "unowned.py"
+        command = f"echo $'\\'' $(touch {target})"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+        assert "unowned.py" in deny_reason(result)
+
+    def test_ansi_c_with_no_inner_write_is_allowed(self, env: dict[str, str]) -> None:
+        # Sanity: an ANSI-C string by itself has no write surface and
+        # must not produce a spurious deny.
+        result = decide(make_payload("bash", {"command": "echo $'\\''"}))
+        assert is_allow(result), result
+
+
+class TestAttachedAmpersandRedirectBypass:
+    """Regression: ``cmd dst&>out`` must split ``&`` from ``dst``.
+
+    Before the fix, ``_normalize_separators`` appended ``&`` (when
+    followed by ``>``) without padding, leaving ``dst&`` glued in the
+    output. ``_strip_fd_prefix_from_output`` then refused to strip the
+    ``&`` because its whitespace-boundary check failed (the previous
+    out-char was a non-space letter), so the cp destination was
+    lock-checked as the literal junk path ``dst&`` — an agent locking
+    that junk path was allowed to write while bash actually wrote to
+    ``dst``.
+    """
+
+    def test_attached_amp_redirect_locks_real_destination(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        owned = repo / "owned.txt"
+        unowned = repo / "unowned.txt"
+        out = repo / "out.txt"
+        # Lock the junk path the buggy parser used as the destination.
+        # Pre-fix the parser would lock-check ``unowned.txt&`` (junk),
+        # find the agent owns it, and ALLOW the write while bash wrote
+        # to the real ``unowned.txt``. Post-fix the parser splits the
+        # ``&`` from the cp destination word, lock-checks the real
+        # ``unowned.txt`` (no lock), and DENIES.
+        junk = repo / "unowned.txt&"
+        assert try_lock(str(junk), "agent-me", repo_namespace=str(repo))
+        assert try_lock(str(owned), "agent-me", repo_namespace=str(repo))
+        # Lock the redirect target so the only failing check is the cp
+        # destination — pinning that the post-fix denial is on the
+        # split-off real path, not on the redirect target.
+        assert try_lock(str(out), "agent-me", repo_namespace=str(repo))
+        command = f"cp {owned} {unowned}&>{out}"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+        # The real path must appear in the reason (not the junk one).
+        reason = deny_reason(result)
+        assert "unowned.txt" in reason
+        assert "unowned.txt&" not in reason
+
+    def test_attached_amp_append_redirect_locks_real_destination(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        unowned = repo / "unowned.txt"
+        out = repo / "out.txt"
+        junk = repo / "unowned.txt&"
+        # Lock the junk-path and the redirect target so the only
+        # un-owned write is the real ``unowned.txt``. Post-fix the
+        # parser must split the ``&`` from the redirection target.
+        assert try_lock(str(junk), "agent-me", repo_namespace=str(repo))
+        assert try_lock(str(out), "agent-me", repo_namespace=str(repo))
+        # ``&>>`` (append form) must split the ``&`` the same way.
+        command = f"echo data >{unowned}&>>{out}"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+    def test_attached_amp_redirect_allows_when_locks_match_bash(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Sanity: when the agent holds the lock on the real bash-side
+        # destination (``unowned.txt`` and ``out.txt``), the write is
+        # allowed — proving the parser now uses bash's split.
+        unowned = repo / "unowned.txt"
+        out = repo / "out.txt"
+        owned = repo / "owned.txt"
+        assert try_lock(str(owned), "agent-me", repo_namespace=str(repo))
+        assert try_lock(str(unowned), "agent-me", repo_namespace=str(repo))
+        assert try_lock(str(out), "agent-me", repo_namespace=str(repo))
+        command = f"cp {owned} {unowned}&>{out}"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_allow(result), result
+
+
+class TestNodeFsPromisesWrites:
+    """Regression: ``require('fs/promises')`` writes must be detected.
+
+    Before the fix, the Node hint table only mentioned ``require('fs')``
+    / ``require('node:fs')``. A normal command like
+    ``node -e "const fsp=require('fs/promises'); fsp.writeFile(...)"``
+    matched no regex and no hint, so ``decide()`` returned allow even
+    though the agent did not hold a lock on the target.
+    """
+
+    @pytest.mark.parametrize(
+        ("require_form", "body_quote"),
+        [
+            # require with single-quoted module name → wrap body in
+            # double quotes for the bash -e arg.
+            ("require('fs/promises')", '"'),
+            ("require('node:fs/promises')", '"'),
+            # require with double-quoted module name → wrap body in
+            # single quotes for the bash -e arg.
+            ('require("fs/promises")', "'"),
+            ('require("node:fs/promises")', "'"),
+        ],
+    )
+    def test_fs_promises_dynamic_binding_denies(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        require_form: str,
+        body_quote: str,
+    ) -> None:
+        # The promise-API binding through a fresh identifier is dynamic
+        # — no literal target the regex can extract — so the hook must
+        # fall back to the unresolved-sentinel deny via the hint check.
+        target = repo / "unlocked.txt"
+        # Use the opposite quote style for the writeFile literal so the
+        # body's quoting is consistent with body_quote.
+        target_quote = "'" if body_quote == '"' else '"'
+        body = (
+            f"const fsp={require_form}; "
+            f"fsp.writeFile({target_quote}{target}{target_quote},"
+            f"{target_quote}x{target_quote})"
+        )
+        command = f"node -e {body_quote}{body}{body_quote}"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+    def test_fs_promises_direct_call_extracts_literal(
+        self,
+        env: dict[str, str],
+        repo: Path,
+    ) -> None:
+        # Direct ``require('fs/promises').writeFile(<lit>)`` form: the
+        # extended ``_NODE_REQUIRE_FS_WRITE_RE`` extracts the literal
+        # target so an unlocked path denies with the explicit message.
+        target = repo / "unlocked.txt"
+        body = f"require('fs/promises').writeFile('{target}','x')"
+        command = f'node -e "{body}"'
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+        assert "unlocked.txt" in deny_reason(result)
+
+
+class TestBsdSedEmptySuffix:
+    """Regression: ``sed -i '' SCRIPT file`` (BSD/macOS) must not deny
+    the script as a write target.
+
+    Before the fix, the BSD-style empty in-place suffix collected as
+    a positional and the script-positional logic dropped it as the
+    "first positional", returning ``SCRIPT`` plus the file as write
+    targets. An agent that correctly held ``file`` was denied for
+    missing a lock on ``s/a/b/`` — a routine macOS sed invocation.
+    """
+
+    def test_bsd_sed_empty_suffix_allows_when_only_file_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "data.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        # The agent does NOT lock ``s/a/b/`` (which isn't a real path
+        # and never could be locked sensibly). Pre-fix this denied.
+        command = f"sed -i '' 's/a/b/' {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+    def test_bsd_sed_empty_suffix_denies_unlocked_file(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Sanity: the heuristic still locks-checks the real file
+        # target. Without a lock on ``data.txt`` the write is denied.
+        target = repo / "data.txt"
+        command = f"sed -i '' 's/a/b/' {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), result
+        assert "data.txt" in deny_reason(result)
