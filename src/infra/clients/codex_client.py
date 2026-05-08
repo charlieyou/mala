@@ -312,33 +312,43 @@ class CodexClient:
         directly so the SIGINT cancellation path explicitly satisfies
         the AC-3 contract regardless of whether disconnect is reached
         via ``async with`` unwinding or an explicit out-of-band call.
-        Errors from the SDK teardown are logged at debug level rather
-        than raised so a failing close path does not mask the original
-        error that drove ``disconnect`` (e.g., ``CancelledError`` from
-        SIGINT).
+
+        Cancellation safety: in production the SIGINT chain delivers
+        ``task.cancel()`` to whichever task is unwinding through this
+        method, so the first yielding ``await`` (``turn.interrupt()``)
+        raises :class:`asyncio.CancelledError` — a ``BaseException``
+        that an ``except Exception`` cannot catch. ``close()`` is
+        guarded with ``try/finally`` so the cancellation path still
+        invokes ``AsyncCodex.close()`` exactly once before
+        ``CancelledError`` propagates. Non-cancellation errors from
+        the SDK teardown are logged at debug level rather than raised
+        so a failing close path does not mask the original error that
+        drove ``disconnect`` (e.g., ``CancelledError`` from SIGINT).
         """
         if self._closed:
             return
         self._closed = True
 
         turn = self._turn
-        if turn is not None:
-            try:
-                await turn.interrupt()
-            except Exception as exc:
-                logger.debug(
-                    "CodexClient: TurnHandle.interrupt raised on disconnect: %s",
-                    exc,
-                )
-            self._turn = None
-
+        self._turn = None
         codex = self._codex
-        if codex is not None:
-            try:
-                await codex.close()
-            except Exception as exc:
-                logger.debug(
-                    "CodexClient: AsyncCodex.close raised on disconnect: %s",
-                    exc,
-                )
-            self._codex = None
+        self._codex = None
+
+        try:
+            if turn is not None:
+                try:
+                    await turn.interrupt()
+                except Exception as exc:
+                    logger.debug(
+                        "CodexClient: TurnHandle.interrupt raised on disconnect: %s",
+                        exc,
+                    )
+        finally:
+            if codex is not None:
+                try:
+                    await codex.close()
+                except Exception as exc:
+                    logger.debug(
+                        "CodexClient: AsyncCodex.close raised on disconnect: %s",
+                        exc,
+                    )

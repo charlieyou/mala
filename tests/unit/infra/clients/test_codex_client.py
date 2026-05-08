@@ -755,6 +755,60 @@ async def test_sigint_mid_turn_cancellation_invokes_interrupt_and_close_once(
     assert fake_codex.exit_calls == 0
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_real_task_cancel_during_interrupt_still_runs_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-3 regression: a real ``task.cancel()`` while ``turn.interrupt()``
+    is awaiting must still reach ``AsyncCodex.close()`` exactly once.
+
+    This is the production SIGINT shape: the lifecycle controller's
+    abort path calls ``task.cancel()`` on whichever task owns the open
+    ``CodexClient``, so ``CancelledError`` is raised at the next
+    yielding ``await`` inside ``disconnect`` — typically
+    ``await turn.interrupt()``. ``CancelledError`` is a
+    ``BaseException``, so a plain ``except Exception`` cannot catch it;
+    without the ``try/finally`` guard, ``CancelledError`` would
+    propagate before ``await codex.close()`` runs, silently violating
+    AC-3. We patch ``turn.interrupt()`` to actually suspend so the
+    cancellation lands at that exact ``await``.
+    """
+    import asyncio
+
+    from src.infra.clients.codex_client import CodexClient
+
+    fake_codex = _install_fake_sdk(monkeypatch)
+    runtime = _build_runtime(tmp_path)
+    thread = _FakeThread(id="thr_real_cancel")
+    fake_codex.next_thread = thread
+
+    client = CodexClient(runtime)
+    await client.__aenter__()
+    await client.query("mid-turn prompt")
+
+    interrupt_started = asyncio.Event()
+    real_turn = thread.turn_handles[0]
+
+    async def slow_interrupt() -> None:
+        real_turn.interrupt_calls += 1
+        interrupt_started.set()
+        # Block long enough that the test's task.cancel() lands here.
+        await asyncio.sleep(60)
+
+    real_turn.interrupt = slow_interrupt  # type: ignore[method-assign,assignment]  # ty:ignore[invalid-assignment]
+
+    task = asyncio.create_task(client.disconnect())
+    await interrupt_started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert real_turn.interrupt_calls == 1
+    assert fake_codex.close_calls == 1
+    assert fake_codex.exit_calls == 0
+
+
 # ---------------------------------------------------------------------------
 # session_id property reflects thread id
 # ---------------------------------------------------------------------------
