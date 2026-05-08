@@ -393,7 +393,11 @@ _WRAPPER_VALUE_LETTERS: dict[str, frozenset[str]] = {
     # all BOOLEAN and intentionally NOT listed here. Listing them as
     # value letters would consume the inner cmd as the flag value.
     "sudo": frozenset({"u", "g", "h", "p", "C", "D", "T", "U", "r", "t"}),
-    "doas": frozenset({"u", "C"}),
+    # ``doas`` short value-flags: ``-a STYLE`` (auth-style),
+    # ``-C path`` (config), ``-u user`` (user). Without ``a`` here,
+    # ``doas -a auth touch unowned`` would treat ``-a`` as boolean and
+    # consume ``touch`` as the inner command's name.
+    "doas": frozenset({"u", "C", "a"}),
     "exec": frozenset({"a"}),
     "nice": frozenset({"n"}),
     "stdbuf": frozenset({"i", "o", "e"}),
@@ -717,6 +721,50 @@ def _is_cd_segment(tokens: list[str]) -> bool:
         next_cmd = _command_basename_str(tokens[1])
         if next_cmd in _CD_BUILTINS:
             return True
+    return False
+
+
+def _has_brace_expansion(tok: str) -> bool:
+    """True if ``tok`` contains a bash brace expansion ``{...,...}`` or
+    range ``{n..m}``.
+
+    The check is purely syntactic — any token with a ``{...}`` block
+    that contains a comma or ``..`` triggers detection. Bash expands
+    such tokens BEFORE command execution, so a single shlex token
+    ``{touch,unowned}`` actually invokes ``touch unowned`` at runtime.
+    Without this check, the hook never sees the inner command and
+    silently allows the unowned write.
+
+    ``${var}`` parameter expansion is NOT a brace expansion and is
+    excluded (a leading ``$`` immediately before ``{`` distinguishes
+    them; ``$`` is also caught separately by ``_SHELL_EXPANSION_RE``
+    in ``_check_lock``).
+    """
+    n = len(tok)
+    i = 0
+    while i < n:
+        if tok[i] == "{" and (i == 0 or tok[i - 1] != "$"):
+            # Find matching ``}``; check if the body contains ``,`` or ``..``.
+            depth = 1
+            j = i + 1
+            has_comma = False
+            has_range = False
+            while j < n and depth > 0:
+                if tok[j] == "{":
+                    depth += 1
+                elif tok[j] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                elif tok[j] == ",":
+                    has_comma = True
+                elif tok[j] == "." and j + 1 < n and tok[j + 1] == ".":
+                    has_range = True
+                    j += 1
+                j += 1
+            if depth == 0 and (has_comma or has_range):
+                return True
+        i += 1
     return False
 
 
@@ -1593,6 +1641,35 @@ _ONELINER_SCRIPT_FLAGS: dict[str, str] = {
 }
 
 
+# Per-interpreter short flag letters that take a separate-token VALUE
+# (other than the script flag itself). Used by ``_find_oneliner_body``
+# so a value token is not misread as the script flag.
+# Example: ``python -W default -c 'open(...)'`` — ``-W`` consumes
+# ``default`` as its value, NOT as the script flag.
+_INTERPRETER_VALUE_LETTERS: dict[str, frozenset[str]] = {
+    "python": frozenset({"W", "X", "Q"}),
+    "python3": frozenset({"W", "X", "Q"}),
+    "perl": frozenset({"I", "M", "F", "S", "x"}),
+    "node": frozenset(),
+    "nodejs": frozenset(),
+    "ruby": frozenset(),
+    "bash": frozenset({"O"}),
+    "sh": frozenset(),
+}
+
+# Per-interpreter long-form value-taking flags (consume next token).
+_INTERPRETER_VALUE_LONG_FLAGS: dict[str, frozenset[str]] = {
+    "python": frozenset({"--check-hash-based-pycs"}),
+    "python3": frozenset({"--check-hash-based-pycs"}),
+    "node": frozenset({"--require", "--import", "--input-type"}),
+    "nodejs": frozenset({"--require", "--import", "--input-type"}),
+    "ruby": frozenset({"--encoding"}),
+    "perl": frozenset(),
+    "bash": frozenset(),
+    "sh": frozenset(),
+}
+
+
 def _find_oneliner_body(tokens: list[str], script_flag: str) -> str | None:
     """Locate the script body for ``cmd ... -c BODY`` even with leading flags
     or attached body.
@@ -1603,17 +1680,25 @@ def _find_oneliner_body(tokens: list[str], script_flag: str) -> str | None:
     - attached short: ``-cBODY`` (body glued to the flag in the same token)
     - leading interpreter flags before ``-c``/``-e`` (``python -u -c ...``)
 
-    Returns the body string, or ``None`` if no script flag is present.
-    Without the attached-form branch, ``python -c"open('f','w')"`` (which
-    shlex tokenises as ``['python', "-copen('f','w')"]``) silently
-    bypasses the heuristic — the strict ``tokens[i] == script_flag``
-    check never matches and ``None`` is returned.
+    Skips OVER value-taking option values per
+    ``_INTERPRETER_VALUE_LETTERS`` / ``_INTERPRETER_VALUE_LONG_FLAGS``
+    so ``python -W -c -c "open('f','w')"`` does NOT match the first
+    ``-c`` (which is ``-W``'s value) — without this skip the heuristic
+    would treat the second ``-c`` as the script body and miss the
+    actual write call entirely.
     """
     if not tokens or len(tokens) < 2:
         return None
     is_short_flag = len(script_flag) == 2 and not script_flag.startswith("--")
+    cmd = _command_basename(tokens)
+    short_value_letters = _INTERPRETER_VALUE_LETTERS.get(cmd, frozenset())
+    long_value_flags = _INTERPRETER_VALUE_LONG_FLAGS.get(cmd, frozenset())
+    skip_next = False
     for i in range(1, len(tokens)):
         tok = tokens[i]
+        if skip_next:
+            skip_next = False
+            continue
         if tok == script_flag:
             if i + 1 < len(tokens):
                 return tokens[i + 1]
@@ -1628,6 +1713,20 @@ def _find_oneliner_body(tokens: list[str], script_flag: str) -> str | None:
             and not tok.startswith("--")
         ):
             return tok[len(script_flag) :]
+        # Skip the value of an interpreter value-flag so we don't
+        # misidentify it as the script flag.
+        if tok.startswith("--") and "=" not in tok and tok in long_value_flags:
+            skip_next = True
+            continue
+        if tok.startswith("-") and not tok.startswith("--") and len(tok) >= 2:
+            body = tok[1:]
+            for j, ch in enumerate(body):
+                if ch in short_value_letters:
+                    if j == len(body) - 1:
+                        # Bundle ends with value-letter: next token is value.
+                        skip_next = True
+                    # Else: attached value, no next-token consumption.
+                    break
     return None
 
 
@@ -1701,32 +1800,53 @@ _GIT_GLOBAL_VALUE_FLAGS = frozenset(
 )
 
 
-def _find_git_subcommand_index(tokens: list[str]) -> int | None:
-    """Return the index of the first non-global-option token after ``git``.
+def _find_git_subcommand_info(
+    tokens: list[str],
+) -> tuple[int | None, str | None]:
+    """Return ``(subcommand_index, -C_dir)`` for a git invocation.
 
-    Skips global options that come before the subcommand. Without this,
-    ``git -C /repo checkout f`` evaluates ``-C`` as the subcommand,
-    finds no match in ``GIT_WRITE_SUBCOMMANDS``, and silently allows
-    the unowned write. ``git --work-tree=. apply patch`` has the same
-    bypass via the long-form ``--key=value`` shape.
+    Skips global options before the subcommand. Captures the value of
+    ``-C dir`` / ``--git-dir`` / ``--work-tree=`` so the caller can
+    resolve subcommand pathspecs against the right directory:
+    ``git -C pkg checkout file.py`` writes ``pkg/file.py``, NOT
+    ``file.py`` resolved against the original cwd.
     """
+    chdir_value: str | None = None
     i = 1
     while i < len(tokens):
         tok = tokens[i]
         if not tok.startswith("-"):
-            return i
+            return i, chdir_value
         # Long form with attached value: ``--git-dir=/abs``
         if tok.startswith("--") and "=" in tok:
+            name, value = tok.split("=", 1)
+            if name in {"--work-tree", "--git-dir"} and value:
+                chdir_value = value
             i += 1
             continue
         if tok in _GIT_GLOBAL_VALUE_FLAGS:
-            i += 2
+            if i + 1 < len(tokens):
+                if tok in {"-C", "--work-tree", "--git-dir"}:
+                    chdir_value = tokens[i + 1]
+                i += 2
+                continue
+            i += 1
             continue
         # Other short/long flags that take no value (``-h``, ``--help``,
         # ``--version``, ``--no-pager``, ``--paginate``, ``--bare``,
         # ``--literal-pathspecs``, ``--glob-pathspecs``, etc.).
         i += 1
-    return None
+    return None, chdir_value
+
+
+def _find_git_subcommand_index(tokens: list[str]) -> int | None:
+    """Return the index of the first non-global-option token after ``git``.
+
+    Backwards-compatible wrapper around ``_find_git_subcommand_info``;
+    callers that don't care about the ``-C`` value can keep using this.
+    """
+    idx, _ = _find_git_subcommand_info(tokens)
+    return idx
 
 
 def _extract_git_targets(tokens: list[str]) -> list[str]:
@@ -1736,16 +1856,29 @@ def _extract_git_targets(tokens: list[str]) -> list[str]:
     (``git -C /repo checkout f``, ``git --work-tree=. apply p``) so the
     subcommand-position heuristic doesn't get fooled into matching a
     flag against ``GIT_WRITE_SUBCOMMANDS``.
+
+    When ``-C dir`` (or ``--work-tree=dir``) is present, relative
+    pathspecs are resolved against that directory by joining ``dir/``
+    onto each emitted write target. Without this, ``git -C pkg
+    checkout file.py`` lock-checks ``$cwd/file.py`` while git actually
+    writes ``$cwd/pkg/file.py`` — an agent holding the parent-level
+    file lock would silently bypass the gate.
     """
     if not tokens or _command_basename(tokens) != "git" or len(tokens) < 2:
         return []
-    sub_idx = _find_git_subcommand_index(tokens)
+    sub_idx, chdir_value = _find_git_subcommand_info(tokens)
     if sub_idx is None:
         return []
     sub = tokens[sub_idx]
     if sub not in GIT_WRITE_SUBCOMMANDS:
         return []
     rest = tokens[sub_idx + 1 :]
+
+    def resolve(target: str) -> str:
+        """Prefix ``chdir_value/`` to relative ``target`` paths."""
+        if chdir_value and target != _UNRESOLVED_SENTINEL and not os.path.isabs(target):
+            return os.path.join(chdir_value, target)
+        return target
 
     if sub in {"checkout", "restore"}:
         # All positional path args after `--` (or after subcommand for
@@ -1760,13 +1893,13 @@ def _extract_git_targets(tokens: list[str]) -> list[str]:
             if tok.startswith("-"):
                 continue
             if seen_dash_dash:
-                out.append(tok)
+                out.append(resolve(tok))
                 continue
             # Heuristic: skip the first positional (often a ref) for
             # `git checkout HEAD file`. We can't reliably distinguish
             # paths from refs without a working tree, so be conservative:
             # treat *all* positionals as potential writes.
-            out.append(tok)
+            out.append(resolve(tok))
         return out
 
     if sub == "apply":
@@ -2202,6 +2335,19 @@ def _extract_shell_write_paths(
             if seg_targets:
                 _append_targets_with_cd(out, seg_targets, cd_seen)
             continue
+        # Brace expansion in ANY token of the segment is unresolvable.
+        # ``{touch,unowned}`` is the canonical bypass: bash expands to
+        # ``touch unowned`` but shlex sees one token, no extractor
+        # matches, and the heuristic emits no targets. Detecting brace
+        # expansion at segment level catches both ``{cmd,args...}``
+        # (command-position) and ``cmd {a,b}`` (arg-position; the
+        # ``_check_lock`` glob check would also catch the arg form,
+        # but emitting the unresolved sentinel here makes the
+        # behaviour uniform for command-position braces too).
+        if any(_has_brace_expansion(tok) for tok in segment):
+            seg_targets.append(_UNRESOLVED_SENTINEL)
+            _append_targets_with_cd(out, seg_targets, cd_seen)
+            continue
         # cwd-changing builtins / ``pushd`` / ``popd`` invalidate
         # relative-path resolution for following segments.
         if _is_cd_segment(segment):
@@ -2242,14 +2388,76 @@ def _append_targets_with_cd(out: list[str], targets: list[str], cd_seen: bool) -
 # ---------------------------------------------------------------------------
 
 
+def _detect_destructive_git_in_subtokens(toks: list[str]) -> str | None:
+    """Detect a destructive git invocation starting at ``toks[0] == git``.
+
+    Used by ``_detect_dangerous_pattern`` to catch destructive git
+    subcommands when global options shift the subcommand position.
+    Without tokenization, ``git -C dir stash`` does not contain the
+    literal substring ``git stash`` and the substring-only detector
+    misses the destructive call.
+    """
+    if not toks or _command_basename_str(toks[0]) != "git":
+        return None
+    sub_idx, _ = _find_git_subcommand_info(toks)
+    if sub_idx is None:
+        return None
+    sub = toks[sub_idx]
+    rest = toks[sub_idx + 1 :]
+    rest_set = set(rest)
+
+    if sub == "stash":
+        return "git stash"
+    if sub == "rebase":
+        return "git rebase"
+    if sub == "restore":
+        return "git restore"
+    if sub == "reset":
+        if "--hard" in rest_set:
+            return "git reset --hard"
+        if "--mixed" in rest_set:
+            return "git reset --mixed"
+        if "--soft" in rest_set:
+            return "git reset --soft"
+        if rest and rest[0] == "HEAD":
+            return "git reset HEAD"
+    if sub == "checkout":
+        if "--" in rest_set:
+            return "git checkout --"
+        if "-f" in rest_set or "--force" in rest_set:
+            return "git checkout -f"
+    if sub == "clean":
+        for tok in rest:
+            if tok.startswith("-") and not tok.startswith("--") and "f" in tok[1:]:
+                return "git clean -f"
+    if sub == "branch":
+        if "-D" in rest_set:
+            return "git branch -D"
+    if sub == "commit":
+        if "--amend" in rest_set:
+            return "git commit --amend"
+    if sub in {"merge", "cherry-pick"}:
+        if "--abort" in rest_set:
+            return f"git {sub} --abort"
+    if sub == "worktree":
+        if rest and rest[0] == "remove":
+            return "git worktree remove"
+    if sub == "submodule":
+        if rest and rest[0] == "deinit" and "-f" in rest_set:
+            return "git submodule deinit -f"
+
+    return None
+
+
 def _detect_dangerous_pattern(command: str) -> str | None:
     """Mirror :func:`block_dangerous_commands` for parity with the Claude hook.
 
     Returns the matched pattern label (for ``_msg_dangerous``) or ``None``.
     Coverage must include every gate the Claude path applies, so AC #9
     ("dangerous shell commands are denied") holds for Codex too: dangerous
-    patterns, destructive git patterns, ``git commit -a``/``--all``,
-    atomic-add-commit requirement, and ``git push --force``.
+    patterns, destructive git patterns (with global-option awareness),
+    ``git commit -a``/``--all``, atomic-add-commit requirement, and
+    ``git push --force``.
     """
     for pattern in DANGEROUS_PATTERNS:
         if pattern in command:
@@ -2257,6 +2465,19 @@ def _detect_dangerous_pattern(command: str) -> str | None:
     for pattern in DESTRUCTIVE_GIT_PATTERNS:
         if pattern in command:
             return pattern
+
+    # Tokenization-based git check: catches destructive subcommands
+    # even when global options shift the subcommand position
+    # (``git -C dir stash``, ``git --work-tree=. restore f``).
+    try:
+        toks = shlex.split(command, posix=True, comments=False)
+    except ValueError:
+        toks = []
+    for i, tok in enumerate(toks):
+        if _command_basename_str(tok) == "git":
+            pattern = _detect_destructive_git_in_subtokens(toks[i:])
+            if pattern is not None:
+                return pattern
 
     # ``git commit -a``/``--all`` and atomic-add-commit (mirror
     # ``block_dangerous_commands`` in ``dangerous_commands.py``).

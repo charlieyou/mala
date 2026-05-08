@@ -3724,3 +3724,200 @@ class TestEnvSplitString:
         command = f"env touch {target}"
         result = decide(make_payload("bash", {"command": command}))
         assert is_allow(result), result
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 6, post-restart)
+# ---------------------------------------------------------------------------
+
+
+class TestDoasAuthStyleFlag:
+    """Regression: ``doas -a auth_style touch unowned`` consumes ``auth_style``.
+
+    Before the fix, ``a`` was missing from doas's value-letter table.
+    The wrapper-strip then treated ``-a`` as boolean and consumed the
+    inner ``touch`` as the auth-style value, leaving ``unowned`` as
+    the cmd basename — no extractor matched, write was allowed.
+    """
+
+    def test_doas_a_flag_value_consumed_correctly(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "unowned.py"
+        command = f"doas -a persist touch {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+
+class TestBraceExpansion:
+    """Regression: ``{touch,unowned.py}`` is brace expansion.
+
+    Before the fix, ``{touch,unowned.py}`` was one shlex token; the
+    extractor saw ``{touch,unowned.py}`` as the cmd basename and no
+    write was detected. Bash brace-expands to ``touch unowned.py``
+    and runs the write.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "{touch,unowned.py}",
+            "{touch,/tmp/unowned}",
+            "{cp,/tmp/src,unowned}",
+            # Range expansion
+            "{touch,a{1..3}.txt}",
+            # Nested braces
+            "{cp,src,{a,b}}",
+            # arg-position brace expansion (already covered by
+            # ``_check_lock`` glob check, but should be uniformly denied)
+            "touch a{b,c}.txt",
+        ],
+    )
+    def test_brace_expansion_command_denied(
+        self, env: dict[str, str], repo: Path, command: str
+    ) -> None:
+        # Even pre-locking the literal brace pattern doesn't bypass.
+        from src.infra.tools.locking import try_lock as try_lock_
+
+        for tok in command.split():
+            if "{" in tok and "}" in tok:
+                try_lock_(tok, "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), f"command: {command!r} → {result}"
+
+    def test_param_expansion_not_brace(self, env: dict[str, str], repo: Path) -> None:
+        # ``${VAR}`` is parameter expansion (denied by the existing
+        # ``$`` check in _SHELL_EXPANSION_RE), NOT brace expansion. The
+        # brace-expansion detector should NOT fire on bare ``${...}``.
+        # Either way the command denies (via the $ check).
+        result = decide(make_payload("bash", {"command": "touch ${VAR}"}, cwd=repo))
+        assert is_deny(result)
+
+
+class TestInterpreterValueFlagsDontMatchScriptFlag:
+    """Regression: ``python -W -c -c "..."`` — first ``-c`` is ``-W``'s value.
+
+    Before the fix, ``_find_oneliner_body`` naively returned the FIRST
+    occurrence of ``-c`` as the script flag. With ``-W -c`` (where
+    ``-c`` is the value of ``-W``), the heuristic returned ``-c`` as
+    the body — completely missing the actual script.
+    """
+
+    def test_python_W_then_c_does_not_match_W_value(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "unowned.py"
+        # ``-W default`` sets a warning filter; ``-c "script"`` runs
+        # the script. Before the fix, the heuristic matched the first
+        # ``-c`` (the value of ``-W``) — but since python ignores
+        # unknown ``-W`` arg, this is exploitable. Use a clearer form:
+        # ``python -W <flag-value> -c "<script>"``.
+        command = f"python -W default -c \"open('{target}','w').write('x')\""
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+    def test_python_X_value_does_not_match(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # ``-X`` also takes a value.
+        target = repo / "unowned.py"
+        command = f"python -X dev -c \"open('{target}','w').write('x')\""
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result)
+        assert "unowned.py" in deny_reason(result)
+
+    def test_perl_I_and_M_value_flags(self, env: dict[str, str], repo: Path) -> None:
+        # ``perl -I path -M Module -e '<script>'`` — both ``-I`` and
+        # ``-M`` take values; the script is the ``-e`` body.
+        target = repo / "unowned.py"
+        command = f"perl -I /tmp -M strict -e \"open(F, '>{target}'); print F 'x'\""
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result)
+
+
+class TestGitCResolvesPath:
+    """Regression: ``git -C pkg checkout file.py`` writes ``pkg/file.py``.
+
+    Before the fix, ``-C pkg`` was stripped as a global option but the
+    extracted target was ``file.py``, resolved against payload cwd as
+    ``$cwd/file.py``. Git actually writes ``$cwd/pkg/file.py``. An
+    agent holding the parent-level lock could bypass the gate.
+    """
+
+    def test_git_C_short_form_resolves_target(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        sub = repo / "pkg"
+        sub.mkdir()
+        # Lock only the parent-level path; the real write surface is
+        # in pkg/. Must deny.
+        from src.infra.tools.locking import try_lock as try_lock_
+
+        try_lock_(str(repo / "file.py"), "agent-me", repo_namespace=str(repo))
+        command = "git -C pkg checkout file.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+    def test_git_work_tree_long_form_resolves_target(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        sub = repo / "pkg"
+        sub.mkdir()
+        from src.infra.tools.locking import try_lock as try_lock_
+
+        try_lock_(str(repo / "file.py"), "agent-me", repo_namespace=str(repo))
+        command = "git --work-tree=pkg checkout file.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+    def test_git_C_with_correct_lock_allows(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        sub = repo / "pkg"
+        sub.mkdir()
+        # Lock the cwd-resolved -C path; the heuristic should match.
+        target = sub / "file.py"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = "git -C pkg checkout file.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_allow(result), result
+
+
+class TestGitGlobalOptionsDestructiveGate:
+    """Regression: ``git -C dir stash`` is destructive but lacks ``git stash``.
+
+    Before the fix, the dangerous-command gate only used substring
+    matches. ``git -C ../repo stash`` does not contain ``git stash``,
+    so the substring check missed it; the heuristic emitted no write
+    targets for plain ``stash`` and the bash branch fell through to
+    allow even though stash is explicitly destructive.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git -C /tmp stash",
+            "git -C ../repo stash push -u",
+            "git --work-tree=. restore file.py",
+            "git --git-dir=.git/ rebase main",
+            "git -C /tmp reset --hard HEAD",
+            "git -c k=v stash",
+            "git -C /tmp commit --amend",
+            "git -C /tmp clean -fd",
+            "git -C /tmp branch -D feature",
+            "git -C /tmp merge --abort",
+            "git -C /tmp cherry-pick --abort",
+            "git -C /tmp worktree remove wt",
+        ],
+    )
+    def test_destructive_git_with_global_opts_denied(
+        self, env: dict[str, str], command: str
+    ) -> None:
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        # Deny reason must reference a destructive git pattern, not
+        # a missing-lock or other heuristic miss.
+        reason = deny_reason(result)
+        assert "git " in reason or "rebase" in reason or "stash" in reason
