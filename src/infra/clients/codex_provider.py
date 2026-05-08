@@ -360,6 +360,12 @@ def _codex_auth_present() -> bool:
     var is accepted directly, otherwise the on-disk
     ``$CODEX_HOME/auth.json`` written by ``codex login`` is the source
     of truth (``codex-rs/login/src/auth/auth_tests.rs:57-114``).
+    When ``cli_auth_credentials_store = "keyring"`` is configured in
+    ``$CODEX_HOME/config.toml``, Codex's keyring backend deletes
+    ``auth.json`` after a successful save, so neither env vars nor the
+    file may be present even though Codex itself has a valid stored
+    credential — the probe defers to Codex's auth manager in that case
+    by treating the keyring opt-in as authenticated.
     Returning False fails closed via
     :class:`CodexNotInstalledError` so unattended ``coder=codex`` runs
     do not silently spawn ``codex app-server`` only to crash on the
@@ -374,7 +380,40 @@ def _codex_auth_present() -> bool:
     for var in _CODEX_AUTH_ENV_VARS:
         if (os.environ.get(var) or "").strip():
             return True
-    return (_resolve_codex_home() / "auth.json").is_file()
+    codex_home = _resolve_codex_home()
+    if (codex_home / "auth.json").is_file():
+        return True
+    return _codex_uses_keyring_credentials_store(codex_home)
+
+
+def _codex_uses_keyring_credentials_store(codex_home: Path) -> bool:
+    """Return True iff ``config.toml`` opts into the keyring backend.
+
+    Codex's ``cli_auth_credentials_store = "keyring"`` knob switches
+    credential storage from ``auth.json`` to the OS keyring; on
+    successful keyring save the Rust auth manager removes the on-disk
+    file, so a fully authenticated user can have neither the file nor
+    any auth env var. Detecting the opt-in here lets the probe defer
+    the actual credential read to Codex itself (which the probe cannot
+    perform without importing the SDK or invoking the CLI) instead of
+    incorrectly raising :class:`CodexNotInstalledError`.
+
+    Failures to read or parse ``config.toml`` are swallowed and treated
+    as "no keyring opt-in" so a malformed config file falls back to the
+    file/env probe rather than masking a genuinely missing credential.
+    """
+    config_path = codex_home / _HOOK_CONFIG_FILENAME
+    if not config_path.is_file():
+        return False
+    import tomllib
+
+    try:
+        raw = config_path.read_bytes()
+        parsed = tomllib.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return False
+    value = parsed.get("cli_auth_credentials_store")
+    return isinstance(value, str) and value.strip().lower() == "keyring"
 
 
 # ---------------------------------------------------------------------------
@@ -1578,8 +1617,10 @@ class CodexAgentProvider:
         if not _codex_auth_present():
             raise CodexNotInstalledError(
                 "Codex auth missing: none of `OPENAI_API_KEY`, "
-                "`CODEX_API_KEY`, or `CODEX_ACCESS_TOKEN` is set, and "
-                f"`{_resolve_codex_home() / 'auth.json'}` does not exist. "
+                "`CODEX_API_KEY`, or `CODEX_ACCESS_TOKEN` is set, "
+                f"`{_resolve_codex_home() / 'auth.json'}` does not exist, "
+                'and `cli_auth_credentials_store = "keyring"` is not '
+                "configured in `config.toml`. "
                 "Run `codex login` (Sign in with ChatGPT) or set "
                 "`OPENAI_API_KEY` to an OpenAI API key, then rerun mala. "
                 "See https://developers.openai.com/codex/auth for the "

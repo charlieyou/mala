@@ -455,6 +455,74 @@ def test_install_prerequisites_accepts_auth_env_var(
 
 
 @pytest.mark.unit
+def test_install_prerequisites_accepts_keyring_credentials_store(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """``cli_auth_credentials_store = "keyring"`` short-circuits the file probe.
+
+    Codex's keyring backend deletes ``auth.json`` after a successful
+    save, so a user who has logged in via the keyring credential store
+    has neither the file nor any auth env var. The probe must defer
+    to Codex's auth manager in that case rather than fail closed —
+    otherwise ``install_prerequisites`` raises :class:`CodexNotInstalledError`
+    before Codex can read its keyring-backed credential.
+    """
+    codex_home, bin_dir = fake_codex_env
+    # Drop the seeded auth.json so only the keyring opt-in remains.
+    (codex_home / "auth.json").unlink()
+    (codex_home / "config.toml").write_text(
+        'cli_auth_credentials_store = "keyring"\n', encoding="utf-8"
+    )
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    plugin_dir = (
+        codex_home
+        / "plugins"
+        / "cache"
+        / "local"
+        / "mala-safety"
+        / "local"
+        / ".codex-plugin"
+    )
+    assert (plugin_dir / "plugin.json").is_file()
+
+
+@pytest.mark.unit
+def test_install_prerequisites_ignores_non_keyring_credentials_store(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """A non-keyring credentials_store value does not bypass the probe.
+
+    Only ``cli_auth_credentials_store = "keyring"`` defers to Codex's
+    auth manager. Any other value (default ``auth_json``, an unknown
+    string) must still require a file or env var.
+    """
+    codex_home, bin_dir = fake_codex_env
+    (codex_home / "auth.json").unlink()
+    (codex_home / "config.toml").write_text(
+        'cli_auth_credentials_store = "auth_json"\n', encoding="utf-8"
+    )
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    provider = CodexAgentProvider()
+    with pytest.raises(CodexNotInstalledError, match="codex login"):
+        provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+
+@pytest.mark.unit
 def test_install_prerequisites_treats_blank_auth_env_var_as_missing(
     monkeypatch: pytest.MonkeyPatch,
     fake_codex_env: tuple[Path, Path],
