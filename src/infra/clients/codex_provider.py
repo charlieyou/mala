@@ -618,23 +618,111 @@ immediately; any wall-clock time past this bound implies it's hung
 closed."""
 
 
-_MODULE_HASH_PROBE_CODE = (
-    "import importlib.util, hashlib, sys\n"
-    "spec = importlib.util.find_spec('src.infra.hooks.codex_pre_tool_use')\n"
-    "if spec is None or spec.origin is None:\n"
-    "    print('NOMODULE'); sys.exit(2)\n"
-    "with open(spec.origin, 'rb') as fp:\n"
-    "    print(hashlib.sha256(fp.read()).hexdigest())\n"
+_HOOK_IDENTITY_MODULES: tuple[str, ...] = (
+    # The PreToolUse hook entry-point (top-level decide / main).
+    "src.infra.hooks.codex_pre_tool_use",
+    # Hook imports BASH_TOOL_NAMES / DANGEROUS_PATTERNS /
+    # DESTRUCTIVE_GIT_PATTERNS from this module
+    # (``codex_pre_tool_use.py:32-36``); a stale install whose
+    # ``codex_pre_tool_use.py`` matches ours but whose
+    # ``dangerous_commands.py`` differs would invoke different
+    # deny-path logic on shell commands.
+    "src.infra.hooks.dangerous_commands",
+    # ``dangerous_commands`` reads ``MALA_DISALLOWED_TOOLS`` from
+    # this module (``dangerous_commands.py:12``); the disallowed-tool
+    # list is part of the hook's enforcement surface.
+    "src.infra.tool_config",
+    # Hook lazily imports ``get_lock_holder`` from this module
+    # (``codex_pre_tool_use.py:332``); the lock-key derivation /
+    # canonicalization logic lives here and gates every file-edit /
+    # shell-write decision.
+    "src.infra.tools.locking",
+    # ``locking`` reads the lock directory via this module
+    # (``locking.py:14``); a different ``MALA_LOCK_DIR`` resolver
+    # would change which on-disk locks the hook consults.
+    "src.infra.tools.env",
 )
+"""Allowlist of mala-bundled modules whose source bytes form the
+identity of the hook the on-PATH ``mala-codex-pre-tool-use`` would
+execute. Hashing the entry-point alone is insufficient — the hook
+imports enforcement data and lock-key logic from the modules above,
+and a stale install with a matching entry-point but a different
+``dangerous_commands.py`` (or any other module here) would still
+take different deny / lock-ownership paths at runtime. A combined
+hash over all modules below is the smallest set of bytes that
+fingerprints the hook's safety-critical behavior."""
+
+
+def _build_module_hash_probe_code(modules: tuple[str, ...]) -> str:
+    """Emit the probe Python code that hashes the on-PATH interpreter's
+    view of every module in ``modules``.
+
+    The probe code resolves each module via the same
+    ``importlib.util.find_spec`` path the hook itself uses at startup,
+    reads its source bytes, and folds them into a length-prefixed
+    deterministic SHA-256. ``NOMODULE:<name>`` is printed and the probe
+    exits non-zero when a module cannot be located. Output on success
+    is a single hex digest line.
+    """
+    return (
+        "import importlib.util, hashlib, sys\n"
+        f"modules = {modules!r}\n"
+        "h = hashlib.sha256()\n"
+        "for name in modules:\n"
+        "    spec = importlib.util.find_spec(name)\n"
+        "    if spec is None or spec.origin is None:\n"
+        "        print('NOMODULE:' + name); sys.exit(2)\n"
+        "    with open(spec.origin, 'rb') as fp:\n"
+        "        data = fp.read()\n"
+        "    h.update(name.encode('utf-8'))\n"
+        "    h.update(b'\\0')\n"
+        "    h.update(len(data).to_bytes(8, 'big'))\n"
+        "    h.update(data)\n"
+        "print(h.hexdigest())\n"
+    )
+
+
+_MODULE_HASH_PROBE_CODE = _build_module_hash_probe_code(_HOOK_IDENTITY_MODULES)
 """Probe code emitted to the on-PATH hook's interpreter.
 
-Resolves the ``src.infra.hooks.codex_pre_tool_use`` module the hook
-binary actually loads (via the same ``importlib.util.find_spec`` path
-the hook itself takes at startup) and prints the SHA-256 of its source
-bytes. The probe inherits the hook's interpreter via the script's
-shebang, so it sees exactly the ``sys.path`` / site-packages the hook
-sees — a different mala install on PATH resolves a different module
-file with a different hash."""
+Inherits the hook's interpreter via the script's shebang so it sees
+exactly the ``sys.path`` / site-packages the hook sees — a different
+mala install on PATH resolves a different set of module files and a
+different combined hash."""
+
+
+def _compute_combined_module_hash(modules: tuple[str, ...]) -> str:
+    """Compute the same combined SHA-256 the probe emits, but in-process.
+
+    Used by :func:`_default_selftest_probe` to derive *our* expected
+    hash; the on-PATH probe must match this value byte-for-byte.
+    Mirrors the probe code's iteration order and length-prefix scheme
+    exactly so both sides land on the same digest.
+    """
+    import hashlib as _hashlib
+    import importlib.util as _importlib_util
+
+    h = _hashlib.sha256()
+    for name in modules:
+        spec = _importlib_util.find_spec(name)
+        if spec is None or spec.origin is None:
+            raise CodexHookNotActiveError(
+                f"Cannot locate this process's {name} module — repo invariant broken.",
+                reason=CodexHookNotActiveReason.SCRIPT_MISSING,
+            )
+        path = Path(spec.origin)
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            raise CodexHookNotActiveError(
+                f"Cannot read embedded hook-dependency module at {path}: {exc}.",
+                reason=CodexHookNotActiveReason.SCRIPT_MISSING,
+            ) from exc
+        h.update(name.encode("utf-8"))
+        h.update(b"\0")
+        h.update(len(data).to_bytes(8, "big"))
+        h.update(data)
+    return h.hexdigest()
 
 
 def _default_selftest_probe(
@@ -658,25 +746,30 @@ def _default_selftest_probe(
       * Installed hooks.json exists, parses, and declares a PreToolUse
         command handler whose ``command`` is ``mala-codex-pre-tool-use``.
         Failure → :class:`CodexHookNotActiveError(HOOK_MARKER_MISSING)`.
-      * Hook-module identity: the SHA-256 of the
-        ``src.infra.hooks.codex_pre_tool_use`` source the on-PATH hook
-        binary's interpreter resolves must equal the SHA-256 of *our*
-        embedded module's source. A divergence means the on-PATH
-        binary is from a different mala install whose Python resolves
-        a different module file — Codex would invoke that other
-        version of the hook, and its deny-path / dangerous-command /
-        lock-ownership logic could differ from ours. Surfaces
+      * Hook-module identity: the combined SHA-256 over every
+        safety-critical mala-bundled module the hook depends on
+        (entry-point ``src.infra.hooks.codex_pre_tool_use`` plus its
+        first-party imports — see :data:`_HOOK_IDENTITY_MODULES`)
+        the on-PATH hook binary's interpreter resolves must equal the
+        combined SHA-256 of *our* embedded modules. A divergence means
+        the on-PATH binary is from a different mala install whose
+        Python resolves a different set of module files — Codex would
+        invoke that other version of the hook + dependencies, and its
+        deny-path / dangerous-command / lock-ownership logic could
+        differ from ours. Surfaces
         :class:`CodexHookNotActiveError(VERSION_MISMATCH)`. A
-        crashing / hung / missing-shebang / no-source-module probe
-        surfaces :class:`CodexHookNotActiveError(HOOK_MARKER_MISSING)`.
+        crashing / hung / missing-shebang / unimportable-dependency
+        probe surfaces
+        :class:`CodexHookNotActiveError(HOOK_MARKER_MISSING)`.
 
-    The hash check closes the gap a benign-input behavioral check left
-    open: a stale ``mala-codex-pre-tool-use`` from another mala install
-    that returns the SAME allow-JSON for an ``echo`` (the obvious safe
-    sentinel) would still differ on the deny / shell-write / disallowed
-    paths Codex actually relies on. Comparing module bytes catches
-    *any* logic difference, including ones not exercised by a single
-    sentinel input.
+    The combined-hash check closes the gap a benign-input behavioral
+    check left open: a stale install whose entry-point bytes match
+    ours but whose ``dangerous_commands.py`` (or
+    ``tools/locking.py``, ``tool_config.py``, ``tools/env.py``)
+    differs would invoke different deny / lock-ownership logic at
+    runtime. Hashing the entry-point alone misses that case; hashing
+    every safety-critical dependency catches *any* logic difference,
+    including ones not exercised by a single sentinel input.
 
     Plan E5 also asks for a real Codex turn that triggers the bundled
     hook end-to-end. That live-spawn path is out of scope for this
@@ -689,9 +782,7 @@ def _default_selftest_probe(
     :class:`CodexHookNotActiveReason` directly, including the runtime
     reasons that a future live-spawn probe would surface.
     """
-    del expected_hash  # superseded by the module-source hash below
-    import hashlib as _hashlib
-    import importlib.util as _importlib_util
+    del expected_hash  # superseded by the combined module-source hash below
     import json as _json
     import shutil as _shutil
     import subprocess as _subprocess
@@ -772,31 +863,21 @@ def _default_selftest_probe(
             reason=CodexHookNotActiveReason.SCRIPT_MISSING,
         )
 
-    # Compute our expected hash from the embedded module source.
-    our_module_spec = _importlib_util.find_spec("src.infra.hooks.codex_pre_tool_use")
-    if our_module_spec is None or our_module_spec.origin is None:
-        raise CodexHookNotActiveError(
-            "Cannot locate this process's "
-            "src.infra.hooks.codex_pre_tool_use module — repo invariant "
-            "broken.",
-            reason=CodexHookNotActiveReason.SCRIPT_MISSING,
-        )
-    our_module_path = Path(our_module_spec.origin)
-    try:
-        our_module_bytes = our_module_path.read_bytes()
-    except OSError as exc:
-        raise CodexHookNotActiveError(
-            f"Cannot read embedded hook module at {our_module_path}: {exc}.",
-            reason=CodexHookNotActiveReason.SCRIPT_MISSING,
-        ) from exc
-    our_hash = _hashlib.sha256(our_module_bytes).hexdigest()
+    # Compute our expected combined hash over every safety-critical
+    # module the hook depends on (entry-point + dangerous_commands +
+    # tool_config + locking + env). Hashing the entry-point alone
+    # would miss the case where a stale install has the same
+    # ``codex_pre_tool_use.py`` but different deny patterns in
+    # ``dangerous_commands.py`` — Codex would still execute the wrong
+    # deny logic on shell traffic.
+    our_hash = _compute_combined_module_hash(_HOOK_IDENTITY_MODULES)
 
     # Resolve the interpreter the on-PATH hook uses by parsing its
     # shebang line. The hook script is a ``[project.scripts]``-style
     # console wrapper whose first line embeds the absolute path to
     # the venv's Python. That interpreter's site-packages determine
-    # which ``src.infra.hooks.codex_pre_tool_use`` Codex actually
-    # imports at runtime.
+    # which ``src.infra.hooks.codex_pre_tool_use`` (and its imports)
+    # Codex actually loads at runtime.
     hook_interpreter = _resolve_hook_interpreter(hook_path)
 
     try:
@@ -829,22 +910,25 @@ def _default_selftest_probe(
         )
 
     their_hash = probe_result.stdout.strip()
-    if their_hash == "NOMODULE":
+    if their_hash.startswith("NOMODULE"):
+        # Probe emits ``NOMODULE:<module-name>`` when ``find_spec``
+        # returns None for one of the safety-critical modules.
         raise CodexHookNotActiveError(
             f"Hook interpreter {hook_interpreter!r} cannot import "
-            "src.infra.hooks.codex_pre_tool_use — Codex would crash "
-            "when invoking the hook.",
+            f"a hook-dependency module ({their_hash}) — Codex would "
+            "crash when invoking the hook.",
             reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
         )
     if their_hash != our_hash:
         raise CodexHookNotActiveError(
             f"On-PATH {_HOOK_COMMAND_NAME!r} ({hook_path}) resolves a "
-            f"different src.infra.hooks.codex_pre_tool_use module "
-            f"(sha256={their_hash!r}) than this process's embedded "
-            f"module (sha256={our_hash!r} at {our_module_path}). The "
-            "hook script on PATH is from a different mala install or "
-            "a different version; remove the stale install or run "
-            "mala from the environment that owns the hook script.",
+            "different set of hook-identity modules (combined "
+            f"sha256={their_hash!r}) than this process's embedded "
+            f"modules (combined sha256={our_hash!r}, modules: "
+            f"{_HOOK_IDENTITY_MODULES}). The hook script on PATH is "
+            "from a different mala install or a different version; "
+            "remove the stale install or run mala from the "
+            "environment that owns the hook script.",
             reason=CodexHookNotActiveReason.VERSION_MISMATCH,
         )
 

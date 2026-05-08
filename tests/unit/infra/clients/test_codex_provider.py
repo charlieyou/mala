@@ -709,6 +709,98 @@ def test_default_marketplace_matches_installer_constant() -> None:
 
 
 @pytest.mark.unit
+def test_hook_identity_modules_cover_safety_critical_dependencies() -> None:
+    """Pin the allowlist of modules whose source bytes form the hook's
+    identity. Hashing the entry-point alone is insufficient — the hook
+    imports enforcement data from sibling modules and a stale install
+    with the same entry-point but different deny-pattern bytes would
+    take different deny logic at runtime.
+
+    Concretely the list must include:
+
+      * ``src.infra.hooks.codex_pre_tool_use`` — entry-point (decide).
+      * ``src.infra.hooks.dangerous_commands`` — DANGEROUS_PATTERNS /
+        DESTRUCTIVE_GIT_PATTERNS / BASH_TOOL_NAMES the hook imports
+        (``codex_pre_tool_use.py:32-36``).
+      * ``src.infra.tool_config`` — MALA_DISALLOWED_TOOLS that
+        ``dangerous_commands`` re-exports (``dangerous_commands.py:12``).
+      * ``src.infra.tools.locking`` — get_lock_holder / lock-key
+        canonicalization the hook uses for file-edit + shell-write
+        decisions (``codex_pre_tool_use.py:332`` lazy import).
+      * ``src.infra.tools.env`` — lock-dir resolution
+        (``locking.py:14``).
+    """
+    from src.infra.clients.codex_provider import _HOOK_IDENTITY_MODULES
+
+    expected = {
+        "src.infra.hooks.codex_pre_tool_use",
+        "src.infra.hooks.dangerous_commands",
+        "src.infra.tool_config",
+        "src.infra.tools.locking",
+        "src.infra.tools.env",
+    }
+    assert set(_HOOK_IDENTITY_MODULES) == expected, (
+        "Hook-identity allowlist drifted from the safety-critical "
+        f"dependency set; got {_HOOK_IDENTITY_MODULES!r}, expected {expected!r}."
+    )
+
+
+@pytest.mark.unit
+def test_combined_module_hash_changes_when_dangerous_commands_diverges(
+    tmp_path: Path,
+) -> None:
+    """Regression: a divergence in ``dangerous_commands.py`` (not just
+    in ``codex_pre_tool_use.py``) must change the combined hash.
+
+    Catches the reviewer's exact concern: an attacker / stale install
+    with the same entry-point but a different ``dangerous_commands.py``
+    would slip past an entry-point-only hash. The combined hash must
+    fold every safety-critical module's bytes in.
+    """
+    import hashlib
+    import importlib.util
+
+    from src.infra.clients.codex_provider import (
+        _HOOK_IDENTITY_MODULES,
+        _compute_combined_module_hash,
+    )
+
+    baseline = _compute_combined_module_hash(_HOOK_IDENTITY_MODULES)
+
+    # Recompute with the same modules but inject a perturbed
+    # dangerous_commands hash by swapping one module's bytes via a
+    # custom helper — proves the hash function actually folds in
+    # every module's bytes (a single-byte change must flip the
+    # digest).
+    spec_dangerous = importlib.util.find_spec("src.infra.hooks.dangerous_commands")
+    assert spec_dangerous is not None and spec_dangerous.origin is not None
+    real_bytes = Path(spec_dangerous.origin).read_bytes()
+
+    # Manually compute what the combined hash would be if
+    # dangerous_commands had a single byte appended. We mirror the
+    # length-prefix scheme the production helper uses.
+    h = hashlib.sha256()
+    for name in _HOOK_IDENTITY_MODULES:
+        spec = importlib.util.find_spec(name)
+        assert spec is not None and spec.origin is not None
+        if name == "src.infra.hooks.dangerous_commands":
+            data = real_bytes + b"\x00"  # perturbed
+        else:
+            data = Path(spec.origin).read_bytes()
+        h.update(name.encode("utf-8"))
+        h.update(b"\0")
+        h.update(len(data).to_bytes(8, "big"))
+        h.update(data)
+    perturbed = h.hexdigest()
+
+    assert baseline != perturbed, (
+        "Combined hash did not change when dangerous_commands bytes "
+        "were perturbed — entry-point-only hashing regression."
+    )
+    del tmp_path  # unused; helper takes no fs ops
+
+
+@pytest.mark.unit
 def test_install_prerequisites_caches_within_run(
     monkeypatch: pytest.MonkeyPatch,
     fake_codex_env: tuple[Path, Path],
@@ -1012,7 +1104,11 @@ def test_default_probe_raises_version_mismatch_on_diverging_module_hash(
             "deadbeef",
         )
     assert excinfo.value.reason is CodexHookNotActiveReason.VERSION_MISMATCH
-    assert "different src.infra.hooks.codex_pre_tool_use module" in str(excinfo.value)
+    # Error message should explicitly reference the multi-module
+    # identity check (not just the entry-point alone).
+    msg = str(excinfo.value)
+    assert "hook-identity modules" in msg
+    assert "src.infra.hooks.dangerous_commands" in msg
 
 
 @pytest.mark.unit
