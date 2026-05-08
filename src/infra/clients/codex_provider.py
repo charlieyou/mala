@@ -618,18 +618,38 @@ immediately; any wall-clock time past this bound implies it's hung
 closed."""
 
 
+_MODULE_HASH_PROBE_CODE = (
+    "import importlib.util, hashlib, sys\n"
+    "spec = importlib.util.find_spec('src.infra.hooks.codex_pre_tool_use')\n"
+    "if spec is None or spec.origin is None:\n"
+    "    print('NOMODULE'); sys.exit(2)\n"
+    "with open(spec.origin, 'rb') as fp:\n"
+    "    print(hashlib.sha256(fp.read()).hexdigest())\n"
+)
+"""Probe code emitted to the on-PATH hook's interpreter.
+
+Resolves the ``src.infra.hooks.codex_pre_tool_use`` module the hook
+binary actually loads (via the same ``importlib.util.find_spec`` path
+the hook itself takes at startup) and prints the SHA-256 of its source
+bytes. The probe inherits the hook's interpreter via the script's
+shebang, so it sees exactly the ``sys.path`` / site-packages the hook
+sees — a different mala install on PATH resolves a different module
+file with a different hash."""
+
+
 def _default_selftest_probe(
     repo_path: Path,
     env_overlay: dict[str, str],
     expected_hash: str,
 ) -> None:
-    """Default selftest probe — structural + behavioral hook verification.
+    """Default selftest probe — structural + module-identity verification.
 
     Fail-closed verification of the on-disk plugin tree at the install
-    target Codex reads, *plus* a behavioral exercise of the on-PATH
-    hook script. Catches every install-time and PATH-resolution
-    failure mode the up-front structural checks (SDK importable, codex
-    runtime resolvable, hook script on PATH) leave open:
+    target Codex reads, *plus* a cryptographic identity check of the
+    Python module the on-PATH hook script actually loads. Catches every
+    install-time and PATH-resolution failure mode the up-front
+    structural checks (SDK importable, codex runtime resolvable, hook
+    script on PATH) leave open:
 
       * Plugin manifest at
         ``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/.codex-plugin/plugin.json``
@@ -638,37 +658,43 @@ def _default_selftest_probe(
       * Installed hooks.json exists, parses, and declares a PreToolUse
         command handler whose ``command`` is ``mala-codex-pre-tool-use``.
         Failure → :class:`CodexHookNotActiveError(HOOK_MARKER_MISSING)`.
-      * Behavioral hook check: invoke the on-PATH ``mala-codex-pre-tool-use``
-        with a deterministic sentinel PreToolUse JSON input and compare
-        its decision against the same input run through *our* embedded
-        :func:`src.infra.hooks.codex_pre_tool_use.decide`. A divergence
-        means the on-PATH script is from a different mala install (or
-        a different version of our own script) — both surface
-        :class:`CodexHookNotActiveError(VERSION_MISMATCH)`. A non-zero
-        exit / non-JSON output / IPC failure surfaces
-        :class:`CodexHookNotActiveError(HOOK_MARKER_MISSING)`.
+      * Hook-module identity: the SHA-256 of the
+        ``src.infra.hooks.codex_pre_tool_use`` source the on-PATH hook
+        binary's interpreter resolves must equal the SHA-256 of *our*
+        embedded module's source. A divergence means the on-PATH
+        binary is from a different mala install whose Python resolves
+        a different module file — Codex would invoke that other
+        version of the hook, and its deny-path / dangerous-command /
+        lock-ownership logic could differ from ours. Surfaces
+        :class:`CodexHookNotActiveError(VERSION_MISMATCH)`. A
+        crashing / hung / missing-shebang / no-source-module probe
+        surfaces :class:`CodexHookNotActiveError(HOOK_MARKER_MISSING)`.
 
-    The behavioral check closes the gap the prior structural-only probe
-    left: ``shutil.which`` only confirms a file *exists* on PATH, not
-    that the file is the script Codex would actually consult. In a
-    multi-install PATH a stale ``mala-codex-pre-tool-use`` from another
-    mala can satisfy ``shutil.which`` while emitting a different
-    decision shape — Codex would silently invoke the wrong script.
+    The hash check closes the gap a benign-input behavioral check left
+    open: a stale ``mala-codex-pre-tool-use`` from another mala install
+    that returns the SAME allow-JSON for an ``echo`` (the obvious safe
+    sentinel) would still differ on the deny / shell-write / disallowed
+    paths Codex actually relies on. Comparing module bytes catches
+    *any* logic difference, including ones not exercised by a single
+    sentinel input.
 
     Plan E5 also asks for a real Codex turn that triggers the bundled
-    hook in-process. That live-spawn path is out of scope for this
-    issue (it depends on a sentinel-emit mode in T014's hook script
-    and a real Codex binary + auth) and remains tracked as follow-up.
+    hook end-to-end. That live-spawn path is out of scope for this
+    issue (depends on a sentinel-emit mode in T014's hook script and a
+    real Codex binary + auth) and remains tracked as follow-up; the
+    module-hash check here gives the same identity guarantee without
+    requiring Codex itself to be available.
 
     Tests inject custom probes to drive each
     :class:`CodexHookNotActiveReason` directly, including the runtime
     reasons that a future live-spawn probe would surface.
     """
-    del expected_hash  # version pinned via behavioral comparison below
+    del expected_hash  # superseded by the module-source hash below
+    import hashlib as _hashlib
+    import importlib.util as _importlib_util
     import json as _json
     import shutil as _shutil
     import subprocess as _subprocess
-    import sys as _sys
 
     from src.infra.clients.codex_plugin_installer import (
         PLUGIN_DIRNAME,
@@ -732,59 +758,50 @@ def _default_selftest_probe(
             reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
         )
 
-    # 3. Behavioral hook check — the on-PATH ``mala-codex-pre-tool-use``
-    # must agree with our embedded module on a sentinel input. Catches
-    # stale-install-on-PATH / wrong-version cases that ``shutil.which``
-    # cannot distinguish.
+    # 3. Hook-module identity check — the SHA-256 of the
+    # ``src.infra.hooks.codex_pre_tool_use`` source the on-PATH hook's
+    # interpreter resolves must equal the SHA-256 of our embedded
+    # module's source. Catches stale-install-on-PATH cases that
+    # ``shutil.which`` (file presence) and a single benign-input
+    # behavioral check (same allow-JSON for the safe path) cannot
+    # distinguish.
     hook_path = _shutil.which(_HOOK_COMMAND_NAME)
     if hook_path is None:
-        # ``install_prerequisites`` already gates on this, but the probe
-        # is also called as a primitive in tests so re-check defensively.
         raise CodexHookNotActiveError(
             f"{_HOOK_COMMAND_NAME!r} not on PATH at probe time.",
             reason=CodexHookNotActiveReason.SCRIPT_MISSING,
         )
 
-    sentinel_input: dict[str, object] = {
-        # Tool name "bash" exercises the SHELL_TOOL_NAMES branch.
-        "tool_name": "bash",
-        # Single ``echo`` of a stable string: not in DANGEROUS_PATTERNS,
-        # has no write-targets, so the script must allow regardless of
-        # MALA_AGENT_ID/MALA_LOCK_DIR/MALA_REPO_NAMESPACE state.
-        "tool_input": {"command": "echo mala-codex-selftest-sentinel"},
-        "session_id": "mala-selftest-session",
-        "cwd": str(repo_path),
-    }
-    sentinel_payload = _json.dumps(sentinel_input)
+    # Compute our expected hash from the embedded module source.
+    our_module_spec = _importlib_util.find_spec("src.infra.hooks.codex_pre_tool_use")
+    if our_module_spec is None or our_module_spec.origin is None:
+        raise CodexHookNotActiveError(
+            "Cannot locate this process's "
+            "src.infra.hooks.codex_pre_tool_use module — repo invariant "
+            "broken.",
+            reason=CodexHookNotActiveReason.SCRIPT_MISSING,
+        )
+    our_module_path = Path(our_module_spec.origin)
+    try:
+        our_module_bytes = our_module_path.read_bytes()
+    except OSError as exc:
+        raise CodexHookNotActiveError(
+            f"Cannot read embedded hook module at {our_module_path}: {exc}.",
+            reason=CodexHookNotActiveReason.SCRIPT_MISSING,
+        ) from exc
+    our_hash = _hashlib.sha256(our_module_bytes).hexdigest()
 
-    # Expected decision for the sentinel above. Pinned to the exact
-    # shape ``src.infra.hooks.codex_pre_tool_use._allow`` produces (see
-    # ``src/infra/hooks/codex_pre_tool_use.py:166``); the architectural
-    # rule that ``src.infra.clients`` does not import ``src.infra.hooks``
-    # forbids calling ``decide()`` directly here, so the value is
-    # duplicated. A regression test
-    # (``tests/unit/infra/hooks/test_codex_pre_tool_use.py::test_selftest_sentinel_allow_shape_is_stable``)
-    # pins the hook side to the same constant so the two stay in
-    # lockstep.
-    expected_decision: dict[str, object] = {
-        "decision": "approve",
-        "hookSpecificOutput": {
-            "permissionDecision": "allow",
-            "permissionDecisionReason": "",
-        },
-    }
-
-    # Drop MALA_* env vars so the on-PATH script's behavior matches the
-    # constant above (the embedded ``_allow()`` shape is unconditional
-    # for this sentinel input). Otherwise an ambient MALA_AGENT_ID could
-    # skew the decision.
-    probe_env = {k: v for k, v in os.environ.items() if not k.startswith("MALA_")}
+    # Resolve the interpreter the on-PATH hook uses by parsing its
+    # shebang line. The hook script is a ``[project.scripts]``-style
+    # console wrapper whose first line embeds the absolute path to
+    # the venv's Python. That interpreter's site-packages determine
+    # which ``src.infra.hooks.codex_pre_tool_use`` Codex actually
+    # imports at runtime.
+    hook_interpreter = _resolve_hook_interpreter(hook_path)
 
     try:
-        completed = _subprocess.run(
-            [hook_path],
-            input=sentinel_payload,
-            env=probe_env,
+        probe_result = _subprocess.run(
+            [hook_interpreter, "-c", _MODULE_HASH_PROBE_CODE],
             capture_output=True,
             text=True,
             timeout=_HOOK_PROBE_TIMEOUT_SECONDS,
@@ -792,45 +809,105 @@ def _default_selftest_probe(
         )
     except _subprocess.TimeoutExpired as exc:
         raise CodexHookNotActiveError(
-            f"On-PATH {_HOOK_COMMAND_NAME!r} did not respond within "
-            f"{_HOOK_PROBE_TIMEOUT_SECONDS:.0f}s. The script may be hung "
-            "or installed against a missing Python interpreter.",
+            f"Hook interpreter {hook_interpreter!r} did not respond "
+            f"within {_HOOK_PROBE_TIMEOUT_SECONDS:.0f}s during the "
+            "module-identity probe.",
             reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
         ) from exc
     except OSError as exc:
         raise CodexHookNotActiveError(
-            f"Cannot spawn {_HOOK_COMMAND_NAME!r} ({hook_path}): {exc}.",
+            f"Cannot spawn hook interpreter {hook_interpreter!r}: {exc}.",
             reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
         ) from exc
 
-    if completed.returncode != 0:
+    if probe_result.returncode != 0:
         raise CodexHookNotActiveError(
-            f"On-PATH {_HOOK_COMMAND_NAME!r} ({hook_path}) exited "
-            f"{completed.returncode}; stderr (truncated): "
-            f"{completed.stderr[:512]!r}.",
+            f"Hook interpreter {hook_interpreter!r} exited "
+            f"{probe_result.returncode} during module-identity probe; "
+            f"stderr: {probe_result.stderr[:512]!r}.",
             reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
         )
 
-    try:
-        actual_decision = _json.loads(completed.stdout)
-    except _json.JSONDecodeError as exc:
+    their_hash = probe_result.stdout.strip()
+    if their_hash == "NOMODULE":
         raise CodexHookNotActiveError(
-            f"On-PATH {_HOOK_COMMAND_NAME!r} ({hook_path}) emitted "
-            f"non-JSON output: {completed.stdout[:512]!r}.",
+            f"Hook interpreter {hook_interpreter!r} cannot import "
+            "src.infra.hooks.codex_pre_tool_use — Codex would crash "
+            "when invoking the hook.",
             reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
-        ) from exc
-
-    if actual_decision != expected_decision:
+        )
+    if their_hash != our_hash:
         raise CodexHookNotActiveError(
-            f"On-PATH {_HOOK_COMMAND_NAME!r} ({hook_path}) returned a "
-            f"different decision ({actual_decision!r}) than the bundled "
-            f"hook module ({expected_decision!r}) for the sentinel "
-            "PreToolUse input. The script on PATH is from a different "
-            "mala install or a different version; remove the stale "
-            "install or run mala from the environment that owns the "
-            f"hook script (current Python: {_sys.executable}).",
+            f"On-PATH {_HOOK_COMMAND_NAME!r} ({hook_path}) resolves a "
+            f"different src.infra.hooks.codex_pre_tool_use module "
+            f"(sha256={their_hash!r}) than this process's embedded "
+            f"module (sha256={our_hash!r} at {our_module_path}). The "
+            "hook script on PATH is from a different mala install or "
+            "a different version; remove the stale install or run "
+            "mala from the environment that owns the hook script.",
             reason=CodexHookNotActiveReason.VERSION_MISMATCH,
         )
+
+
+def _resolve_hook_interpreter(hook_path: str) -> str:
+    """Parse the on-PATH hook script's shebang to find its interpreter.
+
+    Reads the first line of the executable. ``[project.scripts]``
+    console wrappers (the shape pip / uv emit) start with
+    ``#!<absolute python path>`` so the kernel knows which interpreter
+    to spawn; that path is the source-of-truth for which Python
+    resolves ``src.infra.hooks.codex_pre_tool_use`` at runtime.
+
+    Raises :class:`CodexHookNotActiveError(HOOK_MARKER_MISSING)` when
+    the file is unreadable or has no shebang (a native binary, a
+    shell wrapper without ``#!``, etc. — none of these are valid
+    hook-script shapes our packaging produces).
+    """
+    try:
+        with open(hook_path, "rb") as fp:
+            first_line = fp.readline()
+    except OSError as exc:
+        raise CodexHookNotActiveError(
+            f"Cannot read on-PATH {_HOOK_COMMAND_NAME!r} at {hook_path}: {exc}.",
+            reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+        ) from exc
+    if not first_line.startswith(b"#!"):
+        raise CodexHookNotActiveError(
+            f"On-PATH {_HOOK_COMMAND_NAME!r} ({hook_path}) has no "
+            "shebang; cannot identify the Python interpreter that "
+            "would resolve the hook module.",
+            reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+        )
+    shebang = first_line[2:].decode("utf-8", errors="replace").strip()
+    if not shebang:
+        raise CodexHookNotActiveError(
+            f"On-PATH {_HOOK_COMMAND_NAME!r} ({hook_path}) has an empty shebang line.",
+            reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+        )
+    # Honour the typical ``#!/usr/bin/env python3`` shape: take the
+    # first whitespace-delimited token as the interpreter, drop trailing
+    # ``-m`` / ``-S`` / etc. flags by ignoring the rest.
+    interpreter = shebang.split()[0]
+    if interpreter.endswith("/env") or interpreter == "env":
+        # ``#!/usr/bin/env python3 [-S]`` — second token is the program name.
+        rest = shebang.split()[1:]
+        if not rest:
+            raise CodexHookNotActiveError(
+                f"On-PATH {_HOOK_COMMAND_NAME!r} ({hook_path}) uses "
+                "``env`` shebang without a program name.",
+                reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+            )
+        program = rest[0]
+        # Resolve via PATH so the same lookup the kernel/env uses applies.
+        resolved = shutil.which(program)
+        if resolved is None:
+            raise CodexHookNotActiveError(
+                f"``env``-style shebang in {hook_path} references "
+                f"{program!r} which is not on PATH.",
+                reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+            )
+        return resolved
+    return interpreter
 
 
 def _hooks_json_declares_pre_tool_use_command(

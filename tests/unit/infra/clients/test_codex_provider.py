@@ -920,14 +920,17 @@ def _install_valid_plugin_tree(codex_home: Path) -> Path:
 
 
 @pytest.mark.unit
-def test_default_probe_passes_when_real_hook_returns_matching_decision(
+def test_default_probe_passes_when_hook_module_hash_matches(
     fake_codex_env: tuple[Path, Path], tmp_path: Path
 ) -> None:
-    """Behavioral check: a hook script that delegates to our embedded
-    module produces identical output and the probe succeeds.
+    """Module-identity check: a hook script whose shebang points at
+    *this* Python interpreter resolves the same
+    ``src.infra.hooks.codex_pre_tool_use`` module file we have, so the
+    SHA-256 matches and the probe succeeds.
 
-    Pins the contract that the default probe verifies hook *behavior*,
-    not just file presence — defense against stale-install-on-PATH.
+    Pins the happy-path identity contract: when the on-PATH hook is
+    backed by the same Python that runs mala, the module bytes are
+    identical and the run continues.
     """
     from src.infra.clients.codex_provider import _default_selftest_probe
 
@@ -946,32 +949,61 @@ def test_default_probe_passes_when_real_hook_returns_matching_decision(
     )
 
 
+def _install_stub_python_interpreter(path: Path, *, fake_hash: str) -> None:
+    """Write a stub ``python`` interpreter that returns ``fake_hash`` on -c.
+
+    The default probe runs ``[hook_interpreter, "-c", probe_code]`` and
+    expects a hex SHA-256 on stdout. This stub ignores the probe code
+    entirely and prints the requested fake hash, simulating a Python
+    install whose ``src.infra.hooks.codex_pre_tool_use`` resolves to a
+    different (different bytes) module file — exactly the
+    stale-mala-on-PATH scenario the probe must catch.
+    """
+    body = f"#!/bin/sh\necho {fake_hash}\nexit 0\n"
+    path.write_text(body, encoding="utf-8")
+    path.chmod(0o755)
+
+
 @pytest.mark.unit
-def test_default_probe_raises_version_mismatch_on_diverging_decision(
+def test_default_probe_raises_version_mismatch_on_diverging_module_hash(
     fake_codex_env: tuple[Path, Path], tmp_path: Path
 ) -> None:
-    """Stale install regression: a ``mala-codex-pre-tool-use`` script
-    on PATH that emits a *different* decision than our embedded module
-    surfaces ``VERSION_MISMATCH``.
+    """Stale install regression: when the on-PATH hook's interpreter
+    resolves a *different* ``src.infra.hooks.codex_pre_tool_use``
+    module (different bytes / different version of our own logic), the
+    probe raises ``VERSION_MISMATCH``.
 
-    Catches the multi-mala-install case where ``shutil.which`` resolves
-    to a script from a different mala version. The structural-only
-    probe could not distinguish that case; the behavioral probe must.
+    Catches the multi-mala-install case where ``shutil.which`` finds a
+    hook script whose shebang Python points at a venv whose
+    site-packages contain a different version of the hook module.
+    Codex would invoke that version's deny / dangerous-command /
+    lock-ownership logic — even if its allow-path JSON is byte-identical
+    on harmless commands.
+
+    A single-input behavioral check on a benign command would mask this
+    case (same allow shape on safe commands). The hash check exposes
+    *any* logic difference because a single byte change in
+    ``codex_pre_tool_use.py`` flips the SHA-256.
     """
     from src.infra.clients.codex_provider import _default_selftest_probe
 
     codex_home, bin_dir = fake_codex_env
     _install_valid_plugin_tree(codex_home)
-    # Stale hook script: returns a valid-shaped decision JSON, but
-    # different from the one our embedded ``decide()`` produces for
-    # the sentinel input.
-    stale_body = (
-        f"#!{sys.executable}\n"
-        "import json, sys\n"
-        "sys.stdin.read()\n"
-        'print(json.dumps({"decision": "approve"}))\n'
+    # Stub interpreter at a known path; hook shim's shebang points at it.
+    stub_interpreter = bin_dir / "stub-python"
+    _install_stub_python_interpreter(
+        stub_interpreter,
+        fake_hash="dead" * 16,  # 64 hex chars — looks like a valid sha256
     )
-    _make_executable(bin_dir / "mala-codex-pre-tool-use", body=stale_body)
+    # Hook shim with shebang pointing at the stub. The hook itself is
+    # never executed by the probe — only its interpreter is, via the
+    # shebang.
+    hook_path = bin_dir / "mala-codex-pre-tool-use"
+    hook_path.write_text(
+        f"#!{stub_interpreter}\nexit 0\n",
+        encoding="utf-8",
+    )
+    hook_path.chmod(0o755)
 
     with pytest.raises(CodexHookNotActiveError) as excinfo:
         _default_selftest_probe(
@@ -980,20 +1012,35 @@ def test_default_probe_raises_version_mismatch_on_diverging_decision(
             "deadbeef",
         )
     assert excinfo.value.reason is CodexHookNotActiveReason.VERSION_MISMATCH
+    assert "different src.infra.hooks.codex_pre_tool_use module" in str(excinfo.value)
 
 
 @pytest.mark.unit
-def test_default_probe_raises_hook_marker_missing_when_hook_crashes(
+def test_default_probe_raises_hook_marker_missing_when_module_unimportable(
     fake_codex_env: tuple[Path, Path], tmp_path: Path
 ) -> None:
-    """A non-zero exit from the on-PATH hook surfaces
-    ``HOOK_MARKER_MISSING`` rather than masking the failure as success."""
+    """An interpreter that cannot import the hook module surfaces
+    ``HOOK_MARKER_MISSING`` rather than passing silently. Codex would
+    crash trying to invoke the hook on real PreToolUse traffic.
+    """
     from src.infra.clients.codex_provider import _default_selftest_probe
 
     codex_home, bin_dir = fake_codex_env
     _install_valid_plugin_tree(codex_home)
-    crashing = "#!/bin/sh\necho boom 1>&2\nexit 17\n"
-    _make_executable(bin_dir / "mala-codex-pre-tool-use", body=crashing)
+    stub_interpreter = bin_dir / "stub-python"
+    # Stub returns the literal ``NOMODULE`` sentinel the probe code
+    # emits when ``find_spec`` returns None — exit 0 to make sure the
+    # probe doesn't treat this as a generic non-zero exit.
+    body = "#!/bin/sh\necho NOMODULE\nexit 0\n"
+    stub_interpreter.write_text(body, encoding="utf-8")
+    stub_interpreter.chmod(0o755)
+
+    hook_path = bin_dir / "mala-codex-pre-tool-use"
+    hook_path.write_text(
+        f"#!{stub_interpreter}\nexit 0\n",
+        encoding="utf-8",
+    )
+    hook_path.chmod(0o755)
 
     with pytest.raises(CodexHookNotActiveError) as excinfo:
         _default_selftest_probe(
@@ -1005,17 +1052,52 @@ def test_default_probe_raises_hook_marker_missing_when_hook_crashes(
 
 
 @pytest.mark.unit
-def test_default_probe_raises_hook_marker_missing_on_nonjson_output(
+def test_default_probe_raises_hook_marker_missing_when_no_shebang(
     fake_codex_env: tuple[Path, Path], tmp_path: Path
 ) -> None:
-    """Hook output that is not parseable JSON surfaces
-    ``HOOK_MARKER_MISSING`` (the structured-output contract is broken)."""
+    """A hook executable without a Python shebang surfaces
+    ``HOOK_MARKER_MISSING`` — without the shebang we cannot identify
+    the interpreter that would resolve the hook module."""
     from src.infra.clients.codex_provider import _default_selftest_probe
 
     codex_home, bin_dir = fake_codex_env
     _install_valid_plugin_tree(codex_home)
-    body = "#!/bin/sh\necho 'not json'\nexit 0\n"
-    _make_executable(bin_dir / "mala-codex-pre-tool-use", body=body)
+    # No shebang line — kernel won't be able to spawn this anyway.
+    hook_path = bin_dir / "mala-codex-pre-tool-use"
+    hook_path.write_text("(this is not a script)\n", encoding="utf-8")
+    hook_path.chmod(0o755)
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _default_selftest_probe(
+            tmp_path,
+            {"CODEX_HOME": str(codex_home)},
+            "deadbeef",
+        )
+    assert excinfo.value.reason is CodexHookNotActiveReason.HOOK_MARKER_MISSING
+
+
+@pytest.mark.unit
+def test_default_probe_raises_hook_marker_missing_when_interpreter_crashes(
+    fake_codex_env: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """A hook interpreter that crashes during the module-identity
+    probe surfaces ``HOOK_MARKER_MISSING`` rather than masking the
+    failure as success."""
+    from src.infra.clients.codex_provider import _default_selftest_probe
+
+    codex_home, bin_dir = fake_codex_env
+    _install_valid_plugin_tree(codex_home)
+    stub_interpreter = bin_dir / "stub-python"
+    body = "#!/bin/sh\necho boom 1>&2\nexit 17\n"
+    stub_interpreter.write_text(body, encoding="utf-8")
+    stub_interpreter.chmod(0o755)
+
+    hook_path = bin_dir / "mala-codex-pre-tool-use"
+    hook_path.write_text(
+        f"#!{stub_interpreter}\nexit 0\n",
+        encoding="utf-8",
+    )
+    hook_path.chmod(0o755)
 
     with pytest.raises(CodexHookNotActiveError) as excinfo:
         _default_selftest_probe(
