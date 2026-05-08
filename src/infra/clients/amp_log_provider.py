@@ -282,15 +282,17 @@ class AmpLogProvider:
 
     async def wait_for_session_ready(
         self,
-        log_path: Path,
+        repo_path: Path,
+        session_id: str,
         *,
         timeout: float,
         poll_interval: float = 0.5,
     ) -> None:
         """Wait for the Amp tee'd / native JSONL to appear on disk.
 
-        Polls ``log_path`` for existence on a fixed cadence, matching the
-        prior in-runner filesystem poll. The Amp tee'd path appears once
+        Resolves the per-thread log path via :meth:`get_log_path` and
+        polls it for existence on a fixed cadence, matching the prior
+        in-runner filesystem poll. The Amp tee'd path appears once
         :class:`AmpClient` finishes the rename triggered by the
         ``system(init)`` event; a native log directory has the same
         appearance semantic, so the same poll covers both.
@@ -298,6 +300,7 @@ class AmpLogProvider:
         Raises:
             TimeoutError: If the file does not appear within ``timeout``.
         """
+        log_path = self.get_log_path(repo_path, session_id)
         wait_elapsed = 0.0
         while not log_path.exists():
             if wait_elapsed >= timeout:

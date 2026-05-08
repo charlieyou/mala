@@ -27,6 +27,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 
 from src.infra.agent_runtime import ClaudeAgentRuntimeBuilder
+from src.infra.io.session_log_parser import FileSystemLogProvider
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,6 +37,37 @@ if TYPE_CHECKING:
     from src.core.protocols.lifecycle import DeadlockMonitorProtocol
     from src.core.protocols.sdk import McpServerFactory, SDKClientFactoryProtocol
     from src.infra.agent_runtime import ClaudeSDKClientFactoryProtocol
+
+
+class _ImmediateReadyFileSystemLogProvider(FileSystemLogProvider):
+    """:class:`FileSystemLogProvider` with a no-op readiness wait.
+
+    Tests using :class:`FakeAgentProvider` configure the *path* the
+    runner observes via :class:`StubSessionLifecycle.on_get_log_path`,
+    not via the real Claude SDK location. Phase A7 / issue
+    ``mala-dkm9e`` made the readiness gate session-id-shaped:
+    :meth:`EvidenceProvider.wait_for_session_ready` now resolves the
+    log path internally from ``(repo_path, session_id)`` instead of
+    being handed a path. The default :class:`FileSystemLogProvider`
+    resolves to ``~/.claude/projects/...``, which never exists in
+    tests, so the wait would always time out.
+
+    This subclass preserves all parsing/extraction behavior of
+    :class:`FileSystemLogProvider` while overriding the readiness
+    wait to return immediately. Tests that exercise readiness-gate
+    behavior (fast/slow/timeout) inject their own stub provider
+    (see ``tests/unit/pipeline/test_lifecycle_wait_for_log.py``).
+    """
+
+    async def wait_for_session_ready(  # type: ignore[override]
+        self,
+        repo_path: Path,
+        session_id: str,
+        *,
+        timeout: float,
+        poll_interval: float = 0.5,
+    ) -> None:
+        del repo_path, session_id, timeout, poll_interval
 
 
 class FakeAgentProvider:
@@ -52,8 +84,10 @@ class FakeAgentProvider:
         name: ``"claude"`` by default; tests for Amp selection construct
             ``AmpAgentProvider`` directly instead.
         client_factory: The wrapped factory.
-        evidence_provider: Optional override; defaults to
-            :class:`FileSystemLogProvider`.
+        evidence_provider: Optional override; defaults to a wrapper
+            around :class:`FileSystemLogProvider` whose
+            :meth:`wait_for_session_ready` is a no-op (see
+            :class:`_ImmediateReadyFileSystemLogProvider`).
     """
 
     name: Literal["claude", "amp", "codex"] = "claude"
@@ -77,9 +111,9 @@ class FakeAgentProvider:
         self.client_factory: SDKClientFactoryProtocol = client_factory
         self._claude_factory: ClaudeSDKClientFactoryProtocol = client_factory
         if evidence_provider is None:
-            from src.infra.io.session_log_parser import FileSystemLogProvider
-
-            self.evidence_provider: EvidenceProvider = FileSystemLogProvider()  # type: ignore[assignment]
+            self.evidence_provider: EvidenceProvider = (
+                _ImmediateReadyFileSystemLogProvider()
+            )  # type: ignore[assignment]
         else:
             self.evidence_provider = evidence_provider
         self.name = name

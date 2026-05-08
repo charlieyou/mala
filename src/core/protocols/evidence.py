@@ -164,7 +164,8 @@ class EvidenceProvider(Protocol):
 
     async def wait_for_session_ready(
         self,
-        log_path: Path,
+        repo_path: Path,
+        session_id: str,
         *,
         timeout: float,
         poll_interval: float = 0.5,
@@ -178,11 +179,18 @@ class EvidenceProvider(Protocol):
         immediately, while filesystem-backed providers preserve their
         existing polling behavior.
 
+        The contract is session-id-shaped rather than path-shaped:
+        callers identify the session by ``(repo_path, session_id)`` and
+        the provider performs whatever resolution its backend requires
+        (filesystem path lookup for Claude/Amp, no-op for Codex).
+
         Args:
-            log_path: Path the runner has chosen for this session via
-                :meth:`get_log_path`. Filesystem-backed providers poll
-                this path for existence; providers whose readiness is
-                not file-based ignore the argument.
+            repo_path: Repository the session was run in. Filesystem-
+                backed providers use this together with ``session_id``
+                to locate the JSONL log; providers whose readiness is
+                not file-based ignore it.
+            session_id: Coder session/thread id whose readiness is
+                being awaited.
             timeout: Maximum seconds to wait. Implementations MUST raise
                 ``TimeoutError`` when this elapses without readiness.
             poll_interval: Polling cadence for filesystem-backed

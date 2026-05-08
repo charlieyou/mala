@@ -62,7 +62,7 @@ class StubEvidenceProvider:
     log_path: Path
     delay: float = 0.0
     raise_timeout: bool = False
-    calls: list[tuple[Path, float, float]] = field(default_factory=list)
+    calls: list[tuple[Path, str, float, float]] = field(default_factory=list)
 
     def get_log_path(self, repo_path: Path, session_id: str) -> Path:
         del repo_path, session_id
@@ -82,14 +82,15 @@ class StubEvidenceProvider:
 
     async def wait_for_session_ready(
         self,
-        log_path: Path,
+        repo_path: Path,
+        session_id: str,
         *,
         timeout: float,
         poll_interval: float = 0.5,
     ) -> None:
-        self.calls.append((log_path, timeout, poll_interval))
+        self.calls.append((repo_path, session_id, timeout, poll_interval))
         if self.raise_timeout:
-            raise TimeoutError(f"Session log missing after timeout: {log_path}")
+            raise TimeoutError(f"Session log missing after timeout: {self.log_path}")
         if self.delay > 0:
             await asyncio.sleep(self.delay)
 
@@ -175,7 +176,7 @@ class TestHandleLogWaiting:
         assert new_log_path == log_path
         assert result.effect == Effect.RUN_GATE
         assert lifecycle.state == LifecycleState.RUNNING_GATE
-        assert provider.calls == [(log_path, 10.0, 0.5)]
+        assert provider.calls == [(tmp_path, "sess-1", 10.0, 0.5)]
 
     @pytest.mark.asyncio
     async def test_timeout_transitions_to_failed(self, tmp_path: Path) -> None:

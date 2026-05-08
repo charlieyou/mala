@@ -495,20 +495,23 @@ class FileSystemLogProvider:
 
     async def wait_for_session_ready(
         self,
-        log_path: Path,
+        repo_path: Path,
+        session_id: str,
         *,
         timeout: float,
         poll_interval: float = 0.5,
     ) -> None:
         """Wait for the Claude session JSONL to appear on disk.
 
-        Polls ``log_path`` for existence on a fixed cadence — the same
-        behavior the lifecycle previously implemented inline in
+        Resolves the per-session log path via :meth:`get_log_path` and
+        polls it for existence on a fixed cadence — the same behavior
+        the lifecycle previously implemented inline in
         ``AgentSessionRunner._handle_log_waiting``.
 
         Raises:
             TimeoutError: If the file does not appear within ``timeout``.
         """
+        log_path = self.get_log_path(repo_path, session_id)
         wait_elapsed = 0.0
         while not log_path.exists():
             if wait_elapsed >= timeout:

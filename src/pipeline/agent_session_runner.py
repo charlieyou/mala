@@ -894,7 +894,8 @@ class AgentSessionRunner:
 
         try:
             await self.agent_provider.evidence_provider.wait_for_session_ready(
-                log_path,
+                self.config.repo_path,
+                session_id,
                 timeout=log_file_wait_timeout,
                 poll_interval=log_file_poll_interval,
             )

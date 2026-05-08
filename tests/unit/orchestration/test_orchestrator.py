@@ -13,7 +13,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, Callable, Generator, Sequence
 from pathlib import Path
-from typing import Self
+from typing import Self, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -2517,6 +2517,16 @@ def _make_mock_evidence_provider(log_file: Path) -> object:
         def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
             return log_path.stat().st_size if log_path.exists() else start_offset
 
+        async def wait_for_session_ready(
+            self,
+            repo_path: Path,
+            session_id: str,
+            *,
+            timeout: float,
+            poll_interval: float = 0.5,
+        ) -> None:
+            del repo_path, session_id, timeout, poll_interval
+
     return MockEvidenceProvider()
 
 
@@ -2545,11 +2555,20 @@ class TestReviewUsesIssueCommits:
         # Create mala.yaml for build_validation_spec
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
 
+        mock_evidence_provider = _make_mock_evidence_provider(log_file)
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
             max_agents=1,
             timeout_minutes=1,
-            evidence_provider=_make_mock_evidence_provider(log_file),  # type: ignore[arg-type]
+            evidence_provider=mock_evidence_provider,  # type: ignore[arg-type]
+        )
+        # Phase A7 / mala-dkm9e: the runner now calls
+        # ``agent_provider.evidence_provider.wait_for_session_ready(repo_path,
+        # session_id)`` and resolves the path internally. Plumb the same mock
+        # through so the readiness wait matches the path the test created
+        # under ``tmp_path/.claude/...``.
+        orchestrator._agent_provider.evidence_provider = cast(
+            "EvidenceProvider", mock_evidence_provider
         )
 
         captured_commit_lists: list[Sequence[str] | None] = []
