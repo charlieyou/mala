@@ -494,15 +494,20 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     assert (plugin_dir / ".mcp.json").is_file()
 
     config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
-    # Codex requires ALL THREE preconditions for the bundled hook to fire:
-    # (a) ``[features] plugin_hooks = true`` per ``codex-rs/features/src/lib.rs:957``
+    # Codex requires ALL FOUR preconditions for the bundled hook to fire:
+    # (a) ``[features] plugins = true`` per ``codex-rs/features/src/lib.rs:951``
+    #     (Feature::Plugins defaults to True but a user can opt out with
+    #     ``plugins = false``; ``plugins_for_config_with_force_reload``
+    #     early-returns when ``plugins_enabled`` is false);
+    # (b) ``[features] plugin_hooks = true`` per ``codex-rs/features/src/lib.rs:957``
     #     (Feature::PluginHooks ships default_enabled=false; without it
     #     ``catalog_processor`` skips loading plugin-bundled hooks);
-    # (b) ``[plugins."<key>"] enabled = true`` per
+    # (c) ``[plugins."<key>"] enabled = true`` per
     #     ``codex-rs/core-plugins/src/manager.rs::configured_plugins_from_stack``;
-    # (c) ``[hooks.state."<key>"]`` with matching trusted_hash per
+    # (d) ``[hooks.state."<key>"]`` with matching trusted_hash per
     #     ``codex-rs/hooks/src/engine/discovery.rs::hook_trust_status``.
     assert "[features]" in config_toml
+    assert "plugins = true" in config_toml
     assert "plugin_hooks = true" in config_toml
     assert '[plugins."mala-safety@local"]' in config_toml
     assert "enabled = true" in config_toml
@@ -582,6 +587,42 @@ def test_install_prerequisites_overwrites_disabled_plugin_hooks(
     config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
     assert "plugin_hooks = true" in config_toml
     assert "plugin_hooks = false" not in config_toml
+
+
+@pytest.mark.unit
+def test_install_prerequisites_overwrites_user_plugins_opt_out(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """Regression: a user who set ``[features] plugins = false`` must have
+    that flipped to ``true``.
+
+    Codex's ``PluginsManager.plugins_for_config_with_force_reload``
+    (``codex-rs/core-plugins/src/manager.rs:480``) early-returns
+    ``PluginLoadOutcome::default()`` when ``plugins_enabled`` is false,
+    so without flipping this flag the bundled hook never reaches the
+    discovery / trust-check pipeline regardless of how
+    ``plugin_hooks`` and the per-plugin entries are configured.
+    """
+    codex_home, bin_dir = fake_codex_env
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+    (codex_home / "config.toml").write_text(
+        "[features]\nplugins = false\n",
+        encoding="utf-8",
+    )
+
+    provider = CodexAgentProvider()
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
+    assert "plugins = true" in config_toml
+    assert "plugins = false" not in config_toml
+    # plugin_hooks must also have been added inside the same block.
+    assert "plugin_hooks = true" in config_toml
 
 
 @pytest.mark.unit

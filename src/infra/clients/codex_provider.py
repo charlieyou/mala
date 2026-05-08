@@ -362,11 +362,19 @@ def _write_codex_plugin_config(
     codex_home: Path,
     marketplace: str = _DEFAULT_PLUGIN_MARKETPLACE,
 ) -> None:
-    """Fail-closed write of the three config-side preconditions to ``config.toml``.
+    """Fail-closed write of the four config-side preconditions to ``config.toml``.
 
-    Codex requires THREE config-side preconditions for the bundled
+    Codex requires FOUR config-side preconditions for the bundled
     PreToolUse hook to fire:
 
+      * The global ``plugins`` feature flag is enabled:
+        ``[features] plugins = true`` (per
+        ``codex-rs/features/src/lib.rs:951`` — ``Feature::Plugins``
+        ships ``default_enabled = true`` but a user can explicitly
+        set ``[features] plugins = false`` and Codex's
+        ``PluginsManager.plugins_for_config_with_force_reload``
+        early-returns ``PluginLoadOutcome::default()`` when
+        ``plugins_enabled`` is false, so we always pin it to ``true``).
       * The ``plugin_hooks`` feature flag is enabled:
         ``[features] plugin_hooks = true`` (per
         ``codex-rs/features/src/lib.rs:957`` — ``Feature::PluginHooks``
@@ -382,7 +390,7 @@ def _write_codex_plugin_config(
         with ``enabled = true`` and the matching ``trusted_hash`` (per
         ``codex-rs/hooks/src/engine/discovery.rs::hook_trust_status``).
 
-    Without all three entries, Codex would discover the cached plugin
+    Without all four entries, Codex would discover the cached plugin
     tree (``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/``)
     yet still skip the hook on PreToolUse — the orchestrator would
     proceed under ``danger-full-access`` / ``approval_policy=never``
@@ -394,7 +402,7 @@ def _write_codex_plugin_config(
     one-time interactive trust fallback (plan E6) covers users whose
     ``CODEX_HOME`` is read-only.
 
-    The "already correct" short-circuit (when all three blocks already
+    The "already correct" short-circuit (when all four entries already
     match the desired content) returns without writing. The
     ``[features]`` block is updated in-place (preserving any other
     feature flags the user already set) rather than replaced wholesale.
@@ -431,10 +439,20 @@ def _write_codex_plugin_config(
             reason=CodexHookNotActiveReason.TRUSTED_HASH_MISMATCH,
         ) from exc
 
-    # 1. Ensure ``plugin_hooks = true`` inside the existing ``[features]``
-    # block (preserving any other feature flags the user already set).
+    # 1a. Ensure ``plugins = true`` inside the existing ``[features]``
+    # block — Feature::Plugins defaults to true but a user can opt
+    # out, in which case ``plugins_for_config_with_force_reload``
+    # early-returns and our hook never loads.
     rewritten = _ensure_key_in_section(
-        existing, section_header="[features]", key="plugin_hooks", value="true"
+        existing, section_header="[features]", key="plugins", value="true"
+    )
+    # 1b. Ensure ``plugin_hooks = true`` inside the same ``[features]``
+    # block — Feature::PluginHooks defaults to false and gates plugin
+    # hook loading. Both keys live in the same flat table; the
+    # in-place rewriter preserves any other feature flags the user
+    # already set.
+    rewritten = _ensure_key_in_section(
+        rewritten, section_header="[features]", key="plugin_hooks", value="true"
     )
     # 2 + 3. Replace the per-plugin and per-hook state blocks.
     rewritten = _rewrite_toml_block(
@@ -908,11 +926,15 @@ class CodexAgentProvider:
           4. Verify the ``mala-codex-pre-tool-use`` console script is on
              ``PATH`` (raise
              :class:`CodexHookNotActiveError(SCRIPT_MISSING)`).
-          5. Auto-write the three Codex-config preconditions to
+          5. Auto-write the four Codex-config preconditions to
              ``$CODEX_HOME/config.toml`` (decision #16):
+             ``[features] plugins = true`` to override an opt-out
+             setting that would short-circuit plugin loading entirely
+             (``plugins_for_config_with_force_reload`` early-returns
+             when ``plugins_enabled`` is false);
              ``[features] plugin_hooks = true`` so Codex's
              ``catalog_processor`` actually loads plugin-bundled hooks
-             (the feature ships ``default_enabled = false``);
+             (this feature ships ``default_enabled = false``);
              ``[plugins."<plugin_id>"] enabled = true`` so Codex's
              ``configured_plugins_from_stack`` enumerates the plugin;
              and
@@ -1002,13 +1024,17 @@ class CodexAgentProvider:
                 reason=CodexHookNotActiveReason.SCRIPT_MISSING,
             )
 
-        # 5. Auto-write the three config-side preconditions to
-        # config.toml (decision #16). Codex requires ALL THREE for the
-        # hook to fire: ``[features] plugin_hooks = true`` to enable
-        # plugin-bundled hook loading (default-off in upstream Codex),
+        # 5. Auto-write the four config-side preconditions to
+        # config.toml (decision #16). Codex requires ALL FOUR for the
+        # hook to fire: ``[features] plugins = true`` to override an
+        # opt-out user config that early-returns from
+        # ``plugins_for_config_with_force_reload``;
+        # ``[features] plugin_hooks = true`` to enable plugin-bundled
+        # hook loading (default-off in upstream Codex);
         # ``[plugins."<id>"] enabled = true`` to surface the plugin via
-        # ``configured_plugins_from_stack``, and ``[hooks.state."<id>:..."]``
-        # with the matching ``trusted_hash`` to mark the hook Trusted.
+        # ``configured_plugins_from_stack``; and
+        # ``[hooks.state."<id>:..."]`` with the matching ``trusted_hash``
+        # to mark the hook Trusted.
         codex_home = _resolve_codex_home()
         _write_codex_plugin_config(codex_home=codex_home)
 
