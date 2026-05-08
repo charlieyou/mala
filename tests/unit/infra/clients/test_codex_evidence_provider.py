@@ -344,22 +344,70 @@ def test_command_with_completed_status_but_nonzero_exit_is_error(
 
 
 @pytest.mark.unit
-def test_non_command_items_ignore_exit_code(tmp_path: Path) -> None:
-    """``fileChange`` / ``mcpToolCall`` / ``agentMessage`` use status only.
+@pytest.mark.parametrize(
+    "status",
+    ["declined", "cancelled", "error", "timed_out"],
+)
+def test_non_completed_terminal_statuses_are_errors(
+    tmp_path: Path, status: str
+) -> None:
+    """Any terminal status other than ``completed`` is an error.
 
-    Codex's non-command items do not carry an ``exit_code`` field; the
-    error signal lives in ``status``. Verify the type-discrimination
-    branch in ``extract_tool_results`` does not accidentally apply the
-    command-only ``exit_code`` rule to other item types — which would
-    treat all ``status=completed`` non-command items as success
-    (correct), but a future drift to a different default could silently
-    flip them.
+    Regression for review-3 P1: the live :class:`CodexEventAdapter`
+    (``src/infra/clients/codex_event_adapter.py:65-71``) defines
+    ``declined`` as a terminal command/patch status and uses the rule
+    ``is_error = status != "completed"`` for non-command paths, with
+    commands additionally consulting ``exit_code``. An earlier version
+    of this provider allow-listed only ``failed``/``error``/``cancelled``
+    as failures, which let a ``declined`` command (e.g. user denied a
+    bash tool) fall into the command branch and return
+    ``is_error=False`` despite the command never running — the gate
+    would record it as a successful pytest run and pass.
+
+    Parametrizes across the failure statuses we know about plus a
+    representative future-shape (``timed_out``) to prove the
+    "completed-only-success" approach is robust to SDK additions.
     """
     log_path = tmp_path / "thr_test.jsonl"
     _write_jsonl(
         log_path,
         [
-            _agent_message_completed("msg-1", "hello"),
+            _command_completed(
+                "item-declined",
+                "uv run pytest -q",
+                "",
+                status,
+                exit_code=None,
+            ),
+        ],
+    )
+
+    provider = CodexEvidenceProvider(sessions_dir=tmp_path)
+    results: list[tuple[str, bool]] = []
+    for entry in provider.iter_session_events(log_path):
+        results.extend(provider.extract_tool_results(entry))
+
+    assert results == [("item-declined", True)], (
+        f"status={status!r} on a commandExecution item must classify as "
+        "is_error=True; otherwise a declined / cancelled / future-failure "
+        "command will silently pass the validation gate."
+    )
+
+
+@pytest.mark.unit
+def test_non_command_tool_items_use_status_only(tmp_path: Path) -> None:
+    """``fileChange`` / ``mcpToolCall`` use status only (no exit_code).
+
+    Codex's non-command tool items do not carry an ``exit_code`` field;
+    the error signal lives in ``status``. ``status="completed"`` →
+    success; anything else → error. Verify the type-discrimination
+    branch in ``extract_tool_results`` does not accidentally apply the
+    command-only ``exit_code`` rule to other item types.
+    """
+    log_path = tmp_path / "thr_test.jsonl"
+    _write_jsonl(
+        log_path,
+        [
             _file_change_completed("edit-ok", [{"path": "/x"}], status="completed"),
             _file_change_completed("edit-fail", [{"path": "/x"}], status="failed"),
         ],
@@ -371,10 +419,38 @@ def test_non_command_items_ignore_exit_code(tmp_path: Path) -> None:
         results.extend(provider.extract_tool_results(entry))
 
     assert results == [
-        ("msg-1", False),
         ("edit-ok", False),
         ("edit-fail", True),
     ]
+
+
+@pytest.mark.unit
+def test_extract_tool_results_skips_agent_messages(tmp_path: Path) -> None:
+    """``agentMessage`` items are text emissions, not tool results.
+
+    Mirrors :meth:`CodexEventAdapter._handle_item_completed`'s dispatch:
+    only ``commandExecution`` / ``fileChange`` / ``mcpToolCall`` produce
+    tool-result events. ``agentMessage`` items are surfaced through
+    :meth:`extract_assistant_text_blocks` instead. Critically, the
+    Codex SDK's ``AgentMessageThreadItem`` does not carry a ``status``
+    field, so a naive "any status != completed = error" rule would
+    spuriously mark every assistant message as a failed tool result.
+    """
+    log_path = tmp_path / "thr_test.jsonl"
+    _write_jsonl(
+        log_path,
+        [
+            _agent_message_completed("msg-1", "hello"),
+            _agent_message_completed("msg-2", "ISSUE_NO_CHANGE: nothing to do"),
+        ],
+    )
+
+    provider = CodexEvidenceProvider(sessions_dir=tmp_path)
+    results: list[tuple[str, bool]] = []
+    for entry in provider.iter_session_events(log_path):
+        results.extend(provider.extract_tool_results(entry))
+
+    assert results == []
 
 
 @pytest.mark.unit

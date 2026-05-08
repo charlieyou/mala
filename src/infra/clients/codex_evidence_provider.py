@@ -75,9 +75,38 @@ the boundary explicit and makes future id-format changes safe.
 
 
 _BASH_ITEM_TYPE = "commandExecution"
+_FILE_CHANGE_TYPE = "fileChange"
+_MCP_TOOL_CALL_TYPE = "mcpToolCall"
 _AGENT_MESSAGE_TYPE = "agentMessage"
+_TOOL_RESULT_ITEM_TYPES = frozenset(
+    {_BASH_ITEM_TYPE, _FILE_CHANGE_TYPE, _MCP_TOOL_CALL_TYPE}
+)
+"""Item types the live :class:`CodexEventAdapter` emits as tool results.
+
+Mirrors :meth:`CodexEventAdapter._handle_item_completed`'s dispatch:
+``commandExecution`` / ``fileChange`` / ``mcpToolCall`` produce
+``AgentToolResultEvent``; ``agentMessage`` produces only
+``AgentTextEvent`` and ``reasoning`` items are dropped per decision #12.
+:meth:`CodexEvidenceProvider.extract_tool_results` therefore yields
+results ONLY for the three tool types — agent messages would otherwise
+pick up the ``status != "completed"`` rule and surface as spurious
+errors (the SDK's ``AgentMessageThreadItem`` does not carry a status
+field at all).
+"""
 _COMPLETED_METHOD = "item/completed"
-_FAILED_STATUSES = frozenset({"failed", "error", "cancelled"})
+_SUCCESS_STATUS = "completed"
+"""The only status the live :class:`CodexEventAdapter` treats as success.
+
+Mirrors :data:`src.infra.clients.codex_event_adapter._TERMINAL_COMMAND_STATUSES`
+/ ``_TERMINAL_PATCH_STATUSES`` / ``_TERMINAL_MCP_STATUSES`` semantics:
+``completed`` is the success terminal status; every other terminal value
+the SDK emits (``failed``, ``declined``, ``cancelled``, ``error``, …) is
+an error. Using a single positive case is safer than enumerating failure
+strings — a future Codex SDK release adding a new failure status (e.g.
+``denied``, ``timed_out``) would silently fall into ``is_error=False``
+under the prior allow-listed-failures shape and let the gate pass on a
+real failure.
+"""
 
 
 class CodexEvidenceProvider:
@@ -299,48 +328,64 @@ class CodexEvidenceProvider:
         return [(item_id, command)]
 
     def extract_tool_results(self, entry: JsonlEntryProtocol) -> list[tuple[str, bool]]:
-        """Extract ``(item_id, is_error)`` tuples for completed items.
+        """Extract ``(item_id, is_error)`` tuples for completed tool items.
 
-        For ``commandExecution`` items, ``is_error`` consults the shell
-        ``exit_code`` in addition to ``status``: Codex marks a command as
-        ``status="completed"`` whenever the shell process *finished*, even
-        if it exited non-zero. Without the exit-code check, a failed
-        ``uv run pytest`` (status=completed, exit_code=1) would surface as
-        ``(tool_id, False)``,
-        :meth:`EvidenceCheck.parse_validation_evidence_with_spec` would
-        skip adding it to ``failed_commands``, and the validation gate
-        would silently pass on a failed test/lint/typecheck run. Mirrors
-        :meth:`CodexEventAdapter._command_completed` (the live-pipeline
-        path uses the same exit-code rule, plan ``L754``).
+        Classification rules (mirrors :class:`CodexEventAdapter` —
+        :meth:`_command_completed` / :meth:`_file_change_completed` /
+        :meth:`_mcp_completed`):
 
-        For ``fileChange`` / ``mcpToolCall`` / ``agentMessage`` items the
-        Codex SDK does not surface an ``exit_code`` field, so ``status``
-        is the sole signal: ``failed`` / ``error`` / ``cancelled`` →
-        ``is_error=True``; anything else (notably ``completed``) is
-        success.
+          * Yields a result ONLY for the three tool item types in
+            :data:`_TOOL_RESULT_ITEM_TYPES` (``commandExecution`` /
+            ``fileChange`` / ``mcpToolCall``). ``agentMessage`` items
+            produce text, not tool results, and ``reasoning`` items are
+            dropped — both match the live adapter's
+            :meth:`_handle_item_completed` dispatch.
+          * Any status other than ``completed`` → ``is_error=True``.
+            Covers ``failed``, ``declined``, ``cancelled``, ``error`` and
+            any future failure status the SDK adds. Using a single
+            positive success-status check keeps the rule synchronised
+            with the adapter (``is_error = status != "completed"``)
+            without enumerating an open-ended failure list — a future
+            SDK addition like ``timed_out`` would silently fall into
+            ``is_error=False`` under an allow-listed-failures shape and
+            let the gate pass on a real failure.
+          * For ``commandExecution`` items with ``status=completed``:
+            ``is_error`` consults the shell ``exit_code`` because Codex
+            marks a command as completed whenever the shell *finished*,
+            even on non-zero exits. Without the exit-code check, a failed
+            ``uv run pytest`` (status=completed, exit_code=1) would
+            surface as ``(tool_id, False)``,
+            :meth:`EvidenceCheck.parse_validation_evidence_with_spec`
+            would skip adding it to ``failed_commands``, and the gate
+            would silently pass on a failed test/lint/typecheck run.
+          * For ``fileChange`` / ``mcpToolCall`` items with
+            ``status=completed``: the Codex SDK does not surface
+            ``exit_code``, so ``status`` is the sole signal and
+            ``is_error=False``.
 
         Returns:
             List of ``(item_id, is_error)`` tuples. Empty list if the
-            entry is not an ``item/completed`` notification.
+            entry is not an ``item/completed`` notification carrying one
+            of the three tool item types.
         """
         item = self._completed_item(entry, item_type=None)
         if item is None:
+            return []
+        item_type = self._str_field(item, "type")
+        if item_type not in _TOOL_RESULT_ITEM_TYPES:
             return []
         item_id = self._str_field(item, "id")
         if not item_id:
             return []
         status = self._str_field(item, "status").lower()
-        item_type = self._str_field(item, "type")
-        if status in _FAILED_STATUSES:
-            is_error = True
-        elif item_type == _BASH_ITEM_TYPE:
+        if status != _SUCCESS_STATUS:
+            return [(item_id, True)]
+        if item_type == _BASH_ITEM_TYPE:
             # status="completed" means the shell ran to exit; consult
             # exit_code so a non-zero return classifies as a failure.
             exit_code = item.get("exit_code")
-            is_error = exit_code not in (None, 0)
-        else:
-            is_error = False
-        return [(item_id, is_error)]
+            return [(item_id, exit_code not in (None, 0))]
+        return [(item_id, False)]
 
     def extract_assistant_text_blocks(self, entry: JsonlEntryProtocol) -> list[str]:
         """Extract assistant text from a completed ``agentMessage`` item.
