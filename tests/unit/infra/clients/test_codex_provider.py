@@ -693,6 +693,64 @@ def test_ensure_key_in_section_preserves_well_formed_toml_without_trailing_newli
 
 
 @pytest.mark.unit
+def test_ensure_key_in_section_handles_aligned_spaces_around_equals() -> None:
+    """Regression: TOML allows arbitrary whitespace between key and ``=``
+    (e.g. ``plugins    = false`` for value alignment). The matcher must
+    treat such lines as the same key — otherwise the rewriter appends a
+    second ``plugins = true`` line, producing a duplicate-key TOML file
+    that Codex rejects on startup.
+    """
+    from src.infra.clients.codex_provider import _ensure_key_in_section
+
+    aligned = "[features]\nplugins    = false\nplugin_hooks    = false\n"
+
+    rewritten = _ensure_key_in_section(
+        aligned, section_header="[features]", key="plugins", value="true"
+    )
+
+    # ``plugins = false`` must be flipped to ``plugins = true``; the
+    # original aligned-spaces line is rewritten in place.
+    assert "plugins = true" in rewritten
+    assert "plugins    = false" not in rewritten
+    # No duplicate ``plugins`` entries — the in-place rewrite did not
+    # also append a fresh ``plugins = true`` line.
+    plugin_lines = [
+        ln
+        for ln in rewritten.splitlines()
+        if ln.strip().startswith("plugins")
+        and not ln.strip().startswith("plugin_hooks")
+    ]
+    assert len(plugin_lines) == 1, plugin_lines
+
+
+@pytest.mark.unit
+def test_ensure_key_in_section_does_not_match_key_prefix() -> None:
+    """Regression: looking for ``plugin`` must not match
+    ``plugin_hooks`` — otherwise the rewriter overwrites the wrong
+    line. Pins the key-bound check ``stripped[len(key):].lstrip().startswith("=")``
+    behavior.
+    """
+    from src.infra.clients.codex_provider import _ensure_key_in_section
+
+    # Only ``plugin_hooks`` exists; we ask for ``plugin`` (a true prefix
+    # but a distinct key). The rewriter must NOT rewrite the
+    # ``plugin_hooks`` line — it should leave that line alone and
+    # append a fresh ``plugin = true`` instead.
+    existing = "[features]\nplugin_hooks = true\n"
+
+    rewritten = _ensure_key_in_section(
+        existing, section_header="[features]", key="plugin", value="true"
+    )
+
+    assert "plugin_hooks = true" in rewritten  # untouched
+    # And the new ``plugin = true`` line was added inside the section.
+    plugin_lines = [
+        ln for ln in rewritten.splitlines() if ln.strip() == "plugin = true"
+    ]
+    assert len(plugin_lines) == 1, rewritten
+
+
+@pytest.mark.unit
 def test_default_marketplace_matches_installer_constant() -> None:
     """Lock-step pin: the provider's hardcoded marketplace literal must
     equal the installer's ``PLUGIN_MARKETPLACE`` constant.
@@ -1116,18 +1174,25 @@ def test_default_probe_raises_hook_marker_missing_when_module_unimportable(
     fake_codex_env: tuple[Path, Path], tmp_path: Path
 ) -> None:
     """An interpreter that cannot import the hook module surfaces
-    ``HOOK_MARKER_MISSING`` rather than passing silently. Codex would
-    crash trying to invoke the hook on real PreToolUse traffic.
+    ``HOOK_MARKER_MISSING`` and the error message identifies the
+    offending module by name.
+
+    Mirrors the probe's actual emission shape: when ``find_spec``
+    returns None for one of the hook-identity modules, the probe
+    prints ``NOMODULE:<name>`` and ``sys.exit(2)``. The provider must
+    surface the ``NOMODULE:<name>`` diagnostic *before* falling through
+    to the generic non-zero-exit branch — otherwise the user sees a
+    bare ``exited 2`` message instead of which dependency is missing
+    (regression: review-20 P2).
     """
     from src.infra.clients.codex_provider import _default_selftest_probe
 
     codex_home, bin_dir = fake_codex_env
     _install_valid_plugin_tree(codex_home)
     stub_interpreter = bin_dir / "stub-python"
-    # Stub returns the literal ``NOMODULE`` sentinel the probe code
-    # emits when ``find_spec`` returns None — exit 0 to make sure the
-    # probe doesn't treat this as a generic non-zero exit.
-    body = "#!/bin/sh\necho NOMODULE\nexit 0\n"
+    # Stub mirrors the probe's actual emission: ``NOMODULE:<name>`` on
+    # stdout AND exit 2 (the real probe's ``sys.exit(2)``).
+    body = "#!/bin/sh\necho NOMODULE:src.infra.hooks.dangerous_commands\nexit 2\n"
     stub_interpreter.write_text(body, encoding="utf-8")
     stub_interpreter.chmod(0o755)
 
@@ -1145,6 +1210,11 @@ def test_default_probe_raises_hook_marker_missing_when_module_unimportable(
             "deadbeef",
         )
     assert excinfo.value.reason is CodexHookNotActiveReason.HOOK_MARKER_MISSING
+    # Tailored diagnostic must reach the user — not a bare
+    # ``exited 2`` from the generic returncode branch.
+    msg = str(excinfo.value)
+    assert "NOMODULE:src.infra.hooks.dangerous_commands" in msg
+    assert "hook-dependency module" in msg
 
 
 @pytest.mark.unit

@@ -527,16 +527,22 @@ def _ensure_key_in_section(
             break
 
     # Look for an existing ``<key> = ...`` line inside the section.
-    key_pattern_prefix = f"{key} ="
+    # Tolerate any whitespace between the key and ``=`` (TOML allows
+    # value alignment, e.g. ``plugins    = false``); reject non-key
+    # prefixes (e.g. ``plugins_extra = ...`` must not match ``plugins``).
     for idx in range(section_start + 1, section_end):
         stripped = lines[idx].strip()
-        if stripped.startswith(key_pattern_prefix) or stripped.startswith(f"{key}="):
-            if stripped == f"{key} = {value}":
-                return existing  # already correct
-            # Preserve indentation if any.
-            indent_len = len(lines[idx]) - len(lines[idx].lstrip())
-            lines[idx] = lines[idx][:indent_len] + new_line
-            return "".join(lines)
+        if not stripped.startswith(key):
+            continue
+        remainder = stripped[len(key) :].lstrip()
+        if not remainder.startswith("="):
+            continue  # ``<key>_extra = ...`` and similar — not our key.
+        if stripped == f"{key} = {value}":
+            return existing  # already correct
+        # Preserve indentation if any.
+        indent_len = len(lines[idx]) - len(lines[idx].lstrip())
+        lines[idx] = lines[idx][:indent_len] + new_line
+        return "".join(lines)
 
     # Key missing inside the section — splice it just before section_end.
     insert_at = section_end
@@ -901,22 +907,27 @@ def _default_selftest_probe(
             reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
         ) from exc
 
+    # The probe emits ``NOMODULE:<name>`` and ``sys.exit(2)`` when
+    # ``find_spec`` returns None for one of the safety-critical
+    # modules. Surface that specific diagnostic BEFORE the generic
+    # non-zero-exit branch so the user sees the offending module
+    # name rather than a bare ``exited 2; stderr: ''`` message
+    # (regression: review-20 P2). All other non-zero exits fall
+    # through to the generic branch.
+    their_hash = probe_result.stdout.strip()
+    if their_hash.startswith("NOMODULE"):
+        raise CodexHookNotActiveError(
+            f"Hook interpreter {hook_interpreter!r} cannot import "
+            f"a hook-dependency module ({their_hash}) — Codex would "
+            "crash when invoking the hook.",
+            reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+        )
+
     if probe_result.returncode != 0:
         raise CodexHookNotActiveError(
             f"Hook interpreter {hook_interpreter!r} exited "
             f"{probe_result.returncode} during module-identity probe; "
             f"stderr: {probe_result.stderr[:512]!r}.",
-            reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
-        )
-
-    their_hash = probe_result.stdout.strip()
-    if their_hash.startswith("NOMODULE"):
-        # Probe emits ``NOMODULE:<module-name>`` when ``find_spec``
-        # returns None for one of the safety-critical modules.
-        raise CodexHookNotActiveError(
-            f"Hook interpreter {hook_interpreter!r} cannot import "
-            f"a hook-dependency module ({their_hash}) — Codex would "
-            "crash when invoking the hook.",
             reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
         )
     if their_hash != our_hash:
