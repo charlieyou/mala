@@ -3649,3 +3649,78 @@ class TestDiffHeaderSpaceTimestamp:
         # The deny reason must reference the real path, not the
         # date-suffixed string.
         assert "2026-05-08" not in deny_reason(result)
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 5, post-restart)
+# ---------------------------------------------------------------------------
+
+
+class TestEnvSplitString:
+    """Regression: ``env -S 'touch unowned'`` runs the inner command.
+
+    Before the fix, the ``-S`` flag was treated as a regular value-
+    consuming flag — the value was discarded and the heuristic
+    continued with whatever followed. ``env -S 'touch unowned.py'``
+    has nothing after the value, so the wrapper-strip yielded an
+    empty token list and the inner ``touch`` was never seen. The
+    same shape via ``--split-string=`` was also bypassed.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            # Short form, separate-token value.
+            "env -S 'touch {target}'",
+            # Long form, attached value.
+            "env --split-string='touch {target}'",
+            # Long form, separate value.
+            "env --split-string 'touch {target}'",
+            # Mixed with other flags.
+            "env -i -S 'touch {target}'",
+            "env --ignore-environment -S 'touch {target}'",
+            # Followed by a normal cmd (still must extract -S body).
+            "env -S 'touch {target}' /bin/true",
+            # Nested wrapper (sudo wrapping env -S).
+            "sudo env -S 'touch {target}'",
+        ],
+    )
+    def test_env_split_string_inner_write_denied(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+    def test_env_split_string_locked_allows(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "out.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"env -S 'touch {target}'"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+    def test_env_split_string_with_redirect(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # The body itself contains a redirect; it must be detected.
+        target = repo / "out.txt"
+        command = f"env -S 'echo hi > {target}'"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result)
+        assert "out.txt" in deny_reason(result)
+
+    def test_env_without_s_unaffected(self, env: dict[str, str], repo: Path) -> None:
+        # Sanity: ``env touch f`` (no -S) still works via the regular
+        # wrapper unwrap path.
+        target = repo / "out.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"env touch {target}"
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result

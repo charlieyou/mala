@@ -505,6 +505,21 @@ _WRAPPER_OUTPUT_LONG_FLAGS: dict[str, frozenset[str]] = {
     "time": frozenset({"--output"}),
 }
 
+# Per-wrapper short flag letters whose VALUE is a shell command body.
+# ``env -S 'touch unowned'`` (split-string mode, coreutils 8.30+) parses
+# the value as argv and runs it; ignoring the value would silently
+# allow an inner ``touch unowned`` to bypass the gate. The captured
+# body is processed recursively via ``_extract_shell_write_paths`` so
+# its write targets are gated like any other segment.
+_WRAPPER_SHELL_BODY_LETTERS: dict[str, frozenset[str]] = {
+    "env": frozenset({"S"}),
+}
+
+# Per-wrapper long-form flags whose value is a shell command body.
+_WRAPPER_SHELL_BODY_LONG_FLAGS: dict[str, frozenset[str]] = {
+    "env": frozenset({"--split-string"}),
+}
+
 
 def _command_basename_str(token: str) -> str:
     """Return the basename of a single token (``/usr/bin/env`` → ``env``)."""
@@ -513,10 +528,11 @@ def _command_basename_str(token: str) -> str:
 
 def _skip_wrapper_flag_args(
     tokens: list[str], wrapper: str
-) -> tuple[list[str], bool, list[str]]:
+) -> tuple[list[str], bool, list[str], list[str]]:
     """Skip leading flag tokens (and their values) for ``wrapper``.
 
-    Returns ``(remaining_tokens, cwd_changed, wrapper_write_targets)``:
+    Returns ``(remaining_tokens, cwd_changed, wrapper_write_targets,
+    wrapper_shell_bodies)``:
 
     - ``cwd_changed`` is True if any consumed flag was a cwd-changing
       wrapper option (``env -C dir``, ``sudo --chdir=dir``).
@@ -524,6 +540,12 @@ def _skip_wrapper_flag_args(
       writes via flag values (``time -o /tmp/log cmd`` writes
       ``/tmp/log``); the caller adds these to the segment write list
       so they are lock-checked alongside the inner command's writes.
+    - ``wrapper_shell_bodies`` collects shell-command strings supplied
+      via wrapper flag values (``env -S 'touch unowned'`` /
+      ``env --split-string='touch unowned'``); the caller processes
+      each body via ``_extract_shell_write_paths`` so its inner write
+      targets are gated. Without this capture, ``-S``'s value would
+      be silently consumed and the inner ``touch`` would slip past.
 
     Per-wrapper short and long value-flag tables ensure
     ``sudo -u root cmd`` consumes ``root`` as the value of ``-u`` and
@@ -536,8 +558,11 @@ def _skip_wrapper_flag_args(
     cwd_long_flags = _WRAPPER_CWD_CHANGE_LONG_FLAGS.get(wrapper, frozenset())
     output_letters = _WRAPPER_OUTPUT_LETTERS.get(wrapper, frozenset())
     output_long_flags = _WRAPPER_OUTPUT_LONG_FLAGS.get(wrapper, frozenset())
+    body_letters = _WRAPPER_SHELL_BODY_LETTERS.get(wrapper, frozenset())
+    body_long_flags = _WRAPPER_SHELL_BODY_LONG_FLAGS.get(wrapper, frozenset())
     cwd_changed = False
     wrapper_writes: list[str] = []
+    wrapper_bodies: list[str] = []
     i = 0
     while i < len(tokens):
         tok = tokens[i]
@@ -554,6 +579,8 @@ def _skip_wrapper_flag_args(
                 cwd_changed = True
             if name in output_long_flags and value:
                 wrapper_writes.append(value)
+            if name in body_long_flags and value:
+                wrapper_bodies.append(value)
             i += 1
             continue
         # Long form. Only consume the next token when this flag is in
@@ -563,6 +590,8 @@ def _skip_wrapper_flag_args(
                 cwd_changed = True
             if tok in output_long_flags and i + 1 < len(tokens):
                 wrapper_writes.append(tokens[i + 1])
+            if tok in body_long_flags and i + 1 < len(tokens):
+                wrapper_bodies.append(tokens[i + 1])
             if tok in long_value_flags and i + 1 < len(tokens):
                 i += 2
                 continue
@@ -583,6 +612,15 @@ def _skip_wrapper_flag_args(
                     attached = body[j + 1 :]
                     if attached:
                         wrapper_writes.append(attached)
+            if ch in body_letters:
+                # Capture the value as a shell-command body to process.
+                if j == len(body) - 1:
+                    if i + 1 < len(tokens):
+                        wrapper_bodies.append(tokens[i + 1])
+                else:
+                    attached = body[j + 1 :]
+                    if attached:
+                        wrapper_bodies.append(attached)
             if ch in value_letters:
                 if j == len(body) - 1:
                     # Bundle ends with value-letter: next token is
@@ -593,18 +631,21 @@ def _skip_wrapper_flag_args(
                 # next-token consumption.
                 break
         i += 2 if consumed_value else 1
-    return tokens[i:], cwd_changed, wrapper_writes
+    return tokens[i:], cwd_changed, wrapper_writes, wrapper_bodies
 
 
 def _unwrap_execution_prefix(
     tokens: list[str],
-) -> tuple[list[str], bool, list[str]]:
+) -> tuple[list[str], bool, list[str], list[str]]:
     """Strip leading execution-wrapper prefixes recursively.
 
-    Returns ``(stripped_tokens, cwd_changed, wrapper_writes)``:
-    ``cwd_changed`` is True if any wrapper option changed cwd
-    (``env -C``, ``sudo --chdir``); ``wrapper_writes`` collects any
-    write targets supplied via wrapper flags (``time -o file``).
+    Returns ``(stripped_tokens, cwd_changed, wrapper_writes,
+    wrapper_shell_bodies)``: ``cwd_changed`` is True if any wrapper
+    option changed cwd (``env -C``, ``sudo --chdir``);
+    ``wrapper_writes`` collects write targets supplied via wrapper
+    flags (``time -o file``); ``wrapper_shell_bodies`` collects shell
+    command strings supplied via wrapper flags (``env -S 'cmd'``)
+    that the caller processes recursively.
 
     Walks past ``env``/``sudo``/``exec``/``command``/``nohup``/``timeout``/
     etc., their flag args, and (for ``env``-style wrappers) leading
@@ -613,16 +654,20 @@ def _unwrap_execution_prefix(
     """
     cwd_changed = False
     wrapper_writes: list[str] = []
+    wrapper_bodies: list[str] = []
     iterations = 0
     while tokens and iterations < 10:
         cmd = _command_basename_str(tokens[0])
         if cmd not in _EXECUTION_PREFIXES:
             break
         new_tokens = tokens[1:]
-        new_tokens, sub_cwd, sub_writes = _skip_wrapper_flag_args(new_tokens, cmd)
+        new_tokens, sub_cwd, sub_writes, sub_bodies = _skip_wrapper_flag_args(
+            new_tokens, cmd
+        )
         if sub_cwd:
             cwd_changed = True
         wrapper_writes.extend(sub_writes)
+        wrapper_bodies.extend(sub_bodies)
         # Wrappers that allow ``KEY=VALUE`` before the inner cmd.
         if cmd in {"env", "sudo", "doas"}:
             new_tokens = _strip_env_assignments(new_tokens)
@@ -649,7 +694,7 @@ def _unwrap_execution_prefix(
             break
         tokens = new_tokens
         iterations += 1
-    return tokens, cwd_changed, wrapper_writes
+    return tokens, cwd_changed, wrapper_writes, wrapper_bodies
 
 
 # Builtins / commands that change the shell's effective working directory
@@ -2064,7 +2109,7 @@ def _command_contains_cd(cleaned: str) -> bool:
     for seg in _split_segments(tokens):
         stripped = _strip_env_assignments(seg)
         stripped = _strip_leading_reserved(stripped)
-        stripped, wrapper_cwd_changed, _ = _unwrap_execution_prefix(stripped)
+        stripped, wrapper_cwd_changed, _, _ = _unwrap_execution_prefix(stripped)
         if wrapper_cwd_changed:
             return True
         if _is_cd_segment(stripped):
@@ -2135,7 +2180,9 @@ def _extract_shell_write_paths(
         # ``VAR=val`` ends up as the segment's command word and no
         # extractor matches.
         segment = _strip_segment_prefix(segment_raw)
-        segment, wrapper_cwd_changed, wrapper_writes = _unwrap_execution_prefix(segment)
+        segment, wrapper_cwd_changed, wrapper_writes, wrapper_bodies = (
+            _unwrap_execution_prefix(segment)
+        )
         if wrapper_cwd_changed:
             # ``env -C dir cmd`` / ``sudo --chdir dir cmd``: the wrapper
             # itself changed cwd before invoking the inner command, so
@@ -2145,6 +2192,12 @@ def _extract_shell_write_paths(
         seg_targets: list[str] = list(_extract_redirection_targets(segment))
         # Wrapper-side writes (``time -o file cmd`` writes ``file``).
         seg_targets.extend(wrapper_writes)
+        # Wrapper-supplied shell bodies (``env -S 'touch f'``): each is
+        # processed recursively and its inner write targets join the
+        # segment's gate. Pass through ``cd_seen`` so the body's
+        # relative writes respect any prior ``cd``.
+        for body in wrapper_bodies:
+            seg_targets.extend(_extract_shell_write_paths(body, outer_cd_seen=cd_seen))
         if not segment:
             if seg_targets:
                 _append_targets_with_cd(out, seg_targets, cd_seen)
