@@ -707,7 +707,7 @@ Each phase entry: **Goals / Files-touched / Acceptance Criteria / Risks / Test l
 
 **AC.**
 - AC #1: `mala run --coder codex` reaches the `CodexAgentProvider` branch (verified by smoke test that asserts the stub's "not yet implemented" error).
-- AC #3: precedence is CLI > env > yaml > default for both `coder` and `coder_options.codex.*`.
+- AC #3: precedence is CLI > env > yaml > default for `coder` and for the scalar `coder_options.codex.{model, effort, approval_policy, sandbox}` fields. `coder_options.codex.mcp_servers` is structural map data and is YAML-only; Phase G3 owns its merge with the bundled `mala-locking` server, so it is intentionally excluded from CLI/env precedence.
 - AC #4: `coder_options.codex.{model, effort, approval_policy, sandbox}` configurable; defaults `gpt-5.5`, `None`, `never`, `danger-full-access`.
 - AC #13: invalid `coder_options.codex.*` values are rejected with the supported list.
 
