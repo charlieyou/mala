@@ -528,7 +528,7 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     assert (plugin_dir / ".mcp.json").is_file()
 
     config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
-    # Codex requires ALL FOUR preconditions for the bundled hook to fire:
+    # Codex requires ALL FIVE preconditions for the bundled hook to fire:
     # (a) ``[features] plugins = true`` per ``codex-rs/features/src/lib.rs:951``
     #     (Feature::Plugins defaults to True but a user can opt out with
     #     ``plugins = false``; ``plugins_for_config_with_force_reload``
@@ -536,13 +536,16 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     # (b) ``[features] plugin_hooks = true`` per ``codex-rs/features/src/lib.rs:957``
     #     (Feature::PluginHooks ships default_enabled=false; without it
     #     ``catalog_processor`` skips loading plugin-bundled hooks);
-    # (c) ``[plugins."<key>"] enabled = true`` per
+    # (c) ``[features] hooks = true`` so Codex's global hook execution
+    #     gate cannot leave the loaded/trusted safety hook dormant;
+    # (d) ``[plugins."<key>"] enabled = true`` per
     #     ``codex-rs/core-plugins/src/manager.rs::configured_plugins_from_stack``;
-    # (d) ``[hooks.state."<key>"]`` with matching trusted_hash per
+    # (e) ``[hooks.state."<key>"]`` with matching trusted_hash per
     #     ``codex-rs/hooks/src/engine/discovery.rs::hook_trust_status``.
     assert "[features]" in config_toml
     assert "plugins = true" in config_toml
     assert "plugin_hooks = true" in config_toml
+    assert "hooks = true" in config_toml
     assert '[plugins."mala-safety@local"]' in config_toml
     assert "enabled = true" in config_toml
     expected_key = (
@@ -590,10 +593,11 @@ def test_install_prerequisites_preserves_existing_features_block(
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
     config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
-    # All three keys must coexist inside [features] after the write.
+    # All four keys must coexist inside [features] after the write.
     assert "plugins = true" in config_toml
     assert "remote_plugin = false" in config_toml
     assert "plugin_hooks = true" in config_toml
+    assert "hooks = true" in config_toml
 
 
 @pytest.mark.unit
@@ -655,7 +659,41 @@ def test_install_prerequisites_overwrites_user_plugins_opt_out(
     config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
     assert "plugins = true" in config_toml
     assert "plugins = false" not in config_toml
-    # plugin_hooks must also have been added inside the same block.
+    # The other hook-loading gates must also have been added inside the
+    # same block.
+    assert "plugin_hooks = true" in config_toml
+    assert "hooks = true" in config_toml
+
+
+@pytest.mark.unit
+def test_install_prerequisites_overwrites_disabled_global_hooks(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """``hooks = false`` must be rewritten to ``hooks = true``.
+
+    Codex gates hook execution separately from plugin discovery and
+    plugin-bundled hook loading. If a user opted out globally, the
+    safety hook can be loaded/trusted but never executed.
+    """
+    codex_home, bin_dir = fake_codex_env
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+    (codex_home / "config.toml").write_text(
+        "[features]\nhooks = false\nplugins = false\nplugin_hooks = false\n",
+        encoding="utf-8",
+    )
+
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
+    assert "hooks = true" in config_toml
+    assert "hooks = false" not in config_toml
+    assert "plugins = true" in config_toml
     assert "plugin_hooks = true" in config_toml
 
 
