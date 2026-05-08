@@ -4973,6 +4973,13 @@ class TestPerlBareOpenWrite:
             "open(my $fh, '>', '{target}'); print $fh 'x'",
             # 3-arg bareword, append mode.
             "open my $fh, '>>', '{target}'; print $fh 'x'",
+            # 3-arg parens with whitespace inside the mode literal —
+            # Perl strips it so this opens for write. The literal
+            # extractor must match so the path is denied via the
+            # standard unowned-path check rather than the hint.
+            "open(my $fh, ' > ', '{target}'); print $fh 'x'",
+            # 3-arg bareword, append mode with surrounding whitespace.
+            "open my $fh, ' >> ', '{target}'; print $fh 'x'",
         ],
     )
     def test_perl_three_arg_open_extracts_literal(
@@ -5003,11 +5010,6 @@ class TestPerlBareOpenWrite:
             "open my $fh, q(>), q(/tmp/unowned.txt); print $fh q(x)",
             # ``qq(>)`` with double-quote semantics: hint must trigger.
             "open my $fh, qq(>), qq(/tmp/unowned.txt); print $fh qq(x)",
-            # 3-arg form with whitespace inside the mode literal.
-            # Perl strips leading whitespace from the mode, so this
-            # opens for write — the hint must trigger even though
-            # the literal extractor's strict mode pattern does not.
-            "open(my $fh, ' > ', '/tmp/unowned.txt'); print $fh 'x'",
             # 2-arg form with whitespace before the ``>`` marker.
             "open FH, ' >/tmp/unowned.txt'; print FH 'x'",
         ],
@@ -5049,6 +5051,28 @@ class TestPerlBareOpenWrite:
     ) -> None:
         command = f'perl -e "{body}"'
         result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+    @pytest.mark.parametrize(
+        "mode",
+        [" > ", " >> ", " >  ", "  >> "],
+    )
+    def test_perl_space_padded_mode_extracts_allowed_path(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        mode: str,
+    ) -> None:
+        # Perl strips whitespace from the mode string, so `' > '` is a
+        # write mode. The literal extractor must recognise the path
+        # so a write to a locked/allowed file is permitted; otherwise
+        # the call falls through to the hint and is incorrectly denied
+        # as an unresolved write.
+        target = repo / "owned.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        body = f"open(my $fh, '{mode}', '{target}'); print $fh 'x'"
+        command = f'perl -e "{body}"'
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
         assert is_allow(result), result
 
 

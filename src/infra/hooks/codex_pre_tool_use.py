@@ -1848,9 +1848,17 @@ _RUBY_WRITE_RE = re.compile(
 # modern Perl and the previous regex required ``open(`` so a
 # bareword call bypassed both the literal extractor and the
 # (substring) hint check.
+#
+# ``\s*`` inside the mode quotes mirrors the hint regex's
+# whitespace tolerance: Perl strips leading/trailing whitespace
+# from the mode string, so ``open(my $fh, ' > ', '/path')`` opens
+# for write. Without the inner ``\s*`` the literal extractor
+# missed space-padded modes and an agent legitimately writing to
+# an *allowed* file fell through to the hint and was incorrectly
+# denied as an unresolved write.
 _PERL_OPEN_WRITE_RE = re.compile(
     r"""\bopen\b\s*\(?\s*[^,]+?,\s*"""  # open + optional ( + filehandle + ,
-    r"""['"][>]+['"]\s*,\s*"""  # mode literal containing `>` only
+    r"""['"]\s*[>]+\s*['"]\s*,\s*"""  # mode literal containing `>` only
     r"""(['"])([^'"]+)\1"""  # path literal
 )
 # Hint regex: ``open`` call whose *mode argument* (the token after the
