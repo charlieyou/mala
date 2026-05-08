@@ -36,9 +36,12 @@ Mapping table — implements plan L749-L762 verbatim:
   * ``turn/completed`` → :class:`AgentResultEvent`
     (``subtype="completed"``); ``is_error`` derives from
     :class:`TurnStatus` (D6).
-  * ``error`` → :class:`AgentResultEvent`
-    (``subtype="error"``, ``is_error=True``) so a mid-turn provider
-    error surfaces as a terminal failure rather than an idle hang (D7).
+  * ``error`` → :class:`AgentResultEvent` (``is_error=True``) with
+    ``subtype`` classified via :func:`_classify_codex_error` as one of
+    ``"error_auth"`` / ``"error_rate_limit"`` / ``"error_overload"``,
+    falling back to ``"error"`` when no signal matches. The mid-turn
+    provider error surfaces as a terminal failure (D7) rather than an
+    idle hang.
 
 Unknown notification methods are silently ignored — the SDK is still
 churning and a future addition must not crash a running turn.
@@ -69,6 +72,46 @@ _TERMINAL_MCP_STATUSES = frozenset({"completed", "failed"})
 """``McpToolCallStatus`` values that close an MCP tool-use."""
 
 
+# D7 — Codex error classification (plan L762).
+#
+# ``CodexErrorInfoValue`` is a string enum on the SDK side
+# (``codex_app_server/generated/v2_all.py:301``); structured variants
+# (``HttpConnectionFailedCodexErrorInfo`` and friends, same module
+# L321-L380) carry an ``http_status_code``. We classify both shapes plus a
+# substring fallback on ``error.message`` so a payload that omits the
+# structured info still surfaces a useful subtype to the lifecycle
+# (``MessageStreamProcessor._handle_result_event`` keys off ``error_*``).
+
+_AUTH_ENUM_VALUES = frozenset({"unauthorized"})
+_RATE_LIMIT_ENUM_VALUES = frozenset({"usageLimitExceeded"})
+_OVERLOAD_ENUM_VALUES = frozenset({"serverOverloaded"})
+
+_AUTH_HTTP_STATUSES = frozenset({401, 403})
+_RATE_LIMIT_HTTP_STATUSES = frozenset({429})
+_OVERLOAD_HTTP_STATUSES = frozenset({500, 502, 503, 504, 529})
+
+_AUTH_MESSAGE_MARKERS: tuple[str, ...] = (
+    "unauthorized",
+    "401",
+    "forbidden",
+    "invalid api key",
+)
+_RATE_LIMIT_MESSAGE_MARKERS: tuple[str, ...] = (
+    "rate limit",
+    "rate-limit",
+    "ratelimit",
+    "usage limit",
+    "429",
+)
+_OVERLOAD_MESSAGE_MARKERS: tuple[str, ...] = (
+    "overloaded",
+    "server busy",
+    "service unavailable",
+    "503",
+    "529",
+)
+
+
 def _enum_value(obj: object) -> str | None:
     """Best-effort coerce a status enum / pydantic ``RootModel`` to its string.
 
@@ -90,6 +133,87 @@ def _enum_value(obj: object) -> str | None:
 def _unwrap_item(raw_item: object) -> object:
     """Dereference ``ThreadItem.root`` if present (pydantic ``RootModel``)."""
     return getattr(raw_item, "root", raw_item)
+
+
+def _extract_http_status(obj: object, depth: int = 3) -> int | None:
+    """Walk a ``CodexErrorInfo`` variant looking for ``http_status_code``.
+
+    The structured variants (``HttpConnectionFailedCodexErrorInfo`` and
+    friends, ``codex_app_server/generated/v2_all.py:321-380``) nest the
+    status one level deep under variant-specific attribute names. Walking
+    ``__dict__`` (or ``dict`` items) keeps us robust to SDK schema drift
+    without binding to each variant's exact attribute name. The depth
+    bound prevents pathological cycles in test fakes.
+    """
+    if obj is None or depth < 0:
+        return None
+    code = getattr(obj, "http_status_code", None)
+    if isinstance(code, int):
+        return code
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if key in ("http_status_code", "httpStatusCode") and isinstance(
+                value, int
+            ):
+                return value
+            found = _extract_http_status(value, depth - 1)
+            if found is not None:
+                return found
+        return None
+    inner = getattr(obj, "__dict__", None)
+    if isinstance(inner, dict):
+        for value in inner.values():
+            found = _extract_http_status(value, depth - 1)
+            if found is not None:
+                return found
+    return None
+
+
+def _classify_codex_error(error_payload: object) -> str:
+    """Return the ``AgentResultEvent.subtype`` for a Codex ``TurnError``.
+
+    Resolves auth / rate-limit / overload from (in order):
+
+      1. ``codex_error_info.root`` enum value (``CodexErrorInfoValue``).
+      2. ``http_status_code`` on a structured ``CodexErrorInfo`` variant.
+      3. Substring match on ``error.message``.
+
+    Falls back to plain ``"error"`` when no signal matches. Subtypes
+    starting with ``"error_"`` are recognised as terminal failures by
+    :meth:`MessageStreamProcessor._handle_result_event`, so any of the
+    classified values still drives the same lifecycle treatment as a
+    bare error — the classification is metadata for diagnostics and
+    retry logic, not a behavioural switch.
+    """
+    info = _unwrap_item(getattr(error_payload, "codex_error_info", None))
+    enum_value = _enum_value(info)
+    if enum_value is not None:
+        if enum_value in _AUTH_ENUM_VALUES:
+            return "error_auth"
+        if enum_value in _RATE_LIMIT_ENUM_VALUES:
+            return "error_rate_limit"
+        if enum_value in _OVERLOAD_ENUM_VALUES:
+            return "error_overload"
+
+    status = _extract_http_status(info)
+    if status is not None:
+        if status in _AUTH_HTTP_STATUSES:
+            return "error_auth"
+        if status in _RATE_LIMIT_HTTP_STATUSES:
+            return "error_rate_limit"
+        if status in _OVERLOAD_HTTP_STATUSES:
+            return "error_overload"
+
+    message = str(getattr(error_payload, "message", "") or "")
+    lowered = message.lower()
+    if any(marker in lowered for marker in _AUTH_MESSAGE_MARKERS):
+        return "error_auth"
+    if any(marker in lowered for marker in _RATE_LIMIT_MESSAGE_MARKERS):
+        return "error_rate_limit"
+    if any(marker in lowered for marker in _OVERLOAD_MESSAGE_MARKERS):
+        return "error_overload"
+
+    return "error"
 
 
 class CodexEventAdapter:
@@ -344,11 +468,12 @@ class CodexEventAdapter:
 
     def _handle_error(self, payload: object) -> list[AgentEventValue]:
         thread_id = str(getattr(payload, "thread_id", "") or "")
+        error = getattr(payload, "error", None)
         return [
             AgentResultEvent(
                 session_id=thread_id,
                 is_error=True,
-                subtype="error",
-                result=getattr(payload, "error", None),
+                subtype=_classify_codex_error(error),
+                result=error,
             )
         ]

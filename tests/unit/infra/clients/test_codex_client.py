@@ -609,7 +609,11 @@ async def test_receive_response_maps_error_notification_to_result_event(
     """``ErrorNotification`` becomes ``AgentResultEvent(is_error=True)``.
 
     Plan ``L762`` D7: classify the error as a terminal failure so the
-    lifecycle does not stall on the missing ``turn/completed``.
+    lifecycle does not stall on the missing ``turn/completed``. The
+    rate-limit-shaped message routes through the adapter's classifier
+    to ``subtype="error_rate_limit"`` (still ``"error_*"``, so
+    :meth:`MessageStreamProcessor._handle_result_event` treats it as a
+    failure).
     """
     from src.infra.clients.codex_client import CodexClient
 
@@ -640,7 +644,7 @@ async def test_receive_response_maps_error_notification_to_result_event(
     result_event = received[0]
     assert isinstance(result_event, AgentResultEvent)
     assert result_event.is_error is True
-    assert result_event.subtype == "error"
+    assert result_event.subtype == "error_rate_limit"
     assert result_event.session_id == "thr_error"
     assert result_event.result is error_payload
 

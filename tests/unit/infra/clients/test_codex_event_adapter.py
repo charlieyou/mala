@@ -562,10 +562,12 @@ def test_error_notification_surfaces_terminal_failure() -> None:
 
     Without this, ``IdleTimeoutStream`` would never see a terminal
     event for the failed turn and the orchestrator would stall on the
-    idle timeout instead of failing fast (plan ``L762``).
+    idle timeout instead of failing fast (plan ``L762``). The opaque
+    ``message="boom"`` carries no auth/rate-limit/overload signal and
+    therefore lands under the default ``"error"`` subtype.
     """
     adapter = CodexEventAdapter()
-    err_obj = SimpleNamespace(message="429 rate limited")
+    err_obj = SimpleNamespace(message="boom")
     events = adapter.to_events(
         _Notification(
             method="error",
@@ -584,6 +586,135 @@ def test_error_notification_surfaces_terminal_failure() -> None:
     assert event.subtype == "error"
     assert event.is_error is True
     assert event.result is err_obj
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("error_payload", "expected_subtype"),
+    [
+        # ``CodexErrorInfoValue`` enum-shaped payloads (the SDK delivers
+        # ``codex_error_info.root`` as the enum directly; tests model that
+        # via ``SimpleNamespace(value=...)``).
+        pytest.param(
+            SimpleNamespace(
+                message="auth failed",
+                codex_error_info=SimpleNamespace(
+                    root=SimpleNamespace(value="unauthorized")
+                ),
+            ),
+            "error_auth",
+            id="enum_unauthorized",
+        ),
+        pytest.param(
+            SimpleNamespace(
+                message="usage limit",
+                codex_error_info=SimpleNamespace(
+                    root=SimpleNamespace(value="usageLimitExceeded")
+                ),
+            ),
+            "error_rate_limit",
+            id="enum_usage_limit_exceeded",
+        ),
+        pytest.param(
+            SimpleNamespace(
+                message="server busy",
+                codex_error_info=SimpleNamespace(
+                    root=SimpleNamespace(value="serverOverloaded")
+                ),
+            ),
+            "error_overload",
+            id="enum_server_overloaded",
+        ),
+        # Structured HTTP variants (e.g. ``HttpConnectionFailedCodexErrorInfo``):
+        # ``codex_error_info.root`` is a Pydantic model whose nested field
+        # exposes ``http_status_code``.
+        pytest.param(
+            SimpleNamespace(
+                message="http error",
+                codex_error_info=SimpleNamespace(
+                    root=SimpleNamespace(
+                        http_connection_failed=SimpleNamespace(http_status_code=401)
+                    )
+                ),
+            ),
+            "error_auth",
+            id="http_status_401",
+        ),
+        pytest.param(
+            SimpleNamespace(
+                message="too many requests",
+                codex_error_info=SimpleNamespace(
+                    root=SimpleNamespace(
+                        response_too_many_failed_attempts=SimpleNamespace(
+                            http_status_code=429
+                        )
+                    )
+                ),
+            ),
+            "error_rate_limit",
+            id="http_status_429",
+        ),
+        pytest.param(
+            SimpleNamespace(
+                message="upstream issue",
+                codex_error_info=SimpleNamespace(
+                    root=SimpleNamespace(
+                        response_stream_disconnected=SimpleNamespace(
+                            http_status_code=503
+                        )
+                    )
+                ),
+            ),
+            "error_overload",
+            id="http_status_503",
+        ),
+        # Fallback substring matching on ``error.message`` only.
+        pytest.param(
+            SimpleNamespace(message="HTTP 401 Unauthorized"),
+            "error_auth",
+            id="message_401",
+        ),
+        pytest.param(
+            SimpleNamespace(message="HTTP 429 rate limited"),
+            "error_rate_limit",
+            id="message_429",
+        ),
+        pytest.param(
+            SimpleNamespace(message="Server overloaded"),
+            "error_overload",
+            id="message_overloaded",
+        ),
+    ],
+)
+def test_error_notification_classifies_subtype(
+    error_payload: object, expected_subtype: str
+) -> None:
+    """D7 classification — auth / rate-limit / overload signals drive ``subtype``.
+
+    All classified subtypes start with ``"error_"`` so
+    :meth:`MessageStreamProcessor._handle_result_event` still treats
+    them as terminal failures; the specific subtype is metadata for
+    diagnostics and retry logic.
+    """
+    adapter = CodexEventAdapter()
+    events = adapter.to_events(
+        _Notification(
+            method="error",
+            payload=SimpleNamespace(
+                error=error_payload,
+                thread_id="thr_err",
+                turn_id="turn_1",
+                will_retry=False,
+            ),
+        )
+    )
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, AgentResultEvent)
+    assert event.is_error is True
+    assert event.subtype == expected_subtype
+    assert event.session_id == "thr_err"
+    assert event.result is error_payload
 
 
 @pytest.mark.unit
