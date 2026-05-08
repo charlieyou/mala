@@ -499,6 +499,10 @@ async def test_receive_response_maps_notifications_to_agent_events(
     assert result_event.is_error is False
     assert result_event.subtype == "completed"
     assert result_event.kind == "result"
+    # Plan L761 D6: ``result`` carries the ``TurnStatus`` value, not the
+    # opaque ``Turn`` object — otherwise ``lifecycle_ctx.final_result``
+    # ends up holding a Turn repr in retry author context.
+    assert result_event.result == "completed"
 
 
 @pytest.mark.unit
@@ -543,6 +547,7 @@ async def test_receive_response_maps_failed_turn_to_error_result(
     assert isinstance(result_event, AgentResultEvent)
     assert result_event.is_error is True
     assert result_event.subtype == "completed"
+    assert result_event.result == "failed"
 
 
 @pytest.mark.unit

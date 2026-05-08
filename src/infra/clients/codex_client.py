@@ -85,12 +85,17 @@ def _notification_to_events(notification: object) -> list[AgentEventValue]:
         if status_value is None and status_obj is not None:
             status_value = str(status_obj)
         is_error = bool(status_value) and status_value != "completed"
+        # Plan L761 D6 specifies ``result=TurnStatus`` (the status string).
+        # ``MessageStreamProcessor._handle_result_event`` copies this into
+        # ``lifecycle_ctx.final_result`` and exposes it as
+        # ``AgentSessionOutput.summary`` for retry author context, so the
+        # whole ``Turn`` object would surface as an opaque repr.
         return [
             AgentResultEvent(
                 session_id=thread_id,
                 is_error=is_error,
                 subtype="completed",
-                result=turn_obj,
+                result=status_value or "",
             )
         ]
 
