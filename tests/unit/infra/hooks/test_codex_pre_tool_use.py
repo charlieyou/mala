@@ -2621,9 +2621,6 @@ class TestTimeWrapper:
             # unwrapping (basename match against _EXECUTION_PREFIXES).
             "/usr/bin/time touch {target}",
             "/usr/bin/time -p touch {target}",
-            # ``time -o file -a cmd`` consumes the output file path.
-            "time -o /tmp/timing.log touch {target}",
-            "time --output=/tmp/timing.log touch {target}",
         ],
     )
     def test_time_wrapper_inner_write_denied(
@@ -2637,6 +2634,31 @@ class TestTimeWrapper:
         result = decide(make_payload("bash", {"command": command}))
         assert is_deny(result), f"command: {command!r} → {result}"
         assert "unowned.py" in deny_reason(result)
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "time -o /tmp/timing.log touch {target}",
+            "time --output=/tmp/timing.log touch {target}",
+            "time --output /tmp/timing.log touch {target}",
+        ],
+    )
+    def test_time_output_flag_target_lock_checked(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        # ``time -o /path/log cmd`` writes timing data to ``/path/log``.
+        # The wrapper output AND the inner command's writes must both
+        # be lock-checked. With both unlocked, the deny may reference
+        # either path; both are correct outcomes.
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        reason = deny_reason(result)
+        assert "unowned.py" in reason or "/tmp/timing.log" in reason, reason
 
     def test_time_wrapper_inner_allowed_when_locked(
         self, env: dict[str, str], repo: Path
@@ -2858,3 +2880,297 @@ class TestUtilityLongValueFlags:
             )
         )
         assert is_allow(result), result
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 1, post-restart)
+# ---------------------------------------------------------------------------
+
+
+class TestInstallDirectoryMode:
+    """Regression: ``install -d dir1 dir2`` creates ALL listed dirs.
+
+    Before the fix, install used ``last_positional`` so ``install -d
+    unowned_dir owned_dir`` only lock-checked ``owned_dir``. An agent
+    could place a single owned dir at the end of the list to slip
+    arbitrary unowned dirs past the gate.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "install -d unowned_a unowned_b {target}",
+            "install --directory unowned_a unowned_b {target}",
+            "install --directory=755 unowned_a unowned_b {target}",
+            "install -fvd unowned_a unowned_b {target}",
+        ],
+    )
+    def test_install_d_lock_checks_all_dirs(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        # Lock only the trailing dir; install -d would create the
+        # leading unowned dirs too. Must deny.
+        target = repo / "owned_dir"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+
+    def test_install_d_all_locked_allowed(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        a = repo / "a"
+        b = repo / "b"
+        for p in (a, b):
+            assert try_lock(str(p), "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("bash", {"command": f"install -d {a} {b}"}))
+        assert is_allow(result), result
+
+    def test_install_without_d_still_last_positional(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Sanity: ``install /tmp/src dest`` (no -d) is the file-copy
+        # mode where dest is the only write target.
+        dest = repo / "dest"
+        assert try_lock(str(dest), "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("bash", {"command": f"install /tmp/src {dest}"}))
+        assert is_allow(result), result
+
+
+class TestLnSingleArgForm:
+    """Regression: ``ln -s /path/source`` creates ``./source`` link.
+
+    Before the fix, ``ln`` used ``last_positional`` and extracted the
+    SOURCE path. An agent owning the source could create a link in
+    cwd named after the basename without any lock check.
+    """
+
+    def test_ln_single_arg_creates_link_in_cwd(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # The link is created at ./source.txt (resolved against cwd).
+        # Lock the cwd-resolved path to prove the heuristic resolves
+        # correctly.
+        target = repo / "source.txt"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = "ln -s /elsewhere/source.txt"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_allow(result), result
+
+    def test_ln_single_arg_unlocked_link_denies(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # No lock on ./source.txt → must deny. Locking the SOURCE
+        # path (/elsewhere/...) would have allowed before the fix.
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": "ln -s /elsewhere/source.txt"},
+                cwd=repo,
+            )
+        )
+        assert is_deny(result)
+        assert "source.txt" in deny_reason(result)
+
+    def test_ln_two_arg_form_still_uses_dest(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Sanity: ``ln src dest`` still uses last_positional → dest.
+        dest = repo / "dest.txt"
+        assert try_lock(str(dest), "agent-me", repo_namespace=str(repo))
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": f"ln /tmp/src {dest}"},
+            )
+        )
+        assert is_allow(result), result
+
+
+class TestTimeOutputFlagWrite:
+    """Regression: ``time -o file cmd`` writes timing output to ``file``.
+
+    Before the fix, ``time -o file`` consumed both flag tokens
+    silently. The output file is a real write surface that must be
+    lock-checked alongside the inner command's writes.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "time -o {target} ls",
+            "time --output={target} ls",
+            "time --output {target} ls",
+            "time -p -o {target} ls",
+        ],
+    )
+    def test_time_output_unlocked_denies(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "timing.log"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "timing.log" in deny_reason(result)
+
+    def test_time_output_locked_inner_readonly_allows(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "timing.log"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        result = decide(make_payload("bash", {"command": f"time -o {target} ls"}))
+        assert is_allow(result), result
+
+
+class TestSudoChdirOption:
+    """Regression: ``sudo --chdir dir`` and ``sudo -D dir`` change cwd.
+
+    Before the fix, sudo's chdir flag was tracked in the value-flag
+    table (so the value got consumed) but NOT in the cwd-change
+    tables, so the inner command's relative writes resolved against
+    the original payload cwd — letting an agent holding the parent-
+    level lock slip past while bash actually wrote the subdirectory
+    file.
+    """
+
+    def test_sudo_long_chdir_invalidates_relative(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        sub = repo / "pkg"
+        sub.mkdir()
+        assert try_lock(
+            str(repo / "generated.py"), "agent-me", repo_namespace=str(repo)
+        )
+        command = "sudo --chdir pkg touch generated.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+    def test_sudo_short_chdir_invalidates_relative(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        sub = repo / "pkg"
+        sub.mkdir()
+        assert try_lock(
+            str(repo / "generated.py"), "agent-me", repo_namespace=str(repo)
+        )
+        command = "sudo -D pkg touch generated.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+    def test_sudo_long_chdir_eq_invalidates_relative(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        sub = repo / "pkg"
+        sub.mkdir()
+        assert try_lock(
+            str(repo / "generated.py"), "agent-me", repo_namespace=str(repo)
+        )
+        command = "sudo --chdir=pkg touch generated.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+
+class TestInplaceDashDash:
+    """Regression: ``perl -i -e '...' -- -owned.py`` writes ``-owned.py``.
+
+    Before the fix, the in-place extractors skipped every dash-prefixed
+    token as a flag. After ``--``, dash-prefixed tokens are operands —
+    bash writes to ``-owned.py`` but the heuristic emitted no targets.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "sed -i s/a/b/ -- {target}",
+            "perl -i -e 's/a/b/' -- {target}",
+            "awk -i inplace -- '{{print}}' {target}",
+        ],
+    )
+    def test_inplace_dashdash_operand_denied(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "-owned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "-owned.py" in deny_reason(result)
+
+
+class TestEnvAssignmentAfterReservedWord:
+    """Regression: ``then VAR=val touch f`` strips both prefix layers.
+
+    Before the fix, env-assignments were stripped BEFORE reserved
+    words. ``if true; then VAR=val touch f; fi`` produced a segment
+    ``['then', 'VAR=val', 'touch', 'f']`` whose head was ``then`` (so
+    env-strip was a no-op). After reserved-strip removed ``then``,
+    ``VAR=val`` was at the head but never re-stripped. The extractor
+    saw ``VAR=val`` as the cmd basename and emitted no targets.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "if true; then VAR=val touch {target}; fi",
+            "while false; do FOO=bar touch {target}; done",
+            "! VAR=val touch {target}",
+            "for x in 1; do VAR=val touch {target}; done",
+        ],
+    )
+    def test_reserved_then_env_assignment_inner_denied(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        target = repo / "unowned.py"
+        command = command_template.format(target=target)
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_deny(result), f"command: {command!r} → {result}"
+        assert "unowned.py" in deny_reason(result)
+
+
+class TestBuiltinCdAndPushd:
+    """Regression: ``builtin cd`` / ``pushd`` / ``popd`` change cwd.
+
+    Before the fix, only literal ``cd`` was recognised. Bash also
+    supports ``builtin cd dir`` (explicit builtin invocation) and
+    ``pushd dir`` / ``popd`` (dir-stack manipulation). All three
+    change the shell cwd; their relative writes inherit the change.
+    """
+
+    @pytest.mark.parametrize(
+        "command_template",
+        [
+            "pushd pkg && touch generated.py",
+            "pushd /elsewhere && touch generated.py",
+            "builtin cd pkg && touch generated.py",
+            "builtin pushd pkg && touch generated.py",
+            # popd also changes cwd (pops the stack).
+            "popd && touch generated.py",
+        ],
+    )
+    def test_builtin_cd_invalidates_relative(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        command_template: str,
+    ) -> None:
+        # Lock the cwd-level path; if the heuristic ignored the cd,
+        # it would resolve against payload cwd and allow.
+        sub = repo / "pkg"
+        sub.mkdir(exist_ok=True)
+        assert try_lock(
+            str(repo / "generated.py"), "agent-me", repo_namespace=str(repo)
+        )
+        command = command_template
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), f"command: {command!r} → {result}"

@@ -424,15 +424,31 @@ _WRAPPER_VALUE_LONG_FLAGS: dict[str, frozenset[str]] = {
 
 # Per-wrapper short flag letters that change the effective working
 # directory. ``env -C dir cmd`` (coreutils 8.32+) runs ``cmd`` with
-# cwd=``dir``; the heuristic must therefore treat the wrapper as a cd
-# for purposes of relative-path resolution.
+# cwd=``dir``; ``sudo -D dir cmd`` does the same on systems with
+# sudo 1.9.3+. The heuristic must therefore treat these wrappers as a
+# cd for purposes of relative-path resolution.
 _WRAPPER_CWD_CHANGE_LETTERS: dict[str, frozenset[str]] = {
     "env": frozenset({"C"}),
+    "sudo": frozenset({"D"}),
 }
 
 # Per-wrapper long-form flags that change the effective working dir.
 _WRAPPER_CWD_CHANGE_LONG_FLAGS: dict[str, frozenset[str]] = {
     "env": frozenset({"--chdir"}),
+    "sudo": frozenset({"--chdir"}),
+}
+
+# Per-wrapper short flag letters whose VALUE is itself a write target.
+# When the wrapper is unwrapped, these values are added to the segment's
+# write-target list so the lock-check covers wrapper-side writes too.
+# Example: ``time -o /tmp/timing.log cmd`` writes to ``/tmp/timing.log``.
+_WRAPPER_OUTPUT_LETTERS: dict[str, frozenset[str]] = {
+    "time": frozenset({"o"}),
+}
+
+# Per-wrapper long-form flags whose value is a write target.
+_WRAPPER_OUTPUT_LONG_FLAGS: dict[str, frozenset[str]] = {
+    "time": frozenset({"--output"}),
 }
 
 
@@ -441,29 +457,33 @@ def _command_basename_str(token: str) -> str:
     return os.path.basename(token) if token else token
 
 
-def _skip_wrapper_flag_args(tokens: list[str], wrapper: str) -> tuple[list[str], bool]:
+def _skip_wrapper_flag_args(
+    tokens: list[str], wrapper: str
+) -> tuple[list[str], bool, list[str]]:
     """Skip leading flag tokens (and their values) for ``wrapper``.
 
-    Returns ``(remaining_tokens, cwd_changed)``. ``cwd_changed`` is
-    True if any consumed flag was a cwd-changing wrapper option (e.g.
-    ``env -C dir`` or ``env --chdir=dir``); the caller propagates this
-    into ``cd_seen`` so subsequent relative writes inherit the new cwd.
+    Returns ``(remaining_tokens, cwd_changed, wrapper_write_targets)``:
+
+    - ``cwd_changed`` is True if any consumed flag was a cwd-changing
+      wrapper option (``env -C dir``, ``sudo --chdir=dir``).
+    - ``wrapper_write_targets`` collects paths the wrapper itself
+      writes via flag values (``time -o /tmp/log cmd`` writes
+      ``/tmp/log``); the caller adds these to the segment write list
+      so they are lock-checked alongside the inner command's writes.
 
     Per-wrapper short and long value-flag tables ensure
     ``sudo -u root cmd`` consumes ``root`` as the value of ``-u`` and
     ``sudo --preserve-env cmd`` does NOT consume ``cmd`` (since
     ``--preserve-env`` is boolean).
-
-    Default for unknown long flags is BOOLEAN — only flags listed in
-    ``_WRAPPER_VALUE_LONG_FLAGS`` consume the next token. The previous
-    "consume next non-flag token" heuristic was a P1 bypass: any
-    boolean long flag would swallow the inner command word.
     """
     value_letters = _WRAPPER_VALUE_LETTERS.get(wrapper, frozenset())
     long_value_flags = _WRAPPER_VALUE_LONG_FLAGS.get(wrapper, frozenset())
     cwd_letters = _WRAPPER_CWD_CHANGE_LETTERS.get(wrapper, frozenset())
     cwd_long_flags = _WRAPPER_CWD_CHANGE_LONG_FLAGS.get(wrapper, frozenset())
+    output_letters = _WRAPPER_OUTPUT_LETTERS.get(wrapper, frozenset())
+    output_long_flags = _WRAPPER_OUTPUT_LONG_FLAGS.get(wrapper, frozenset())
     cwd_changed = False
+    wrapper_writes: list[str] = []
     i = 0
     while i < len(tokens):
         tok = tokens[i]
@@ -475,9 +495,11 @@ def _skip_wrapper_flag_args(tokens: list[str], wrapper: str) -> tuple[list[str],
             break
         # Long form ``--name=value``: token includes its value.
         if tok.startswith("--") and "=" in tok:
-            name = tok.split("=", 1)[0]
+            name, value = tok.split("=", 1)
             if name in cwd_long_flags:
                 cwd_changed = True
+            if name in output_long_flags and value:
+                wrapper_writes.append(value)
             i += 1
             continue
         # Long form. Only consume the next token when this flag is in
@@ -485,6 +507,8 @@ def _skip_wrapper_flag_args(tokens: list[str], wrapper: str) -> tuple[list[str],
         if tok.startswith("--"):
             if tok in cwd_long_flags:
                 cwd_changed = True
+            if tok in output_long_flags and i + 1 < len(tokens):
+                wrapper_writes.append(tokens[i + 1])
             if tok in long_value_flags and i + 1 < len(tokens):
                 i += 2
                 continue
@@ -496,6 +520,15 @@ def _skip_wrapper_flag_args(tokens: list[str], wrapper: str) -> tuple[list[str],
         for j, ch in enumerate(body):
             if ch in cwd_letters:
                 cwd_changed = True
+            if ch in output_letters:
+                # Capture the value as a wrapper-side write target.
+                if j == len(body) - 1:
+                    if i + 1 < len(tokens):
+                        wrapper_writes.append(tokens[i + 1])
+                else:
+                    attached = body[j + 1 :]
+                    if attached:
+                        wrapper_writes.append(attached)
             if ch in value_letters:
                 if j == len(body) - 1:
                     # Bundle ends with value-letter: next token is
@@ -506,18 +539,18 @@ def _skip_wrapper_flag_args(tokens: list[str], wrapper: str) -> tuple[list[str],
                 # next-token consumption.
                 break
         i += 2 if consumed_value else 1
-    return tokens[i:], cwd_changed
+    return tokens[i:], cwd_changed, wrapper_writes
 
 
 def _unwrap_execution_prefix(
     tokens: list[str],
-) -> tuple[list[str], bool]:
+) -> tuple[list[str], bool, list[str]]:
     """Strip leading execution-wrapper prefixes recursively.
 
-    Returns ``(stripped_tokens, cwd_changed)``. ``cwd_changed`` is True
-    when any wrapper option encountered along the way changed the
-    effective cwd (e.g. ``env -C dir cmd``); callers OR this into
-    ``cd_seen`` so following relative writes are flagged unresolved.
+    Returns ``(stripped_tokens, cwd_changed, wrapper_writes)``:
+    ``cwd_changed`` is True if any wrapper option changed cwd
+    (``env -C``, ``sudo --chdir``); ``wrapper_writes`` collects any
+    write targets supplied via wrapper flags (``time -o file``).
 
     Walks past ``env``/``sudo``/``exec``/``command``/``nohup``/``timeout``/
     etc., their flag args, and (for ``env``-style wrappers) leading
@@ -525,15 +558,17 @@ def _unwrap_execution_prefix(
     command. Loops to handle nested wrappers (``sudo env touch f``).
     """
     cwd_changed = False
+    wrapper_writes: list[str] = []
     iterations = 0
     while tokens and iterations < 10:
         cmd = _command_basename_str(tokens[0])
         if cmd not in _EXECUTION_PREFIXES:
             break
         new_tokens = tokens[1:]
-        new_tokens, sub_cwd = _skip_wrapper_flag_args(new_tokens, cmd)
+        new_tokens, sub_cwd, sub_writes = _skip_wrapper_flag_args(new_tokens, cmd)
         if sub_cwd:
             cwd_changed = True
+        wrapper_writes.extend(sub_writes)
         # Wrappers that allow ``KEY=VALUE`` before the inner cmd.
         if cmd in {"env", "sudo", "doas"}:
             new_tokens = _strip_env_assignments(new_tokens)
@@ -544,7 +579,52 @@ def _unwrap_execution_prefix(
             break
         tokens = new_tokens
         iterations += 1
-    return tokens, cwd_changed
+    return tokens, cwd_changed, wrapper_writes
+
+
+# Builtins / commands that change the shell's effective working directory
+# in a way the heuristic cannot statically resolve. ``pushd``/``popd``
+# both shift cwd (push to a stack / pop from it). ``builtin cd ...``
+# explicitly invokes the cd builtin even when ``cd`` is shadowed.
+_CD_BUILTINS = frozenset({"cd", "pushd", "popd"})
+
+
+def _is_cd_segment(tokens: list[str]) -> bool:
+    """True if a segment changes cwd (``cd``/``pushd``/``popd``/``builtin cd``)."""
+    if not tokens:
+        return False
+    cmd = _command_basename(tokens)
+    if cmd in _CD_BUILTINS:
+        return True
+    # ``builtin cd <dir>`` and ``builtin pushd ...`` — first token is
+    # ``builtin``, second is the cd-family builtin.
+    if cmd == "builtin" and len(tokens) >= 2:
+        next_cmd = _command_basename_str(tokens[1])
+        if next_cmd in _CD_BUILTINS:
+            return True
+    return False
+
+
+def _strip_segment_prefix(tokens: list[str]) -> list[str]:
+    """Strip leading reserved words and env-assignments until stable.
+
+    Calling ``_strip_env_assignments`` once before ``_strip_leading_reserved``
+    misses the case where a reserved word HIDES an env assignment, e.g.
+    ``then VAR=val touch f``: ``then`` is at the head so env-strip is a
+    no-op; ``then`` is then removed by reserved-strip; but ``VAR=val``
+    is now at the head and never re-stripped. The result is a segment
+    whose "command word" is ``VAR=val``, which no extractor matches —
+    the inner ``touch`` is silently allowed. Looping until both passes
+    are no-ops handles this and any other interleaving (``! VAR=val
+    cmd``, ``time VAR=val cmd``).
+    """
+    while True:
+        before = len(tokens)
+        tokens = _strip_env_assignments(tokens)
+        tokens = _strip_leading_reserved(tokens)
+        if len(tokens) == before:
+            break
+    return tokens
 
 
 def _strip_leading_reserved(tokens: list[str]) -> list[str]:
@@ -854,9 +934,18 @@ def _extract_inplace_targets(tokens: list[str]) -> list[str]:
     positionals: list[str] = []
     skip_next = False
     has_value_flag = False
+    options_ended = False
     for tok in tokens[1:]:
         if skip_next:
             skip_next = False
+            continue
+        # ``--`` end-of-options marker: every later token is a positional
+        # file argument, even if it starts with ``-``.
+        if not options_ended and tok == "--":
+            options_ended = True
+            continue
+        if options_ended:
+            positionals.append(tok)
             continue
         if tok.startswith("--"):
             name = tok.split("=", 1)[0]
@@ -911,11 +1000,21 @@ def _extract_awk_inplace_targets(tokens: list[str]) -> list[str]:
     has_program_flag = False
     skip_next = False
     positionals: list[str] = []
+    options_ended = False
     i = 1
     while i < len(tokens):
         tok = tokens[i]
         if skip_next:
             skip_next = False
+            i += 1
+            continue
+        # ``--`` end-of-options marker: every later token is a positional.
+        if not options_ended and tok == "--":
+            options_ended = True
+            i += 1
+            continue
+        if options_ended:
+            positionals.append(tok)
             i += 1
             continue
         # ``-i inplace`` (separate tokens) — gawk's documented form.
@@ -1227,6 +1326,21 @@ def _extract_utility_targets(tokens: list[str]) -> list[str]:
     if explicit_targets:
         return explicit_targets
 
+    # ``install -d <dirs>...`` is the directory-creation mode and behaves
+    # like ``mkdir -p``: every positional is a directory to create. The
+    # default ``last_positional`` strategy would only lock-check the
+    # last dir, letting an agent slip an unowned dir past the gate by
+    # placing an owned one at the end.
+    if cmd == "install" and _install_directory_mode_flag(args):
+        return positionals
+    # ``ln target`` (single positional) creates a link in the current
+    # directory named ``./basename(target)`` — NOT to ``target``. The
+    # default ``last_positional`` strategy would lock-check the source
+    # path; an agent owning the source could create an unchecked link
+    # in cwd.
+    if cmd == "ln" and len(positionals) == 1:
+        return [os.path.basename(positionals[0])]
+
     if strategy == "last_positional":
         return positionals[-1:] if len(positionals) >= 1 else []
     if strategy == "all_positional":
@@ -1238,6 +1352,33 @@ def _extract_utility_targets(tokens: list[str]) -> list[str]:
         return positionals[1:] if len(positionals) > 1 else []
 
     return []
+
+
+def _install_directory_mode_flag(args: list[str]) -> bool:
+    """True if ``install`` args include ``-d`` / ``--directory``.
+
+    Honors the ``--`` end-of-options marker so a literal ``-d`` operand
+    after ``--`` is not misread as the flag.
+    """
+    options_ended = False
+    for tok in args:
+        if not options_ended and tok == "--":
+            options_ended = True
+            continue
+        if options_ended:
+            continue
+        if tok == "--directory":
+            return True
+        if tok.startswith("--directory="):
+            return True
+        if (
+            tok.startswith("-")
+            and not tok.startswith("--")
+            and len(tok) >= 2
+            and "d" in tok[1:]
+        ):
+            return True
+    return False
 
 
 # Pattern matcher for embedded write-open expressions in language one-liners.
@@ -1800,10 +1941,10 @@ def _command_contains_cd(cleaned: str) -> bool:
     for seg in _split_segments(tokens):
         stripped = _strip_env_assignments(seg)
         stripped = _strip_leading_reserved(stripped)
-        stripped, wrapper_cwd_changed = _unwrap_execution_prefix(stripped)
+        stripped, wrapper_cwd_changed, _ = _unwrap_execution_prefix(stripped)
         if wrapper_cwd_changed:
             return True
-        if stripped and _command_basename(stripped) == "cd":
+        if _is_cd_segment(stripped):
             return True
     return False
 
@@ -1865,23 +2006,29 @@ def _extract_shell_write_paths(
 
     cd_seen = outer_cd_seen
     for segment_raw in _split_segments(tokens):
-        segment = _strip_env_assignments(segment_raw)
-        segment = _strip_leading_reserved(segment)
-        segment, wrapper_cwd_changed = _unwrap_execution_prefix(segment)
+        # Strip env-assignments and reserved words in a loop so a
+        # reserved word followed by a ``KEY=VALUE`` token (``then
+        # VAR=val touch f``) is fully unwrapped — without the loop the
+        # ``VAR=val`` ends up as the segment's command word and no
+        # extractor matches.
+        segment = _strip_segment_prefix(segment_raw)
+        segment, wrapper_cwd_changed, wrapper_writes = _unwrap_execution_prefix(segment)
         if wrapper_cwd_changed:
-            # ``env -C dir cmd`` / ``env --chdir dir cmd``: the wrapper
+            # ``env -C dir cmd`` / ``sudo --chdir dir cmd``: the wrapper
             # itself changed cwd before invoking the inner command, so
             # the inner command's relative writes inherit the change.
             cd_seen = True
         # Redirection scans the full segment regardless of cmd word.
         seg_targets: list[str] = list(_extract_redirection_targets(segment))
+        # Wrapper-side writes (``time -o file cmd`` writes ``file``).
+        seg_targets.extend(wrapper_writes)
         if not segment:
             if seg_targets:
                 _append_targets_with_cd(out, seg_targets, cd_seen)
             continue
-        # ``cd <dir>`` is not itself a write but invalidates relative-
-        # path resolution for following segments.
-        if _command_basename(segment) == "cd":
+        # cwd-changing builtins / ``pushd`` / ``popd`` invalidate
+        # relative-path resolution for following segments.
+        if _is_cd_segment(segment):
             cd_seen = True
             if seg_targets:
                 _append_targets_with_cd(out, seg_targets, cd_seen)
