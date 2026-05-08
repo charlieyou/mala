@@ -37,24 +37,33 @@ mala-codex-pre-tool-use = "src.infra.hooks.codex_pre_tool_use:main"
 dev = ["pytest>=8.0.0", "pytest-asyncio>=0.24.0", "pytest-cov>=5.0.0"]
 # `mala[codex]` opts a user into the Codex coder backend without making
 # the SDK a hard dependency for Claude/Amp-only installs (plan I1 /
-# decision #8 + L1334). The Codex SDK package
-# (``openai-codex-app-server-sdk``) is currently published only as a
-# pre-release wheel (``0.116.0a1`` upstream); pinning a stable range
-# here would force every uv-sync to resolve a non-existent stable
-# release. The unsatisfiable marker ``python_version < '0'`` keeps the
-# extra declared (so ``uv pip install 'mala-agent[codex]'`` discovers
-# it and surfaces an actionable error pointing users at the upstream
-# install instructions) without breaking ``uv sync`` for Claude/Amp-only
-# installs. Replace the marker with the resolved version range once the
-# SDK ships a stable PyPI release. The platform-specific
-# ``openai-codex-cli-bin`` runtime is a separate install (each platform
-# ships its own wheel and the SDK pulls it in transitively when
-# requested upstream).
-codex = ["openai-codex-app-server-sdk; python_version < '0'"]
+# decision #8 + L1334). The ``openai-codex-app-server-sdk`` distribution
+# is not yet published on PyPI under that name (PR openai/codex#18996
+# wired the publishing infrastructure but a stable wheel has not been
+# pushed; ``openai-codex-cli-bin`` IS on PyPI and the SDK pulls it in
+# transitively). Until the SDK ships to PyPI we install it directly
+# from the upstream tag — same path
+# ``developers.openai.com/codex/sdk`` documents — pinned to
+# ``rust-v0.126.0`` (the first stable tag that ships the renamed
+# distribution; earlier tags carry the prior name
+# ``codex-app-server-sdk`` and uv refuses the rename mismatch).
+# Replace with a normal version specifier once the SDK is on PyPI.
+codex = [
+    "openai-codex-app-server-sdk @ git+https://github.com/openai/codex@rust-v0.126.0#subdirectory=sdk/python",
+]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+# Required so the ``mala[codex]`` extra can declare a direct git
+# reference for ``openai-codex-app-server-sdk`` (the SDK is not yet
+# published to PyPI under that name; see the comment on the extra
+# above). Hatchling refuses direct references by default for safety;
+# enabling it scoped to this project is the documented escape hatch
+# (``hatch.pypa.io/latest/config/metadata/#allowing-direct-references``).
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]

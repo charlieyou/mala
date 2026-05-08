@@ -264,9 +264,9 @@ class TestCoderAttribute:
 
     @pytest.mark.parametrize("coder", ["claude", "amp", "codex"])
     def test_base_sink_accepts_coder_on_relevant_spans(
-        self, coder: Literal["claude", "amp"]
+        self, coder: Literal["claude", "amp", "codex"]
     ) -> None:
-        """BaseEventSink methods accept ``coder`` for both supported values."""
+        """BaseEventSink methods accept ``coder`` for every supported value."""
         sink = BaseEventSink()
 
         # Agent session scope
