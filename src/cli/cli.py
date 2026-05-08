@@ -398,6 +398,32 @@ def _validate_codex_effort_option(value: str | None) -> str | None:
     return parsed
 
 
+def _validate_codex_approval_policy_option(value: str | None) -> str | None:
+    """Typer callback validating --codex-approval-policy against the SDK enum."""
+    from src.infra.io.config import parse_codex_approval_policy
+
+    if value is None:
+        return None
+    try:
+        parsed = parse_codex_approval_policy(value, source="--codex-approval-policy")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+    return parsed
+
+
+def _validate_codex_sandbox_option(value: str | None) -> str | None:
+    """Typer callback validating --codex-sandbox against the SDK enum."""
+    from src.infra.io.config import parse_codex_sandbox
+
+    if value is None:
+        return None
+    try:
+        parsed = parse_codex_sandbox(value, source="--codex-sandbox")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+    return parsed
+
+
 def _apply_cli_overrides(
     config: MalaConfig,
     *,
@@ -407,6 +433,8 @@ def _apply_cli_overrides(
     effort: str | None,
     codex_model: str | None = None,
     codex_effort: str | None = None,
+    codex_approval_policy: str | None = None,
+    codex_sandbox: str | None = None,
 ) -> MalaConfig:
     """Apply CLI overrides to MalaConfig.
 
@@ -420,6 +448,8 @@ def _apply_cli_overrides(
         and effort is None
         and codex_model is None
         and codex_effort is None
+        and codex_approval_policy is None
+        and codex_sandbox is None
     ):
         return config
 
@@ -432,6 +462,8 @@ def _apply_cli_overrides(
         effort=effort,
         codex_model=codex_model,
         codex_effort=codex_effort,
+        codex_approval_policy=codex_approval_policy,
+        codex_sandbox=codex_sandbox,
     )
     resolved = build_resolved_config(config, overrides)
 
@@ -525,6 +557,14 @@ _CODEX_MODEL_HELP = (
 _CODEX_EFFORT_HELP = (
     "Codex reasoning effort. Validated against the Codex SDK ReasoningEffort "
     "enum at parse time. Only consulted when coder=codex. Default: SDK default."
+)
+_CODEX_APPROVAL_POLICY_HELP = (
+    "Codex approval policy. Valid: never, on-request, on-failure, untrusted. "
+    "Only consulted when coder=codex. Default: never."
+)
+_CODEX_SANDBOX_HELP = (
+    "Codex sandbox mode. Valid: read-only, workspace-write, danger-full-access. "
+    "Only consulted when coder=codex. Default: danger-full-access."
 )
 
 
@@ -686,6 +726,24 @@ def run(
             rich_help_panel="Coder",
         ),
     ] = None,
+    codex_approval_policy: Annotated[
+        str | None,
+        typer.Option(
+            "--codex-approval-policy",
+            help=_CODEX_APPROVAL_POLICY_HELP,
+            callback=_validate_codex_approval_policy_option,
+            rich_help_panel="Coder",
+        ),
+    ] = None,
+    codex_sandbox: Annotated[
+        str | None,
+        typer.Option(
+            "--codex-sandbox",
+            help=_CODEX_SANDBOX_HELP,
+            callback=_validate_codex_sandbox_option,
+            rich_help_panel="Coder",
+        ),
+    ] = None,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
@@ -793,7 +851,7 @@ def run(
     )
 
     # Apply CLI overrides (claude_settings_sources, coder, amp_mode, effort,
-    # codex_model, codex_effort)
+    # codex_model, codex_effort, codex_approval_policy, codex_sandbox)
     try:
         config = _apply_cli_overrides(
             config,
@@ -803,6 +861,8 @@ def run(
             effort=effort,
             codex_model=codex_model,
             codex_effort=codex_effort,
+            codex_approval_policy=codex_approval_policy,
+            codex_sandbox=codex_sandbox,
         )
     except ValueError as exc:
         log("✗", str(exc), Colors.RED)
@@ -950,6 +1010,24 @@ def epic_verify(
             rich_help_panel="Coder",
         ),
     ] = None,
+    codex_approval_policy: Annotated[
+        str | None,
+        typer.Option(
+            "--codex-approval-policy",
+            help=_CODEX_APPROVAL_POLICY_HELP,
+            callback=_validate_codex_approval_policy_option,
+            rich_help_panel="Coder",
+        ),
+    ] = None,
+    codex_sandbox: Annotated[
+        str | None,
+        typer.Option(
+            "--codex-sandbox",
+            help=_CODEX_SANDBOX_HELP,
+            callback=_validate_codex_sandbox_option,
+            rich_help_panel="Coder",
+        ),
+    ] = None,
 ) -> None:
     """Verify a single epic and optionally close it without running tasks."""
     set_verbose(verbose)
@@ -993,6 +1071,8 @@ def epic_verify(
             effort=effort,
             codex_model=codex_model,
             codex_effort=codex_effort,
+            codex_approval_policy=codex_approval_policy,
+            codex_sandbox=codex_sandbox,
         )
     except ValueError as exc:
         log("✗", str(exc), Colors.RED)

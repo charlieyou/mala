@@ -225,7 +225,9 @@ def test_coder_help_shows_effective_defaults(
     result = runner.invoke(cli.app, [*command, "--help"])
 
     assert result.exit_code == 0
-    output = " ".join(result.output.split())
+    # Strip Rich box borders and collapse whitespace so wrapping doesn't
+    # leak `│` tokens into substring checks when the widest option grows.
+    output = " ".join(result.output.replace("│", " ").split())
     assert "--coder" in output
     assert "Default: amp" in output
     assert "--amp-mode" in output

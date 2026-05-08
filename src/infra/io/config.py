@@ -693,6 +693,23 @@ class MalaConfig:
         except ValueError as exc:
             parse_errors.append(str(exc))
             env_codex_effort = None
+        # Parse MALA_CODEX_APPROVAL_POLICY (env > yaml > default).
+        try:
+            env_codex_approval_policy = parse_codex_approval_policy(
+                os.environ.get("MALA_CODEX_APPROVAL_POLICY"),
+                source="MALA_CODEX_APPROVAL_POLICY",
+            )
+        except ValueError as exc:
+            parse_errors.append(str(exc))
+            env_codex_approval_policy = None
+        # Parse MALA_CODEX_SANDBOX (env > yaml > default).
+        try:
+            env_codex_sandbox = parse_codex_sandbox(
+                os.environ.get("MALA_CODEX_SANDBOX"), source="MALA_CODEX_SANDBOX"
+            )
+        except ValueError as exc:
+            parse_errors.append(str(exc))
+            env_codex_sandbox = None
         yaml_codex = (
             yaml_codex_options if yaml_codex_options is not None else CodexOptions()
         )
@@ -703,8 +720,16 @@ class MalaConfig:
             effort=(
                 env_codex_effort if env_codex_effort is not None else yaml_codex.effort
             ),
-            approval_policy=yaml_codex.approval_policy,
-            sandbox=yaml_codex.sandbox,
+            approval_policy=(
+                env_codex_approval_policy
+                if env_codex_approval_policy is not None
+                else yaml_codex.approval_policy
+            ),
+            sandbox=(
+                env_codex_sandbox
+                if env_codex_sandbox is not None
+                else yaml_codex.sandbox
+            ),
             mcp_servers=yaml_codex.mcp_servers,
         )
         if resolved_effort is None:
@@ -836,6 +861,8 @@ class CLIOverrides:
     effort: str | None = None
     codex_model: str | None = None
     codex_effort: str | None = None
+    codex_approval_policy: str | None = None
+    codex_sandbox: str | None = None
 
 
 @dataclass(frozen=True)
@@ -992,12 +1019,24 @@ def build_resolved_config(
     cli_codex_effort = parse_codex_effort(
         overrides.codex_effort, source="--codex-effort"
     )
+    cli_codex_approval_policy = parse_codex_approval_policy(
+        overrides.codex_approval_policy, source="--codex-approval-policy"
+    )
+    cli_codex_sandbox = parse_codex_sandbox(
+        overrides.codex_sandbox, source="--codex-sandbox"
+    )
     base_codex = base_config.coder_options.codex
     codex_options = CodexOptions(
         model=cli_codex_model if cli_codex_model is not None else base_codex.model,
         effort=cli_codex_effort if cli_codex_effort is not None else base_codex.effort,
-        approval_policy=base_codex.approval_policy,
-        sandbox=base_codex.sandbox,
+        approval_policy=(
+            cli_codex_approval_policy
+            if cli_codex_approval_policy is not None
+            else base_codex.approval_policy
+        ),
+        sandbox=(
+            cli_codex_sandbox if cli_codex_sandbox is not None else base_codex.sandbox
+        ),
         mcp_servers=base_codex.mcp_servers,
     )
     coder_options = CoderOptions(amp=AmpOptions(mode=amp_mode), codex=codex_options)

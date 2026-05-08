@@ -78,6 +78,8 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "MALA_EFFORT",
         "MALA_CODEX_MODEL",
         "MALA_CODEX_EFFORT",
+        "MALA_CODEX_APPROVAL_POLICY",
+        "MALA_CODEX_SANDBOX",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -281,3 +283,178 @@ def test_env_coder_codex_selects_codex_via_env(
     config = _DummyOrchestrator.last_mala_config
     assert config is not None
     assert config.coder == "codex"
+
+
+# ---------------------------------------------------------------------------
+# Precedence: approval_policy + sandbox (CLI > env > yaml > default)
+# ---------------------------------------------------------------------------
+
+
+def test_env_codex_approval_policy_overrides_yaml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``MALA_CODEX_APPROVAL_POLICY`` overrides the value from mala.yaml."""
+    from typer.testing import CliRunner
+
+    _isolate_env(monkeypatch)
+    monkeypatch.setenv("MALA_CODEX_APPROVAL_POLICY", "on-request")
+    (tmp_path / "mala.yaml").write_text(
+        "preset: python-uv\n"
+        "coder: codex\n"
+        "coder_options:\n"
+        "  codex:\n"
+        "    approval_policy: never\n",
+    )
+
+    cli = _reload_cli(monkeypatch)
+    _patch_orchestrator(monkeypatch, cli, tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["run", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    config = _DummyOrchestrator.last_mala_config
+    assert config is not None
+    assert config.coder_options.codex.approval_policy == "on-request"
+
+
+def test_cli_codex_approval_policy_overrides_env_and_yaml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``--codex-approval-policy`` beats env and yaml."""
+    from typer.testing import CliRunner
+
+    _isolate_env(monkeypatch)
+    monkeypatch.setenv("MALA_CODEX_APPROVAL_POLICY", "on-request")
+    (tmp_path / "mala.yaml").write_text(
+        "preset: python-uv\n"
+        "coder: codex\n"
+        "coder_options:\n"
+        "  codex:\n"
+        "    approval_policy: never\n",
+    )
+
+    cli = _reload_cli(monkeypatch)
+    _patch_orchestrator(monkeypatch, cli, tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app,
+        ["run", str(tmp_path), "--codex-approval-policy", "untrusted"],
+    )
+
+    assert result.exit_code == 0, result.output
+    config = _DummyOrchestrator.last_mala_config
+    assert config is not None
+    assert config.coder_options.codex.approval_policy == "untrusted"
+
+
+def test_env_codex_sandbox_overrides_yaml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``MALA_CODEX_SANDBOX`` overrides the value from mala.yaml."""
+    from typer.testing import CliRunner
+
+    _isolate_env(monkeypatch)
+    monkeypatch.setenv("MALA_CODEX_SANDBOX", "read-only")
+    (tmp_path / "mala.yaml").write_text(
+        "preset: python-uv\n"
+        "coder: codex\n"
+        "coder_options:\n"
+        "  codex:\n"
+        "    sandbox: workspace-write\n",
+    )
+
+    cli = _reload_cli(monkeypatch)
+    _patch_orchestrator(monkeypatch, cli, tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["run", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    config = _DummyOrchestrator.last_mala_config
+    assert config is not None
+    assert config.coder_options.codex.sandbox == "read-only"
+
+
+def test_cli_codex_sandbox_overrides_env_and_yaml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``--codex-sandbox`` beats env and yaml."""
+    from typer.testing import CliRunner
+
+    _isolate_env(monkeypatch)
+    monkeypatch.setenv("MALA_CODEX_SANDBOX", "read-only")
+    (tmp_path / "mala.yaml").write_text(
+        "preset: python-uv\n"
+        "coder: codex\n"
+        "coder_options:\n"
+        "  codex:\n"
+        "    sandbox: workspace-write\n",
+    )
+
+    cli = _reload_cli(monkeypatch)
+    _patch_orchestrator(monkeypatch, cli, tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app,
+        ["run", str(tmp_path), "--codex-sandbox", "danger-full-access"],
+    )
+
+    assert result.exit_code == 0, result.output
+    config = _DummyOrchestrator.last_mala_config
+    assert config is not None
+    assert config.coder_options.codex.sandbox == "danger-full-access"
+
+
+def test_invalid_codex_approval_policy_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from typer.testing import CliRunner
+
+    _isolate_env(monkeypatch)
+    cli = _reload_cli(monkeypatch)
+    _patch_orchestrator(monkeypatch, cli, tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app,
+        [
+            "run",
+            str(tmp_path),
+            "--coder",
+            "codex",
+            "--codex-approval-policy",
+            "auto",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "auto" in result.output
+
+
+def test_invalid_codex_sandbox_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from typer.testing import CliRunner
+
+    _isolate_env(monkeypatch)
+    cli = _reload_cli(monkeypatch)
+    _patch_orchestrator(monkeypatch, cli, tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app,
+        [
+            "run",
+            str(tmp_path),
+            "--coder",
+            "codex",
+            "--codex-sandbox",
+            "open",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "open" in result.output
