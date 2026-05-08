@@ -4946,3 +4946,207 @@ class TestGitChdirComposition:
         command = "git -C pkg -C '' checkout file.py"
         result = decide(make_payload("bash", {"command": command}, cwd=repo))
         assert is_allow(result), result
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regressions (attempt 5 — P1 + P2 findings)
+# ---------------------------------------------------------------------------
+
+
+class TestPerlBareOpenWrite:
+    """Regression: Perl ``open`` without parens must be detected.
+
+    The previous regex/hint required ``open(`` (with parenthesis), but
+    Perl supports bareword call style: ``open my $fh, '>', '/path';``.
+    Pre-fix this matched no regex and no hint, so ``decide()`` returned
+    allow on a write-open that creates/truncates the unowned file.
+    """
+
+    @pytest.mark.parametrize(
+        "body_template",
+        [
+            # 3-arg bareword form (idiomatic modern Perl).
+            "open my $fh, '>', '{target}'; print $fh 'x'",
+            # 3-arg bareword with double-quoted args.
+            'open my $fh, ">", "{target}"; print $fh "x"',
+            # 3-arg parens (was already covered).
+            "open(my $fh, '>', '{target}'); print $fh 'x'",
+            # 3-arg bareword, append mode.
+            "open my $fh, '>>', '{target}'; print $fh 'x'",
+        ],
+    )
+    def test_perl_three_arg_open_extracts_literal(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        body_template: str,
+    ) -> None:
+        target = repo / "unowned.txt"
+        body = body_template.format(target=target)
+        # The body uses single quotes for Perl args; wrap in double
+        # quotes for the bash -e arg.
+        if "'" in body:
+            command = f'perl -e "{body}"'
+        else:
+            command = f"perl -e '{body}'"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+        assert "unowned.txt" in deny_reason(result)
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            # 2-arg form with mode-in-path: not literal-extractable but
+            # the hint must trigger.
+            "open FH, '>/tmp/unowned.txt'; print FH 'x'",
+            # ``q(>)`` quote-like operator: hint must trigger.
+            "open my $fh, q(>), q(/tmp/unowned.txt); print $fh q(x)",
+            # ``qq(>)`` with double-quote semantics: hint must trigger.
+            "open my $fh, qq(>), qq(/tmp/unowned.txt); print $fh qq(x)",
+        ],
+    )
+    def test_perl_open_write_hint_triggers_unresolved(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        body: str,
+    ) -> None:
+        # Choose outer quote to avoid clashing with body quotes.
+        outer = '"' if "'" in body and '"' not in body else "'"
+        if outer == "'" and "'" in body:
+            outer = '"'
+        command = f"perl -e {outer}{body}{outer}"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+    def test_perl_read_open_does_not_trigger(
+        self,
+        env: dict[str, str],
+    ) -> None:
+        # Sanity: read-mode ``open my $fh, '<', '/path'`` has no ``>``
+        # marker and must NOT be flagged as a write.
+        body = "open my $fh, '<', '/tmp/file'; my $line = <$fh>"
+        command = f'perl -e "{body}"'
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+
+class TestNodeReadOnlyDoesNotDeny:
+    """Regression: read-only Node fs commands must not deny.
+
+    The previous ``_NODE_WRITE_HINTS`` table included module-import
+    substrings (``require('fs')``, ``from 'fs'``, ``import('fs')``).
+    Any node command that imported fs — even a read-only one — hit
+    the substring fallback and was denied. Tighten hints to write-call
+    substrings only so ``node -e "const fs=require('fs');
+    fs.readFileSync('/repo/file')"`` allows.
+    """
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "const fs=require('fs'); fs.readFileSync('/tmp/file')",
+            "const fs=require('fs/promises'); await fs.readFile('/tmp/file')",
+            "const {readFileSync}=require('fs'); readFileSync('/tmp/file')",
+        ],
+    )
+    def test_node_read_only_require_allows(
+        self,
+        env: dict[str, str],
+        body: str,
+    ) -> None:
+        command = f'node -e "{body}"'
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "import { readFileSync } from 'node:fs'; readFileSync('/tmp/file')",
+            "import fs from 'fs'; fs.readFileSync('/tmp/file')",
+        ],
+    )
+    def test_node_read_only_esm_import_allows(
+        self,
+        env: dict[str, str],
+        body: str,
+    ) -> None:
+        command = f'node --input-type=module -e "{body}"'
+        result = decide(make_payload("bash", {"command": command}))
+        assert is_allow(result), result
+
+    def test_node_dynamic_target_write_still_denies(
+        self,
+        env: dict[str, str],
+        repo: Path,
+    ) -> None:
+        # The tightened hints must still catch dynamic-target writes
+        # via the bare-call substring (``writeFile``).
+        body = "const fs=require('fs'); fs.writeFile(p, 'x')"
+        command = f'node -e "{body}"'
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+
+class TestGitWorkTreeAndGitDir:
+    """Regression: ``--git-dir`` must be ignored; ``--work-tree`` must
+    compose with ``-C``.
+
+    Pre-fix, ``_find_git_subcommand_info`` treated both as setting
+    ``chdir_value`` (with last-value-wins overwrite). That allowed
+    two distinct bypasses:
+      * ``git --git-dir=/tmp/junk checkout f`` — agent locks
+        ``/tmp/junk/f`` (a junk path) while git writes ``$cwd/f``.
+      * ``git -C pkg --work-tree=wt checkout f`` — agent locks
+        ``wt/f`` while git writes ``pkg/wt/f``.
+    """
+
+    def test_git_dir_does_not_shift_resolution_base(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Lock a junk path under /tmp/junk; the agent does NOT own
+        # the real write target ``$cwd/f.py``. Pre-fix this allowed
+        # because the heuristic resolved the write under ``/tmp/junk/``.
+        junk_dir = repo / "junk"
+        junk_dir.mkdir()
+        junk = junk_dir / "f.py"
+        assert try_lock(str(junk), "agent-me", repo_namespace=str(repo))
+        command = f"git --git-dir={junk_dir} checkout f.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+
+    def test_dash_c_with_work_tree_composes(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Lock the path the buggy parser used: ``$repo/wt/f.py``.
+        # Pre-fix ALLOW; post-fix DENY because git writes
+        # ``$repo/pkg/wt/f.py``.
+        wrong = repo / "wt" / "f.py"
+        wrong.parent.mkdir(parents=True)
+        assert try_lock(str(wrong), "agent-me", repo_namespace=str(repo))
+        command = "git -C pkg --work-tree=wt checkout f.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_deny(result), result
+        reason = deny_reason(result)
+        assert "pkg/wt/f.py" in reason
+
+    def test_dash_c_with_work_tree_composed_lock_allows(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        # Sanity: locking the *composed* path lets the write through.
+        composed = repo / "pkg" / "wt" / "f.py"
+        composed.parent.mkdir(parents=True)
+        assert try_lock(str(composed), "agent-me", repo_namespace=str(repo))
+        command = "git -C pkg --work-tree=wt checkout f.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_allow(result), result
+
+    def test_absolute_work_tree_resets(self, env: dict[str, str], repo: Path) -> None:
+        # ``--work-tree=/abs`` (absolute) discards any preceding ``-C``.
+        abs_dir = repo / "abs"
+        abs_dir.mkdir()
+        target = abs_dir / "f.py"
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        command = f"git -C pkg --work-tree={abs_dir} checkout f.py"
+        result = decide(make_payload("bash", {"command": command}, cwd=repo))
+        assert is_allow(result), result

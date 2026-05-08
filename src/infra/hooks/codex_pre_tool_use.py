@@ -1841,9 +1841,26 @@ _NODE_OPENSYNC_WRITE_RE = re.compile(
 _RUBY_WRITE_RE = re.compile(
     r"""(?:File\.(?:write|open)|IO\.write)\s*\(\s*(['"])([^'"]+)\1"""
 )
+# Perl 3-arg ``open`` with explicit write-mode (``'>'`` / ``'>>'``).
+# Captures the path literal in groups (1, 2). Handles both
+# parenthesized ``open(my $fh, '>', '/path')`` and bareword
+# ``open my $fh, '>', '/path'`` forms — bareword is idiomatic in
+# modern Perl and the previous regex required ``open(`` so a
+# bareword call bypassed both the literal extractor and the
+# (substring) hint check.
 _PERL_OPEN_WRITE_RE = re.compile(
-    r"""open\s*\([^)]*?,\s*['"][>]+['"]\s*,\s*(['"])([^'"]+)\1"""
+    r"""\bopen\b\s*\(?\s*[^,]+?,\s*"""  # open + optional ( + filehandle + ,
+    r"""['"][>]+['"]\s*,\s*"""  # mode literal containing `>` only
+    r"""(['"])([^'"]+)\1"""  # path literal
 )
+# Hint regex: any ``open`` call that contains a write-mode marker
+# (``'>'``-prefixed string, ``q(>...)``, ``qq(>...)``) before the
+# next statement terminator. Triggers the unresolved-sentinel deny
+# when the literal regex above fails (dynamic path, 2-arg
+# ``open FH, '>file'`` mode-in-path form, or quote-like operator).
+# A read-mode ``open FH, '<', '/path'`` does NOT contain ``>`` and
+# correctly does not match.
+_PERL_OPEN_WRITE_HINT_RE = re.compile(r"""\bopen\b[^;\n]*?[\(\[\{'"][>]+""")
 
 # Marks that suggest a write call whose target literal we cannot resolve
 # statically — used to trigger the unresolved-sentinel deny per plan L846.
@@ -1854,43 +1871,23 @@ _PYTHON_WRITE_HINTS = (
     ".writelines",
 )
 _NODE_WRITE_HINTS = (
-    "fs.writeFile",
-    "fs.appendFile",
-    "fs.createWriteStream",
-    # CommonJS: ``require('fs')`` / ``require("fs")``, also
-    # ``require('node:fs')`` and the promise-based variant
-    # ``require('fs/promises')`` (and its ``node:`` form).
-    "require('fs')",
-    'require("fs")',
-    "require('node:fs')",
-    'require("node:fs")',
-    "require('fs/promises')",
-    'require("fs/promises")',
-    "require('node:fs/promises')",
-    'require("node:fs/promises")',
-    # ESM static imports: ``import ... from 'fs'`` / ``from 'node:fs'``
-    # / ``from 'fs/promises'`` / ``from 'node:fs/promises'``. Without
-    # these hints, ``node --input-type=module -e "import { writeFile }
-    # from 'node:fs'; writeFile(dyn, 'x')"`` (with a non-literal
-    # target) bypassed the gate — no regex matched and no hint
-    # triggered the unresolved-sentinel deny.
-    "from 'fs'",
-    'from "fs"',
-    "from 'node:fs'",
-    'from "node:fs"',
-    "from 'fs/promises'",
-    'from "fs/promises"',
-    "from 'node:fs/promises'",
-    'from "node:fs/promises"',
-    # ESM dynamic imports: ``await import('fs')`` and friends.
-    "import('fs')",
-    'import("fs")',
-    "import('node:fs')",
-    'import("node:fs")',
-    "import('fs/promises')",
-    'import("fs/promises")',
-    "import('node:fs/promises')",
-    'import("node:fs/promises")',
+    # Write-call substrings only — module-import substrings are
+    # deliberately NOT in this list. Hint-only on imports caused
+    # false-deny on read-only commands like ``node -e "const
+    # fs=require('fs'); fs.readFileSync('/repo/file')"`` — the
+    # ``require('fs')`` import substring triggered sentinel-deny
+    # despite no write surface.
+    #
+    # The write-call substrings cover the ``fs.``/aliased/ESM-bare
+    # forms. The literal-target regex ``_NODE_FS_WRITE_RE`` already
+    # uses a boundary class so ``fsp.writeFile``, bare
+    # ``writeFile``, and ``fs.writeFile`` all match for literal
+    # targets; this list is the dynamic-target fallback. Matching
+    # on the bare function name (``writeFile`` / ``appendFile`` /
+    # ``createWriteStream``) makes the hint binding-agnostic.
+    "writeFile",
+    "appendFile",
+    "createWriteStream",
 )
 # Regex hint for ``openSync`` calls with a write-mode flag where the
 # literal target is not statically extractable. Without this hint, an
@@ -2060,7 +2057,7 @@ def _extract_oneliner_targets(tokens: list[str]) -> list[str]:
         return out
     if cmd == "perl":
         out.extend(m.group(2) for m in _PERL_OPEN_WRITE_RE.finditer(body))
-        if not out and "open(" in body:
+        if not out and _PERL_OPEN_WRITE_HINT_RE.search(body) is not None:
             out.append(_UNRESOLVED_SENTINEL)
         return out
 
@@ -2111,30 +2108,52 @@ def _compose_git_chdir(prev: str | None, value: str) -> str | None:
 def _find_git_subcommand_info(
     tokens: list[str],
 ) -> tuple[int | None, str | None]:
-    """Return ``(subcommand_index, -C_dir)`` for a git invocation.
+    """Return ``(subcommand_index, effective_write_base)`` for a git
+    invocation.
 
-    Skips global options before the subcommand. Composes repeated
-    ``-C dir`` options cumulatively (per ``git`` semantics — see
-    ``_compose_git_chdir``). For ``--git-dir`` / ``--work-tree``,
-    keeps the last-set value (these flags do not compose; the last
-    one wins) so the caller can resolve subcommand pathspecs against
-    the right directory. ``git -C pkg checkout file.py`` writes
-    ``pkg/file.py``; ``git -C pkg -C sub checkout file.py`` writes
-    ``pkg/sub/file.py``.
+    Skips global options before the subcommand. The returned
+    ``effective_write_base`` is the directory pathspecs are resolved
+    against to derive the actual write target on disk:
+
+    * ``-C <dir>`` accumulates into the cwd (per ``git``: each
+      subsequent non-absolute ``-C`` is interpreted relative to the
+      preceding one; absolute resets; empty no-op — see
+      ``_compose_git_chdir``).
+    * ``--work-tree=<wt>`` (and the separate-token form) sets the
+      working tree. When ``--work-tree`` is set, write paths resolve
+      against ``work-tree`` (relative to the post-``-C`` cwd if
+      relative; absolute if absolute). The last ``--work-tree`` value
+      wins — git itself does not compose repeated ``--work-tree``.
+    * ``--git-dir`` is INTENTIONALLY ignored. ``--git-dir`` specifies
+      the location of the ``.git`` repository database, NOT the
+      working tree. Treating it as a path-resolution base let an
+      agent run ``git --git-dir=/tmp/junk checkout f`` and lock
+      ``/tmp/junk/f`` (a junk path) while git actually wrote ``$cwd/f``.
+
+    Examples:
+
+    * ``git -C pkg checkout file.py`` → base ``pkg`` → writes ``pkg/file.py``
+    * ``git -C pkg -C sub checkout f`` → base ``pkg/sub``
+    * ``git -C pkg --work-tree=wt checkout f`` → base ``pkg/wt`` (work-tree
+      ``wt`` resolved relative to post-``-C`` cwd ``pkg``); pre-fix this
+      overwrote ``chdir_value`` with ``wt`` and let an agent locking
+      ``wt/f`` overwrite the unowned ``pkg/wt/f``
+    * ``git --git-dir=/tmp/junk checkout f`` → base ``None`` (writes ``$cwd/f``)
     """
     chdir_value: str | None = None
+    work_tree_value: str | None = None
     i = 1
     while i < len(tokens):
         tok = tokens[i]
         if not tok.startswith("-"):
-            return i, chdir_value
-        # Long form with attached value: ``--git-dir=/abs``
+            return i, _git_effective_base(chdir_value, work_tree_value)
+        # Long form with attached value: ``--work-tree=path`` /
+        # ``--git-dir=path``.
         if tok.startswith("--") and "=" in tok:
             name, value = tok.split("=", 1)
-            if name in {"--work-tree", "--git-dir"} and value:
-                # ``--work-tree`` / ``--git-dir`` do not compose; the
-                # last value wins.
-                chdir_value = value
+            if name == "--work-tree" and value:
+                work_tree_value = value
+            # ``--git-dir`` intentionally ignored — see docstring.
             i += 1
             continue
         if tok in _GIT_GLOBAL_VALUE_FLAGS:
@@ -2142,8 +2161,9 @@ def _find_git_subcommand_info(
                 value = tokens[i + 1]
                 if tok == "-C":
                     chdir_value = _compose_git_chdir(chdir_value, value)
-                elif tok in {"--work-tree", "--git-dir"}:
-                    chdir_value = value
+                elif tok == "--work-tree":
+                    work_tree_value = value
+                # ``--git-dir`` intentionally ignored — see docstring.
                 i += 2
                 continue
             i += 1
@@ -2152,7 +2172,26 @@ def _find_git_subcommand_info(
         # ``--version``, ``--no-pager``, ``--paginate``, ``--bare``,
         # ``--literal-pathspecs``, ``--glob-pathspecs``, etc.).
         i += 1
-    return None, chdir_value
+    return None, _git_effective_base(chdir_value, work_tree_value)
+
+
+def _git_effective_base(
+    chdir_value: str | None, work_tree_value: str | None
+) -> str | None:
+    """Compose the effective path-resolution base from ``-C`` and ``--work-tree``.
+
+    Per ``git`` semantics, ``-C`` changes the effective cwd, then
+    ``--work-tree`` (if set) sets the working tree relative to that
+    new cwd. Write paths resolve against the working tree if set,
+    otherwise the cwd.
+    """
+    if work_tree_value is None:
+        return chdir_value
+    if os.path.isabs(work_tree_value):
+        return work_tree_value
+    if chdir_value is None:
+        return work_tree_value
+    return os.path.join(chdir_value, work_tree_value)
 
 
 def _find_git_subcommand_index(tokens: list[str]) -> int | None:
