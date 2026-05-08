@@ -1583,6 +1583,21 @@ class CodexAgentProvider:
         (which writes back to ``auth.json``) lands in the user's real
         file rather than the temp dir.
 
+        ``config.toml`` is **copied** (not symlinked) from the user's
+        real ``$CODEX_HOME`` so the keyring opt-in
+        (``cli_auth_credentials_store = "keyring"``) and any other
+        user-set scalars carry into the isolated home. Without this
+        seed, a user who logged in via Codex's keyring backend has
+        neither ``auth.json`` (the keyring backend deletes it after a
+        successful save) nor the keyring opt-in inside the isolated
+        home — the spawned Codex falls back to the default
+        ``auth_json`` credential store, finds no file, and crashes at
+        ``thread_start`` instead of using the stored keyring
+        credential. Copy (rather than symlink) is required because
+        :func:`_write_codex_plugin_config` writes to this file later
+        to register the plugin/hook trust entries; a symlink would
+        route those writes back into the user's real config.
+
         The :class:`tempfile.TemporaryDirectory` handle is held on the
         provider so the directory survives for the orchestrator's
         lifetime; cleanup happens when the provider is garbage-collected
@@ -1615,6 +1630,19 @@ class CodexAgentProvider:
                         # against the user's real home, so the failure
                         # here would only manifest at thread_start.
                         pass
+            user_config = user_codex_home / _HOOK_CONFIG_FILENAME
+            if user_config.is_file():
+                try:
+                    shutil.copy2(user_config, isolated / _HOOK_CONFIG_FILENAME)
+                except OSError:
+                    # Best-effort: a missing copy here means
+                    # ``_write_codex_plugin_config`` writes a
+                    # plugin-only file and a keyring user loses the
+                    # opt-in. The auth probe ran against the user's
+                    # real home before this point so the failure mode
+                    # surfaces only at thread_start; matches the
+                    # auth.json copy fallback above.
+                    pass
         return Path(self._isolated_codex_home.name)
 
     def install_prerequisites(

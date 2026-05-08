@@ -836,6 +836,58 @@ def test_install_prerequisites_renders_user_mcp_servers_into_installed_mcp_json(
 
 
 @pytest.mark.unit
+def test_isolated_codex_home_preserves_keyring_credentials_store_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """Regression: keyring-backed users with user MCP servers configured
+    must see ``cli_auth_credentials_store = "keyring"`` carried into the
+    isolated ``CODEX_HOME``'s ``config.toml``.
+
+    Codex's keyring backend deletes ``auth.json`` after a successful
+    save, so a keyring user has neither the file nor any auth env var
+    in their real ``$CODEX_HOME``. The pre-isolation auth probe accepts
+    them via ``_codex_uses_keyring_credentials_store``, but if the
+    isolated home is then seeded with no ``config.toml``, the spawned
+    Codex falls back to the default ``auth_json`` credential store and
+    crashes at ``thread_start``. ``_ensure_isolated_codex_home`` must
+    copy the user's ``config.toml`` so the keyring opt-in survives the
+    isolation.
+    """
+    codex_home, bin_dir = fake_codex_env
+    # Keyring-backed user: no auth.json on disk, only the opt-in flag.
+    (codex_home / "auth.json").unlink()
+    (codex_home / "config.toml").write_text(
+        'cli_auth_credentials_store = "keyring"\n', encoding="utf-8"
+    )
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    provider = CodexAgentProvider(
+        mcp_servers=(
+            (
+                "custom-server",
+                {"command": "/usr/bin/custom-mcp", "args": [], "env": {}},
+            ),
+        ),
+        selftest_probe=_noop_probe,
+    )
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    isolated_home = _provider_isolated_codex_home(provider)
+    isolated_config = (isolated_home / "config.toml").read_text(encoding="utf-8")
+    # The keyring opt-in survived the seed *and* the
+    # ``_write_codex_plugin_config`` rewrite that adds plugin/hook entries.
+    assert 'cli_auth_credentials_store = "keyring"' in isolated_config
+    # Plugin entries were also written, proving the rewrite preserved
+    # the top-level keyring scalar rather than dropping it.
+    assert "trusted_hash" in isolated_config
+
+
+@pytest.mark.unit
 def test_install_prerequisites_threads_isolated_codex_home_into_runtime_env(
     monkeypatch: pytest.MonkeyPatch,
     fake_codex_env: tuple[Path, Path],
