@@ -24,7 +24,6 @@ Codex install path on import.
 from __future__ import annotations
 
 import importlib.util
-import logging
 import os
 import shutil
 from enum import StrEnum
@@ -49,9 +48,6 @@ if TYPE_CHECKING:
         SDKClientFactoryProtocol,
         SDKClientProtocol,
     )
-
-logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Public exception + reason enum (Phase E5, T015)
@@ -199,6 +195,39 @@ class _CodexClientFactory:
 
 
 # ---------------------------------------------------------------------------
+# Codex runtime resolution (Phase E5)
+# ---------------------------------------------------------------------------
+
+
+def _codex_runtime_resolvable() -> bool:
+    """Return True iff Codex can find a ``codex`` binary at session-start.
+
+    Mirrors the resolution path :func:`codex_app_server.client.resolve_codex_bin`
+    walks (``codex/sdk/python/src/codex_app_server/client.py:107-117``):
+
+      1. ``CODEX_BINARY`` env (operator override) — if set, accept and let
+         the SDK validate the path.
+      2. ``codex`` on ``PATH`` — accept if found.
+      3. SDK-bundled ``codex_cli_bin`` package — accept if importable.
+
+    Returning True when only the bundled runtime is present matches the
+    SDK's ``AppServerConfig(codex_bin=None)`` default that
+    :class:`CodexClient.__aenter__` relies on
+    (``src/infra/clients/codex_client.py:226-228``). Returning False
+    raises :class:`CodexHookNotActiveError(CODEX_BINARY_MISSING)`.
+    """
+    if os.environ.get("CODEX_BINARY"):
+        return True
+    if shutil.which("codex") is not None:
+        return True
+    try:
+        spec = importlib.util.find_spec("codex_cli_bin")
+    except (ImportError, ValueError):
+        spec = None
+    return spec is not None
+
+
+# ---------------------------------------------------------------------------
 # Trusted-hash auto-trust helpers (Phase E6, decision #16)
 # ---------------------------------------------------------------------------
 
@@ -326,21 +355,31 @@ def _write_trusted_hash(
     codex_home: Path,
     marketplace: str = _DEFAULT_PLUGIN_MARKETPLACE,
 ) -> None:
-    """Best-effort write of the bundled hook's ``trusted_hash`` to Codex's config.
+    """Fail-closed write of the bundled hook's ``trusted_hash`` to Codex's config.
 
     Codex's hook-state for plugin hooks lives in
-    ``$CODEX_HOME/config.toml`` under ``[hooks.state."<plugin_id>:<rel-path>:pre_tool_use:0:0"]``
-    (per ``codex-rs/core/tests/common/hooks.rs``). The function preserves
+    ``$CODEX_HOME/config.toml`` under
+    ``[hooks.state."<plugin_id>:<rel-path>:pre_tool_use:0:0"]`` (per
+    ``codex-rs/core/tests/common/hooks.rs``). The function preserves
     any pre-existing top-level config tables and rewrites only the
     matching ``[hooks.state."<key>"]`` block.
 
-    Failures are logged at warning level rather than raised: if the
-    user's ``CODEX_HOME`` is read-only or the marketplace name turns
-    out to differ, the selftest probe catches the dormant hook and
-    surfaces :class:`CodexHookNotActiveError` with a structured reason
-    (TRUSTED_HASH_MISMATCH or HOOK_MARKER_MISSING) — we don't want a
-    Codex-home permissions issue or an unconfirmed marketplace name to
-    masquerade as a missing-plugin error.
+    Auto-trust is the safety-critical bridge between "plugin installed"
+    and "Codex actually loads the hook" (decision #16). If we cannot
+    mkdir / read / write ``config.toml``, Codex will run with the hook
+    in ``Untrusted`` state — discovered but never invoked
+    (``codex-rs/hooks/src/engine/discovery.rs::hook_trust_status``) —
+    and the orchestrator would proceed under ``danger-full-access`` /
+    ``approval_policy=never`` without the safety gate. Therefore I/O
+    failures here raise :class:`CodexHookNotActiveError(TRUSTED_HASH_MISMATCH)`
+    so :meth:`install_prerequisites` aborts the run; the documented
+    one-time interactive trust fallback (plan E6) covers users whose
+    ``CODEX_HOME`` is read-only.
+
+    The "already correct" short-circuit (when the on-disk content
+    already declares the same trusted_hash) returns without writing,
+    which is fine — the dormant-hook risk only exists when the entry
+    is missing or stale.
     """
     section_header = f'[hooks.state."{_hook_state_key(marketplace=marketplace)}"]'
     trusted_hash_value = _compute_normalized_hook_hash()
@@ -352,23 +391,22 @@ def _write_trusted_hash(
     try:
         codex_home.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        logger.warning(
-            "Codex hook trusted_hash auto-write skipped: cannot create %s (%s). "
-            "Selftest will catch a dormant hook and surface the structured reason.",
-            codex_home,
-            exc,
-        )
-        return
+        raise CodexHookNotActiveError(
+            f"Cannot create Codex home directory {codex_home} to write the "
+            f"hook's trusted_hash ({exc}). Auto-trust is the bridge that "
+            "lets Codex load the bundled safety hook; without it Codex "
+            "marks the hook untrusted and never invokes it.",
+            reason=CodexHookNotActiveReason.TRUSTED_HASH_MISMATCH,
+        ) from exc
 
     try:
         existing = target.read_text(encoding="utf-8") if target.exists() else ""
     except OSError as exc:
-        logger.warning(
-            "Codex hook trusted_hash auto-write skipped: cannot read %s (%s).",
-            target,
-            exc,
-        )
-        return
+        raise CodexHookNotActiveError(
+            f"Cannot read Codex config file {target} to update the hook's "
+            f"trusted_hash ({exc}).",
+            reason=CodexHookNotActiveReason.TRUSTED_HASH_MISMATCH,
+        ) from exc
 
     rewritten = _rewrite_hook_state_block(
         existing, section_header=section_header, new_block=new_block
@@ -379,12 +417,13 @@ def _write_trusted_hash(
     try:
         target.write_text(rewritten, encoding="utf-8")
     except OSError as exc:
-        logger.warning(
-            "Codex hook trusted_hash auto-write failed at %s (%s). "
-            "Selftest will catch a dormant hook.",
-            target,
-            exc,
-        )
+        raise CodexHookNotActiveError(
+            f"Cannot write hook trusted_hash to {target} ({exc}). The "
+            "bundled safety hook would remain Untrusted and Codex would "
+            "skip it on PreToolUse; refusing to run under "
+            "danger-full-access without the safety gate.",
+            reason=CodexHookNotActiveReason.TRUSTED_HASH_MISMATCH,
+        ) from exc
 
 
 def _rewrite_hook_state_block(
@@ -796,11 +835,20 @@ class CodexAgentProvider:
                 "See the docs for the full Codex prerequisites."
             )
 
-        # 2. Codex binary on PATH.
-        if shutil.which("codex") is None:
+        # 2. Codex runtime resolvable. Either an external ``codex`` binary
+        # on PATH, or the SDK-bundled ``codex_cli_bin`` runtime package
+        # (which ``codex_app_server.client.resolve_codex_bin`` falls back
+        # to when ``AppServerConfig.codex_bin`` is None — the same path
+        # ``CodexClient.__aenter__`` exercises). Honors ``CODEX_BINARY``
+        # so an explicit operator override skips both lookups.
+        if not _codex_runtime_resolvable():
             raise CodexHookNotActiveError(
-                "codex binary not found on PATH; coder=codex requires the "
-                "openai-codex-cli-bin runtime package to be installed.",
+                "Codex runtime not resolvable: no `codex` binary on PATH, "
+                "no `CODEX_BINARY` override, and the bundled "
+                "`codex_cli_bin` runtime package is not importable. "
+                "Install `openai-codex-cli-bin` (typically as a dependency "
+                "of `openai-codex-app-server-sdk`) or place a `codex` "
+                "binary on PATH.",
                 reason=CodexHookNotActiveReason.CODEX_BINARY_MISSING,
             )
 

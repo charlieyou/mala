@@ -85,17 +85,27 @@ def _make_executable(path: Path, body: str = "#!/bin/sh\nexit 0\n") -> None:
     path.chmod(0o755)
 
 
-def _install_fake_sdk(monkeypatch: pytest.MonkeyPatch, *, present: bool) -> None:
-    """Stub ``importlib.util.find_spec`` so the SDK probe sees a controlled state."""
+def _install_fake_sdk(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    present: bool,
+    codex_cli_bin_present: bool = False,
+) -> None:
+    """Stub ``importlib.util.find_spec`` so the SDK probes see controlled state.
+
+    Drives both the ``codex_app_server`` SDK probe and the
+    ``codex_cli_bin`` runtime-package probe used by the SDK-bundled
+    runtime path (``codex_app_server.client.resolve_codex_bin``). When
+    ``codex_cli_bin_present`` is True the provider should accept the
+    SDK-bundled runtime even with no external ``codex`` binary on PATH.
+    """
     real_find_spec = importlib.util.find_spec
 
     def fake_find_spec(name: str, package: str | None = None) -> object | None:
         if name == "codex_app_server":
-            if present:
-                # Return any non-None object — the provider checks for
-                # ``is None`` truthiness.
-                return object()
-            return None
+            return object() if present else None
+        if name == "codex_cli_bin":
+            return object() if codex_cli_bin_present else None
         return real_find_spec(name, package=package)
 
     monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
@@ -290,9 +300,16 @@ def test_install_prerequisites_raises_codex_binary_missing(
     fake_mcp_factory: Callable[..., dict[str, object]],
     tmp_path: Path,
 ) -> None:
-    """No ``codex`` on PATH → :class:`CodexHookNotActiveError(CODEX_BINARY_MISSING)`."""
-    _install_fake_sdk(monkeypatch, present=True)
+    """All three runtime sources unavailable → ``CODEX_BINARY_MISSING``.
+
+    The provider rejects only when ALL of (a) ``CODEX_BINARY`` env var,
+    (b) ``codex`` on ``PATH``, and (c) the SDK-bundled ``codex_cli_bin``
+    runtime package are absent (parity with
+    ``codex_app_server.client.resolve_codex_bin``).
+    """
+    _install_fake_sdk(monkeypatch, present=True, codex_cli_bin_present=False)
     monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))  # no codex here
+    monkeypatch.delenv("CODEX_BINARY", raising=False)
 
     provider = CodexAgentProvider()
     with pytest.raises(CodexHookNotActiveError) as excinfo:
@@ -300,6 +317,68 @@ def test_install_prerequisites_raises_codex_binary_missing(
             Path("/tmp"), mcp_server_factory=fake_mcp_factory
         )
     assert excinfo.value.reason is CodexHookNotActiveReason.CODEX_BINARY_MISSING
+
+
+@pytest.mark.unit
+def test_install_prerequisites_accepts_sdk_bundled_codex_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """No ``codex`` on PATH but ``codex_cli_bin`` importable → succeeds.
+
+    Regression: ``codex_app_server.client.resolve_codex_bin`` falls back
+    to importing ``codex_cli_bin`` when ``AppServerConfig.codex_bin`` is
+    None — the path :class:`CodexClient.__aenter__` exercises by default.
+    The provider must not reject this configuration: rejecting it would
+    mean a ``codex_app_server`` + ``openai-codex-cli-bin`` install with
+    no external ``codex`` binary fails install_prerequisites even though
+    a real Codex session would actually run.
+    """
+    codex_home, bin_dir = fake_codex_env
+    _install_fake_sdk(monkeypatch, present=True, codex_cli_bin_present=True)
+    monkeypatch.delenv("CODEX_BINARY", raising=False)
+    # mala-codex-pre-tool-use must be on PATH for the install to succeed,
+    # but we deliberately do NOT install a fake ``codex`` to prove the
+    # SDK-bundled runtime path is accepted.
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    provider = CodexAgentProvider()
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    # Plugin tree must be installed and config.toml must carry the
+    # trusted_hash entry — the happy path completed end-to-end without
+    # an external codex binary.
+    plugin_dir = codex_home / "plugins" / "mala-safety" / ".codex-plugin"
+    assert (plugin_dir / "plugin.json").is_file()
+    assert "trusted_hash" in (codex_home / "config.toml").read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+def test_install_prerequisites_accepts_codex_binary_env_override(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """``CODEX_BINARY`` env override → succeeds without PATH or SDK package.
+
+    Mirrors the operator-override branch in
+    ``codex_app_server.client.resolve_codex_bin``: if ``CODEX_BINARY``
+    points anywhere, the SDK accepts and validates the path itself —
+    the provider should not gate on independent PATH / package checks.
+    """
+    codex_home, bin_dir = fake_codex_env
+    _install_fake_sdk(monkeypatch, present=True, codex_cli_bin_present=False)
+    monkeypatch.setenv("CODEX_BINARY", str(tmp_path / "anywhere" / "codex"))
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    provider = CodexAgentProvider()
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    plugin_dir = codex_home / "plugins" / "mala-safety" / ".codex-plugin"
+    assert (plugin_dir / "plugin.json").is_file()
 
 
 @pytest.mark.unit
@@ -319,6 +398,38 @@ def test_install_prerequisites_raises_script_missing(
     with pytest.raises(CodexHookNotActiveError) as excinfo:
         provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
     assert excinfo.value.reason is CodexHookNotActiveReason.SCRIPT_MISSING
+
+
+@pytest.mark.unit
+def test_install_prerequisites_raises_trusted_hash_mismatch_on_unwritable_config(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """Unwritable ``$CODEX_HOME/config.toml`` → ``TRUSTED_HASH_MISMATCH``.
+
+    Auto-trust is the bridge that lets Codex load the bundled hook;
+    when we cannot persist ``trusted_hash``, Codex marks the hook
+    Untrusted and silently skips it on PreToolUse
+    (``codex-rs/hooks/src/engine/discovery.rs::hook_trust_status``).
+    The provider must therefore fail-closed instead of caching success.
+
+    Drives the failure by making ``config.toml`` itself a directory so
+    every ``write_text`` call raises ``IsADirectoryError`` — the same
+    surface a read-only ``CODEX_HOME`` would expose to ``write_text``.
+    """
+    codex_home, bin_dir = fake_codex_env
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+    # Place a directory at the config.toml path so write_text fails.
+    (codex_home / "config.toml").mkdir()
+
+    provider = CodexAgentProvider()
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+    assert excinfo.value.reason is CodexHookNotActiveReason.TRUSTED_HASH_MISMATCH
 
 
 @pytest.mark.unit
