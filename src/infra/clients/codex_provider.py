@@ -251,25 +251,25 @@ records is therefore ``.codex-plugin/hooks.json``.
 """
 
 
-def _default_marketplace() -> str:
-    """Marketplace name the plugin is installed under.
+_DEFAULT_PLUGIN_MARKETPLACE = "local"
+"""Marketplace component of the Codex ``PluginId.as_key()`` value.
 
-    Imported lazily from the installer so the two stay in lockstep — the
-    installer's ``PLUGIN_MARKETPLACE`` constant drives both the
-    on-disk cache path
-    (``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/``)
-    and the user-config plugin key (``[plugins."<plugin>@<marketplace>"]``).
-    Codex's ``PluginId.as_key()`` returns ``<plugin_name>@<marketplace_name>``
-    (``codex-rs/plugin/src/plugin_id.rs:45``); using the literal
-    ``local`` matches Codex's ``DEFAULT_PLUGIN_VERSION`` /
-    local-marketplace convention.
-    """
-    from src.infra.clients.codex_plugin_installer import PLUGIN_MARKETPLACE
+Hardcoded to the same literal as
+:attr:`src.infra.clients.codex_plugin_installer.PLUGIN_MARKETPLACE` so
+the two stay in lockstep without forcing the installer module to be
+imported at module-load time (the lazy-import contract requires the
+installer stay off the cold path until
+:meth:`CodexAgentProvider.install_prerequisites` is invoked). A
+regression test
+(``tests/unit/infra/clients/test_codex_provider.py::test_default_marketplace_matches_installer_constant``)
+pins the two literals together so a drift fails CI.
 
-    return PLUGIN_MARKETPLACE
-
-
-_DEFAULT_PLUGIN_MARKETPLACE = _default_marketplace()
+Codex's ``PluginId.as_key()`` returns
+``<plugin_name>@<marketplace_name>``
+(``codex-rs/plugin/src/plugin_id.rs:45``); using the literal ``local``
+matches Codex's ``DEFAULT_PLUGIN_VERSION`` / local-marketplace
+convention.
+"""
 
 
 def _resolve_codex_home() -> Path:
@@ -362,11 +362,18 @@ def _write_codex_plugin_config(
     codex_home: Path,
     marketplace: str = _DEFAULT_PLUGIN_MARKETPLACE,
 ) -> None:
-    """Fail-closed write of the plugin-enable + trusted_hash entries to ``config.toml``.
+    """Fail-closed write of the three config-side preconditions to ``config.toml``.
 
-    Codex requires TWO config-side preconditions for the bundled
+    Codex requires THREE config-side preconditions for the bundled
     PreToolUse hook to fire:
 
+      * The ``plugin_hooks`` feature flag is enabled:
+        ``[features] plugin_hooks = true`` (per
+        ``codex-rs/features/src/lib.rs:957`` — ``Feature::PluginHooks``
+        ships ``default_enabled = false`` and gates plugin-bundled hook
+        loading inside ``catalog_processor`` /
+        ``manager.plugins_for_config``). Without it, Codex caches the
+        plugin tree but registers zero hooks.
       * The plugin is enabled in user config: ``[plugins."<id>"] enabled = true``
         (per ``codex-rs/core-plugins/src/manager.rs::configured_plugins_from_stack``
         — only ``[plugins."<key>"]`` entries are surfaced as "configured
@@ -375,8 +382,8 @@ def _write_codex_plugin_config(
         with ``enabled = true`` and the matching ``trusted_hash`` (per
         ``codex-rs/hooks/src/engine/discovery.rs::hook_trust_status``).
 
-    Without either entry, Codex would discover the cached plugin tree
-    (``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/``)
+    Without all three entries, Codex would discover the cached plugin
+    tree (``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/``)
     yet still skip the hook on PreToolUse — the orchestrator would
     proceed under ``danger-full-access`` / ``approval_policy=never``
     without the safety gate. Auto-trust is therefore the safety-critical
@@ -387,8 +394,10 @@ def _write_codex_plugin_config(
     one-time interactive trust fallback (plan E6) covers users whose
     ``CODEX_HOME`` is read-only.
 
-    The "already correct" short-circuit (when both blocks already match
-    the desired content) returns without writing.
+    The "already correct" short-circuit (when all three blocks already
+    match the desired content) returns without writing. The
+    ``[features]`` block is updated in-place (preserving any other
+    feature flags the user already set) rather than replaced wholesale.
     """
     plugin_id = _plugin_id(marketplace)
     plugin_section = f'[plugins."{plugin_id}"]'
@@ -407,7 +416,7 @@ def _write_codex_plugin_config(
     except OSError as exc:
         raise CodexHookNotActiveError(
             f"Cannot create Codex home directory {codex_home} to write the "
-            f"plugin enable + trusted_hash entries ({exc}). Auto-trust is "
+            f"plugin/feature config entries ({exc}). Auto-trust is "
             "the bridge that lets Codex load the bundled safety hook; "
             "without it Codex marks the hook untrusted and never invokes it.",
             reason=CodexHookNotActiveReason.TRUSTED_HASH_MISMATCH,
@@ -417,19 +426,25 @@ def _write_codex_plugin_config(
         existing = target.read_text(encoding="utf-8") if target.exists() else ""
     except OSError as exc:
         raise CodexHookNotActiveError(
-            f"Cannot read Codex config file {target} to update the plugin "
-            f"enable + trusted_hash entries ({exc}).",
+            f"Cannot read Codex config file {target} to update the "
+            f"plugin/feature config entries ({exc}).",
             reason=CodexHookNotActiveReason.TRUSTED_HASH_MISMATCH,
         ) from exc
 
+    # 1. Ensure ``plugin_hooks = true`` inside the existing ``[features]``
+    # block (preserving any other feature flags the user already set).
+    rewritten = _ensure_key_in_section(
+        existing, section_header="[features]", key="plugin_hooks", value="true"
+    )
+    # 2 + 3. Replace the per-plugin and per-hook state blocks.
     rewritten = _rewrite_toml_block(
-        existing, section_header=plugin_section, new_block=plugin_block
+        rewritten, section_header=plugin_section, new_block=plugin_block
     )
     rewritten = _rewrite_toml_block(
         rewritten, section_header=state_section, new_block=state_block
     )
     if rewritten == existing:
-        return  # both blocks already correct
+        return  # all three already correct
 
     try:
         target.write_text(rewritten, encoding="utf-8")
@@ -440,6 +455,79 @@ def _write_codex_plugin_config(
             "refusing to run under danger-full-access without the safety gate.",
             reason=CodexHookNotActiveReason.TRUSTED_HASH_MISMATCH,
         ) from exc
+
+
+def _ensure_key_in_section(
+    existing: str, *, section_header: str, key: str, value: str
+) -> str:
+    """Ensure ``<key> = <value>`` lives inside ``[<section_header>]``.
+
+    Pure-text rewrite suitable for flat key=value blocks like
+    ``[features]`` (the ``Feature`` registry is keyed by snake-case
+    string and serialized as bool / int / string scalars per
+    ``codex-rs/features/src/lib.rs``; nested table syntax is not used
+    inside this section). Behavior:
+
+      * If ``[section_header]`` does not exist: append it with the new
+        key=value line.
+      * If ``[section_header]`` exists and contains ``<key> = ...``:
+        rewrite that line to ``<key> = <value>`` (preserving every
+        other key inside the section).
+      * If ``[section_header]`` exists but lacks the key: append the
+        new line at the end of the section (just before the next
+        top-level ``[...]`` header).
+
+    Returns the existing text unchanged if the block already has
+    ``<key> = <value>``.
+    """
+    new_line = f"{key} = {value}\n"
+    lines = existing.splitlines(keepends=True)
+    if not lines:
+        return f"{section_header}\n{new_line}"
+
+    section_start = -1
+    for idx, line in enumerate(lines):
+        if line.strip() == section_header:
+            section_start = idx
+            break
+
+    if section_start < 0:
+        out = list(lines)
+        if out and not out[-1].endswith("\n"):
+            out[-1] = out[-1] + "\n"
+        out.append("\n")
+        out.append(f"{section_header}\n")
+        out.append(new_line)
+        return "".join(out)
+
+    # Find the end of the section (next top-level header or EOF).
+    section_end = len(lines)
+    for idx in range(section_start + 1, len(lines)):
+        stripped = lines[idx].strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section_end = idx
+            break
+
+    # Look for an existing ``<key> = ...`` line inside the section.
+    key_pattern_prefix = f"{key} ="
+    for idx in range(section_start + 1, section_end):
+        stripped = lines[idx].strip()
+        if stripped.startswith(key_pattern_prefix) or stripped.startswith(f"{key}="):
+            if stripped == f"{key} = {value}":
+                return existing  # already correct
+            # Preserve indentation if any.
+            indent_len = len(lines[idx]) - len(lines[idx].lstrip())
+            lines[idx] = lines[idx][:indent_len] + new_line
+            return "".join(lines)
+
+    # Key missing inside the section — splice it just before section_end.
+    insert_at = section_end
+    # Skip trailing blank lines so the new key sits adjacent to other
+    # keys rather than after a blank gap.
+    while insert_at > section_start + 1 and lines[insert_at - 1].strip() == "":
+        insert_at -= 1
+    lines.insert(insert_at, new_line)
+    return "".join(lines)
 
 
 def _rewrite_toml_block(existing: str, *, section_header: str, new_block: str) -> str:
@@ -820,10 +908,13 @@ class CodexAgentProvider:
           4. Verify the ``mala-codex-pre-tool-use`` console script is on
              ``PATH`` (raise
              :class:`CodexHookNotActiveError(SCRIPT_MISSING)`).
-          5. Auto-write both Codex-config preconditions to
+          5. Auto-write the three Codex-config preconditions to
              ``$CODEX_HOME/config.toml`` (decision #16):
+             ``[features] plugin_hooks = true`` so Codex's
+             ``catalog_processor`` actually loads plugin-bundled hooks
+             (the feature ships ``default_enabled = false``);
              ``[plugins."<plugin_id>"] enabled = true`` so Codex's
-             ``configured_plugins_from_stack`` enumerates the plugin,
+             ``configured_plugins_from_stack`` enumerates the plugin;
              and
              ``[hooks.state."<plugin_id>:.codex-plugin/hooks.json:pre_tool_use:0:0"]``
              with ``enabled = true`` + ``trusted_hash`` so the hook is
@@ -911,12 +1002,13 @@ class CodexAgentProvider:
                 reason=CodexHookNotActiveReason.SCRIPT_MISSING,
             )
 
-        # 5. Auto-write the plugin-enable + trusted_hash entries to
-        # config.toml (decision #16). Codex requires BOTH for the hook
-        # to fire: a ``[plugins."<id>"] enabled = true`` entry to
-        # surface the plugin via ``configured_plugins_from_stack``, and
-        # a ``[hooks.state."<id>:..."]`` entry with the matching
-        # ``trusted_hash`` to mark the hook Trusted.
+        # 5. Auto-write the three config-side preconditions to
+        # config.toml (decision #16). Codex requires ALL THREE for the
+        # hook to fire: ``[features] plugin_hooks = true`` to enable
+        # plugin-bundled hook loading (default-off in upstream Codex),
+        # ``[plugins."<id>"] enabled = true`` to surface the plugin via
+        # ``configured_plugins_from_stack``, and ``[hooks.state."<id>:..."]``
+        # with the matching ``trusted_hash`` to mark the hook Trusted.
         codex_home = _resolve_codex_home()
         _write_codex_plugin_config(codex_home=codex_home)
 

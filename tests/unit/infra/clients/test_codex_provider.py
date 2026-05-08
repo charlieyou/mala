@@ -250,6 +250,12 @@ def test_importing_codex_provider_does_not_pull_codex_app_server() -> None:
     Touching the lazy-instantiated factory is also part of the
     cold-path expectation; it must not load the SDK either, only
     constructing the factory class.
+
+    Also asserts that the bundled-plugin installer module
+    (``codex_plugin_installer``) stays off the cold path — module-load
+    of ``codex_provider`` must not eagerly import the installer either.
+    Regression for the prior ``_DEFAULT_PLUGIN_MARKETPLACE = _default_marketplace()``
+    pattern that pulled the installer at module-load time.
     """
     code = """
 import sys
@@ -258,9 +264,16 @@ provider = CodexAgentProvider()
 # Touching the lazy-instantiated factory must not load codex_app_server.
 provider.client_factory  # noqa: B018
 provider.evidence_provider  # noqa: B018
-loaded = sorted(m for m in sys.modules if m.startswith('codex_app_server'))
-if loaded:
-    print('FAIL: ' + ','.join(loaded))
+sdk = sorted(m for m in sys.modules if m.startswith('codex_app_server'))
+installer = sorted(
+    m for m in sys.modules
+    if m == 'src.infra.clients.codex_plugin_installer'
+)
+if sdk:
+    print('FAIL: codex_app_server loaded: ' + ','.join(sdk))
+    sys.exit(1)
+if installer:
+    print('FAIL: codex_plugin_installer loaded: ' + ','.join(installer))
     sys.exit(1)
 print('PASS')
 """
@@ -481,11 +494,16 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     assert (plugin_dir / ".mcp.json").is_file()
 
     config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
-    # Codex requires BOTH preconditions for the bundled hook to fire
-    # (``codex-rs/core-plugins/src/manager.rs::configured_plugins_from_stack``
-    # filters to ``[plugins."<key>"]`` with ``enabled = true``;
-    # ``codex-rs/hooks/src/engine/discovery.rs::hook_trust_status``
-    # gates on the matching ``trusted_hash``).
+    # Codex requires ALL THREE preconditions for the bundled hook to fire:
+    # (a) ``[features] plugin_hooks = true`` per ``codex-rs/features/src/lib.rs:957``
+    #     (Feature::PluginHooks ships default_enabled=false; without it
+    #     ``catalog_processor`` skips loading plugin-bundled hooks);
+    # (b) ``[plugins."<key>"] enabled = true`` per
+    #     ``codex-rs/core-plugins/src/manager.rs::configured_plugins_from_stack``;
+    # (c) ``[hooks.state."<key>"]`` with matching trusted_hash per
+    #     ``codex-rs/hooks/src/engine/discovery.rs::hook_trust_status``.
+    assert "[features]" in config_toml
+    assert "plugin_hooks = true" in config_toml
     assert '[plugins."mala-safety@local"]' in config_toml
     assert "enabled = true" in config_toml
     expected_key = (
@@ -502,6 +520,84 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     match = _re.search(r'trusted_hash = "(sha256:[0-9a-f]+)"', config_toml)
     assert match is not None, config_toml
     assert len(match.group(1)) == len("sha256:") + 64
+
+
+@pytest.mark.unit
+def test_install_prerequisites_preserves_existing_features_block(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """Regression: writing ``plugin_hooks = true`` must not clobber other
+    feature flags the user already set.
+
+    Codex's ``[features]`` block is a flat key=value table; replacing
+    the whole section would drop unrelated flags
+    (``codex-rs/features/src/lib.rs`` registers ~40 features). The
+    install step must update only ``plugin_hooks`` in-place.
+    """
+    codex_home, bin_dir = fake_codex_env
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+    # Pre-populate config.toml with an existing features block.
+    (codex_home / "config.toml").write_text(
+        "[features]\nplugins = true\nremote_plugin = false\n",
+        encoding="utf-8",
+    )
+
+    provider = CodexAgentProvider()
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
+    # All three keys must coexist inside [features] after the write.
+    assert "plugins = true" in config_toml
+    assert "remote_plugin = false" in config_toml
+    assert "plugin_hooks = true" in config_toml
+
+
+@pytest.mark.unit
+def test_install_prerequisites_overwrites_disabled_plugin_hooks(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """``plugin_hooks = false`` (the upstream Codex default) must be
+    rewritten to ``plugin_hooks = true`` so the bundled hook actually
+    fires."""
+    codex_home, bin_dir = fake_codex_env
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+    (codex_home / "config.toml").write_text(
+        "[features]\nplugin_hooks = false\n",
+        encoding="utf-8",
+    )
+
+    provider = CodexAgentProvider()
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
+    assert "plugin_hooks = true" in config_toml
+    assert "plugin_hooks = false" not in config_toml
+
+
+@pytest.mark.unit
+def test_default_marketplace_matches_installer_constant() -> None:
+    """Lock-step pin: the provider's hardcoded marketplace literal must
+    equal the installer's ``PLUGIN_MARKETPLACE`` constant.
+
+    The two intentionally duplicate the literal (``"local"``) so the
+    provider module's lazy-import contract is preserved (importing the
+    installer module at module-load time would defeat the contract).
+    This regression test fails if either side drifts.
+    """
+    from src.infra.clients.codex_plugin_installer import PLUGIN_MARKETPLACE
+    from src.infra.clients.codex_provider import _DEFAULT_PLUGIN_MARKETPLACE
+
+    assert _DEFAULT_PLUGIN_MARKETPLACE == PLUGIN_MARKETPLACE
 
 
 @pytest.mark.unit
