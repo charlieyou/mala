@@ -85,6 +85,35 @@ def _make_executable(path: Path, body: str = "#!/bin/sh\nexit 0\n") -> None:
     path.chmod(0o755)
 
 
+def _install_real_hook_shim(path: Path) -> None:
+    """Install a ``mala-codex-pre-tool-use`` shim that delegates to our module.
+
+    The default selftest probe spawns the on-PATH script and compares
+    its decision to the same input passed to our embedded
+    ``src.infra.hooks.codex_pre_tool_use.decide``. For tests that
+    exercise the happy-path install flow we want a script that agrees
+    with the embedded module — a python shim importing our ``main()``
+    is byte-identical, so the probe's behavioral comparison passes.
+    """
+    body = (
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        f"sys.path.insert(0, {str(REPO_ROOT)!r})\n"
+        "from src.infra.hooks.codex_pre_tool_use import main\n"
+        "raise SystemExit(main())\n"
+    )
+    path.write_text(body, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def _noop_probe(repo: Path, env: dict[str, str], plugin_hash: str) -> None:
+    """Selftest probe that always succeeds. Injected by tests that
+    cover :meth:`install_prerequisites` flow but don't want to pay the
+    cost of the default probe's behavioral subprocess check."""
+    del repo, env, plugin_hash
+    return None
+
+
 def _install_fake_sdk(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -357,7 +386,10 @@ def test_install_prerequisites_accepts_sdk_bundled_codex_runtime(
     # SDK-bundled runtime path is accepted.
     _make_executable(bin_dir / "mala-codex-pre-tool-use")
 
-    provider = CodexAgentProvider()
+    # Bypass the default probe's behavioral subprocess check (covered by
+    # its own dedicated tests below); the focus here is runtime
+    # resolution.
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
     # Plugin tree must be installed and config.toml must carry the
@@ -395,7 +427,8 @@ def test_install_prerequisites_accepts_codex_binary_env_override(
     monkeypatch.setenv("CODEX_BINARY", str(tmp_path / "anywhere" / "codex"))
     _make_executable(bin_dir / "mala-codex-pre-tool-use")
 
-    provider = CodexAgentProvider()
+    # Focus is the env-override branch; bypass the default probe.
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
     plugin_dir = (
@@ -477,7 +510,8 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     _make_executable(bin_dir / "codex")
     _make_executable(bin_dir / "mala-codex-pre-tool-use")
 
-    provider = CodexAgentProvider()
+    # Focus is the config.toml writes; bypass the default probe.
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
     plugin_dir = (
@@ -552,7 +586,7 @@ def test_install_prerequisites_preserves_existing_features_block(
         encoding="utf-8",
     )
 
-    provider = CodexAgentProvider()
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
     config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
@@ -581,7 +615,7 @@ def test_install_prerequisites_overwrites_disabled_plugin_hooks(
         encoding="utf-8",
     )
 
-    provider = CodexAgentProvider()
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
     config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
@@ -615,7 +649,7 @@ def test_install_prerequisites_overwrites_user_plugins_opt_out(
         encoding="utf-8",
     )
 
-    provider = CodexAgentProvider()
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
     config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
@@ -623,6 +657,39 @@ def test_install_prerequisites_overwrites_user_plugins_opt_out(
     assert "plugins = false" not in config_toml
     # plugin_hooks must also have been added inside the same block.
     assert "plugin_hooks = true" in config_toml
+
+
+@pytest.mark.unit
+def test_ensure_key_in_section_preserves_well_formed_toml_without_trailing_newline() -> (
+    None
+):
+    """Regression: ``_ensure_key_in_section`` must not concatenate the
+    new key onto the previous line when the input lacks a trailing
+    newline.
+
+    A user-edited ``config.toml`` ending mid-section without a final
+    ``\\n`` would previously round-trip to malformed TOML
+    (``plugins = trueplugin_hooks = true``) which crashes Codex on
+    startup.
+    """
+    from src.infra.clients.codex_provider import _ensure_key_in_section
+
+    existing_no_trailing_newline = "[features]\nplugins = true"  # no '\n' at EOF
+
+    rewritten = _ensure_key_in_section(
+        existing_no_trailing_newline,
+        section_header="[features]",
+        key="plugin_hooks",
+        value="true",
+    )
+
+    # The output must contain the existing key on its own line and the
+    # new key on its own line — no concatenation.
+    lines = rewritten.splitlines()
+    assert "plugins = true" in lines
+    assert "plugin_hooks = true" in lines
+    # And the merged token ``trueplugin_hooks`` must NOT appear.
+    assert "trueplugin_hooks" not in rewritten
 
 
 @pytest.mark.unit
@@ -802,6 +869,163 @@ def test_default_probe_raises_hook_marker_missing_when_command_absent(
     assert excinfo.value.reason is CodexHookNotActiveReason.HOOK_MARKER_MISSING
 
 
+def _install_valid_plugin_tree(codex_home: Path) -> Path:
+    """Helper: write a valid bundled plugin tree under the cache root.
+
+    Returns the ``.codex-plugin/`` directory the default probe reads.
+    """
+    import json as _json
+
+    plugin_dir = (
+        codex_home
+        / "plugins"
+        / "cache"
+        / "local"
+        / "mala-safety"
+        / "local"
+        / ".codex-plugin"
+    )
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.json").write_text(
+        _json.dumps(
+            {
+                "name": "mala-safety",
+                "hooks": "./.codex-plugin/hooks.json",
+                "mcpServers": "./.codex-plugin/.mcp.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plugin_dir / "hooks.json").write_text(
+        _json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "mala-codex-pre-tool-use",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plugin_dir / ".mcp.json").write_text("{}", encoding="utf-8")
+    return plugin_dir
+
+
+@pytest.mark.unit
+def test_default_probe_passes_when_real_hook_returns_matching_decision(
+    fake_codex_env: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Behavioral check: a hook script that delegates to our embedded
+    module produces identical output and the probe succeeds.
+
+    Pins the contract that the default probe verifies hook *behavior*,
+    not just file presence — defense against stale-install-on-PATH.
+    """
+    from src.infra.clients.codex_provider import _default_selftest_probe
+
+    codex_home, bin_dir = fake_codex_env
+    _install_valid_plugin_tree(codex_home)
+    _install_real_hook_shim(bin_dir / "mala-codex-pre-tool-use")
+
+    # Returns None on success.
+    assert (
+        _default_selftest_probe(
+            tmp_path,
+            {"CODEX_HOME": str(codex_home)},
+            "deadbeef",
+        )
+        is None
+    )
+
+
+@pytest.mark.unit
+def test_default_probe_raises_version_mismatch_on_diverging_decision(
+    fake_codex_env: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Stale install regression: a ``mala-codex-pre-tool-use`` script
+    on PATH that emits a *different* decision than our embedded module
+    surfaces ``VERSION_MISMATCH``.
+
+    Catches the multi-mala-install case where ``shutil.which`` resolves
+    to a script from a different mala version. The structural-only
+    probe could not distinguish that case; the behavioral probe must.
+    """
+    from src.infra.clients.codex_provider import _default_selftest_probe
+
+    codex_home, bin_dir = fake_codex_env
+    _install_valid_plugin_tree(codex_home)
+    # Stale hook script: returns a valid-shaped decision JSON, but
+    # different from the one our embedded ``decide()`` produces for
+    # the sentinel input.
+    stale_body = (
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        "sys.stdin.read()\n"
+        'print(json.dumps({"decision": "approve"}))\n'
+    )
+    _make_executable(bin_dir / "mala-codex-pre-tool-use", body=stale_body)
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _default_selftest_probe(
+            tmp_path,
+            {"CODEX_HOME": str(codex_home)},
+            "deadbeef",
+        )
+    assert excinfo.value.reason is CodexHookNotActiveReason.VERSION_MISMATCH
+
+
+@pytest.mark.unit
+def test_default_probe_raises_hook_marker_missing_when_hook_crashes(
+    fake_codex_env: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """A non-zero exit from the on-PATH hook surfaces
+    ``HOOK_MARKER_MISSING`` rather than masking the failure as success."""
+    from src.infra.clients.codex_provider import _default_selftest_probe
+
+    codex_home, bin_dir = fake_codex_env
+    _install_valid_plugin_tree(codex_home)
+    crashing = "#!/bin/sh\necho boom 1>&2\nexit 17\n"
+    _make_executable(bin_dir / "mala-codex-pre-tool-use", body=crashing)
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _default_selftest_probe(
+            tmp_path,
+            {"CODEX_HOME": str(codex_home)},
+            "deadbeef",
+        )
+    assert excinfo.value.reason is CodexHookNotActiveReason.HOOK_MARKER_MISSING
+
+
+@pytest.mark.unit
+def test_default_probe_raises_hook_marker_missing_on_nonjson_output(
+    fake_codex_env: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Hook output that is not parseable JSON surfaces
+    ``HOOK_MARKER_MISSING`` (the structured-output contract is broken)."""
+    from src.infra.clients.codex_provider import _default_selftest_probe
+
+    codex_home, bin_dir = fake_codex_env
+    _install_valid_plugin_tree(codex_home)
+    body = "#!/bin/sh\necho 'not json'\nexit 0\n"
+    _make_executable(bin_dir / "mala-codex-pre-tool-use", body=body)
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _default_selftest_probe(
+            tmp_path,
+            {"CODEX_HOME": str(codex_home)},
+            "deadbeef",
+        )
+    assert excinfo.value.reason is CodexHookNotActiveReason.HOOK_MARKER_MISSING
+
+
 @pytest.mark.unit
 def test_install_prerequisites_reinstall_replaces_stale_plugin(
     monkeypatch: pytest.MonkeyPatch,
@@ -829,7 +1053,8 @@ def test_install_prerequisites_reinstall_replaces_stale_plugin(
     (plugin_dir / "hooks.json").write_text("// stale\n", encoding="utf-8")
     (plugin_dir / ".mcp.json").write_text("// stale\n", encoding="utf-8")
 
-    provider = CodexAgentProvider()
+    # Focus is the installer's stale-replace behavior; bypass the probe.
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
     # First call replaces stale content.
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
     fresh_bytes = (plugin_dir / "plugin.json").read_bytes()

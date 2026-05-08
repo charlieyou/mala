@@ -544,6 +544,14 @@ def _ensure_key_in_section(
     # keys rather than after a blank gap.
     while insert_at > section_start + 1 and lines[insert_at - 1].strip() == "":
         insert_at -= 1
+    # Guarantee the previous line ends with a newline before splicing the
+    # new key in. Without this, a config.toml that ends mid-section
+    # without a trailing ``\n`` (e.g. user-edited file) would have the
+    # new ``key = value`` concatenated onto the previous line, producing
+    # malformed TOML that crashes Codex on startup. Regression: gemini
+    # P1 on review-17.
+    if insert_at > 0 and not lines[insert_at - 1].endswith("\n"):
+        lines[insert_at - 1] = lines[insert_at - 1] + "\n"
     lines.insert(insert_at, new_line)
     return "".join(lines)
 
@@ -602,17 +610,26 @@ _HOOK_COMMAND_NAME = "mala-codex-pre-tool-use"
 ``pyproject.toml`` and the bundled ``hooks.json`` registration."""
 
 
+_HOOK_PROBE_TIMEOUT_SECONDS = 10.0
+"""Timeout for the on-PATH hook subprocess invocation in the default
+probe. The hook is a pure JSON-in/JSON-out script that returns
+immediately; any wall-clock time past this bound implies it's hung
+(stale install, broken interpreter, etc.) and the run should fail
+closed."""
+
+
 def _default_selftest_probe(
     repo_path: Path,
     env_overlay: dict[str, str],
     expected_hash: str,
 ) -> None:
-    """Default selftest probe — structural verification of the installed plugin.
+    """Default selftest probe — structural + behavioral hook verification.
 
     Fail-closed verification of the on-disk plugin tree at the install
-    target Codex reads. Catches the install-corruption / wrong-path /
-    wrong-command failure modes that the up-front structural checks
-    (SDK importable, codex on PATH, hook script on PATH) leave open:
+    target Codex reads, *plus* a behavioral exercise of the on-PATH
+    hook script. Catches every install-time and PATH-resolution
+    failure mode the up-front structural checks (SDK importable, codex
+    runtime resolvable, hook script on PATH) leave open:
 
       * Plugin manifest at
         ``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/.codex-plugin/plugin.json``
@@ -621,24 +638,37 @@ def _default_selftest_probe(
       * Installed hooks.json exists, parses, and declares a PreToolUse
         command handler whose ``command`` is ``mala-codex-pre-tool-use``.
         Failure → :class:`CodexHookNotActiveError(HOOK_MARKER_MISSING)`.
+      * Behavioral hook check: invoke the on-PATH ``mala-codex-pre-tool-use``
+        with a deterministic sentinel PreToolUse JSON input and compare
+        its decision against the same input run through *our* embedded
+        :func:`src.infra.hooks.codex_pre_tool_use.decide`. A divergence
+        means the on-PATH script is from a different mala install (or
+        a different version of our own script) — both surface
+        :class:`CodexHookNotActiveError(VERSION_MISMATCH)`. A non-zero
+        exit / non-JSON output / IPC failure surfaces
+        :class:`CodexHookNotActiveError(HOOK_MARKER_MISSING)`.
 
-    Plan E5 also calls for a one-shot Codex turn that triggers the
-    bundled hook and verifies it ran with the expected version hash.
-    That live-spawn verification depends on a Codex binary + auth + a
-    sentinel-emitting hook (``MALA_HOOK_SELFTEST_MARKER`` would be a
-    T014 follow-up since the hook script is out of scope for this
-    issue) and is therefore tracked as a follow-up real-Codex e2e gate.
-    The structural verification here is the defense-in-depth baseline:
-    it catches every install-time signature reliably without paying
-    real-binary cost on every run.
+    The behavioral check closes the gap the prior structural-only probe
+    left: ``shutil.which`` only confirms a file *exists* on PATH, not
+    that the file is the script Codex would actually consult. In a
+    multi-install PATH a stale ``mala-codex-pre-tool-use`` from another
+    mala can satisfy ``shutil.which`` while emitting a different
+    decision shape — Codex would silently invoke the wrong script.
+
+    Plan E5 also asks for a real Codex turn that triggers the bundled
+    hook in-process. That live-spawn path is out of scope for this
+    issue (it depends on a sentinel-emit mode in T014's hook script
+    and a real Codex binary + auth) and remains tracked as follow-up.
 
     Tests inject custom probes to drive each
     :class:`CodexHookNotActiveReason` directly, including the runtime
-    reasons (HOOK_MARKER_MISSING / VERSION_MISMATCH / PLUGIN_DISABLED /
-    TRUSTED_HASH_MISMATCH) that a future live-spawn probe would surface.
+    reasons that a future live-spawn probe would surface.
     """
-    del repo_path, expected_hash
+    del expected_hash  # version pinned via behavioral comparison below
     import json as _json
+    import shutil as _shutil
+    import subprocess as _subprocess
+    import sys as _sys
 
     from src.infra.clients.codex_plugin_installer import (
         PLUGIN_DIRNAME,
@@ -700,6 +730,106 @@ def _default_selftest_probe(
             f"PreToolUse command handler for {_HOOK_COMMAND_NAME!r}; the "
             "safety hook would not fire on tool use.",
             reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+        )
+
+    # 3. Behavioral hook check — the on-PATH ``mala-codex-pre-tool-use``
+    # must agree with our embedded module on a sentinel input. Catches
+    # stale-install-on-PATH / wrong-version cases that ``shutil.which``
+    # cannot distinguish.
+    hook_path = _shutil.which(_HOOK_COMMAND_NAME)
+    if hook_path is None:
+        # ``install_prerequisites`` already gates on this, but the probe
+        # is also called as a primitive in tests so re-check defensively.
+        raise CodexHookNotActiveError(
+            f"{_HOOK_COMMAND_NAME!r} not on PATH at probe time.",
+            reason=CodexHookNotActiveReason.SCRIPT_MISSING,
+        )
+
+    sentinel_input: dict[str, object] = {
+        # Tool name "bash" exercises the SHELL_TOOL_NAMES branch.
+        "tool_name": "bash",
+        # Single ``echo`` of a stable string: not in DANGEROUS_PATTERNS,
+        # has no write-targets, so the script must allow regardless of
+        # MALA_AGENT_ID/MALA_LOCK_DIR/MALA_REPO_NAMESPACE state.
+        "tool_input": {"command": "echo mala-codex-selftest-sentinel"},
+        "session_id": "mala-selftest-session",
+        "cwd": str(repo_path),
+    }
+    sentinel_payload = _json.dumps(sentinel_input)
+
+    # Expected decision for the sentinel above. Pinned to the exact
+    # shape ``src.infra.hooks.codex_pre_tool_use._allow`` produces (see
+    # ``src/infra/hooks/codex_pre_tool_use.py:166``); the architectural
+    # rule that ``src.infra.clients`` does not import ``src.infra.hooks``
+    # forbids calling ``decide()`` directly here, so the value is
+    # duplicated. A regression test
+    # (``tests/unit/infra/hooks/test_codex_pre_tool_use.py::test_selftest_sentinel_allow_shape_is_stable``)
+    # pins the hook side to the same constant so the two stay in
+    # lockstep.
+    expected_decision: dict[str, object] = {
+        "decision": "approve",
+        "hookSpecificOutput": {
+            "permissionDecision": "allow",
+            "permissionDecisionReason": "",
+        },
+    }
+
+    # Drop MALA_* env vars so the on-PATH script's behavior matches the
+    # constant above (the embedded ``_allow()`` shape is unconditional
+    # for this sentinel input). Otherwise an ambient MALA_AGENT_ID could
+    # skew the decision.
+    probe_env = {k: v for k, v in os.environ.items() if not k.startswith("MALA_")}
+
+    try:
+        completed = _subprocess.run(
+            [hook_path],
+            input=sentinel_payload,
+            env=probe_env,
+            capture_output=True,
+            text=True,
+            timeout=_HOOK_PROBE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except _subprocess.TimeoutExpired as exc:
+        raise CodexHookNotActiveError(
+            f"On-PATH {_HOOK_COMMAND_NAME!r} did not respond within "
+            f"{_HOOK_PROBE_TIMEOUT_SECONDS:.0f}s. The script may be hung "
+            "or installed against a missing Python interpreter.",
+            reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+        ) from exc
+    except OSError as exc:
+        raise CodexHookNotActiveError(
+            f"Cannot spawn {_HOOK_COMMAND_NAME!r} ({hook_path}): {exc}.",
+            reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+        ) from exc
+
+    if completed.returncode != 0:
+        raise CodexHookNotActiveError(
+            f"On-PATH {_HOOK_COMMAND_NAME!r} ({hook_path}) exited "
+            f"{completed.returncode}; stderr (truncated): "
+            f"{completed.stderr[:512]!r}.",
+            reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+        )
+
+    try:
+        actual_decision = _json.loads(completed.stdout)
+    except _json.JSONDecodeError as exc:
+        raise CodexHookNotActiveError(
+            f"On-PATH {_HOOK_COMMAND_NAME!r} ({hook_path}) emitted "
+            f"non-JSON output: {completed.stdout[:512]!r}.",
+            reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+        ) from exc
+
+    if actual_decision != expected_decision:
+        raise CodexHookNotActiveError(
+            f"On-PATH {_HOOK_COMMAND_NAME!r} ({hook_path}) returned a "
+            f"different decision ({actual_decision!r}) than the bundled "
+            f"hook module ({expected_decision!r}) for the sentinel "
+            "PreToolUse input. The script on PATH is from a different "
+            "mala install or a different version; remove the stale "
+            "install or run mala from the environment that owns the "
+            f"hook script (current Python: {_sys.executable}).",
+            reason=CodexHookNotActiveReason.VERSION_MISMATCH,
         )
 
 

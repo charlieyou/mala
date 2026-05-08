@@ -5150,3 +5150,28 @@ class TestGitWorkTreeAndGitDir:
         command = f"git -C pkg --work-tree={abs_dir} checkout f.py"
         result = decide(make_payload("bash", {"command": command}, cwd=repo))
         assert is_allow(result), result
+
+
+@pytest.mark.unit
+def test_selftest_sentinel_allow_shape_is_stable() -> None:
+    """Lock-step pin: ``codex_provider._default_selftest_probe`` hardcodes
+    the expected decision shape for a sentinel ``echo`` invocation
+    (the architectural rule forbids ``src.infra.clients`` from
+    importing ``src.infra.hooks``, so the shape is duplicated). This
+    test fails if either side drifts so the cross-module contract
+    stays in sync.
+    """
+    sentinel_input = {
+        "tool_name": "bash",
+        "tool_input": {"command": "echo mala-codex-selftest-sentinel"},
+        "session_id": "mala-selftest-session",
+        "cwd": "/tmp/mala-selftest",
+    }
+    expected = {
+        "decision": "approve",
+        "hookSpecificOutput": {
+            "permissionDecision": "allow",
+            "permissionDecisionReason": "",
+        },
+    }
+    assert decide(sentinel_input) == expected
