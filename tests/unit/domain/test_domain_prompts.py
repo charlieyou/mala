@@ -17,6 +17,7 @@ from src.domain.prompts import (
     load_prompt,
     load_prompts,
 )
+from src.domain.validation.config import PromptValidationCommands
 from src.infra.tools.env import PROMPTS_DIR
 
 if TYPE_CHECKING:
@@ -34,12 +35,17 @@ class TestLoadPrompts:
         assert "{max_attempts}" in result.gate_followup_prompt
         assert "{failure_reasons}" in result.gate_followup_prompt
         assert "{issue_id}" in result.gate_followup_prompt
-        # Check for validation command placeholders
-        assert "{lint_command}" in result.gate_followup_prompt
-        assert "{format_command}" in result.gate_followup_prompt
-        assert "{typecheck_command}" in result.gate_followup_prompt
-        assert "{custom_commands_section}" in result.gate_followup_prompt
-        assert "{test_command}" in result.gate_followup_prompt
+        # Canonical-wrapper substitution replaces the per-command placeholders
+        assert "{missing_command_wrappers}" in result.gate_followup_prompt
+        # The wrappers redirect to {validation_log_dir}/<issue>.<key>.log, so the
+        # template must run `mkdir -p` on that directory before invoking them.
+        assert "{validation_log_dir}" in result.gate_followup_prompt
+        assert "mkdir -p {validation_log_dir}" in result.gate_followup_prompt
+        assert "{lint_command}" not in result.gate_followup_prompt
+        assert "{format_command}" not in result.gate_followup_prompt
+        assert "{typecheck_command}" not in result.gate_followup_prompt
+        assert "{custom_commands_section}" not in result.gate_followup_prompt
+        assert "{test_command}" not in result.gate_followup_prompt
 
     def test_raises_on_missing_prompt_dir(self, tmp_path: Path) -> None:
         """load_prompts raises FileNotFoundError for missing directory."""
@@ -408,30 +414,45 @@ class TestPromptTemplateIntegration:
         assert "uvx" not in prompt
 
     def test_gate_followup_renders_with_commands(self, tmp_path: Path) -> None:
-        """Gate followup prompt renders correctly with validation commands."""
+        """Gate followup prompt renders canonical wrappers for missing commands."""
+        from src.domain.prompts import (
+            commands_for_gate_followup,
+            format_gate_followup_prompt,
+        )
+
         prompts = load_prompts(PROMPTS_DIR)
 
         mala_yaml = tmp_path / "mala.yaml"
         mala_yaml.write_text("preset: go\n")
 
         cmds = build_prompt_validation_commands(tmp_path)
-        prompt = prompts.gate_followup_prompt.format(
+        validation_log_dir = tmp_path / "validation-logs"
+
+        prompt = format_gate_followup_prompt(
+            prompts.gate_followup_prompt,
             attempt=1,
             max_attempts=3,
             failure_reasons="- lint failed\n- tests failed",
             issue_id="test-123",
-            lint_command=cmds.lint,
-            format_command=cmds.format,
-            typecheck_command=cmds.typecheck,
-            custom_commands_section="",
-            test_command=cmds.test,
+            missing_commands=commands_for_gate_followup(cmds),
+            validation_log_dir=validation_log_dir,
         )
 
-        # Verify Go commands appear
+        # Verify Go commands appear inside canonical wrappers
         assert "golangci-lint" in prompt
         assert "go test" in prompt
+        # Canonical wrapper signals
+        assert "printf 'MALA_EVIDENCE name=%s" in prompt
+        assert " 'lint' " in prompt
+        assert " 'test' " in prompt
+        # The rerun block must create the log directory before redirecting
+        # canonical wrappers into it (otherwise the `> .../<issue>.<key>.log`
+        # redirect fails when validation was previously skipped).
+        assert f"mkdir -p {validation_log_dir}" in prompt
         # Verify no unsubstituted placeholders
-        assert "{" not in prompt or "}" not in prompt.split("{")[-1]
+        assert "{missing_command_wrappers}" not in prompt
+        assert "{validation_log_dir}" not in prompt
+        assert "{lint_command}" not in prompt
 
     def test_implementer_prompt_directs_custom_commands_to_named_logs(
         self,
@@ -443,8 +464,9 @@ class TestPromptTemplateIntegration:
         assert "Do not combine multiple custom validation commands" in (
             prompts.implementer_prompt
         )
-        assert "{issue_id}.python_test.log" in prompts.implementer_prompt
-        assert "{issue_id}.python_lint.log" in prompts.implementer_prompt
+        # Custom command keys are referenced in narrative as evidence-key examples.
+        assert "python_test" in prompts.implementer_prompt
+        assert "python_lint" in prompts.implementer_prompt
 
 
 class TestFormatImplementerPrompt:
@@ -513,3 +535,335 @@ class TestFormatImplementerPrompt:
         assert prompt.count(f"mkdir -p {validation_log_dir}") == 1
         assert f"{validation_log_dir}/test-123.test.log" in prompt
         assert f"{lock_dir}/test-123.test.log" not in prompt
+
+
+class TestCanonicalWrapperPrompts:
+    """Prompt-tests pinning the canonical-wrapper substitution contract."""
+
+    @staticmethod
+    def _make_validation_commands(
+        *,
+        custom: tuple[tuple[str, str, int, bool], ...] = (),
+    ) -> PromptValidationCommands:
+        return PromptValidationCommands(
+            lint="uvx ruff check .",
+            format="uvx ruff format .",
+            typecheck="uvx ty check",
+            test="uv run pytest",
+            custom_commands=custom,
+        )
+
+    def test_implementer_prompt_renders_one_canonical_wrapper_per_command(
+        self, tmp_path: Path
+    ) -> None:
+        """AC1 + AC3: built-ins + advisory custom render five canonical wrappers."""
+        prompts = load_prompts(PROMPTS_DIR)
+        validation_log_dir = tmp_path / "validation-logs"
+        cmds = self._make_validation_commands(
+            custom=(("security-scan", "trivy fs .", 60, True),),
+        )
+
+        prompt = format_implementer_prompt(
+            prompts.implementer_prompt,
+            issue_id="bd-mala-abc",
+            repo_path=tmp_path,
+            agent_id="test-agent",
+            validation_commands=cmds,
+            lock_dir=tmp_path / "locks",
+            validation_log_dir=validation_log_dir,
+            issue_description="Test issue",
+        )
+
+        # The canonical wrapper format string `MALA_EVIDENCE name=%s ...`
+        # appears once per generated wrapper.
+        assert prompt.count("MALA_EVIDENCE name=%s exit=%s log=%s") == 5
+        assert prompt.count("printf 'MALA_EVIDENCE name=%s") == 5
+
+        # Each evidence key is supplied as the printf argument `'<name>'`
+        for evidence_key in ("format", "lint", "typecheck", "security-scan", "test"):
+            assert f" '{evidence_key}' " in prompt, evidence_key
+            log_path = validation_log_dir / f"bd-mala-abc.{evidence_key}.log"
+            assert f'__mala_log="{log_path}"' in prompt
+
+        # Strict wrappers propagate exit; advisory wrappers exit 0
+        strict_exits = prompt.count('exit "$__mala_status"')
+        advisory_exits = prompt.count("\n  exit 0\n")
+        assert strict_exits == 4
+        assert advisory_exits == 1
+
+        # AC3: no marker syntax remains anywhere in the prompt
+        assert "[custom:" not in prompt
+
+    def test_implementer_prompt_honours_configured_builtin_timeouts(
+        self, tmp_path: Path
+    ) -> None:
+        """Configured `commands.<kind>.timeout` flows into the canonical wrapper.
+
+        Regression for the P1 finding: built-ins were rendered with a hardcoded
+        120 s timeout, which would kill long but valid configured checks
+        (e.g., `commands.test.timeout: 600`). The wrapper must use the
+        per-command timeout from `PromptValidationCommands`.
+        """
+        prompts = load_prompts(PROMPTS_DIR)
+        cmds = PromptValidationCommands(
+            lint="uvx ruff check .",
+            format="uvx ruff format .",
+            typecheck="uvx ty check",
+            test="uv run pytest",
+            custom_commands=(),
+            lint_timeout=45,
+            format_timeout=30,
+            typecheck_timeout=180,
+            test_timeout=600,
+        )
+
+        prompt = format_implementer_prompt(
+            prompts.implementer_prompt,
+            issue_id="bd-mala-abc",
+            repo_path=tmp_path,
+            agent_id="test-agent",
+            validation_commands=cmds,
+            lock_dir=tmp_path / "locks",
+            validation_log_dir=tmp_path / "validation-logs",
+            issue_description="Test",
+        )
+
+        assert "if timeout 600 bash -lc 'uv run pytest'" in prompt
+        assert "if timeout 45 bash -lc 'uvx ruff check .'" in prompt
+        assert "if timeout 30 bash -lc 'uvx ruff format .'" in prompt
+        assert "if timeout 180 bash -lc 'uvx ty check'" in prompt
+        # Default 120 should not appear for any built-in here
+        assert "if timeout 120 bash -lc 'uv run pytest'" not in prompt
+
+    def test_prompt_validation_commands_threads_configured_timeouts(
+        self, tmp_path: Path
+    ) -> None:
+        """`mala.yaml` per-command timeouts populate PromptValidationCommands."""
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """
+commands:
+  lint:
+    command: "ruff check ."
+    timeout: 90
+  test:
+    command: "pytest"
+    timeout: 600
+"""
+        )
+
+        result = build_prompt_validation_commands(tmp_path)
+
+        assert result.lint_timeout == 90
+        assert result.test_timeout == 600
+        # Unconfigured commands keep the 120 fallback so the wrapper's
+        # `timeout` invocation has a sane default.
+        assert result.format_timeout == 120
+        assert result.typecheck_timeout == 120
+
+    def test_implementer_prompt_embeds_exact_configured_commands(
+        self, tmp_path: Path
+    ) -> None:
+        """Generated wrappers include the exact configured command via escape_for_bash_lc."""
+        from src.domain.validation_wrapper import escape_for_bash_lc
+
+        prompts = load_prompts(PROMPTS_DIR)
+        cmds = self._make_validation_commands(
+            custom=(("python_test", "uv run pytest -k 'happy path'", 120, False),),
+        )
+
+        prompt = format_implementer_prompt(
+            prompts.implementer_prompt,
+            issue_id="bd-mala-abc",
+            repo_path=tmp_path,
+            agent_id="test-agent",
+            validation_commands=cmds,
+            lock_dir=tmp_path / "locks",
+            validation_log_dir=tmp_path / "validation-logs",
+            issue_description="Test issue",
+        )
+
+        for command in (
+            cmds.lint,
+            cmds.format,
+            cmds.typecheck,
+            cmds.test,
+            "uv run pytest -k 'happy path'",
+        ):
+            assert escape_for_bash_lc(command) in prompt, command
+
+    def test_implementer_prompt_renders_with_no_custom_commands(
+        self, tmp_path: Path
+    ) -> None:
+        """Without custom commands, the section is empty but four built-ins still render."""
+        prompts = load_prompts(PROMPTS_DIR)
+        cmds = self._make_validation_commands()
+
+        prompt = format_implementer_prompt(
+            prompts.implementer_prompt,
+            issue_id="bd-mala-abc",
+            repo_path=tmp_path,
+            agent_id="test-agent",
+            validation_commands=cmds,
+            lock_dir=tmp_path / "locks",
+            validation_log_dir=tmp_path / "validation-logs",
+            issue_description="Test",
+        )
+
+        strict_exits = prompt.count('exit "$__mala_status"')
+        assert strict_exits == 4
+        assert "[custom:" not in prompt
+        assert "{custom_commands_section}" not in prompt
+
+    def test_gate_followup_renders_one_wrapper_per_missing_command(
+        self, tmp_path: Path
+    ) -> None:
+        """AC2: gate_followup with two missing commands yields exactly two wrappers."""
+        from src.domain.prompts import format_gate_followup_prompt
+        from src.domain.validation.spec import CommandKind, ValidationCommand
+
+        prompts = load_prompts(PROMPTS_DIR)
+        validation_log_dir = tmp_path / "validation-logs"
+        lint_cmd = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+        security_scan_cmd = ValidationCommand(
+            name="security-scan",
+            command="trivy fs .",
+            kind=CommandKind.CUSTOM,
+            allow_fail=True,
+        )
+
+        prompt = format_gate_followup_prompt(
+            prompts.gate_followup_prompt,
+            attempt=2,
+            max_attempts=3,
+            failure_reasons="- missing lint evidence\n- missing security-scan evidence",
+            issue_id="bd-mala-abc",
+            missing_commands=[lint_cmd, security_scan_cmd],
+            validation_log_dir=validation_log_dir,
+        )
+
+        # Exactly two canonical wrappers
+        assert prompt.count("printf 'MALA_EVIDENCE name=%s") == 2
+        assert "uvx ruff check ." in prompt
+        assert "trivy fs ." in prompt
+        # Strict wrapper for lint, advisory for security-scan
+        assert prompt.count('exit "$__mala_status"') == 1
+        assert prompt.count("\n  exit 0\n") == 1
+        # Rerun-rule sentence and unsubstituted placeholder absence
+        assert "Do not manually echo `MALA_EVIDENCE`" in prompt
+        assert "{missing_command_wrappers}" not in prompt
+        assert "{format_command}" not in prompt
+        assert "{test_command}" not in prompt
+        assert "[custom:" not in prompt
+
+    def test_gate_followup_with_no_missing_commands_omits_wrappers(
+        self, tmp_path: Path
+    ) -> None:
+        """Empty missing_commands renders no wrappers, only the rule sentence."""
+        from src.domain.prompts import format_gate_followup_prompt
+
+        prompts = load_prompts(PROMPTS_DIR)
+        prompt = format_gate_followup_prompt(
+            prompts.gate_followup_prompt,
+            attempt=1,
+            max_attempts=3,
+            failure_reasons="- some failure",
+            issue_id="bd-mala-abc",
+            missing_commands=[],
+            validation_log_dir=tmp_path / "validation-logs",
+        )
+
+        assert "printf 'MALA_EVIDENCE name=%s" not in prompt
+        assert "Do not manually echo `MALA_EVIDENCE`" in prompt
+
+    def test_canonical_wrapper_round_trips_command_with_single_quotes(
+        self, tmp_path: Path
+    ) -> None:
+        """Negative case: configured command with `'` is escaped via escape_for_bash_lc."""
+        from src.domain.validation_wrapper import escape_for_bash_lc
+
+        prompts = load_prompts(PROMPTS_DIR)
+        cmds = self._make_validation_commands(
+            custom=(
+                (
+                    "python_e2e",
+                    'bash -c "echo it\'s fine"',
+                    120,
+                    False,
+                ),
+            ),
+        )
+
+        prompt = format_implementer_prompt(
+            prompts.implementer_prompt,
+            issue_id="bd-mala-abc",
+            repo_path=tmp_path,
+            agent_id="test-agent",
+            validation_commands=cmds,
+            lock_dir=tmp_path / "locks",
+            validation_log_dir=tmp_path / "validation-logs",
+            issue_description="Test",
+        )
+
+        embedded = escape_for_bash_lc('bash -c "echo it\'s fine"')
+        assert embedded in prompt
+        # And the unescaped form is NOT present
+        assert "echo it's fine" not in prompt or "it'\\''s" in prompt
+
+    def test_no_marker_syntax_in_any_rendered_prompt(self, tmp_path: Path) -> None:
+        """AC3: `[custom:` does not appear in any rendered prompt for any spec."""
+        from src.domain.prompts import format_gate_followup_prompt
+        from src.domain.validation.spec import CommandKind, ValidationCommand
+
+        prompts = load_prompts(PROMPTS_DIR)
+        validation_log_dir = tmp_path / "validation-logs"
+
+        for custom in (
+            (),
+            (("scan", "trivy fs .", 60, True),),
+            (("strict_one", "do-strict", 30, False), ("adv_one", "do-adv", 30, True)),
+        ):
+            cmds = self._make_validation_commands(custom=custom)
+            impl_prompt = format_implementer_prompt(
+                prompts.implementer_prompt,
+                issue_id="bd-mala-abc",
+                repo_path=tmp_path,
+                agent_id="test-agent",
+                validation_commands=cmds,
+                lock_dir=tmp_path / "locks",
+                validation_log_dir=validation_log_dir,
+                issue_description="Test",
+            )
+            assert "[custom:" not in impl_prompt
+
+            missing = [
+                ValidationCommand(
+                    name="lint",
+                    command="uvx ruff check .",
+                    kind=CommandKind.LINT,
+                ),
+            ]
+            for name, command, timeout, allow_fail in custom:
+                missing.append(
+                    ValidationCommand(
+                        name=name,
+                        command=command,
+                        kind=CommandKind.CUSTOM,
+                        timeout=timeout,
+                        allow_fail=allow_fail,
+                    )
+                )
+            gate_prompt = format_gate_followup_prompt(
+                prompts.gate_followup_prompt,
+                attempt=1,
+                max_attempts=3,
+                failure_reasons="-",
+                issue_id="bd-mala-abc",
+                missing_commands=missing,
+                validation_log_dir=validation_log_dir,
+            )
+            assert "[custom:" not in gate_prompt

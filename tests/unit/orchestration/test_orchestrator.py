@@ -1671,12 +1671,36 @@ class TestValidationResultMetadata:
             original_record(self, issue)
 
         # Create gate result with validation evidence
-        evidence = ValidationEvidence()
-        evidence.commands_ran[CommandKind.TEST] = True
-        evidence.commands_ran[CommandKind.LINT] = True
-        evidence.commands_ran[CommandKind.FORMAT] = True
-        evidence.commands_ran[CommandKind.TYPECHECK] = True
-        evidence.failed_commands = []
+        from src.domain.evidence_check import CommandEvidence
+
+        evidence = ValidationEvidence(
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="passed",
+                ),
+                "lint": CommandEvidence(
+                    name="lint",
+                    kind=CommandKind.LINT,
+                    seen=True,
+                    status="passed",
+                ),
+                "format": CommandEvidence(
+                    name="format",
+                    kind=CommandKind.FORMAT,
+                    seen=True,
+                    status="passed",
+                ),
+                "typecheck": CommandEvidence(
+                    name="typecheck",
+                    kind=CommandKind.TYPECHECK,
+                    seen=True,
+                    status="passed",
+                ),
+            },
+        )
 
         gate_result = GateResult(
             passed=True,
@@ -1765,12 +1789,37 @@ class TestValidationResultMetadata:
             original_record(self, issue)
 
         # Create gate result with specific evidence
-        evidence = ValidationEvidence()
-        evidence.commands_ran[CommandKind.TEST] = True
-        evidence.commands_ran[CommandKind.LINT] = True
-        evidence.commands_ran[CommandKind.FORMAT] = True
-        evidence.commands_ran[CommandKind.TYPECHECK] = True
-        evidence.failed_commands = ["ruff check"]  # One command failed
+        from src.domain.evidence_check import CommandEvidence
+
+        evidence = ValidationEvidence(
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="passed",
+                ),
+                "lint": CommandEvidence(
+                    name="lint",
+                    kind=CommandKind.LINT,
+                    seen=True,
+                    status="failed",
+                    observed_command="ruff check",
+                ),
+                "format": CommandEvidence(
+                    name="format",
+                    kind=CommandKind.FORMAT,
+                    seen=True,
+                    status="passed",
+                ),
+                "typecheck": CommandEvidence(
+                    name="typecheck",
+                    kind=CommandKind.TYPECHECK,
+                    seen=True,
+                    status="passed",
+                ),
+            },
+        )
 
         gate_result = GateResult(
             passed=False,  # Gate failed due to validation failure
@@ -3172,12 +3221,28 @@ class TestBuildGateMetadata:
         from src.pipeline.gate_metadata import (
             build_gate_metadata as _build_gate_metadata,
         )
-        from src.domain.evidence_check import GateResult, ValidationEvidence
+        from src.domain.evidence_check import (
+            CommandEvidence,
+            GateResult,
+            ValidationEvidence,
+        )
         from src.domain.validation.spec import CommandKind
 
         evidence = ValidationEvidence(
-            commands_ran={CommandKind.TEST: True, CommandKind.LINT: True},
-            failed_commands=[],
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="passed",
+                ),
+                "lint": CommandEvidence(
+                    name="lint",
+                    kind=CommandKind.LINT,
+                    seen=True,
+                    status="passed",
+                ),
+            },
         )
         gate_result = GateResult(
             passed=True,
@@ -3204,12 +3269,23 @@ class TestBuildGateMetadata:
         from src.pipeline.gate_metadata import (
             build_gate_metadata as _build_gate_metadata,
         )
-        from src.domain.evidence_check import GateResult, ValidationEvidence
+        from src.domain.evidence_check import (
+            CommandEvidence,
+            GateResult,
+            ValidationEvidence,
+        )
         from src.domain.validation.spec import CommandKind
 
         evidence = ValidationEvidence(
-            commands_ran={CommandKind.TEST: True, CommandKind.LINT: False},
-            failed_commands=["pytest"],
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="failed",
+                    observed_command="pytest",
+                ),
+            },
         )
         gate_result = GateResult(
             passed=False,
@@ -3241,7 +3317,7 @@ class TestBuildGateMetadata:
         )
         from src.domain.evidence_check import GateResult, ValidationEvidence
 
-        evidence = ValidationEvidence(commands_ran={}, failed_commands=[])
+        evidence = ValidationEvidence(commands={})
         gate_result = GateResult(
             passed=False,
             failure_reasons=[],
@@ -3262,7 +3338,7 @@ class TestBuildGateMetadata:
         )
         from src.domain.evidence_check import GateResult, ValidationEvidence
 
-        evidence = ValidationEvidence(commands_ran={}, failed_commands=[])
+        evidence = ValidationEvidence(commands={})
         gate_result = GateResult(
             passed=False,  # Gate says failed
             failure_reasons=["some reason"],

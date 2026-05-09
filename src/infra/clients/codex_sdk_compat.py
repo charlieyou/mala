@@ -14,6 +14,7 @@ thread response is received and an ``AsyncThread`` wrapper is needed.
 from __future__ import annotations
 
 import inspect
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -36,7 +37,9 @@ async def _maybe_await(value: object) -> object:
     return value
 
 
-async def _request_thread_id(codex: object, method: str, params: dict[str, object]) -> str | None:
+async def _request_thread_id(
+    codex: object, method: str, params: dict[str, object]
+) -> str | None:
     raw_client = getattr(codex, "_client", None)
     raw_request = getattr(raw_client, "_request_raw", None)
     sdk_request = getattr(raw_client, "request", None)
@@ -57,7 +60,8 @@ async def _request_thread_id(codex: object, method: str, params: dict[str, objec
     if not isinstance(response, dict):
         raise TypeError(f"{method} raw response must be an object")
 
-    thread = response.get("thread")
+    response_dict: dict[Any, Any] = response
+    thread = response_dict.get("thread")
     thread_id = thread.get("id") if isinstance(thread, dict) else None
     if not isinstance(thread_id, str) or not thread_id:
         raise TypeError(f"{method} raw response missing thread.id")
@@ -69,7 +73,7 @@ async def start_thread_compat(
     params: dict[str, object],
     *,
     typed_kwargs: dict[str, object],
-) -> object:
+) -> Any:  # noqa: ANN401 - codex_app_server.AsyncThread, avoid lazy-import
     """Start a Codex thread, bypassing stale typed response validation when possible."""
     thread_id = await _request_thread_id(codex, "thread/start", params)
     if thread_id is None:
@@ -83,7 +87,7 @@ async def start_thread_compat(
     return AsyncThread(codex, thread_id)
 
 
-async def resume_thread_compat(codex: object, thread_id: str) -> object:
+async def resume_thread_compat(codex: object, thread_id: str) -> Any:  # noqa: ANN401 - codex_app_server.AsyncThread, avoid lazy-import
     """Resume a Codex thread, bypassing stale typed response validation when possible."""
     resumed_thread_id = await _request_thread_id(
         codex,

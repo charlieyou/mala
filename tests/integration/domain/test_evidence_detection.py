@@ -660,9 +660,18 @@ evidence_check:
 
         # Create evidence where lint ran but test/format did not
         # Since only lint is required, this should pass
+        from src.domain.evidence_check import CommandEvidence
         from src.domain.validation.spec import CommandKind
 
         evidence = ValidationEvidence(
+            commands={
+                "lint": CommandEvidence(
+                    name="lint",
+                    kind=CommandKind.LINT,
+                    seen=True,
+                    status="passed",
+                ),
+            },
             commands_ran={CommandKind.LINT: True},
         )
 

@@ -209,7 +209,9 @@ def _build_resume_prompt(
         typecheck_command=validation_commands.typecheck,
         test_command=validation_commands.test,
         custom_commands_section=build_custom_commands_section(
-            validation_commands.custom_commands
+            validation_commands.custom_commands,
+            issue_id=issue_id,
+            validation_log_dir=get_repo_validation_log_dir(repo_path),
         ),
     )
 

@@ -42,7 +42,7 @@ def test_kind_discriminator_default(cls: type, expected_kind: str) -> None:
 @pytest.mark.parametrize(
     ("cls", "expected_fields"),
     [
-        (AgentTextEvent, {"kind", "text"}),
+        (AgentTextEvent, {"kind", "text", "is_delta"}),
         (AgentToolUseEvent, {"kind", "id", "name", "input"}),
         (AgentToolResultEvent, {"kind", "tool_use_id", "is_error", "content"}),
         (AgentResultEvent, {"kind", "session_id", "is_error", "subtype", "result"}),

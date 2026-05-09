@@ -12,7 +12,11 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from src.domain.evidence_check import GateResult, ValidationEvidence
+from src.domain.evidence_check import (
+    CommandEvidence,
+    GateResult,
+    ValidationEvidence,
+)
 from src.domain.validation.spec import CommandKind
 from src.pipeline.gate_metadata import (
     build_gate_metadata,
@@ -51,8 +55,20 @@ class TestBuildGateMetadata:
     def test_passed_gate_result(self) -> None:
         """Should extract metadata from a passed gate result."""
         evidence = ValidationEvidence(
-            commands_ran={CommandKind.TEST: True, CommandKind.LINT: True},
-            failed_commands=[],
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="passed",
+                ),
+                "lint": CommandEvidence(
+                    name="lint",
+                    kind=CommandKind.LINT,
+                    seen=True,
+                    status="passed",
+                ),
+            },
         )
         gate_result = GateResult(
             passed=True,
@@ -78,8 +94,21 @@ class TestBuildGateMetadata:
     def test_failed_gate_result(self) -> None:
         """Should extract metadata from a failed gate result."""
         evidence = ValidationEvidence(
-            commands_ran={CommandKind.TEST: True, CommandKind.LINT: True},
-            failed_commands=["ruff check"],
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="passed",
+                ),
+                "lint": CommandEvidence(
+                    name="lint",
+                    kind=CommandKind.LINT,
+                    seen=True,
+                    status="failed",
+                    observed_command="ruff check",
+                ),
+            },
         )
         gate_result = GateResult(
             passed=False,
@@ -98,11 +127,98 @@ class TestBuildGateMetadata:
         assert metadata.validation_result.passed is False
         assert "ruff check" in metadata.validation_result.commands_failed
 
+    def test_failed_custom_command_excluded_from_commands_failed(self) -> None:
+        """Failed CUSTOM commands must not surface in commands_failed.
+
+        Legacy parity: parse_validation_evidence_with_spec excludes CUSTOM
+        kinds from failed_commands because custom failures are reported via
+        the strict/advisory path. The new commands-map derivation must keep
+        the same exclusion or commands_run/commands_failed will diverge for
+        the same input.
+        """
+        evidence = ValidationEvidence(
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="passed",
+                ),
+                "import_lint": CommandEvidence(
+                    name="import_lint",
+                    kind=CommandKind.CUSTOM,
+                    seen=True,
+                    status="failed",
+                    observed_command="uvx lint-imports",
+                ),
+            },
+        )
+        gate_result = GateResult(
+            passed=False,
+            failure_reasons=["custom command failed"],
+            validation_evidence=evidence,
+            commit_hash="abc123",
+        )
+
+        metadata = build_gate_metadata(gate_result, passed=False)
+
+        assert metadata.validation_result is not None
+        assert "uvx lint-imports" not in metadata.validation_result.commands_failed
+        assert "import_lint" not in metadata.validation_result.commands_failed
+        # Custom commands also must not appear in commands_run (matches legacy).
+        assert "custom" not in metadata.validation_result.commands_run
+
+    def test_commands_run_and_failed_are_deduplicated(self) -> None:
+        """commands_run/commands_failed must dedupe duplicate kinds and commands.
+
+        ``failed_commands`` already dedupes via ``dict.fromkeys`` in
+        evidence_check; the metadata derivations must match legacy semantics
+        when several entries in ``evidence.commands`` share a kind or
+        observed command (e.g., one ruff invocation matched by both LINT and
+        FORMAT).
+        """
+        evidence = ValidationEvidence(
+            commands={
+                "lint_a": CommandEvidence(
+                    name="lint_a",
+                    kind=CommandKind.LINT,
+                    seen=True,
+                    status="failed",
+                    observed_command="ruff check",
+                ),
+                "lint_b": CommandEvidence(
+                    name="lint_b",
+                    kind=CommandKind.LINT,
+                    seen=True,
+                    status="failed",
+                    observed_command="ruff check",
+                ),
+            },
+        )
+        gate_result = GateResult(
+            passed=False,
+            failure_reasons=["lint failed"],
+            validation_evidence=evidence,
+            commit_hash="abc123",
+        )
+
+        metadata = build_gate_metadata(gate_result, passed=False)
+
+        assert metadata.validation_result is not None
+        assert metadata.validation_result.commands_run == ["lint"]
+        assert metadata.validation_result.commands_failed == ["ruff check"]
+
     def test_passed_override(self) -> None:
         """Should override passed status when overall run passed."""
         evidence = ValidationEvidence(
-            commands_ran={CommandKind.TEST: True},
-            failed_commands=[],
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="passed",
+                ),
+            },
         )
         gate_result = GateResult(
             passed=False,  # Gate failed but overall run passed
@@ -177,8 +293,14 @@ class TestBuildGateMetadataFromLogs:
         log_path.write_text("mock log content")
 
         evidence = ValidationEvidence(
-            commands_ran={CommandKind.TEST: True},
-            failed_commands=[],
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="passed",
+                ),
+            },
         )
 
         gate = FakeGateChecker(validation_evidence=evidence)
@@ -206,8 +328,15 @@ class TestBuildGateMetadataFromLogs:
         log_path.write_text("mock log content")
 
         evidence = ValidationEvidence(
-            commands_ran={CommandKind.TEST: True},
-            failed_commands=["pytest"],
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="failed",
+                    observed_command="pytest",
+                ),
+            },
         )
 
         gate = FakeGateChecker(validation_evidence=evidence)
@@ -224,6 +353,99 @@ class TestBuildGateMetadataFromLogs:
         assert metadata.evidence_check_result is not None
         assert "tests failed" in metadata.evidence_check_result.failure_reasons
         assert "lint failed" in metadata.evidence_check_result.failure_reasons
+
+    def test_failed_custom_command_excluded_from_commands_failed(
+        self, tmp_path: Path
+    ) -> None:
+        """Failed CUSTOM commands must not surface in commands_failed via the log path.
+
+        The stored-result path filters CUSTOM kinds from commands_failed; the
+        log-fallback path must apply the same exclusion or IssueFinalizer's
+        fallback metadata diverges from the canonical path for the same input.
+        """
+        from src.domain.validation.spec import ValidationScope, ValidationSpec
+
+        log_path = tmp_path / "session.log"
+        log_path.write_text("mock log content")
+
+        evidence = ValidationEvidence(
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="passed",
+                ),
+                "import_lint": CommandEvidence(
+                    name="import_lint",
+                    kind=CommandKind.CUSTOM,
+                    seen=True,
+                    status="failed",
+                    observed_command="uvx lint-imports",
+                ),
+            },
+        )
+        gate = FakeGateChecker(validation_evidence=evidence)
+        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_SESSION)
+
+        metadata = build_gate_metadata_from_logs(
+            log_path=log_path,
+            result_summary="Quality gate failed: custom command failed",
+            result_success=False,
+            evidence_check=cast("GateChecker", gate),
+            per_session_spec=spec,
+        )
+
+        assert metadata.validation_result is not None
+        assert "uvx lint-imports" not in metadata.validation_result.commands_failed
+        assert "import_lint" not in metadata.validation_result.commands_failed
+        assert "custom" not in metadata.validation_result.commands_run
+
+    def test_commands_run_and_failed_are_deduplicated(self, tmp_path: Path) -> None:
+        """Multiple commands sharing a kind must not produce duplicate entries.
+
+        A single observed command may be matched by multiple CommandKinds (e.g.,
+        ``ruff check`` matches LINT and FORMAT) and multiple ValidationCommands
+        may share a kind, so the derivations must dedupe to match legacy
+        ``failed_commands`` semantics.
+        """
+        from src.domain.validation.spec import ValidationScope, ValidationSpec
+
+        log_path = tmp_path / "session.log"
+        log_path.write_text("mock log content")
+
+        evidence = ValidationEvidence(
+            commands={
+                "lint_a": CommandEvidence(
+                    name="lint_a",
+                    kind=CommandKind.LINT,
+                    seen=True,
+                    status="failed",
+                    observed_command="ruff check",
+                ),
+                "lint_b": CommandEvidence(
+                    name="lint_b",
+                    kind=CommandKind.LINT,
+                    seen=True,
+                    status="failed",
+                    observed_command="ruff check",
+                ),
+            },
+        )
+        gate = FakeGateChecker(validation_evidence=evidence)
+        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_SESSION)
+
+        metadata = build_gate_metadata_from_logs(
+            log_path=log_path,
+            result_summary="Quality gate failed: lint failed",
+            result_success=False,
+            evidence_check=cast("GateChecker", gate),
+            per_session_spec=spec,
+        )
+
+        assert metadata.validation_result is not None
+        assert metadata.validation_result.commands_run == ["lint"]
+        assert metadata.validation_result.commands_failed == ["ruff check"]
 
 
 # ============================================================================

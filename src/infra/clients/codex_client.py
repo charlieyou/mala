@@ -288,7 +288,7 @@ class CodexClient:
             if self._resume_thread_id is not None:
                 self._thread = await resume_thread_compat(codex, self._resume_thread_id)
             else:
-                thread_start_params = {
+                thread_start_params: dict[str, object] = {
                     "model": self._runtime.model,
                     "sandbox": self._runtime.sandbox,
                     "approvalPolicy": self._runtime.approval_policy,

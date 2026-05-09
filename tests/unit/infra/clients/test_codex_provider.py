@@ -43,6 +43,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Self
 
+    from pydantic import BaseModel
+
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 
@@ -2843,7 +2845,7 @@ def test_live_dispatch_probe_uses_raw_rpc_to_tolerate_priority_service_tier(
             method: str,
             params: dict[str, object] | None = None,
             *,
-            response_model: type[object],
+            response_model: type[BaseModel],
         ) -> object:
             del params
             calls.append(method)
@@ -2966,4 +2968,3 @@ def test_live_dispatch_probe_fails_closed_when_raw_thread_id_missing(
 
     assert excinfo.value.reason is CodexHookNotActiveReason.CODEX_BINARY_MISSING
     assert "missing thread.id" in str(excinfo.value)
-

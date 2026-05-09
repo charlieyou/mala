@@ -17,9 +17,12 @@ from typing import TYPE_CHECKING, TypeVar, cast
 from src.domain.lifecycle import Effect
 from src.domain.prompts import (
     build_custom_commands_section,
+    commands_for_gate_followup,
+    format_gate_followup_prompt,
     get_default_validation_commands as _get_default_validation_commands,
 )
 from src.infra.sigint_guard import InterruptGuard
+from src.infra.tools.env import get_repo_validation_log_dir
 from src.pipeline.review_formatter import format_review_issues
 
 if TYPE_CHECKING:
@@ -240,8 +243,11 @@ def _build_review_retry_prompt(
         cast("Sequence[ReviewIssueProtocol]", review_result.issues),
         base_path=repo_path,
     )
+    validation_log_dir = get_repo_validation_log_dir(repo_path)
     custom_commands_section = build_custom_commands_section(
-        validation_commands.custom_commands
+        validation_commands.custom_commands,
+        issue_id=issue_id,
+        validation_log_dir=validation_log_dir,
     )
     return review_followup_template.format(
         attempt=lifecycle_ctx.retry_state.review_attempt,
@@ -395,19 +401,18 @@ class LifecycleEffectHandler:
                 self.config.prompt_validation_commands
                 or _get_default_validation_commands()
             )
-            custom_commands_section = build_custom_commands_section(
-                cmds.custom_commands
-            )
-            pending_query = self.config.prompts.gate_followup.format(
+            validation_log_dir = get_repo_validation_log_dir(self.config.repo_path)
+            # Until the parser surfaces a per-command evidence map (T003), the
+            # follow-up rerun the full configured validation suite.
+            missing_commands = commands_for_gate_followup(cmds)
+            pending_query = format_gate_followup_prompt(
+                self.config.prompts.gate_followup,
                 attempt=lifecycle_ctx.retry_state.gate_attempt,
                 max_attempts=self.config.max_gate_retries,
                 failure_reasons=failure_text,
                 issue_id=input.issue_id,
-                lint_command=cmds.lint,
-                format_command=cmds.format,
-                typecheck_command=cmds.typecheck,
-                custom_commands_section=custom_commands_section,
-                test_command=cmds.test,
+                missing_commands=missing_commands,
+                validation_log_dir=validation_log_dir,
             )
             return pending_query, False, result  # continue with retry
 

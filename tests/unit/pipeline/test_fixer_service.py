@@ -236,7 +236,9 @@ class TestFixerServiceSuccess:
         service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
+        with patch(
+            "src.infra.io.session_log_parser.get_claude_log_path"
+        ) as mock_log_path:
             mock_log_path.return_value = Path("/tmp/fixer.log")
 
             result = await service.run_fixer(ctx)
@@ -255,7 +257,9 @@ class TestFixerServiceSuccess:
         service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
+        with patch(
+            "src.infra.io.session_log_parser.get_claude_log_path"
+        ) as mock_log_path:
             mock_log_path.return_value = tmp_path / "fixer.log"
 
             result = await service.run_fixer(ctx)
@@ -353,7 +357,9 @@ class TestFixerServiceFailure:
         service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context()
 
-        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
+        with patch(
+            "src.infra.io.session_log_parser.get_claude_log_path"
+        ) as mock_log_path:
             mock_log_path.return_value = Path("/tmp/fixer.log")
 
             result = await service.run_fixer(ctx)
@@ -375,7 +381,9 @@ class TestFixerServiceFailure:
         service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context()
 
-        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
+        with patch(
+            "src.infra.io.session_log_parser.get_claude_log_path"
+        ) as mock_log_path:
             mock_log_path.return_value = Path("/tmp/fixer.log")
 
             result = await service.run_fixer(ctx)
@@ -445,7 +453,9 @@ class TestFixerServiceInterrupt:
         service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
+        with patch(
+            "src.infra.io.session_log_parser.get_claude_log_path"
+        ) as mock_log_path:
             mock_log_path.return_value = Path("/tmp/fixer.log")
 
             # Patch InterruptGuard to return interrupted after first check
@@ -521,6 +531,70 @@ class TestFixerServiceEvents:
             await service.run_fixer(ctx)
 
         event_sink.on_fixer_text.assert_called_once_with(2, "Fixing the issue...")
+
+    @pytest.mark.asyncio
+    async def test_coalesces_delta_text_events(self) -> None:
+        """Streaming ``is_delta=True`` text events flush as a single block.
+
+        Codex emits text chunks as ``AgentTextEvent(is_delta=True)`` and
+        suppresses the completed event. Without coalescing, the console
+        sink prefixes ``▶ FIXER attempt N:`` to every chunk and the output
+        is unreadable. The fixer mirrors :class:`MessageStreamProcessor`:
+        deltas accumulate until a non-text event flushes them.
+        """
+        from src.core.protocols.agent_event import (
+            AgentResultEvent,
+            AgentTextEvent,
+            AgentToolUseEvent,
+        )
+
+        events: list[object] = [
+            AgentTextEvent(text="I'll", is_delta=True),
+            AgentTextEvent(text=" fix", is_delta=True),
+            AgentTextEvent(text=" the bug", is_delta=True),
+            AgentToolUseEvent(id="t-1", name="Bash", input={"command": "pwd"}),
+            AgentResultEvent(session_id="sess-x", result="done"),
+        ]
+
+        client = MockSDKClient(messages=events)
+        factory = make_mock_sdk_client_factory(client)
+        config = make_config()
+        event_sink = MagicMock()
+        provider = FakeAgentProvider(factory)
+        install_mock_runtime_builder(provider)
+        service = FixerService(config, provider, event_sink=event_sink)
+        ctx = make_failure_context(attempt=2)
+
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
+            await service.run_fixer(ctx)
+
+        text_calls = [call.args for call in event_sink.on_fixer_text.call_args_list]
+        assert text_calls == [(2, "I'll fix the bug")]
+
+    @pytest.mark.asyncio
+    async def test_flushes_pending_delta_at_stream_end(self) -> None:
+        """Trailing deltas with no follow-up event still flush to the sink."""
+        from src.core.protocols.agent_event import AgentTextEvent
+
+        events: list[object] = [
+            AgentTextEvent(text="partial ", is_delta=True),
+            AgentTextEvent(text="message", is_delta=True),
+        ]
+
+        client = MockSDKClient(messages=events)
+        factory = make_mock_sdk_client_factory(client)
+        config = make_config()
+        event_sink = MagicMock()
+        provider = FakeAgentProvider(factory)
+        install_mock_runtime_builder(provider)
+        service = FixerService(config, provider, event_sink=event_sink)
+        ctx = make_failure_context(attempt=1)
+
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
+            await service.run_fixer(ctx)
+
+        text_calls = [call.args for call in event_sink.on_fixer_text.call_args_list]
+        assert text_calls == [(1, "partial message")]
 
     @pytest.mark.asyncio
     async def test_emits_tool_use_events(self) -> None:
