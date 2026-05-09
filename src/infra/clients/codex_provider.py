@@ -202,12 +202,14 @@ def _build_merged_codex_plugin_mcp_json(
     bundled-only file, dropping ``coder_options.codex.mcp_servers``
     entries from Codex's effective config.
 
-    The bundled spec on disk uses the **static** shape (empty
-    ``args``/``env``) — the launcher inherits ``MALA_AGENT_ID`` /
-    ``MALA_REPO_NAMESPACE`` from Codex's parent process env (passed via
-    :class:`AppServerConfig.env`), so per-session values do not need to
-    be embedded in the plugin file (which would otherwise race
-    concurrent agents under ``--max-agents > 1``).
+    The bundled spec on disk uses the **static** shape (empty ``args``
+    and no literal per-session ``env`` values). Codex launches stdio MCP
+    servers with a sanitized environment, so the static spec must list
+    the required ``MALA_*`` names in ``env_vars`` to forward them from
+    the Codex app-server process env (passed via
+    :class:`AppServerConfig.env`). Embedding literal per-session values
+    in the plugin file would race concurrent agents under
+    ``--max-agents > 1``.
     """
     import json as _json
 
@@ -216,6 +218,11 @@ def _build_merged_codex_plugin_mcp_json(
         "command": CODEX_BUNDLED_MCP_LAUNCHER_COMMAND,
         "args": [],
         "env": {},
+        "env_vars": [
+            "MALA_AGENT_ID",
+            "MALA_LOCK_DIR",
+            "MALA_REPO_NAMESPACE",
+        ],
     }
     return (_json.dumps({"mcpServers": merged}, indent=2) + "\n").encode("utf-8")
 

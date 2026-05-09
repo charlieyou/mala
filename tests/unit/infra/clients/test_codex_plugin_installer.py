@@ -129,6 +129,26 @@ def test_bundled_manifest_points_at_dot_codex_plugin_paths() -> None:
 
 
 @pytest.mark.unit
+def test_bundled_mcp_forwards_lock_context_env_vars() -> None:
+    """Regression: Codex stdio MCP subprocesses get a sanitized env.
+
+    The static bundled ``.mcp.json`` must list Mala's lock-context
+    variables in ``env_vars`` so Codex forwards them from the
+    app-server process env to ``mala-codex-mcp-locking``. An empty
+    ``env`` map alone is not enough.
+    """
+    import json as _json
+
+    payload = _json.loads((_REAL_BUNDLED_DIR / ".mcp.json").read_text("utf-8"))
+    bundled = payload["mcpServers"]["mala-locking"]
+    assert bundled["env_vars"] == [
+        "MALA_AGENT_ID",
+        "MALA_LOCK_DIR",
+        "MALA_REPO_NAMESPACE",
+    ]
+
+
+@pytest.mark.unit
 def test_resolver_prefers_wheel_data_dir_when_present(tmp_path: Path) -> None:
     """Simulate a wheel-installed layout: the installer module sits inside
     ``site-packages/src/infra/clients/`` and a ``_codex_plugin_data/``

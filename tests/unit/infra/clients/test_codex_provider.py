@@ -739,6 +739,15 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     assert (plugin_dir / "plugin.json").is_file()
     assert (plugin_dir / "hooks.json").is_file()
     assert (plugin_dir / ".mcp.json").is_file()
+    import json as _json
+
+    mcp_payload = _json.loads((plugin_dir / ".mcp.json").read_text(encoding="utf-8"))
+    bundled_mcp = mcp_payload["mcpServers"]["mala-locking"]
+    assert bundled_mcp["env_vars"] == [
+        "MALA_AGENT_ID",
+        "MALA_LOCK_DIR",
+        "MALA_REPO_NAMESPACE",
+    ]
 
     config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
     # Codex requires ALL FIVE preconditions for the bundled hook to fire:
