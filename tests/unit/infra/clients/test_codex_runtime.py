@@ -165,21 +165,23 @@ def test_env_carries_parent_environ_plus_mala_overlays(
 
 
 @pytest.mark.unit
-def test_env_omits_mala_lock_dir_when_unset(
+def test_env_resolves_mala_lock_dir_default_when_unset(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``MALA_LOCK_DIR`` is inherited from ``os.environ`` only when set there.
+    """``MALA_LOCK_DIR`` is resolved through ``get_lock_dir()`` even when unset.
 
-    Regression for the Phase C reviewer's P3 dead-code finding: the
-    builder used to re-add ``MALA_LOCK_DIR`` after the ``**os.environ``
-    spread, which was always a no-op. The bundled hook + MCP launcher
-    falls through to ``src.infra.tools.env.get_lock_dir`` when the var
-    is unset; this test pins that contract so a regression that
-    silently fabricates a value would fail here.
+    Pins AC-3 (plan ``L815``): Mala MUST pass the lock-ownership env
+    bundle to the Codex subprocess via the explicit per-process env
+    dict, not by relying on parent ``os.environ`` to carry
+    ``MALA_LOCK_DIR``. The bundled ``mala-codex-pre-tool-use`` hook
+    reads its env strictly from what the Codex subprocess inherits, so
+    a missing ``MALA_LOCK_DIR`` would deny every lock-gated write
+    fail-closed. The default resolved value is the
+    :func:`src.infra.tools.env.get_lock_dir` fallback (``/tmp/mala-locks``).
     """
     monkeypatch.delenv("MALA_LOCK_DIR", raising=False)
     runtime = _make_builder(tmp_path).build()
-    assert "MALA_LOCK_DIR" not in runtime.env
+    assert runtime.env["MALA_LOCK_DIR"] == "/tmp/mala-locks"
 
 
 @pytest.mark.unit

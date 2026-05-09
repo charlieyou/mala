@@ -202,15 +202,20 @@ class CodexRuntimeBuilder:
         """Materialize the runtime.
 
         Composes the per-process env dict from ``os.environ`` plus the
-        ``MALA_*`` overlays the bundled hook expects (``MALA_AGENT_ID``,
-        ``MALA_REPO_NAMESPACE``); ``MALA_LOCK_DIR`` is forwarded from
-        the orchestrator's environment when set so the spawned MCP
-        launcher writes lock files where the rest of the run reads
-        them. Other parent env keys are inherited unchanged.
+        full ``MALA_*`` overlay the bundled ``mala-codex-pre-tool-use``
+        hook needs to evaluate lock-gated writes (``MALA_AGENT_ID``,
+        ``MALA_LOCK_DIR``, ``MALA_REPO_NAMESPACE``). ``MALA_LOCK_DIR``
+        is resolved through :func:`src.infra.tools.env.get_lock_dir`
+        rather than relying on the parent ``os.environ``: the hook
+        reads its env strictly from what the Codex subprocess inherits,
+        and an unset ``MALA_LOCK_DIR`` in the orchestrator's env would
+        cause the hook to deny every lock-gated shell/apply_patch write
+        fail-closed. Mirrors the Amp path's posture at
+        ``src/infra/clients/amp_runtime.py:288``.
 
-        Constructs a :class:`LintCache` instance for the runtime so the
-        pipeline can read ``runtime.lint_cache`` without branching on
-        coder.
+        Other parent env keys are inherited unchanged. Constructs a
+        :class:`LintCache` instance for the runtime so the pipeline can
+        read ``runtime.lint_cache`` without branching on coder.
         """
         if self._mcp_servers_override is not None:
             mcp_servers: dict[str, object] = dict(self._mcp_servers_override)
@@ -219,14 +224,15 @@ class CodexRuntimeBuilder:
                 self._mcp_server_factory(self._agent_id, self._repo_path, None)
             )
 
-        # ``MALA_LOCK_DIR`` is inherited verbatim from ``os.environ`` via
-        # the spread above when set there (parity with the Amp path
-        # behavior at ``src/infra/clients/amp_provider.py:127``); when
-        # unset, the bundled hook + MCP launcher fall through to
-        # ``src.infra.tools.env.get_lock_dir`` for the default location.
+        # Lazy import to keep ``codex_runtime`` free of a hard
+        # ``src.infra.tools.env`` dep at module-load time; the env
+        # resolver is only needed when actually building a runtime.
+        from src.infra.tools.env import get_lock_dir
+
         env: dict[str, str] = {
             **os.environ,
             "MALA_AGENT_ID": self._agent_id,
+            "MALA_LOCK_DIR": str(get_lock_dir()),
             "MALA_REPO_NAMESPACE": str(self._repo_path),
             **self._env_extra,
         }
