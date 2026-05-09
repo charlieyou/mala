@@ -26,6 +26,32 @@ _SUBPROCESS_TIMEOUT_SECONDS = 120.0
 """Generous bound for a tiny prompt; absorbs cold-start jitter."""
 
 
+def _upstream_error_reason(events: list[dict[str, Any]]) -> str | None:
+    """Return a skip reason if the run failed on a transient upstream error.
+
+    The Amp service occasionally returns ``error_during_execution`` results
+    whose ``error`` payload is an upstream HTTP error page (e.g. ``400 Bad
+    Request`` HTML). That bypasses Amp itself and produces no assistant
+    events — there is nothing schema-relevant to validate. Treat it as a
+    skip so the schema gate stays meaningful when upstream is healthy
+    without going red on transient outages.
+    """
+    for event in events:
+        if event.get("type") != "result":
+            continue
+        if event.get("subtype") != "error_during_execution":
+            continue
+        if event.get("num_turns", 0):
+            continue
+        error_text = str(event.get("error") or "")
+        if "Bad Request" in error_text or "<html" in error_text.lower():
+            return (
+                "transient Amp upstream error before any assistant turn: "
+                f"{error_text[:200]}"
+            )
+    return None
+
+
 def _require_amp_cli() -> None:
     """Skip the real-Amp e2e test when the Amp CLI is not installed."""
     if shutil.which("amp") is None:
@@ -218,6 +244,10 @@ def test_amp_real_cli_stream_json_schema() -> None:
 
     observed_types = sorted({str(e["type"]) for e in events})
     print(f"[amp-e2e] observed event.type values: {observed_types}", file=sys.stderr)
+
+    upstream_skip = _upstream_error_reason(events)
+    if upstream_skip is not None:
+        pytest.skip(upstream_skip)
 
     system_inits = [
         e for e in events if e.get("type") == "system" and e.get("subtype") == "init"
