@@ -450,6 +450,73 @@ async def test_query_uses_compat_thread_start_for_priority_service_tier(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_query_uses_compat_thread_resume_for_priority_service_tier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resume path bypasses the same stale ``serviceTier`` SDK enum."""
+    import types
+
+    from src.infra.clients.codex_client import CodexClient
+
+    requests: list[tuple[str, dict[str, object] | None, type[object]]] = []
+    turn_inputs: list[_FakeTextInput] = []
+
+    class _CompatClient:
+        async def request(
+            self,
+            method: str,
+            params: dict[str, object] | None,
+            *,
+            response_model: type[object],
+        ) -> object:
+            requests.append((method, params, response_model))
+            assert method == "thread/resume"
+            return response_model.model_validate(
+                {"thread": {"id": "thr_resume_priority"}, "serviceTier": "priority"}
+            )
+
+    class _CompatAsyncCodex:
+        def __init__(self, config: _FakeAppServerConfig | None = None) -> None:
+            del config
+            self._client = _CompatClient()
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def close(self) -> None:
+            return None
+
+        async def thread_resume(self, _thread_id: str) -> object:
+            raise AssertionError("typed thread_resume should not be used")
+
+    class _CompatThread:
+        def __init__(self, _codex: object, id: str) -> None:
+            self.id = id
+
+        async def turn(self, text_input: _FakeTextInput, **_kwargs: object) -> object:
+            turn_inputs.append(text_input)
+            return _FakeTurnHandle()
+
+    fake_module: ModuleType = types.ModuleType("codex_app_server")
+    fake_module.AsyncCodex = _CompatAsyncCodex  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
+    fake_module.AppServerConfig = _FakeAppServerConfig  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
+    fake_module.AsyncThread = _CompatThread  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
+    fake_module.TextInput = _FakeTextInput  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
+    monkeypatch.setitem(sys.modules, "codex_app_server", fake_module)
+
+    runtime = _build_runtime(tmp_path)
+    async with CodexClient(runtime).with_resume("thr_existing") as client:
+        await client.query("resume priority")
+
+    method, params, _ = requests[0]
+    assert method == "thread/resume"
+    assert params == {"threadId": "thr_existing"}
+    assert client.session_id == "thr_resume_priority"
+    assert turn_inputs[0].prompt == "resume priority"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_query_reuses_existing_thread_on_subsequent_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
