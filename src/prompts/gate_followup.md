@@ -28,6 +28,7 @@ This follow-up overrides the baseline "do not fix untouched files" validation ru
 2. Re-run the canonical wrapper for each missing or invalid command. Each snippet below is the exact wrapper the gate recognizes — run it as-is in a single Bash tool call. Do not manually echo `MALA_EVIDENCE`. Rerun the provided snippet exactly as shown — only the snippet is recognized as evidence.
 
 ```bash
+mkdir -p {validation_log_dir}
 {missing_command_wrappers}
 ```
 

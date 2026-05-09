@@ -271,6 +271,7 @@ def format_gate_followup_prompt(
         failure_reasons=failure_reasons,
         issue_id=issue_id,
         missing_command_wrappers=missing_command_wrappers,
+        validation_log_dir=validation_log_dir,
     )
 
 

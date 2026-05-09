@@ -37,6 +37,10 @@ class TestLoadPrompts:
         assert "{issue_id}" in result.gate_followup_prompt
         # Canonical-wrapper substitution replaces the per-command placeholders
         assert "{missing_command_wrappers}" in result.gate_followup_prompt
+        # The wrappers redirect to {validation_log_dir}/<issue>.<key>.log, so the
+        # template must run `mkdir -p` on that directory before invoking them.
+        assert "{validation_log_dir}" in result.gate_followup_prompt
+        assert "mkdir -p {validation_log_dir}" in result.gate_followup_prompt
         assert "{lint_command}" not in result.gate_followup_prompt
         assert "{format_command}" not in result.gate_followup_prompt
         assert "{typecheck_command}" not in result.gate_followup_prompt
@@ -441,8 +445,13 @@ class TestPromptTemplateIntegration:
         assert "printf 'MALA_EVIDENCE name=%s" in prompt
         assert " 'lint' " in prompt
         assert " 'test' " in prompt
+        # The rerun block must create the log directory before redirecting
+        # canonical wrappers into it (otherwise the `> .../<issue>.<key>.log`
+        # redirect fails when validation was previously skipped).
+        assert f"mkdir -p {validation_log_dir}" in prompt
         # Verify no unsubstituted placeholders
         assert "{missing_command_wrappers}" not in prompt
+        assert "{validation_log_dir}" not in prompt
         assert "{lint_command}" not in prompt
 
     def test_implementer_prompt_directs_custom_commands_to_named_logs(
