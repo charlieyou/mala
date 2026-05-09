@@ -170,10 +170,10 @@ the main coder.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--coder` | `amp` | Coder backend: `claude`, `amp`, or `codex`. Validated at parse time. |
+| `--coder` | `claude` | Coder backend: `claude`, `amp`, or `codex`. Validated at parse time. |
 | `--amp-mode` | `deep` | Amp execution mode: `smart`, `rush`, or `deep`. Only consulted when `coder=amp`. |
 | `--codex-model` | `gpt-5.5` | Codex model identifier (e.g., `gpt-5.5`). Only consulted when `coder=codex`. |
-| `--codex-effort` | None (SDK default) | Codex reasoning effort. Validated against the SDK's `ReasoningEffort` enum at parse time. Only consulted when `coder=codex`. |
+| `--codex-effort` | `medium` | Codex reasoning effort. Validated against the SDK's `ReasoningEffort` enum at parse time. Only consulted when `coder=codex`. |
 | `--codex-approval-policy` | `never` | Codex approval policy: `never`, `on-request`, `on-failure`, `untrusted`. Only consulted when `coder=codex`. |
 | `--codex-sandbox` | `danger-full-access` | Codex sandbox mode: `read-only`, `workspace-write`, `danger-full-access`. Only consulted when `coder=codex`. |
 
@@ -184,10 +184,10 @@ All coder flags follow the same **CLI > env > yaml > default** precedence as
 
 | Setting | CLI | Env | YAML | Default |
 |---------|-----|-----|------|---------|
-| Coder | `--coder claude` | `MALA_CODER=claude` | `coder: claude` | `amp` |
+| Coder | `--coder claude` | `MALA_CODER=claude` | `coder: claude` | `claude` |
 | Amp mode | `--amp-mode rush` | `MALA_AMP_MODE=rush` | `amp_mode: rush` | `deep` |
 | Codex model | `--codex-model gpt-5.5` | `MALA_CODEX_MODEL=gpt-5.5` | `coder_options.codex.model: gpt-5.5` | `gpt-5.5` |
-| Codex effort | `--codex-effort high` | `MALA_CODEX_EFFORT=high` | `coder_options.codex.effort: high` | None |
+| Codex effort | `--codex-effort high` | `MALA_CODEX_EFFORT=high` | `coder_options.codex.effort: high` | `medium` |
 | Codex approval policy | `--codex-approval-policy never` | `MALA_CODEX_APPROVAL_POLICY=never` | `coder_options.codex.approval_policy: never` | `never` |
 | Codex sandbox | `--codex-sandbox danger-full-access` | `MALA_CODEX_SANDBOX=danger-full-access` | `coder_options.codex.sandbox: danger-full-access` | `danger-full-access` |
 
@@ -272,6 +272,11 @@ The writes are idempotent — reruns against an already-trusted hook short-circu
 without rewriting the file. Other keys inside `[features]` and unrelated tables
 in `config.toml` are preserved.
 
+The runtime self-test verifies both trusted handlers: `SessionStart` must fire
+when the Codex turn starts, and `PreToolUse` must fire before a real tool call.
+Both handlers write event-specific marker files, and mala only proceeds when
+both markers contain the expected hook version hash.
+
 ### Interactive trust fallback (one-time)
 
 Auto-trust requires `$CODEX_HOME` to be writable. On systems where `~/.codex/`
@@ -347,10 +352,10 @@ Precedence: CLI flags override global config, which overrides program defaults.
 | `MALA_DISABLE_DEBUG_LOG` | - | Set to `1` to disable debug file logging (for performance or disk space) |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Claude SDK config directory (plugins, sessions) |
 | `MALA_CLAUDE_SETTINGS_SOURCES` | `local,project` | Comma-separated Claude settings sources |
-| `MALA_CODER` | `amp` | Coder backend: `claude`, `amp`, or `codex`. Overridden by `--coder`; falls back to `coder:` in `mala.yaml`. |
+| `MALA_CODER` | `claude` | Coder backend: `claude`, `amp`, or `codex`. Overridden by `--coder`; falls back to `coder:` in `mala.yaml`. |
 | `MALA_AMP_MODE` | `deep` | Amp execution mode: `smart`, `rush`, or `deep`. Overridden by `--amp-mode`; falls back to `amp_mode` in `mala.yaml`. Only consulted when coder is `amp`. |
 | `MALA_CODEX_MODEL` | `gpt-5.5` | Codex model id. Overridden by `--codex-model`; falls back to `coder_options.codex.model`. Only consulted when coder is `codex`. |
-| `MALA_CODEX_EFFORT` | None | Codex reasoning effort (validated against the SDK's `ReasoningEffort` enum). Overridden by `--codex-effort`; falls back to `coder_options.codex.effort`. Only consulted when coder is `codex`. |
+| `MALA_CODEX_EFFORT` | `medium` | Codex reasoning effort (validated against the SDK's `ReasoningEffort` enum). Overridden by `--codex-effort`; falls back to `coder_options.codex.effort`. Only consulted when coder is `codex`. |
 | `MALA_CODEX_APPROVAL_POLICY` | `never` | Codex approval policy: `never`, `on-request`, `on-failure`, `untrusted`. Overridden by `--codex-approval-policy`; falls back to `coder_options.codex.approval_policy`. Only consulted when coder is `codex`. |
 | `MALA_CODEX_SANDBOX` | `danger-full-access` | Codex sandbox mode: `read-only`, `workspace-write`, `danger-full-access`. Overridden by `--codex-sandbox`; falls back to `coder_options.codex.sandbox`. Only consulted when coder is `codex`. |
 

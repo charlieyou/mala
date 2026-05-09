@@ -536,7 +536,7 @@ app = typer.Typer(
 )
 
 _CODER_HELP = (
-    "Coder backend to drive issue execution (claude, amp, or codex). Default: amp."
+    "Coder backend to drive issue execution (claude, amp, or codex). Default: claude."
 )
 _AMP_MODE_HELP = (
     "Amp execution mode: smart, rush, or deep. Only consulted when coder=amp. "
@@ -556,7 +556,7 @@ _CODEX_MODEL_HELP = (
 )
 _CODEX_EFFORT_HELP = (
     "Codex reasoning effort. Validated against the Codex SDK ReasoningEffort "
-    "enum at parse time. Only consulted when coder=codex. Default: SDK default."
+    "enum at parse time. Only consulted when coder=codex. Default: medium."
 )
 _CODEX_APPROVAL_POLICY_HELP = (
     "Codex approval policy. Valid: never, on-request, on-failure, untrusted. "

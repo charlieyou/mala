@@ -188,10 +188,10 @@ def test_provider_conforms_to_agent_provider_protocol() -> None:
 
 @pytest.mark.unit
 def test_default_options_match_unattended_run_defaults() -> None:
-    """Plan decisions #2, #3, #9: defaults for unattended Codex runs."""
+    """Defaults for unattended Codex runs."""
     provider = CodexAgentProvider()
     assert provider.model == "gpt-5.5"
-    assert provider.effort is None
+    assert provider.effort == "medium"
     assert provider.approval_policy == "never"
     assert provider.sandbox == "danger-full-access"
 

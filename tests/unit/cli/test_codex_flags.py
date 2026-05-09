@@ -139,7 +139,7 @@ def test_default_codex_options_when_flags_absent(
     config = _DummyOrchestrator.last_mala_config
     assert config is not None
     assert config.coder_options.codex.model == "gpt-5.5"
-    assert config.coder_options.codex.effort is None
+    assert config.coder_options.codex.effort == "medium"
     assert config.coder_options.codex.approval_policy == "never"
     assert config.coder_options.codex.sandbox == "danger-full-access"
 

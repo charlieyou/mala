@@ -130,8 +130,8 @@ def _resolve_codex_efforts() -> tuple[frozenset[str], bool]:
 def validate_codex_effort(effort: str | None, *, source: str) -> None:
     """Validate ``effort`` against Codex's ``ReasoningEffort`` enum.
 
-    Mirrors :func:`validate_amp_effort_for_mode`'s shape: ``None`` is the
-    "use SDK default" sentinel and is always accepted; non-None values must
+    Mirrors :func:`validate_amp_effort_for_mode`'s shape: ``None`` means no
+    explicit value to validate and is always accepted; non-None values must
     match an enum member sourced lazily from ``codex_app_server`` (or the
     documented fallback list when the SDK is absent).
     """
@@ -156,6 +156,7 @@ VALID_CODEX_SANDBOXES: frozenset[str] = frozenset(
     {"read-only", "workspace-write", "danger-full-access"}
 )
 DEFAULT_CODEX_MODEL: str = "gpt-5.5"
+DEFAULT_CODEX_EFFORT: str = "medium"
 DEFAULT_CODEX_APPROVAL_POLICY: Literal[
     "never", "on-request", "on-failure", "untrusted"
 ] = "never"

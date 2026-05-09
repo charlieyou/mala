@@ -241,6 +241,10 @@ modes drove the design:
   structured `CodexHookNotActiveReason` enum
   (`HOOK_MARKER_MISSING`, `VERSION_MISMATCH`, `SCRIPT_MISSING`,
   `PLUGIN_DISABLED`, `TRUSTED_HASH_MISMATCH`, `CODEX_BINARY_MISSING`).
+  The self-test drives both Codex hook events the bundled plugin declares:
+  `SessionStart` proves the plugin dispatch path is enabled, and a real
+  tool-call turn proves the safety-critical `PreToolUse` hook fires before
+  unattended tool execution.
   See [architecture.md §10a](architecture.md#10a-codex-safety-model--bundled-hook--plugin-self-test).
 - **"User skipped the trust step."** Codex's hook framework requires
   `trusted_hash` matching for the hook to fire. `CodexPluginInstaller`
@@ -266,16 +270,15 @@ and `MALA_DISALLOWED_TOOLS` from its process env. Mala MUST NOT mutate
 `os.environ` in the parent process — under `--max-agents > 1`, concurrent
 agents would leak each other's `MALA_AGENT_ID` to subprocesses.
 `CodexRuntimeBuilder.build()` constructs a per-subprocess env dict
-explicitly (`env_extra` overlays on a fresh copy of `os.environ`); the
-SDK's env-injection support plumbs this through to the spawned `codex
-app-server` and its hook subprocess.
+explicitly (`env_extra` overlays on a fresh copy of `os.environ` plus the
+mandatory `MALA_AGENT_ID`, resolved `MALA_LOCK_DIR`, and
+`MALA_REPO_NAMESPACE` values); the SDK's env-injection support plumbs this
+through to the spawned `codex app-server` and its hook subprocess.
 
-If a future SDK version drops env-injection support, the documented
-fallback is a per-session state file
-(`~/.config/mala/agent-state/{session_id}.env`, written atomically before
-the first turn fires; hook reads it keyed on the `session_id` it receives
-in stdin). The hook implementation accepts either source so the fallback
-ships without a binary change.
+Env injection is the only supported transport. The previous
+`~/.config/mala/agent-state/{session_id}.env` fallback was removed because
+it could let hooks read stale per-session state; missing env now fails
+closed at decision time.
 
 ### Local Verification
 

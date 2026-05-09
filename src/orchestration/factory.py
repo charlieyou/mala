@@ -139,7 +139,9 @@ def _resolve_yaml_codex_options(
         model=yaml_codex_options.model
         if yaml_codex_options.model is not None
         else base.model,
-        effort=yaml_codex_options.effort,
+        effort=yaml_codex_options.effort
+        if yaml_codex_options.effort is not None
+        else base.effort,
         approval_policy=yaml_codex_options.approval_policy
         if yaml_codex_options.approval_policy is not None
         else base.approval_policy,

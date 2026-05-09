@@ -1,6 +1,9 @@
 # Architecture
 
-**mala** (Multi-Agent Loop Architecture) is an orchestrator for processing issues in parallel using Claude agents. This document describes its layered architecture, module responsibilities, key flows, and design decisions.
+**mala** (Multi-Agent Loop Architecture) is an orchestrator for processing
+issues in parallel using Claude, Amp, or Codex coder backends. This document
+describes its layered architecture, module responsibilities, key flows, and
+design decisions.
 
 > **Source of truth**: Configuration values (thresholds, contracts) are documented here for convenience, but the canonical source is `pyproject.toml` and code under `src/domain/validation`.
 
@@ -796,12 +799,13 @@ fail-closed gate as the Amp provider before any issue agent is spawned:
    `CodexNotInstalledError` with actionable remediation on any miss.
 2. Copy the bundled plugin tree via write-temp-then-rename; verify content
    hashes match the bundled copies; write the trusted-hash entry.
-3. Spawn a self-test Codex turn that triggers the bundled hook with a
-   sentinel `PreToolUse` event; wait for the hook script's marker on
-   stdout and verify the version hash matches the installed plugin's
-   content hash.
-4. **Pass** when the marker arrives and matches; mala terminates the
-   self-test turn before any LLM cost is incurred.
+3. Spawn a self-test Codex turn that drives Codex's real hook dispatch:
+   `SessionStart` fires first, then the test prompt nudges a real tool call
+   so `PreToolUse` fires. The hook writes atomic per-event marker files
+   (`SessionStart.json`, `PreToolUse.json`) with the expected version hash.
+4. **Pass** only when both event markers arrive and match. The `PreToolUse`
+   self-test response uses Codex's per-event deny fields only, avoiding
+   unsupported universal fields that Codex rejects.
 5. **Fail closed** otherwise: raise `CodexHookNotActiveError` carrying a
    structured `CodexHookNotActiveReason` enum (`HOOK_MARKER_MISSING`,
    `VERSION_MISMATCH`, `SCRIPT_MISSING`, `PLUGIN_DISABLED`,
@@ -814,12 +818,13 @@ own process env. Mala MUST NOT mutate `os.environ` in the parent process
 — under `--max-agents > 1`, concurrent agents would leak each other's
 `MALA_AGENT_ID` to subprocesses. `CodexRuntimeBuilder.build()` constructs
 a per-subprocess env dict explicitly (`{**os.environ, "MALA_AGENT_ID": …,
-"MALA_REPO_NAMESPACE": …, **env_extra}`) and that dict is plumbed through
-to the Codex subprocess. If a future SDK version drops env-injection
-support, a state-file fallback (`~/.config/mala/agent-state/{session_id}.env`,
-written atomically before the first turn fires; hook reads it keyed on
-`session_id` from stdin) is documented as a contingency. The current
-implementation uses env injection.
+"MALA_LOCK_DIR": str(get_lock_dir()), "MALA_REPO_NAMESPACE": …,
+**env_extra}`) and that dict is plumbed through to the Codex subprocess.
+`MALA_LOCK_DIR` is resolved through mala's lock-dir helper and injected even
+when the parent environment did not set it, so the hook has the same lock
+directory as the orchestrator. Env injection is the sole supported transport;
+the old state-file fallback was removed so missing env fails closed instead
+of silently reading stale state.
 
 **No silent unguarded path.** Combined with `sandbox: danger-full-access`
 + `approval_policy: never`, the bundled hook is the *only* gate. Any

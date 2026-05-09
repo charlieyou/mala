@@ -5,7 +5,8 @@
 
 **M**ulti-**A**gent **L**oop **A**rchitecture
 
-A multi-agent system for processing beads issues in parallel using the Claude Agent SDK.
+A multi-agent system for processing beads issues in parallel using Claude,
+Amp, or Codex coder backends.
 
 The name also derives from Sanskrit, where *mala* means "garland" or "string of beads" - fitting for a system that orchestrates beads issues in a continuous loop, like counting prayer beads.
 
@@ -30,15 +31,14 @@ LLM agents become unreliable as their context window fills up. Early in a sessio
 
 ### Claude Code
 
-[Claude Code](https://code.claude.com/docs/en/setup) CLI is the agent runtime. See the docs for installation instructions.
+[Claude Code](https://code.claude.com/docs/en/setup) CLI is the default
+agent runtime. See the docs for installation instructions.
 
 ### Amp (Optional, for `coder: amp`)
 
 Mala can drive its per-issue implementation agent on Sourcegraph's
-[Amp](https://ampcode.com/manual) instead of Claude. Amp is the default
-coder, selected via `--coder amp` / `MALA_CODER=amp` / `coder: amp` in
-`mala.yaml`; pass `--coder claude` (or `MALA_CODER=claude`) to opt back
-to Claude.
+[Amp](https://ampcode.com/manual) instead of Claude. Amp is opt-in via
+`--coder amp` / `MALA_CODER=amp` / `coder: amp` in `mala.yaml`.
 
 When `coder: amp` is selected, the orchestrator runs `amp --execute --stream-json`
 under `--dangerously-allow-all` and relies on a bundled TypeScript safety plugin
@@ -95,7 +95,7 @@ Mala can drive its per-issue implementation agent on OpenAI's
 [`codex app-server`](https://developers.openai.com/codex/sdk) (`gpt-5.5`
 family) instead of Claude or Amp. Codex is opt-in via `--coder codex` /
 `MALA_CODER=codex` / `coder: codex` in `mala.yaml`; the default remains
-`coder: amp`.
+`coder: claude`.
 
 When `coder: codex` is selected, mala drives `codex app-server` through the
 `codex_app_server` Python SDK (in-process JSON-RPC over stdio — no CLI
@@ -107,8 +107,9 @@ lock-ownership enforcement, and `MALA_DISALLOWED_TOOLS` enforcement. Both
 are packaged as a Mala-shipped Codex plugin
 (`plugins/codex/mala-safety/.codex-plugin/`) installed idempotently to
 `~/.codex/plugins/`. Before any issue agent is spawned, mala runs a
-fail-closed runtime self-test that proves the hook is active and trusted;
-if it isn't, the run aborts with a clear error.
+fail-closed runtime self-test that proves both `SessionStart` and
+`PreToolUse` hook handlers are active and trusted; if either handler is
+missing, disabled, untrusted, or stale, the run aborts with a clear error.
 
 **Prerequisites:**
 
@@ -137,13 +138,16 @@ if it isn't, the run aborts with a clear error.
   with `CodexNotInstalledError` when the SDK, runtime, or auth is missing.
 - `~/.codex/plugins/` writable. Mala installs the bundled `mala-safety`
   plugin (with hook + locking MCP) idempotently on every run.
+- `$CODEX_HOME/config.toml` writable for automatic hook trust. If it is
+  read-only, use the one-time interactive trust fallback documented in
+  [CLI Reference: Codex Prerequisites](docs/cli-reference.md#codex-prerequisites).
 
 **Defaults under `coder: codex`:**
 
 | Option | Default | Why |
 |--------|---------|-----|
 | `model` | `gpt-5.5` | Latest gpt-5.5 family release |
-| `effort` | None (SDK default) | Pass-through to Codex's `ReasoningEffort` enum |
+| `effort` | `medium` | Explicit Codex `ReasoningEffort` default |
 | `approval_policy` | `never` | Unattended-run posture; bundled hook is the gate |
 | `sandbox` | `danger-full-access` | Same posture as Amp's `--dangerously-allow-all` |
 

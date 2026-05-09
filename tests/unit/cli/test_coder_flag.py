@@ -229,7 +229,7 @@ def test_coder_help_shows_effective_defaults(
     # leak `│` tokens into substring checks when the widest option grows.
     output = " ".join(result.output.replace("│", " ").split())
     assert "--coder" in output
-    assert "Default: amp" in output
+    assert "Default: claude" in output
     assert "--amp-mode" in output
     assert "Default: deep" in output
     assert "--effort" in output
@@ -256,7 +256,7 @@ def test_absence_of_flags_preserves_default_config(
     config = _DummyOrchestrator.last_mala_config
     assert config is not None
     # Defaults (no env, no yaml, no CLI override).
-    assert config.coder == "amp"
+    assert config.coder == "claude"
     assert config.coder_options.amp.mode == "deep"
 
 

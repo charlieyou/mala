@@ -1,8 +1,8 @@
 """Factory-level AgentProvider selection (T007).
 
-These tests are the unit-level evidence for AC#1: the default ``coder=amp``
-constructs an :class:`AmpAgentProvider`, while ``coder=claude`` selects
-:class:`ClaudeAgentProvider`. The integration evidence lives in
+These tests are the unit-level evidence for AC#1: the default ``coder=claude``
+constructs a :class:`ClaudeAgentProvider`, while ``coder=amp`` selects
+:class:`AmpAgentProvider`. The integration evidence lives in
 ``tests/integration/test_amp_provider.py``.
 
 The factory pulls ``coder`` and ``coder_options.amp.mode`` from
@@ -71,12 +71,12 @@ def _wire_fake_amp_self_test(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 # ---------------------------------------------------------------------------
 
 
-def test_create_agent_provider_picks_amp_by_default() -> None:
+def test_create_agent_provider_picks_claude_by_default() -> None:
     config = MalaConfig.from_env(validate=False)
-    assert config.coder == "amp"
+    assert config.coder == "claude"
     provider = _create_agent_provider(config)
-    assert isinstance(provider, AmpAgentProvider)
-    assert provider.name == "amp"
+    assert isinstance(provider, ClaudeAgentProvider)
+    assert provider.name == "claude"
 
 
 def test_create_agent_provider_picks_claude_when_configured() -> None:
@@ -165,10 +165,10 @@ def test_create_agent_provider_threads_claude_settings_sources() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_orchestrator_uses_amp_provider_by_default(
+def test_orchestrator_uses_claude_provider_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _wire_fake_amp_self_test(tmp_path, monkeypatch)
+    del monkeypatch
     config = OrchestratorConfig(repo_path=tmp_path, max_agents=1)
     deps = OrchestratorDependencies(
         issue_provider=FakeIssueProvider(),
@@ -176,8 +176,8 @@ def test_orchestrator_uses_amp_provider_by_default(
     mala_config = MalaConfig.from_env(validate=False)
     orchestrator = create_orchestrator(config, mala_config=mala_config, deps=deps)
 
-    # The provider stored on the orchestrator is the Amp one.
-    assert isinstance(orchestrator._agent_provider, AmpAgentProvider)
+    # The provider stored on the orchestrator is the Claude one.
+    assert isinstance(orchestrator._agent_provider, ClaudeAgentProvider)
     # And the same instance is threaded through to the run coordinator's
     # FixerService — fixers therefore follow the main coder.
     assert (

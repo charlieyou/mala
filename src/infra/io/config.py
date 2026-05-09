@@ -36,6 +36,7 @@ from typing import Literal
 from src.core.constants import (
     DEFAULT_CLAUDE_SETTINGS_SOURCES,
     DEFAULT_CODEX_APPROVAL_POLICY,
+    DEFAULT_CODEX_EFFORT,
     DEFAULT_CODEX_MODEL,
     DEFAULT_CODEX_SANDBOX,
     VALID_CLAUDE_SETTINGS_SOURCES,
@@ -51,7 +52,7 @@ _logger = logging.getLogger(__name__)
 
 VALID_CODERS: frozenset[str] = frozenset({"claude", "amp", "codex"})
 VALID_AMP_MODES: frozenset[str] = frozenset({"smart", "rush", "deep"})
-DEFAULT_CODER: Literal["claude", "amp", "codex"] = "amp"
+DEFAULT_CODER: Literal["claude", "amp", "codex"] = "claude"
 DEFAULT_AMP_MODE: Literal["smart", "rush", "deep"] = "deep"
 
 
@@ -362,9 +363,8 @@ class CodexOptions:
     Attributes:
         model: Codex model identifier. Default ``gpt-5.5`` (decision #9).
         effort: Optional ``ReasoningEffort`` value passed through to Codex.
-            ``None`` means "use SDK default"; non-None values are validated
-            against the Codex SDK's ``ReasoningEffort`` enum at parse time
-            (decision #13).
+            Defaults to ``medium``; values are validated against the Codex
+            SDK's ``ReasoningEffort`` enum at parse time (decision #13).
         approval_policy: Codex turn approval policy. Default ``never``
             (decision #3) — combined with ``sandbox=danger-full-access``,
             the bundled hook is the only safety gate for unattended runs.
@@ -377,7 +377,7 @@ class CodexOptions:
     """
 
     model: str = DEFAULT_CODEX_MODEL
-    effort: str | None = None
+    effort: str | None = DEFAULT_CODEX_EFFORT
     approval_policy: Literal["never", "on-request", "on-failure", "untrusted"] = (
         DEFAULT_CODEX_APPROVAL_POLICY
     )
@@ -685,7 +685,7 @@ class MalaConfig:
         except ValueError as exc:
             parse_errors.append(str(exc))
             env_codex_model = None
-        # Parse MALA_CODEX_EFFORT (env > yaml > default; None == SDK default).
+        # Parse MALA_CODEX_EFFORT (env > yaml > default).
         try:
             env_codex_effort = parse_codex_effort(
                 os.environ.get("MALA_CODEX_EFFORT"), source="MALA_CODEX_EFFORT"

@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from src.core.constants import (
     DEFAULT_CODEX_APPROVAL_POLICY,
+    DEFAULT_CODEX_EFFORT,
     DEFAULT_CODEX_MODEL,
     DEFAULT_CODEX_SANDBOX,
 )
@@ -1896,7 +1897,7 @@ class CodexAgentProvider:
         self,
         *,
         model: str = DEFAULT_CODEX_MODEL,
-        effort: str | None = None,
+        effort: str | None = DEFAULT_CODEX_EFFORT,
         approval_policy: Literal[
             "never", "on-request", "on-failure", "untrusted"
         ] = DEFAULT_CODEX_APPROVAL_POLICY,
@@ -1984,7 +1985,7 @@ class CodexAgentProvider:
 
     @property
     def effort(self) -> str | None:
-        """Resolved Codex reasoning effort (``None`` = SDK default)."""
+        """Resolved Codex reasoning effort."""
         return self._effort
 
     @property
@@ -2024,7 +2025,7 @@ class CodexAgentProvider:
         # ``LintCache`` carrier (the import-linter contract is OK with
         # the codex_runtime exception, but keeping this lazy mirrors
         # the Amp path's posture and keeps the ``coder=claude`` /
-        # ``coder=amp`` cold-path identical to the current default).
+        # ``coder=amp`` cold-path unchanged unless Codex is selected.
         from src.infra.clients.codex_runtime import CodexRuntimeBuilder
 
         builder = CodexRuntimeBuilder(

@@ -45,6 +45,7 @@ def test_factory_returns_codex_provider_when_coder_codex() -> None:
     provider = _create_agent_provider(config)
     assert isinstance(provider, CodexAgentProvider)
     assert provider.name == "codex"
+    assert provider.effort == "medium"
 
 
 def test_factory_threads_resolved_codex_options_to_provider() -> None:
@@ -199,6 +200,7 @@ def test_cli_codex_selects_provider_with_default_options(
     provider = _DummyOrchestrator.last_provider
     assert isinstance(provider, CodexAgentProvider)
     assert provider.model == "gpt-5.5"
+    assert provider.effort == "medium"
     assert provider.approval_policy == "never"
     assert provider.sandbox == "danger-full-access"
 
@@ -231,6 +233,7 @@ def test_yaml_codex_options_reach_provider(
     provider = _DummyOrchestrator.last_provider
     assert isinstance(provider, CodexAgentProvider)
     assert provider.model == "gpt-5.5-foo"
+    assert provider.effort == "medium"
     assert provider.approval_policy == "on-request"
     assert provider.sandbox == "workspace-write"
 
