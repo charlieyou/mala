@@ -44,12 +44,13 @@ dev = ["pytest>=8.0.0", "pytest-asyncio>=0.24.0", "pytest-cov>=5.0.0"]
 # transitively). Until the SDK ships to PyPI we install it directly
 # from the upstream tag — same path
 # ``developers.openai.com/codex/sdk`` documents — pinned to
-# ``rust-v0.126.0`` (the first stable tag that ships the renamed
-# distribution; earlier tags carry the prior name
+# ``rust-v0.129.0`` (matching the Codex CLI runtime version this integration
+# currently targets; earlier tags carry older generated app-server models, and
+# pre-0.126 tags carry the prior name
 # ``codex-app-server-sdk`` and uv refuses the rename mismatch).
 # Replace with a normal version specifier once the SDK is on PyPI.
 codex = [
-    "openai-codex-app-server-sdk @ git+https://github.com/openai/codex@rust-v0.126.0#subdirectory=sdk/python",
+    "openai-codex-app-server-sdk @ git+https://github.com/openai/codex@rust-v0.129.0#subdirectory=sdk/python",
 ]
 
 [build-system]

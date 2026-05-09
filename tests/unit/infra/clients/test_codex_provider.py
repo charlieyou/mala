@@ -20,6 +20,7 @@ Covers:
 from __future__ import annotations
 
 import importlib.util
+import json
 import shutil
 import subprocess
 import sys
@@ -2812,3 +2813,194 @@ def test_install_prerequisites_reinstall_replaces_stale_plugin(
     # bytes do not change.
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
     assert (plugin_dir / "plugin.json").read_bytes() == fresh_bytes
+
+
+@pytest.mark.unit
+def test_live_dispatch_probe_uses_raw_rpc_to_tolerate_priority_service_tier(
+    _stub_live_codex_probes: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Raw JSON-RPC bypasses stale SDK response validation for selftest only."""
+    monkeypatch.undo()
+    from src.infra.clients.codex_provider import _live_codex_hook_dispatch_probe
+
+    expected_hash = "feedface" * 8
+    calls: list[str] = []
+
+    class _RawClient:
+        def __init__(self, env: dict[str, str]) -> None:
+            self._env = env
+
+        async def request(
+            self,
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            response_model: type[object],
+        ) -> object:
+            del params
+            calls.append(method)
+            if method == "thread/start":
+                return response_model.model_validate(
+                    {"thread": {"id": "thread-raw"}, "serviceTier": "priority"}
+                )
+            if method == "turn/start":
+                marker_dir = Path(self._env["MALA_CODEX_HOOK_SELFTEST_MARKER_DIR"])
+                for event in ("SessionStart", "PreToolUse"):
+                    (marker_dir / f"{event}.json").write_text(
+                        json.dumps({"version": expected_hash, "event_name": event}),
+                        encoding="utf-8",
+                    )
+                return response_model.model_validate({"turn": {"id": "turn-raw"}})
+            if method == "turn/interrupt":
+                return response_model.model_validate({})
+            raise AssertionError(f"unexpected raw request {method}")
+
+    class _RawAsyncCodex:
+        def __init__(self, *, config: object) -> None:
+            self._client = _RawClient(dict(cast("Any", config).env))
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: object,
+        ) -> None:
+            del exc_type, exc, tb
+
+        async def thread_start(self, **_kwargs: object) -> object:
+            raise AssertionError("typed thread_start should not be used")
+
+    import sys as _sys
+    import types
+
+    class _CapturingAppServerConfig:
+        def __init__(self, **kw: object) -> None:
+            self.env = kw["env"]  # type: ignore[assignment]
+
+    fake_pkg = types.ModuleType("codex_app_server")
+    fake_pkg.AppServerConfig = _CapturingAppServerConfig  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    fake_pkg.AsyncCodex = _RawAsyncCodex  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    fake_pkg.TextInput = lambda text: text  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    monkeypatch.setitem(_sys.modules, "codex_app_server", fake_pkg)
+
+    _live_codex_hook_dispatch_probe(
+        {"CODEX_HOME": str(tmp_path)}, tmp_path, expected_hash
+    )
+
+    assert "thread/start" in calls
+    assert "turn/start" in calls
+
+
+@pytest.mark.unit
+def test_live_dispatch_probe_fails_closed_when_raw_thread_id_missing(
+    _stub_live_codex_probes: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Malformed raw selftest responses still fail closed with context."""
+    monkeypatch.undo()
+    from src.infra.clients.codex_provider import _live_codex_hook_dispatch_probe
+
+    class _RawClient:
+        def _request_raw(
+            self, method: str, params: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            del params
+            if method == "thread/start":
+                return {"thread": {}, "serviceTier": "priority"}
+            raise AssertionError(f"unexpected raw request {method}")
+
+    class _RawAsyncCodex:
+        _client = _RawClient()
+
+        def __init__(self, *, config: object) -> None:
+            del config
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: object,
+        ) -> None:
+            del exc_type, exc, tb
+
+    import sys as _sys
+    import types
+
+    fake_pkg = types.ModuleType("codex_app_server")
+    fake_pkg.AppServerConfig = staticmethod(lambda **_kw: None)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    fake_pkg.AsyncCodex = _RawAsyncCodex  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    fake_pkg.TextInput = lambda text: text  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    monkeypatch.setitem(_sys.modules, "codex_app_server", fake_pkg)
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _live_codex_hook_dispatch_probe(
+            {"CODEX_HOME": str(tmp_path)}, tmp_path, "deadbeef"
+        )
+
+    assert excinfo.value.reason is CodexHookNotActiveReason.CODEX_BINARY_MISSING
+    assert "missing thread.id" in str(excinfo.value)
+
+
+@pytest.mark.unit
+def test_live_dispatch_probe_fails_closed_when_raw_turn_id_missing(
+    _stub_live_codex_probes: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Malformed raw ``turn/start`` responses also fail closed with context."""
+    monkeypatch.undo()
+    from src.infra.clients.codex_provider import _live_codex_hook_dispatch_probe
+
+    class _RawClient:
+        def _request_raw(
+            self, method: str, params: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            del params
+            if method == "thread/start":
+                return {"thread": {"id": "thread-raw"}, "serviceTier": "priority"}
+            if method == "turn/start":
+                return {"turn": {}}
+            raise AssertionError(f"unexpected raw request {method}")
+
+    class _RawAsyncCodex:
+        _client = _RawClient()
+
+        def __init__(self, *, config: object) -> None:
+            del config
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: object,
+        ) -> None:
+            del exc_type, exc, tb
+
+    import sys as _sys
+    import types
+
+    fake_pkg = types.ModuleType("codex_app_server")
+    fake_pkg.AppServerConfig = staticmethod(lambda **_kw: None)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    fake_pkg.AsyncCodex = _RawAsyncCodex  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    fake_pkg.TextInput = lambda text: text  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    monkeypatch.setitem(_sys.modules, "codex_app_server", fake_pkg)
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _live_codex_hook_dispatch_probe(
+            {"CODEX_HOME": str(tmp_path)}, tmp_path, "deadbeef"
+        )
+
+    assert excinfo.value.reason is CodexHookNotActiveReason.CODEX_BINARY_MISSING
+    assert "missing turn.id" in str(excinfo.value)

@@ -371,6 +371,85 @@ async def test_query_starts_thread_with_runtime_settings(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_query_uses_compat_thread_start_for_priority_service_tier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real async SDK path can bypass stale ``ThreadStartResponse`` enum.
+
+    Codex CLI 0.129 may return ``serviceTier='priority'`` while the generated
+    SDK model only accepts ``fast`` / ``flex``. The client only needs
+    ``thread.id`` to create the SDK thread wrapper.
+    """
+    import types
+
+    from src.infra.clients.codex_client import CodexClient
+
+    requests: list[tuple[str, dict[str, object] | None, type[object]]] = []
+    turn_inputs: list[_FakeTextInput] = []
+
+    class _CompatClient:
+        async def request(
+            self,
+            method: str,
+            params: dict[str, object] | None,
+            *,
+            response_model: type[object],
+        ) -> object:
+            requests.append((method, params, response_model))
+            assert method == "thread/start"
+            return response_model.model_validate(
+                {"thread": {"id": "thr_priority"}, "serviceTier": "priority"}
+            )
+
+    class _CompatAsyncCodex:
+        config: _FakeAppServerConfig | None = None
+
+        def __init__(self, config: _FakeAppServerConfig | None = None) -> None:
+            self.config = config
+            self._client = _CompatClient()
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def close(self) -> None:
+            return None
+
+        async def thread_start(self, **_kwargs: object) -> object:
+            raise AssertionError("typed thread_start should not be used")
+
+    class _CompatThread:
+        def __init__(self, _codex: object, id: str) -> None:
+            self.id = id
+
+        async def turn(self, text_input: _FakeTextInput, **_kwargs: object) -> object:
+            turn_inputs.append(text_input)
+            return _FakeTurnHandle()
+
+    fake_module: ModuleType = types.ModuleType("codex_app_server")
+    fake_module.AsyncCodex = _CompatAsyncCodex  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
+    fake_module.AppServerConfig = _FakeAppServerConfig  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
+    fake_module.AsyncThread = _CompatThread  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
+    fake_module.TextInput = _FakeTextInput  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
+    monkeypatch.setitem(sys.modules, "codex_app_server", fake_module)
+
+    runtime = _build_runtime(tmp_path)
+    async with CodexClient(runtime) as client:
+        await client.query("hello priority")
+
+    assert requests
+    method, params, _ = requests[0]
+    assert method == "thread/start"
+    assert params is not None
+    assert params["model"] == "gpt-5.5"
+    assert params["approvalPolicy"] == "never"
+    assert params["sandbox"] == "danger-full-access"
+    assert params["cwd"] == str(tmp_path)
+    assert client.session_id == "thr_priority"
+    assert turn_inputs[0].prompt == "hello priority"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_query_reuses_existing_thread_on_subsequent_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

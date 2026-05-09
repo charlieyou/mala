@@ -287,13 +287,52 @@ class CodexClient:
             if self._resume_thread_id is not None:
                 self._thread = await codex.thread_resume(self._resume_thread_id)
             else:
-                self._thread = await codex.thread_start(
-                    model=self._runtime.model,
-                    sandbox=self._runtime.sandbox,
-                    approval_policy=self._runtime.approval_policy,
-                    base_instructions=self._runtime.base_instructions,
-                    cwd=str(self._runtime.cwd),
-                )
+                raw_client = getattr(codex, "_client", None)
+                sdk_request = getattr(raw_client, "request", None)
+                if callable(sdk_request):
+                    # Temporary workaround for openai/codex#21871. Codex CLI
+                    # 0.129 can return ``serviceTier = "priority"`` from
+                    # ``thread/start`` while the generated Python SDK model only
+                    # accepts ``fast`` / ``flex``. We only need ``thread.id`` to
+                    # construct the SDK's AsyncThread wrapper, so use a
+                    # permissive local response model here until upstream fixes
+                    # the generated enum.
+                    from pydantic import BaseModel, ConfigDict
+
+                    from codex_app_server import (  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]
+                        AsyncThread,
+                    )
+
+                    class _ThreadStartCompatResponse(BaseModel):
+                        model_config = ConfigDict(extra="allow")
+
+                        thread: dict[str, object]
+
+                    response = await sdk_request(
+                        "thread/start",
+                        {
+                            "model": self._runtime.model,
+                            "sandbox": self._runtime.sandbox,
+                            "approvalPolicy": self._runtime.approval_policy,
+                            "baseInstructions": self._runtime.base_instructions,
+                            "cwd": str(self._runtime.cwd),
+                        },
+                        response_model=_ThreadStartCompatResponse,
+                    )
+                    thread_id = response.thread.get("id")
+                    if not isinstance(thread_id, str) or not thread_id:
+                        raise RuntimeError(
+                            "Codex thread/start response missing thread.id"
+                        )
+                    self._thread = AsyncThread(codex, thread_id)
+                else:
+                    self._thread = await codex.thread_start(
+                        model=self._runtime.model,
+                        sandbox=self._runtime.sandbox,
+                        approval_policy=self._runtime.approval_policy,
+                        base_instructions=self._runtime.base_instructions,
+                        cwd=str(self._runtime.cwd),
+                    )
 
         from codex_app_server import (  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]
             TextInput,
