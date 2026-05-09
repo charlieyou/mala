@@ -240,6 +240,7 @@ class FixerService:
                     )
             return log_path
 
+        pending_text_delta = ""
         try:
             async with asyncio.timeout(self._config.timeout_seconds):
                 async with client:
@@ -248,25 +249,32 @@ class FixerService:
                         session_id=None if is_amp_provider else agent_id,
                     )
 
-                    # Both Claude (wrapped SDK client in
-                    # ``src.infra.sdk_adapter``) and Amp emit ``AgentEvent``s
-                    # directly, so the fixer iterates them without any
-                    # translation step.
-                    async for event in client.receive_response():
-                        # Check for interrupt between events
-                        if guard.is_interrupted():
-                            return FixerResult(
-                                success=None,
-                                interrupted=True,
-                                log_path=current_log_path(),
-                            )
+                    try:
+                        # Both Claude (wrapped SDK client in
+                        # ``src.infra.sdk_adapter``) and Amp emit
+                        # ``AgentEvent``s directly, so the fixer iterates
+                        # them without any translation step.
+                        async for event in client.receive_response():
+                            # Check for interrupt between events
+                            if guard.is_interrupted():
+                                return FixerResult(
+                                    success=None,
+                                    interrupted=True,
+                                    log_path=current_log_path(),
+                                )
 
-                        self._process_event(
-                            event,
-                            failure_context.attempt,
-                            runtime,
-                            pending_lint_commands,
+                            pending_text_delta = self._process_event(
+                                event,
+                                failure_context.attempt,
+                                runtime,
+                                pending_lint_commands,
+                                pending_text_delta,
+                            )
+                    finally:
+                        self._flush_text_delta(
+                            failure_context.attempt, pending_text_delta
                         )
+                        pending_text_delta = ""
 
             return FixerResult(success=True, log_path=current_log_path())
 
@@ -290,21 +298,38 @@ class FixerService:
         attempt: int,
         runtime: object,
         pending_lint_commands: dict[str, tuple[str, str]],
-    ) -> None:
+        pending_text_delta: str,
+    ) -> str:
         """Process one ``AgentEvent`` from the fixer agent.
+
+        Mirrors :class:`MessageStreamProcessor` by coalescing ``is_delta``
+        text events into a single ``on_fixer_text`` callback. Returns the
+        (possibly updated) pending delta buffer so the caller can flush it
+        when the stream ends.
 
         Args:
             event: ``AgentEvent`` produced by the adapter / translator.
             attempt: Current fixer attempt number.
             runtime: AgentRuntime with lint_cache.
             pending_lint_commands: Dict tracking pending lint command results.
+            pending_text_delta: Accumulated streaming text awaiting flush.
         """
         kind = getattr(event, "kind", None)
         if kind == "text":
-            if self._event_sink is not None:
-                text = getattr(event, "text", "")
-                self._event_sink.on_fixer_text(attempt, text)
-        elif kind == "tool_use":
+            if self._event_sink is None:
+                return ""
+            text = getattr(event, "text", "")
+            if bool(getattr(event, "is_delta", False)):
+                return pending_text_delta + str(text)
+            self._flush_text_delta(attempt, pending_text_delta)
+            self._event_sink.on_fixer_text(attempt, text)
+            return ""
+
+        # Non-text events: flush any accumulated streaming text before
+        # processing so console output stays in order.
+        self._flush_text_delta(attempt, pending_text_delta)
+
+        if kind == "tool_use":
             name = getattr(event, "name", "")
             block_input = getattr(event, "input", {}) or {}
             if self._event_sink is not None:
@@ -333,6 +358,13 @@ class FixerService:
             result = getattr(event, "result", "") or ""
             if self._event_sink is not None:
                 self._event_sink.on_fixer_completed(result)
+        return ""
+
+    def _flush_text_delta(self, attempt: int, pending_text_delta: str) -> None:
+        """Flush an accumulated streaming-text buffer to the event sink."""
+        if not pending_text_delta or self._event_sink is None:
+            return
+        self._event_sink.on_fixer_text(attempt, pending_text_delta)
 
     def _build_validation_commands_string(self, spec: ValidationSpec | None) -> str:
         """Build formatted validation commands string for fixer prompt.
