@@ -2491,39 +2491,51 @@ def test_live_codex_hook_dispatch_probe_raises_hook_marker_missing_when_marker_a
 
 
 @pytest.mark.unit
-def test_live_codex_hook_dispatch_probe_passes_when_marker_matches(
+def test_live_codex_hook_dispatch_probe_passes_when_both_event_markers_present(
     _stub_live_codex_probes: None,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Happy path: SessionStart hook fires, writes marker with matching hash."""
+    """Happy path: both SessionStart and PreToolUse event markers
+    appear with matching hashes (review-4 P1 — per-handler trust
+    paths exercised independently)."""
     monkeypatch.undo()
     from src.infra.clients.codex_provider import _live_codex_hook_dispatch_probe
 
     expected_hash = "abcd1234" * 8
 
-    class _MarkerWritingThread:
-        def __init__(self, marker_path_factory: Callable[[], Path]) -> None:
-            self._marker_path_factory = marker_path_factory
+    captured_marker_env: dict[str, str] = {}
 
-        async def turn(self, _input: object) -> object:
-            # Simulate Codex spawning the SessionStart hook subprocess
-            # which writes the marker before the turn aborts.
+    class _FakeTurnHandle:
+        id = "turn-fake"
+
+        async def interrupt(self) -> None:
+            return None
+
+    class _FakeThread:
+        id = "thread-fake"
+
+        async def turn(self, _input: object) -> _FakeTurnHandle:
             import json as _json
 
-            marker_path = self._marker_path_factory()
-            marker_path.write_text(
-                _json.dumps({"mala_codex_hook": "loaded", "version": expected_hash}),
-                encoding="utf-8",
-            )
-            return object()
-
-    captured_marker_env: dict[str, str] = {}
+            marker_dir = Path(captured_marker_env["dir"])
+            for event in ("SessionStart", "PreToolUse"):
+                (marker_dir / f"{event}.json").write_text(
+                    _json.dumps(
+                        {
+                            "mala_codex_hook": "loaded",
+                            "version": expected_hash,
+                            "event_name": event,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            return _FakeTurnHandle()
 
     class _MarkerAsyncCodex:
         def __init__(self, *, config: object) -> None:
-            captured_marker_env["path"] = cast("Any", config).env[
-                "MALA_CODEX_HOOK_SELFTEST_MARKER"
+            captured_marker_env["dir"] = cast("Any", config).env[
+                "MALA_CODEX_HOOK_SELFTEST_MARKER_DIR"
             ]
 
         async def __aenter__(self) -> Self:
@@ -2537,8 +2549,8 @@ def test_live_codex_hook_dispatch_probe_passes_when_marker_matches(
         ) -> None:
             del exc_type, exc, tb
 
-        async def thread_start(self, **_kwargs: object) -> object:
-            return _MarkerWritingThread(lambda: Path(captured_marker_env["path"]))
+        async def thread_start(self, **_kwargs: object) -> _FakeThread:
+            return _FakeThread()
 
     import sys as _sys
     import types
@@ -2560,9 +2572,13 @@ def test_live_codex_hook_dispatch_probe_passes_when_marker_matches(
         {"CODEX_HOME": str(tmp_path)}, tmp_path, expected_hash
     )
 
-    # The marker env var is plumbed into AppServerConfig.env so the
-    # spawned hook subprocess can write to it.
-    assert captured_config_env[0]["MALA_CODEX_HOOK_SELFTEST_MARKER"]
+    # The marker dir env var + target event are plumbed into
+    # AppServerConfig.env so the spawned hook subprocess can write
+    # per-event markers and recognize the PreToolUse selftest target.
+    assert captured_config_env[0]["MALA_CODEX_HOOK_SELFTEST_MARKER_DIR"]
+    assert (
+        captured_config_env[0]["MALA_CODEX_HOOK_SELFTEST_TARGET_EVENT"] == "PreToolUse"
+    )
     assert captured_config_env[0]["CODEX_HOME"] == str(tmp_path)
 
 
@@ -2582,26 +2598,38 @@ def test_live_codex_hook_dispatch_probe_raises_version_mismatch_on_wrong_hash(
     monkeypatch.undo()
     from src.infra.clients.codex_provider import _live_codex_hook_dispatch_probe
 
-    class _MarkerWritingThread:
-        def __init__(self, marker_path_factory: Callable[[], Path]) -> None:
-            self._marker_path_factory = marker_path_factory
+    captured_marker_env: dict[str, str] = {}
 
-        async def turn(self, _input: object) -> object:
+    class _FakeTurnHandle:
+        id = "turn-fake"
+
+        async def interrupt(self) -> None:
+            return None
+
+    class _FakeThread:
+        id = "thread-fake"
+
+        async def turn(self, _input: object) -> _FakeTurnHandle:
             import json as _json
 
-            marker_path = self._marker_path_factory()
-            marker_path.write_text(
-                _json.dumps({"mala_codex_hook": "loaded", "version": "wrong-hash"}),
-                encoding="utf-8",
-            )
-            return object()
-
-    captured_marker_env: dict[str, str] = {}
+            marker_dir = Path(captured_marker_env["dir"])
+            for event in ("SessionStart", "PreToolUse"):
+                (marker_dir / f"{event}.json").write_text(
+                    _json.dumps(
+                        {
+                            "mala_codex_hook": "loaded",
+                            "version": "wrong-hash",
+                            "event_name": event,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            return _FakeTurnHandle()
 
     class _MarkerAsyncCodex:
         def __init__(self, *, config: object) -> None:
-            captured_marker_env["path"] = cast("Any", config).env[
-                "MALA_CODEX_HOOK_SELFTEST_MARKER"
+            captured_marker_env["dir"] = cast("Any", config).env[
+                "MALA_CODEX_HOOK_SELFTEST_MARKER_DIR"
             ]
 
         async def __aenter__(self) -> Self:
@@ -2615,8 +2643,8 @@ def test_live_codex_hook_dispatch_probe_raises_version_mismatch_on_wrong_hash(
         ) -> None:
             del exc_type, exc, tb
 
-        async def thread_start(self, **_kwargs: object) -> object:
-            return _MarkerWritingThread(lambda: Path(captured_marker_env["path"]))
+        async def thread_start(self, **_kwargs: object) -> _FakeThread:
+            return _FakeThread()
 
     import sys as _sys
     import types

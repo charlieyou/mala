@@ -5306,6 +5306,66 @@ def test_main_does_not_emit_marker_when_env_var_unset(
 
 
 @pytest.mark.unit
+def test_marker_write_is_atomic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for review-4 P2 TOCTOU: a polling reader observing
+    the marker path must never see a partial / empty file.
+
+    Surrogate proof: assert the implementation routes the write
+    through a sibling temp file + ``os.replace`` (atomic at the
+    directory-entry level on POSIX). A direct ``Path.write_text``
+    would expose ``open + write`` non-atomicity to a parallel
+    reader.
+    """
+    import json as _json
+
+    from src.infra.hooks.codex_pre_tool_use import SELFTEST_MARKER_ENV, main
+
+    marker_path = tmp_path / "marker.json"
+    monkeypatch.setenv(SELFTEST_MARKER_ENV, str(marker_path))
+    monkeypatch.setattr(
+        "sys.stdin",
+        type(
+            "FakeStdin",
+            (),
+            {"read": staticmethod(lambda: _json.dumps({"tool_name": "noop"}))},
+        )(),
+    )
+
+    # Track every os.replace call so we can assert atomicity.
+    import os as _os
+
+    replace_calls: list[tuple[str, str]] = []
+    real_replace = _os.replace
+
+    def _tracking_replace(src: object, dst: object) -> None:
+        replace_calls.append((str(src), str(dst)))
+        real_replace(str(src), str(dst))
+
+    monkeypatch.setattr(_os, "replace", _tracking_replace)
+
+    main()
+
+    assert marker_path.is_file()
+    # Exactly one os.replace went to the marker path; the source
+    # path is a sibling temp (under the same parent dir) so the
+    # rename is atomic.
+    matching = [src for src, dst in replace_calls if dst == str(marker_path)]
+    assert matching, f"marker write did not go through os.replace: {replace_calls!r}"
+    from pathlib import Path as _Path
+
+    src_path = _Path(matching[0])
+    assert src_path.parent == marker_path.parent
+
+    # Marker contents are valid JSON — ``read_text`` from a parallel
+    # poller would either see "no file yet" or the fully-written
+    # JSON, never an empty / partial body.
+    marker_data = _json.loads(marker_path.read_text(encoding="utf-8"))
+    assert marker_data["mala_codex_hook"] == "loaded"
+
+
+@pytest.mark.unit
 def test_main_swallows_marker_write_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

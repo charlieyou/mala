@@ -870,6 +870,26 @@ import-linter forbids ``src.infra.clients`` from importing
 equality is pinned by a unit test."""
 
 
+_HOOK_SELFTEST_MARKER_DIR_ENV = "MALA_CODEX_HOOK_SELFTEST_MARKER_DIR"
+"""Env var pointing the hook at a directory for per-event markers.
+
+Mirrors :data:`src.infra.hooks.codex_pre_tool_use.SELFTEST_MARKER_DIR_ENV`.
+Used by the live PreToolUse-driven dispatch probe so SessionStart
+and PreToolUse hook firing produce distinct per-event marker files
+(``SessionStart.json`` vs ``PreToolUse.json``) — Codex tracks the
+two trust states independently
+(``[hooks.state.<...>:session_start:0:0]`` vs
+``[hooks.state.<...>:pre_tool_use:0:0]``), so both must fire to
+prove the per-handler trust evaluation is correct for both events
+real PreToolUse turns rely on (review-4 P1)."""
+
+
+_HOOK_SELFTEST_TARGET_EVENT_ENV = "MALA_CODEX_HOOK_SELFTEST_TARGET_EVENT"
+"""Env var naming the event whose hook should ``decision=block`` /
+``continue=false`` so the live probe's turn aborts. Mirrors
+:data:`src.infra.hooks.codex_pre_tool_use.SELFTEST_TARGET_EVENT_ENV`."""
+
+
 _HOOK_IDENTITY_MODULES: tuple[str, ...] = (
     # The PreToolUse hook entry-point (top-level decide / main).
     "src.infra.hooks.codex_pre_tool_use",
@@ -977,63 +997,82 @@ def _compute_combined_module_hash(modules: tuple[str, ...]) -> str:
     return h.hexdigest()
 
 
+_LIVE_DISPATCH_PROBE_PROMPT = (
+    "Use the shell tool to run exactly: echo mala-selftest\n"
+    "Do not use any other tool, do not read or edit files, and do not "
+    "ask any questions. Issue the shell call immediately."
+)
+"""Prompt the live PreToolUse-driven probe sends to nudge a tool call.
+
+Codex's PreToolUse hook only fires on real tool calls, which require
+an LLM round trip. The prompt is short, targets a harmless ``echo``,
+and explicitly forbids file edits so the model is unlikely to attempt
+anything besides the requested shell call (which the bundled hook
+will deny in selftest mode anyway). Cost: one model round trip
+(~$0.001 on gpt-5.5) per ``install_prerequisites`` call, cached per
+selftest run via ``_selftest_cache_key``."""
+
+
 def _live_codex_hook_dispatch_probe(
     env_overlay: dict[str, str],
     repo_path: Path,
     expected_marker_hash: str,
 ) -> None:
-    """Spawn a real Codex turn that fires the bundled SessionStart hook.
+    """Drive a real Codex turn that fires BOTH SessionStart AND PreToolUse.
 
-    Plan AC-5 / E5 (review-2 follow-up): ``plugin/list`` validates plugin
-    discovery + ``Feature::Plugins`` + per-plugin ``enabled``, but it
-    does NOT verify the per-handler ``[hooks.state.<key>]`` trust
-    state, the ``Feature::PluginHooks`` / ``Feature::CodexHooks`` gates
-    that gate hook execution specifically, or the actual hook-dispatch
-    code path Codex runs at PreToolUse time. A wrong ``hook_state_key``
-    or stale ``trusted_hash`` can pass ``plugin/list`` while Codex
-    skips the safety hook under ``danger-full-access``.
+    Plan AC-5 / E5 (review-4 P1 follow-up): each hook event has its
+    own ``[hooks.state."<plugin_id>:...:<event>:0:0"]`` trust block
+    in Codex; trusting ``...:session_start:0:0`` does NOT imply
+    ``...:pre_tool_use:0:0`` is also trusted. A SessionStart-only
+    probe lets the selftest pass while real ``apply_patch`` /
+    ``bash`` PreToolUse turns silently skip the safety hook under
+    ``danger-full-access``. This probe closes that gap by driving
+    a real LLM-backed turn and asserting the bundled
+    ``mala-codex-pre-tool-use`` script ran for *both* events:
 
-    This probe closes that gap by:
-
-      1. Issuing a fresh ``thread_start`` + ``turn_start`` against a
-         live ``codex app-server`` subprocess.
-      2. Codex's session machinery fires the bundled ``SessionStart``
-         handler before any LLM call (per
-         ``codex-rs/core/src/session/turn.rs::run_pending_session_start_hooks``).
-         The handler is the same ``mala-codex-pre-tool-use`` script
-         that handles PreToolUse — it writes the selftest marker and
-         returns ``{"continue": false, "stopReason": ...}`` so the
-         turn aborts before any model token is spent.
-      3. The marker file proves the hook actually ran end-to-end
-         through Codex's plugin discovery + feature gates +
-         ``[hooks.state."<key>"]`` trust evaluation +
-         ``hook_runtime::run_pending_session_start_hooks`` dispatch.
-         A mismatched ``trusted_hash``, a wrong hook-state key, or
-         either of the two ``Feature::PluginHooks`` / ``Feature::CodexHooks``
-         flags being off would all leave the marker absent.
-
-    The marker's ``version`` field carries the hook's
-    self-computed identity hash (combined SHA-256 over the safety-
-    critical mala modules); we compare to ``expected_marker_hash``
-    so a stale install whose script bytes diverge from this process
-    does not pass this probe even when Codex correctly invokes it.
+      1. ``SessionStart`` fires before the LLM call (returns
+         ``continue=true`` in selftest mode so the turn proceeds —
+         hook still emits a per-event marker file).
+      2. The LLM emits a ``shell`` tool call for ``echo
+         mala-selftest`` (one round trip, ~$0.001 on gpt-5.5;
+         bounded to one shot at the first tool call by the prompt
+         and by interrupting the turn from the client side as soon
+         as the marker appears).
+      3. ``PreToolUse`` fires for the tool call, writes its own
+         per-event marker, returns ``decision=block`` +
+         ``continue=false`` so the call is denied (no shell command
+         executed) and Codex aborts the turn.
+      4. The provider polls the per-event marker dir for both
+         ``SessionStart.json`` and ``PreToolUse.json`` and verifies
+         each marker's ``version`` field matches
+         ``expected_marker_hash``.
 
     Failure modes:
 
       * SDK / spawn / RPC failure → ``CODEX_BINARY_MISSING``.
-      * Marker absent within bounded timeout → ``HOOK_MARKER_MISSING``
-        (Codex's hook trust / dispatch evaluation rejected the
-        handler — the symptom the reviewer specifically flagged).
+      * Either marker absent within bounded timeout →
+        ``HOOK_MARKER_MISSING`` (Codex's per-handler trust
+        evaluation skipped the hook for that event).
       * Marker present but ``version`` mismatch → ``VERSION_MISMATCH``
-        (Codex did invoke the hook, but the script's identity drifted
-        from this process).
+        (Codex invoked the hook, but the on-PATH script's identity
+        drifted from this process).
+
+    Atomic marker writes + per-event marker files together protect
+    against the review-4 P2 TOCTOU race where a partial read of
+    a single shared marker file would parse as malformed JSON.
+
+    Cost: one bounded LLM turn per ``install_prerequisites`` call.
+    Cached via ``_selftest_cache_key`` so a long-running orchestrator
+    pays at most once per startup.
     """
     import asyncio
     import json as _json
     import tempfile
     import time as _time
 
-    async def _drive_turn(marker_path: Path) -> str:
+    expected_event_files = ("SessionStart.json", "PreToolUse.json")
+
+    async def _drive_turn(marker_dir: Path) -> dict[str, str]:
         from codex_app_server import (  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]
             AppServerConfig,
             AsyncCodex,
@@ -1043,20 +1082,18 @@ def _live_codex_hook_dispatch_probe(
         codex_bin = os.environ.get("CODEX_BINARY") or None
         merged_env = dict(os.environ)
         merged_env.update(env_overlay)
-        # The SessionStart hook reads this env var and emits the marker
-        # before responding ``continue=false``. Codex inherits the
-        # parent process env to spawn the hook subprocess (via
-        # ``AppServerConfig.env``), so the marker var must live there.
-        merged_env[_HOOK_SELFTEST_MARKER_ENV] = str(marker_path)
+        # Wire the marker dir + target event so the bundled hook can
+        # write per-event markers (review-4 P1) and so the PreToolUse
+        # firing returns decision=block to deny the requested shell
+        # call. Codex inherits this env into the hook subprocess via
+        # ``AppServerConfig.env``.
+        merged_env[_HOOK_SELFTEST_MARKER_DIR_ENV] = str(marker_dir)
+        merged_env[_HOOK_SELFTEST_TARGET_EVENT_ENV] = "PreToolUse"
         config = AppServerConfig(
             codex_bin=codex_bin,
             cwd=str(repo_path),
             env=merged_env,
         )
-        # SDK's typed wrappers want SandboxMode / AskForApproval enum
-        # instances; we pass the same string literals codex_client.py
-        # uses and the SDK pydantic-coerces them. ``cast`` keeps ty
-        # quiet without changing runtime behavior.
         sandbox_value = cast("Any", "read-only")
         approval_policy_value = cast("Any", "never")
         async with AsyncCodex(config=config) as codex:
@@ -1066,83 +1103,121 @@ def _live_codex_hook_dispatch_probe(
                 approval_policy=approval_policy_value,
                 cwd=str(repo_path),
             )
-            # Issue an empty-payload turn. SessionStart hook fires
-            # before any model call; the hook's continue=false aborts
-            # the turn (per session/turn.rs:305-307).
-            await thread.turn(TextInput("ping"))
+            turn = await thread.turn(TextInput(_LIVE_DISPATCH_PROBE_PROMPT))
             deadline = _time.monotonic() + _HOOK_PROBE_TIMEOUT_SECONDS
+            collected: dict[str, str] = {}
+            interrupted = False
             while _time.monotonic() < deadline:
-                if marker_path.is_file():
+                for filename in expected_event_files:
+                    marker_path = marker_dir / filename
+                    if filename in collected or not marker_path.is_file():
+                        continue
                     try:
-                        return marker_path.read_text(encoding="utf-8")
+                        text = marker_path.read_text(encoding="utf-8")
                     except OSError:
-                        pass  # mid-write, retry
+                        continue
+                    if not text.strip():
+                        continue
+                    try:
+                        _json.loads(text)
+                    except _json.JSONDecodeError:
+                        # Mid-write — retry next tick. Atomic writes
+                        # in the hook should make this rare; the
+                        # retry is a belt-and-suspenders bound on
+                        # the review-4 P2 TOCTOU race.
+                        continue
+                    collected[filename] = text
+                if len(collected) == len(expected_event_files):
+                    break
+                # As soon as PreToolUse has fired we no longer need
+                # the LLM-backed turn to keep running; interrupt it
+                # client-side to bound LLM cost.
+                if (
+                    not interrupted
+                    and "PreToolUse.json" in collected
+                    and getattr(turn, "id", None) is not None
+                ):
+                    try:
+                        await turn.interrupt()
+                    except Exception:
+                        # Best-effort interrupt: any failure here just
+                        # leaves the turn running until the bound
+                        # timeout in ``_drive_with_timeout``. Selftest
+                        # success doesn't depend on the interrupt
+                        # succeeding — it depends on the per-event
+                        # markers being present, which they already are.
+                        pass
+                    interrupted = True
                 await asyncio.sleep(0.1)
-            raise CodexHookNotActiveError(
-                "Codex did not fire the bundled SessionStart hook within "
-                f"{_HOOK_PROBE_TIMEOUT_SECONDS:.0f}s during the live "
-                "selftest probe. The plugin tree is on disk and "
-                "plugin/list reports it loaded, but the per-handler "
-                "trust evaluation skipped the hook. Likely cause: a "
-                "[hooks.state.<key>] mismatch (wrong key, stale "
-                "trusted_hash) or the plugin_hooks / hooks feature "
-                "flag is off in a higher-priority config layer. Real "
-                "PreToolUse turns would skip the safety hook for the "
-                "same reason.",
-                reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
-            )
+            if len(collected) < len(expected_event_files):
+                missing = [
+                    filename
+                    for filename in expected_event_files
+                    if filename not in collected
+                ]
+                raise CodexHookNotActiveError(
+                    "Codex did not fire all bundled hook events within "
+                    f"{_HOOK_PROBE_TIMEOUT_SECONDS:.0f}s during the live "
+                    f"selftest probe; missing event markers: "
+                    f"{', '.join(missing)}. The plugin tree is on disk "
+                    "and plugin/list reports it loaded, but the "
+                    "per-handler [hooks.state.<key>] trust evaluation "
+                    "skipped at least one event. Real PreToolUse turns "
+                    "would skip the safety hook for the same reason.",
+                    reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+                )
+            return collected
 
-    async def _drive_with_timeout(marker_path: Path) -> str:
+    async def _drive_with_timeout(marker_dir: Path) -> dict[str, str]:
         return await asyncio.wait_for(
-            _drive_turn(marker_path),
+            _drive_turn(marker_dir),
             timeout=_HOOK_PROBE_TIMEOUT_SECONDS * 3.0,
         )
 
-    with tempfile.TemporaryDirectory(prefix="mala-codex-session-selftest-") as tmpdir:
-        marker_path = Path(tmpdir) / "marker.json"
+    with tempfile.TemporaryDirectory(prefix="mala-codex-dispatch-selftest-") as tmpdir:
+        marker_dir = Path(tmpdir)
         try:
-            marker_text = asyncio.run(_drive_with_timeout(marker_path))
+            collected = asyncio.run(_drive_with_timeout(marker_dir))
         except TimeoutError as exc:
             raise CodexHookNotActiveError(
-                f"Codex SessionStart-driven hook dispatch did not "
-                f"complete within {_HOOK_PROBE_TIMEOUT_SECONDS * 3.0:.0f}s "
-                "during the live selftest probe. A hung Codex thread or "
-                "RPC stall would block real turns the same way; failing "
-                "closed.",
+                f"Codex hook-dispatch selftest did not complete within "
+                f"{_HOOK_PROBE_TIMEOUT_SECONDS * 3.0:.0f}s. A hung Codex "
+                "thread or LLM stall would block real turns the same "
+                "way; failing closed.",
                 reason=CodexHookNotActiveReason.CODEX_BINARY_MISSING,
             ) from exc
         except CodexHookNotActiveError:
             raise
         except Exception as exc:
             raise CodexHookNotActiveError(
-                "Codex app-server failed during SessionStart-driven hook "
-                f"dispatch probe: {exc!r}. Codex's hook dispatch could "
-                "not be exercised even though the SDK / runtime / auth "
-                "/ plugin-list probes succeeded; the safety hook would "
-                "not fire on real turns.",
+                "Codex app-server failed during the live hook-dispatch "
+                f"selftest probe: {exc!r}. Codex's hook dispatch could "
+                "not be exercised end-to-end even though the SDK / "
+                "runtime / auth / plugin-list probes succeeded.",
                 reason=CodexHookNotActiveReason.CODEX_BINARY_MISSING,
             ) from exc
 
-    try:
-        marker_data = _json.loads(marker_text)
-    except _json.JSONDecodeError as exc:
-        raise CodexHookNotActiveError(
-            "SessionStart hook wrote a malformed selftest marker during "
-            f"the live probe: {exc}. Marker text: {marker_text[:512]!r}.",
-            reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
-        ) from exc
-    marker_version = (
-        marker_data.get("version") if isinstance(marker_data, dict) else None
-    )
-    if marker_version != expected_marker_hash:
-        raise CodexHookNotActiveError(
-            "SessionStart hook fired through Codex but emitted a marker "
-            f"version {marker_version!r} that does not match this "
-            f"process's expected hash {expected_marker_hash!r}. The "
-            "on-disk hook script's identity diverged from this mala "
-            "install's modules.",
-            reason=CodexHookNotActiveReason.VERSION_MISMATCH,
+    for filename, marker_text in collected.items():
+        try:
+            marker_data = _json.loads(marker_text)
+        except _json.JSONDecodeError as exc:
+            raise CodexHookNotActiveError(
+                f"Hook wrote malformed marker for {filename!r} during "
+                f"the live probe: {exc}. Text: {marker_text[:256]!r}.",
+                reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+            ) from exc
+        marker_version = (
+            marker_data.get("version") if isinstance(marker_data, dict) else None
         )
+        if marker_version != expected_marker_hash:
+            raise CodexHookNotActiveError(
+                f"Hook fired for {filename!r} through Codex but emitted "
+                f"a marker version {marker_version!r} that does not "
+                f"match this process's expected hash "
+                f"{expected_marker_hash!r}. The on-PATH hook script's "
+                "identity diverged from this mala install's modules.",
+                reason=CodexHookNotActiveReason.VERSION_MISMATCH,
+            )
 
 
 def _live_codex_plugin_list_probe(

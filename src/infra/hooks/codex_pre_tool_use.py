@@ -39,7 +39,13 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
-__all__ = ["SELFTEST_MARKER_ENV", "decide", "main"]
+__all__ = [
+    "SELFTEST_MARKER_DIR_ENV",
+    "SELFTEST_MARKER_ENV",
+    "SELFTEST_TARGET_EVENT_ENV",
+    "decide",
+    "main",
+]
 
 
 # Codex shell tool name candidates. ``bash`` is the public Codex tool name;
@@ -3247,6 +3253,36 @@ hashed correctly via the module-identity probe). Mirrors Amp's
 """
 
 
+SELFTEST_MARKER_DIR_ENV = "MALA_CODEX_HOOK_SELFTEST_MARKER_DIR"
+"""Env var pointing at a directory for *per-event* selftest markers.
+
+When set (in addition to / instead of :data:`SELFTEST_MARKER_ENV`),
+each hook invocation writes ``<hook_event_name>.json`` inside the
+directory (atomic via temp + rename). Lets the provider's live probe
+distinguish SessionStart vs PreToolUse firing, so both per-handler
+``[hooks.state."<key>"]`` trust states are exercised end-to-end:
+SessionStart's path proves ``...:session_start:0:0`` is trusted, and
+the PreToolUse path proves ``...:pre_tool_use:0:0`` is trusted (the
+two are independently keyed in Codex, so trusting one does not imply
+the other). The single-file :data:`SELFTEST_MARKER_ENV` is retained
+for the direct-spawn step and as a backward-compat fallback.
+"""
+
+
+SELFTEST_TARGET_EVENT_ENV = "MALA_CODEX_HOOK_SELFTEST_TARGET_EVENT"
+"""Env var naming a hook event whose selftest path should ``decision=block``.
+
+When the hook fires for a matching event AND the marker dir env is
+set AND this env names the event, the hook returns the block / abort
+decision so the live probe's turn aborts after the marker is
+written. Used by the PreToolUse-driven dispatch probe — the LLM
+emits a shell tool call, PreToolUse hook fires, writes
+``PreToolUse.json``, returns ``decision=block`` + ``continue=false``,
+and the provider interrupts the turn from the client side. Cap on
+LLM cost: bounded to one shot at the first tool call.
+"""
+
+
 SELFTEST_IDENTITY_MODULES: tuple[str, ...] = (
     "src.infra.hooks.codex_pre_tool_use",
     "src.infra.hooks.dangerous_commands",
@@ -3295,55 +3331,137 @@ def _compute_selftest_identity_hash() -> str | None:
     return digest.hexdigest()
 
 
-def _emit_selftest_marker_if_requested() -> None:
-    """Write the live-hook marker when ``SELFTEST_MARKER_ENV`` is set.
+def _atomic_write_json(target: Path, data: dict[str, Any]) -> None:
+    """Write ``data`` as JSON to ``target`` atomically.
+
+    Sibling temp file + ``os.replace`` keeps the directory-entry
+    swap atomic on POSIX so the provider's polling reader never
+    observes a partial / empty file (regression: review-4 P1 TOCTOU).
+    I/O failures are swallowed by callers; the provider treats an
+    absent / unreadable marker as the fail-closed signal.
+    """
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        dir=str(target.parent),
+        delete=False,
+    ) as tmp:
+        tmp.write(json.dumps(data))
+        tmp.flush()
+        try:
+            os.fsync(tmp.fileno())
+        except OSError:
+            pass
+        tmp_name = tmp.name
+    os.replace(tmp_name, target)
+
+
+def _emit_selftest_marker_if_requested(event_name: str = "") -> None:
+    """Write the live-hook marker(s) when selftest env var(s) are set.
+
+    Two complementary markers:
+
+      * Single-file marker at :data:`SELFTEST_MARKER_ENV` —
+        event-agnostic; written for every invocation when the env
+        var is set. Used by the direct-spawn / module-identity
+        / single-event SessionStart probe paths.
+      * Per-event marker at
+        ``$SELFTEST_MARKER_DIR_ENV/<hook_event_name>.json`` — used
+        by the live PreToolUse-driven dispatch probe so SessionStart
+        and PreToolUse firing can be distinguished. Each event
+        writes its own file so trusting ``...:session_start:0:0``
+        does not implicitly mark ``...:pre_tool_use:0:0`` validated
+        (regression: review-4 P1 — the per-handler trust paths are
+        independent in Codex).
 
     Best-effort: I/O errors are swallowed so a misconfigured marker
     path on a real Codex run does not break the hook's primary
     decision flow. The provider's selftest treats an absent / unreadable
     marker as the fail-closed signal
-    (:class:`CodexHookNotActiveReason.HOOK_MARKER_MISSING`), so silent
-    swallow here just lets that classification fire without
-    accidentally denying real tool calls.
+    (:class:`CodexHookNotActiveReason.HOOK_MARKER_MISSING`).
     """
-    marker_path = os.environ.get(SELFTEST_MARKER_ENV)
-    if not marker_path:
-        return
     payload = {
         "mala_codex_hook": "loaded",
         "version": _compute_selftest_identity_hash(),
+        "event_name": event_name or "",
     }
-    try:
-        Path(marker_path).write_text(json.dumps(payload), encoding="utf-8")
-    except OSError:
-        pass
+
+    marker_path = os.environ.get(SELFTEST_MARKER_ENV)
+    if marker_path:
+        try:
+            _atomic_write_json(Path(marker_path), payload)
+        except OSError:
+            pass
+
+    marker_dir = os.environ.get(SELFTEST_MARKER_DIR_ENV)
+    if marker_dir and event_name:
+        # Restrict to a known set so a malicious / accidental
+        # ``hook_event_name`` value cannot escape the marker dir
+        # via path-separator characters.
+        safe_events = {
+            "PreToolUse",
+            "SessionStart",
+            "UserPromptSubmit",
+            "PostToolUse",
+            "PreCompact",
+            "PostCompact",
+            "Stop",
+            "PermissionRequest",
+        }
+        if event_name in safe_events:
+            try:
+                _atomic_write_json(Path(marker_dir) / f"{event_name}.json", payload)
+            except OSError:
+                pass
+
+
+def _selftest_mode_active() -> bool:
+    """Return True iff the provider's selftest set either marker env."""
+    return bool(
+        os.environ.get(SELFTEST_MARKER_ENV) or os.environ.get(SELFTEST_MARKER_DIR_ENV)
+    )
+
+
+def _selftest_target_event_matches(event_name: str) -> bool:
+    """Return True iff the target-event env var names ``event_name``."""
+    target = os.environ.get(SELFTEST_TARGET_EVENT_ENV)
+    return bool(target) and target == event_name
 
 
 def _handle_session_start_event() -> dict[str, Any]:
     """Handle a Codex ``SessionStart`` hook payload.
 
-    Two operating modes:
+    Three operating modes:
 
-      * **Selftest mode** — when :data:`SELFTEST_MARKER_ENV` is set, the
-        provider's live-Codex probe is driving a one-shot turn whose
-        only purpose is to make Codex actually fire the hook through
-        its plugin discovery + feature gates + per-handler trust state
-        + dispatch machinery. We respond with ``continue: false`` plus
-        a ``stopReason`` so the turn aborts BEFORE Codex contacts the
-        model — no LLM tokens spent. The marker (already emitted by
-        :func:`_emit_selftest_marker_if_requested`) gives the provider
-        proof that the hook actually ran end-to-end through Codex.
-      * **Production mode** — the env var is unset, so we return
-        ``continue: true`` to let Codex proceed normally. The hook
-        adds a small subprocess-spawn latency to every Codex
-        ``SessionStart`` event but no behavioral change.
+      * **Selftest mode targeting SessionStart** — the live SessionStart
+        probe sets :data:`SELFTEST_MARKER_ENV` (single-file marker)
+        but not :data:`SELFTEST_TARGET_EVENT_ENV`. We respond with
+        ``continue: false`` so the turn aborts BEFORE the LLM is
+        contacted. No tokens spent.
+      * **Selftest mode targeting PreToolUse** — the live PreToolUse
+        probe sets :data:`SELFTEST_MARKER_DIR_ENV` and
+        :data:`SELFTEST_TARGET_EVENT_ENV` to ``"PreToolUse"``. The
+        SessionStart hook must let the turn proceed (``continue=true``)
+        so Codex reaches the model and emits a tool call which then
+        triggers PreToolUse. Per-event marker is still emitted so
+        the provider can verify SessionStart ALSO fired (proves
+        ``...:session_start:0:0`` trust state).
+      * **Production mode** — neither selftest env is set; return
+        ``continue=true`` for normal session flow.
 
     The output shape follows the Codex ``session-start.command.output``
     schema (``HookUniversalOutputWire`` flattened in
     :class:`SessionStartCommandOutputWire`); fields not used here
     default per Codex's serde definitions.
     """
-    if os.environ.get(SELFTEST_MARKER_ENV):
+    target = os.environ.get(SELFTEST_TARGET_EVENT_ENV)
+    if _selftest_mode_active() and (
+        target is None or target == "" or target == "SessionStart"
+    ):
         return {
             "continue": False,
             "stopReason": "mala-codex selftest probe (continue=false aborts the turn before any LLM call)",
@@ -3351,35 +3469,79 @@ def _handle_session_start_event() -> dict[str, Any]:
     return {"continue": True}
 
 
+def _handle_pre_tool_use_selftest() -> dict[str, Any]:
+    """Return the PreToolUse selftest decision when the live probe is driving.
+
+    The provider's live PreToolUse probe sets
+    :data:`SELFTEST_TARGET_EVENT_ENV` to ``"PreToolUse"`` so the
+    bundled hook can distinguish a real PreToolUse from the
+    selftest's deliberate trigger. We deny the tool call (so
+    nothing actually executes) AND return ``continue=false`` to
+    request that Codex abort the turn — the provider also calls
+    ``turn_interrupt`` from the client side as a belt-and-suspenders
+    bound on LLM cost (PreToolUse ``continue=false`` is honored on
+    a best-effort basis depending on Codex's turn-loop semantics
+    for the version in use).
+
+    Output shape follows ``pre-tool-use.command.output``
+    (HookUniversalOutputWire + ``decision`` + ``reason`` +
+    ``hookSpecificOutput``).
+    """
+    return {
+        "continue": False,
+        "stopReason": "mala-codex selftest probe (deny + abort)",
+        "decision": "block",
+        "reason": "mala-codex selftest probe denied the tool call to bound LLM cost",
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "mala-codex selftest probe",
+        },
+    }
+
+
 def main() -> int:
     """CLI entry-point: read JSON stdin, write JSON stdout, exit 0."""
-    # Emit the selftest marker FIRST so the provider's live-hook check
-    # observes a marker even if the JSON payload that follows is
-    # malformed. Without this ordering, a fail-closed deny on bad input
-    # would still skip the marker and the selftest could not
-    # distinguish "hook ran on a malformed test payload" from "hook
-    # never ran at all."
-    _emit_selftest_marker_if_requested()
+    # Read the payload first so we can route the marker emission per
+    # event_name (SessionStart vs PreToolUse markers go to different
+    # files so the live probe can verify each per-handler trust path
+    # independently). The single-file marker (env-agnostic) is also
+    # emitted; either path is enough for the legacy single-event
+    # probes to observe the hook ran.
     try:
         raw = sys.stdin.read()
         payload = json.loads(raw) if raw.strip() else {}
         if not isinstance(payload, dict):
             payload = {}
+        invalid_json: str | None = None
     except json.JSONDecodeError as exc:
-        # Malformed input: deny fail-closed with a diagnostic reason.
-        result = _deny(f"hook input is not valid JSON: {exc.msg}")
+        payload = {}
+        invalid_json = exc.msg
+
+    event_name = str(payload.get("hook_event_name") or "")
+    _emit_selftest_marker_if_requested(event_name)
+
+    if invalid_json is not None:
+        result = _deny(f"hook input is not valid JSON: {invalid_json}")
+    elif event_name == "SessionStart":
+        result = _handle_session_start_event()
+    elif (
+        event_name == "PreToolUse"
+        and _selftest_mode_active()
+        and _selftest_target_event_matches("PreToolUse")
+    ):
+        # Provider's live PreToolUse probe is driving — block the
+        # tool call (no execution) and request turn abort.
+        result = _handle_pre_tool_use_selftest()
     else:
-        # Branch on the Codex hook event type. ``SessionStart`` requires
-        # a different output shape than ``PreToolUse`` (Codex's
-        # ``deny_unknown_fields`` on the per-event schemas would reject
-        # a PreToolUse-shaped output emitted for a SessionStart turn);
-        # see ``codex-rs/hooks/src/schema.rs::SessionStartCommandOutputWire``
+        # Branch on the Codex hook event type for production traffic.
+        # ``SessionStart`` requires a different output shape than
+        # ``PreToolUse`` (Codex's ``deny_unknown_fields`` on the
+        # per-event schemas would reject a PreToolUse-shaped output
+        # emitted for a SessionStart turn); see
+        # ``codex-rs/hooks/src/schema.rs::SessionStartCommandOutputWire``
         # vs ``PreToolUseCommandOutputWire``.
-        event_name = str(payload.get("hook_event_name") or "")
-        if event_name == "SessionStart":
-            result = _handle_session_start_event()
-        else:
-            result = decide(payload)
+        result = decide(payload)
     sys.stdout.write(json.dumps(result))
     sys.stdout.write("\n")
     sys.stdout.flush()
