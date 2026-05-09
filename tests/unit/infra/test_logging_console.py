@@ -202,6 +202,28 @@ def test_quiet_summary_shell_command_truncates_command() -> None:
     assert summary == f"{'x' * 80}..."
 
 
+@pytest.mark.parametrize(
+    ("tool_name", "description", "arguments"),
+    [
+        ("Read", "", {"file_path": "/very/long/" + "x" * 90}),
+        (
+            "mcp__mala_locking__lock_acquire",
+            "",
+            {"filepaths": [f"/repo/path/{'x' * 30}.py" for _ in range(4)]},
+        ),
+        ("apply_patch", "", {"paths": [f"/repo/path/{'x' * 30}.py" for _ in range(4)]}),
+        ("Bash", "x" * 90, {}),
+    ],
+)
+def test_quiet_summary_truncates_all_summary_sources(
+    tool_name: str, description: str, arguments: dict[str, object]
+) -> None:
+    """Compact tool summaries are bounded regardless of where the text came from."""
+    summary = console._get_quiet_summary(tool_name, description, arguments)
+    assert summary == f"{summary[:80]}..."
+    assert len(summary) == 83
+
+
 def test_quiet_summary_shell_command_replaces_newlines() -> None:
     """Test that shell commands stay single-line in quiet mode."""
     summary = console._get_quiet_summary(

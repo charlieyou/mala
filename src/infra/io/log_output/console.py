@@ -95,6 +95,8 @@ CODE_FIELDS = frozenset(
     }
 )
 
+QUIET_SUMMARY_MAX_LENGTH = 80
+
 # Maps agent/issue IDs to their assigned colors
 _agent_color_map: dict[str, str] = {}
 _agent_color_index = 0
@@ -379,11 +381,11 @@ def _get_shell_command(arguments: dict[str, Any] | None) -> str | None:
     return str(command)
 
 
-def _format_quiet_command(command: str) -> str:
-    command = command.replace("\n", "↵")
-    if len(command) > 80:
-        return command[:80] + "..."
-    return command
+def _format_quiet_summary_text(text: str) -> str:
+    summary = text.replace("\n", "↵")
+    if len(summary) > QUIET_SUMMARY_MAX_LENGTH:
+        return summary[:QUIET_SUMMARY_MAX_LENGTH] + "..."
+    return summary
 
 
 def _format_lock_filepaths(arguments: dict[str, Any] | None) -> str | None:
@@ -449,33 +451,33 @@ def _get_quiet_summary(
             or arguments.get("pattern")
         )
         if path:
-            return str(path)
+            return _format_quiet_summary_text(str(path))
 
     if _is_lock_acquire_tool(tool_name):
         filepaths = _format_lock_filepaths(arguments)
         if filepaths is not None:
-            return filepaths
+            return _format_quiet_summary_text(filepaths)
 
     if _is_lock_release_tool(tool_name):
         filepaths = _format_lock_filepaths(arguments)
         if filepaths is not None:
-            return filepaths
+            return _format_quiet_summary_text(filepaths)
 
     if _is_edit_tool(tool_name):
         paths = _format_edit_paths(arguments)
         if paths is not None:
-            return paths
+            return _format_quiet_summary_text(paths)
 
     # Shell tools: show the command itself. Amp deep mode reports
     # `command`; Amp smart mode reports `cmd`.
     if _is_shell_tool(tool_name):
         command = _get_shell_command(arguments)
         if command is not None:
-            return _format_quiet_command(command)
+            return _format_quiet_summary_text(command)
         if description:
-            return description
+            return _format_quiet_summary_text(description)
         if arguments and arguments.get("description"):
-            return str(arguments["description"])
+            return _format_quiet_summary_text(str(arguments["description"]))
 
     # Other tools: truncated args dict
     if arguments:
@@ -484,7 +486,7 @@ def _get_quiet_summary(
             preview = ", ".join(f"{k}=..." for k in keys)
             if len(arguments) > 3:
                 preview += f", +{len(arguments) - 3} more"
-            return f"{{{preview}}}"
+            return _format_quiet_summary_text(f"{{{preview}}}")
 
     return ""
 
