@@ -941,6 +941,174 @@ def _compute_combined_module_hash(modules: tuple[str, ...]) -> str:
     return h.hexdigest()
 
 
+def _live_codex_plugin_list_probe(
+    env_overlay: dict[str, str],
+    repo_path: Path,
+    *,
+    marketplace: str = _DEFAULT_PLUGIN_MARKETPLACE,
+) -> None:
+    """Spawn the real Codex app-server and verify the bundled plugin loads.
+
+    Plan AC-5 / E5: the prior structural / identity / direct-spawn
+    checks all bypass Codex's own plugin loader — a broken
+    ``[hooks.state.<key>]`` block, a feature-flag toggle Codex is
+    re-evaluating differently, an unexpected schema change in
+    ``plugin.json`` parsing, or any other Codex-side loader mismatch
+    would leave the on-disk tree looking right while real turns silently
+    skip the safety hook under ``danger-full-access``. This probe
+    closes that gap by issuing an actual ``plugin/list`` JSON-RPC
+    request to a live ``codex app-server`` subprocess and asserting
+    Codex itself reports the bundled ``mala-safety`` plugin as
+    ``installed=True`` and ``enabled=True``.
+
+    The ``plugin/list`` response goes through:
+
+      * Plugin discovery (``PluginsManager.list_marketplaces_for_config``
+        walks the ``$CODEX_HOME/plugins/cache`` tree the installer
+        wrote into).
+      * The ``Feature::Plugins`` and workspace-codex-plugins gates
+        (early-return ``empty_response()`` paths in
+        ``plugin_list_response`` short-circuit when either is off).
+      * The ``[plugins.<id>] enabled`` config flag (surfaced as
+        ``PluginSummary.enabled``).
+
+    Failure modes mapped to existing
+    :class:`CodexHookNotActiveReason` values:
+
+      * SDK fails to spawn / initialize → ``CODEX_BINARY_MISSING``
+        (the SDK + binary checks earlier in ``install_prerequisites``
+        already run; this branch catches a regression where they pass
+        but the spawned app-server still cannot start).
+      * ``plugin/list`` returns no marketplaces / our plugin missing →
+        ``PLUGIN_DISABLED`` (Codex did not discover the plugin tree).
+      * Plugin found but ``installed=False`` → ``PLUGIN_DISABLED``
+        (Codex sees the plugin tree but considers the install
+        incomplete / broken).
+      * Plugin found but ``enabled=False`` → ``PLUGIN_DISABLED``
+        (Codex's user config shows the plugin disabled even though
+        we wrote ``enabled = true``; the trusted_hash + state writes
+        in ``_write_codex_plugin_config`` rely on the same TOML
+        splice and would surface here).
+
+    Tests inject a fake by monkeypatching
+    ``_live_codex_plugin_list_probe`` to a noop or a controlled
+    failure-driver — spawning a real app-server in unit tests would
+    require a live Codex binary which the in-repo fakes do not
+    provide.
+    """
+    import asyncio
+
+    expected_plugin_id = _plugin_id(marketplace)
+
+    async def _query() -> tuple[list[object], list[object]]:
+        # Lazy import keeps the lazy-import contract on the success path of
+        # `install_prerequisites`: the SDK is only imported when the live
+        # probe actually runs (which only happens after the upstream
+        # SDK importability + binary + auth checks already passed).
+        from codex_app_server import (  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]
+            AppServerConfig,
+            AsyncCodex,
+        )
+        from codex_app_server.generated.v2_all import (  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]
+            PluginListResponse,
+        )
+
+        codex_bin = os.environ.get("CODEX_BINARY") or None
+        merged_env = dict(os.environ)
+        merged_env.update(env_overlay)
+        config = AppServerConfig(
+            codex_bin=codex_bin,
+            cwd=str(repo_path),
+            env=merged_env,
+        )
+        async with AsyncCodex(config=config) as codex:
+            # The SDK's typed wrappers omit ``plugin/list``, so go through
+            # the underlying client's generic ``request`` method. Single
+            # ``cwds`` entry pinned to the orchestrated repo so Codex
+            # walks the right repo-marketplace search root.
+            # Use the underlying client's generic ``request`` since the
+            # pinned SDK version omits a typed ``plugin/list`` wrapper.
+            response = await codex._client.request(
+                "plugin/list",
+                {"cwds": [str(repo_path)]},
+                response_model=PluginListResponse,
+            )
+        marketplaces: list[object] = list(response.marketplaces or [])
+        load_errors: list[object] = list(response.marketplace_load_errors or [])
+        return marketplaces, load_errors
+
+    try:
+        marketplaces, load_errors = asyncio.run(_query())
+    except CodexHookNotActiveError:
+        raise
+    except Exception as exc:
+        # Catch-all for SDK / RPC / spawn failures: any exception out of
+        # ``asyncio.run(_query())`` means Codex's app-server could not
+        # respond, which is a fail-closed signal regardless of the
+        # underlying cause.
+        raise CodexHookNotActiveError(
+            f"Codex app-server failed to respond to plugin/list during the "
+            f"live selftest probe: {exc!r}. Codex's plugin loader could not "
+            "be reached even though the SDK / runtime / auth probes "
+            "succeeded; the safety hook would not fire on real turns.",
+            reason=CodexHookNotActiveReason.CODEX_BINARY_MISSING,
+        ) from exc
+
+    if load_errors:
+        # Marketplace load errors mean Codex saw the plugin tree but
+        # rejected its layout. The on-disk install looks right but
+        # Codex's loader hit a parse/permission/missing-file failure.
+        rendered = ", ".join(repr(err) for err in load_errors[:3])
+        raise CodexHookNotActiveError(
+            "Codex's plugin/list returned marketplace_load_errors during "
+            f"the live selftest probe: {rendered}. The on-disk plugin tree "
+            "is corrupt from Codex's loader's perspective; rerun mala to "
+            "reinstall.",
+            reason=CodexHookNotActiveReason.PLUGIN_DISABLED,
+        )
+
+    summaries: list[object] = []
+    for marketplace_entry in marketplaces:
+        plugins_attr = getattr(marketplace_entry, "plugins", None)
+        if plugins_attr:
+            summaries.extend(plugins_attr)
+    matching = [
+        summary
+        for summary in summaries
+        if str(getattr(summary, "id", "")) == expected_plugin_id
+    ]
+    if not matching:
+        raise CodexHookNotActiveError(
+            f"Codex's plugin/list does not include the bundled "
+            f"{expected_plugin_id!r} plugin during the live selftest "
+            f"probe (saw {len(summaries)} plugin summaries). Codex's "
+            "plugin discovery does not see our install — the install "
+            "target diverges from Codex's PluginStore search path, or "
+            "the plugin manifest is malformed at Codex's layer.",
+            reason=CodexHookNotActiveReason.PLUGIN_DISABLED,
+        )
+    matched = matching[0]
+    if not getattr(matched, "installed", False):
+        raise CodexHookNotActiveError(
+            f"Codex's plugin/list reports {expected_plugin_id!r} as "
+            f"NOT installed during the live selftest probe (got "
+            f"installed={getattr(matched, 'installed', None)!r}). "
+            "Codex sees the marketplace entry but considers the install "
+            "broken; rerun mala to reinstall.",
+            reason=CodexHookNotActiveReason.PLUGIN_DISABLED,
+        )
+    if not getattr(matched, "enabled", False):
+        raise CodexHookNotActiveError(
+            f"Codex's plugin/list reports {expected_plugin_id!r} as "
+            f"NOT enabled during the live selftest probe (got "
+            f"enabled={getattr(matched, 'enabled', None)!r}). The "
+            f'`[plugins."{expected_plugin_id}"] enabled = true` write '
+            "did not take effect, or a higher-priority config layer "
+            "disabled the plugin.",
+            reason=CodexHookNotActiveReason.PLUGIN_DISABLED,
+        )
+
+
 def _default_selftest_probe(
     repo_path: Path,
     env_overlay: dict[str, str],
@@ -1263,6 +1431,23 @@ def _default_selftest_probe(
                 "differs from this mala install.",
                 reason=CodexHookNotActiveReason.VERSION_MISMATCH,
             )
+
+    # 5. Live Codex probe — ask the real ``codex app-server`` whether it
+    # actually loaded the bundled plugin under our user-config writes.
+    # The previous steps each prove a different facet (on-disk tree
+    # shape, hook bytes match, hook script runs end-to-end) but they
+    # all bypass Codex's own plugin loader. A broken
+    # ``[hooks.state.<key>]`` block, a feature-flag toggle Codex
+    # re-evaluates differently, an unexpected ``plugin.json`` schema
+    # change, or any other Codex-side loader mismatch would leave the
+    # on-disk tree looking right while real turns silently skip the
+    # safety hook under ``danger-full-access``. Routing through
+    # ``plugin/list`` JSON-RPC is the cheapest path to ask Codex
+    # directly: no LLM call, no model token cost, no production
+    # ``hooks.json`` change, and the response goes through the same
+    # plugin-discovery + feature-gate + per-plugin enable code path
+    # that real PreToolUse turns rely on. Plan AC-5 / E5.
+    _live_codex_plugin_list_probe(env_overlay, repo_path)
 
 
 def _resolve_hook_interpreter(hook_path: str) -> str:

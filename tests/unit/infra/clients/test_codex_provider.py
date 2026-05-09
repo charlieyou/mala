@@ -40,9 +40,28 @@ from src.infra.clients.codex_runtime import CodexRuntime, CodexRuntimeBuilder
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from typing import Self
 
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
+
+
+@pytest.fixture(autouse=True)
+def _stub_live_codex_plugin_list_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the live ``codex app-server`` plugin/list probe by default.
+
+    Real ``_live_codex_plugin_list_probe`` spawns a Codex app-server
+    subprocess (the pinned SDK's ``codex_cli_bin``) which is not
+    installable in unit-test environments — most of this file's tests
+    drive structural / identity / direct-spawn checks against fake
+    plugin trees and stub interpreters and have no need to also pay
+    for a live Codex spawn. Tests that exercise the live probe itself
+    re-monkeypatch the symbol explicitly.
+    """
+    monkeypatch.setattr(
+        "src.infra.clients.codex_provider._live_codex_plugin_list_probe",
+        lambda env_overlay, repo_path, *, marketplace="local": None,
+    )
 
 
 @pytest.fixture
@@ -1954,6 +1973,369 @@ def test_default_probe_raises_hook_marker_missing_when_live_hook_exits_nonzero(
     assert excinfo.value.reason is CodexHookNotActiveReason.HOOK_MARKER_MISSING
     msg = str(excinfo.value)
     assert "exited 7" in msg
+
+
+# ---------------------------------------------------------------------------
+# Live Codex plugin/list probe (Phase E5 / AC-5)
+# ---------------------------------------------------------------------------
+
+
+class _FakePluginSummary:
+    """Minimal stand-in for ``codex_app_server.PluginSummary``."""
+
+    def __init__(self, *, plugin_id: str, installed: bool, enabled: bool) -> None:
+        self.id = plugin_id
+        self.installed = installed
+        self.enabled = enabled
+
+
+class _FakeMarketplaceEntry:
+    def __init__(self, plugins: list[_FakePluginSummary]) -> None:
+        self.plugins = plugins
+
+
+class _FakePluginListResponse:
+    def __init__(
+        self,
+        marketplaces: list[_FakeMarketplaceEntry],
+        *,
+        load_errors: list[object] | None = None,
+    ) -> None:
+        self.marketplaces = marketplaces
+        self.marketplace_load_errors = load_errors or []
+
+
+class _FakeAsyncClient:
+    def __init__(self, response: _FakePluginListResponse) -> None:
+        self._response = response
+
+    async def request(
+        self,
+        method: str,
+        params: object,
+        *,
+        response_model: object,
+    ) -> _FakePluginListResponse:
+        del method, params, response_model
+        return self._response
+
+
+class _FakeAsyncCodex:
+    """Minimal stand-in for ``codex_app_server.AsyncCodex`` for unit tests.
+
+    Implements the async-context-manager + ``_client.request`` surface
+    the live probe exercises without spawning a real ``codex
+    app-server`` subprocess. Tests inject the desired ``plugin/list``
+    response shape via ``_FakePluginListResponse``.
+    """
+
+    _next_response: _FakePluginListResponse | None = None
+    _next_request_error: Exception | None = None
+    _next_aenter_error: Exception | None = None
+
+    def __init__(self, *, config: object) -> None:
+        del config
+        self._client: object = _FakeAsyncClient(
+            _FakeAsyncCodex._next_response or _FakePluginListResponse([])
+        )
+
+    async def __aenter__(self) -> Self:
+        if _FakeAsyncCodex._next_aenter_error is not None:
+            raise _FakeAsyncCodex._next_aenter_error
+        if _FakeAsyncCodex._next_request_error is not None:
+            self._client = _ErrorClient(_FakeAsyncCodex._next_request_error)
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object,
+    ) -> None:
+        del exc_type, exc, tb
+
+
+class _ErrorClient:
+    """Async client that always raises a configured exception on ``request``."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    async def request(
+        self,
+        method: str,
+        params: object,
+        *,
+        response_model: object,
+    ) -> object:
+        del method, params, response_model
+        raise self._exc
+
+
+def _patch_async_codex(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    response: _FakePluginListResponse | None = None,
+    request_error: Exception | None = None,
+    aenter_error: Exception | None = None,
+) -> None:
+    """Install ``_FakeAsyncCodex`` + a fake ``PluginListResponse`` model.
+
+    Builds dummy modules whose attributes the live probe imports, then
+    swaps them into ``sys.modules`` so the lazy ``from codex_app_server
+    import ...`` inside the probe picks up the fakes instead of the
+    real SDK.
+    """
+    import sys as _sys
+    import types
+
+    _FakeAsyncCodex._next_response = response
+    _FakeAsyncCodex._next_request_error = request_error
+    _FakeAsyncCodex._next_aenter_error = aenter_error
+
+    class _FakeAppServerPkg(types.ModuleType):
+        AppServerConfig = staticmethod(lambda **_kw: None)
+        AsyncCodex = _FakeAsyncCodex
+
+    class _FakeV2(types.ModuleType):
+        PluginListResponse = object
+
+    fake_pkg = _FakeAppServerPkg("codex_app_server")
+    fake_generated = types.ModuleType("codex_app_server.generated")
+    fake_v2 = _FakeV2("codex_app_server.generated.v2_all")
+    monkeypatch.setitem(_sys.modules, "codex_app_server", fake_pkg)
+    monkeypatch.setitem(_sys.modules, "codex_app_server.generated", fake_generated)
+    monkeypatch.setitem(_sys.modules, "codex_app_server.generated.v2_all", fake_v2)
+
+
+@pytest.mark.unit
+def test_live_codex_plugin_list_probe_passes_when_plugin_installed_and_enabled(
+    _stub_live_codex_plugin_list_probe: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Happy path: Codex reports our plugin installed+enabled → probe succeeds."""
+    # Override the autouse stub so we drive the real implementation.
+    monkeypatch.undo()
+    from src.infra.clients.codex_provider import _live_codex_plugin_list_probe
+
+    _patch_async_codex(
+        monkeypatch,
+        response=_FakePluginListResponse(
+            marketplaces=[
+                _FakeMarketplaceEntry(
+                    plugins=[
+                        _FakePluginSummary(
+                            plugin_id="mala-safety@local",
+                            installed=True,
+                            enabled=True,
+                        )
+                    ]
+                )
+            ]
+        ),
+    )
+
+    # No raise on success.
+    _live_codex_plugin_list_probe({"CODEX_HOME": str(tmp_path)}, tmp_path)
+
+
+@pytest.mark.unit
+def test_live_codex_plugin_list_probe_raises_plugin_disabled_when_plugin_missing(
+    _stub_live_codex_plugin_list_probe: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Codex's plugin/list does not list the bundled plugin → PLUGIN_DISABLED.
+
+    Catches the case where the on-disk install is shaped right per our
+    structural checks but Codex's plugin discovery did not see it
+    (different cache root, manifest field rename, etc.).
+    """
+    monkeypatch.undo()
+    from src.infra.clients.codex_provider import _live_codex_plugin_list_probe
+
+    _patch_async_codex(
+        monkeypatch,
+        response=_FakePluginListResponse(marketplaces=[]),
+    )
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _live_codex_plugin_list_probe({"CODEX_HOME": str(tmp_path)}, tmp_path)
+    assert excinfo.value.reason is CodexHookNotActiveReason.PLUGIN_DISABLED
+    assert "does not include" in str(excinfo.value)
+
+
+@pytest.mark.unit
+def test_live_codex_plugin_list_probe_raises_plugin_disabled_when_not_installed(
+    _stub_live_codex_plugin_list_probe: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Codex sees the plugin but reports installed=False → PLUGIN_DISABLED."""
+    monkeypatch.undo()
+    from src.infra.clients.codex_provider import _live_codex_plugin_list_probe
+
+    _patch_async_codex(
+        monkeypatch,
+        response=_FakePluginListResponse(
+            marketplaces=[
+                _FakeMarketplaceEntry(
+                    plugins=[
+                        _FakePluginSummary(
+                            plugin_id="mala-safety@local",
+                            installed=False,
+                            enabled=True,
+                        )
+                    ]
+                )
+            ]
+        ),
+    )
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _live_codex_plugin_list_probe({"CODEX_HOME": str(tmp_path)}, tmp_path)
+    assert excinfo.value.reason is CodexHookNotActiveReason.PLUGIN_DISABLED
+    assert "NOT installed" in str(excinfo.value)
+
+
+@pytest.mark.unit
+def test_live_codex_plugin_list_probe_raises_plugin_disabled_when_not_enabled(
+    _stub_live_codex_plugin_list_probe: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Codex sees the plugin installed but enabled=False → PLUGIN_DISABLED.
+
+    This is the failure mode the reviewer specifically called out: the
+    on-disk ``[plugins."<id>"] enabled = true`` write looked successful
+    but Codex's evaluation reports the plugin disabled, meaning real
+    PreToolUse turns would skip the safety hook. The live probe is the
+    only signal that catches this discrepancy.
+    """
+    monkeypatch.undo()
+    from src.infra.clients.codex_provider import _live_codex_plugin_list_probe
+
+    _patch_async_codex(
+        monkeypatch,
+        response=_FakePluginListResponse(
+            marketplaces=[
+                _FakeMarketplaceEntry(
+                    plugins=[
+                        _FakePluginSummary(
+                            plugin_id="mala-safety@local",
+                            installed=True,
+                            enabled=False,
+                        )
+                    ]
+                )
+            ]
+        ),
+    )
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _live_codex_plugin_list_probe({"CODEX_HOME": str(tmp_path)}, tmp_path)
+    assert excinfo.value.reason is CodexHookNotActiveReason.PLUGIN_DISABLED
+    assert "NOT enabled" in str(excinfo.value)
+
+
+@pytest.mark.unit
+def test_live_codex_plugin_list_probe_raises_plugin_disabled_on_marketplace_load_errors(
+    _stub_live_codex_plugin_list_probe: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Codex returns marketplace_load_errors → PLUGIN_DISABLED.
+
+    Surfaces the case where Codex's loader could not parse the
+    on-disk plugin tree even though our structural JSON parse
+    succeeded (e.g. unexpected ``plugin.json`` field, permission
+    error, missing referenced file).
+    """
+    monkeypatch.undo()
+    from src.infra.clients.codex_provider import _live_codex_plugin_list_probe
+
+    _patch_async_codex(
+        monkeypatch,
+        response=_FakePluginListResponse(
+            marketplaces=[],
+            load_errors=["unexpected manifest field"],
+        ),
+    )
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _live_codex_plugin_list_probe({"CODEX_HOME": str(tmp_path)}, tmp_path)
+    assert excinfo.value.reason is CodexHookNotActiveReason.PLUGIN_DISABLED
+    assert "marketplace_load_errors" in str(excinfo.value)
+
+
+@pytest.mark.unit
+def test_live_codex_plugin_list_probe_raises_codex_binary_missing_when_spawn_fails(
+    _stub_live_codex_plugin_list_probe: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """SDK fails to spawn the codex app-server → CODEX_BINARY_MISSING.
+
+    Real failure shape from the SDK's ``_resolve_codex_bin`` when the
+    runtime probe upstream succeeds but the actual spawn cannot find
+    a binary (a packaging regression in ``codex_cli_bin``, a stale
+    ``CODEX_BINARY`` env var pointing at a deleted path, etc.).
+    """
+    monkeypatch.undo()
+    from src.infra.clients.codex_provider import _live_codex_plugin_list_probe
+
+    _patch_async_codex(
+        monkeypatch,
+        aenter_error=FileNotFoundError("Unable to locate the pinned Codex runtime."),
+    )
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _live_codex_plugin_list_probe({"CODEX_HOME": str(tmp_path)}, tmp_path)
+    assert excinfo.value.reason is CodexHookNotActiveReason.CODEX_BINARY_MISSING
+
+
+@pytest.mark.unit
+def test_default_probe_invokes_live_codex_probe_after_other_checks(
+    fake_codex_env: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """End-to-end pin: ``_default_selftest_probe`` calls the live probe
+    after the structural / identity / direct-spawn checks all pass.
+
+    Catches the regression where a refactor accidentally drops the
+    live-Codex step — without it the selftest would silently lose the
+    only Codex-side validation we have.
+    """
+    from src.infra.clients.codex_provider import _default_selftest_probe
+
+    codex_home, bin_dir = fake_codex_env
+    _install_valid_plugin_tree(codex_home)
+    _install_real_hook_shim(bin_dir / "mala-codex-pre-tool-use")
+
+    calls: list[tuple[dict[str, str], Path]] = []
+
+    def _record_call(
+        env: dict[str, str], repo: Path, *, marketplace: str = "local"
+    ) -> None:
+        del marketplace
+        calls.append((dict(env), repo))
+
+    monkeypatch.setattr(
+        "src.infra.clients.codex_provider._live_codex_plugin_list_probe",
+        _record_call,
+    )
+
+    _default_selftest_probe(
+        tmp_path,
+        {"CODEX_HOME": str(codex_home)},
+        "deadbeef",
+    )
+
+    assert len(calls) == 1
+    assert calls[0][0] == {"CODEX_HOME": str(codex_home)}
+    assert calls[0][1] == tmp_path
 
 
 @pytest.mark.unit
