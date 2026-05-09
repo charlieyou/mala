@@ -1,13 +1,26 @@
 """SDK adapter for Claude Agent SDK.
 
-This module provides a factory for creating Claude SDK clients, isolating
-SDK imports to the infra layer. The pipeline layer uses SDKClientProtocol
-from core.protocols instead of importing SDK types directly.
+This module provides a Claude-private factory for creating Claude SDK
+clients, isolating SDK imports to the infra layer. The pipeline layer
+uses ``SDKClientProtocol`` and the slim cross-coder
+``SDKClientFactoryProtocol`` from ``core.protocols``; Claude-specific
+knobs (``create_options``, ``create_hook_matcher``) live on the
+concrete :class:`SDKClientFactory` defined here and never leak onto the
+cross-coder protocol.
 
 Design principles:
 - All SDK imports are local (inside methods, not at module level)
 - Factory pattern enables dependency injection and testing
 - TYPE_CHECKING imports for SDK types avoid runtime dependency
+
+The Claude pipeline path returns a :class:`_ClaudeAgentEventClient`
+wrapper whose ``receive_response()`` emits coder-agnostic
+:class:`AgentEvent` values directly, mirroring
+:meth:`AmpClient.receive_response` and removing the per-call translation
+that previously lived in the pipeline. Claude-private callers that pass
+bare ``ClaudeAgentOptions`` (e.g. :class:`AgentSDKReviewer`, which
+consumes Anthropic ``ResultMessage`` fields like ``structured_output``
+directly) still receive the unwrapped SDK client.
 """
 
 from __future__ import annotations
@@ -15,43 +28,109 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+    from types import TracebackType
+    from typing import Self
+
+    from src.core.protocols.agent_event import AgentEventValue
     from src.core.protocols.sdk import SDKClientProtocol
 
 
-class SDKClientFactory:
-    """Factory for creating Claude SDK clients.
+class _ClaudeAgentEventClient:
+    """Wrap :class:`ClaudeSDKClient` so ``receive_response()`` emits ``AgentEvent``s.
 
-    This factory encapsulates SDK imports and client creation, allowing
-    the pipeline layer to use SDK clients without importing SDK directly.
+    The pipeline only iterates ``receive_response()``; every other
+    method delegates verbatim to the inner SDK client so context-manager
+    entry/exit, ``query``, and ``disconnect`` retain their original
+    Anthropic-SDK semantics.
+    """
+
+    def __init__(self, inner: SDKClientProtocol) -> None:
+        self._inner = inner
+
+    async def __aenter__(self) -> Self:
+        await self._inner.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        await self._inner.__aexit__(exc_type, exc_val, exc_tb)
+
+    async def query(self, prompt: str, session_id: str | None = None) -> None:
+        await self._inner.query(prompt, session_id)
+
+    def receive_response(self) -> AsyncIterator[AgentEventValue]:
+        from src.core.protocols.agent_event import to_agent_events
+
+        return to_agent_events(self._inner.receive_response())
+
+    async def disconnect(self) -> None:
+        await self._inner.disconnect()
+
+
+class SDKClientFactory:
+    """Claude-private factory for creating Claude SDK clients.
+
+    Conforms to the slim cross-coder ``SDKClientFactoryProtocol``
+    (``create`` / ``with_resume``) and additionally exposes the
+    Claude-only knobs ``create_options`` and ``create_hook_matcher``
+    used by Claude-specific wiring code (``ClaudeAgentRuntimeBuilder``,
+    ``AgentSDKReviewer``). The Claude knobs intentionally do not appear
+    on the cross-coder protocol so Amp / Codex backends are not forced
+    to provide ``NotImplementedError`` walls for them.
 
     Usage:
         factory = SDKClientFactory()
-        client = factory.create(options)
+        client = factory.create(runtime)
         async with client:
             await client.query(prompt)
             async for msg in client.receive_response():
                 ...
     """
 
-    def create(self, options: object) -> SDKClientProtocol:
-        """Create a new SDK client with the given options.
+    def create(self, runtime: object) -> SDKClientProtocol:
+        """Create a new SDK client for the given Claude runtime.
 
         Args:
-            options: ClaudeAgentOptions (or compatible) for the client.
-                The type is `object` to avoid requiring SDK import in
-                the caller's type annotations.
+            runtime: Opaque Claude-shaped runtime. Either an
+                :class:`AgentRuntime` produced by
+                :class:`ClaudeAgentRuntimeBuilder.build`, in which case its
+                ``options`` field carries the ``ClaudeAgentOptions``, or a
+                bare ``ClaudeAgentOptions`` for Claude-private callers
+                (e.g. :class:`AgentSDKReviewer`) that build options
+                themselves. The pipeline only goes through the runtime
+                form; the bare-options shape is a Claude-private
+                convenience preserved here.
 
         Returns:
-            SDKClientProtocol wrapping a ClaudeSDKClient.
+            SDKClientProtocol. For pipeline (``AgentRuntime``) callers,
+            this is a :class:`_ClaudeAgentEventClient` wrapping a
+            ``ClaudeSDKClient`` so ``receive_response()`` yields
+            ``AgentEvent`` values directly. For Claude-private bare
+            ``ClaudeAgentOptions`` callers, the underlying
+            ``ClaudeSDKClient`` is returned unwrapped so they can
+            consume Anthropic-shaped ``ResultMessage`` fields
+            (``structured_output``, etc.) that have no AgentEvent
+            counterpart.
         """
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient  # noqa: TC002
+        from src.infra.agent_runtime import AgentRuntime
         from src.infra.sdk_transport import ensure_sigint_isolated_cli_transport
 
+        options = getattr(runtime, "options", runtime)
+
         ensure_sigint_isolated_cli_transport()
-        return cast(
+        raw_client = cast(
             "SDKClientProtocol",
             ClaudeSDKClient(options=cast("ClaudeAgentOptions", options)),
         )
+        if isinstance(runtime, AgentRuntime):
+            return cast("SDKClientProtocol", _ClaudeAgentEventClient(raw_client))
+        return raw_client
 
     def create_options(
         self,
@@ -142,25 +221,34 @@ class SDKClientFactory:
 
         return HookMatcher(matcher=matcher, hooks=hooks)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
 
-    def with_resume(self, options: object, resume: str | None) -> object:
-        """Create a copy of options with a different resume session ID.
+    def with_resume(self, runtime: object, resume: str | None) -> object:
+        """Create a copy of the runtime with a different resume session ID.
 
         This is used to resume a prior session when retrying after idle timeout
         or review failures. The SDK's resume feature loads the prior conversation
         context before processing the next query.
 
         Args:
-            options: Existing ClaudeAgentOptions to clone.
+            runtime: Existing Claude-shaped runtime. Either an
+                :class:`AgentRuntime` (with an ``options`` field carrying
+                the ``ClaudeAgentOptions``) or a bare ``ClaudeAgentOptions``
+                for Claude-private callers.
             resume: Session ID to resume from, or None to start fresh.
 
         Returns:
-            New ClaudeAgentOptions with the resume field set.
+            Same shape as ``runtime`` with its ``ClaudeAgentOptions``
+            ``resume`` field updated.
         """
         from claude_agent_sdk import ClaudeAgentOptions
-        from dataclasses import fields
+        from dataclasses import fields, replace
 
-        # ClaudeAgentOptions is a dataclass - extract all field values
-        opts = options
+        from src.infra.agent_runtime import AgentRuntime
+
+        if isinstance(runtime, AgentRuntime):
+            opts = runtime.options
+        else:
+            opts = runtime
+
         if not isinstance(opts, ClaudeAgentOptions):
             raise TypeError(f"Expected ClaudeAgentOptions, got {type(opts)}")
 
@@ -170,4 +258,7 @@ class SDKClientFactory:
         if "settings" in kwargs and kwargs["settings"] is None:
             kwargs["settings"] = '{"autoCompactEnabled": true}'
 
-        return ClaudeAgentOptions(**kwargs)  # type: ignore[arg-type]
+        new_opts = ClaudeAgentOptions(**kwargs)  # type: ignore[arg-type]
+        if isinstance(runtime, AgentRuntime):
+            return replace(runtime, options=new_opts)
+        return new_opts

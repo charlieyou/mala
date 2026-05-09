@@ -17,7 +17,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # Import SDK types that the runner uses for isinstance checks
-from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
+from src.core.protocols.agent_event import (
+    AgentResultEvent,
+    AgentTextEvent,
+    AgentToolUseEvent,
+)
 
 from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
@@ -86,15 +90,18 @@ def make_test_prompts() -> SessionPrompts:
 def make_result_message(
     session_id: str = "test-session-123",
     result: str | None = "Test completed successfully",
-) -> ResultMessage:
-    """Create a ResultMessage with the given fields."""
-    return ResultMessage(
-        subtype="result",
-        duration_ms=100,
-        duration_api_ms=50,
-        is_error=False,
-        num_turns=1,
+) -> AgentResultEvent:
+    """Create a terminal ``AgentResultEvent`` for the wrapped Claude path.
+
+    Production wrapping (``_ClaudeAgentEventClient`` in
+    ``src.infra.sdk_adapter``) translates Anthropic ``ResultMessage`` into
+    this event before the pipeline sees it; tests mirror that contract by
+    yielding ``AgentResultEvent`` directly through ``FakeSDKClient``.
+    """
+    return AgentResultEvent(
         session_id=session_id,
+        is_error=False,
+        subtype="result",
         result=result,
     )
 
@@ -127,8 +134,14 @@ class HangingAfterMessagesSDKClient(FakeSDKClient):
     """
 
     async def receive_response(self) -> AsyncIterator[Any]:
-        for msg in self.messages:
-            yield msg
+        from src.core.protocols.agent_event import to_agent_events
+
+        async def _raw() -> AsyncIterator[Any]:
+            for msg in self.messages:
+                yield msg
+
+        async for event in to_agent_events(_raw()):
+            yield event
         # Hang forever instead of yielding result_message
         while True:
             await asyncio.sleep(3600)
@@ -143,7 +156,7 @@ class SlowSDKClient(FakeSDKClient):
         self,
         delay: float,
         messages: list[Any] | None = None,
-        result_message: ResultMessage | None = None,
+        result_message: AgentResultEvent | None = None,
     ):
         # Default to empty list and result message if not provided
         msgs = messages if messages is not None else []
@@ -152,12 +165,18 @@ class SlowSDKClient(FakeSDKClient):
         self.delay = delay
 
     async def receive_response(self) -> AsyncIterator[Any]:
-        for msg in self.messages:
+        from src.core.protocols.agent_event import to_agent_events
+
+        async def _raw() -> AsyncIterator[Any]:
+            for msg in self.messages:
+                await asyncio.sleep(self.delay)
+                yield msg
             await asyncio.sleep(self.delay)
-            yield msg
-        await asyncio.sleep(self.delay)
-        if self.result_message is not None:
-            yield self.result_message
+            if self.result_message is not None:
+                yield self.result_message
+
+        async for event in to_agent_events(_raw()):
+            yield event
 
 
 class FakeHookMatcher:
@@ -182,18 +201,18 @@ class SequencedSDKClientFactory:
         self.with_resume_calls: list[tuple[object, str | None]] = []
         self._index = 0
 
-    def create(self, options: object) -> SDKClientProtocol:
-        self.create_calls.append(options)
+    def create(self, runtime: object) -> SDKClientProtocol:
+        self.create_calls.append(runtime)
         client = self.clients[min(self._index, len(self.clients) - 1)]
         self._index += 1
         return cast("SDKClientProtocol", client)
 
-    def with_resume(self, options: object, resume: str | None) -> object:
-        """Create a copy of options with a different resume session ID."""
-        self.with_resume_calls.append((options, resume))
-        if isinstance(options, dict):
-            return {**options, "resume": resume}
-        return options
+    def with_resume(self, runtime: object, resume: str | None) -> object:
+        """Create a copy of the runtime with a different resume session ID."""
+        self.with_resume_calls.append((runtime, resume))
+        if isinstance(runtime, dict):
+            return {**runtime, "resume": resume}
+        return runtime
 
     def create_options(
         self,
@@ -684,13 +703,13 @@ class TestAgentSessionRunnerStreamingCallbacks:
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
     ) -> None:
-        """Runner should invoke on_tool_use callback for ToolUseBlock messages."""
-        # Create messages with a ToolUseBlock
-        tool_block = ToolUseBlock(id="tool-1", name="Read", input={"path": "test.py"})
-        assistant_msg = AssistantMessage(content=[tool_block], model="test-model")
+        """Runner should invoke on_tool_use callback for tool_use events."""
+        tool_event = AgentToolUseEvent(
+            id="tool-1", name="Read", input={"path": "test.py"}
+        )
 
         fake_client = FakeSDKClient(
-            messages=[assistant_msg], result_message=make_result_message()
+            messages=[tool_event], result_message=make_result_message()
         )
         fake_factory = FakeSDKClientFactory(fake_client)
 
@@ -738,13 +757,11 @@ class TestAgentSessionRunnerStreamingCallbacks:
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
     ) -> None:
-        """Runner should invoke on_agent_text callback for TextBlock messages."""
-        # Create messages with a TextBlock
-        text_block = TextBlock(text="Processing the request...")
-        assistant_msg = AssistantMessage(content=[text_block], model="test-model")
+        """Runner should invoke on_agent_text callback for text events."""
+        text_event = AgentTextEvent(text="Processing the request...")
 
         fake_client = FakeSDKClient(
-            messages=[assistant_msg], result_message=make_result_message()
+            messages=[text_event], result_message=make_result_message()
         )
         fake_factory = FakeSDKClientFactory(fake_client)
 
@@ -791,15 +808,13 @@ class TestAgentSessionRunnerStreamingCallbacks:
         tmp_log_path: Path,
     ) -> None:
         """Runner should work without streaming callbacks (optional)."""
-        # Create messages with both TextBlock and ToolUseBlock
-        text_block = TextBlock(text="Working...")
-        tool_block = ToolUseBlock(id="tool-1", name="Read", input={"path": "test.py"})
-        assistant_msg = AssistantMessage(
-            content=[text_block, tool_block], model="test-model"
+        text_event = AgentTextEvent(text="Working...")
+        tool_event = AgentToolUseEvent(
+            id="tool-1", name="Read", input={"path": "test.py"}
         )
 
         fake_client = FakeSDKClient(
-            messages=[assistant_msg], result_message=make_result_message()
+            messages=[text_event, tool_event], result_message=make_result_message()
         )
         fake_factory = FakeSDKClientFactory(fake_client)
 
@@ -1730,10 +1745,11 @@ class TestIdleTimeoutRetry:
         is the only backstop in this case.
         """
         # Create a client that yields tool calls then hangs
-        tool_block = ToolUseBlock(id="tool-1", name="Bash", input={"command": "ls"})
-        assistant_msg = AssistantMessage(content=[tool_block], model="test-model")
+        tool_event = AgentToolUseEvent(
+            id="tool-1", name="Bash", input={"command": "ls"}
+        )
 
-        hanging_client = HangingAfterMessagesSDKClient(messages=[assistant_msg])
+        hanging_client = HangingAfterMessagesSDKClient(messages=[tool_event])
 
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
@@ -1956,17 +1972,17 @@ class TestIdleTimeoutRetry:
                 self.create_calls: list[Any] = []
                 self.idx = 0
 
-            def create(self, options: object) -> SDKClientProtocol:
-                self.create_calls.append(options)
+            def create(self, runtime: object) -> SDKClientProtocol:
+                self.create_calls.append(runtime)
                 sid = session_ids[min(self.idx, len(session_ids) - 1)]
                 self.idx += 1
                 return cast("SDKClientProtocol", make_client_for_session(sid))
 
-            def with_resume(self, options: object, resume: str | None) -> object:
-                """Create a copy of options with resume session ID."""
-                if isinstance(options, dict):
-                    return {**options, "resume": resume}
-                return options
+            def with_resume(self, runtime: object, resume: str | None) -> object:
+                """Create a copy of the runtime with resume session ID."""
+                if isinstance(runtime, dict):
+                    return {**runtime, "resume": resume}
+                return runtime
 
             def create_options(
                 self,
@@ -2370,7 +2386,7 @@ class TestBuildSessionOutput:
 
         session_cfg = SessionConfig(
             agent_id="test-123-abc12345",
-            options={},
+            runtime={},
             lint_cache=LintCache(repo_path=tmp_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -2427,7 +2443,7 @@ class TestBuildSessionOutput:
 
         session_cfg = SessionConfig(
             agent_id="test-fail-abc",
-            options={},
+            runtime={},
             lint_cache=LintCache(repo_path=tmp_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -2482,7 +2498,7 @@ class TestBuildSessionOutput:
 
         session_cfg = SessionConfig(
             agent_id="test-res-abc",
-            options={},
+            runtime={},
             lint_cache=LintCache(repo_path=tmp_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -2532,7 +2548,7 @@ class TestBuildSessionOutput:
 
         session_cfg = SessionConfig(
             agent_id="test-low-abc",
-            options={},
+            runtime={},
             lint_cache=LintCache(repo_path=tmp_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -2591,7 +2607,7 @@ class TestBuildSessionOutput:
 
         session_cfg = SessionConfig(
             agent_id="test-session-end-abc",
-            options={},
+            runtime={},
             lint_cache=LintCache(repo_path=tmp_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -2650,7 +2666,7 @@ class TestBuildSessionOutput:
 
         session_cfg = SessionConfig(
             agent_id="test-no-session-end",
-            options={},
+            runtime={},
             lint_cache=LintCache(repo_path=tmp_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -3186,7 +3202,7 @@ class TestRunLifecycleLoop:
 
         session_cfg = SessionConfig(
             agent_id="test-loop-abc",
-            options=MagicMock(),  # Mock SDK options
+            runtime=MagicMock(),  # Mock SDK options
             lint_cache=LintCache(repo_path=session_config.repo_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -3230,13 +3246,10 @@ class TestRunLifecycleLoop:
         )
 
         # Client that returns no session_id-equivalent value
-        no_session_result = ResultMessage(
-            subtype="result",
-            duration_ms=100,
-            duration_api_ms=50,
-            is_error=False,
-            num_turns=1,
+        no_session_result = AgentResultEvent(
             session_id="",
+            is_error=False,
+            subtype="result",
             result="Done",
         )
         fake_client = FakeSDKClient(result_message=no_session_result)
@@ -3252,7 +3265,7 @@ class TestRunLifecycleLoop:
 
         session_cfg = SessionConfig(
             agent_id="test-no-session",
-            options=MagicMock(),  # Mock SDK options
+            runtime=MagicMock(),  # Mock SDK options
             lint_cache=LintCache(repo_path=session_config.repo_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -3321,7 +3334,7 @@ class TestRunLifecycleLoop:
 
         session_cfg = SessionConfig(
             agent_id="test-events-abc",
-            options=MagicMock(),  # Mock SDK options
+            runtime=MagicMock(),  # Mock SDK options
             lint_cache=LintCache(repo_path=session_config.repo_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -3733,7 +3746,7 @@ class TestLocalSettingsIntegration:
         class HybridSDKClientFactory:
             """Factory using real SDK for options, fake client for execution."""
 
-            def create(self, options: object) -> FakeSDKClient:
+            def create(self, runtime: object) -> FakeSDKClient:
                 return fake_client
 
             def create_options(
@@ -3779,8 +3792,8 @@ class TestLocalSettingsIntegration:
             ) -> object:
                 return real_factory.create_hook_matcher(matcher, hooks)
 
-            def with_resume(self, options: object, resume: str | None) -> object:
-                return real_factory.with_resume(options, resume)
+            def with_resume(self, runtime: object, resume: str | None) -> object:
+                return real_factory.with_resume(runtime, resume)
 
         hybrid_factory = HybridSDKClientFactory()
 

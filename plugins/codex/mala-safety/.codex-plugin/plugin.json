@@ -1,0 +1,6 @@
+{
+  "name": "mala-safety",
+  "description": "Mala safety hook + locking MCP for unattended Codex runs (sandbox=danger-full-access + approval_policy=never).",
+  "hooks": "./.codex-plugin/hooks.json",
+  "mcpServers": "./.codex-plugin/.mcp.json"
+}

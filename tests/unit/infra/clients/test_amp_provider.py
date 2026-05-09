@@ -94,21 +94,24 @@ def _install_fake_amp_emitting_sentinel(
 def test_client_factory_resume_uses_verified_threads_continue_strategy(
     tmp_path: Path,
 ) -> None:
-    from src.infra.clients.amp_client import AmpClientOptions
+    from src.infra.clients.amp_runtime import AmpRuntime
+    from src.infra.hooks.lint_cache import LintCache
 
     provider = AmpAgentProvider()
-    options = AmpClientOptions(
+    runtime = AmpRuntime(
         cwd=tmp_path,
         env={},
         argv=("amp", "--execute", "--stream-json"),
+        mcp_config={},
+        mode="deep",
         log_path=tmp_path / ".pending.jsonl",
+        lint_cache=LintCache(repo_path=tmp_path),
     )
 
-    resumed = provider.client_factory.with_resume(options, "T-resume")
+    resumed = provider.client_factory.with_resume(runtime, "T-resume")
 
-    assert isinstance(resumed, AmpClientOptions)
-    assert resumed.thread_id == "T-resume"
-    assert resumed.resume_strategy == "threads-continue"
+    assert isinstance(resumed, AmpRuntime)
+    assert resumed.resume_thread_id == "T-resume"
     assert "--thread-id" not in resumed.argv
 
 

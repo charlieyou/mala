@@ -707,7 +707,9 @@ class TestVerifyAndCloseEligible:
             reasoning="Blocking and advisory work remain",
         )
         issue_ids = iter([None, "advisory-1"])
-        mock_beads.create_issue_async = AsyncMock(side_effect=lambda **_: next(issue_ids))
+        mock_beads.create_issue_async = AsyncMock(
+            side_effect=lambda **_: next(issue_ids)
+        )
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
             if "epic" in cmd and "status" in cmd:

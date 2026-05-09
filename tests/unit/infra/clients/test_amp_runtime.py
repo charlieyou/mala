@@ -8,10 +8,10 @@ Covers the runtime-builder slice of plan section "Testing & Validation"
 - Env includes ``PLUGINS=all`` and inherits parent ``os.environ`` keys.
 - **Regression guard**: env includes ``MALA_AGENT_ID``, ``MALA_LOCK_DIR``,
   ``MALA_VALIDATION_LOG_DIR``, and ``MALA_REPO_NAMESPACE``. The lock ownership
-  values match what the Claude path's ``AgentRuntimeBuilder.with_env()`` would
-  inject for ``AGENT_ID``, ``LOCK_DIR``, ``REPO_NAMESPACE``. If core safety env
-  is missing, the ``mala-safety.ts`` plugin is disabled or cannot exempt
-  validation logs, so this is asserted positively *and* defensively.
+  values match what the Claude path's ``ClaudeAgentRuntimeBuilder.with_env()``
+  would inject for ``AGENT_ID``, ``LOCK_DIR``, ``REPO_NAMESPACE``. If core
+  safety env is missing, the ``mala-safety.ts`` plugin is disabled or cannot
+  exempt validation logs, so this is asserted positively *and* defensively.
 - ``--mode <smart|rush|deep>`` wired from :class:`AmpOptions.mode`.
 - ``mcp_config`` JSON contains the ``locking_mcp`` stdio launch spec.
 - Env is built from ``os.environ`` (not a bare dict).
@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 
-from src.infra.agent_runtime import AgentRuntimeBuilder
+from src.infra.agent_runtime import ClaudeAgentRuntimeBuilder
 from src.infra.clients.amp_runtime import AmpRuntime, AmpRuntimeBuilder
 from src.infra.io.config import MalaConfig
 from src.infra.tools.env import SCRIPTS_DIR, encode_repo_path
@@ -189,7 +189,6 @@ def test_env_includes_plugins_all(builder: AmpRuntimeBuilder) -> None:
 def test_env_enables_mala_amp_plugin(builder: AmpRuntimeBuilder) -> None:
     runtime = builder.build()
     assert runtime.env["AMP_MALA"] == "true"
-    assert runtime.options.env["AMP_MALA"] == "true"
 
 
 @pytest.mark.unit
@@ -211,7 +210,6 @@ def test_env_includes_default_mcp_timeout(builder: AmpRuntimeBuilder) -> None:
 def test_agent_timeout_sets_mcp_timeout(builder: AmpRuntimeBuilder) -> None:
     runtime = builder.with_agent_timeout(1800).build()
     assert runtime.env["MCP_TIMEOUT"] == "1800000"
-    assert runtime.options.env["MCP_TIMEOUT"] == "1800000"
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +267,7 @@ def test_lock_ownership_env_values_match_claude_path(
     coordination."""
     repo_path.mkdir(parents=True, exist_ok=True)
     claude_runtime = (
-        AgentRuntimeBuilder(repo_path, "agent-42", FakeSDKClientFactory())
+        ClaudeAgentRuntimeBuilder(repo_path, "agent-42", FakeSDKClientFactory())
         .with_env()
         .with_mcp(servers={})
         .build()
@@ -329,16 +327,17 @@ def test_deadlock_monitor_enables_amp_lock_event_side_channel(repo_path: Path) -
         async def handle_event(self, event: object) -> None:
             del event
 
-    runtime = (
-        AmpRuntimeBuilder(repo_path, "agent-77", _stdio_locking_factory())
-        .with_hooks(deadlock_monitor=Monitor())
-        .build()
-    )
+    runtime = AmpRuntimeBuilder(
+        repo_path,
+        "agent-77",
+        _stdio_locking_factory(),
+        deadlock_monitor=Monitor(),
+    ).build()
 
-    event_log = runtime.options.lock_event_log_path
+    event_log = runtime.lock_event_log_path
     assert event_log is not None
     assert runtime.env["MALA_LOCK_EVENT_LOG"] == str(event_log)
-    assert runtime.options.lock_event_callback is not None
+    assert runtime.lock_event_callback is not None
 
     raw_spec = runtime.mcp_config["locking_mcp"]
     assert isinstance(raw_spec, dict)
@@ -434,8 +433,7 @@ def test_with_resume_records_thread_id_for_client_resume(
 ) -> None:
     runtime = builder.with_resume("T-deadbeef").build()
     assert "--thread-id" not in runtime.argv
-    assert runtime.options.thread_id == "T-deadbeef"
-    assert runtime.options.resume_strategy == "threads-continue"
+    assert runtime.resume_thread_id == "T-deadbeef"
 
 
 @pytest.mark.unit
@@ -516,13 +514,15 @@ def test_malaconfig_amp_mode_deep_flows_into_argv(
 
 
 # ---------------------------------------------------------------------------
-# Fluent-API regression: pipeline calls
-# builder.with_hooks().with_agent_timeout().with_env().with_mcp()
-# .with_disallowed_tools().with_lint_tools().build() and reads runtime.options
-# + runtime.lint_cache.
-# Without these, AgentSessionRunner._build_session raises AttributeError
-# on the first Amp issue session (AC#6 break documented at
-# plans/2026-04-29-amp-provider-plan.md#L165).
+# Fluent-API regression: pipeline calls only the cross-coder
+# :class:`CoderRuntimeBuilder` surface (plan A6):
+# builder.with_agent_timeout().with_env().with_mcp().with_lint_tools().build()
+# and forwards the runtime opaquely to ``client_factory.create(runtime)``
+# (plan A3). The provider's factory privately unpacks ``argv`` / ``env`` /
+# ``log_path`` etc.; the pipeline only reads ``runtime.lint_cache``.
+# Deadlock-monitor wiring is threaded through the builder constructor (via
+# :meth:`AgentProvider.runtime_builder`'s ``deadlock_monitor`` kwarg) so
+# the cross-coder pipeline does not call ``with_hooks``.
 # ---------------------------------------------------------------------------
 
 
@@ -531,18 +531,15 @@ def test_fluent_chain_used_by_agent_session_runner_returns_runtime(
     builder: AmpRuntimeBuilder,
 ) -> None:
     """The exact chain ``AgentSessionRunner._build_session`` calls must
-    produce an :class:`AmpRuntime`.
+    produce an :class:`AmpRuntime` (plan A6 narrowing).
 
-    Mirrors ``AgentSessionRunner._initialize_session``. A regression
-    that drops one of these methods would re-introduce the AttributeError
-    the reviewer flagged.
+    A regression that drops one of these methods would re-introduce the
+    AttributeError the reviewer flagged in the original AC#6 break.
     """
     runtime = (
-        builder.with_hooks(deadlock_monitor=None)
-        .with_agent_timeout(600)
+        builder.with_agent_timeout(600)
         .with_env(extra={"MALA_SDK_FLOW": "implementer"})
         .with_mcp()
-        .with_disallowed_tools()
         .with_lint_tools(frozenset({"ruff"}))
         .build()
     )
@@ -553,19 +550,17 @@ def test_fluent_chain_used_by_agent_session_runner_returns_runtime(
 def test_fluent_chain_used_by_fixer_service_returns_runtime(
     builder: AmpRuntimeBuilder,
 ) -> None:
-    """Mirrors :meth:`FixerService._spawn_fixer`'s shaping (with explicit
-    ``include_*`` flags + a manual ``servers={}`` override)."""
+    """Mirrors :meth:`FixerService.run_fixer`'s shaping post plan-A6.
+
+    Claude-only fixer hook flags (``include_*``) are noops on Amp; the
+    real :class:`FixerService` downcasts to
+    :class:`ClaudeAgentRuntimeBuilder` via ``isinstance`` so they never
+    reach Amp's builder.
+    """
     runtime = (
-        builder.with_hooks(
-            deadlock_monitor=None,
-            include_stop_hook=True,
-            include_mala_disallowed_tools_hook=False,
-        )
-        .with_agent_timeout(600)
+        builder.with_agent_timeout(600)
         .with_env(extra={"MALA_SDK_FLOW": "fixer"})
-        .with_disallowed_tools()
         .with_mcp(servers={})
-        .with_hooks(include_lock_enforcement_hook=False)
         .with_lint_tools(frozenset({"ruff"}))
         .build()
     )
@@ -596,21 +591,20 @@ def test_with_env_extras_are_layered_on_top_of_mandatory_overlays(
 
 
 @pytest.mark.unit
-def test_runtime_exposes_options_consumed_by_client_factory(
+def test_runtime_carries_fields_factory_uses_to_build_client_options(
     builder: AmpRuntimeBuilder,
 ) -> None:
-    """``runtime.options`` is what the pipeline forwards to
-    ``client_factory.create``. Must be an :class:`AmpClientOptions` whose
-    cwd / env / argv / log_path mirror the runtime's top-level fields."""
-    from src.infra.clients.amp_client import AmpClientOptions
-
+    """The runtime exposes the cwd / env / argv / log_path fields the Amp
+    client factory privately reads at ``create(runtime)`` time (plan A3 —
+    pipeline never inspects ``runtime.options``)."""
     runtime = builder.build()
-    assert isinstance(runtime.options, AmpClientOptions)
-    assert runtime.options.cwd == runtime.cwd
-    assert dict(runtime.options.env) == dict(runtime.env)
-    assert tuple(runtime.options.argv) == runtime.argv
-    assert runtime.options.log_path == runtime.log_path
-    assert runtime.options.thread_id == runtime.resume_thread_id
+    assert isinstance(runtime.cwd, Path)
+    assert dict(runtime.env)  # non-empty mapping
+    assert tuple(runtime.argv)  # non-empty argv
+    assert isinstance(runtime.log_path, Path)
+    assert runtime.resume_thread_id is None
+    assert runtime.lock_event_log_path is None
+    assert runtime.lock_event_callback is None
 
 
 @pytest.mark.unit

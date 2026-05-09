@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.agent_provider import AgentProvider
+    from src.core.protocols.evidence import EvidenceProvider
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.infra import (
         CommandRunnerPort,
@@ -69,7 +70,6 @@ if TYPE_CHECKING:
         LockManagerPort,
     )
     from src.core.protocols.issue import IssueProvider
-    from src.core.protocols.log import LogProvider
     from src.core.protocols.review import CodeReviewer
     from src.core.protocols.validation import (
         EpicVerificationModel,
@@ -81,7 +81,7 @@ if TYPE_CHECKING:
         ValidationConfig,
         VerificationRetryPolicy,
     )
-    from src.infra.io.config import MalaConfig
+    from src.infra.io.config import CodexOptions, MalaConfig
     from src.infra.telemetry import TelemetryProvider
 
     from .orchestrator import MalaOrchestrator
@@ -107,6 +107,51 @@ class _ReviewerConfig:
     cerberus_config: CerberusConfig | None = None
 
 
+def _resolve_yaml_codex_options(
+    yaml_codex_options: object | None,
+) -> CodexOptions | None:
+    """Convert :class:`CodexOptionsConfig` (yaml) to :class:`CodexOptions` (runtime).
+
+    Returns ``None`` when the yaml block is absent or all fields are unset
+    (so :meth:`MalaConfig.from_env` keeps using its defaults). Otherwise
+    fills in defaults for any fields the user did not specify.
+    """
+    if yaml_codex_options is None:
+        return None
+    from src.domain.validation.config import CodexOptionsConfig
+    from src.infra.io.config import CodexOptions
+
+    if not isinstance(yaml_codex_options, CodexOptionsConfig):
+        return None
+
+    has_value = (
+        yaml_codex_options.model is not None
+        or yaml_codex_options.effort is not None
+        or yaml_codex_options.approval_policy is not None
+        or yaml_codex_options.sandbox is not None
+        or bool(yaml_codex_options.mcp_servers)
+    )
+    if not has_value:
+        return None
+
+    base = CodexOptions()
+    return CodexOptions(
+        model=yaml_codex_options.model
+        if yaml_codex_options.model is not None
+        else base.model,
+        effort=yaml_codex_options.effort
+        if yaml_codex_options.effort is not None
+        else base.effort,
+        approval_policy=yaml_codex_options.approval_policy
+        if yaml_codex_options.approval_policy is not None
+        else base.approval_policy,
+        sandbox=yaml_codex_options.sandbox
+        if yaml_codex_options.sandbox is not None
+        else base.sandbox,
+        mcp_servers=yaml_codex_options.mcp_servers,
+    )
+
+
 def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
     """Construct the :class:`AgentProvider` for this run.
 
@@ -122,7 +167,11 @@ def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
 
     Args:
         mala_config: Configuration carrying ``coder`` and ``coder_options``.
-            ``coder`` is one of ``"amp"`` (default) or ``"claude"``.
+            ``coder`` is one of ``"amp"`` (default), ``"claude"``, or
+            ``"codex"``. The Codex provider is not yet wired (Phase B);
+            selecting it here raises :class:`NotImplementedError` so the
+            enum widening in A8 stays observable while the actual provider
+            stub lands later.
 
     Returns:
         An :class:`AgentProvider` for the selected backend. The Amp provider
@@ -136,6 +185,21 @@ def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
             AmpAgentProvider(
                 mode=mala_config.coder_options.amp.mode,
                 effort=mala_config.effort,
+            ),
+        )
+
+    if mala_config.coder == "codex":
+        from src.infra.clients.codex_provider import CodexAgentProvider
+
+        codex = mala_config.coder_options.codex
+        return cast(
+            "AgentProvider",
+            CodexAgentProvider(
+                model=codex.model,
+                effort=codex.effort,
+                approval_policy=codex.approval_policy,
+                sandbox=codex.sandbox,
+                mcp_servers=codex.mcp_servers,
             ),
         )
 
@@ -154,21 +218,23 @@ def load_yaml_coder_resolution(
     repo_path: Path,
 ) -> tuple[
     tuple[str, ...] | None,
-    Literal["claude", "amp"] | None,
+    Literal["claude", "amp", "codex"] | None,
     Literal["smart", "rush", "deep"] | None,
     str | None,
+    object | None,
 ]:
     """Load yaml-derived inputs for the coder-selection precedence chain.
 
     Returns
-    ``(yaml_claude_settings_sources, yaml_coder, yaml_amp_mode, yaml_effort)``
-    so callers can feed them into :meth:`MalaConfig.from_env`. This is the
-    bridge that lets the CLI honor ``mala.yaml`` ``coder:`` /
-    ``amp_mode:`` / ``effort:`` under the documented
+    ``(yaml_claude_settings_sources, yaml_coder, yaml_amp_mode,
+    yaml_effort, yaml_codex_options)`` so callers can feed them into
+    :meth:`MalaConfig.from_env`. This is the bridge that lets the CLI
+    honor ``mala.yaml`` ``coder:`` / ``amp_mode:`` / ``effort:`` /
+    ``coder_options.codex.*`` under the documented
     CLI > env > yaml > default precedence (AC-3 of the Amp provider epic
-    and the unified-effort issue).
+    and AC #3/#4 of the Codex provider epic).
 
-    When ``mala.yaml`` is missing, returns ``(None, None, None, None)`` so
+    When ``mala.yaml`` is missing, returns ``(None, ..., None)`` so
     ``from_env`` falls back to env / defaults.
 
     Raises:
@@ -183,7 +249,7 @@ def load_yaml_coder_resolution(
     try:
         user_config = load_config(repo_path)
     except ConfigMissingError:
-        return (None, None, None, None)
+        return (None, None, None, None, None)
 
     if user_config.preset is not None:
         preset_config = PresetRegistry().get(user_config.preset)
@@ -196,6 +262,7 @@ def load_yaml_coder_resolution(
         validation_config.coder,
         validation_config.amp_mode,
         validation_config.effort,
+        validation_config.codex_options,
     )
 
 
@@ -847,7 +914,7 @@ def _build_dependencies(
     IssueProvider,
     CodeReviewer,
     GateChecker,
-    LogProvider,
+    EvidenceProvider,
     TelemetryProvider,
     MalaEventSink,
     EpicVerifierProtocol | None,
@@ -911,23 +978,24 @@ def _build_dependencies(
     else:
         event_sink = ConsoleEventSink()
 
-    # Agent provider - select the coder backend now so its log_provider can
-    # be reused for evidence parsing below. Per plan L100, selection happens
-    # exactly once per run; later pipeline construction reuses this instance.
+    # Agent provider - select the coder backend now so its evidence_provider
+    # can be reused for evidence parsing below. Per plan L100, selection
+    # happens exactly once per run; later pipeline construction reuses this
+    # instance.
     agent_provider: AgentProvider
     if deps is not None and deps.agent_provider is not None:
         agent_provider = deps.agent_provider
     else:
         agent_provider = _create_agent_provider(mala_config)
 
-    # Log provider
-    log_provider: LogProvider
-    if deps is not None and deps.log_provider is not None:
-        log_provider = deps.log_provider
+    # Evidence provider
+    evidence_provider: EvidenceProvider
+    if deps is not None and deps.evidence_provider is not None:
+        evidence_provider = deps.evidence_provider
     else:
-        log_provider = agent_provider.log_provider
+        evidence_provider = agent_provider.evidence_provider
 
-    # Gate checker (needs log_provider and command_runner)
+    # Gate checker (needs evidence_provider and command_runner)
     gate_checker: GateChecker
     if deps is not None and deps.gate_checker is not None:
         gate_checker = deps.gate_checker
@@ -935,7 +1003,9 @@ def _build_dependencies(
         gate_checker = cast(
             "GateChecker",
             EvidenceCheck(
-                repo_path, log_provider=log_provider, command_runner=command_runner
+                repo_path,
+                evidence_provider=evidence_provider,
+                command_runner=command_runner,
             ),
         )
 
@@ -1013,7 +1083,7 @@ def _build_dependencies(
         issue_provider,
         code_reviewer,
         gate_checker,
-        log_provider,
+        evidence_provider,
         telemetry_provider,
         event_sink,
         epic_verifier,
@@ -1076,9 +1146,10 @@ def create_orchestrator(
     # Load ValidationConfig once from mala.yaml for all settings that need to flow
     # to MalaConfig and reviewer configuration (avoids redundant I/O and parsing)
     yaml_claude_settings_sources: tuple[str, ...] | None = None
-    yaml_coder: Literal["claude", "amp"] | None = None
+    yaml_coder: Literal["claude", "amp", "codex"] | None = None
     yaml_amp_mode: Literal["smart", "rush", "deep"] | None = None
     yaml_effort: str | None = None
+    yaml_codex_options: object | None = None
     reviewer_config = _ReviewerConfig()  # Default
     validation_config = None
     validation_config_missing = False
@@ -1095,6 +1166,7 @@ def create_orchestrator(
         yaml_coder = validation_config.coder
         yaml_amp_mode = validation_config.amp_mode
         yaml_effort = validation_config.effort
+        yaml_codex_options = validation_config.codex_options
         reviewer_config = _extract_reviewer_config(validation_config)
     except ConfigMissingError:
         # mala.yaml not present - use defaults
@@ -1111,6 +1183,7 @@ def create_orchestrator(
             yaml_coder=yaml_coder,
             yaml_amp_mode=yaml_amp_mode,
             yaml_effort=yaml_effort,
+            yaml_codex_options=_resolve_yaml_codex_options(yaml_codex_options),
         )
 
     # Derive computed configuration
@@ -1173,7 +1246,7 @@ def create_orchestrator(
         issue_provider,
         code_reviewer,
         gate_checker,
-        log_provider,
+        evidence_provider,
         telemetry_provider,
         event_sink,
         epic_verifier,
@@ -1195,26 +1268,12 @@ def create_orchestrator(
 
     # Install per-coder prerequisites once before the first session of the run
     # (per plan L168). For Claude this is a no-op; for Amp this performs the
-    # plugin-load self-test (T013).
-    #
-    # Coders need different MCP factory shapes: Claude consumes in-process
-    # Claude-SDK ``Server`` objects, Amp consumes JSON stdio launch specs
-    # (plan ``L302-L312``: the self-test must use the SAME --mcp-config shape
-    # real sessions use). Dispatching here keeps the factory matched to the
-    # active provider.
-    from src.orchestration.orchestration_wiring import (
-        create_amp_mcp_server_factory,
-        create_mcp_server_factory,
-    )
-
-    if agent_provider.name == "amp":
-        prereq_mcp_factory = create_amp_mcp_server_factory()
-    else:
-        prereq_mcp_factory = create_mcp_server_factory()
-
+    # plugin-load self-test (T013). The provider owns its MCP factory shape
+    # so the self-test exercises the SAME --mcp-config payload real sessions
+    # use (plan ``L302-L312``).
     agent_provider.install_prerequisites(
         config.repo_path.resolve(),
-        mcp_server_factory=prereq_mcp_factory,
+        mcp_server_factory=agent_provider.mcp_server_factory(),
     )
 
     # Create orchestrator using internal constructor
@@ -1231,7 +1290,7 @@ def create_orchestrator(
         _issue_provider=issue_provider,
         _code_reviewer=code_reviewer,
         _gate_checker=gate_checker,
-        _log_provider=log_provider,
+        _evidence_provider=evidence_provider,
         _telemetry_provider=telemetry_provider,
         _event_sink=event_sink,
         _epic_verifier=epic_verifier,

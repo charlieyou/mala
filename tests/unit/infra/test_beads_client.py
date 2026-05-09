@@ -2478,9 +2478,7 @@ class TestAddParentChildDependencyAsync:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(beads, "_run_subprocess_async", capturing_run)
-            result = await beads.add_parent_child_dependency_async(
-                "issue-1", "epic-1"
-            )
+            result = await beads.add_parent_child_dependency_async("issue-1", "epic-1")
 
         assert result is True
         assert captured_cmds == [
@@ -2501,17 +2499,15 @@ class TestAddParentChildDependencyAsync:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_command_result(returncode=1, stderr="boom")),
+                AsyncMock(
+                    return_value=make_command_result(returncode=1, stderr="boom")
+                ),
             )
-            result = await beads.add_parent_child_dependency_async(
-                "issue-1", "epic-1"
-            )
+            result = await beads.add_parent_child_dependency_async("issue-1", "epic-1")
 
         assert result is False
         assert beads._parent_epic_cache["issue-1"] is None
-        assert warnings == [
-            "br dep add --type parent-child failed for issue-1: boom"
-        ]
+        assert warnings == ["br dep add --type parent-child failed for issue-1: boom"]
 
 
 class TestCreateIssueAsync:

@@ -451,9 +451,9 @@ class TestEvidenceDetectionCustomCommandsIntegration:
             ]
         )
 
-        log_provider = FileSystemLogProvider()
+        evidence_provider = FileSystemLogProvider()
         command_runner = CommandRunner(cwd=tmp_path)
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner)
 
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
@@ -490,9 +490,9 @@ class TestEvidenceDetectionCustomCommandsIntegration:
             ]
         )
 
-        log_provider = FileSystemLogProvider()
+        evidence_provider = FileSystemLogProvider()
         command_runner = CommandRunner(cwd=tmp_path)
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner)
 
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
@@ -538,9 +538,9 @@ class TestEvidenceDetectionCustomCommandsIntegration:
             ]
         )
 
-        log_provider = FileSystemLogProvider()
+        evidence_provider = FileSystemLogProvider()
         command_runner = CommandRunner(cwd=tmp_path)
-        gate = EvidenceCheck(tmp_path, log_provider, command_runner)
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner)
 
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 

@@ -35,17 +35,24 @@ from typing import Literal
 
 from src.core.constants import (
     DEFAULT_CLAUDE_SETTINGS_SOURCES,
+    DEFAULT_CODEX_APPROVAL_POLICY,
+    DEFAULT_CODEX_EFFORT,
+    DEFAULT_CODEX_MODEL,
+    DEFAULT_CODEX_SANDBOX,
     VALID_CLAUDE_SETTINGS_SOURCES,
+    VALID_CODEX_APPROVAL_POLICIES,
+    VALID_CODEX_SANDBOXES,
     VALID_EFFORTS,
     default_effort_for,
     validate_amp_effort_for_mode,
+    validate_codex_effort,
 )
 
 _logger = logging.getLogger(__name__)
 
-VALID_CODERS: frozenset[str] = frozenset({"claude", "amp"})
+VALID_CODERS: frozenset[str] = frozenset({"claude", "amp", "codex"})
 VALID_AMP_MODES: frozenset[str] = frozenset({"smart", "rush", "deep"})
-DEFAULT_CODER: Literal["claude", "amp"] = "amp"
+DEFAULT_CODER: Literal["claude", "amp", "codex"] = "claude"
 DEFAULT_AMP_MODE: Literal["smart", "rush", "deep"] = "deep"
 
 
@@ -133,12 +140,14 @@ def parse_claude_settings_sources(
     return tuple(sources)
 
 
-def parse_coder(raw: str | None, *, source: str) -> Literal["claude", "amp"] | None:
+def parse_coder(
+    raw: str | None, *, source: str
+) -> Literal["claude", "amp", "codex"] | None:
     """Parse a coder selection string.
 
     Args:
-        raw: Raw value, "claude" or "amp" (after strip; case-sensitive to
-            match the strict-enum YAML schema in
+        raw: Raw value, "claude", "amp", or "codex" (after strip; case-sensitive
+            to match the strict-enum YAML schema in
             src/domain/validation/config.py).
         source: Source name for error messages (e.g., "MALA_CODER", "CLI").
 
@@ -159,6 +168,8 @@ def parse_coder(raw: str | None, *, source: str) -> Literal["claude", "amp"] | N
     # Narrow Literal type for the type checker.
     if stripped == "amp":
         return "amp"
+    if stripped == "codex":
+        return "codex"
     return "claude"
 
 
@@ -192,6 +203,83 @@ def parse_amp_mode(
     if stripped == "deep":
         return "deep"
     return "smart"
+
+
+def parse_codex_model(raw: str | None, *, source: str) -> str | None:
+    """Parse a Codex model string.
+
+    Codex accepts arbitrary model identifiers (the SDK does not enforce a
+    fixed set), so validation is shape-only: empty/whitespace -> None,
+    otherwise pass through the trimmed value.
+    """
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    del source
+    return stripped
+
+
+def parse_codex_effort(raw: str | None, *, source: str) -> str | None:
+    """Parse a Codex effort string with strict-enum validation.
+
+    Validates against the Codex SDK's ``ReasoningEffort`` enum (or the
+    documented fallback when the SDK is not installed). Empty/whitespace ->
+    None.
+    """
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    validate_codex_effort(stripped, source=source)
+    return stripped
+
+
+def parse_codex_approval_policy(
+    raw: str | None, *, source: str
+) -> Literal["never", "on-request", "on-failure", "untrusted"] | None:
+    """Parse a Codex ``approval_policy`` string with strict-enum validation."""
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    if stripped not in VALID_CODEX_APPROVAL_POLICIES:
+        valid = ", ".join(sorted(VALID_CODEX_APPROVAL_POLICIES))
+        raise ValueError(
+            f"{source}: Invalid Codex approval_policy '{stripped}'. "
+            f"Valid policies: {valid}"
+        )
+    if stripped == "on-request":
+        return "on-request"
+    if stripped == "on-failure":
+        return "on-failure"
+    if stripped == "untrusted":
+        return "untrusted"
+    return "never"
+
+
+def parse_codex_sandbox(
+    raw: str | None, *, source: str
+) -> Literal["read-only", "workspace-write", "danger-full-access"] | None:
+    """Parse a Codex ``sandbox`` string with strict-enum validation."""
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    if stripped not in VALID_CODEX_SANDBOXES:
+        valid = ", ".join(sorted(VALID_CODEX_SANDBOXES))
+        raise ValueError(
+            f"{source}: Invalid Codex sandbox '{stripped}'. Valid sandboxes: {valid}"
+        )
+    if stripped == "read-only":
+        return "read-only"
+    if stripped == "workspace-write":
+        return "workspace-write"
+    return "danger-full-access"
 
 
 def parse_effort(raw: str | None, *, source: str) -> str | None:
@@ -269,13 +357,42 @@ class AmpOptions:
 
 
 @dataclass(frozen=True)
-class CoderOptions:
-    """Per-coder option container.
+class CodexOptions:
+    """Codex-coder specific options (Phase B).
 
-    Currently only houses Amp options; new coders extend this dataclass.
+    Attributes:
+        model: Codex model identifier. Default ``gpt-5.5`` (decision #9).
+        effort: Optional ``ReasoningEffort`` value passed through to Codex.
+            Defaults to ``medium``; values are validated against the Codex
+            SDK's ``ReasoningEffort`` enum at parse time (decision #13).
+        approval_policy: Codex turn approval policy. Default ``never``
+            (decision #3) — combined with ``sandbox=danger-full-access``,
+            the bundled hook is the only safety gate for unattended runs.
+        sandbox: Codex sandbox mode. Default ``danger-full-access``
+            (decision #2) — Mala's hook + locking MCP enforce safety;
+            relying on the Codex sandbox would block normal turn behavior.
+        mcp_servers: Optional pre-merged MCP server map. Phase G3 merges
+            user-supplied servers with the bundled ``mala-locking`` server;
+            Phase B passes the raw map through unchanged.
     """
 
+    model: str = DEFAULT_CODEX_MODEL
+    effort: str | None = DEFAULT_CODEX_EFFORT
+    approval_policy: Literal["never", "on-request", "on-failure", "untrusted"] = (
+        DEFAULT_CODEX_APPROVAL_POLICY
+    )
+    sandbox: Literal["read-only", "workspace-write", "danger-full-access"] = (
+        DEFAULT_CODEX_SANDBOX
+    )
+    mcp_servers: tuple[tuple[str, object], ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class CoderOptions:
+    """Per-coder option container."""
+
     amp: AmpOptions = field(default_factory=AmpOptions)
+    codex: CodexOptions = field(default_factory=CodexOptions)
 
 
 @dataclass(frozen=True)
@@ -361,7 +478,7 @@ class MalaConfig:
     # Coder selection (which agent backend to drive issue execution)
     # Mirrors claude_settings_sources resolver pattern: env > yaml > default here;
     # CLI override is layered on top in build_resolved_config().
-    coder: Literal["claude", "amp"] = DEFAULT_CODER
+    coder: Literal["claude", "amp", "codex"] = DEFAULT_CODER
     coder_options: CoderOptions = field(default_factory=CoderOptions)
 
     # Mala-level reasoning effort. Forwarded to ``ClaudeAgentOptions.effort``
@@ -426,9 +543,10 @@ class MalaConfig:
         *,
         validate: bool = True,
         yaml_claude_settings_sources: tuple[str, ...] | None = None,
-        yaml_coder: Literal["claude", "amp"] | None = None,
+        yaml_coder: Literal["claude", "amp", "codex"] | None = None,
         yaml_amp_mode: Literal["smart", "rush", "deep"] | None = None,
         yaml_effort: str | None = None,
+        yaml_codex_options: CodexOptions | None = None,
     ) -> MalaConfig:
         """Create MalaConfig by loading from environment variables with validation.
 
@@ -438,7 +556,7 @@ class MalaConfig:
             - CLAUDE_CONFIG_DIR: Claude SDK config directory (optional)
             - MALA_TRACK_REVIEW_ISSUES: Create beads issues for P2/P3 findings (deprecated)
             - MALA_CLAUDE_SETTINGS_SOURCES: Comma-separated Claude settings sources (optional)
-            - MALA_CODER: Coder selection ("claude" or "amp") (optional)
+            - MALA_CODER: Coder selection ("claude", "amp", or "codex") (optional)
             - MALA_AMP_MODE: Amp execution mode ("smart", "rush", "deep") (optional)
             - LLM_API_KEY: API key for LLM calls (optional)
             - LLM_BASE_URL: Base URL for LLM API (optional)
@@ -527,7 +645,7 @@ class MalaConfig:
         except ValueError as exc:
             parse_errors.append(str(exc))
             env_coder = None
-        resolved_coder: Literal["claude", "amp"] = (
+        resolved_coder: Literal["claude", "amp", "codex"] = (
             env_coder
             if env_coder is not None
             else (yaml_coder if yaml_coder is not None else DEFAULT_CODER)
@@ -557,6 +675,62 @@ class MalaConfig:
             env_effort = None
         resolved_effort: str | None = (
             env_effort if env_effort is not None else yaml_effort
+        )
+
+        # Parse MALA_CODEX_MODEL (env > yaml > default).
+        try:
+            env_codex_model = parse_codex_model(
+                os.environ.get("MALA_CODEX_MODEL"), source="MALA_CODEX_MODEL"
+            )
+        except ValueError as exc:
+            parse_errors.append(str(exc))
+            env_codex_model = None
+        # Parse MALA_CODEX_EFFORT (env > yaml > default).
+        try:
+            env_codex_effort = parse_codex_effort(
+                os.environ.get("MALA_CODEX_EFFORT"), source="MALA_CODEX_EFFORT"
+            )
+        except ValueError as exc:
+            parse_errors.append(str(exc))
+            env_codex_effort = None
+        # Parse MALA_CODEX_APPROVAL_POLICY (env > yaml > default).
+        try:
+            env_codex_approval_policy = parse_codex_approval_policy(
+                os.environ.get("MALA_CODEX_APPROVAL_POLICY"),
+                source="MALA_CODEX_APPROVAL_POLICY",
+            )
+        except ValueError as exc:
+            parse_errors.append(str(exc))
+            env_codex_approval_policy = None
+        # Parse MALA_CODEX_SANDBOX (env > yaml > default).
+        try:
+            env_codex_sandbox = parse_codex_sandbox(
+                os.environ.get("MALA_CODEX_SANDBOX"), source="MALA_CODEX_SANDBOX"
+            )
+        except ValueError as exc:
+            parse_errors.append(str(exc))
+            env_codex_sandbox = None
+        yaml_codex = (
+            yaml_codex_options if yaml_codex_options is not None else CodexOptions()
+        )
+        resolved_codex_options = CodexOptions(
+            model=(
+                env_codex_model if env_codex_model is not None else yaml_codex.model
+            ),
+            effort=(
+                env_codex_effort if env_codex_effort is not None else yaml_codex.effort
+            ),
+            approval_policy=(
+                env_codex_approval_policy
+                if env_codex_approval_policy is not None
+                else yaml_codex.approval_policy
+            ),
+            sandbox=(
+                env_codex_sandbox
+                if env_codex_sandbox is not None
+                else yaml_codex.sandbox
+            ),
+            mcp_servers=yaml_codex.mcp_servers,
         )
         if resolved_effort is None:
             resolved_effort = default_effort_for(
@@ -597,7 +771,10 @@ class MalaConfig:
                 )
             ),
             coder=resolved_coder,
-            coder_options=CoderOptions(amp=AmpOptions(mode=resolved_amp_mode)),
+            coder_options=CoderOptions(
+                amp=AmpOptions(mode=resolved_amp_mode),
+                codex=resolved_codex_options,
+            ),
             effort=resolved_effort,
         )
 
@@ -682,6 +859,10 @@ class CLIOverrides:
     coder: str | None = None
     amp_mode: str | None = None
     effort: str | None = None
+    codex_model: str | None = None
+    codex_effort: str | None = None
+    codex_approval_policy: str | None = None
+    codex_sandbox: str | None = None
 
 
 @dataclass(frozen=True)
@@ -736,7 +917,7 @@ class ResolvedConfig:
     claude_settings_sources: tuple[str, ...]
 
     # Coder selection
-    coder: Literal["claude", "amp"]
+    coder: Literal["claude", "amp", "codex"]
     coder_options: CoderOptions
     effort: str | None
 
@@ -823,7 +1004,7 @@ def build_resolved_config(
     # Apply coder override (CLI > env > yaml > default)
     # base_config already has env > yaml > default applied
     cli_coder = parse_coder(overrides.coder, source="CLI")
-    coder: Literal["claude", "amp"] = (
+    coder: Literal["claude", "amp", "codex"] = (
         cli_coder if cli_coder is not None else base_config.coder
     )
 
@@ -832,7 +1013,33 @@ def build_resolved_config(
     amp_mode: Literal["smart", "rush", "deep"] = (
         cli_amp_mode if cli_amp_mode is not None else base_config.coder_options.amp.mode
     )
-    coder_options = CoderOptions(amp=AmpOptions(mode=amp_mode))
+
+    # Apply codex options overrides (CLI > env > yaml > default).
+    cli_codex_model = parse_codex_model(overrides.codex_model, source="--codex-model")
+    cli_codex_effort = parse_codex_effort(
+        overrides.codex_effort, source="--codex-effort"
+    )
+    cli_codex_approval_policy = parse_codex_approval_policy(
+        overrides.codex_approval_policy, source="--codex-approval-policy"
+    )
+    cli_codex_sandbox = parse_codex_sandbox(
+        overrides.codex_sandbox, source="--codex-sandbox"
+    )
+    base_codex = base_config.coder_options.codex
+    codex_options = CodexOptions(
+        model=cli_codex_model if cli_codex_model is not None else base_codex.model,
+        effort=cli_codex_effort if cli_codex_effort is not None else base_codex.effort,
+        approval_policy=(
+            cli_codex_approval_policy
+            if cli_codex_approval_policy is not None
+            else base_codex.approval_policy
+        ),
+        sandbox=(
+            cli_codex_sandbox if cli_codex_sandbox is not None else base_codex.sandbox
+        ),
+        mcp_servers=base_codex.mcp_servers,
+    )
+    coder_options = CoderOptions(amp=AmpOptions(mode=amp_mode), codex=codex_options)
 
     # Apply effort override (CLI > env > yaml > backend/mode default).
     # base_config already has env > yaml > default applied; if a CLI override

@@ -1,6 +1,9 @@
 # Architecture
 
-**mala** (Multi-Agent Loop Architecture) is an orchestrator for processing issues in parallel using Claude agents. This document describes its layered architecture, module responsibilities, key flows, and design decisions.
+**mala** (Multi-Agent Loop Architecture) is an orchestrator for processing
+issues in parallel using Claude, Amp, or Codex coder backends. This document
+describes its layered architecture, module responsibilities, key flows, and
+design decisions.
 
 > **Source of truth**: Configuration values (thresholds, contracts) are documented here for convenience, but the canonical source is `pyproject.toml` and code under `src/domain/validation`.
 
@@ -260,7 +263,7 @@ Pure data structures and interfaces with **no internal dependencies**.
 |--------|---------|
 | `models.py` | Shared dataclasses (IssueResolution, ValidationArtifacts, EpicVerdict, RetryConfig) |
 | `constants.py` | Shared constants used across layers |
-| `protocols.py` | Protocol interfaces (IssueProvider, GateChecker, CodeReviewer, LogProvider, EpicVerificationModel) |
+| `protocols.py` | Protocol interfaces (IssueProvider, GateChecker, CodeReviewer, EvidenceProvider, EpicVerificationModel) |
 | `log_events.py` | JSONL log schema types and parsing helpers |
 | `session_end_result.py` | Session_end trigger result and remediation state |
 | `tool_name_extractor.py` | Normalize tool names from shell commands for logs/caching |
@@ -507,7 +510,8 @@ Supporting orchestration components:
 - `SessionLogParser` / `FileSystemLogProvider`: parsing and offset tracking for JSONL logs.
   - Key methods:
     - `iter_jsonl_entries()` / `get_log_end_offset()`: parser-level iteration + offsets.
-    - `iter_events()` / `get_end_offset()`: provider-level streaming access + offsets.
+    - `iter_session_events()` / `iter_thread_evidence()` / `get_end_offset()`:
+      EvidenceProvider-level streaming access + offsets.
     - `extract_*()` helpers: tool use, tool result, and assistant text parsing.
 - `CommandRunner`: standardized subprocess execution with timeouts and process-group handling.
   - Key methods:
@@ -560,7 +564,7 @@ Hardening constraints (aspirational; not yet enforced):
 
 Core protocols define contracts between orchestration and infra:
 - `IssueProvider`, `GateChecker`, `CodeReviewer`
-- `LogProvider`, `EpicVerificationModel`, `TelemetryProvider`
+- `EvidenceProvider`, `EpicVerificationModel`, `TelemetryProvider`
 
 ### 4) Pipeline Decomposition
 
@@ -613,20 +617,22 @@ through the `lock_acquire` MCP tool, the same path the Claude coder uses.
 
 ### 8) Agent Provider Abstraction (Coder Backend Selection)
 
-Mala can drive its per-issue implementation agent on Claude (default) or on
-Sourcegraph's Amp. Selection is global to a run and is done once at orchestrator
-construction; the per-session pipeline (`AgentSessionRunner`, `RunCoordinator`,
-`FixerService`) is coder-agnostic and consumes only the protocol.
+Mala can drive its per-issue implementation agent on Claude, Sourcegraph's
+Amp, or OpenAI's Codex (`codex app-server`). Selection is global to a run and
+is done once at orchestrator construction; the per-session pipeline
+(`AgentSessionRunner`, `RunCoordinator`, `FixerService`) is coder-agnostic
+and consumes only the protocol.
 
 The `AgentProvider` protocol (`src/core/protocols/agent_provider.py`) bundles
-three pluggable concerns:
+five pluggable concerns:
 
-| Concern | Claude impl | Amp impl |
-|---------|-------------|----------|
-| `client_factory` (produces `SDKClientProtocol`-conforming clients) | `ClaudeSDKClient` via Claude Agent SDK | `AmpClient` (subprocess wrapper around `amp --execute --stream-json`) |
-| `runtime_builder(repo_path, agent_id, *, mcp_server_factory)` (produces an opaque coder-shaped runtime) | hooks dict + MCP servers + setting sources (`AgentRuntimeBuilder`) | `AmpRuntime` (CLI args + `--mcp-config` JSON + `MALA_*` env injection + tee log path) |
-| `log_provider` (`LogProvider` for evidence parsing) | `FileSystemLogProvider` over `~/.claude/projects/...` | `AmpLogProvider` over `~/.config/mala/amp-sessions/{thread_id}.jsonl` (per-thread, append-only across resumes) |
-| `install_prerequisites(repo_path, *, mcp_server_factory)` | no-op | install plugin + run **fail-closed runtime self-test** (see below) |
+| Concern | Claude impl | Amp impl | Codex impl |
+|---------|-------------|----------|------------|
+| `client_factory` (produces `SDKClientProtocol` clients whose `receive_response()` yields `AgentEvent`s) | `ClaudeSDKClient` via Claude Agent SDK | `AmpClient` (subprocess wrapper around `amp --execute --stream-json`) | `CodexClient` (in-process wrapper around `codex_app_server.AsyncCodex`) |
+| `runtime_builder(repo_path, agent_id, *, mcp_server_factory)` (produces an opaque coder-shaped runtime) | hooks dict + MCP servers + setting sources (`ClaudeAgentRuntimeBuilder`) | `AmpRuntime` (CLI args + `--mcp-config` JSON + `MALA_*` env injection + tee log path) | `CodexRuntime` (model/effort/approval/sandbox + bundled-plus-user MCP servers + `MALA_*` env injection) |
+| `evidence_provider` (`EvidenceProvider` protocol — replaces the prior `LogProvider.iter_thread_events` escape hatch) | `FileSystemLogProvider` over `~/.claude/projects/...` | `AmpLogProvider` over `~/.config/mala/amp-sessions/{thread_id}.jsonl` (per-thread, append-only across resumes) | `CodexEvidenceProvider` over `~/.config/mala/codex-sessions/{thread_id}.jsonl` (tee fallback; native `Thread.read(include_turns=True)` was disconfirmed by the Phase F1 spike — Extended-persistence is hardcoded off in app-server) |
+| `mcp_server_factory()` (provider-owned MCP factory; replaces the prior `if name == "amp"` orchestrator branch) | Claude MCP factory | bundled `mala-locking` (TS plugin reads, MCP launcher writes) | bundled `mala-locking` (Codex plugin's `.mcp.json` references `mala-codex-mcp-locking`) |
+| `install_prerequisites(repo_path, *, mcp_server_factory)` | no-op | install plugin + **fail-closed runtime plugin-load self-test** | install plugin + write trusted-hash + **fail-closed runtime hook-load self-test** |
 
 ```mermaid
 flowchart TD
@@ -634,28 +640,54 @@ flowchart TD
   CFG --> Factory[orchestration/factory.py picks AgentProvider]
   Factory -->|coder=claude| CL[ClaudeAgentProvider]
   Factory -->|coder=amp| AM[AmpAgentProvider]
+  Factory -->|coder=codex| CX[CodexAgentProvider]
   CL --> CLC[ClaudeSDKClient + hooks + ~/.claude/projects/...]
   AM --> AMC[AmpClient: amp --execute --stream-json --dangerously-allow-all<br/>--mcp-config + PLUGINS=all + MALA_* env<br/>tee → ~/.config/mala/amp-sessions/]
+  CX --> CXC[CodexClient: AsyncCodex over codex app-server stdio JSON-RPC<br/>bundled mala-safety plugin: PreToolUse hook + mala-locking MCP<br/>tee → ~/.config/mala/codex-sessions/]
   CLC --> Pipe[AgentSessionRunner / MessageStreamProcessor / Gate / Review / Fixer]
   AMC --> Pipe
+  CXC --> Pipe
 ```
 
-Both providers feed the same `AgentSessionRunner` / `MessageStreamProcessor` /
-gate / review / lifecycle / `FixerService` pipeline. `FixerService` receives the
-same provider, so fixers spawn whichever coder the main run uses.
+All three providers feed the same `AgentSessionRunner` /
+`MessageStreamProcessor` / gate / review / lifecycle / `FixerService`
+pipeline. `FixerService` receives the same provider, so fixers spawn
+whichever coder the main run uses.
 
 **Selection precedence:** CLI > env > yaml > default — mirrors the
 `claude_settings_sources` resolver. See
 [CLI Reference: Coder Selection](cli-reference.md#coder-selection).
 
+**Coder-agnostic event protocol (Phase A1).** `MessageStreamProcessor`
+branches on `event.kind` only — the prior Anthropic-class-name duck typing
+(`type(message).__name__ == "AssistantMessage"` etc.) is gone. The contract
+is `AgentEvent` (`src/core/protocols/agent_event.py`) with concrete variants
+`AgentTextEvent` / `AgentToolUseEvent` / `AgentToolResultEvent` /
+`AgentResultEvent`. Each provider's `client.receive_response()` yields
+events directly; new coders never reach into the processor's branching.
+
+**Slim SDK factory protocol (Phase A2).** `SDKClientFactoryProtocol` carries
+only `create(runtime)` + `with_resume(runtime, resume)`. Claude-only knobs
+(`create_options(...)`, `create_hook_matcher(...)`) live on a Claude-private
+factory class — Amp and Codex never inherit `NotImplementedError` walls.
+
+**Provider-owned MCP factory (Phase A4).** `factory.py` and
+`orchestrator.py` no longer branch on `provider.name`. Each provider's
+`mcp_server_factory()` returns the locking-MCP factory keyed for its coder
+(`mala-amp-mcp-locking` for Amp, `mala-codex-mcp-locking` for Codex; both
+back the same `src/infra/tools/locking_mcp_stdio.main` console-script).
+
 **Pipeline isolation:** the runtime object returned by `runtime_builder` is
 opaque to the pipeline. Only the matching `client_factory` knows its shape.
-There are no `if coder == "amp"` branches outside `src/orchestration/factory.py`;
-all coder-specific behavior is hidden behind `AgentProvider`.
+There are no `if coder == "..."` branches outside
+`src/orchestration/factory.py`; all coder-specific behavior is hidden
+behind `AgentProvider`.
 
-**Lazy SDK imports:** `claude_agent_sdk` is only imported by the Claude provider;
-the Amp adapter is only imported when `coder=amp` is selected. An Amp-only run
-does not require the Claude SDK package to be installed, and vice versa.
+**Lazy SDK imports:** `claude_agent_sdk` is only imported by the Claude
+provider; the Amp adapter is only imported when `coder=amp` is selected;
+the Codex adapter (and `codex_app_server` SDK) are only imported when
+`coder=codex` is selected. A single-coder install does not require the
+other two SDKs/runtimes.
 
 ### 9) Safety-Critical Plugin Self-Test (Amp)
 
@@ -721,13 +753,108 @@ as the safe default:
   atomically renamed to `{thread_id}.jsonl` once the ID is captured. On
   resume, the pending file's contents are appended to the existing thread
   file.
-- `AmpLogProvider.iter_events()` reads the whole file regardless of which
-  invocation produced which events, tolerating both possible Amp resume
+- `AmpLogProvider.iter_session_events()` reads the whole file regardless of
+  which invocation produced which events, tolerating both possible Amp resume
   shapes (delta-only vs. full-history-on-resume) — evidence is presence-based,
   not count-based.
 
-Telemetry: `MalaEventSink` spans carry a `coder=claude|amp` attribute so
-dashboards can split per-coder metrics.
+Telemetry: `MalaEventSink` spans carry a `coder=claude|amp|codex` attribute
+so dashboards can split per-coder metrics.
+
+### 10a) Codex Safety Model — Bundled Hook + Plugin Self-Test
+
+When `coder=codex`, mala runs Codex with `sandbox: danger-full-access` and
+`approval_policy: never` by default. The safety surface — dangerous-command
+blocking, lock-ownership enforcement, `MALA_DISALLOWED_TOOLS` enforcement —
+collapses to a single `PreToolUse` command hook
+(`mala-codex-pre-tool-use`, registered as a `[project.scripts]` entry
+point) bundled with the locking MCP server inside a Mala-shipped Codex
+plugin. **If the hook is not loaded or trusted, the run is unguarded.**
+
+Unlike the Amp TypeScript plugin, the Codex hook is a Python script that
+imports `src.infra.tools.locking.lock_path` directly — no cross-language
+SHA-256 reimplementation, no tee'd lock-format contract. Lock-key
+derivation is byte-identical to the rest of mala by construction.
+
+**Plugin packaging.** `plugins/codex/mala-safety/.codex-plugin/` ships
+three files:
+
+- `plugin.json` — manifest (`name`, `version`, `description`).
+- `hooks.json` — declares `PreToolUse` with `command: mala-codex-pre-tool-use`.
+- `.mcp.json` — declares the `mala-locking` MCP server pointing at the
+  `mala-codex-mcp-locking` console-script (sibling of `mala-amp-mcp-locking`,
+  same module).
+
+`CodexPluginInstaller` performs an idempotent straight-copy of the bundled
+tree into Codex's user-plugin directory (`~/.codex/plugins/`) and writes
+the expected `trusted_hash` into Codex's `HookStateToml` so Codex
+auto-trusts the hook on next launch.
+
+**The fail-closed safety invariant.**
+`CodexAgentProvider.install_prerequisites()` runs the same shape of
+fail-closed gate as the Amp provider before any issue agent is spawned:
+
+1. Probe SDK (`importlib.util.find_spec("codex_app_server")`), runtime
+   (`shutil.which("codex")`), and Codex auth — raise
+   `CodexNotInstalledError` with actionable remediation on any miss.
+2. Copy the bundled plugin tree via write-temp-then-rename; verify content
+   hashes match the bundled copies; write the trusted-hash entry.
+3. Spawn a self-test Codex turn that drives Codex's real hook dispatch:
+   `SessionStart` fires first, then the test prompt nudges a real tool call
+   so `PreToolUse` fires. The hook writes atomic per-event marker files
+   (`SessionStart.json`, `PreToolUse.json`) with the expected version hash.
+4. **Pass** only when both event markers arrive and match. The `PreToolUse`
+   self-test response uses Codex's per-event deny fields only, avoiding
+   unsupported universal fields that Codex rejects.
+5. **Fail closed** otherwise: raise `CodexHookNotActiveError` carrying a
+   structured `CodexHookNotActiveReason` enum (`HOOK_MARKER_MISSING`,
+   `VERSION_MISMATCH`, `SCRIPT_MISSING`, `PLUGIN_DISABLED`,
+   `TRUSTED_HASH_MISMATCH`, `CODEX_BINARY_MISSING`) so callers and
+   telemetry can branch without parsing prose.
+
+**Per-process env isolation.** The bundled hook reads `MALA_AGENT_ID`,
+`MALA_LOCK_DIR`, `MALA_REPO_NAMESPACE`, `MALA_DISALLOWED_TOOLS` from its
+own process env. Mala MUST NOT mutate `os.environ` in the parent process
+— under `--max-agents > 1`, concurrent agents would leak each other's
+`MALA_AGENT_ID` to subprocesses. `CodexRuntimeBuilder.build()` constructs
+a per-subprocess env dict explicitly (`{**os.environ, "MALA_AGENT_ID": …,
+"MALA_LOCK_DIR": str(get_lock_dir()), "MALA_REPO_NAMESPACE": …,
+**env_extra}`) and that dict is plumbed through to the Codex subprocess.
+`MALA_LOCK_DIR` is resolved through mala's lock-dir helper and injected even
+when the parent environment did not set it, so the hook has the same lock
+directory as the orchestrator. Env injection is the sole supported transport;
+the old state-file fallback was removed so missing env fails closed instead
+of silently reading stale state.
+
+**No silent unguarded path.** Combined with `sandbox: danger-full-access`
++ `approval_policy: never`, the bundled hook is the *only* gate. Any
+fail-closed reason aborts the run before issue execution begins.
+
+### 10b) Codex Evidence Provider — Tee Strategy
+
+`Thread.read(include_turns=True)` was the design's preferred evidence
+source (Phase F1). The Phase F1 spike (2026-05-08) **disconfirmed** this
+path: `codex app-server` hardcodes `EventPersistenceMode::Limited` for
+the rollout-item filter, which drops `ExecCommandEnd` events; replay
+yields `aggregated_output: None` for every completed bash turn — so
+lint/build evidence is unobservable through `Thread.read`. This is the
+same loss across `thread/resume`. (`PatchApplyEnd` *does* survive, so
+file-edit evidence is recoverable through the native path, but bash
+evidence is not.)
+
+`CodexEvidenceProvider` uses the F3 tee fallback as the primary path:
+every `AsyncCodex` turn for a given thread tees stream-json events to
+`~/.config/mala/codex-sessions/{thread_id}.jsonl` (per-thread,
+append-only, namespaced separately from Amp's `~/.config/mala/amp-sessions/`
+to avoid thread-id collision). Evidence parsing extracts Bash commands
+from the tee'd `CommandExecutionThreadItem` events and applies the same
+`extract_bash_commands` / `extract_tool_results` / `extract_assistant_text_blocks`
+semantics the Claude/Amp providers use.
+
+The Phase F1 spike (`tests/spike/test_codex_thread_read_evidence.py`)
+remains in-tree so a future Codex SDK release that re-enables Extended
+persistence flips the spike tests green and the team can revisit the
+native path.
 
 ### 11) Worktree Validation (Programmatic)
 

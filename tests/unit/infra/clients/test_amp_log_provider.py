@@ -15,14 +15,15 @@ Verification section:
     ``get_log_path(repo_path, thread_id)`` resolves to the renamed file.
   * Resume appends to the existing thread file: events from both
     invocations are present in file order (AC#7a).
-  * ``iter_events()`` reads across invocations: a fixture file containing
-    events written by two simulated invocations yields events in file
-    order spanning both (AC#7a).
+  * ``iter_session_events()`` reads across invocations: a fixture file
+    containing events written by two simulated invocations yields events
+    in file order spanning both (AC#7a).
   * Cross-resume validation evidence (regression for the log-stitching
     finding): invocation 1 logs Bash ``tool_use`` events for
     ``pytest`` / ``ruff check`` / ``ty check``; invocation 2 logs only
-    new events. ``iter_events()`` still surfaces the original lint /
-    test / typecheck events so the gate's evidence parser observes them.
+    new events. ``iter_session_events()`` still surfaces the original
+    lint / test / typecheck events so the gate's evidence parser observes
+    them.
   * Missing tee file → empty iterator (no raise).
   * Malformed trailing line tolerance: yield all preceding events; warn.
   * Orphan ``.pending-*`` file ignored by thread-keyed reads.
@@ -163,7 +164,7 @@ def test_default_log_path_is_amp_sessions_dir() -> None:
 
 
 @pytest.mark.unit
-def test_iter_events_emits_same_bash_shape_as_filesystem_provider(
+def test_iter_session_events_emits_same_bash_shape_as_filesystem_provider(
     tmp_path: Path,
 ) -> None:
     log_path = tmp_path / "T-thread.jsonl"
@@ -181,11 +182,11 @@ def test_iter_events_emits_same_bash_shape_as_filesystem_provider(
     fs = FileSystemLogProvider()
 
     amp_bash: list[tuple[str, str]] = []
-    for entry in amp.iter_events(log_path):
+    for entry in amp.iter_session_events(log_path):
         amp_bash.extend(amp.extract_bash_commands(entry))
 
     fs_bash: list[tuple[str, str]] = []
-    for entry in fs.iter_events(log_path):
+    for entry in fs.iter_session_events(log_path):
         fs_bash.extend(fs.extract_bash_commands(entry))
 
     assert amp_bash == [("tool-1", "uv run pytest -q")]
@@ -193,7 +194,7 @@ def test_iter_events_emits_same_bash_shape_as_filesystem_provider(
 
 
 @pytest.mark.unit
-def test_iter_events_extracts_amp_bash_cmd_input(tmp_path: Path) -> None:
+def test_iter_session_events_extracts_amp_bash_cmd_input(tmp_path: Path) -> None:
     log_path = tmp_path / "T-amp-cmd.jsonl"
     _write_jsonl(
         log_path,
@@ -208,7 +209,7 @@ def test_iter_events_extracts_amp_bash_cmd_input(tmp_path: Path) -> None:
 
     commands = [
         command
-        for entry in provider.iter_events(log_path)
+        for entry in provider.iter_session_events(log_path)
         for (_tool_id, command) in provider.extract_bash_commands(entry)
     ]
 
@@ -216,7 +217,7 @@ def test_iter_events_extracts_amp_bash_cmd_input(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_iter_events_extracts_amp_shell_command_tool(tmp_path: Path) -> None:
+def test_iter_session_events_extracts_amp_shell_command_tool(tmp_path: Path) -> None:
     log_path = tmp_path / "T-amp-shell-command.jsonl"
     _write_jsonl(
         log_path,
@@ -231,7 +232,7 @@ def test_iter_events_extracts_amp_shell_command_tool(tmp_path: Path) -> None:
 
     commands = [
         command
-        for entry in provider.iter_events(log_path)
+        for entry in provider.iter_session_events(log_path)
         for (_tool_id, command) in provider.extract_bash_commands(entry)
     ]
 
@@ -239,7 +240,7 @@ def test_iter_events_extracts_amp_shell_command_tool(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_iter_events_emits_tool_results_and_text_blocks(tmp_path: Path) -> None:
+def test_iter_session_events_emits_tool_results_and_text_blocks(tmp_path: Path) -> None:
     log_path = tmp_path / "T-mix.jsonl"
     _write_jsonl(
         log_path,
@@ -264,7 +265,7 @@ def test_iter_events_emits_tool_results_and_text_blocks(tmp_path: Path) -> None:
     )
 
     provider = AmpLogProvider()
-    entries = list(provider.iter_events(log_path))
+    entries = list(provider.iter_session_events(log_path))
 
     assistant_texts = [
         text for e in entries for text in provider.extract_assistant_text_blocks(e)
@@ -369,7 +370,7 @@ def test_get_log_path_resolves_to_renamed_thread_file(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_iter_events_reads_across_two_invocations(tmp_path: Path) -> None:
+def test_iter_session_events_reads_across_two_invocations(tmp_path: Path) -> None:
     log_path = tmp_path / "T-resume.jsonl"
 
     # Invocation 1: full lint/test/typecheck Bash evidence, then result.
@@ -399,7 +400,7 @@ def test_iter_events_reads_across_two_invocations(tmp_path: Path) -> None:
 
     provider = AmpLogProvider(native_dir=tmp_path)
 
-    entries = list(provider.iter_events(log_path))
+    entries = list(provider.iter_session_events(log_path))
     bash_commands = [
         cmd for e in entries for (_id, cmd) in provider.extract_bash_commands(e)
     ]
@@ -414,22 +415,22 @@ def test_iter_events_reads_across_two_invocations(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_iter_events_honors_caller_offset_for_resolution_scoping(
+def test_iter_session_events_honors_caller_offset_for_resolution_scoping(
     tmp_path: Path,
 ) -> None:
-    """``iter_events`` honors caller offset (resolution-marker scoping).
+    """``iter_session_events`` honors caller offset (resolution-marker scoping).
 
     The gate's resolution-marker parser passes
     ``retry_state.log_offset`` so that a stale ``ISSUE_*`` marker
     emitted in invocation 1 (and rejected by the gate) does not
     override the latest invocation's decision on retry. This is the
-    standard ``LogProvider.iter_events`` contract; AmpLogProvider
-    matches FileSystemLogProvider here.
+    standard ``EvidenceProvider.iter_session_events`` contract;
+    AmpLogProvider matches FileSystemLogProvider here.
 
     For cross-invocation evidence-persistence reads the caller must
-    use :meth:`AmpLogProvider.iter_thread_events`; that case is
+    use :meth:`AmpLogProvider.iter_thread_evidence`; that case is
     covered separately in
-    ``test_iter_thread_events_ignores_caller_offset_for_evidence``.
+    ``test_iter_thread_evidence_ignores_caller_offset_for_evidence``.
     """
     log_path = tmp_path / "T-offset-honor.jsonl"
 
@@ -451,7 +452,7 @@ def test_iter_events_honors_caller_offset_for_resolution_scoping(
 
     provider = AmpLogProvider(native_dir=tmp_path)
 
-    entries = list(provider.iter_events(log_path, offset=end_of_invocation_1))
+    entries = list(provider.iter_session_events(log_path, offset=end_of_invocation_1))
     commands = [
         cmd for e in entries for (_id, cmd) in provider.extract_bash_commands(e)
     ]
@@ -461,13 +462,13 @@ def test_iter_events_honors_caller_offset_for_resolution_scoping(
 
 
 @pytest.mark.unit
-def test_iter_thread_events_ignores_caller_offset_for_evidence(
+def test_iter_thread_evidence_ignores_caller_offset_for_evidence(
     tmp_path: Path,
 ) -> None:
     """Regression for cross-resume evidence persistence (AC#7a).
 
     Validation-evidence parsing calls
-    :meth:`LogProvider.iter_thread_events`, which on Amp ignores the
+    :meth:`EvidenceProvider.iter_thread_evidence`, which on Amp ignores the
     caller-supplied offset and reads from byte 0. Without this, the
     gate retry path's advanced ``retry_state.log_offset`` would skip
     invocation 1's lint/test/typecheck Bash events when invocation 2
@@ -497,7 +498,7 @@ def test_iter_thread_events_ignores_caller_offset_for_evidence(
 
     provider = AmpLogProvider(native_dir=tmp_path)
 
-    entries = list(provider.iter_thread_events(log_path, offset=end_of_invocation_1))
+    entries = list(provider.iter_thread_evidence(log_path, offset=end_of_invocation_1))
     commands = [
         cmd for e in entries for (_id, cmd) in provider.extract_bash_commands(e)
     ]
@@ -513,7 +514,7 @@ def test_cross_resume_validation_evidence_persists(tmp_path: Path) -> None:
     """Regression for log-stitching finding: invocation 1 evidence persists.
 
     Invocation 1 logs Bash tool_use events for pytest / ruff check / ty check.
-    Invocation 2 (delta-only resume) appends new events. ``iter_events`` must
+    Invocation 2 (delta-only resume) appends new events. ``iter_session_events`` must
     still surface the original lint / test / typecheck events so the gate's
     evidence parser observes them — i.e., a delta-only resume does not lose
     validation evidence (AC#7a).
@@ -540,7 +541,7 @@ def test_cross_resume_validation_evidence_persists(tmp_path: Path) -> None:
     _append_jsonl(log_path, invocation_2_delta_only)
 
     provider = AmpLogProvider(native_dir=tmp_path)
-    entries = list(provider.iter_events(log_path))
+    entries = list(provider.iter_session_events(log_path))
     commands = [
         cmd for e in entries for (_id, cmd) in provider.extract_bash_commands(e)
     ]
@@ -560,18 +561,18 @@ def test_cross_resume_validation_evidence_persists(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_iter_events_missing_file_yields_empty(tmp_path: Path) -> None:
+def test_iter_session_events_missing_file_yields_empty(tmp_path: Path) -> None:
     provider = AmpLogProvider(native_dir=tmp_path)
     log_path = tmp_path / "T-never-written.jsonl"
 
     # Must not raise and must yield nothing.
-    entries = list(provider.iter_events(log_path))
+    entries = list(provider.iter_session_events(log_path))
 
     assert entries == []
 
 
 @pytest.mark.unit
-def test_iter_events_tolerates_malformed_trailing_line(
+def test_iter_session_events_tolerates_malformed_trailing_line(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     log_path = tmp_path / "T-corrupt.jsonl"
@@ -587,7 +588,7 @@ def test_iter_events_tolerates_malformed_trailing_line(
     provider = AmpLogProvider(native_dir=tmp_path)
 
     with caplog.at_level(logging.WARNING, logger="src.infra.clients.amp_log_provider"):
-        entries = list(provider.iter_events(log_path))
+        entries = list(provider.iter_session_events(log_path))
 
     bash = [cmd for e in entries for (_id, cmd) in provider.extract_bash_commands(e)]
     assert bash == ["echo hello"]
@@ -629,7 +630,7 @@ def test_orphan_pending_file_does_not_interfere_with_thread_reads(
 
     bash = [
         cmd
-        for e in provider.iter_events(resolved)
+        for e in provider.iter_session_events(resolved)
         for (_id, cmd) in provider.extract_bash_commands(e)
     ]
     # Only the real thread file's events surface.

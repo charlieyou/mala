@@ -72,6 +72,7 @@ async def test_resume_reuses_persisted_baseline_timestamp(
     sdk_factory_run1.configure_next_client(
         result_message=_make_result_message(session_id_run1, result="Done")
     )
+    agent_provider_run1 = FakeAgentProvider(sdk_factory_run1)
 
     orchestrator_run1 = make_orchestrator(
         repo_path=tmp_path,
@@ -80,12 +81,11 @@ async def test_resume_reuses_persisted_baseline_timestamp(
             {issue_id: FakeIssue(id=issue_id, description="Run 1")}
         ),
         gate_checker=gate_checker_run1,
+        evidence_provider=agent_provider_run1.evidence_provider,
         runs_dir=runs_dir,
         disable_validations={"global-validate"},
     )
-    orchestrator_run1._agent_provider = FakeAgentProvider(  # test-only override
-        sdk_factory_run1
-    )
+    orchestrator_run1._agent_provider = agent_provider_run1  # test-only override
 
     await _run_with_fake_git(orchestrator_run1)
 
@@ -100,6 +100,7 @@ async def test_resume_reuses_persisted_baseline_timestamp(
     sdk_factory_run2.configure_next_client(
         result_message=_make_result_message(session_id_run2, result="Done")
     )
+    agent_provider_run2 = FakeAgentProvider(sdk_factory_run2)
 
     commit_since: list[int | None] = []
     commit_shas_seen: list[Sequence[str]] = []
@@ -151,13 +152,12 @@ async def test_resume_reuses_persisted_baseline_timestamp(
         ),
         gate_checker=gate_checker_run2,
         code_reviewer=fake_reviewer,
+        evidence_provider=agent_provider_run2.evidence_provider,
         runs_dir=runs_dir,
         include_wip=True,
         disable_validations={"global-validate"},
     )
-    orchestrator_run2._agent_provider = FakeAgentProvider(  # test-only override
-        sdk_factory_run2
-    )
+    orchestrator_run2._agent_provider = agent_provider_run2  # test-only override
 
     await _run_with_fake_git(
         orchestrator_run2, get_issue_commits=fake_get_issue_commits_async
@@ -215,16 +215,11 @@ async def _run_with_fake_git(
 
 
 def _make_result_message(session_id: str, *, result: str) -> object:
-    from claude_agent_sdk import ResultMessage
+    from src.core.protocols.agent_event import AgentResultEvent
 
-    return ResultMessage(
-        subtype="result",
+    return AgentResultEvent(
         session_id=session_id,
-        result=result,
-        duration_ms=1000,
-        duration_api_ms=800,
         is_error=False,
-        num_turns=1,
-        total_cost_usd=0.01,
-        usage=None,
+        subtype="result",
+        result=result,
     )

@@ -53,6 +53,7 @@ class TestBaseEventSink:
         missing = protocol_methods - sink_methods
         assert not missing, f"BaseEventSink missing protocol methods: {missing}"
 
+
 class TestNullEventSink:
     """Tests for NullEventSink implementation."""
 
@@ -88,6 +89,7 @@ class TestNullEventSink:
         # All protocol methods should be in the sink
         missing = protocol_methods - sink_methods
         assert not missing, f"NullEventSink missing protocol methods: {missing}"
+
 
 class TestConsoleEventSink:
     """Tests for ConsoleEventSink implementation."""
@@ -260,11 +262,11 @@ class TestCoderAttribute:
     not break legacy call sites.
     """
 
-    @pytest.mark.parametrize("coder", ["claude", "amp"])
+    @pytest.mark.parametrize("coder", ["claude", "amp", "codex"])
     def test_base_sink_accepts_coder_on_relevant_spans(
-        self, coder: Literal["claude", "amp"]
+        self, coder: Literal["claude", "amp", "codex"]
     ) -> None:
-        """BaseEventSink methods accept ``coder`` for both supported values."""
+        """BaseEventSink methods accept ``coder`` for every supported value."""
         sink = BaseEventSink()
 
         # Agent session scope
@@ -304,10 +306,10 @@ class TestCoderAttribute:
         assert sink.on_session_end_completed("i-1", "pass") is None
         assert sink.on_session_end_skipped("i-1", "gate_failed") is None
 
-    @pytest.mark.parametrize("coder", ["claude", "amp"])
+    @pytest.mark.parametrize("coder", ["claude", "amp", "codex"])
     def test_console_sink_renders_coder_on_per_issue_header(
         self,
-        coder: Literal["claude", "amp"],
+        coder: Literal["claude", "amp", "codex"],
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Console sink surfaces the active coder on the per-issue claim header."""
@@ -331,10 +333,10 @@ class TestCoderAttribute:
         assert "issue-42" in captured.out
         assert "coder=" not in captured.out
 
-    @pytest.mark.parametrize("coder", ["claude", "amp"])
+    @pytest.mark.parametrize("coder", ["claude", "amp", "codex"])
     def test_console_sink_renders_coder_on_issue_completed(
         self,
-        coder: Literal["claude", "amp"],
+        coder: Literal["claude", "amp", "codex"],
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """on_issue_completed renders the coder so the per-issue summary shows it."""
@@ -346,10 +348,10 @@ class TestCoderAttribute:
         assert "issue-42" in captured.out
         assert f"coder={coder}" in captured.out
 
-    @pytest.mark.parametrize("coder", ["claude", "amp"])
+    @pytest.mark.parametrize("coder", ["claude", "amp", "codex"])
     def test_console_sink_renders_coder_on_fixer_started(
         self,
-        coder: Literal["claude", "amp"],
+        coder: Literal["claude", "amp", "codex"],
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """on_fixer_started renders the coder so dashboards can scope by fixer coder."""

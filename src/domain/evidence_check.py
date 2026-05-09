@@ -31,9 +31,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    from src.core.protocols.evidence import EvidenceProvider, JsonlEntryProtocol
     from src.core.protocols.infra import CommandRunnerPort
     from src.core.protocols.issue import IssueResolutionProtocol
-    from src.core.protocols.log import JsonlEntryProtocol, LogProvider
     from src.core.protocols.validation import ValidationEvidenceProtocol
 
     from .validation.spec import ValidationSpec
@@ -393,7 +393,7 @@ class GateResult:
 class EvidenceCheck:
     """Quality gate for verifying agent work meets requirements.
 
-    Uses LogProvider for JSONL log parsing, keeping this class
+    Uses EvidenceProvider for JSONL log parsing, keeping this class
     focused on policy checking and validation logic.
     """
 
@@ -424,18 +424,18 @@ class EvidenceCheck:
     def __init__(
         self,
         repo_path: Path,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         command_runner: CommandRunnerPort,
     ):
         """Initialize quality gate.
 
         Args:
             repo_path: Path to the repository for git operations.
-            log_provider: LogProvider for reading session logs.
+            evidence_provider: EvidenceProvider for reading session logs.
             command_runner: CommandRunnerPort for running git commands.
         """
         self.repo_path = repo_path
-        self._log_provider = log_provider
+        self._evidence_provider = evidence_provider
         self._command_runner = command_runner
 
     def _match_resolution_pattern(self, text: str) -> IssueResolution | None:
@@ -638,7 +638,7 @@ class EvidenceCheck:
     ) -> Iterator[JsonlEntryProtocol]:
         """Iterate over parsed JSONL entries from a log file.
 
-        Delegates to LogProvider.iter_events().
+        Delegates to EvidenceProvider.iter_session_events().
 
         Args:
             log_path: Path to the JSONL log file.
@@ -647,7 +647,7 @@ class EvidenceCheck:
         Yields:
             JsonlEntryProtocol objects for each successfully parsed JSON line.
         """
-        return self._log_provider.iter_events(log_path, offset)
+        return self._evidence_provider.iter_session_events(log_path, offset)
 
     def parse_issue_resolution(self, log_path: Path) -> IssueResolution | None:
         """Parse JSONL log file for issue resolution markers.
@@ -683,7 +683,9 @@ class EvidenceCheck:
 
         try:
             for entry in self._iter_jsonl_entries(log_path, offset):
-                for text in self._log_provider.extract_assistant_text_blocks(entry):
+                for text in self._evidence_provider.extract_assistant_text_blocks(
+                    entry
+                ):
                     resolution = self._match_resolution_pattern(text)
                     if resolution:
                         return resolution, entry.offset + entry.line_len
@@ -728,8 +730,10 @@ class EvidenceCheck:
         # None means no terminal marker seen yet
         custom_marker_state: dict[str, tuple[bool, str | None]] = {}
 
-        for entry in self._log_provider.iter_thread_events(log_path, offset):
-            for tool_id, command in self._log_provider.extract_bash_commands(entry):
+        for entry in self._evidence_provider.iter_thread_evidence(log_path, offset):
+            for tool_id, command in self._evidence_provider.extract_bash_commands(
+                entry
+            ):
                 matched_kinds = self._match_spec_pattern_with_kinds(
                     command, evidence, kind_patterns
                 )
@@ -743,7 +747,9 @@ class EvidenceCheck:
                 )
                 if matched_custom_matches:
                     tool_id_to_custom_matches[tool_id] = matched_custom_matches
-            for tool_use_id, is_error in self._log_provider.extract_tool_results(entry):
+            for tool_use_id, is_error in self._evidence_provider.extract_tool_results(
+                entry
+            ):
                 if tool_use_id in tool_id_to_info:
                     for kind, full_cmd in tool_id_to_info[tool_use_id]:
                         # Latest status for this CommandKind wins (allows retries to succeed)
@@ -753,12 +759,12 @@ class EvidenceCheck:
             for (
                 _tool_use_id,
                 content,
-            ) in self._log_provider.extract_tool_result_content(entry):
+            ) in self._evidence_provider.extract_tool_result_content(entry):
                 self._parse_custom_markers(content, custom_marker_state)
                 if _tool_use_id in tool_id_to_custom_matches:
                     # Re-read the result status for this tool id from the same entry.
                     result_status = dict(
-                        self._log_provider.extract_tool_results(entry)
+                        self._evidence_provider.extract_tool_results(entry)
                     ).get(_tool_use_id, False)
                     self._apply_custom_command_fallback(
                         tool_id_to_custom_matches[_tool_use_id],
@@ -802,7 +808,7 @@ class EvidenceCheck:
     def get_log_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
         """Get the byte offset at the end of a log file.
 
-        Delegates to LogProvider.get_end_offset().
+        Delegates to EvidenceProvider.get_end_offset().
 
         Args:
             log_path: Path to the JSONL log file.
@@ -812,7 +818,7 @@ class EvidenceCheck:
             The byte offset at the end of the file, or start_offset if file
             doesn't exist or can't be read.
         """
-        return self._log_provider.get_end_offset(log_path, start_offset)
+        return self._evidence_provider.get_end_offset(log_path, start_offset)
 
     def check_no_progress(
         self,

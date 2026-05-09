@@ -10,13 +10,14 @@ logs that can be used for:
 The parser uses typed log events from log_events.py to ensure type safety
 and contract adherence with the Claude Agent SDK schema.
 
-This module also provides FileSystemLogProvider, the canonical implementation
-of the LogProvider protocol that reads logs from the Claude SDK's filesystem
-storage at ~/.claude/projects/{encoded-path}/.
+This module also provides FileSystemLogProvider, the canonical Claude
+implementation of the EvidenceProvider protocol that reads logs from the
+Claude SDK's filesystem storage at ~/.claude/projects/{encoded-path}/.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.log_events import LogEntry
-    from src.core.protocols.log import JsonlEntryProtocol
+    from src.core.protocols.evidence import JsonlEntryProtocol
 
 
 @dataclass
@@ -406,18 +407,18 @@ class SessionLogParser:
 
 
 class FileSystemLogProvider:
-    """LogProvider implementation for Claude SDK filesystem logs.
+    """EvidenceProvider implementation for Claude SDK filesystem logs.
 
     Reads JSONL session logs from the Claude SDK's standard location:
     {claude_config_dir}/projects/{encoded-repo-path}/{session_id}.jsonl
 
-    This class conforms to the LogProvider protocol and wraps SessionLogParser
-    for the actual parsing logic.
+    This class conforms to the EvidenceProvider protocol and wraps
+    SessionLogParser for the actual parsing logic.
 
     Example:
         >>> provider = FileSystemLogProvider()
         >>> log_path = provider.get_log_path(repo_path, session_id)
-        >>> for entry in provider.iter_events(log_path):
+        >>> for entry in provider.iter_session_events(log_path):
         ...     # Process entry
     """
 
@@ -440,7 +441,7 @@ class FileSystemLogProvider:
         """
         return get_claude_log_path(repo_path, session_id)
 
-    def iter_events(
+    def iter_session_events(
         self, log_path: Path, offset: int = 0
     ) -> Iterator[JsonlEntryProtocol]:
         """Iterate over parsed JSONL entries from a log file.
@@ -459,21 +460,23 @@ class FileSystemLogProvider:
             self._parser.iter_jsonl_entries(log_path, offset),
         )
 
-    def iter_thread_events(
+    def iter_thread_evidence(
         self, log_path: Path, offset: int = 0
     ) -> Iterator[JsonlEntryProtocol]:
         """Cross-attempt evidence-presence read for the Claude path.
 
         Claude SDK writes a fresh log file per session, so per-attempt
-        offset scoping (the existing :meth:`iter_events` semantic) is
-        correct for evidence parsing too — there is no cross-invocation
-        log file to stitch. Delegates to :meth:`iter_events` unchanged.
+        offset scoping (the existing :meth:`iter_session_events` semantic)
+        is correct for evidence parsing too — there is no cross-invocation
+        log file to stitch. Delegates to :meth:`iter_session_events`
+        unchanged.
 
-        See :class:`src.core.protocols.log.LogProvider.iter_thread_events`
+        See
+        :class:`src.core.protocols.evidence.EvidenceProvider.iter_thread_evidence`
         for the protocol-level rationale and the contrast with the Amp
         path's per-thread log file.
         """
-        return self.iter_events(log_path, offset)
+        return self.iter_session_events(log_path, offset)
 
     def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
         """Get the byte offset at the end of a log file.
@@ -490,13 +493,39 @@ class FileSystemLogProvider:
         """
         return self._parser.get_log_end_offset(log_path, start_offset)
 
+    async def wait_for_session_ready(
+        self,
+        repo_path: Path,
+        session_id: str,
+        *,
+        timeout: float,
+        poll_interval: float = 0.5,
+    ) -> None:
+        """Wait for the Claude session JSONL to appear on disk.
+
+        Resolves the per-session log path via :meth:`get_log_path` and
+        polls it for existence on a fixed cadence — the same behavior
+        the lifecycle previously implemented inline in
+        ``AgentSessionRunner._handle_log_waiting``.
+
+        Raises:
+            TimeoutError: If the file does not appear within ``timeout``.
+        """
+        log_path = self.get_log_path(repo_path, session_id)
+        wait_elapsed = 0.0
+        while not log_path.exists():
+            if wait_elapsed >= timeout:
+                raise TimeoutError(f"Session log missing after timeout: {log_path}")
+            await asyncio.sleep(poll_interval)
+            wait_elapsed += poll_interval
+
     def extract_bash_commands(self, entry: JsonlEntryProtocol) -> list[tuple[str, str]]:
         """Extract Bash tool_use commands from an entry.
 
         Delegates to SessionLogParser.extract_bash_commands().
 
         Args:
-            entry: A JsonlEntryProtocol from iter_events.
+            entry: A JsonlEntryProtocol from iter_session_events.
 
         Returns:
             List of (tool_id, command) tuples for Bash tool_use blocks.
@@ -509,7 +538,7 @@ class FileSystemLogProvider:
         Delegates to SessionLogParser.extract_tool_results().
 
         Args:
-            entry: A JsonlEntryProtocol from iter_events.
+            entry: A JsonlEntryProtocol from iter_session_events.
 
         Returns:
             List of (tool_use_id, is_error) tuples for tool_result blocks.
@@ -522,7 +551,7 @@ class FileSystemLogProvider:
         Delegates to SessionLogParser.extract_assistant_text_blocks().
 
         Args:
-            entry: A JsonlEntryProtocol from iter_events.
+            entry: A JsonlEntryProtocol from iter_session_events.
 
         Returns:
             List of text strings from text blocks in assistant messages.
@@ -537,7 +566,7 @@ class FileSystemLogProvider:
         Delegates to SessionLogParser.extract_tool_result_content().
 
         Args:
-            entry: A JsonlEntryProtocol from iter_events.
+            entry: A JsonlEntryProtocol from iter_session_events.
 
         Returns:
             List of (tool_use_id, content) tuples for all tool_result blocks.

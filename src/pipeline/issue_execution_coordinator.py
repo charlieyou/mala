@@ -453,8 +453,7 @@ class IssueExecutionCoordinator:
                             # Update spawn limit check for next iteration
                             spawn_limit_reached = (
                                 self.config.max_issues is not None
-                                and watch_state.completed_count
-                                + len(self.active_tasks)
+                                and watch_state.completed_count + len(self.active_tasks)
                                 >= self.config.max_issues
                             )
 

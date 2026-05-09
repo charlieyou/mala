@@ -119,7 +119,7 @@ class IdleTimeoutRetryPolicy:
         result = await policy.execute_iteration(
             issue_id="ISSUE-123",
             query="...",
-            options=sdk_options,
+            runtime=coder_runtime,
             state=msg_state,
             lifecycle_ctx=lifecycle_ctx,
             lint_cache=lint_cache,
@@ -150,7 +150,7 @@ class IdleTimeoutRetryPolicy:
         self,
         query: str,
         issue_id: str,
-        options: object,
+        runtime: object,
         state: MessageIterationState,
         lifecycle_ctx: LifecycleContext,
         lint_cache: LintCacheProtocol,
@@ -165,7 +165,10 @@ class IdleTimeoutRetryPolicy:
         Args:
             query: The query to send to the agent.
             issue_id: Issue ID for logging.
-            options: SDK client options.
+            runtime: Opaque coder-shaped runtime forwarded verbatim to
+                ``client_factory.create(runtime)`` /
+                ``client_factory.with_resume(runtime, ...)``. The pipeline
+                never inspects its shape.
             state: Mutable state for the iteration.
             lifecycle_ctx: Lifecycle context for session state.
             lint_cache: Cache for lint command results.
@@ -196,15 +199,15 @@ class IdleTimeoutRetryPolicy:
             elif pending_retry_kind == "subprocess":
                 await self._apply_subprocess_exit_backoff(subprocess_exit_retries)
 
-            # Create options with resume if we have a session to resume
-            effective_options = options
+            # Create runtime with resume if we have a session to resume
+            effective_runtime = runtime
             if state.pending_session_id is not None:
-                effective_options = self._sdk_client_factory.with_resume(
-                    options, state.pending_session_id
+                effective_runtime = self._sdk_client_factory.with_resume(
+                    runtime, state.pending_session_id
                 )
 
             # Create client for this attempt
-            client = self._sdk_client_factory.create(effective_options)
+            client = self._sdk_client_factory.create(effective_runtime)
 
             try:
                 async with client:
@@ -223,7 +226,11 @@ class IdleTimeoutRetryPolicy:
                         )
                     await client.query(pending_query)
 
-                    # Wrap stream with idle timeout handling
+                    # Wrap the provider's AgentEvent stream with idle timeout
+                    # handling. Both Claude (via the wrapped SDK client in
+                    # ``src.infra.sdk_adapter``) and Amp emit ``AgentEvent``s
+                    # directly, so no translation is needed at the pipeline
+                    # layer.
                     stream = IdleTimeoutStream(
                         client.receive_response(),
                         idle_timeout_seconds,

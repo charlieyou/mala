@@ -39,19 +39,19 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestDefaults:
-    def test_malaconfig_defaults_to_amp(self) -> None:
+    def test_malaconfig_defaults_to_claude(self) -> None:
         config = MalaConfig()
-        assert config.coder == "amp"
+        assert config.coder == "claude"
         assert config.coder_options.amp.mode == "deep"
-        assert config.effort == "medium"
+        assert config.effort == "xhigh"
 
     def test_from_env_no_overrides_uses_defaults(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config = MalaConfig.from_env(validate=False)
-        assert config.coder == "amp"
+        assert config.coder == "claude"
         assert config.coder_options.amp.mode == "deep"
-        assert config.effort == "medium"
+        assert config.effort == "xhigh"
 
     def test_amp_options_and_coder_options_are_frozen(self) -> None:
         amp = AmpOptions()
@@ -127,7 +127,7 @@ class TestRegressionLegacyYaml:
         config = MalaConfig.from_env(
             validate=False, yaml_coder=None, yaml_amp_mode=None
         )
-        assert config.coder == "amp"
+        assert config.coder == "claude"
         assert config.coder_options.amp.mode == "deep"
 
 
@@ -146,9 +146,7 @@ class TestYamlEndToEnd:
         from src.domain.validation.config_loader import load_config
 
         yaml_path = tmp_path / "mala.yaml"
-        yaml_path.write_text(
-            "preset: python-uv\ncoder: amp\namp_mode: deep\n"
-        )
+        yaml_path.write_text("preset: python-uv\ncoder: amp\namp_mode: deep\n")
         validation_config = load_config(tmp_path)
         assert validation_config.coder == "amp"
         assert validation_config.amp_mode == "deep"
@@ -181,7 +179,7 @@ class TestYamlEndToEnd:
             yaml_coder=validation_config.coder,
             yaml_amp_mode=validation_config.amp_mode,
         )
-        assert config.coder == "amp"
+        assert config.coder == "claude"
         assert config.coder_options.amp.mode == "deep"
 
 
@@ -195,7 +193,7 @@ class TestBuildResolvedConfigPrecedence:
 
     def test_default_when_no_layers_set(self) -> None:
         resolved = build_resolved_config(self._base(), CLIOverrides())
-        assert resolved.coder == "amp"
+        assert resolved.coder == "claude"
         assert resolved.coder_options.amp.mode == "deep"
 
     def test_yaml_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -360,11 +358,11 @@ class TestEffortPrecedence:
             claude_config_dir=Path("/tmp/claude"),
         )
 
-    def test_default_effort_uses_amp_deep_default(self) -> None:
+    def test_default_effort_uses_claude_default(self) -> None:
         config = MalaConfig.from_env(validate=False)
-        assert config.effort == "medium"
+        assert config.effort == "xhigh"
         resolved = build_resolved_config(config, CLIOverrides())
-        assert resolved.effort == "medium"
+        assert resolved.effort == "xhigh"
 
     @pytest.mark.parametrize(
         ("mode", "expected"),
@@ -515,10 +513,7 @@ class TestEffortPrecedence:
 
         yaml_path = tmp_path / "mala.yaml"
         yaml_path.write_text(
-            "preset: python-uv\n"
-            "coder: amp\n"
-            "amp_mode: deep\n"
-            f"effort: {effort}\n"
+            f"preset: python-uv\ncoder: amp\namp_mode: deep\neffort: {effort}\n"
         )
         with pytest.raises(ConfigError, match="medium"):
             load_config(tmp_path)

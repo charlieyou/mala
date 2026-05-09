@@ -14,9 +14,9 @@ LockReleaserFunc = Callable[[list[str]], int]
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from src.core.protocols.evidence import EvidenceProvider
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.issue import IssueProvider
-    from src.core.protocols.log import LogProvider
     from src.core.protocols.review import CodeReviewer
     from src.core.protocols.validation import GateChecker
     from src.infra.io.config import MalaConfig
@@ -129,7 +129,7 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
         issue_provider: IssueProvider | None = None,
         code_reviewer: CodeReviewer | None = None,
         gate_checker: GateChecker | None = None,
-        log_provider: LogProvider | None = None,
+        evidence_provider: EvidenceProvider | None = None,
         telemetry_provider: TelemetryProvider | None = None,
         event_sink: MalaEventSink | None = None,
         config: MalaConfig | None = None,
@@ -138,6 +138,7 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
     ) -> MalaOrchestrator:
         """Create an orchestrator using the factory pattern."""
         from src.orchestration.factory import OrchestratorDependencies
+        from src.infra.io.config import MalaConfig
 
         orch_config = OrchestratorConfig(
             repo_path=repo_path,
@@ -162,12 +163,19 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
             issue_provider=issue_provider,
             code_reviewer=code_reviewer,
             gate_checker=gate_checker,
-            log_provider=log_provider,
+            evidence_provider=evidence_provider,
             telemetry_provider=telemetry_provider,
             event_sink=event_sink,
             runs_dir=runs_dir,
             lock_releaser=lock_releaser,
         )
+
+        if config is None:
+            config = MalaConfig(
+                runs_dir=repo_path / "runs",
+                lock_dir=repo_path / "locks",
+                coder="claude",
+            )
 
         return create_orchestrator(orch_config, mala_config=config, deps=deps)
 
@@ -175,11 +183,11 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
 
 
 @pytest.fixture
-def log_provider() -> LogProvider:
+def evidence_provider() -> EvidenceProvider:
     """Provide a FileSystemLogProvider for tests that need log parsing.
 
     Returns:
-        A LogProvider instance for reading session logs from filesystem.
+        An EvidenceProvider instance for reading session logs from filesystem.
     """
     from src.infra.io.session_log_parser import FileSystemLogProvider
 

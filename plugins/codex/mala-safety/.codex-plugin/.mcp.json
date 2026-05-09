@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "mala-locking": {
+      "command": "mala-codex-mcp-locking",
+      "args": [],
+      "env": {},
+      "env_vars": [
+        "MALA_AGENT_ID",
+        "MALA_LOCK_DIR",
+        "MALA_REPO_NAMESPACE"
+      ]
+    }
+  }
+}

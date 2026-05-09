@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
     from src.core.models import OrderPreference
     from src.core.protocols.agent_provider import AgentProvider
+    from src.core.protocols.evidence import EvidenceProvider
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.infra import (
         CommandRunnerPort,
@@ -34,7 +35,6 @@ if TYPE_CHECKING:
         LockManagerPort,
     )
     from src.core.protocols.issue import IssueProvider
-    from src.core.protocols.log import LogProvider
     from src.core.protocols.review import CodeReviewer
     from src.core.protocols.validation import GateChecker
     from src.domain.deadlock import DeadlockMonitor
@@ -114,11 +114,11 @@ class OrchestratorDependencies:
         issue_provider: IssueProvider for issue tracking operations.
         code_reviewer: CodeReviewer for post-commit code reviews.
         gate_checker: GateChecker for quality gate validation.
-        log_provider: LogProvider for session log access.
+        evidence_provider: EvidenceProvider for session log access.
         telemetry_provider: TelemetryProvider for tracing.
         event_sink: MalaEventSink for run lifecycle logging.
         agent_provider: AgentProvider bundling client_factory + runtime_builder
-            + log_provider for the chosen coder backend (Claude or Amp).
+            + evidence_provider for the chosen coder backend (Claude or Amp).
             Selected once at orchestrator construction in
             ``src/orchestration/factory.py`` and threaded into
             AgentSessionRunner / FixerService / RunCoordinator.
@@ -132,7 +132,7 @@ class OrchestratorDependencies:
     issue_provider: IssueProvider | None = None
     code_reviewer: CodeReviewer | None = None
     gate_checker: GateChecker | None = None
-    log_provider: LogProvider | None = None
+    evidence_provider: EvidenceProvider | None = None
     telemetry_provider: TelemetryProvider | None = None
     event_sink: MalaEventSink | None = None
     agent_provider: AgentProvider | None = None

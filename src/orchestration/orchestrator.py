@@ -25,6 +25,7 @@ from src.domain.prompts import build_custom_commands_section
 from src.pipeline.review_formatter import format_review_issues
 from src.infra.git_utils import get_git_branch_async, get_git_commit_async
 from src.infra.io.log_output.run_metadata import (
+    find_sessions_for_issue,
     lookup_prior_session_info,
     remove_run_marker,
     write_run_marker,
@@ -64,8 +65,6 @@ from src.orchestration.orchestration_wiring import (
     build_epic_callbacks,
     build_session_callback_factory,
     build_session_config,
-    create_amp_mcp_server_factory,
-    create_mcp_server_factory,
 )
 from src.orchestration.types import (
     IssueFilterConfig,
@@ -89,8 +88,8 @@ if TYPE_CHECKING:
         EnvConfigPort,
         LockManagerPort,
     )
+    from src.core.protocols.evidence import EvidenceProvider
     from src.core.protocols.issue import IssueProvider
-    from src.core.protocols.log import LogProvider
     from src.core.protocols.review import CodeReviewer
     from src.core.protocols.validation import EpicVerifierProtocol, GateChecker
     from src.domain.prompts import PromptProvider
@@ -235,7 +234,7 @@ class MalaOrchestrator:
         _issue_provider: IssueProvider,
         _code_reviewer: CodeReviewer,
         _gate_checker: GateChecker,
-        _log_provider: LogProvider,
+        _evidence_provider: EvidenceProvider,
         _telemetry_provider: TelemetryProvider,
         _event_sink: MalaEventSink,
         _epic_verifier: EpicVerifierProtocol | None = None,
@@ -253,7 +252,7 @@ class MalaOrchestrator:
             _issue_provider,
             _code_reviewer,
             _gate_checker,
-            _log_provider,
+            _evidence_provider,
             _telemetry_provider,
             _event_sink,
             _epic_verifier,
@@ -273,7 +272,7 @@ class MalaOrchestrator:
         issue_provider: IssueProvider,
         code_reviewer: CodeReviewer,
         gate_checker: GateChecker,
-        log_provider: LogProvider,
+        evidence_provider: EvidenceProvider,
         telemetry_provider: TelemetryProvider,
         event_sink: MalaEventSink,
         epic_verifier: EpicVerifierProtocol | None,
@@ -328,7 +327,7 @@ class MalaOrchestrator:
         self.review_disabled_reason = derived.review_disabled_reason
         self._per_issue_review = derived.per_issue_review
         self._init_runtime_state()
-        self.log_provider = log_provider
+        self.evidence_provider = evidence_provider
         self.evidence_check = gate_checker
         self.event_sink = event_sink
         self.beads = issue_provider
@@ -339,9 +338,10 @@ class MalaOrchestrator:
         self._command_runner = _command_runner
         self._env_config = _env_config
         self._lock_manager = _lock_manager
-        # AgentProvider bundles client_factory + runtime_builder + log_provider
-        # for the chosen coder backend (Claude or Amp). Selected by the factory
-        # so the pipeline never branches on coder identity.
+        # AgentProvider bundles client_factory + runtime_builder +
+        # evidence_provider for the chosen coder backend (Claude or Amp).
+        # Selected by the factory so the pipeline never branches on coder
+        # identity.
         self._agent_provider = _agent_provider
         self._init_pipeline_runners()
 
@@ -394,16 +394,12 @@ class MalaOrchestrator:
         pipeline = self._build_pipeline_config()
         filters = self._build_issue_filter_config()
 
-        # Build core runners. The MCP factory must match the active coder
-        # (Claude consumes in-process SDK Server objects; Amp consumes
-        # JSON stdio launch specs). Dispatching here keeps the pipeline's
-        # ``--mcp-config`` shape correct for the runtime the
-        # ``client_factory.create()`` call will actually spawn.
-        coder_mcp_factory = (
-            create_amp_mcp_server_factory()
-            if self._agent_provider.name == "amp"
-            else create_mcp_server_factory()
-        )
+        # Build core runners. The provider owns its MCP factory shape
+        # (Claude returns in-process SDK Server objects; Amp returns JSON
+        # stdio launch specs), so the pipeline's ``--mcp-config`` payload
+        # always matches the runtime the ``client_factory.create()`` call
+        # will spawn.
+        coder_mcp_factory = self._agent_provider.mcp_server_factory()
         self.gate_runner, self.async_gate_runner = build_gate_runner(runtime, pipeline)
         self.review_runner = build_review_runner(runtime, pipeline)
         self.run_coordinator = build_run_coordinator(
@@ -417,7 +413,7 @@ class MalaOrchestrator:
 
         # Build session infrastructure
         context = SessionRunContext(
-            log_provider_getter=lambda: self.log_provider,
+            evidence_provider_getter=lambda: self.evidence_provider,
             evidence_check_getter=lambda: self.evidence_check,
             on_session_log_path=self._on_session_log_path,
             on_review_log_path=self._on_review_log_path,
@@ -923,31 +919,39 @@ class MalaOrchestrator:
         resume_session_id: str | None = None
         baseline_timestamp: int | None = None
         if self.include_wip:
-            prior_session = lookup_prior_session_info(self.repo_path, issue_id)
+            if self.fresh_session:
+                prior_sessions = find_sessions_for_issue(self.repo_path, issue_id)
+                prior_session = prior_sessions[0] if prior_sessions else None
+            else:
+                prior_session = lookup_prior_session_info(self.repo_path, issue_id)
             resume_session_id = prior_session.session_id if prior_session else None
             baseline_timestamp = (
                 prior_session.baseline_timestamp if prior_session else None
             )
+            if prior_session:
+                # Preserve prior-review feedback in the prompt even when the
+                # SDK session itself will not be resumed (for example,
+                # --fresh clears resume_session_id below).
+                resume_prompt = _build_resume_prompt(
+                    prior_session.last_review_issues or [],
+                    self._prompts,
+                    self._prompt_validation_commands,
+                    issue_id,
+                    self.max_review_retries,
+                    self.repo_path,
+                    prior_session.run_id,
+                )
+                if resume_prompt:
+                    if self.fresh_session:
+                        prompt = f"{prompt}\n\n{resume_prompt}"
+                    else:
+                        prompt = resume_prompt
             if resume_session_id:
                 logger.debug(
                     "Resuming session %s for issue %s",
                     resume_session_id,
                     issue_id,
                 )
-                # Build resume prompt if prior session has review issues
-                # _build_resume_prompt returns None if no issues, so call unconditionally
-                if prior_session:
-                    resume_prompt = _build_resume_prompt(
-                        prior_session.last_review_issues or [],
-                        self._prompts,
-                        self._prompt_validation_commands,
-                        issue_id,
-                        self.max_review_retries,
-                        self.repo_path,
-                        prior_session.run_id,
-                    )
-                    if resume_prompt:
-                        prompt = resume_prompt
             elif self.strict_resume:
                 # Strict mode: fail issue if no prior session found
                 logger.warning(
@@ -1004,11 +1008,18 @@ class MalaOrchestrator:
             review_runner=adapters.review_runner,
             session_lifecycle=adapters.session_lifecycle,
             event_sink=self.event_sink,
+            # Use the orchestrator-level provider (which respects
+            # ``OrchestratorDependencies.evidence_provider``) so the
+            # readiness gate resolves the same log path the lifecycle
+            # uses, even when ``agent_provider.evidence_provider`` was
+            # not overridden alongside it.
+            evidence_provider=self.evidence_provider,
         )
         tracer = self.telemetry_provider.create_span(
             issue_id,
             metadata={
                 "agent_id": temp_agent_id,
+                "coder": self._agent_provider.name,
                 "mala_version": __version__,
                 "project_dir": self.repo_path.name,
                 "git_branch": await get_git_branch_async(self.repo_path),
@@ -1074,7 +1085,9 @@ class MalaOrchestrator:
             return None
 
         task = asyncio.create_task(self.run_implementer(issue_id, flow=flow))
-        self.event_sink.on_agent_started(issue_id, issue_id)
+        self.event_sink.on_agent_started(
+            issue_id, issue_id, coder=self._agent_provider.name
+        )
         return task
 
     async def _run_main_loop(

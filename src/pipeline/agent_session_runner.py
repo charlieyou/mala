@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.agent_provider import AgentProvider
-    from src.infra.agent_runtime import AgentRuntimeBuilder
+    from src.core.protocols.evidence import EvidenceProvider
     from src.core.protocols.lifecycle import ISessionLifecycle
     from src.core.protocols.review import IReviewRunner
     from src.core.protocols.validation import IGateRunner
@@ -130,7 +130,11 @@ class SessionConfig:
 
     Attributes:
         agent_id: Unique agent ID for this session.
-        options: SDK client options.
+        runtime: Opaque coder-shaped runtime forwarded verbatim to
+            ``provider.client_factory.create(runtime)``. The pipeline
+            never inspects its shape; each provider's factory privately
+            unpacks the runtime it produced from its
+            :class:`CoderRuntimeBuilder`.
         lint_cache: Lint command result cache.
         log_file_wait_timeout: Timeout for log file availability.
         log_file_poll_interval: Poll interval for log file.
@@ -138,7 +142,7 @@ class SessionConfig:
     """
 
     agent_id: str
-    options: object
+    runtime: object
     lint_cache: LintCache
     log_file_wait_timeout: float
     log_file_poll_interval: float
@@ -332,13 +336,20 @@ class AgentSessionRunner:
         config: Session configuration.
         agent_provider: Bundles ``client_factory`` (for SDK-style streaming),
             ``runtime_builder()`` (for per-session env/options assembly), and
-            ``log_provider`` (for evidence parsing). One ``AgentProvider`` is
-            chosen per run by the orchestration factory; the pipeline never
-            branches on which coder is active.
+            ``evidence_provider`` (for evidence parsing). One
+            ``AgentProvider`` is chosen per run by the orchestration factory;
+            the pipeline never branches on which coder is active.
         event_sink: Optional event sink for structured logging.
         gate_runner: Protocol for gate checking operations (required).
         review_runner: Protocol for review operations (required).
         session_lifecycle: Protocol for session lifecycle operations (required).
+        evidence_provider: EvidenceProvider used for the readiness gate
+            (``Effect.WAIT_FOR_LOG``). Defaults to
+            ``agent_provider.evidence_provider`` when not supplied; callers
+            that inject a custom evidence provider (e.g. orchestrators
+            wired via ``OrchestratorDependencies.evidence_provider``)
+            must pass it explicitly so readiness resolves the same log
+            location the lifecycle uses for log-path computation.
     """
 
     config: AgentSessionConfig
@@ -347,11 +358,14 @@ class AgentSessionRunner:
     review_runner: IReviewRunner
     session_lifecycle: ISessionLifecycle
     event_sink: MalaEventSink | None = None
+    evidence_provider: EvidenceProvider | None = None
     _retry_policy: IdleTimeoutRetryPolicy = field(init=False, repr=False)
     _effect_handler: LifecycleEffectHandler = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Initialize derived components."""
+        if self.evidence_provider is None:
+            self.evidence_provider = self.agent_provider.evidence_provider
         # Initialize retry policy with stream processor factory
         retry_config = RetryConfig(
             max_idle_retries=self.config.max_idle_retries,
@@ -407,28 +421,21 @@ class AgentSessionRunner:
         lifecycle_ctx.retry_state.baseline_timestamp = baseline_timestamp
 
         # Build session components via the AgentProvider's runtime builder.
-        # The fluent ``with_*`` calls below are Claude-specific - the Amp
-        # provider's builder will eventually expose the same surface, but
-        # that path is not exercised here in T007 (the stub Amp provider
-        # raises before we ever reach the client.create() call). We cast
-        # to AgentRuntimeBuilder for type-checking the fluent chain; at
-        # runtime the call only succeeds when the active provider's
-        # builder structurally supports it.
+        # The chain below uses only the cross-coder
+        # :class:`CoderRuntimeBuilder` fluent surface (plan A6); deadlock
+        # monitor wiring is threaded through ``runtime_builder()`` because
+        # the SDK-hook side of it is Claude-private.
         mcp_factory = self.config.mcp_server_factory or _noop_mcp_server_factory
-        builder = cast(
-            "AgentRuntimeBuilder",
-            self.agent_provider.runtime_builder(
-                self.config.repo_path,
-                agent_id,
-                mcp_server_factory=mcp_factory,
-            ),
+        builder = self.agent_provider.runtime_builder(
+            self.config.repo_path,
+            agent_id,
+            mcp_server_factory=mcp_factory,
+            deadlock_monitor=self.config.deadlock_monitor,
         )
         runtime = (
-            builder.with_hooks(deadlock_monitor=self.config.deadlock_monitor)
-            .with_agent_timeout(self.config.timeout_seconds)
+            builder.with_agent_timeout(self.config.timeout_seconds)
             .with_env(extra={"MALA_SDK_FLOW": input.flow})
             .with_mcp()
-            .with_disallowed_tools()
             .with_lint_tools(self.config.lint_tools)
             .build()
         )
@@ -441,17 +448,19 @@ class AgentSessionRunner:
         if idle_timeout_seconds <= 0:
             idle_timeout_seconds = None
 
-        # Apply session resumption if resume_session_id is set
-        options = runtime.options
+        # Apply session resumption if resume_session_id is set. The
+        # runtime is forwarded opaquely; ``with_resume`` returns a new
+        # opaque runtime that the factory will later unpack privately.
+        session_runtime: object = runtime
         if input.resume_session_id:
-            options = self.agent_provider.client_factory.with_resume(
-                options, input.resume_session_id
+            session_runtime = self.agent_provider.client_factory.with_resume(
+                session_runtime, input.resume_session_id
             )
 
         session_config = SessionConfig(
             agent_id=agent_id,
-            options=options,
-            lint_cache=runtime.lint_cache,
+            runtime=session_runtime,
+            lint_cache=cast("LintCache", runtime.lint_cache),  # ty:ignore[unresolved-attribute]
             log_file_wait_timeout=self.config.log_file_wait_timeout,
             log_file_poll_interval=0.5,
             idle_timeout_seconds=idle_timeout_seconds,
@@ -512,7 +521,7 @@ class AgentSessionRunner:
                     iter_result = await self._retry_policy.execute_iteration(
                         query=pending_query,
                         issue_id=input.issue_id,
-                        options=session_cfg.options,
+                        runtime=session_cfg.runtime,
                         state=state.msg_state,
                         lifecycle_ctx=lifecycle_ctx,
                         lint_cache=session_cfg.lint_cache,
@@ -849,7 +858,14 @@ class AgentSessionRunner:
         log_file_wait_timeout: float,
         log_file_poll_interval: float = 0.5,
     ) -> tuple[Path | None, TransitionResult]:
-        """Handle WAIT_FOR_LOG effect - wait for log file to become available.
+        """Handle ``Effect.WAIT_FOR_LOG`` — block until the provider is ready.
+
+        Delegates the readiness gate to
+        :meth:`EvidenceProvider.wait_for_session_ready` (issue
+        ``mala-b18dd.5.3`` / Phase A7) so the runner no longer probes the
+        filesystem directly. Claude/Amp providers preserve the prior
+        polling behavior; Codex (Phase H) returns immediately because
+        ``Thread.read`` is always available once the thread is started.
 
         Args:
             session_id: Current SDK session ID.
@@ -857,8 +873,10 @@ class AgentSessionRunner:
             log_path: Current log path (may be None).
             lifecycle: Lifecycle state machine.
             lifecycle_ctx: Lifecycle context.
-            log_file_wait_timeout: Max seconds to wait for log file.
-            log_file_poll_interval: Seconds between poll attempts.
+            log_file_wait_timeout: Max seconds to wait for readiness.
+            log_file_poll_interval: Polling cadence forwarded to
+                filesystem-backed providers; ignored by providers that do
+                not poll.
 
         Returns:
             Tuple of (updated log_path, TransitionResult from log ready/timeout).
@@ -885,20 +903,29 @@ class AgentSessionRunner:
         if self.event_sink is not None:
             self.event_sink.on_log_waiting(issue_id)
 
-        # Wait for log file
-        wait_elapsed = 0.0
-        while not log_path.exists():
-            if wait_elapsed >= log_file_wait_timeout:
-                result = lifecycle.on_log_timeout(lifecycle_ctx, str(log_path))
-                if self.event_sink is not None:
-                    self.event_sink.on_log_timeout(issue_id, str(log_path))
-                return log_path, result
-            await asyncio.sleep(log_file_poll_interval)
-            wait_elapsed += log_file_poll_interval
-
-        if log_path.exists():
+        # ``evidence_provider`` is normalized by ``__post_init__`` so this
+        # attribute is always set by the time we reach the readiness gate.
+        # When the orchestrator was constructed with a custom
+        # ``OrchestratorDependencies.evidence_provider`` (without overriding
+        # ``agent_provider``), the injected provider is what the session
+        # lifecycle uses to compute the log path; routing readiness through
+        # the same instance keeps both halves of the gate aligned.
+        assert self.evidence_provider is not None
+        try:
+            await self.evidence_provider.wait_for_session_ready(
+                self.config.repo_path,
+                session_id,
+                timeout=log_file_wait_timeout,
+                poll_interval=log_file_poll_interval,
+            )
+        except TimeoutError:
+            result = lifecycle.on_log_timeout(lifecycle_ctx, str(log_path))
             if self.event_sink is not None:
-                self.event_sink.on_log_ready(issue_id)
+                self.event_sink.on_log_timeout(issue_id, str(log_path))
+            return log_path, result
+
+        if self.event_sink is not None:
+            self.event_sink.on_log_ready(issue_id)
         result = lifecycle.on_log_ready(lifecycle_ctx)
         return log_path, result
 

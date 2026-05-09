@@ -47,8 +47,8 @@ if TYPE_CHECKING:
         RetryStateProtocol,
     )
     from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.evidence import EvidenceProvider
     from src.core.protocols.infra import CommandResultProtocol, CommandRunnerPort
-    from src.core.protocols.log import LogProvider
     from src.domain.lifecycle import (
         GateOutcome,
         RetryState,
@@ -81,7 +81,8 @@ class SessionRunContext:
     at call time rather than construction time.
 
     Attributes:
-        log_provider_getter: Returns the LogProvider for session logging.
+        evidence_provider_getter: Returns the EvidenceProvider for session
+            logging.
         evidence_check_getter: Returns the GateChecker for evidence validation.
         on_session_log_path: Called with (issue_id, path) when session log path is known.
         on_review_log_path: Called with (issue_id, path) when review log path is known.
@@ -92,7 +93,7 @@ class SessionRunContext:
         abort_event_getter: Returns the abort Event or None if not set.
     """
 
-    log_provider_getter: Callable[[], LogProvider]
+    evidence_provider_getter: Callable[[], EvidenceProvider]
     evidence_check_getter: Callable[[], GateChecker]
     on_session_log_path: Callable[[str, Path], None]
     on_review_log_path: Callable[[str, str], None]
@@ -155,7 +156,7 @@ class SessionCallbackFactory:
 
     Usage:
         context = SessionRunContext(
-            log_provider_getter=...,
+            evidence_provider_getter=...,
             evidence_check_getter=...,
             on_session_log_path=...,
             on_review_log_path=...,
@@ -203,9 +204,10 @@ class SessionCallbackFactory:
             session_end_timeout: Overall timeout for session_end in seconds.
 
         Note:
-            The context bundles late-bound getters (log_provider, evidence_check,
-            interrupt_event, etc.) to support runtime patching. This allows tests
-            to swap orchestrator attributes after factory construction.
+            The context bundles late-bound getters (evidence_provider,
+            evidence_check, interrupt_event, etc.) to support runtime
+            patching. This allows tests to swap orchestrator attributes
+            after factory construction.
         """
         self._gate_async_runner = gate_async_runner
         self._review_runner = review_runner
@@ -1182,7 +1184,7 @@ class _SessionLifecycleAdapter:
 
     def get_log_path(self, session_id: str) -> Path:
         """Get the log file path for a session."""
-        log_path = self._factory._context.log_provider_getter().get_log_path(
+        log_path = self._factory._context.evidence_provider_getter().get_log_path(
             self._factory._repo_path, session_id
         )
         self._factory._context.on_session_log_path(self._issue_id, log_path)

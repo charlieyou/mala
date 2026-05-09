@@ -15,7 +15,7 @@ from src.core.session_end_result import SessionEndResult, SessionEndRetryState
 def _create_minimal_context() -> SessionRunContext:
     """Create a SessionRunContext with minimal lambda stubs."""
     return SessionRunContext(
-        log_provider_getter=lambda: MagicMock(),
+        evidence_provider_getter=lambda: MagicMock(),
         evidence_check_getter=lambda: MagicMock(),
         on_session_log_path=lambda issue_id, path: None,
         on_review_log_path=lambda issue_id, path: None,
@@ -88,7 +88,7 @@ class TestReviewAdapterEmptyDiffSkip:
             side_effect=AssertionError("external review should be skipped")
         )
         context = SessionRunContext(
-            log_provider_getter=lambda: MagicMock(),
+            evidence_provider_getter=lambda: MagicMock(),
             evidence_check_getter=lambda: MagicMock(),
             on_session_log_path=lambda issue_id, path: None,
             on_review_log_path=lambda issue_id, path: None,
@@ -175,7 +175,7 @@ class TestReviewAdapterEmptyDiffSkip:
         review_runner.config = MagicMock()
         review_runner.run_review = AsyncMock(return_value=review_output)
         context = SessionRunContext(
-            log_provider_getter=lambda: MagicMock(),
+            evidence_provider_getter=lambda: MagicMock(),
             evidence_check_getter=lambda: MagicMock(),
             on_session_log_path=lambda issue_id, path: None,
             on_review_log_path=lambda issue_id, path: None,
@@ -233,7 +233,9 @@ class TestReviewAdapterEmptyDiffSkip:
             _from_commit: str,
             _to_commit: str,
         ) -> bool:
-            raise AssertionError("should not check tree changes for interleaved commits")
+            raise AssertionError(
+                "should not check tree changes for interleaved commits"
+            )
 
         monkeypatch.setattr(
             infra_git_utils, "get_issue_commits_async", fake_get_issue_commits_async
@@ -259,7 +261,7 @@ class TestReviewAdapterEmptyDiffSkip:
         review_runner.config = MagicMock()
         review_runner.run_review = AsyncMock(return_value=review_output)
         context = SessionRunContext(
-            log_provider_getter=lambda: MagicMock(),
+            evidence_provider_getter=lambda: MagicMock(),
             evidence_check_getter=lambda: MagicMock(),
             on_session_log_path=lambda issue_id, path: None,
             on_review_log_path=lambda issue_id, path: None,

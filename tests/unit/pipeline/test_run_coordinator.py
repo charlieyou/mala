@@ -176,12 +176,14 @@ class TestFixerInterruptHandling:
         builder class directly.
         """
         mock_builder = MagicMock()
-        mock_builder.with_hooks.return_value = mock_builder
         mock_builder.with_agent_timeout.return_value = mock_builder
         mock_builder.with_env.return_value = mock_builder
         mock_builder.with_mcp.return_value = mock_builder
-        mock_builder.with_disallowed_tools.return_value = mock_builder
         mock_builder.with_lint_tools.return_value = mock_builder
+        mock_builder.with_resume.return_value = mock_builder
+        # Claude-private hooks: kept for tests that exercise the
+        # ``FixerService``'s ``isinstance`` downcast path.
+        mock_builder.with_hooks.return_value = mock_builder
         mock_builder.build.return_value = runtime
         provider.runtime_builder = MagicMock(return_value=mock_builder)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
         return mock_builder
@@ -247,16 +249,20 @@ class TestFixerInterruptHandling:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.query = AsyncMock()
 
-        # Create a mock ResultMessage
-        result_message = MagicMock()
-        result_message.__class__.__name__ = "ResultMessage"
-        type(result_message).__name__ = "ResultMessage"
-        result_message.result = "Fixed!"
-        result_message.session_id = "test-session-123"
+        # Create the terminal ``AgentResultEvent`` (production wrapping
+        # translates Anthropic ``ResultMessage`` into this shape before the
+        # pipeline sees it).
+        from src.core.protocols.agent_event import AgentResultEvent
 
-        # Make receive_response return the result message
-        async def mock_receive() -> AsyncGenerator[MagicMock, None]:
-            yield result_message
+        result_event = AgentResultEvent(
+            session_id="test-session-123",
+            is_error=False,
+            subtype="result",
+            result="Fixed!",
+        )
+
+        async def mock_receive() -> AsyncGenerator[AgentResultEvent, None]:
+            yield result_event
 
         mock_client.receive_response = mock_receive
         mock_sdk_client_factory.create.return_value = mock_client
@@ -264,7 +270,6 @@ class TestFixerInterruptHandling:
         # Override provider.runtime_builder to avoid MCP server factory
         # dependency (the production path goes through agent_provider).
         mock_runtime = MagicMock()
-        mock_runtime.options = {}
         mock_runtime.lint_cache = MagicMock()
         self._install_mock_runtime_builder(fake_agent_provider, mock_runtime)
 
@@ -296,13 +301,17 @@ class TestFixerInterruptHandling:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.query = AsyncMock()
 
-        result_message = MagicMock()
-        result_message.__class__.__name__ = "ResultMessage"
-        type(result_message).__name__ = "ResultMessage"
-        result_message.result = "Fixed!"
+        from src.core.protocols.agent_event import AgentResultEvent
 
-        async def mock_receive() -> AsyncGenerator[MagicMock, None]:
-            yield result_message
+        result_event = AgentResultEvent(
+            session_id="",
+            is_error=False,
+            subtype="result",
+            result="Fixed!",
+        )
+
+        async def mock_receive() -> AsyncGenerator[AgentResultEvent, None]:
+            yield result_event
 
         mock_client.receive_response = mock_receive
         mock_sdk_client_factory.create.return_value = mock_client
@@ -310,7 +319,6 @@ class TestFixerInterruptHandling:
         # Override provider.runtime_builder to avoid MCP server factory
         # dependency.
         mock_runtime = MagicMock()
-        mock_runtime.options = {}
         mock_runtime.lint_cache = MagicMock()
         self._install_mock_runtime_builder(fake_agent_provider, mock_runtime)
 
@@ -319,7 +327,7 @@ class TestFixerInterruptHandling:
         mock_uuid.hex = "abcd1234efgh5678"
 
         with (
-            patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path,
+            patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path,
             patch("src.pipeline.fixer_service.uuid.uuid4", return_value=mock_uuid),
         ):
             mock_log_path.return_value = Path("/mock/log/path/session.jsonl")
@@ -357,18 +365,17 @@ class TestFixerInterruptHandling:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.query = AsyncMock()
 
-        # First message is normal, but we set interrupt before second
-        first_message = MagicMock()
-        first_message.__class__.__name__ = "AssistantMessage"
-        type(first_message).__name__ = "AssistantMessage"
-        first_message.content = []
+        from src.core.protocols.agent_event import AgentTextEvent
 
-        async def mock_receive() -> AsyncGenerator[MagicMock, None]:
-            yield first_message
-            # Set interrupt after first message
+        # First event is normal, but we set interrupt before second
+        first_event = AgentTextEvent(text="working...")
+
+        async def mock_receive() -> AsyncGenerator[object, None]:
+            yield first_event
+            # Set interrupt after first event
             interrupt_event.set()
-            # This message should not be fully processed
-            yield MagicMock()
+            # This event should not be fully processed
+            yield AgentTextEvent(text="post-interrupt")
 
         mock_client.receive_response = mock_receive
         mock_sdk_client_factory.create.return_value = mock_client
@@ -376,7 +383,6 @@ class TestFixerInterruptHandling:
         # Override provider.runtime_builder to avoid MCP server factory
         # dependency.
         mock_runtime = MagicMock()
-        mock_runtime.options = {}
         mock_runtime.lint_cache = MagicMock()
         self._install_mock_runtime_builder(fake_agent_provider, mock_runtime)
 
@@ -408,23 +414,21 @@ class TestFixerInterruptHandling:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.query = AsyncMock()
 
-        # Receive first message, then set interrupt before second
-        assistant_message = MagicMock()
-        assistant_message.__class__.__name__ = "AssistantMessage"
-        type(assistant_message).__name__ = "AssistantMessage"
-        assistant_message.content = []
+        from src.core.protocols.agent_event import AgentTextEvent
 
-        async def mock_receive() -> AsyncGenerator[MagicMock, None]:
-            yield assistant_message
-            # Set interrupt after first message
+        # Receive first event, then set interrupt before second
+        assistant_event = AgentTextEvent(text="working...")
+
+        async def mock_receive() -> AsyncGenerator[object, None]:
+            yield assistant_event
+            # Set interrupt after first event
             interrupt_event.set()
-            yield MagicMock()
+            yield AgentTextEvent(text="post-interrupt")
 
         mock_client.receive_response = mock_receive
         mock_sdk_client_factory.create.return_value = mock_client
 
         mock_runtime = MagicMock()
-        mock_runtime.options = {}
         mock_runtime.lint_cache = MagicMock()
         self._install_mock_runtime_builder(fake_agent_provider, mock_runtime)
 
@@ -433,7 +437,7 @@ class TestFixerInterruptHandling:
         mock_uuid.hex = "deadbeef12345678"
 
         with (
-            patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path,
+            patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path,
             patch("src.pipeline.fixer_service.uuid.uuid4", return_value=mock_uuid),
         ):
             mock_log_path.return_value = Path("/mock/log/path/interrupted.jsonl")

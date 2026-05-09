@@ -66,12 +66,23 @@ class FakeReviewResult:
     interrupted: bool = False
 
 
-@dataclass
-class ResultMessage:
-    """Minimal SDK result message recognized by MessageStreamProcessor."""
+def ResultMessage(session_id: str, result: str = "done") -> object:
+    """Construct a terminal ``AgentResultEvent`` for AgentSessionRunner tests.
 
-    session_id: str
-    result: str = "done"
+    Production wrapping (``_ClaudeAgentEventClient`` in
+    ``src.infra.sdk_adapter``) translates Anthropic ``ResultMessage`` into
+    this event before the pipeline sees it; tests yield it directly so the
+    stream processor can extract ``session_id`` / ``result`` without
+    depending on the Claude SDK shape.
+    """
+    from src.core.protocols.agent_event import AgentResultEvent
+
+    return AgentResultEvent(
+        session_id=session_id,
+        is_error=False,
+        subtype="result",
+        result=result,
+    )
 
 
 @dataclass
@@ -92,7 +103,7 @@ def make_session_config() -> SessionConfig:
     """Create a minimal SessionConfig for testing."""
     return SessionConfig(
         agent_id="test-agent",
-        options=FakeOptions(),
+        runtime=FakeOptions(),
         lint_cache=FakeLintCache(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         log_file_wait_timeout=10.0,
         log_file_poll_interval=0.5,
@@ -393,8 +404,8 @@ class TestBuildSessionOutputFiltering:
 class FakeSDKClientFactory:
     """Fake SDK client factory for testing."""
 
-    def create(self, options: object) -> SDKClientProtocol:
-        del options
+    def create(self, runtime: object) -> SDKClientProtocol:
+        del runtime
         raise NotImplementedError("Should not be called in early interrupt tests")
 
     def create_options(
@@ -438,8 +449,8 @@ class FakeSDKClientFactory:
     ) -> object:
         return ("matcher", matcher, hooks)
 
-    def with_resume(self, options: object, resume: str | None) -> object:
-        del options, resume
+    def with_resume(self, runtime: object, resume: str | None) -> object:
+        del runtime, resume
         raise NotImplementedError("Should not be called in early interrupt tests")
 
 

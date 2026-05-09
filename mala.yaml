@@ -1,3 +1,6 @@
+coder: claude
+effort: xhigh
+
 preset: python-uv
 
 commands:

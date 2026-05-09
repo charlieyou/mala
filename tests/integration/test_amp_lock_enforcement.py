@@ -231,6 +231,12 @@ def _build_amp_env(
     spawned["HOME"] = str(env.home_dir)
     spawned["XDG_CONFIG_HOME"] = str(env.home_dir / ".config")
     spawned["PLUGINS"] = "all"
+    # ``mala-safety.ts`` short-circuits unless ``AMP_MALA=true`` (gating
+    # commit 2676014a); production sets this in
+    # ``AmpRuntimeBuilder.build`` (``src/infra/clients/amp_runtime.py:296``).
+    # Without it the plugin returns early before any handler registers,
+    # so the sentinel marker never reaches stderr.
+    spawned["AMP_MALA"] = "true"
     spawned["MALA_AGENT_ID"] = agent_id
     spawned["MALA_LOCK_DIR"] = str(lock_dir or env.lock_dir)
     spawned["MALA_REPO_NAMESPACE"] = repo_namespace or str(env.repo_path)

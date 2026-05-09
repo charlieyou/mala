@@ -24,15 +24,16 @@ class AgentLifecycleEvents(Protocol):
         agent_id: str,
         issue_id: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         """Called when an agent is spawned for an issue.
 
         Args:
             agent_id: Unique agent identifier.
             issue_id: Issue being worked on.
-            coder: Active coder backend (``claude`` or ``amp``); enables
-                per-coder dashboard breakdowns. Optional for back-compat.
+            coder: Active coder backend (``claude``, ``amp``, or
+                ``codex``); enables per-coder dashboard breakdowns.
+                Optional for back-compat.
         """
         ...
 
@@ -44,7 +45,7 @@ class AgentLifecycleEvents(Protocol):
         duration_seconds: float,
         summary: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         """Called when an agent completes (success or failure).
 
@@ -54,7 +55,7 @@ class AgentLifecycleEvents(Protocol):
             success: Whether the agent succeeded.
             duration_seconds: Total execution time.
             summary: Result summary or error message.
-            coder: Active coder backend (``claude`` or ``amp``).
+            coder: Active coder backend (``claude``, ``amp``, or ``codex``).
         """
         ...
 

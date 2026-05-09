@@ -15,10 +15,10 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
+from src.infra.agent_runtime import ClaudeAgentRuntimeBuilder
 from src.infra.sigint_guard import InterruptGuard
-from src.infra.tools.env import get_claude_log_path
 from src.infra.tools.locking import cleanup_agent_locks
 from src.domain.validation.spec import extract_lint_tools_from_spec
 from src.pipeline.fixer_interface import FixerResult
@@ -30,7 +30,6 @@ if TYPE_CHECKING:
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.sdk import McpServerFactory
     from src.domain.validation.spec import ValidationSpec
-    from src.infra.agent_runtime import AgentRuntimeBuilder
 
 
 def _noop_mcp_server_factory(
@@ -165,58 +164,81 @@ class FixerService:
 
         fixer_cwd = self._config.repo_path
 
-        # Build runtime via the AgentProvider's runtime builder so fixers
-        # follow the main coder. The fluent ``with_*`` calls are the Claude
-        # builder's surface; the Amp builder will expose equivalent shaping
-        # in T009. In T007, the stub Amp client_factory raises before this
-        # runtime is consumed, so fixer-on-Amp surfaces NotImplementedError.
+        # Build runtime via the AgentProvider's runtime builder. The
+        # cross-coder chain only uses :class:`CoderRuntimeBuilder` methods
+        # (plan A6); Claude-only fixer hook flags (which are noops on Amp)
+        # are applied by downcasting to
+        # :class:`ClaudeAgentRuntimeBuilder` via ``isinstance``.
         lint_tools = extract_lint_tools_from_spec(failure_context.spec)
         mcp_factory = self._config.mcp_server_factory or _noop_mcp_server_factory
-        raw_builder = self._agent_provider.runtime_builder(
+        builder = self._agent_provider.runtime_builder(
             fixer_cwd,
             agent_id,
             mcp_server_factory=mcp_factory,
+            deadlock_monitor=None,
         )
-        builder = (
-            cast("AgentRuntimeBuilder", raw_builder)
-            .with_hooks(
-                deadlock_monitor=None,
-                include_stop_hook=True,
-                include_mala_disallowed_tools_hook=False,
-            )
-            .with_agent_timeout(self._config.timeout_seconds)
-            .with_env(extra={"MALA_SDK_FLOW": "fixer"})
-            .with_disallowed_tools()
+        builder = builder.with_agent_timeout(self._config.timeout_seconds).with_env(
+            extra={"MALA_SDK_FLOW": "fixer"}
         )
         # Configure MCP: use factory if available, otherwise empty (no MCP tools)
         if self._config.mcp_server_factory is not None:
             builder = builder.with_mcp()
         else:
             # No MCP tools means no lock_acquire - disable lock enforcement
-            builder = builder.with_mcp(servers={}).with_hooks(
-                include_lock_enforcement_hook=False
-            )
+            builder = builder.with_mcp(servers={})
+            if isinstance(builder, ClaudeAgentRuntimeBuilder):
+                builder.with_hooks(include_lock_enforcement_hook=False)
         # Only set lint_tools if we have them; otherwise use builder defaults
         if lint_tools is not None:
             builder = builder.with_lint_tools(lint_tools)
+        # Apply Claude-private fixer hook flags. Amp does not honor SDK
+        # hooks (its safety lives in the bundled plugin); the no-op was
+        # dropped in plan A6, so we conditionally cast for Claude only.
+        if isinstance(builder, ClaudeAgentRuntimeBuilder):
+            builder.with_hooks(
+                include_stop_hook=True,
+                include_mala_disallowed_tools_hook=False,
+            )
         runtime = builder.build()
-        client = self._agent_provider.client_factory.create(runtime.options)
+        client = self._agent_provider.client_factory.create(runtime)
 
         pending_lint_commands: dict[str, tuple[str, str]] = {}
-        is_amp_provider = getattr(self._agent_provider, "name", None) == "amp"
+        provider_name = getattr(self._agent_provider, "name", None)
+        is_amp_provider = provider_name == "amp"
+        is_codex_provider = provider_name == "codex"
+        runtime_log_path = getattr(runtime, "log_path", None)
+        # Resolve the log path through the provider's EvidenceProvider so
+        # the contract on ``FixerResult.log_path`` holds for every coder.
+        # Amp pre-sets ``runtime.log_path`` during build; Claude maps
+        # ``agent_id`` to ``~/.claude/projects/.../{agent_id}.jsonl``;
+        # Codex's tee path keys on ``thread_id`` (only known post-query),
+        # so we use ``agent_id`` as a stand-in here and re-resolve via
+        # ``current_log_path`` once the thread id is populated.
         log_path: str = (
-            str(runtime.log_path)
-            if is_amp_provider
-            else str(get_claude_log_path(self._config.repo_path, agent_id))
+            str(runtime_log_path)
+            if is_amp_provider and runtime_log_path is not None
+            else str(
+                self._agent_provider.evidence_provider.get_log_path(
+                    self._config.repo_path, agent_id
+                )
+            )
         )
 
         def current_log_path() -> str:
-            if not is_amp_provider:
+            if is_amp_provider:
+                client_log_path = getattr(client, "log_path", None)
+                if client_log_path is not None:
+                    return str(client_log_path)
                 return log_path
-            client_log_path = getattr(client, "log_path", None)
-            if client_log_path is not None:
-                return str(client_log_path)
-            return str(runtime.log_path)
+            if is_codex_provider:
+                thread_id = getattr(client, "thread_id", None)
+                if thread_id is not None:
+                    return str(
+                        self._agent_provider.evidence_provider.get_log_path(
+                            self._config.repo_path, thread_id
+                        )
+                    )
+            return log_path
 
         try:
             async with asyncio.timeout(self._config.timeout_seconds):
@@ -226,8 +248,12 @@ class FixerService:
                         session_id=None if is_amp_provider else agent_id,
                     )
 
-                    async for message in client.receive_response():
-                        # Check for interrupt between messages
+                    # Both Claude (wrapped SDK client in
+                    # ``src.infra.sdk_adapter``) and Amp emit ``AgentEvent``s
+                    # directly, so the fixer iterates them without any
+                    # translation step.
+                    async for event in client.receive_response():
+                        # Check for interrupt between events
                         if guard.is_interrupted():
                             return FixerResult(
                                 success=None,
@@ -235,9 +261,8 @@ class FixerService:
                                 log_path=current_log_path(),
                             )
 
-                        # Process message using duck typing
-                        self._process_message(
-                            message,
+                        self._process_event(
+                            event,
                             failure_context.attempt,
                             runtime,
                             pending_lint_commands,
@@ -259,56 +284,53 @@ class FixerService:
                 self._active_fixer_ids.remove(agent_id)
             cleanup_agent_locks(agent_id)
 
-    def _process_message(
+    def _process_event(
         self,
-        message: object,
+        event: object,
         attempt: int,
         runtime: object,
         pending_lint_commands: dict[str, tuple[str, str]],
     ) -> None:
-        """Process a message from the fixer agent.
-
-        Uses duck typing to avoid SDK imports.
+        """Process one ``AgentEvent`` from the fixer agent.
 
         Args:
-            message: Message from the SDK client.
+            event: ``AgentEvent`` produced by the adapter / translator.
             attempt: Current fixer attempt number.
             runtime: AgentRuntime with lint_cache.
             pending_lint_commands: Dict tracking pending lint command results.
         """
-        msg_type = type(message).__name__
-        if msg_type == "AssistantMessage":
-            content = getattr(message, "content", [])
-            for block in content:
-                block_type = type(block).__name__
-                if block_type == "TextBlock":
-                    text = getattr(block, "text", "")
-                    if self._event_sink is not None:
-                        self._event_sink.on_fixer_text(attempt, text)
-                elif block_type == "ToolUseBlock":
-                    name = getattr(block, "name", "")
-                    block_input = getattr(block, "input", {})
-                    if self._event_sink is not None:
-                        self._event_sink.on_fixer_tool_use(attempt, name, block_input)
-                    if name.lower() == "bash":
-                        cmd = block_input.get("command", "")
-                        # Access lint_cache via attribute
-                        lint_cache = getattr(runtime, "lint_cache", None)
-                        if lint_cache is not None:
-                            lint_type = lint_cache.detect_lint_command(cmd)
-                            if lint_type:
-                                block_id = getattr(block, "id", "")
-                                pending_lint_commands[block_id] = (lint_type, cmd)
-                elif block_type == "ToolResultBlock":
-                    tool_use_id = getattr(block, "tool_use_id", None)
-                    if tool_use_id in pending_lint_commands:
-                        lint_type, cmd = pending_lint_commands.pop(tool_use_id)
-                        if not getattr(block, "is_error", False):
-                            lint_cache = getattr(runtime, "lint_cache", None)
-                            if lint_cache is not None:
-                                lint_cache.mark_success(lint_type, cmd)
-        elif msg_type == "ResultMessage":
-            result = getattr(message, "result", "") or ""
+        kind = getattr(event, "kind", None)
+        if kind == "text":
+            if self._event_sink is not None:
+                text = getattr(event, "text", "")
+                self._event_sink.on_fixer_text(attempt, text)
+        elif kind == "tool_use":
+            name = getattr(event, "name", "")
+            block_input = getattr(event, "input", {}) or {}
+            if self._event_sink is not None:
+                self._event_sink.on_fixer_tool_use(attempt, name, block_input)
+            if isinstance(name, str) and name.lower() == "bash":
+                cmd = (
+                    block_input.get("command", "")
+                    if isinstance(block_input, dict)
+                    else ""
+                )
+                lint_cache = getattr(runtime, "lint_cache", None)
+                if lint_cache is not None:
+                    lint_type = lint_cache.detect_lint_command(cmd)
+                    if lint_type:
+                        block_id = getattr(event, "id", "")
+                        pending_lint_commands[block_id] = (lint_type, cmd)
+        elif kind == "tool_result":
+            tool_use_id = getattr(event, "tool_use_id", None)
+            if tool_use_id in pending_lint_commands:
+                lint_type, cmd = pending_lint_commands.pop(tool_use_id)
+                if not getattr(event, "is_error", False):
+                    lint_cache = getattr(runtime, "lint_cache", None)
+                    if lint_cache is not None:
+                        lint_cache.mark_success(lint_type, cmd)
+        elif kind == "result":
+            result = getattr(event, "result", "") or ""
             if self._event_sink is not None:
                 self._event_sink.on_fixer_completed(result)
 

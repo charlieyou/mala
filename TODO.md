@@ -3,10 +3,6 @@ Bugs
 * Epic verification permissions lock down
 * epic depth should not be required in config
 * mala locks should clear on deadlock kill
-* All auto-gen tasks should be in a dep chain
-* Timeout should reset on each attempt. Reviews reset it
-
-* Set amp auto-handoff
 
 New Features
 * Add fixer sessions and cerberus reviews to logs search
@@ -18,8 +14,6 @@ New Features
 * CLI command for run statistics - tokens used, tools calls, reviewer/validation pass rates, etc.
 
 * deadlock victims should have their changes restored?
-
-* integrate coders: codex, cursor
 
 Tech Debt
 * Use pydantic-settings, or some other library for config

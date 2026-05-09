@@ -39,6 +39,7 @@ class MockSDKClient:
         self.messages = messages or []
         self.raise_on_receive = raise_on_receive
         self.query_calls: list[tuple[str, str | None]] = []
+        self.log_path: Path | None = None
         self._entered = False
 
     async def __aenter__(self) -> Self:
@@ -57,10 +58,21 @@ class MockSDKClient:
         self.query_calls.append((prompt, session_id))
 
     async def receive_response(self) -> AsyncIterator[object]:
+        from src.core.protocols.agent_event import to_agent_events
+
         if self.raise_on_receive is not None:
             raise self.raise_on_receive
-        for msg in self.messages:
-            yield msg
+
+        async def _raw() -> AsyncIterator[object]:
+            for msg in self.messages:
+                yield msg
+
+        # Mirror production wrapped Claude/Amp clients: receive_response
+        # emits ``AgentEvent``s. Tests that pre-translate (e.g. yielding
+        # ``AgentTextEvent``) pass straight through; tests that yield
+        # Anthropic-shaped mocks are flattened by ``to_agent_events``.
+        async for event in to_agent_events(_raw()):
+            yield event
 
 
 def make_mock_sdk_client_factory(
@@ -75,7 +87,6 @@ def make_mock_sdk_client_factory(
 def make_mock_runtime() -> MagicMock:
     """Create a mock AgentRuntime."""
     runtime = MagicMock()
-    runtime.options = MagicMock()
     runtime.lint_cache = MagicMock()
     runtime.lint_cache.detect_lint_command.return_value = None
     return runtime
@@ -93,12 +104,16 @@ def install_mock_runtime_builder(
     ``agent_provider.runtime_builder(...)``.
     """
     mock_builder = MagicMock()
-    mock_builder.with_hooks.return_value = mock_builder
     mock_builder.with_agent_timeout.return_value = mock_builder
     mock_builder.with_env.return_value = mock_builder
     mock_builder.with_mcp.return_value = mock_builder
-    mock_builder.with_disallowed_tools.return_value = mock_builder
     mock_builder.with_lint_tools.return_value = mock_builder
+    mock_builder.with_resume.return_value = mock_builder
+    # Claude-private hooks: ``FixerService`` only invokes ``with_hooks`` on
+    # ``ClaudeAgentRuntimeBuilder`` instances after an ``isinstance`` check,
+    # but the MagicMock fluent shape still needs the attribute for the
+    # rare test that pre-binds the spec to a Claude builder.
+    mock_builder.with_hooks.return_value = mock_builder
     mock_builder.build.return_value = runtime or make_mock_runtime()
     provider.runtime_builder = MagicMock(return_value=mock_builder)  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
     return mock_builder
@@ -221,7 +236,7 @@ class TestFixerServiceSuccess:
         service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path:
+        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
             mock_log_path.return_value = Path("/tmp/fixer.log")
 
             result = await service.run_fixer(ctx)
@@ -240,7 +255,7 @@ class TestFixerServiceSuccess:
         service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path:
+        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
             mock_log_path.return_value = tmp_path / "fixer.log"
 
             result = await service.run_fixer(ctx)
@@ -266,7 +281,7 @@ class TestFixerServiceSuccess:
             max_attempts=5,
         )
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
             await service.run_fixer(ctx)
 
         assert len(client.query_calls) == 1
@@ -338,7 +353,7 @@ class TestFixerServiceFailure:
         service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context()
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path:
+        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
             mock_log_path.return_value = Path("/tmp/fixer.log")
 
             result = await service.run_fixer(ctx)
@@ -360,7 +375,7 @@ class TestFixerServiceFailure:
         service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context()
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path:
+        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
             mock_log_path.return_value = Path("/tmp/fixer.log")
 
             result = await service.run_fixer(ctx)
@@ -415,12 +430,12 @@ class TestFixerServiceInterrupt:
     @pytest.mark.asyncio
     async def test_run_fixer_interrupt_during_messages(self) -> None:
         """Verify run_fixer returns interrupted when event is set during processing."""
+        from src.core.protocols.agent_event import AgentTextEvent
+
         interrupt_event = asyncio.Event()
 
-        # Create a message that triggers interrupt check
-        mock_msg = MagicMock()
-        type(mock_msg).__name__ = "AssistantMessage"
-        mock_msg.content = []
+        # An event in the stream so the per-event interrupt check fires.
+        mock_msg = AgentTextEvent(text="working...")
 
         client = MockSDKClient(messages=[mock_msg])
         factory = make_mock_sdk_client_factory(client)
@@ -430,7 +445,7 @@ class TestFixerServiceInterrupt:
         service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path:
+        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
             mock_log_path.return_value = Path("/tmp/fixer.log")
 
             # Patch InterruptGuard to return interrupted after first check
@@ -451,9 +466,9 @@ class TestFixerServiceInterrupt:
         self, tmp_path: Path
     ) -> None:
         """Amp interruptions report the actual tee path when available."""
-        mock_msg = MagicMock()
-        type(mock_msg).__name__ = "AssistantMessage"
-        mock_msg.content = []
+        from src.core.protocols.agent_event import AgentTextEvent
+
+        mock_msg = AgentTextEvent(text="working...")
 
         client = MockSDKClient(messages=[mock_msg])
         client.log_path = tmp_path / "T-fixer.jsonl"  # type: ignore[attr-defined]
@@ -502,7 +517,7 @@ class TestFixerServiceEvents:
         service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context(attempt=2)
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
             await service.run_fixer(ctx)
 
         event_sink.on_fixer_text.assert_called_once_with(2, "Fixing the issue...")
@@ -529,7 +544,7 @@ class TestFixerServiceEvents:
         service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context(attempt=1)
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
             await service.run_fixer(ctx)
 
         event_sink.on_fixer_tool_use.assert_called_once_with(
@@ -553,7 +568,7 @@ class TestFixerServiceEvents:
         service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context()
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
             await service.run_fixer(ctx)
 
         event_sink.on_fixer_completed.assert_called_once_with(
@@ -613,7 +628,7 @@ class TestFixerServiceValidationCommands:
             validation_commands="   - `ruff check .`\n   - `pytest`"
         )
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
             await service.run_fixer(ctx)
 
         prompt, _ = client.query_calls[0]
@@ -645,7 +660,7 @@ class TestFixerServiceValidationCommands:
             spec=spec,
         )
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
             await service.run_fixer(ctx)
 
         prompt, _ = client.query_calls[0]
@@ -663,7 +678,7 @@ class TestFixerServiceValidationCommands:
         service = FixerService(config, provider)
         ctx = make_failure_context()  # No spec, no validation_commands
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
             await service.run_fixer(ctx)
 
         prompt, _ = client.query_calls[0]
@@ -707,7 +722,7 @@ class TestFixerServiceLintCache:
         service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
             await service.run_fixer(ctx)
 
         # Verify lint cache was updated

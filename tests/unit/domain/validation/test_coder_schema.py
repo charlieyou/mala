@@ -33,14 +33,23 @@ class TestCoderEnum:
     def test_amp_is_valid(self) -> None:
         ValidationConfig.from_dict({"coder": "amp"})
 
+    def test_codex_is_valid(self) -> None:
+        # Phase A8: ``codex`` widens the strict-enum but the provider stub
+        # lands in Phase B. Schema-layer validation is purely about the value;
+        # the factory-level NotImplementedError lives in test_factory_provider_selection.
+        ValidationConfig.from_dict({"coder": "codex"})
+
     def test_unknown_value_rejected(self) -> None:
         with pytest.raises(
-            ConfigError, match=r"coder must be 'claude' or 'amp', got 'foo'"
+            ConfigError,
+            match=r"coder must be 'claude', 'amp', or 'codex', got 'foo'",
         ):
             ValidationConfig.from_dict({"coder": "foo"})
 
     def test_non_string_rejected(self) -> None:
-        with pytest.raises(ConfigError, match=r"coder must be 'claude' or 'amp'"):
+        with pytest.raises(
+            ConfigError, match=r"coder must be 'claude', 'amp', or 'codex'"
+        ):
             ValidationConfig.from_dict({"coder": 42})
 
     def test_null_is_treated_as_unset(self) -> None:
@@ -108,7 +117,9 @@ class TestEndToEndViaLoadConfig:
             tmp_path,
             "preset: python-uv\ncoder: foo\n",
         )
-        with pytest.raises(ConfigError, match=r"coder must be 'claude' or 'amp'"):
+        with pytest.raises(
+            ConfigError, match=r"coder must be 'claude', 'amp', or 'codex'"
+        ):
             load_config(repo)
 
     def test_invalid_amp_mode_rejected_via_load_config(self, tmp_path: Path) -> None:
@@ -123,7 +134,9 @@ class TestEndToEndViaLoadConfig:
         self, tmp_path: Path
     ) -> None:
         """The pre-flatten YAML shape (`coder_options.amp.mode`) is no longer
-        supported. The top-level allow-list rejects it as an unknown field."""
+        supported. ``coder_options`` is reserved for codex options
+        (Phase B); placing ``amp`` under it must fail with a clear
+        message pointing at top-level ``amp_mode``."""
         repo = self._write_yaml(
             tmp_path,
             "preset: python-uv\ncoder: amp\ncoder_options:\n  amp:\n    mode: deep\n",

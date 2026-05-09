@@ -1,15 +1,17 @@
-"""MessageStreamProcessor: SDK stream processing component.
+"""MessageStreamProcessor: AgentEvent stream processing component.
 
-Extracted from AgentSessionRunner to separate stream iteration logic from
-session lifecycle management. This module handles:
-- Wrapping SDK streams with idle timeout detection
-- Iterating and processing SDK messages (AssistantMessage, ResultMessage)
-- Tracking tool calls and lint cache updates
+Consumes the coder-agnostic ``AgentEvent`` stream emitted by adapters
+(Claude via :func:`src.core.protocols.agent_event.to_agent_events`, Amp via
+:meth:`AmpClient.receive_response`) and drives the lifecycle/lint side
+effects. This module handles:
+- Wrapping event streams with idle timeout detection.
+- Iterating and processing :class:`AgentEvent`s (text/tool_use/tool_result/result).
+- Tracking tool calls and lint cache updates.
 
 Design principles:
-- Protocol-based message/block checks for testability (no SDK imports at runtime)
-- Explicit state management via MessageIterationState
-- Callbacks for external operations (text/tool notifications)
+- Branch on ``event.kind`` only — no provider-specific class-name duck typing.
+- Explicit state management via :class:`MessageIterationState`.
+- Callbacks for external operations (text/tool notifications).
 """
 
 from __future__ import annotations
@@ -156,8 +158,8 @@ class StreamProcessorCallbacks:
     """Callbacks for stream processing events.
 
     Attributes:
-        on_tool_use: Called when ToolUseBlock is encountered.
-        on_agent_text: Called when TextBlock is encountered.
+        on_tool_use: Called for each tool_use AgentEvent.
+        on_agent_text: Called for each text AgentEvent.
     """
 
     on_tool_use: ToolUseCallback | None = None
@@ -165,11 +167,11 @@ class StreamProcessorCallbacks:
 
 
 class MessageStreamProcessor:
-    """Processes SDK message streams.
+    """Processes ``AgentEvent`` streams.
 
-    Handles iteration over SDK streams, tracking tool calls, updating lint cache,
-    and detecting idle timeouts. Uses duck typing for SDK message types to
-    avoid SDK imports at runtime.
+    Iterates an :class:`AgentEvent` stream, tracking tool calls, updating
+    the lint cache, and detecting idle timeouts. Branches on
+    ``event.kind`` — no provider-specific class-name checks.
 
     Usage:
         processor = MessageStreamProcessor(config, callbacks)
@@ -196,13 +198,13 @@ class MessageStreamProcessor:
         query_start: float,
         tracer: TelemetrySpan | None,
     ) -> MessageIterationResult:
-        """Process SDK message stream and update state.
+        """Process an ``AgentEvent`` stream and update state.
 
         Updates state.session_id, state.tool_calls_this_turn, state.pending_tool_ids,
         and lint_cache on successful lint commands.
 
         Args:
-            stream: The message stream to process.
+            stream: The ``AgentEvent`` stream to process.
             issue_id: Issue ID for logging.
             state: Mutable state for the iteration.
             lifecycle_ctx: Lifecycle context for session state.
@@ -213,28 +215,42 @@ class MessageStreamProcessor:
         Returns:
             MessageIterationResult with success status.
         """
-        # Use duck typing to avoid SDK imports - check type name instead of isinstance
         result_error: str | None = None
-        async for message in stream:
-            if not state.first_message_received:
-                state.first_message_received = True
-                latency = time.time() - query_start
-                logger.debug(
-                    "Session %s: first message after %.1fs",
-                    issue_id,
-                    latency,
-                )
-            if tracer is not None:
-                tracer.log_message(message)
+        pending_text_delta = ""
+        try:
+            async for event in stream:
+                if not state.first_message_received:
+                    state.first_message_received = True
+                    latency = time.time() - query_start
+                    logger.debug(
+                        "Session %s: first message after %.1fs",
+                        issue_id,
+                        latency,
+                    )
+                if tracer is not None:
+                    tracer.log_message(event)
 
-            msg_type = type(message).__name__
-            if msg_type == "AssistantMessage":
-                self._process_assistant_message(message, issue_id, state, lint_cache)
-
-            elif msg_type == "ResultMessage":
-                result_error = self._process_result_message(
-                    message, issue_id, state, lifecycle_ctx
-                )
+                kind = getattr(event, "kind", None)
+                if kind == "text":
+                    pending_text_delta = self._handle_text_event(
+                        event, issue_id, pending_text_delta
+                    )
+                elif kind == "tool_use":
+                    self._flush_text_delta(issue_id, pending_text_delta)
+                    pending_text_delta = ""
+                    self._handle_tool_use_event(event, issue_id, state, lint_cache)
+                elif kind == "tool_result":
+                    self._flush_text_delta(issue_id, pending_text_delta)
+                    pending_text_delta = ""
+                    self._handle_tool_result_event(event, state, lint_cache)
+                elif kind == "result":
+                    self._flush_text_delta(issue_id, pending_text_delta)
+                    pending_text_delta = ""
+                    result_error = self._handle_result_event(
+                        event, issue_id, state, lifecycle_ctx
+                    )
+        finally:
+            self._flush_text_delta(issue_id, pending_text_delta)
 
         # Success
         stream_duration = time.time() - query_start
@@ -251,70 +267,84 @@ class MessageStreamProcessor:
             idle_retry_count=0,
         )
 
-    def _process_assistant_message(
+    def _handle_text_event(
+        self, event: object, issue_id: str, pending_text_delta: str
+    ) -> str:
+        if self.callbacks.on_agent_text is None:
+            return ""
+        text = getattr(event, "text", "")
+        if bool(getattr(event, "is_delta", False)):
+            return pending_text_delta + str(text)
+        self._flush_text_delta(issue_id, pending_text_delta)
+        self.callbacks.on_agent_text(issue_id, text)
+        return ""
+
+    def _flush_text_delta(self, issue_id: str, pending_text_delta: str) -> None:
+        if not pending_text_delta or self.callbacks.on_agent_text is None:
+            return
+        self.callbacks.on_agent_text(issue_id, pending_text_delta)
+
+    def _handle_tool_use_event(
         self,
-        message: object,
+        event: object,
         issue_id: str,
         state: MessageIterationState,
         lint_cache: LintCacheProtocol,
     ) -> None:
-        """Process an AssistantMessage, handling text/tool blocks."""
-        content = getattr(message, "content", [])
-        for block in content:
-            block_type = type(block).__name__
-            if block_type == "TextBlock":
-                text = getattr(block, "text", "")
-                if self.callbacks.on_agent_text is not None:
-                    self.callbacks.on_agent_text(issue_id, text)
-            elif block_type == "ToolUseBlock":
-                state.tool_calls_this_turn += 1
-                block_id = getattr(block, "id", "")
-                state.pending_tool_ids.add(block_id)
-                name = getattr(block, "name", "")
-                block_input = getattr(block, "input", {})
-                if self.callbacks.on_tool_use is not None:
-                    self.callbacks.on_tool_use(issue_id, name, block_input)
-                if name.lower() == "bash":
-                    cmd = block_input.get("command", "")
-                    lint_type = lint_cache.detect_lint_command(cmd)
-                    if lint_type:
-                        state.pending_lint_commands[block_id] = (
-                            lint_type,
-                            cmd,
-                        )
-            elif block_type == "ToolResultBlock":
-                tool_use_id = getattr(block, "tool_use_id", None)
-                if tool_use_id:
-                    state.pending_tool_ids.discard(tool_use_id)
-                if tool_use_id in state.pending_lint_commands:
-                    lint_type, cmd = state.pending_lint_commands.pop(tool_use_id)
-                    if not getattr(block, "is_error", False):
-                        lint_cache.mark_success(lint_type, cmd)
+        state.tool_calls_this_turn += 1
+        block_id = getattr(event, "id", "")
+        state.pending_tool_ids.add(block_id)
+        name = getattr(event, "name", "")
+        block_input = getattr(event, "input", {}) or {}
+        if self.callbacks.on_tool_use is not None:
+            self.callbacks.on_tool_use(issue_id, name, block_input)
+        if isinstance(name, str) and name.lower() == "bash":
+            cmd = (
+                block_input.get("command", "") if isinstance(block_input, dict) else ""
+            )
+            lint_type = lint_cache.detect_lint_command(cmd)
+            if lint_type:
+                state.pending_lint_commands[block_id] = (lint_type, cmd)
 
-    def _process_result_message(
+    def _handle_tool_result_event(
         self,
-        message: object,
+        event: object,
+        state: MessageIterationState,
+        lint_cache: LintCacheProtocol,
+    ) -> None:
+        tool_use_id = getattr(event, "tool_use_id", None)
+        if tool_use_id:
+            state.pending_tool_ids.discard(tool_use_id)
+        if tool_use_id in state.pending_lint_commands:
+            lint_type, cmd = state.pending_lint_commands.pop(tool_use_id)
+            if not getattr(event, "is_error", False):
+                lint_cache.mark_success(lint_type, cmd)
+
+    def _handle_result_event(
+        self,
+        event: object,
         issue_id: str,
         state: MessageIterationState,
         lifecycle_ctx: LifecycleContext,
     ) -> str | None:
-        """Process a ResultMessage, extracting session ID and final result.
+        """Process a result AgentEvent.
 
-        Returns an error string when the SDK reports an unsuccessful result.
-        Amp exposes transient stream failures as ResultMessage values (for
-        example ``error_during_execution``) rather than as Python exceptions;
-        callers must not treat those as completed agent turns.
+        Returns an error string when the result reports an unsuccessful turn.
+        Amp exposes transient stream failures as result events (for example
+        ``error_during_execution``) rather than Python exceptions; callers
+        must not treat those as completed agent turns.
         """
-        state.session_id = getattr(message, "session_id", None)
+        del issue_id  # logged via state mutation; reserved for future tracing
+        state.session_id = getattr(event, "session_id", None)
         lifecycle_ctx.session_id = state.session_id
-        result = getattr(message, "result", "") or ""
+        result = getattr(event, "result", "") or ""
         lifecycle_ctx.final_result = result
 
-        subtype = str(getattr(message, "subtype", "") or "")
+        subtype = str(getattr(event, "subtype", "") or "")
         result_text = str(result)
         subtype_lower = subtype.lower()
         result_text_lower = result_text.lower()
-        is_error = bool(getattr(message, "is_error", False))
+        is_error = bool(getattr(event, "is_error", False))
         if (
             is_error
             or subtype_lower.startswith("error_")

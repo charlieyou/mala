@@ -360,19 +360,14 @@ def _read_latest_run_metadata(runs_dir: Path, repo_path: Path) -> dict[str, Any]
 
 
 def _make_result_message(session_id: str, *, result: str) -> object:
-    """Create a fake ResultMessage for testing."""
-    from claude_agent_sdk import ResultMessage
+    """Create a terminal ``AgentResultEvent`` for the wrapped Claude path."""
+    from src.core.protocols.agent_event import AgentResultEvent
 
-    return ResultMessage(
-        subtype="result",
+    return AgentResultEvent(
         session_id=session_id,
-        result=result,
-        duration_ms=1000,
-        duration_api_ms=800,
         is_error=False,
-        num_turns=1,
-        total_cost_usd=0.01,
-        usage=None,
+        subtype="result",
+        result=result,
     )
 
 
@@ -432,6 +427,7 @@ async def test_resume_with_review_feedback_uses_review_followup_prompt(
     sdk_factory_run1.configure_next_client(
         result_message=_make_result_message(session_id_run1, result="Done")
     )
+    agent_provider_run1 = FakeAgentProvider(sdk_factory_run1)
 
     orchestrator_run1 = make_orchestrator(
         repo_path=tmp_path,
@@ -440,10 +436,11 @@ async def test_resume_with_review_feedback_uses_review_followup_prompt(
             {issue_id: FakeIssue(id=issue_id, description="Run 1")}
         ),
         gate_checker=gate_checker_run1,
+        evidence_provider=agent_provider_run1.evidence_provider,
         runs_dir=runs_dir,
         disable_validations={"global-validate"},
     )
-    orchestrator_run1._agent_provider = FakeAgentProvider(sdk_factory_run1)
+    orchestrator_run1._agent_provider = agent_provider_run1
 
     await _run_with_fake_git(orchestrator_run1)
 
@@ -495,6 +492,7 @@ async def test_resume_with_review_feedback_uses_review_followup_prompt(
     sdk_factory_run2.configure_next_client(
         result_message=_make_result_message(session_id_run2, result="Done")
     )
+    agent_provider_run2 = FakeAgentProvider(sdk_factory_run2)
 
     orchestrator_run2 = make_orchestrator(
         repo_path=tmp_path,
@@ -507,11 +505,12 @@ async def test_resume_with_review_feedback_uses_review_followup_prompt(
             }
         ),
         gate_checker=gate_checker_run2,
+        evidence_provider=agent_provider_run2.evidence_provider,
         runs_dir=runs_dir,
         include_wip=True,  # Enable resume
         disable_validations={"global-validate"},
     )
-    orchestrator_run2._agent_provider = FakeAgentProvider(sdk_factory_run2)
+    orchestrator_run2._agent_provider = agent_provider_run2
 
     # Check if _build_resume_prompt is called with the right data
     import src.orchestration.orchestrator as orch_module

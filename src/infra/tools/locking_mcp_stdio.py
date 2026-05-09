@@ -11,7 +11,7 @@ Wire-up:
 * ``[project.scripts]`` registers ``mala-amp-mcp-locking`` →
   :func:`main`. After ``uv sync`` (or any ``pip install -e .``) the
   console script lands on ``PATH``.
-* :func:`src.orchestration.orchestration_wiring.create_amp_mcp_server_factory`
+* :meth:`src.infra.clients.amp_provider.AmpAgentProvider.mcp_server_factory`
   emits ``{"command": "mala-amp-mcp-locking", "args": [...], "env": {...}}``
   for Amp to spawn.
 

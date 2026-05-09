@@ -95,6 +95,8 @@ CODE_FIELDS = frozenset(
     }
 )
 
+QUIET_SUMMARY_MAX_LENGTH = 80
+
 # Maps agent/issue IDs to their assigned colors
 _agent_color_map: dict[str, str] = {}
 _agent_color_index = 0
@@ -335,7 +337,9 @@ def _display_tool_name(tool_name: str) -> str:
         return "Bash"
     if _is_lock_acquire_tool(tool_name):
         return "Lock"
-    if _is_amp_edit_tool(tool_name):
+    if _is_lock_release_tool(tool_name):
+        return "Release"
+    if _is_edit_tool(tool_name):
         return "Edit"
     return tool_name
 
@@ -345,15 +349,25 @@ def _is_shell_tool(tool_name: str) -> bool:
 
 
 def _is_lock_acquire_tool(tool_name: str) -> bool:
-    normalized = tool_name.replace("-", "_")
+    normalized = tool_name.replace("-", "_").replace(".", "__")
     return normalized in {
         "lock_acquire",
         "mcp__mala_locking__lock_acquire",
+        "mala_locking__lock_acquire",
     }
 
 
-def _is_amp_edit_tool(tool_name: str) -> bool:
-    return tool_name in {"apply_patch", "edit_file"}
+def _is_lock_release_tool(tool_name: str) -> bool:
+    normalized = tool_name.replace("-", "_").replace(".", "__")
+    return normalized in {
+        "lock_release",
+        "mcp__mala_locking__lock_release",
+        "mala_locking__lock_release",
+    }
+
+
+def _is_edit_tool(tool_name: str) -> bool:
+    return tool_name in {"apply_patch", "edit_file", "file_change"}
 
 
 def _get_shell_command(arguments: dict[str, Any] | None) -> str | None:
@@ -367,11 +381,11 @@ def _get_shell_command(arguments: dict[str, Any] | None) -> str | None:
     return str(command)
 
 
-def _format_quiet_command(command: str) -> str:
-    command = command.replace("\n", "↵")
-    if len(command) > 80:
-        return command[:80] + "..."
-    return command
+def _format_quiet_summary_text(text: str) -> str:
+    summary = text.replace("\n", "↵")
+    if len(summary) > QUIET_SUMMARY_MAX_LENGTH:
+        return summary[:QUIET_SUMMARY_MAX_LENGTH] + "..."
+    return summary
 
 
 def _format_lock_filepaths(arguments: dict[str, Any] | None) -> str | None:
@@ -385,10 +399,12 @@ def _format_lock_filepaths(arguments: dict[str, Any] | None) -> str | None:
             return ", ".join(paths)
     if filepaths:
         return str(filepaths)
+    if arguments.get("all") is True:
+        return "all"
     return None
 
 
-def _format_amp_edit_paths(arguments: dict[str, Any] | None) -> str | None:
+def _format_edit_paths(arguments: dict[str, Any] | None) -> str | None:
     if not arguments:
         return None
 
@@ -403,6 +419,14 @@ def _format_amp_edit_paths(arguments: dict[str, Any] | None) -> str | None:
     path = arguments.get("path")
     if path:
         return str(path)
+
+    changes = arguments.get("changes")
+    if isinstance(changes, list):
+        path_strings = [
+            str(change.get("path")) for change in changes if change.get("path")
+        ]
+        if path_strings:
+            return ", ".join(path_strings)
     return None
 
 
@@ -427,28 +451,33 @@ def _get_quiet_summary(
             or arguments.get("pattern")
         )
         if path:
-            return str(path)
+            return _format_quiet_summary_text(str(path))
 
     if _is_lock_acquire_tool(tool_name):
         filepaths = _format_lock_filepaths(arguments)
         if filepaths is not None:
-            return filepaths
+            return _format_quiet_summary_text(filepaths)
 
-    if _is_amp_edit_tool(tool_name):
-        paths = _format_amp_edit_paths(arguments)
+    if _is_lock_release_tool(tool_name):
+        filepaths = _format_lock_filepaths(arguments)
+        if filepaths is not None:
+            return _format_quiet_summary_text(filepaths)
+
+    if _is_edit_tool(tool_name):
+        paths = _format_edit_paths(arguments)
         if paths is not None:
-            return paths
+            return _format_quiet_summary_text(paths)
 
     # Shell tools: show the command itself. Amp deep mode reports
     # `command`; Amp smart mode reports `cmd`.
     if _is_shell_tool(tool_name):
         command = _get_shell_command(arguments)
         if command is not None:
-            return _format_quiet_command(command)
+            return _format_quiet_summary_text(command)
         if description:
-            return description
+            return _format_quiet_summary_text(description)
         if arguments and arguments.get("description"):
-            return str(arguments["description"])
+            return _format_quiet_summary_text(str(arguments["description"]))
 
     # Other tools: truncated args dict
     if arguments:
@@ -457,7 +486,7 @@ def _get_quiet_summary(
             preview = ", ".join(f"{k}=..." for k in keys)
             if len(arguments) > 3:
                 preview += f", +{len(arguments) - 3} more"
-            return f"{{{preview}}}"
+            return _format_quiet_summary_text(f"{{{preview}}}")
 
     return ""
 

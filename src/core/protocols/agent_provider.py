@@ -2,8 +2,8 @@
 
 This module defines the abstraction line between pipeline code and concrete
 coder backends. The pipeline consumes an ``AgentProvider`` (which bundles a
-client factory, a per-session runtime builder, and a log provider) and is
-agnostic to whether the underlying coder is Claude or Amp.
+client factory, a per-session runtime builder, and an evidence provider) and
+is agnostic to whether the underlying coder is Claude or Amp.
 
 Concrete provider implementations (``ClaudeAgentProvider``,
 ``AmpAgentProvider``) live in ``src/infra``; this module contains protocol
@@ -15,9 +15,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Set as AbstractSet
     from pathlib import Path
 
-    from src.core.protocols.log import LogProvider
+    from src.core.protocols.evidence import EvidenceProvider
+    from src.core.protocols.lifecycle import DeadlockMonitorProtocol
     from src.core.protocols.sdk import McpServerFactory, SDKClientFactoryProtocol
 
 
@@ -29,7 +31,43 @@ class CoderRuntimeBuilder(Protocol):
     matching ``client_factory`` knows how to consume it. Concrete return types
     include ``ClaudeRuntime`` (for the Claude provider) and ``AmpRuntime``
     (for the Amp provider).
+
+    The cross-coder fluent surface is intentionally minimal (plan A6): only
+    the with_* methods declared here may be invoked by the coder-agnostic
+    pipeline. Claude-only configuration (setting sources, SDK hooks,
+    disallowed tools) lives on :class:`ClaudeAgentRuntimeBuilder` and is
+    threaded in at provider-construction or via constructor kwargs on
+    :meth:`AgentProvider.runtime_builder`.
     """
+
+    def with_resume(self, resume_id: str | None) -> CoderRuntimeBuilder:
+        """Configure session resumption for the next :meth:`build` call.
+
+        ``None`` means no resumption (fresh session). Concrete builders
+        interpret the id per coder (Claude: SDK ``resume`` option; Amp:
+        ``thread_id`` for ``amp threads continue``).
+        """
+        ...
+
+    def with_agent_timeout(self, timeout_seconds: float | None) -> CoderRuntimeBuilder:
+        """Configure the per-agent timeout used for MCP tool calls."""
+        ...
+
+    def with_env(self, extra: Mapping[str, str] | None = None) -> CoderRuntimeBuilder:
+        """Layer extra environment variables onto the per-session env."""
+        ...
+
+    def with_lint_tools(
+        self, lint_tools: AbstractSet[str] | None = None
+    ) -> CoderRuntimeBuilder:
+        """Configure the lint-tool set used by the runtime's lint cache."""
+        ...
+
+    def with_mcp(
+        self, servers: Mapping[str, object] | None = None
+    ) -> CoderRuntimeBuilder:
+        """Configure MCP servers; default uses the provider-injected factory."""
+        ...
 
     def build(self) -> object:
         """Return an opaque coder-shaped runtime; consumed only by the matching client_factory."""
@@ -41,19 +79,19 @@ class AgentProvider(Protocol):
     """Encapsulates a coder backend (Claude or Amp).
 
     Bundles three pluggable concerns:
-      - client_factory:  produces SDKClientProtocol-conforming clients
-      - runtime_builder: produces a coder-shaped runtime per session
-      - log_provider:    produces a LogProvider for evidence parsing
+      - client_factory:     produces SDKClientProtocol-conforming clients
+      - runtime_builder:    produces a coder-shaped runtime per session
+      - evidence_provider:  produces an EvidenceProvider for evidence parsing
 
-    ``client_factory`` and ``log_provider`` are attributes (values) because the
-    same instance is reused across the run; ``runtime_builder`` is a method
-    because the runtime is constructed per session and depends on the repo
-    path and per-issue ``agent_id``.
+    ``client_factory`` and ``evidence_provider`` are attributes (values)
+    because the same instance is reused across the run; ``runtime_builder``
+    is a method because the runtime is constructed per session and depends
+    on the repo path and per-issue ``agent_id``.
     """
 
-    name: Literal["claude", "amp"]
+    name: Literal["claude", "amp", "codex"]
     client_factory: SDKClientFactoryProtocol
-    log_provider: LogProvider
+    evidence_provider: EvidenceProvider
 
     def runtime_builder(
         self,
@@ -61,6 +99,7 @@ class AgentProvider(Protocol):
         agent_id: str,
         *,
         mcp_server_factory: McpServerFactory,
+        deadlock_monitor: DeadlockMonitorProtocol | None = None,
     ) -> CoderRuntimeBuilder:
         """Construct a per-session :class:`CoderRuntimeBuilder`.
 
@@ -69,11 +108,27 @@ class AgentProvider(Protocol):
             agent_id: Per-issue agent identifier (used for lock-ownership
                 plumbing and MCP server configuration).
             mcp_server_factory: Factory producing the MCP server config map.
+            deadlock_monitor: Optional deadlock monitor whose
+                ``handle_event`` is wired into the per-coder lock-event
+                bridge (Claude: SDK PostToolUse hook; Amp: tee'd JSONL
+                side-channel). Threaded through the protocol so the
+                pipeline does not need to call coder-specific fluent
+                methods (plan A6).
 
         Returns:
             A :class:`CoderRuntimeBuilder` whose ``build()`` yields the
             coder-shaped runtime object consumed by the matching
             ``client_factory``.
+        """
+        ...
+
+    def mcp_server_factory(self) -> McpServerFactory:
+        """Return the coder-shaped MCP server factory.
+
+        Each provider knows whether it consumes in-process Server objects
+        (Claude) or stdio launch specs (Amp / Codex), so dispatch is owned
+        here rather than at the orchestrator. The orchestrator and factory
+        call this method instead of branching on ``self.name``.
         """
         ...
 

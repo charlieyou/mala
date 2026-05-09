@@ -7,7 +7,7 @@ Observable state:
 - FakeSDKClient.queries: list of (prompt, session_id) tuples sent via query()
 - FakeSDKClient.disconnect_called: whether disconnect() was invoked
 - FakeSDKClientFactory.clients: list of clients created
-- FakeSDKClientFactory.create_calls: list of options passed to create()
+- FakeSDKClientFactory.create_calls: list of runtimes passed to create()
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Self
 
+from src.core.protocols.agent_event import AgentResultEvent
 from src.core.protocols.sdk import SDKClientFactoryProtocol, SDKClientProtocol
 
 if TYPE_CHECKING:
@@ -24,20 +25,16 @@ if TYPE_CHECKING:
 
 
 def _make_default_result_message() -> object:
-    """Create a default ResultMessage for completing SDK response iteration.
+    """Create a default terminal ``AgentResultEvent`` for response iteration.
 
-    Imports claude_agent_sdk lazily to avoid import errors in environments
-    where the SDK is not installed.
+    Returns the cross-coder event directly so the fake mirrors production
+    wrapped SDK clients (which emit ``AgentEvent`` values from
+    ``receive_response``) without depending on ``claude_agent_sdk``.
     """
-    from claude_agent_sdk import ResultMessage
-
-    return ResultMessage(
-        subtype="result",
-        duration_ms=0,
-        duration_api_ms=0,
-        is_error=False,
-        num_turns=1,
+    return AgentResultEvent(
         session_id="fake-session",
+        subtype="result",
+        is_error=False,
         result=None,
     )
 
@@ -105,20 +102,27 @@ class FakeSDKClient(SDKClientProtocol):
             raise self.query_error
 
     async def receive_response(self) -> AsyncIterator[Any]:
-        """Yield configured messages, then result_message.
+        """Yield configured messages, then ``result_message``.
 
-        If result_message was not configured, yields a default ResultMessage.
-        If result_message was explicitly set to None, yields nothing after messages.
+        Tests pass whatever shape they need: ``AgentEvent`` values for the
+        coder-agnostic pipeline path, or Anthropic-shaped messages
+        (``MagicMock`` / ``AssistantMessage`` / ``ResultMessage``) for
+        Claude-private callers (e.g. ``AgentSDKReviewer``). The fake never
+        rewrites the shape — production wrapping (``_ClaudeAgentEventClient``)
+        only happens on the real Claude pipeline factory path.
+
+        If ``result_message`` was not configured, yields the default
+        terminal :class:`AgentResultEvent` so pipeline consumers see a
+        recognised event without a ``claude_agent_sdk`` import.
+        If ``result_message`` is explicitly ``None``, nothing terminal is
+        yielded (protocol edge case).
         """
         for msg in self.messages:
             yield msg
         if self.result_message is _NO_RESULT_MESSAGE:
-            # Default: yield a minimal ResultMessage to complete iteration
             yield _make_default_result_message()
         elif self.result_message is not None:
-            # Explicitly configured result message
             yield self.result_message
-        # If result_message is None, end without ResultMessage (protocol edge case)
 
     async def disconnect(self) -> None:
         """Mark client as disconnected, optionally with delay."""
@@ -131,15 +135,15 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
     """In-memory fake SDK client factory for testing.
 
     Can be initialized with a single client or a sequence of clients.
-    Tracks all create() calls and options for verification.
+    Tracks all create() calls and runtimes for verification.
 
     Attributes:
         client: Optional single client to always return (for simple test cases).
         clients: List of clients created (or pre-configured).
-        create_calls: List of options passed to create().
+        create_calls: List of runtimes passed to create().
         created_options: List of options dicts returned by create_options().
         created_matchers: List of (name, matcher, hooks) tuples from create_hook_matcher().
-        with_resume_calls: List of (options, resume) tuples passed to with_resume().
+        with_resume_calls: List of (runtime, resume) tuples passed to with_resume().
         _client_queue: Internal queue of clients to return.
     """
 
@@ -190,9 +194,9 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
         self._client_queue.append(client)
         return client
 
-    def create(self, options: object) -> SDKClientProtocol:
+    def create(self, runtime: object) -> SDKClientProtocol:
         """Return next queued client, fixed client, or create a new one."""
-        self.create_calls.append(options)
+        self.create_calls.append(runtime)
         if self.client is not None:
             # Always return the same client if one was provided
             # Track in clients list for test assertions
@@ -242,15 +246,15 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
         self.created_options.append(opts)
         return opts
 
-    def with_resume(self, options: object, resume: str | None) -> dict[str, Any]:
-        """Create a copy of options with a different resume session ID.
+    def with_resume(self, runtime: object, resume: str | None) -> dict[str, Any]:
+        """Create a copy of the runtime with a different resume session ID.
 
         For testing, this simply copies the dict and updates the resume field.
         Tracks the call in with_resume_calls for test verification.
         """
-        self.with_resume_calls.append((options, resume))
-        if isinstance(options, dict):
-            new_opts = dict(options)
+        self.with_resume_calls.append((runtime, resume))
+        if isinstance(runtime, dict):
+            new_opts = dict(runtime)
         else:
             new_opts = {}
         new_opts["resume"] = resume

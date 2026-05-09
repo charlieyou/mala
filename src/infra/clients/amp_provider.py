@@ -3,7 +3,7 @@
 Replaces the T007 stub with the real provider. Binds:
   * :class:`AmpClient` (T008) via the lazy ``client_factory``
   * :class:`AmpRuntimeBuilder` (T012) via :meth:`runtime_builder`
-  * :class:`AmpLogProvider` (T011) via the lazy ``log_provider``
+  * :class:`AmpLogProvider` (T011) via the lazy ``evidence_provider``
   * :class:`AmpPluginInstaller` (T010) inside :meth:`install_prerequisites`
 
 :meth:`install_prerequisites` is the safety-critical fail-closed gate
@@ -55,10 +55,12 @@ from typing import IO, TYPE_CHECKING, Any, Literal, cast
 from src.infra.clients.amp_runtime import AmpRuntimeBuilder
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from src.core.protocols.agent_provider import CoderRuntimeBuilder
-    from src.core.protocols.log import LogProvider
+    from src.core.protocols.evidence import EvidenceProvider
+    from src.core.protocols.lifecycle import DeadlockMonitorProtocol
     from src.core.protocols.sdk import (
         McpServerFactory,
         SDKClientFactoryProtocol,
@@ -67,6 +69,79 @@ if TYPE_CHECKING:
     from src.infra.clients.amp_runtime import AmpMode, AmpRuntime
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Amp MCP server factory (provider-owned)
+# ---------------------------------------------------------------------------
+
+
+def _create_amp_mcp_server_factory() -> McpServerFactory:
+    """Amp-shaped MCP server factory returning **stdio launch specs**.
+
+    The Amp ``--mcp-config`` payload is plain JSON (see
+    :class:`AmpRuntimeBuilder.build`); it cannot consume the in-process
+    Claude SDK server objects produced by the Claude provider's factory
+    (they contain a ``Server`` instance and fail ``json.dumps``).
+
+    Wires Amp at the same ``locking_mcp`` server the Claude path uses by
+    pointing at the ``mala-amp-mcp-locking`` console script (registered
+    via ``[project.scripts]``; entry point lives at
+    :mod:`src.infra.tools.locking_mcp_stdio`). The launcher exposes
+    ``lock_acquire`` / ``lock_release`` over stdio JSON-RPC and writes
+    ``<hash>.lock`` files via the same Python primitives
+    (:func:`src.infra.tools.locking.try_lock`) that
+    :mod:`src.infra.tools.locking_mcp` uses, so the plugin's lock-key
+    derivation in ``plugins/amp/mala-safety.ts`` sees identical fixtures
+    regardless of which path produced them — closing AC#9 (plan
+    ``L702``).
+
+    ``MALA_AGENT_ID`` and ``MALA_REPO_NAMESPACE`` are also passed via
+    args **and** env so the launcher works whether Amp inherits parent
+    env into spawned MCP children or not. ``MALA_LOCK_DIR`` is forwarded
+    from the orchestrator's environment when set (it is what the Claude
+    path uses to choose the lock directory); when unset, the launcher
+    falls back to the default in :func:`src.infra.tools.env.get_lock_dir`,
+    matching Claude-side behavior.
+
+    The ``emit_lock_event`` parameter is interpreted by
+    :class:`AmpRuntimeBuilder`: when present it injects ``MALA_LOCK_EVENT_LOG``
+    into this stdio spec, and ``AmpClient`` tails that JSONL side channel back
+    into the orchestrator's deadlock monitor.
+    """
+
+    def factory(
+        agent_id: str,
+        repo_path: Path,
+        emit_lock_event: Callable | None,
+    ) -> dict[str, object]:
+        del emit_lock_event
+        env: dict[str, str] = {
+            "MALA_AGENT_ID": agent_id,
+            "MALA_REPO_NAMESPACE": str(repo_path),
+        }
+        # Forward the orchestrator's lock dir when one is configured so
+        # the spawned launcher writes lock files where the rest of the
+        # run reads them. Falling through to the env.py default when the
+        # var is unset matches the Claude path's behavior.
+        lock_dir = os.environ.get("MALA_LOCK_DIR")
+        if lock_dir:
+            env["MALA_LOCK_DIR"] = lock_dir
+
+        return {
+            "mala-locking": {
+                "command": "mala-amp-mcp-locking",
+                "args": [
+                    "--agent-id",
+                    agent_id,
+                    "--repo-namespace",
+                    str(repo_path),
+                ],
+                "env": env,
+            }
+        }
+
+    return factory
 
 
 # ---------------------------------------------------------------------------
@@ -493,90 +568,69 @@ _MALA_DISALLOWED_WARNING = (
 
 
 class _AmpClientFactory:
-    """:class:`SDKClientFactoryProtocol` implementation for the Amp coder.
+    """Slim :class:`SDKClientFactoryProtocol` implementation for the Amp coder.
 
-    Only :meth:`create` and :meth:`with_resume` are exercised on the Amp
-    pipeline — the other surfaces exist for protocol conformance because
-    :class:`SDKClientFactoryProtocol` was originally Claude-shaped. Methods
-    that have no Amp analog raise :class:`NotImplementedError` with a clear
-    "not applicable to Amp" message rather than silently no-op'ing, so a
-    misrouted Claude code path surfaces an actionable error instead of
-    failing deep inside the subprocess pipeline.
+    Implements just the cross-coder surface (``create`` / ``with_resume``).
+    Claude-only knobs (``create_options`` / ``create_hook_matcher``) do
+    not appear on the protocol, so the Amp factory has no
+    ``NotImplementedError`` walls — a misrouted Claude code path now
+    fails at type-check time rather than deep inside the subprocess
+    pipeline.
     """
 
-    def create(self, options: object) -> SDKClientProtocol:
-        """Return a new :class:`AmpClient` for ``options``.
+    def create(self, runtime: object) -> SDKClientProtocol:
+        """Return a new :class:`AmpClient` for ``runtime``.
 
-        ``options`` must be an :class:`AmpClientOptions` constructed by the
-        Amp pipeline (typically out of an :class:`AmpRuntime`). The lazy
-        import keeps :mod:`amp_client` (and its asyncio + signal imports)
-        out of the Claude-only path.
+        ``runtime`` must be an :class:`AmpRuntime` produced by
+        :meth:`AmpAgentProvider.runtime_builder().build()`. The factory
+        privately unpacks the runtime's argv/env/log_path into an
+        :class:`AmpClientOptions`; the pipeline never inspects the
+        runtime shape (plan A3).
+
+        The lazy import keeps :mod:`amp_client` (and its asyncio +
+        signal imports) out of the Claude-only path.
         """
         from src.infra.clients.amp_client import AmpClient, AmpClientOptions
+        from src.infra.clients.amp_runtime import AmpRuntime
 
-        if not isinstance(options, AmpClientOptions):
+        if not isinstance(runtime, AmpRuntime):
             raise TypeError(
-                "AmpAgentProvider.client_factory.create(options) requires an "
-                "AmpClientOptions; got "
-                f"{type(options).__name__}. The pipeline must construct "
-                "AmpClientOptions from the AmpRuntime returned by "
+                "AmpAgentProvider.client_factory.create(runtime) requires an "
+                "AmpRuntime; got "
+                f"{type(runtime).__name__}. Build it via "
                 "AmpAgentProvider.runtime_builder(...).build()."
             )
+        options = AmpClientOptions(
+            cwd=runtime.cwd,
+            env=runtime.env,
+            argv=runtime.argv,
+            log_path=runtime.log_path,
+            thread_id=runtime.resume_thread_id,
+            lock_event_log_path=runtime.lock_event_log_path,
+            lock_event_callback=runtime.lock_event_callback,
+        )
         return cast("SDKClientProtocol", AmpClient(options))
 
-    def create_options(
-        self,
-        *,
-        cwd: str,
-        permission_mode: str = "bypassPermissions",
-        model: str = "opus",
-        system_prompt: dict[str, str] | None = None,
-        output_format: object | None = None,
-        settings: str | None = None,
-        setting_sources: list[str] | None = None,
-        mcp_servers: object | None = None,
-        disallowed_tools: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        hooks: dict[str, list[object]] | None = None,
-        resume: str | None = None,
-    ) -> object:
-        raise NotImplementedError(
-            "AmpAgentProvider.client_factory.create_options() is not used. "
-            "Amp uses a CLI-flag-shaped runtime (AmpClientOptions); the Amp "
-            "pipeline constructs it from the AmpRuntime, not via this "
-            "Claude-shaped helper."
-        )
+    def with_resume(self, runtime: object, resume: str | None) -> object:
+        """Return a copy of ``runtime`` continuing Amp thread ``resume``.
 
-    def create_hook_matcher(
-        self,
-        matcher: object | None,
-        hooks: list[object],
-    ) -> object:
-        raise NotImplementedError(
-            "AmpAgentProvider.client_factory.create_hook_matcher() is not "
-            "applicable: Amp safety is enforced via the bundled "
-            "mala-safety.ts plugin loaded under PLUGINS=all, not via SDK "
-            "hooks."
-        )
-
-    def with_resume(self, options: object, resume: str | None) -> object:
-        """Return a copy of ``options`` continuing Amp thread ``resume``.
-
-        For the Amp path this updates :attr:`AmpClientOptions.thread_id`;
-        the next ``query()`` then applies the configured resume strategy
-        (``amp threads continue <id>`` by default) to the spawn argv.
+        Updates :attr:`AmpRuntime.resume_thread_id`; the next
+        :meth:`create` materializes an :class:`AmpClientOptions` whose
+        ``thread_id`` carries the resume token, and the configured
+        resume strategy (``amp threads continue <id>`` by default) is
+        applied at spawn time.
         """
-        from src.infra.clients.amp_client import AmpClientOptions
+        from src.infra.clients.amp_runtime import AmpRuntime
 
-        if not isinstance(options, AmpClientOptions):
+        if not isinstance(runtime, AmpRuntime):
             raise TypeError(
-                "AmpAgentProvider.client_factory.with_resume(options, resume) "
-                "requires AmpClientOptions; got "
-                f"{type(options).__name__}."
+                "AmpAgentProvider.client_factory.with_resume(runtime, resume) "
+                "requires AmpRuntime; got "
+                f"{type(runtime).__name__}."
             )
         if resume is None:
-            return options
-        return replace(options, thread_id=resume)
+            return runtime
+        return replace(runtime, resume_thread_id=resume)
 
 
 # ---------------------------------------------------------------------------
@@ -597,7 +651,8 @@ class AmpAgentProvider:
         name: Provider identifier (always ``"amp"``).
         client_factory: :class:`SDKClientFactoryProtocol` returning
             :class:`AmpClient` instances.
-        log_provider: :class:`LogProvider` reading the per-thread tee log.
+        evidence_provider: :class:`EvidenceProvider` reading the per-thread
+            tee log.
     """
 
     name: Literal["amp"] = "amp"
@@ -618,7 +673,7 @@ class AmpAgentProvider:
         self._mode: AmpMode = mode
         self._effort: str | None = effort
         self._client_factory_cached: _AmpClientFactory | None = None
-        self._log_provider_cached: object | None = None
+        self._evidence_provider_cached: object | None = None
 
         # In-memory self-test cache keyed on (amp_version, plugin_hash).
         # Per plan L121: not persisted across runs. Per plan L823: invoked
@@ -643,18 +698,18 @@ class AmpAgentProvider:
         return cast("SDKClientFactoryProtocol", self._client_factory_cached)
 
     @property
-    def log_provider(self) -> LogProvider:
-        """Lazily-instantiated Amp log provider.
+    def evidence_provider(self) -> EvidenceProvider:
+        """Lazily-instantiated Amp evidence provider.
 
         Constructed on first access using
         :meth:`AmpLogProvider.from_probe` so the native-log probe runs
         once per run (per plan ``L122``).
         """
-        if self._log_provider_cached is None:
+        if self._evidence_provider_cached is None:
             from src.infra.clients.amp_log_provider import AmpLogProvider
 
-            self._log_provider_cached = AmpLogProvider.from_probe()
-        return cast("LogProvider", self._log_provider_cached)
+            self._evidence_provider_cached = AmpLogProvider.from_probe()
+        return cast("EvidenceProvider", self._evidence_provider_cached)
 
     def runtime_builder(
         self,
@@ -662,6 +717,7 @@ class AmpAgentProvider:
         agent_id: str,
         *,
         mcp_server_factory: McpServerFactory,
+        deadlock_monitor: DeadlockMonitorProtocol | None = None,
     ) -> CoderRuntimeBuilder:
         """Construct an :class:`AmpRuntimeBuilder` for one Amp session."""
         return AmpRuntimeBuilder(
@@ -670,7 +726,12 @@ class AmpAgentProvider:
             mcp_server_factory,
             mode=self._mode,
             effort=self._effort,
+            deadlock_monitor=deadlock_monitor,
         )
+
+    def mcp_server_factory(self) -> McpServerFactory:
+        """Return the Amp-shaped MCP server factory (stdio launch specs)."""
+        return _create_amp_mcp_server_factory()
 
     def install_prerequisites(
         self,

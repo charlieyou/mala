@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from claude_agent_sdk import ResultMessage
+from src.core.protocols.agent_event import AgentResultEvent
 
 from src.domain.evidence_check import GateResult
 from src.pipeline.agent_session_runner import (
@@ -78,15 +78,12 @@ def make_test_prompts() -> SessionPrompts:
 def make_result_message(
     session_id: str = "test-session-123",
     result: str | None = "Test completed successfully",
-) -> ResultMessage:
-    """Create a ResultMessage with the given fields."""
-    return ResultMessage(
-        subtype="result",
-        duration_ms=100,
-        duration_api_ms=50,
-        is_error=False,
-        num_turns=1,
+) -> AgentResultEvent:
+    """Create a terminal ``AgentResultEvent`` for the wrapped Claude path."""
+    return AgentResultEvent(
         session_id=session_id,
+        is_error=False,
+        subtype="result",
         result=result,
     )
 

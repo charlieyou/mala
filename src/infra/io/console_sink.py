@@ -239,7 +239,7 @@ class ConsoleEventSink(BaseEventSink):
         agent_id: str,
         issue_id: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         suffix = f" [coder={coder}]" if coder is not None else ""
         log("▶", f"Claimed {issue_id}{suffix}", agent_id=agent_id)
@@ -252,7 +252,7 @@ class ConsoleEventSink(BaseEventSink):
         duration_seconds: float,
         summary: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         # Use verbose logging since on_issue_completed provides similar info
         status_icon = "✓" if success else "✗"
@@ -427,7 +427,7 @@ class ConsoleEventSink(BaseEventSink):
         attempt: int,
         max_attempts: int,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         suffix = f" [coder={coder}]" if coder is not None else ""
         log(
@@ -440,7 +440,7 @@ class ConsoleEventSink(BaseEventSink):
         self,
         result: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         log("✓", f"FIXER {result}", agent_id="fixer")
 
@@ -448,7 +448,7 @@ class ConsoleEventSink(BaseEventSink):
         self,
         reason: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         log("✗", f"FIXER {Colors.RED}{reason}{Colors.RESET}", agent_id="fixer")
 
@@ -461,7 +461,7 @@ class ConsoleEventSink(BaseEventSink):
         agent_id: str,
         issue_id: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         log("→", f"CLOSE {issue_id}", agent_id=agent_id)
 
@@ -473,7 +473,7 @@ class ConsoleEventSink(BaseEventSink):
         duration_seconds: float,
         summary: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         status_icon = "✓" if success else "✗"
         color = Colors.GREEN if success else Colors.RED
@@ -850,7 +850,7 @@ class ConsoleEventSink(BaseEventSink):
         self,
         issue_id: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         log(
             "→",
@@ -863,7 +863,7 @@ class ConsoleEventSink(BaseEventSink):
         issue_id: str,
         result: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         log(
             "✓",
@@ -876,7 +876,7 @@ class ConsoleEventSink(BaseEventSink):
         issue_id: str,
         reason: str,
         *,
-        coder: Literal["claude", "amp"] | None = None,
+        coder: Literal["claude", "amp", "codex"] | None = None,
     ) -> None:
         log(
             "○",

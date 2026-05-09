@@ -5,7 +5,8 @@
 
 **M**ulti-**A**gent **L**oop **A**rchitecture
 
-A multi-agent system for processing beads issues in parallel using the Claude Agent SDK.
+A multi-agent system for processing beads issues in parallel using Claude,
+Amp, or Codex coder backends.
 
 The name also derives from Sanskrit, where *mala* means "garland" or "string of beads" - fitting for a system that orchestrates beads issues in a continuous loop, like counting prayer beads.
 
@@ -30,14 +31,14 @@ LLM agents become unreliable as their context window fills up. Early in a sessio
 
 ### Claude Code
 
-[Claude Code](https://code.claude.com/docs/en/setup) CLI is the agent runtime. See the docs for installation instructions.
+[Claude Code](https://code.claude.com/docs/en/setup) CLI is the default
+agent runtime. See the docs for installation instructions.
 
 ### Amp (Optional, for `coder: amp`)
 
 Mala can drive its per-issue implementation agent on Sourcegraph's
 [Amp](https://ampcode.com/manual) instead of Claude. Amp is opt-in via
-`--coder amp` / `MALA_CODER=amp` / `coder: amp` in `mala.yaml`; the default
-remains `coder: claude`.
+`--coder amp` / `MALA_CODER=amp` / `coder: amp` in `mala.yaml`.
 
 When `coder: amp` is selected, the orchestrator runs `amp --execute --stream-json`
 under `--dangerously-allow-all` and relies on a bundled TypeScript safety plugin
@@ -88,6 +89,84 @@ stream-json contract.
 - No devcontainer integration: Amp install/auth is a user prerequisite, not
   baked into mala's DevContainer image.
 
+### Codex (Optional, for `coder: codex`)
+
+Mala can drive its per-issue implementation agent on OpenAI's
+[`codex app-server`](https://developers.openai.com/codex/sdk) (`gpt-5.5`
+family) instead of Claude or Amp. Codex is opt-in via `--coder codex` /
+`MALA_CODER=codex` / `coder: codex` in `mala.yaml`; the default remains
+`coder: claude`.
+
+When `coder: codex` is selected, mala drives `codex app-server` through the
+`codex_app_server` Python SDK (in-process JSON-RPC over stdio — no CLI
+subprocess wrapping by mala). The orchestrator runs Codex with
+`sandbox: danger-full-access` and `approval_policy: never` by default, and
+relies on a bundled `PreToolUse` command hook (`mala-codex-pre-tool-use`)
+plus the bundled `mala-locking` MCP server for dangerous-command blocking,
+lock-ownership enforcement, and `MALA_DISALLOWED_TOOLS` enforcement. Both
+are packaged as a Mala-shipped Codex plugin
+(`plugins/codex/mala-safety/.codex-plugin/`) installed idempotently to
+`~/.codex/plugins/`. Before any issue agent is spawned, mala runs a
+fail-closed runtime self-test that proves both `SessionStart` and
+`PreToolUse` hook handlers are active and trusted; if either handler is
+missing, disabled, untrusted, or stale, the run aborts with a clear error.
+
+**Prerequisites:**
+
+- **Codex Python SDK.** Install via the `mala[codex]` extra:
+
+  ```bash
+  uv sync --extra codex
+  ```
+
+  or add the SDK directly:
+
+  ```bash
+  uv add openai-codex-app-server-sdk
+  ```
+
+  The SDK is **experimental** ("expect breaking changes"); mala pins to
+  the upstream tag in `pyproject.toml`. See `[project.optional-dependencies]`
+  for the current pin.
+- **Codex runtime binary** (`openai-codex-cli-bin`). The SDK pulls this in
+  as a transitive dependency; it is platform-specific (mac/linux/windows
+  wheels) and pinned to an exact version matching the SDK release. Mala
+  does not vendor the runtime.
+- **Codex auth.** Configure Codex auth in your local Codex config (e.g.,
+  via `codex login`) — see [Codex docs](https://developers.openai.com/codex/sdk)
+  for the current auth flow. Mala's `install_prerequisites()` fails closed
+  with `CodexNotInstalledError` when the SDK, runtime, or auth is missing.
+- `~/.codex/plugins/` writable. Mala installs the bundled `mala-safety`
+  plugin (with hook + locking MCP) idempotently on every run.
+- `$CODEX_HOME/config.toml` writable for automatic hook trust. If it is
+  read-only, use the one-time interactive trust fallback documented in
+  [CLI Reference: Codex Prerequisites](docs/cli-reference.md#codex-prerequisites).
+
+**Defaults under `coder: codex`:**
+
+| Option | Default | Why |
+|--------|---------|-----|
+| `model` | `gpt-5.5` | Latest gpt-5.5 family release |
+| `effort` | `medium` | Explicit Codex `ReasoningEffort` default |
+| `approval_policy` | `never` | Unattended-run posture; bundled hook is the gate |
+| `sandbox` | `danger-full-access` | Same posture as Amp's `--dangerously-allow-all` |
+
+**Known limitations under `coder: codex` (MVP):**
+
+- **No cross-coder session resume.** Codex `thr_*` thread IDs are not
+  interchangeable with Claude session IDs or Amp `T-*` thread IDs.
+- `--claude-settings-sources` and `--amp-mode` are logged as ignored
+  under `coder: codex` (parity with the existing cross-coder ignore
+  contract).
+- The bundled `mala-locking` MCP server is **mandatory and cannot be
+  replaced** via `coder_options.codex.mcp_servers`; user-supplied servers
+  are merged with the bundled one (the bundled key wins on conflict).
+- `ReasoningThreadItem` content (Codex's internal reasoning) is stripped
+  from `AgentEvent`s in MVP (parity with Amp's stripped-thinking stance).
+- No devcontainer baking: Codex install/auth is a user prerequisite. The
+  existing DevContainer mounts `~/.codex` so an authed local install
+  carries through.
+
 ### Cerberus Review-Gate (Optional)
 
 [Cerberus](https://github.com/charlieyou/cerberus) provides automated code review when `reviewer_type: cerberus`
@@ -118,6 +197,8 @@ mala run --strict --resume /path/to/repo   # Fail if a resumed issue has no sess
 mala run --watch /path/to/repo             # Keep polling for new issues
 mala run --coder amp /path/to/repo         # Use Amp instead of Claude as the per-issue coder
 mala run --coder amp --amp-mode rush /path/to/repo  # Amp in rush mode (Haiku)
+mala run --coder codex /path/to/repo       # Use Codex (gpt-5.5) as the per-issue coder
+mala run --coder codex --codex-model gpt-5.5 --codex-effort high /path/to/repo
 mala status                               # Check locks, config, logs
 mala status --all                          # Show running instances across directories
 mala logs list                            # List recent runs

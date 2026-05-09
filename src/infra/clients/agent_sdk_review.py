@@ -31,7 +31,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.events import MalaEventSink
-    from src.core.protocols.sdk import SDKClientFactoryProtocol, SDKClientProtocol
+    from src.core.protocols.sdk import SDKClientProtocol
+    from src.infra.agent_runtime import ClaudeSDKClientFactoryProtocol
     from src.infra.sigint_guard import InterruptGuard
 
 
@@ -108,7 +109,7 @@ class AgentSDKReviewer:
 
     repo_path: Path
     review_agent_prompt: str
-    sdk_client_factory: SDKClientFactoryProtocol
+    sdk_client_factory: ClaudeSDKClientFactoryProtocol
     event_sink: MalaEventSink | None = None
     model: str = "opus"
     default_timeout: int = DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS

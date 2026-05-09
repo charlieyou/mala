@@ -1,10 +1,8 @@
 """Unit tests for MessageStreamProcessor.
 
-Tests the extracted stream processing logic using fake SDK messages,
-without actual SDK/API dependencies.
-
-This module uses the actual SDK types (ResultMessage, etc.) to ensure
-type name checks work correctly in the processor.
+Tests the extracted stream processing logic using ``AgentEvent``s,
+without SDK/API dependencies. The processor consumes the coder-agnostic
+event protocol; tests feed the corresponding dataclasses directly.
 """
 
 from __future__ import annotations
@@ -14,15 +12,12 @@ from typing import TYPE_CHECKING, Any, Self
 
 import pytest
 
-# Import SDK types for realistic test messages
-from claude_agent_sdk import (
-    AssistantMessage,
-    ResultMessage,
-    TextBlock,
-    ToolResultBlock,
-    ToolUseBlock,
+from src.core.protocols.agent_event import (
+    AgentResultEvent,
+    AgentTextEvent,
+    AgentToolResultEvent,
+    AgentToolUseEvent,
 )
-
 from src.pipeline.message_stream_processor import (
     IdleTimeoutError,
     IdleTimeoutStream,
@@ -40,41 +35,25 @@ if TYPE_CHECKING:
 # --- Fixtures and helpers ---
 
 
-def make_result_message(
+def make_result_event(
     session_id: str = "test-session-123",
-    result: str | None = "Test completed successfully",
-    usage: dict[str, int] | None = None,
+    result: object = "Test completed successfully",
     subtype: str = "result",
     is_error: bool = False,
-) -> ResultMessage:
-    """Create a ResultMessage with the given fields."""
-    msg = ResultMessage(
-        subtype=subtype,
-        duration_ms=100,
-        duration_api_ms=50,
-        is_error=is_error,
-        num_turns=1,
+) -> AgentResultEvent:
+    """Create a result AgentEvent for testing."""
+    return AgentResultEvent(
         session_id=session_id,
         result=result,
+        subtype=subtype,
+        is_error=is_error,
     )
-    if usage is not None:
-        # Set usage via attribute since it's optional in constructor
-        object.__setattr__(msg, "usage", usage)
-    return msg
 
 
-def make_assistant_message(content: list[Any]) -> AssistantMessage:
-    """Create an AssistantMessage with the given content blocks."""
-    return AssistantMessage(content=content, model="test-model")
-
-
-async def messages_to_stream(
-    messages: list[Any], result: ResultMessage
-) -> AsyncIterator[Any]:
-    """Convert a list of messages to an async iterator."""
-    for msg in messages:
-        yield msg
-    yield result
+async def events_to_stream(events: list[Any]) -> AsyncIterator[Any]:
+    """Convert a flat list of events to an async iterator."""
+    for ev in events:
+        yield ev
 
 
 class FakeTracer:
@@ -196,12 +175,12 @@ class TestMessageStreamProcessorBasic:
     async def test_process_empty_stream_with_result(
         self, processor: MessageStreamProcessor, lifecycle_ctx: LifecycleContext
     ) -> None:
-        """Processing stream with just ResultMessage succeeds."""
-        result_msg = make_result_message(session_id="sess-abc")
+        """Stream with just a result event succeeds."""
+        result_event = make_result_event(session_id="sess-abc")
         state = MessageIterationState()
         lint_cache = FakeLintCache()
 
-        stream = messages_to_stream([], result_msg)
+        stream = events_to_stream([result_event])
         result = await processor.process_stream(
             stream,
             issue_id="test-issue",
@@ -218,18 +197,18 @@ class TestMessageStreamProcessorBasic:
         assert lifecycle_ctx.session_id == "sess-abc"
 
     @pytest.mark.asyncio
-    async def test_error_result_message_is_not_success(
+    async def test_error_result_event_is_not_success(
         self, processor: MessageStreamProcessor, lifecycle_ctx: LifecycleContext
     ) -> None:
-        """Amp error ResultMessages should not be treated as completed turns."""
-        result_msg = make_result_message(
+        """Amp error result events should not be treated as completed turns."""
+        result_event = make_result_event(
             session_id="sess-error",
             result="error_during_execution",
         )
         state = MessageIterationState()
 
         result = await processor.process_stream(
-            messages_to_stream([], result_msg),
+            events_to_stream([result_event]),
             issue_id="test-issue",
             state=state,
             lifecycle_ctx=lifecycle_ctx,
@@ -247,8 +226,8 @@ class TestMessageStreamProcessorBasic:
     async def test_error_subtype_with_human_result_is_not_success(
         self, processor: MessageStreamProcessor, lifecycle_ctx: LifecycleContext
     ) -> None:
-        """Detect real Amp shape where subtype classifies a human error result."""
-        result_msg = make_result_message(
+        """Detect Amp shape where subtype classifies a human error result."""
+        result_event = make_result_event(
             session_id="sess-error",
             result="Response incomplete: stream ended unexpectedly",
             subtype="error_during_execution",
@@ -257,7 +236,7 @@ class TestMessageStreamProcessorBasic:
         state = MessageIterationState()
 
         result = await processor.process_stream(
-            messages_to_stream([], result_msg),
+            events_to_stream([result_event]),
             issue_id="test-issue",
             state=state,
             lifecycle_ctx=lifecycle_ctx,
@@ -272,10 +251,10 @@ class TestMessageStreamProcessorBasic:
         assert lifecycle_ctx.session_id == "sess-error"
 
     @pytest.mark.asyncio
-    async def test_process_text_block_invokes_callback(
+    async def test_process_text_event_invokes_callback(
         self, lifecycle_ctx: LifecycleContext
     ) -> None:
-        """TextBlock triggers on_agent_text callback."""
+        """AgentTextEvent triggers on_agent_text callback."""
         text_calls: list[tuple[str, str]] = []
 
         def on_text(issue_id: str, text: str) -> None:
@@ -284,12 +263,11 @@ class TestMessageStreamProcessorBasic:
         callbacks = StreamProcessorCallbacks(on_agent_text=on_text)
         processor = MessageStreamProcessor(callbacks=callbacks)
 
-        text_block = TextBlock(text="Hello agent")
-        assistant_msg = make_assistant_message([text_block])
-        result_msg = make_result_message()
+        text_event = AgentTextEvent(text="Hello agent")
+        result_event = make_result_event()
         state = MessageIterationState()
 
-        stream = messages_to_stream([assistant_msg], result_msg)
+        stream = events_to_stream([text_event, result_event])
         await processor.process_stream(
             stream,
             issue_id="issue-1",
@@ -303,10 +281,10 @@ class TestMessageStreamProcessorBasic:
         assert text_calls == [("issue-1", "Hello agent")]
 
     @pytest.mark.asyncio
-    async def test_process_tool_use_block_invokes_callback(
+    async def test_process_tool_use_event_invokes_callback(
         self, lifecycle_ctx: LifecycleContext
     ) -> None:
-        """ToolUseBlock triggers on_tool_use callback and tracks pending."""
+        """AgentToolUseEvent triggers on_tool_use callback and tracks pending."""
         tool_calls: list[tuple[str, str, dict[str, Any] | None]] = []
 
         def on_tool(issue_id: str, name: str, arguments: dict[str, Any] | None) -> None:
@@ -315,16 +293,15 @@ class TestMessageStreamProcessorBasic:
         callbacks = StreamProcessorCallbacks(on_tool_use=on_tool)
         processor = MessageStreamProcessor(callbacks=callbacks)
 
-        tool_block = ToolUseBlock(
+        tool_event = AgentToolUseEvent(
             id="tool-abc",
             name="Read",
             input={"file_path": "/test.py"},
         )
-        assistant_msg = make_assistant_message([tool_block])
-        result_msg = make_result_message()
+        result_event = make_result_event()
         state = MessageIterationState()
 
-        stream = messages_to_stream([assistant_msg], result_msg)
+        stream = events_to_stream([tool_event, result_event])
         await processor.process_stream(
             stream,
             issue_id="issue-2",
@@ -337,7 +314,6 @@ class TestMessageStreamProcessorBasic:
 
         assert tool_calls == [("issue-2", "Read", {"file_path": "/test.py"})]
         assert state.tool_calls_this_turn == 1
-        # Tool ID should be in pending until result received
         assert "tool-abc" in state.pending_tool_ids
 
 
@@ -354,27 +330,20 @@ class TestMessageStreamProcessorLintCache:
 
         processor = MessageStreamProcessor()
 
-        # ToolUseBlock for bash with lint command
-        tool_block = ToolUseBlock(
+        tool_event = AgentToolUseEvent(
             id="tool-lint",
             name="Bash",
             input={"command": "ruff check ."},
         )
-        assistant_msg = make_assistant_message([tool_block])
-
-        # Use real ToolResultBlock for accurate type name checking
-        result_block = ToolResultBlock(
+        result_block = AgentToolResultEvent(
             tool_use_id="tool-lint",
             content="All checks passed",
             is_error=False,
         )
-
-        # Create assistant message containing the result
-        assistant_with_result = make_assistant_message([result_block])
-        result_msg = make_result_message()
+        result_event = make_result_event()
         state = MessageIterationState()
 
-        stream = messages_to_stream([assistant_msg, assistant_with_result], result_msg)
+        stream = events_to_stream([tool_event, result_block, result_event])
         await processor.process_stream(
             stream,
             issue_id="issue-3",
@@ -385,9 +354,7 @@ class TestMessageStreamProcessorLintCache:
             tracer=None,
         )
 
-        # Lint command was detected
         assert ("detect", "ruff check .") in lint_cache.detected_commands
-        # And marked as successful
         assert ("ruff", "ruff check .") in lint_cache.marked_successes
 
     @pytest.mark.asyncio
@@ -400,24 +367,20 @@ class TestMessageStreamProcessorLintCache:
 
         processor = MessageStreamProcessor()
 
-        tool_block = ToolUseBlock(
+        tool_event = AgentToolUseEvent(
             id="tool-lint",
             name="Bash",
             input={"command": "ruff check ."},
         )
-        assistant_msg = make_assistant_message([tool_block])
-
-        # Use real ToolResultBlock with is_error=True
-        result_block = ToolResultBlock(
+        result_block = AgentToolResultEvent(
             tool_use_id="tool-lint",
             content="Error: linting failed",
             is_error=True,
         )
-        assistant_with_result = make_assistant_message([result_block])
-        result_msg = make_result_message()
+        result_event = make_result_event()
         state = MessageIterationState()
 
-        stream = messages_to_stream([assistant_msg, assistant_with_result], result_msg)
+        stream = events_to_stream([tool_event, result_block, result_event])
         await processor.process_stream(
             stream,
             issue_id="issue-4",
@@ -428,9 +391,7 @@ class TestMessageStreamProcessorLintCache:
             tracer=None,
         )
 
-        # Lint command was detected
         assert ("detect", "ruff check .") in lint_cache.detected_commands
-        # But NOT marked as successful due to error
         assert lint_cache.marked_successes == []
 
 
@@ -438,19 +399,18 @@ class TestMessageStreamProcessorTracer:
     """Tests for tracer integration."""
 
     @pytest.mark.asyncio
-    async def test_tracer_logs_all_messages(
+    async def test_tracer_logs_all_events(
         self, lifecycle_ctx: LifecycleContext
     ) -> None:
-        """Tracer receives all messages from stream."""
+        """Tracer receives all events from stream."""
         processor = MessageStreamProcessor()
         tracer = FakeTracer()
 
-        text_block = TextBlock(text="hello")
-        assistant_msg = make_assistant_message([text_block])
-        result_msg = make_result_message()
+        text_event = AgentTextEvent(text="hello")
+        result_event = make_result_event()
         state = MessageIterationState()
 
-        stream = messages_to_stream([assistant_msg], result_msg)
+        stream = events_to_stream([text_event, result_event])
         await processor.process_stream(
             stream,
             issue_id="issue-trace",
@@ -462,8 +422,8 @@ class TestMessageStreamProcessorTracer:
         )
 
         assert len(tracer.logged_messages) == 2
-        assert tracer.logged_messages[0] == assistant_msg
-        assert tracer.logged_messages[1] == result_msg
+        assert tracer.logged_messages[0] == text_event
+        assert tracer.logged_messages[1] == result_event
 
 
 class TestMessageIterationState:
@@ -473,13 +433,13 @@ class TestMessageIterationState:
     async def test_first_message_received_flag(
         self, processor: MessageStreamProcessor, lifecycle_ctx: LifecycleContext
     ) -> None:
-        """first_message_received is set on first message."""
-        result_msg = make_result_message()
+        """first_message_received is set on first event."""
+        result_event = make_result_event()
         state = MessageIterationState()
 
         assert state.first_message_received is False
 
-        stream = messages_to_stream([], result_msg)
+        stream = events_to_stream([result_event])
         await processor.process_stream(
             stream,
             issue_id="issue-first",
@@ -496,14 +456,13 @@ class TestMessageIterationState:
     async def test_tool_calls_counter(
         self, processor: MessageStreamProcessor, lifecycle_ctx: LifecycleContext
     ) -> None:
-        """tool_calls_this_turn counts ToolUseBlocks."""
-        tool1 = ToolUseBlock(id="t1", name="Read", input={})
-        tool2 = ToolUseBlock(id="t2", name="Write", input={})
-        assistant_msg = make_assistant_message([tool1, tool2])
-        result_msg = make_result_message()
+        """tool_calls_this_turn counts AgentToolUseEvents."""
+        tool1 = AgentToolUseEvent(id="t1", name="Read", input={})
+        tool2 = AgentToolUseEvent(id="t2", name="Write", input={})
+        result_event = make_result_event()
         state = MessageIterationState()
 
-        stream = messages_to_stream([assistant_msg], result_msg)
+        stream = events_to_stream([tool1, tool2, result_event])
         await processor.process_stream(
             stream,
             issue_id="issue-count",

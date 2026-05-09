@@ -88,6 +88,7 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "coder",
         "amp_mode",
         "effort",
+        "coder_options",
     }
 )
 
