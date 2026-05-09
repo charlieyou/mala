@@ -86,10 +86,14 @@ def build_gate_metadata(
             for c in evidence.commands.values()
             if c.seen and c.kind != CommandKind.CUSTOM
         ]
+        # Match legacy parser semantics: failed CUSTOM commands are surfaced
+        # via the strict/advisory custom-command path, not via commands_failed.
         commands_failed = [
             c.observed_command or c.name
             for c in evidence.commands.values()
-            if c.status == "failed" and c.kind not in EVIDENCE_CHECK_IGNORED_KINDS
+            if c.status == "failed"
+            and c.kind not in EVIDENCE_CHECK_IGNORED_KINDS
+            and c.kind != CommandKind.CUSTOM
         ]
         validation_result = MetaValidationResult(
             passed=passed if passed else gate_result.passed,

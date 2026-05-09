@@ -127,6 +127,47 @@ class TestBuildGateMetadata:
         assert metadata.validation_result.passed is False
         assert "ruff check" in metadata.validation_result.commands_failed
 
+    def test_failed_custom_command_excluded_from_commands_failed(self) -> None:
+        """Failed CUSTOM commands must not surface in commands_failed.
+
+        Legacy parity: parse_validation_evidence_with_spec excludes CUSTOM
+        kinds from failed_commands because custom failures are reported via
+        the strict/advisory path. The new commands-map derivation must keep
+        the same exclusion or commands_run/commands_failed will diverge for
+        the same input.
+        """
+        evidence = ValidationEvidence(
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="passed",
+                ),
+                "import_lint": CommandEvidence(
+                    name="import_lint",
+                    kind=CommandKind.CUSTOM,
+                    seen=True,
+                    status="failed",
+                    observed_command="uvx lint-imports",
+                ),
+            },
+        )
+        gate_result = GateResult(
+            passed=False,
+            failure_reasons=["custom command failed"],
+            validation_evidence=evidence,
+            commit_hash="abc123",
+        )
+
+        metadata = build_gate_metadata(gate_result, passed=False)
+
+        assert metadata.validation_result is not None
+        assert "uvx lint-imports" not in metadata.validation_result.commands_failed
+        assert "import_lint" not in metadata.validation_result.commands_failed
+        # Custom commands also must not appear in commands_run (matches legacy).
+        assert "custom" not in metadata.validation_result.commands_run
+
     def test_passed_override(self) -> None:
         """Should override passed status when overall run passed."""
         evidence = ValidationEvidence(

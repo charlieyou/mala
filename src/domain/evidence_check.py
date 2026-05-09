@@ -355,7 +355,7 @@ def check_evidence_against_spec(
         if name not in required_keys:
             # This command is not in evidence_required, skip it
             continue
-        ran = evidence.commands_ran.get(kind, False)
+        ran = any(c.seen for c in evidence.commands.values() if c.kind == kind)
         if not ran:
             missing.append(name)
 
@@ -368,10 +368,10 @@ def check_evidence_against_spec(
         if name not in required_keys:
             # This command is not in evidence_required, skip it
             continue
-        ran = evidence.custom_commands_ran.get(name, False)
-        if not ran:
+        record = evidence.commands.get(name)
+        if record is None or not record.seen:
             missing.append(name)
-        elif evidence.custom_commands_failed.get(name, False):
+        elif record.status == "failed":
             # Command ran but failed
             if not cmd.allow_fail:
                 # Strict failure - blocks gate
@@ -1394,11 +1394,23 @@ class EvidenceCheck:
                 f"Custom command(s) failed: {', '.join(failed_strict)}"
             )
 
-        # Check for failed built-in validation commands
-        if evidence.failed_commands:
+        # Check for failed built-in validation commands (excludes CUSTOM,
+        # which is reported via the strict/advisory custom-command path above).
+        failed_built_ins = [
+            c.observed_command or c.name
+            for c in evidence.commands.values()
+            if c.status == "failed"
+            and c.kind not in EVIDENCE_CHECK_IGNORED_KINDS
+            and c.kind != CommandKind.CUSTOM
+        ]
+        # Deduplicate while preserving order: multiple kinds may map to the
+        # same observed command (e.g., a single ruff invocation matched as
+        # both LINT and FORMAT in legacy parsing).
+        failed_built_ins = list(dict.fromkeys(failed_built_ins))
+        if failed_built_ins:
             passed = False
             failure_reasons.append(
-                f"Validation command(s) failed: {', '.join(evidence.failed_commands)}"
+                f"Validation command(s) failed: {', '.join(failed_built_ins)}"
             )
 
         return GateResult(

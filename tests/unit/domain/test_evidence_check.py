@@ -8,7 +8,7 @@ Tests for:
 import json
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 
@@ -104,12 +104,19 @@ def make_evidence(
     }
     commands: dict[str, CommandEvidence] = {}
     for name, kind in name_kind_pairs:
+        observed = next(
+            (full for full in failed_set if name == full or name in full),
+            None,
+        )
+        status_lit: Literal["passed", "failed"] = (
+            "failed" if observed is not None else "passed"
+        )
         commands[name] = CommandEvidence(
             name=name,
             kind=kind,
             seen=True,
-            status="passed",
-            observed_command=name,
+            status=status_lit,
+            observed_command=observed if observed is not None else name,
         )
     return ValidationEvidence(
         commands=commands,
@@ -1978,6 +1985,14 @@ class TestEvidenceRequiredFiltering:
     def test_custom_command_allow_fail_ran_failed_passes(self) -> None:
         """Test 20: allow_fail + ran + failed → passes, advisory failure."""
         evidence = ValidationEvidence(
+            commands={
+                "import_lint": CommandEvidence(
+                    name="import_lint",
+                    kind=CommandKind.CUSTOM,
+                    seen=True,
+                    status="failed",
+                ),
+            },
             commands_ran={},
             failed_commands=[],
             custom_commands_ran={"import_lint": True},  # Ran
@@ -2011,6 +2026,20 @@ class TestEvidenceRequiredFiltering:
         """
         # Evidence with two custom commands ran
         evidence = ValidationEvidence(
+            commands={
+                "import_lint": CommandEvidence(
+                    name="import_lint",
+                    kind=CommandKind.CUSTOM,
+                    seen=True,
+                    status="passed",
+                ),
+                "doc_check": CommandEvidence(
+                    name="doc_check",
+                    kind=CommandKind.CUSTOM,
+                    seen=True,
+                    status="passed",
+                ),
+            },
             commands_ran={},
             failed_commands=[],
             custom_commands_ran={
@@ -2080,6 +2109,14 @@ class TestEvidenceRequiredFiltering:
         Same scenario as above but for custom commands specifically.
         """
         evidence = ValidationEvidence(
+            commands={
+                "existing_check": CommandEvidence(
+                    name="existing_check",
+                    kind=CommandKind.CUSTOM,
+                    seen=True,
+                    status="passed",
+                ),
+            },
             commands_ran={},
             failed_commands=[],
             custom_commands_ran={"existing_check": True},
@@ -2104,6 +2141,77 @@ class TestEvidenceRequiredFiltering:
         assert passed is False
         assert "missing_check" in missing
         assert failed_strict == []
+
+
+class TestCheckEvidenceAgainstSpecReadsFromCommandsMap:
+    """Regression: check_evidence_against_spec must read from evidence.commands.
+
+    The legacy fields (commands_ran/custom_commands_ran/custom_commands_failed)
+    are removed in T005. Until then they are still populated by the parser as
+    a transitional shim, but the gate decision must come from the unified
+    commands map so behaviour is correct after T005's deletion.
+    """
+
+    def test_built_in_evidence_only_in_commands_map_passes(self) -> None:
+        """Built-in evidence supplied only via commands map must satisfy spec."""
+        evidence = ValidationEvidence(
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="passed",
+                ),
+            },
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command="uv run pytest",
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("test",),
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        assert passed is True
+        assert missing == []
+        assert failed_strict == []
+
+    def test_custom_evidence_failed_only_in_commands_map_blocks_strict(self) -> None:
+        """Strict custom failures recorded only in the commands map block the gate."""
+        evidence = ValidationEvidence(
+            commands={
+                "import_lint": CommandEvidence(
+                    name="import_lint",
+                    kind=CommandKind.CUSTOM,
+                    seen=True,
+                    status="failed",
+                ),
+            },
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="import_lint",
+                    command="uvx lint-imports",
+                    kind=CommandKind.CUSTOM,
+                    allow_fail=False,
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("import_lint",),
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        assert passed is False
+        assert missing == []
+        assert "import_lint" in failed_strict
 
 
 class TestCheckWithResolutionSpec:
@@ -5028,6 +5136,12 @@ class TestCustomCommandMarkerParsing:
         evidence = ValidationEvidence()
         evidence.custom_commands_ran["import_lint"] = True
         evidence.custom_commands_failed["import_lint"] = True
+        evidence.commands["import_lint"] = CommandEvidence(
+            name="import_lint",
+            kind=CommandKind.CUSTOM,
+            seen=True,
+            status="failed",
+        )
 
         # allow_fail=True means this is an advisory failure
         spec = self._make_custom_spec([("import_lint", "python scripts/lint.py", True)])
@@ -5048,6 +5162,12 @@ class TestCustomCommandMarkerParsing:
         evidence = ValidationEvidence()
         evidence.custom_commands_ran["import_lint"] = True
         evidence.custom_commands_failed["import_lint"] = True
+        evidence.commands["import_lint"] = CommandEvidence(
+            name="import_lint",
+            kind=CommandKind.CUSTOM,
+            seen=True,
+            status="failed",
+        )
 
         # allow_fail=False means this is a strict failure
         spec = self._make_custom_spec(
