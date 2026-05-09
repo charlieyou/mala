@@ -100,6 +100,48 @@ async def test_text_kind_invokes_text_callback() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_text_deltas_are_coalesced_before_callback() -> None:
+    obs = await _drive(
+        [
+            AgentTextEvent(text="I", is_delta=True),
+            AgentTextEvent(text="'ll", is_delta=True),
+            AgentTextEvent(text=" implement", is_delta=True),
+            AgentToolUseEvent(id="t-1", name="Bash", input={"command": "pwd"}),
+            AgentResultEvent(session_id="sess-x", result="done"),
+        ]
+    )
+    assert obs.text_calls == [("issue-42", "I'll implement")]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_text_deltas_flush_when_stream_raises() -> None:
+    obs = _Observations()
+    callbacks = StreamProcessorCallbacks(
+        on_agent_text=lambda issue_id, text: obs.text_calls.append((issue_id, text)),
+    )
+    processor = MessageStreamProcessor(callbacks=callbacks)
+
+    async def broken_stream() -> AsyncIterator[Any]:
+        yield AgentTextEvent(text="partial", is_delta=True)
+        raise RuntimeError("stream failed")
+
+    with pytest.raises(RuntimeError, match="stream failed"):
+        await processor.process_stream(
+            stream=broken_stream(),
+            issue_id="issue-42",
+            state=MessageIterationState(),
+            lifecycle_ctx=LifecycleContext(),
+            lint_cache=FakeLintCache(),
+            query_start=0.0,
+            tracer=None,
+        )
+
+    assert obs.text_calls == [("issue-42", "partial")]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_tool_use_kind_increments_counter_and_tracks_pending() -> None:
     obs = await _drive(
         [

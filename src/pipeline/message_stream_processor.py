@@ -216,29 +216,41 @@ class MessageStreamProcessor:
             MessageIterationResult with success status.
         """
         result_error: str | None = None
-        async for event in stream:
-            if not state.first_message_received:
-                state.first_message_received = True
-                latency = time.time() - query_start
-                logger.debug(
-                    "Session %s: first message after %.1fs",
-                    issue_id,
-                    latency,
-                )
-            if tracer is not None:
-                tracer.log_message(event)
+        pending_text_delta = ""
+        try:
+            async for event in stream:
+                if not state.first_message_received:
+                    state.first_message_received = True
+                    latency = time.time() - query_start
+                    logger.debug(
+                        "Session %s: first message after %.1fs",
+                        issue_id,
+                        latency,
+                    )
+                if tracer is not None:
+                    tracer.log_message(event)
 
-            kind = getattr(event, "kind", None)
-            if kind == "text":
-                self._handle_text_event(event, issue_id)
-            elif kind == "tool_use":
-                self._handle_tool_use_event(event, issue_id, state, lint_cache)
-            elif kind == "tool_result":
-                self._handle_tool_result_event(event, state, lint_cache)
-            elif kind == "result":
-                result_error = self._handle_result_event(
-                    event, issue_id, state, lifecycle_ctx
-                )
+                kind = getattr(event, "kind", None)
+                if kind == "text":
+                    pending_text_delta = self._handle_text_event(
+                        event, issue_id, pending_text_delta
+                    )
+                elif kind == "tool_use":
+                    self._flush_text_delta(issue_id, pending_text_delta)
+                    pending_text_delta = ""
+                    self._handle_tool_use_event(event, issue_id, state, lint_cache)
+                elif kind == "tool_result":
+                    self._flush_text_delta(issue_id, pending_text_delta)
+                    pending_text_delta = ""
+                    self._handle_tool_result_event(event, state, lint_cache)
+                elif kind == "result":
+                    self._flush_text_delta(issue_id, pending_text_delta)
+                    pending_text_delta = ""
+                    result_error = self._handle_result_event(
+                        event, issue_id, state, lifecycle_ctx
+                    )
+        finally:
+            self._flush_text_delta(issue_id, pending_text_delta)
 
         # Success
         stream_duration = time.time() - query_start
@@ -255,11 +267,22 @@ class MessageStreamProcessor:
             idle_retry_count=0,
         )
 
-    def _handle_text_event(self, event: object, issue_id: str) -> None:
+    def _handle_text_event(
+        self, event: object, issue_id: str, pending_text_delta: str
+    ) -> str:
         if self.callbacks.on_agent_text is None:
-            return
+            return ""
         text = getattr(event, "text", "")
+        if bool(getattr(event, "is_delta", False)):
+            return pending_text_delta + str(text)
+        self._flush_text_delta(issue_id, pending_text_delta)
         self.callbacks.on_agent_text(issue_id, text)
+        return ""
+
+    def _flush_text_delta(self, issue_id: str, pending_text_delta: str) -> None:
+        if not pending_text_delta or self.callbacks.on_agent_text is None:
+            return
+        self.callbacks.on_agent_text(issue_id, pending_text_delta)
 
     def _handle_tool_use_event(
         self,

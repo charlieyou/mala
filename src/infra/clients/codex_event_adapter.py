@@ -289,11 +289,16 @@ class CodexEventAdapter:
     # ------------------------------------------------------------------
 
     def _handle_message_delta(self, payload: object) -> list[AgentEventValue]:
-        delta = getattr(payload, "delta", "") or ""
+        raw_delta = getattr(payload, "delta", None)
+        if raw_delta is None:
+            return []
+        delta = str(raw_delta)
+        if delta == "":
+            return []
         item_id = str(getattr(payload, "item_id", "") or "")
         if item_id:
             self._seen_message_deltas.add(item_id)
-        return [AgentTextEvent(text=str(delta))]
+        return [AgentTextEvent(text=delta, is_delta=True)]
 
     def _handle_message_completed(
         self, item: object, item_id: str

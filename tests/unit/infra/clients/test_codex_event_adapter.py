@@ -137,7 +137,33 @@ def test_agent_message_delta_yields_text_event() -> None:
             ),
         )
     )
-    assert events == [AgentTextEvent(text="hello")]
+    assert events == [AgentTextEvent(text="hello", is_delta=True)]
+
+
+@pytest.mark.unit
+def test_empty_agent_message_delta_is_ignored_and_does_not_suppress_completed() -> None:
+    adapter = CodexEventAdapter()
+    delta_events = adapter.to_events(
+        _Notification(
+            method="item/agentMessage/delta",
+            payload=SimpleNamespace(delta="", item_id="msg_1"),
+        )
+    )
+    completed_events = adapter.to_events(
+        _Notification(
+            method="item/completed",
+            payload=SimpleNamespace(
+                item=_wrap_root(
+                    SimpleNamespace(id="msg_1", type="agentMessage", text="full message")
+                ),
+                thread_id="thr_1",
+                turn_id="turn_1",
+            ),
+        )
+    )
+
+    assert delta_events == []
+    assert completed_events == [AgentTextEvent(text="full message")]
 
 
 @pytest.mark.unit

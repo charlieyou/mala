@@ -42,6 +42,7 @@ class AgentTextEvent:
     """Assistant emitted plain text."""
 
     text: str = ""
+    is_delta: bool = False
     kind: Literal["text"] = "text"
 
 
