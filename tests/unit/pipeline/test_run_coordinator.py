@@ -327,7 +327,7 @@ class TestFixerInterruptHandling:
         mock_uuid.hex = "abcd1234efgh5678"
 
         with (
-            patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path,
+            patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path,
             patch("src.pipeline.fixer_service.uuid.uuid4", return_value=mock_uuid),
         ):
             mock_log_path.return_value = Path("/mock/log/path/session.jsonl")
@@ -437,7 +437,7 @@ class TestFixerInterruptHandling:
         mock_uuid.hex = "deadbeef12345678"
 
         with (
-            patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path,
+            patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path,
             patch("src.pipeline.fixer_service.uuid.uuid4", return_value=mock_uuid),
         ):
             mock_log_path.return_value = Path("/mock/log/path/interrupted.jsonl")

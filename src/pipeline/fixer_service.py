@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING
 
 from src.infra.agent_runtime import ClaudeAgentRuntimeBuilder
 from src.infra.sigint_guard import InterruptGuard
-from src.infra.tools.env import get_claude_log_path
 from src.infra.tools.locking import cleanup_agent_locks
 from src.domain.validation.spec import extract_lint_tools_from_spec
 from src.pipeline.fixer_interface import FixerResult
@@ -204,20 +203,41 @@ class FixerService:
         client = self._agent_provider.client_factory.create(runtime)
 
         pending_lint_commands: dict[str, tuple[str, str]] = {}
-        is_amp_provider = getattr(self._agent_provider, "name", None) == "amp"
+        provider_name = getattr(self._agent_provider, "name", None)
+        is_amp_provider = provider_name == "amp"
+        is_codex_provider = provider_name == "codex"
         runtime_log_path = getattr(runtime, "log_path", None)
+        # Resolve the log path through the provider's EvidenceProvider so
+        # the contract on ``FixerResult.log_path`` holds for every coder.
+        # Amp pre-sets ``runtime.log_path`` during build; Claude maps
+        # ``agent_id`` to ``~/.claude/projects/.../{agent_id}.jsonl``;
+        # Codex's tee path keys on ``thread_id`` (only known post-query),
+        # so we use ``agent_id`` as a stand-in here and re-resolve via
+        # ``current_log_path`` once the thread id is populated.
         log_path: str = (
             str(runtime_log_path)
             if is_amp_provider and runtime_log_path is not None
-            else str(get_claude_log_path(self._config.repo_path, agent_id))
+            else str(
+                self._agent_provider.evidence_provider.get_log_path(
+                    self._config.repo_path, agent_id
+                )
+            )
         )
 
         def current_log_path() -> str:
-            if not is_amp_provider:
+            if is_amp_provider:
+                client_log_path = getattr(client, "log_path", None)
+                if client_log_path is not None:
+                    return str(client_log_path)
                 return log_path
-            client_log_path = getattr(client, "log_path", None)
-            if client_log_path is not None:
-                return str(client_log_path)
+            if is_codex_provider:
+                thread_id = getattr(client, "thread_id", None)
+                if thread_id is not None:
+                    return str(
+                        self._agent_provider.evidence_provider.get_log_path(
+                            self._config.repo_path, thread_id
+                        )
+                    )
             return log_path
 
         try:

@@ -236,7 +236,7 @@ class TestFixerServiceSuccess:
         service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path:
+        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
             mock_log_path.return_value = Path("/tmp/fixer.log")
 
             result = await service.run_fixer(ctx)
@@ -255,7 +255,7 @@ class TestFixerServiceSuccess:
         service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path:
+        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
             mock_log_path.return_value = tmp_path / "fixer.log"
 
             result = await service.run_fixer(ctx)
@@ -281,7 +281,7 @@ class TestFixerServiceSuccess:
             max_attempts=5,
         )
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
             await service.run_fixer(ctx)
 
         assert len(client.query_calls) == 1
@@ -353,7 +353,7 @@ class TestFixerServiceFailure:
         service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context()
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path:
+        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
             mock_log_path.return_value = Path("/tmp/fixer.log")
 
             result = await service.run_fixer(ctx)
@@ -375,7 +375,7 @@ class TestFixerServiceFailure:
         service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context()
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path:
+        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
             mock_log_path.return_value = Path("/tmp/fixer.log")
 
             result = await service.run_fixer(ctx)
@@ -445,7 +445,7 @@ class TestFixerServiceInterrupt:
         service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path") as mock_log_path:
+        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
             mock_log_path.return_value = Path("/tmp/fixer.log")
 
             # Patch InterruptGuard to return interrupted after first check
@@ -517,7 +517,7 @@ class TestFixerServiceEvents:
         service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context(attempt=2)
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
             await service.run_fixer(ctx)
 
         event_sink.on_fixer_text.assert_called_once_with(2, "Fixing the issue...")
@@ -544,7 +544,7 @@ class TestFixerServiceEvents:
         service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context(attempt=1)
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
             await service.run_fixer(ctx)
 
         event_sink.on_fixer_tool_use.assert_called_once_with(
@@ -568,7 +568,7 @@ class TestFixerServiceEvents:
         service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context()
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
             await service.run_fixer(ctx)
 
         event_sink.on_fixer_completed.assert_called_once_with(
@@ -628,7 +628,7 @@ class TestFixerServiceValidationCommands:
             validation_commands="   - `ruff check .`\n   - `pytest`"
         )
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
             await service.run_fixer(ctx)
 
         prompt, _ = client.query_calls[0]
@@ -660,7 +660,7 @@ class TestFixerServiceValidationCommands:
             spec=spec,
         )
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
             await service.run_fixer(ctx)
 
         prompt, _ = client.query_calls[0]
@@ -678,7 +678,7 @@ class TestFixerServiceValidationCommands:
         service = FixerService(config, provider)
         ctx = make_failure_context()  # No spec, no validation_commands
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
             await service.run_fixer(ctx)
 
         prompt, _ = client.query_calls[0]
@@ -722,7 +722,7 @@ class TestFixerServiceLintCache:
         service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch("src.pipeline.fixer_service.get_claude_log_path"):
+        with patch("src.infra.io.session_log_parser.get_claude_log_path"):
             await service.run_fixer(ctx)
 
         # Verify lint cache was updated
