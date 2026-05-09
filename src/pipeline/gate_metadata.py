@@ -81,20 +81,26 @@ def build_gate_metadata(
 
     validation_result: MetaValidationResult | None = None
     if evidence is not None:
-        commands_run = [
-            c.kind.value
-            for c in evidence.commands.values()
-            if c.seen and c.kind != CommandKind.CUSTOM
-        ]
+        # Deduplicate: multiple commands may share a kind, and multiple kinds may
+        # map to the same observed command (e.g., LINT+FORMAT for a single ruff run).
+        commands_run = list(
+            dict.fromkeys(
+                c.kind.value
+                for c in evidence.commands.values()
+                if c.seen and c.kind != CommandKind.CUSTOM
+            )
+        )
         # Match legacy parser semantics: failed CUSTOM commands are surfaced
         # via the strict/advisory custom-command path, not via commands_failed.
-        commands_failed = [
-            c.observed_command or c.name
-            for c in evidence.commands.values()
-            if c.status == "failed"
-            and c.kind not in EVIDENCE_CHECK_IGNORED_KINDS
-            and c.kind != CommandKind.CUSTOM
-        ]
+        commands_failed = list(
+            dict.fromkeys(
+                c.observed_command or c.name
+                for c in evidence.commands.values()
+                if c.status == "failed"
+                and c.kind not in EVIDENCE_CHECK_IGNORED_KINDS
+                and c.kind != CommandKind.CUSTOM
+            )
+        )
         validation_result = MetaValidationResult(
             passed=passed if passed else gate_result.passed,
             commands_run=commands_run,
@@ -159,16 +165,24 @@ def build_gate_metadata_from_logs(
         failure_reasons=failure_reasons,
     )
 
-    commands_run = [
-        c.kind.value
-        for c in evidence.commands.values()
-        if c.seen and c.kind != CommandKind.CUSTOM
-    ]
-    commands_failed = [
-        c.observed_command or c.name
-        for c in evidence.commands.values()
-        if c.status == "failed" and c.kind not in EVIDENCE_CHECK_IGNORED_KINDS
-    ]
+    # Deduplicate and exclude CUSTOM kinds to match build_gate_metadata semantics.
+    # Failed CUSTOM commands are surfaced via the strict/advisory path, not here.
+    commands_run = list(
+        dict.fromkeys(
+            c.kind.value
+            for c in evidence.commands.values()
+            if c.seen and c.kind != CommandKind.CUSTOM
+        )
+    )
+    commands_failed = list(
+        dict.fromkeys(
+            c.observed_command or c.name
+            for c in evidence.commands.values()
+            if c.status == "failed"
+            and c.kind not in EVIDENCE_CHECK_IGNORED_KINDS
+            and c.kind != CommandKind.CUSTOM
+        )
+    )
     validation_result = MetaValidationResult(
         passed=result_success,
         commands_run=commands_run,

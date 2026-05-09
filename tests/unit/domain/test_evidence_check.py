@@ -5298,3 +5298,96 @@ class TestCustomCommandMarkerParsing:
         # Should detect marker even when content is a list of dicts
         assert evidence.custom_commands_ran.get("test_cmd") is True
         assert evidence.custom_commands_failed.get("test_cmd", False) is False
+
+    def _make_bash_tool_use_entry(self, tool_use_id: str, command: str) -> str:
+        """Create an assistant message with a Bash tool_use block."""
+        return json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": tool_use_id,
+                            "name": "Bash",
+                            "input": {"command": command},
+                        }
+                    ]
+                },
+            }
+        )
+
+    def test_bare_command_fallback_source_is_shell_status(
+        self,
+        tmp_path: Path,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """Custom command credited via bare-command fallback uses shell_status source.
+
+        When a configured custom command is invoked directly without any
+        ``[custom:<name>:...]`` markers, the bare-command fallback synthesizes a
+        terminal string (e.g. ``"pass"`` or ``"fail exit=1"``) from the shell
+        tool result status. The documented contract requires the resulting
+        ``CommandEvidence.source`` to be ``"command+shell_status"`` so callers
+        can distinguish marker-driven evidence from shell-status fallback.
+        """
+        log_path = tmp_path / "session.jsonl"
+        entries = [
+            self._make_bash_tool_use_entry("toolu_1", "python scripts/lint.py"),
+            self._make_tool_result_entry(
+                "toolu_1",
+                "Linted 42 files in 0.3s.\nNo issues found.",
+                is_error=False,
+            ),
+        ]
+        log_path.write_text("\n".join(entries) + "\n")
+
+        spec = self._make_custom_spec(
+            [("import_lint", "python scripts/lint.py", False)]
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert "import_lint" in evidence.commands
+        assert evidence.commands["import_lint"].source == "command+shell_status"
+        assert evidence.commands["import_lint"].status == "passed"
+
+    def test_marker_overrides_bare_command_fallback_source(
+        self,
+        tmp_path: Path,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """Explicit terminal markers always set source to command+summary.
+
+        If a later tool result for the same custom command emits a
+        ``[custom:<name>:...]`` marker, that marker wins over an earlier
+        bare-command fallback credit and the source attribution must reflect
+        the marker-based decision rather than the shell status that the
+        fallback used.
+        """
+        log_path = tmp_path / "session.jsonl"
+        entries = [
+            self._make_bash_tool_use_entry("toolu_1", "python scripts/lint.py"),
+            # First tool result: bare run, fallback credits "pass" from shell status.
+            self._make_tool_result_entry("toolu_1", "OK", is_error=False),
+            self._make_bash_tool_use_entry("toolu_2", "python scripts/lint.py"),
+            # Second tool result: explicit fail marker overrides earlier fallback.
+            self._make_tool_result_entry(
+                "toolu_2",
+                "[custom:import_lint:fail exit=2]",
+                is_error=True,
+            ),
+        ]
+        log_path.write_text("\n".join(entries) + "\n")
+
+        spec = self._make_custom_spec(
+            [("import_lint", "python scripts/lint.py", False)]
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert "import_lint" in evidence.commands
+        assert evidence.commands["import_lint"].source == "command+summary"
+        assert evidence.commands["import_lint"].status == "failed"

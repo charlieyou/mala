@@ -587,6 +587,7 @@ class EvidenceCheck:
         is_error: bool,
         content: str,
         state: dict[str, tuple[bool, str | None]],
+        fallback_credited_names: set[str],
     ) -> None:
         """Credit custom evidence from exact command matches when markers are absent.
 
@@ -595,6 +596,8 @@ class EvidenceCheck:
         output reports per-command ``<name> exit=<code>`` lines, which avoids
         treating one aggregate shell exit code as proof for several checks.
         Explicit ``[custom:<name>:...]`` markers always win over this fallback.
+        Names credited via this path are tracked in ``fallback_credited_names``
+        so callers can attribute the resulting evidence to ``command+shell_status``.
         """
         if not matches:
             return
@@ -613,13 +616,16 @@ class EvidenceCheck:
                     True,
                     "pass" if exit_code == 0 else f"fail exit={exit_code}",
                 )
+                fallback_credited_names.add(name)
             elif len(matches) == 1 and fallback_match.shell_status_is_authoritative:
                 state[name] = (True, "fail exit=1" if is_error else "pass")
+                fallback_credited_names.add(name)
 
     def _parse_custom_markers(
         self,
         content: str,
         state: dict[str, tuple[bool, str | None]],
+        fallback_credited_names: set[str],
     ) -> None:
         """Parse custom command markers from tool result content.
 
@@ -630,9 +636,15 @@ class EvidenceCheck:
         retries (start without terminal) are correctly treated as failures.
         Latest terminal marker wins within a single attempt.
 
+        Markers always win over the bare-command fallback, so names matched here
+        are removed from ``fallback_credited_names``.
+
         Args:
             content: Tool result content to scan for markers.
             state: Mutable dict tracking (has_start, latest_terminal) per command name.
+            fallback_credited_names: Mutable set of names credited via the
+                bare-command fallback; names found here are discarded so that
+                source attribution reflects the marker-based update.
         """
         for match in CUSTOM_MARKER_PATTERN.finditer(content):
             name = match.group(1)
@@ -651,6 +663,7 @@ class EvidenceCheck:
                 terminal = marker_type
 
             state[name] = (has_start, terminal)
+            fallback_credited_names.discard(name)
 
     def _iter_jsonl_entries(
         self, log_path: Path, offset: int = 0
@@ -748,6 +761,9 @@ class EvidenceCheck:
         # Terminal markers: "pass", "fail exit=N", "timeout"
         # None means no terminal marker seen yet
         custom_marker_state: dict[str, tuple[bool, str | None]] = {}
+        # Track names credited via the bare-command fallback (no markers).
+        # Markers, when seen later, override the fallback and remove the name.
+        fallback_credited_names: set[str] = set()
 
         for entry in self._evidence_provider.iter_thread_evidence(log_path, offset):
             for tool_id, command in self._evidence_provider.extract_bash_commands(
@@ -779,7 +795,9 @@ class EvidenceCheck:
                 _tool_use_id,
                 content,
             ) in self._evidence_provider.extract_tool_result_content(entry):
-                self._parse_custom_markers(content, custom_marker_state)
+                self._parse_custom_markers(
+                    content, custom_marker_state, fallback_credited_names
+                )
                 if _tool_use_id in tool_id_to_custom_matches:
                     # Re-read the result status for this tool id from the same entry.
                     result_status = dict(
@@ -790,6 +808,7 @@ class EvidenceCheck:
                         result_status,
                         content,
                         custom_marker_state,
+                        fallback_credited_names,
                     )
 
         # Build failed_commands from kinds that failed, using full command strings
@@ -824,7 +843,9 @@ class EvidenceCheck:
 
         # Transitional shim: project the legacy fields into evidence.commands so
         # callers can migrate to the unified shape ahead of T003's parser rewrite.
-        self._derive_commands_map_from_legacy_state(evidence, spec, custom_marker_state)
+        self._derive_commands_map_from_legacy_state(
+            evidence, spec, custom_marker_state, fallback_credited_names
+        )
 
         return evidence
 
@@ -833,6 +854,7 @@ class EvidenceCheck:
         evidence: ValidationEvidence,
         spec: ValidationSpec,
         custom_marker_state: dict[str, tuple[bool, str | None]],
+        fallback_credited_names: set[str],
     ) -> None:
         """Project legacy evidence fields into the unified ``commands`` map.
 
@@ -848,12 +870,18 @@ class EvidenceCheck:
                 failed = evidence.custom_commands_failed.get(cmd.name, False)
                 state = custom_marker_state.get(cmd.name)
                 terminal = state[1] if state is not None else None
+                # Names credited via the bare-command fallback derive their
+                # status from shell exit status, not summary markers; the
+                # documented contract requires `command+shell_status` for that
+                # path even when fallback synthesized a "pass"/"fail exit=N"
+                # terminal string.
                 source: Literal["command+summary", "command+shell_status"]
-                source = (
-                    "command+summary"
-                    if terminal is not None
-                    else ("command+shell_status")
-                )
+                if cmd.name in fallback_credited_names:
+                    source = "command+shell_status"
+                elif terminal is not None:
+                    source = "command+summary"
+                else:
+                    source = "command+shell_status"
                 timed_out = terminal == "timeout"
                 exit_code: int | None = None
                 if terminal is not None and terminal.startswith("fail exit="):
