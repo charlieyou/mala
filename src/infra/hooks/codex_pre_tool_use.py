@@ -172,10 +172,8 @@ _MSG_ENV_MISSING = (
 def _allow() -> dict[str, Any]:
     """Build an ``allow`` hook result."""
     return {
-        "decision": "approve",
         "hookSpecificOutput": {
-            "permissionDecision": "allow",
-            "permissionDecisionReason": "",
+            "hookEventName": "PreToolUse",
         },
     }
 
@@ -183,8 +181,8 @@ def _allow() -> dict[str, Any]:
 def _deny(reason: str) -> dict[str, Any]:
     """Build a ``deny`` hook result."""
     return {
-        "decision": "block",
         "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
             "permissionDecisionReason": reason,
         },

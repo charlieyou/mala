@@ -79,7 +79,7 @@ def deny_reason(result: dict[str, Any]) -> str:
 
 def is_allow(result: dict[str, Any]) -> bool:
     spec = result.get("hookSpecificOutput") or {}
-    return spec.get("permissionDecision") == "allow"
+    return spec.get("hookEventName") == "PreToolUse" and "permissionDecision" not in spec
 
 
 # ---------------------------------------------------------------------------
@@ -519,14 +519,13 @@ class TestEnvTransport:
 class TestOutputShape:
     def test_allow_shape(self, env: dict[str, str]) -> None:
         result = decide(make_payload("bash", {"command": "echo hi"}))
-        assert result["decision"] == "approve"
         spec = result["hookSpecificOutput"]
-        assert spec["permissionDecision"] == "allow"
+        assert spec == {"hookEventName": "PreToolUse"}
 
     def test_deny_shape(self, env: dict[str, str]) -> None:
         result = decide(make_payload("bash", {"command": "rm -rf /"}))
-        assert result["decision"] == "block"
         spec = result["hookSpecificOutput"]
+        assert spec["hookEventName"] == "PreToolUse"
         assert spec["permissionDecision"] == "deny"
         assert spec["permissionDecisionReason"]
 
@@ -5121,10 +5120,8 @@ def test_selftest_sentinel_allow_shape_is_stable() -> None:
         "cwd": "/tmp/mala-selftest",
     }
     expected = {
-        "decision": "approve",
         "hookSpecificOutput": {
-            "permissionDecision": "allow",
-            "permissionDecisionReason": "",
+            "hookEventName": "PreToolUse",
         },
     }
     assert decide(sentinel_input) == expected
