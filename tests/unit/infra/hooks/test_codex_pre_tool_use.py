@@ -5492,3 +5492,60 @@ def test_main_continues_session_start_in_production(
     output = _json.loads(capsys.readouterr().out.strip())
     assert output == {"continue": True}
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.unit
+def test_main_pre_tool_use_selftest_omits_universal_continue_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """PreToolUse selftest must use only the per-event deny fields.
+
+    Codex's PreToolUse output parser rejects the universal
+    ``continue``/``stopReason`` fields as unsupported, and the
+    PreToolUse runner fails open on invalid hook output. Emitting
+    them would let the sentinel tool call proceed even though the
+    selftest marker was written and the probe appeared to pass —
+    silently defeating the deny/abort the live dispatch probe relies
+    on.
+    """
+    import json as _json
+
+    from src.infra.hooks.codex_pre_tool_use import (
+        SELFTEST_MARKER_ENV,
+        SELFTEST_TARGET_EVENT_ENV,
+        main,
+    )
+
+    marker_path = tmp_path / "PreToolUse.json"
+    monkeypatch.setenv(SELFTEST_MARKER_ENV, str(marker_path))
+    monkeypatch.setenv(SELFTEST_TARGET_EVENT_ENV, "PreToolUse")
+    monkeypatch.setattr(
+        "sys.stdin",
+        type(
+            "FakeStdin",
+            (),
+            {
+                "read": staticmethod(
+                    lambda: _json.dumps(
+                        {
+                            "hook_event_name": "PreToolUse",
+                            "session_id": "sess-1",
+                            "cwd": str(tmp_path),
+                            "tool_name": "shell",
+                            "tool_input": {},
+                        }
+                    )
+                )
+            },
+        )(),
+    )
+
+    main()
+
+    output = _json.loads(capsys.readouterr().out.strip())
+    assert "continue" not in output
+    assert "stopReason" not in output
+    assert output["decision"] == "block"
+    assert output["hookSpecificOutput"]["permissionDecision"] == "deny"

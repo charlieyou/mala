@@ -3475,21 +3475,23 @@ def _handle_pre_tool_use_selftest() -> dict[str, Any]:
     The provider's live PreToolUse probe sets
     :data:`SELFTEST_TARGET_EVENT_ENV` to ``"PreToolUse"`` so the
     bundled hook can distinguish a real PreToolUse from the
-    selftest's deliberate trigger. We deny the tool call (so
-    nothing actually executes) AND return ``continue=false`` to
-    request that Codex abort the turn — the provider also calls
+    selftest's deliberate trigger. We deny the tool call so the
+    sentinel never executes; the provider also calls
     ``turn_interrupt`` from the client side as a belt-and-suspenders
-    bound on LLM cost (PreToolUse ``continue=false`` is honored on
-    a best-effort basis depending on Codex's turn-loop semantics
-    for the version in use).
+    bound on LLM cost.
+
+    The universal ``continue``/``stopReason`` fields are intentionally
+    omitted: Codex's PreToolUse output parser rejects them as
+    unsupported, and the PreToolUse runner fails open on invalid
+    hook output — emitting them would let the sentinel tool call
+    proceed even though the marker was written and the selftest
+    appeared to pass.
 
     Output shape follows ``pre-tool-use.command.output``
     (HookUniversalOutputWire + ``decision`` + ``reason`` +
     ``hookSpecificOutput``).
     """
     return {
-        "continue": False,
-        "stopReason": "mala-codex selftest probe (deny + abort)",
         "decision": "block",
         "reason": "mala-codex selftest probe denied the tool call to bound LLM cost",
         "hookSpecificOutput": {
