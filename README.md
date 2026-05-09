@@ -35,9 +35,10 @@ LLM agents become unreliable as their context window fills up. Early in a sessio
 ### Amp (Optional, for `coder: amp`)
 
 Mala can drive its per-issue implementation agent on Sourcegraph's
-[Amp](https://ampcode.com/manual) instead of Claude. Amp is opt-in via
-`--coder amp` / `MALA_CODER=amp` / `coder: amp` in `mala.yaml`; the default
-remains `coder: claude`.
+[Amp](https://ampcode.com/manual) instead of Claude. Amp is the default
+coder, selected via `--coder amp` / `MALA_CODER=amp` / `coder: amp` in
+`mala.yaml`; pass `--coder claude` (or `MALA_CODER=claude`) to opt back
+to Claude.
 
 When `coder: amp` is selected, the orchestrator runs `amp --execute --stream-json`
 under `--dangerously-allow-all` and relies on a bundled TypeScript safety plugin
