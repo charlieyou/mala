@@ -335,7 +335,9 @@ def _display_tool_name(tool_name: str) -> str:
         return "Bash"
     if _is_lock_acquire_tool(tool_name):
         return "Lock"
-    if _is_amp_edit_tool(tool_name):
+    if _is_lock_release_tool(tool_name):
+        return "Release"
+    if _is_edit_tool(tool_name):
         return "Edit"
     return tool_name
 
@@ -345,15 +347,25 @@ def _is_shell_tool(tool_name: str) -> bool:
 
 
 def _is_lock_acquire_tool(tool_name: str) -> bool:
-    normalized = tool_name.replace("-", "_")
+    normalized = tool_name.replace("-", "_").replace(".", "__")
     return normalized in {
         "lock_acquire",
         "mcp__mala_locking__lock_acquire",
+        "mala_locking__lock_acquire",
     }
 
 
-def _is_amp_edit_tool(tool_name: str) -> bool:
-    return tool_name in {"apply_patch", "edit_file"}
+def _is_lock_release_tool(tool_name: str) -> bool:
+    normalized = tool_name.replace("-", "_").replace(".", "__")
+    return normalized in {
+        "lock_release",
+        "mcp__mala_locking__lock_release",
+        "mala_locking__lock_release",
+    }
+
+
+def _is_edit_tool(tool_name: str) -> bool:
+    return tool_name in {"apply_patch", "edit_file", "file_change"}
 
 
 def _get_shell_command(arguments: dict[str, Any] | None) -> str | None:
@@ -385,10 +397,12 @@ def _format_lock_filepaths(arguments: dict[str, Any] | None) -> str | None:
             return ", ".join(paths)
     if filepaths:
         return str(filepaths)
+    if arguments.get("all") is True:
+        return "all"
     return None
 
 
-def _format_amp_edit_paths(arguments: dict[str, Any] | None) -> str | None:
+def _format_edit_paths(arguments: dict[str, Any] | None) -> str | None:
     if not arguments:
         return None
 
@@ -403,6 +417,14 @@ def _format_amp_edit_paths(arguments: dict[str, Any] | None) -> str | None:
     path = arguments.get("path")
     if path:
         return str(path)
+
+    changes = arguments.get("changes")
+    if isinstance(changes, list):
+        path_strings = [
+            str(change.get("path")) for change in changes if change.get("path")
+        ]
+        if path_strings:
+            return ", ".join(path_strings)
     return None
 
 
@@ -434,8 +456,13 @@ def _get_quiet_summary(
         if filepaths is not None:
             return filepaths
 
-    if _is_amp_edit_tool(tool_name):
-        paths = _format_amp_edit_paths(arguments)
+    if _is_lock_release_tool(tool_name):
+        filepaths = _format_lock_filepaths(arguments)
+        if filepaths is not None:
+            return filepaths
+
+    if _is_edit_tool(tool_name):
+        paths = _format_edit_paths(arguments)
         if paths is not None:
             return paths
 

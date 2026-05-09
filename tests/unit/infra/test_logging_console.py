@@ -108,6 +108,7 @@ def test_quiet_summary_bash_uses_command() -> None:
     [
         "mcp__mala_locking__lock_acquire",
         "mcp__mala-locking__lock_acquire",
+        "mala-locking.lock_acquire",
     ],
 )
 def test_quiet_summary_amp_lock_acquire_uses_filepaths(tool_name: str) -> None:
@@ -119,6 +120,42 @@ def test_quiet_summary_amp_lock_acquire_uses_filepaths(tool_name: str) -> None:
     )
     assert summary == "src/main.py, src/utils.py"
     assert console._display_tool_name(tool_name) == "Lock"
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "lock_release",
+        "mcp__mala_locking__lock_release",
+        "mcp__mala-locking__lock_release",
+        "mala-locking.lock_release",
+    ],
+)
+def test_quiet_summary_lock_release_uses_filepaths(tool_name: str) -> None:
+    """Lock release logs show Release and paths instead of raw arguments."""
+    summary = console._get_quiet_summary(
+        tool_name,
+        "",
+        {"filepaths": ["src/main.py", "src/utils.py"]},
+    )
+    assert summary == "src/main.py, src/utils.py"
+    assert console._display_tool_name(tool_name) == "Release"
+
+
+def test_quiet_summary_file_change_uses_changed_paths() -> None:
+    """Codex file_change logs show Edit and changed paths."""
+    summary = console._get_quiet_summary(
+        "file_change",
+        "",
+        {
+            "changes": [
+                {"path": "src/main.py", "diff": "...", "kind": "update"},
+                {"path": "tests/test_main.py", "diff": "...", "kind": "add"},
+            ]
+        },
+    )
+    assert summary == "src/main.py, tests/test_main.py"
+    assert console._display_tool_name("file_change") == "Edit"
 
 
 def test_quiet_summary_apply_patch_uses_paths() -> None:
@@ -259,6 +296,37 @@ def test_log_tool_quiet_mode_output(
     assert "mcp__mala_locking__lock_acquire" not in output
     assert "filepaths=..." not in output
     assert "timeout_seconds=..." not in output
+
+    console.log_tool(
+        "mala-locking.lock_acquire",
+        arguments={"filepaths": ["src/codex.py"], "timeout_seconds": 300},
+    )
+    output = capsys.readouterr().out
+    assert "Lock" in output
+    assert "src/codex.py" in output
+    assert "mala-locking.lock_acquire" not in output
+    assert "filepaths=..." not in output
+    assert "timeout_seconds=..." not in output
+
+    console.log_tool(
+        "mala-locking.lock_release",
+        arguments={"filepaths": ["src/codex.py"]},
+    )
+    output = capsys.readouterr().out
+    assert "Release" in output
+    assert "src/codex.py" in output
+    assert "mala-locking.lock_release" not in output
+    assert "filepaths=..." not in output
+
+    console.log_tool(
+        "file_change",
+        arguments={"changes": [{"path": "src/main.py", "diff": "..."}]},
+    )
+    output = capsys.readouterr().out
+    assert "Edit" in output
+    assert "src/main.py" in output
+    assert "file_change" not in output
+    assert "changes=..." not in output
 
     console.log_tool(
         "apply_patch",
