@@ -3319,6 +3319,38 @@ def _emit_selftest_marker_if_requested() -> None:
         pass
 
 
+def _handle_session_start_event() -> dict[str, Any]:
+    """Handle a Codex ``SessionStart`` hook payload.
+
+    Two operating modes:
+
+      * **Selftest mode** — when :data:`SELFTEST_MARKER_ENV` is set, the
+        provider's live-Codex probe is driving a one-shot turn whose
+        only purpose is to make Codex actually fire the hook through
+        its plugin discovery + feature gates + per-handler trust state
+        + dispatch machinery. We respond with ``continue: false`` plus
+        a ``stopReason`` so the turn aborts BEFORE Codex contacts the
+        model — no LLM tokens spent. The marker (already emitted by
+        :func:`_emit_selftest_marker_if_requested`) gives the provider
+        proof that the hook actually ran end-to-end through Codex.
+      * **Production mode** — the env var is unset, so we return
+        ``continue: true`` to let Codex proceed normally. The hook
+        adds a small subprocess-spawn latency to every Codex
+        ``SessionStart`` event but no behavioral change.
+
+    The output shape follows the Codex ``session-start.command.output``
+    schema (``HookUniversalOutputWire`` flattened in
+    :class:`SessionStartCommandOutputWire`); fields not used here
+    default per Codex's serde definitions.
+    """
+    if os.environ.get(SELFTEST_MARKER_ENV):
+        return {
+            "continue": False,
+            "stopReason": "mala-codex selftest probe (continue=false aborts the turn before any LLM call)",
+        }
+    return {"continue": True}
+
+
 def main() -> int:
     """CLI entry-point: read JSON stdin, write JSON stdout, exit 0."""
     # Emit the selftest marker FIRST so the provider's live-hook check
@@ -3337,7 +3369,17 @@ def main() -> int:
         # Malformed input: deny fail-closed with a diagnostic reason.
         result = _deny(f"hook input is not valid JSON: {exc.msg}")
     else:
-        result = decide(payload)
+        # Branch on the Codex hook event type. ``SessionStart`` requires
+        # a different output shape than ``PreToolUse`` (Codex's
+        # ``deny_unknown_fields`` on the per-event schemas would reject
+        # a PreToolUse-shaped output emitted for a SessionStart turn);
+        # see ``codex-rs/hooks/src/schema.rs::SessionStartCommandOutputWire``
+        # vs ``PreToolUseCommandOutputWire``.
+        event_name = str(payload.get("hook_event_name") or "")
+        if event_name == "SessionStart":
+            result = _handle_session_start_event()
+        else:
+            result = decide(payload)
     sys.stdout.write(json.dumps(result))
     sys.stdout.write("\n")
     sys.stdout.flush()

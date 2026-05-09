@@ -24,7 +24,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -47,20 +47,25 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 
 
 @pytest.fixture(autouse=True)
-def _stub_live_codex_plugin_list_probe(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stub the live ``codex app-server`` plugin/list probe by default.
+def _stub_live_codex_probes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the live ``codex app-server`` probes by default.
 
-    Real ``_live_codex_plugin_list_probe`` spawns a Codex app-server
+    Real ``_live_codex_plugin_list_probe`` and
+    ``_live_codex_hook_dispatch_probe`` spawn a Codex app-server
     subprocess (the pinned SDK's ``codex_cli_bin``) which is not
     installable in unit-test environments — most of this file's tests
     drive structural / identity / direct-spawn checks against fake
     plugin trees and stub interpreters and have no need to also pay
-    for a live Codex spawn. Tests that exercise the live probe itself
-    re-monkeypatch the symbol explicitly.
+    for a live Codex spawn. Tests that exercise the live probes
+    themselves re-monkeypatch the symbols explicitly.
     """
     monkeypatch.setattr(
         "src.infra.clients.codex_provider._live_codex_plugin_list_probe",
         lambda env_overlay, repo_path, *, marketplace="local": None,
+    )
+    monkeypatch.setattr(
+        "src.infra.clients.codex_provider._live_codex_hook_dispatch_probe",
+        lambda env_overlay, repo_path, expected_marker_hash: None,
     )
 
 
@@ -1654,7 +1659,17 @@ def _install_valid_plugin_tree(codex_home: Path) -> Path:
                                 }
                             ]
                         }
-                    ]
+                    ],
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "mala-codex-pre-tool-use",
+                                }
+                            ]
+                        }
+                    ],
                 }
             }
         ),
@@ -2158,7 +2173,7 @@ def _patch_async_codex(
 
 @pytest.mark.unit
 def test_live_codex_plugin_list_probe_passes_when_plugin_installed_and_enabled(
-    _stub_live_codex_plugin_list_probe: None,
+    _stub_live_codex_probes: None,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -2190,7 +2205,7 @@ def test_live_codex_plugin_list_probe_passes_when_plugin_installed_and_enabled(
 
 @pytest.mark.unit
 def test_live_codex_plugin_list_probe_raises_plugin_disabled_when_plugin_missing(
-    _stub_live_codex_plugin_list_probe: None,
+    _stub_live_codex_probes: None,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -2216,7 +2231,7 @@ def test_live_codex_plugin_list_probe_raises_plugin_disabled_when_plugin_missing
 
 @pytest.mark.unit
 def test_live_codex_plugin_list_probe_raises_plugin_disabled_when_not_installed(
-    _stub_live_codex_plugin_list_probe: None,
+    _stub_live_codex_probes: None,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -2249,7 +2264,7 @@ def test_live_codex_plugin_list_probe_raises_plugin_disabled_when_not_installed(
 
 @pytest.mark.unit
 def test_live_codex_plugin_list_probe_raises_plugin_disabled_when_not_enabled(
-    _stub_live_codex_plugin_list_probe: None,
+    _stub_live_codex_probes: None,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -2289,7 +2304,7 @@ def test_live_codex_plugin_list_probe_raises_plugin_disabled_when_not_enabled(
 
 @pytest.mark.unit
 def test_live_codex_plugin_list_probe_raises_plugin_disabled_on_marketplace_load_errors(
-    _stub_live_codex_plugin_list_probe: None,
+    _stub_live_codex_probes: None,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -2319,7 +2334,7 @@ def test_live_codex_plugin_list_probe_raises_plugin_disabled_on_marketplace_load
 
 @pytest.mark.unit
 def test_live_codex_plugin_list_probe_raises_codex_binary_missing_when_spawn_fails(
-    _stub_live_codex_plugin_list_probe: None,
+    _stub_live_codex_probes: None,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -2344,35 +2359,50 @@ def test_live_codex_plugin_list_probe_raises_codex_binary_missing_when_spawn_fai
 
 
 @pytest.mark.unit
-def test_default_probe_invokes_live_codex_probe_after_other_checks(
+def test_default_probe_invokes_both_live_codex_probes_after_other_checks(
     fake_codex_env: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """End-to-end pin: ``_default_selftest_probe`` calls the live probe
+    """End-to-end pin: ``_default_selftest_probe`` calls both live probes
     after the structural / identity / direct-spawn checks all pass.
 
-    Catches the regression where a refactor accidentally drops the
-    live-Codex step — without it the selftest would silently lose the
-    only Codex-side validation we have.
+    Catches the regression where a refactor accidentally drops either
+    live-Codex step — plugin/list validates plugin-level discovery +
+    feature gates, and the SessionStart-dispatch probe validates the
+    per-handler trust state + actual hook firing through Codex.
     """
-    from src.infra.clients.codex_provider import _default_selftest_probe
+    from src.infra.clients.codex_provider import (
+        _compute_combined_module_hash,
+        _default_selftest_probe,
+        _HOOK_IDENTITY_MODULES,
+    )
 
     codex_home, bin_dir = fake_codex_env
     _install_valid_plugin_tree(codex_home)
     _install_real_hook_shim(bin_dir / "mala-codex-pre-tool-use")
 
-    calls: list[tuple[dict[str, str], Path]] = []
+    plugin_calls: list[tuple[dict[str, str], Path]] = []
+    dispatch_calls: list[tuple[dict[str, str], Path, str]] = []
 
-    def _record_call(
+    def _record_plugin_call(
         env: dict[str, str], repo: Path, *, marketplace: str = "local"
     ) -> None:
         del marketplace
-        calls.append((dict(env), repo))
+        plugin_calls.append((dict(env), repo))
+
+    def _record_dispatch_call(
+        env: dict[str, str], repo: Path, expected_marker_hash: str
+    ) -> None:
+        dispatch_calls.append((dict(env), repo, expected_marker_hash))
 
     monkeypatch.setattr(
         "src.infra.clients.codex_provider._live_codex_plugin_list_probe",
-        _record_call,
+        _record_plugin_call,
+    )
+    monkeypatch.setattr(
+        "src.infra.clients.codex_provider._live_codex_hook_dispatch_probe",
+        _record_dispatch_call,
     )
 
     _default_selftest_probe(
@@ -2381,9 +2411,339 @@ def test_default_probe_invokes_live_codex_probe_after_other_checks(
         "deadbeef",
     )
 
-    assert len(calls) == 1
-    assert calls[0][0] == {"CODEX_HOME": str(codex_home)}
-    assert calls[0][1] == tmp_path
+    assert len(plugin_calls) == 1
+    assert plugin_calls[0][0] == {"CODEX_HOME": str(codex_home)}
+    assert plugin_calls[0][1] == tmp_path
+
+    assert len(dispatch_calls) == 1
+    assert dispatch_calls[0][0] == {"CODEX_HOME": str(codex_home)}
+    assert dispatch_calls[0][1] == tmp_path
+    # The dispatch probe is given the same combined module hash the
+    # earlier identity probe computed; the marker the SessionStart
+    # hook writes should match this value.
+    assert dispatch_calls[0][2] == _compute_combined_module_hash(_HOOK_IDENTITY_MODULES)
+
+
+@pytest.mark.unit
+def test_live_codex_hook_dispatch_probe_raises_hook_marker_missing_when_marker_absent(
+    _stub_live_codex_probes: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Live-dispatch step: Codex completes the turn but never writes the
+    selftest marker → ``HOOK_MARKER_MISSING``.
+
+    This is the failure mode the reviewer specifically called out:
+    Codex's per-handler ``[hooks.state.<key>]`` evaluation rejected the
+    SessionStart handler (wrong key, stale trusted_hash, or the
+    plugin_hooks / hooks feature flag is off in a higher-priority
+    config layer). Real PreToolUse turns would skip the safety hook
+    for the same reason.
+    """
+    monkeypatch.undo()
+    from src.infra.clients.codex_provider import _live_codex_hook_dispatch_probe
+
+    # Fake AsyncCodex whose thread/turn complete normally but the
+    # SessionStart hook never fires (so the marker file stays absent).
+    class _NoopThread:
+        async def turn(self, _input: object) -> object:
+            return object()
+
+    class _NoopAsyncCodex:
+        def __init__(self, *, config: object) -> None:
+            del config
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: object,
+        ) -> None:
+            del exc_type, exc, tb
+
+        async def thread_start(self, **_kwargs: object) -> _NoopThread:
+            return _NoopThread()
+
+    import sys as _sys
+    import types
+
+    fake_pkg = types.ModuleType("codex_app_server")
+    fake_pkg.AppServerConfig = staticmethod(lambda **_kw: None)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    fake_pkg.AsyncCodex = _NoopAsyncCodex  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    fake_pkg.TextInput = lambda text: text  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    monkeypatch.setitem(_sys.modules, "codex_app_server", fake_pkg)
+
+    # Shrink the timeout so the test does not wait for the production
+    # ``_HOOK_PROBE_TIMEOUT_SECONDS`` (10s).
+    monkeypatch.setattr(
+        "src.infra.clients.codex_provider._HOOK_PROBE_TIMEOUT_SECONDS", 0.5
+    )
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _live_codex_hook_dispatch_probe(
+            {"CODEX_HOME": str(tmp_path)}, tmp_path, "deadbeef"
+        )
+    assert excinfo.value.reason is CodexHookNotActiveReason.HOOK_MARKER_MISSING
+    assert "SessionStart" in str(excinfo.value)
+
+
+@pytest.mark.unit
+def test_live_codex_hook_dispatch_probe_passes_when_marker_matches(
+    _stub_live_codex_probes: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Happy path: SessionStart hook fires, writes marker with matching hash."""
+    monkeypatch.undo()
+    from src.infra.clients.codex_provider import _live_codex_hook_dispatch_probe
+
+    expected_hash = "abcd1234" * 8
+
+    class _MarkerWritingThread:
+        def __init__(self, marker_path_factory: Callable[[], Path]) -> None:
+            self._marker_path_factory = marker_path_factory
+
+        async def turn(self, _input: object) -> object:
+            # Simulate Codex spawning the SessionStart hook subprocess
+            # which writes the marker before the turn aborts.
+            import json as _json
+
+            marker_path = self._marker_path_factory()
+            marker_path.write_text(
+                _json.dumps({"mala_codex_hook": "loaded", "version": expected_hash}),
+                encoding="utf-8",
+            )
+            return object()
+
+    captured_marker_env: dict[str, str] = {}
+
+    class _MarkerAsyncCodex:
+        def __init__(self, *, config: object) -> None:
+            captured_marker_env["path"] = cast("Any", config).env[
+                "MALA_CODEX_HOOK_SELFTEST_MARKER"
+            ]
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: object,
+        ) -> None:
+            del exc_type, exc, tb
+
+        async def thread_start(self, **_kwargs: object) -> object:
+            return _MarkerWritingThread(lambda: Path(captured_marker_env["path"]))
+
+    import sys as _sys
+    import types
+
+    captured_config_env: list[dict[str, str]] = []
+
+    class _CapturingAppServerConfig:
+        def __init__(self, **kw: object) -> None:
+            self.env = kw["env"]  # type: ignore[assignment]
+            captured_config_env.append(dict(cast("Any", kw["env"])))
+
+    fake_pkg = types.ModuleType("codex_app_server")
+    fake_pkg.AppServerConfig = _CapturingAppServerConfig  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    fake_pkg.AsyncCodex = _MarkerAsyncCodex  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    fake_pkg.TextInput = lambda text: text  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    monkeypatch.setitem(_sys.modules, "codex_app_server", fake_pkg)
+
+    _live_codex_hook_dispatch_probe(
+        {"CODEX_HOME": str(tmp_path)}, tmp_path, expected_hash
+    )
+
+    # The marker env var is plumbed into AppServerConfig.env so the
+    # spawned hook subprocess can write to it.
+    assert captured_config_env[0]["MALA_CODEX_HOOK_SELFTEST_MARKER"]
+    assert captured_config_env[0]["CODEX_HOME"] == str(tmp_path)
+
+
+@pytest.mark.unit
+def test_live_codex_hook_dispatch_probe_raises_version_mismatch_on_wrong_hash(
+    _stub_live_codex_probes: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Hook fires through Codex but the marker hash diverges from this
+    process → ``VERSION_MISMATCH``.
+
+    Catches the multi-mala-install case where Codex's loader chose a
+    hook script whose embedded module bytes differ from this process,
+    even if Codex evaluated the trust state correctly.
+    """
+    monkeypatch.undo()
+    from src.infra.clients.codex_provider import _live_codex_hook_dispatch_probe
+
+    class _MarkerWritingThread:
+        def __init__(self, marker_path_factory: Callable[[], Path]) -> None:
+            self._marker_path_factory = marker_path_factory
+
+        async def turn(self, _input: object) -> object:
+            import json as _json
+
+            marker_path = self._marker_path_factory()
+            marker_path.write_text(
+                _json.dumps({"mala_codex_hook": "loaded", "version": "wrong-hash"}),
+                encoding="utf-8",
+            )
+            return object()
+
+    captured_marker_env: dict[str, str] = {}
+
+    class _MarkerAsyncCodex:
+        def __init__(self, *, config: object) -> None:
+            captured_marker_env["path"] = cast("Any", config).env[
+                "MALA_CODEX_HOOK_SELFTEST_MARKER"
+            ]
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: object,
+        ) -> None:
+            del exc_type, exc, tb
+
+        async def thread_start(self, **_kwargs: object) -> object:
+            return _MarkerWritingThread(lambda: Path(captured_marker_env["path"]))
+
+    import sys as _sys
+    import types
+
+    class _CapturingAppServerConfig:
+        def __init__(self, **kw: object) -> None:
+            self.env = kw["env"]  # type: ignore[assignment]
+
+    fake_pkg = types.ModuleType("codex_app_server")
+    fake_pkg.AppServerConfig = _CapturingAppServerConfig  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    fake_pkg.AsyncCodex = _MarkerAsyncCodex  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    fake_pkg.TextInput = lambda text: text  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    monkeypatch.setitem(_sys.modules, "codex_app_server", fake_pkg)
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _live_codex_hook_dispatch_probe(
+            {"CODEX_HOME": str(tmp_path)},
+            tmp_path,
+            expected_marker_hash="expected-hash",
+        )
+    assert excinfo.value.reason is CodexHookNotActiveReason.VERSION_MISMATCH
+    assert "wrong-hash" in str(excinfo.value)
+
+
+@pytest.mark.unit
+def test_live_codex_hook_dispatch_probe_raises_codex_binary_missing_on_spawn_failure(
+    _stub_live_codex_probes: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """SDK spawn fails → ``CODEX_BINARY_MISSING`` (parity with plugin/list step)."""
+    monkeypatch.undo()
+    from src.infra.clients.codex_provider import _live_codex_hook_dispatch_probe
+
+    class _SpawnFailureAsyncCodex:
+        def __init__(self, *, config: object) -> None:
+            del config
+
+        async def __aenter__(self) -> Self:
+            raise FileNotFoundError("codex binary not on PATH")
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: object,
+        ) -> None:
+            del exc_type, exc, tb
+
+    import sys as _sys
+    import types
+
+    fake_pkg = types.ModuleType("codex_app_server")
+    fake_pkg.AppServerConfig = staticmethod(lambda **_kw: None)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    fake_pkg.AsyncCodex = _SpawnFailureAsyncCodex  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    fake_pkg.TextInput = lambda text: text  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    monkeypatch.setitem(_sys.modules, "codex_app_server", fake_pkg)
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _live_codex_hook_dispatch_probe(
+            {"CODEX_HOME": str(tmp_path)}, tmp_path, "deadbeef"
+        )
+    assert excinfo.value.reason is CodexHookNotActiveReason.CODEX_BINARY_MISSING
+
+
+@pytest.mark.unit
+def test_live_codex_plugin_list_probe_raises_codex_binary_missing_on_timeout(
+    _stub_live_codex_probes: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Hung Codex app-server during plugin/list → ``CODEX_BINARY_MISSING``.
+
+    Regression for the gemini P2 finding: without a timeout wrapper a
+    stuck app-server would hang the entire mala run; the live probe
+    must fail closed within ``_HOOK_PROBE_TIMEOUT_SECONDS``.
+    """
+    monkeypatch.undo()
+    import asyncio as _asyncio
+
+    from src.infra.clients.codex_provider import _live_codex_plugin_list_probe
+
+    class _HangingClient:
+        async def request(
+            self, method: str, params: object, *, response_model: object
+        ) -> object:
+            del method, params, response_model
+            await _asyncio.sleep(60.0)
+            raise AssertionError("hang did not time out")
+
+    class _HangingAsyncCodex:
+        def __init__(self, *, config: object) -> None:
+            del config
+            self._client = _HangingClient()
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: object,
+        ) -> None:
+            del exc_type, exc, tb
+
+    import sys as _sys
+    import types
+
+    fake_pkg = types.ModuleType("codex_app_server")
+    fake_pkg.AppServerConfig = staticmethod(lambda **_kw: None)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    fake_pkg.AsyncCodex = _HangingAsyncCodex  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    fake_generated = types.ModuleType("codex_app_server.generated")
+    fake_v2 = types.ModuleType("codex_app_server.generated.v2_all")
+    fake_v2.PluginListResponse = object  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    monkeypatch.setitem(_sys.modules, "codex_app_server", fake_pkg)
+    monkeypatch.setitem(_sys.modules, "codex_app_server.generated", fake_generated)
+    monkeypatch.setitem(_sys.modules, "codex_app_server.generated.v2_all", fake_v2)
+
+    monkeypatch.setattr(
+        "src.infra.clients.codex_provider._HOOK_PROBE_TIMEOUT_SECONDS", 0.5
+    )
+
+    with pytest.raises(CodexHookNotActiveError) as excinfo:
+        _live_codex_plugin_list_probe({"CODEX_HOME": str(tmp_path)}, tmp_path)
+    assert excinfo.value.reason is CodexHookNotActiveReason.CODEX_BINARY_MISSING
+    assert "did not respond" in str(excinfo.value)
 
 
 @pytest.mark.unit

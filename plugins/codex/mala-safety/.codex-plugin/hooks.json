@@ -9,6 +9,16 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mala-codex-pre-tool-use"
+          }
+        ]
+      }
     ]
   }
 }

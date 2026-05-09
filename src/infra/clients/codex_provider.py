@@ -29,7 +29,7 @@ import shutil
 import tempfile
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from src.core.constants import (
     DEFAULT_CODEX_APPROVAL_POLICY,
@@ -474,19 +474,43 @@ def _plugin_id(marketplace: str = _DEFAULT_PLUGIN_MARKETPLACE) -> str:
     return f"mala-safety@{marketplace}"
 
 
-def _hook_state_key(*, marketplace: str = _DEFAULT_PLUGIN_MARKETPLACE) -> str:
-    """Compute the Codex hook-state key for the bundled PreToolUse entry.
+_HOOK_EVENTS: tuple[tuple[str, str], ...] = (
+    ("PreToolUse", "pre_tool_use"),
+    ("SessionStart", "session_start"),
+)
+"""Hook events the bundled plugin's ``hooks.json`` registers, paired
+with the Codex internal snake_case identifier used in
+:func:`_hook_state_key` / :func:`_normalized_hook_identity_value`.
+
+Both entries point at the same ``mala-codex-pre-tool-use`` command;
+PreToolUse is the safety gate (lock / dangerous-cmd / disallowed-tool
+/ shell-write enforcement), and SessionStart is exercised by the
+live-Codex selftest probe so the on-disk install is exercised through
+Codex's actual plugin discovery + feature gates + per-handler trust
+state + dispatch machinery without an LLM call (decision: SessionStart
+hook returns ``continue=false`` in selftest mode, aborting the turn
+before any model call). The two entries must stay in lockstep with
+``plugins/codex/mala-safety/.codex-plugin/hooks.json``."""
+
+
+def _hook_state_key(
+    event: str = "pre_tool_use",
+    *,
+    marketplace: str = _DEFAULT_PLUGIN_MARKETPLACE,
+) -> str:
+    """Compute the Codex hook-state key for a bundled hook entry.
 
     Mirrors ``codex-rs/hooks/src/declarations.rs::plugin_hook_key_source`` +
     ``codex-rs/hooks/src/lib.rs::hook_key``: for plugin hooks the key
     is ``<plugin_id>:<source_relative_path>:<event>:<group>:<handler>``.
-    Our hooks.json declares exactly one PreToolUse matcher with one
-    command handler, so the indices are ``0:0``.
+    Our hooks.json declares exactly one matcher group per event with
+    one command handler, so the indices are ``0:0`` for both
+    ``pre_tool_use`` and ``session_start``.
     """
-    return f"{_plugin_id(marketplace)}:{_PLUGIN_SOURCE_RELATIVE_PATH}:pre_tool_use:0:0"
+    return f"{_plugin_id(marketplace)}:{_PLUGIN_SOURCE_RELATIVE_PATH}:{event}:0:0"
 
 
-def _normalized_hook_identity_value() -> object:
+def _normalized_hook_identity_value(event: str = "pre_tool_use") -> object:
     """Build the ``NormalizedHookIdentity`` payload Codex hashes for ``current_hash``.
 
     Source-of-truth: ``codex-rs/hooks/src/engine/discovery.rs::command_hook_hash``
@@ -502,7 +526,7 @@ def _normalized_hook_identity_value() -> object:
     not present in the TOML round-trip used by the hash routine.
     """
     return {
-        "event_name": "pre_tool_use",
+        "event_name": event,
         "hooks": [
             {
                 "type": "command",
@@ -526,7 +550,7 @@ def _canonical_json(value: object) -> object:
     return value
 
 
-def _compute_normalized_hook_hash() -> str:
+def _compute_normalized_hook_hash(event: str = "pre_tool_use") -> str:
     """Compute the ``sha256:<hex>`` ``current_hash`` Codex assigns the bundled hook.
 
     The Rust path serializes the struct to TOML, canonicalizes it, and
@@ -541,7 +565,7 @@ def _compute_normalized_hook_hash() -> str:
     import hashlib
     import json as _json
 
-    canonical = _canonical_json(_normalized_hook_identity_value())
+    canonical = _canonical_json(_normalized_hook_identity_value(event))
     serialized = _json.dumps(canonical, separators=(",", ":")).encode("utf-8")
     return f"sha256:{hashlib.sha256(serialized).hexdigest()}"
 
@@ -605,11 +629,22 @@ def _write_codex_plugin_config(
     plugin_section = f'[plugins."{plugin_id}"]'
     plugin_block = f"{plugin_section}\nenabled = true\n"
 
-    state_section = f'[hooks.state."{_hook_state_key(marketplace=marketplace)}"]'
-    trusted_hash_value = _compute_normalized_hook_hash()
-    state_block = (
-        f'{state_section}\nenabled = true\ntrusted_hash = "{trusted_hash_value}"\n'
-    )
+    # Each hook handler in the bundled ``hooks.json`` (PreToolUse +
+    # SessionStart) gets its own ``[hooks.state."<key>"]`` block with
+    # the per-event trusted_hash. Without writing the SessionStart
+    # state Codex would mark the SessionStart handler untrusted and
+    # the live-Codex selftest probe would never observe the hook
+    # firing — the safety hook would still load (because PreToolUse
+    # has its own state block) but the cross-Codex validation that
+    # the install actually wired up correctly would silently break.
+    state_blocks: list[tuple[str, str]] = []
+    for _, snake_event in _HOOK_EVENTS:
+        section = (
+            f'[hooks.state."{_hook_state_key(snake_event, marketplace=marketplace)}"]'
+        )
+        trusted_hash_value = _compute_normalized_hook_hash(snake_event)
+        block = f'{section}\nenabled = true\ntrusted_hash = "{trusted_hash_value}"\n'
+        state_blocks.append((section, block))
 
     target = codex_home / _HOOK_CONFIG_FILENAME
 
@@ -659,9 +694,10 @@ def _write_codex_plugin_config(
     rewritten = _rewrite_toml_block(
         rewritten, section_header=plugin_section, new_block=plugin_block
     )
-    rewritten = _rewrite_toml_block(
-        rewritten, section_header=state_section, new_block=state_block
-    )
+    for state_section, state_block in state_blocks:
+        rewritten = _rewrite_toml_block(
+            rewritten, section_header=state_section, new_block=state_block
+        )
     if rewritten == existing:
         return  # all config entries already correct
 
@@ -941,6 +977,174 @@ def _compute_combined_module_hash(modules: tuple[str, ...]) -> str:
     return h.hexdigest()
 
 
+def _live_codex_hook_dispatch_probe(
+    env_overlay: dict[str, str],
+    repo_path: Path,
+    expected_marker_hash: str,
+) -> None:
+    """Spawn a real Codex turn that fires the bundled SessionStart hook.
+
+    Plan AC-5 / E5 (review-2 follow-up): ``plugin/list`` validates plugin
+    discovery + ``Feature::Plugins`` + per-plugin ``enabled``, but it
+    does NOT verify the per-handler ``[hooks.state.<key>]`` trust
+    state, the ``Feature::PluginHooks`` / ``Feature::CodexHooks`` gates
+    that gate hook execution specifically, or the actual hook-dispatch
+    code path Codex runs at PreToolUse time. A wrong ``hook_state_key``
+    or stale ``trusted_hash`` can pass ``plugin/list`` while Codex
+    skips the safety hook under ``danger-full-access``.
+
+    This probe closes that gap by:
+
+      1. Issuing a fresh ``thread_start`` + ``turn_start`` against a
+         live ``codex app-server`` subprocess.
+      2. Codex's session machinery fires the bundled ``SessionStart``
+         handler before any LLM call (per
+         ``codex-rs/core/src/session/turn.rs::run_pending_session_start_hooks``).
+         The handler is the same ``mala-codex-pre-tool-use`` script
+         that handles PreToolUse — it writes the selftest marker and
+         returns ``{"continue": false, "stopReason": ...}`` so the
+         turn aborts before any model token is spent.
+      3. The marker file proves the hook actually ran end-to-end
+         through Codex's plugin discovery + feature gates +
+         ``[hooks.state."<key>"]`` trust evaluation +
+         ``hook_runtime::run_pending_session_start_hooks`` dispatch.
+         A mismatched ``trusted_hash``, a wrong hook-state key, or
+         either of the two ``Feature::PluginHooks`` / ``Feature::CodexHooks``
+         flags being off would all leave the marker absent.
+
+    The marker's ``version`` field carries the hook's
+    self-computed identity hash (combined SHA-256 over the safety-
+    critical mala modules); we compare to ``expected_marker_hash``
+    so a stale install whose script bytes diverge from this process
+    does not pass this probe even when Codex correctly invokes it.
+
+    Failure modes:
+
+      * SDK / spawn / RPC failure → ``CODEX_BINARY_MISSING``.
+      * Marker absent within bounded timeout → ``HOOK_MARKER_MISSING``
+        (Codex's hook trust / dispatch evaluation rejected the
+        handler — the symptom the reviewer specifically flagged).
+      * Marker present but ``version`` mismatch → ``VERSION_MISMATCH``
+        (Codex did invoke the hook, but the script's identity drifted
+        from this process).
+    """
+    import asyncio
+    import json as _json
+    import tempfile
+    import time as _time
+
+    async def _drive_turn(marker_path: Path) -> str:
+        from codex_app_server import (  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]
+            AppServerConfig,
+            AsyncCodex,
+            TextInput,
+        )
+
+        codex_bin = os.environ.get("CODEX_BINARY") or None
+        merged_env = dict(os.environ)
+        merged_env.update(env_overlay)
+        # The SessionStart hook reads this env var and emits the marker
+        # before responding ``continue=false``. Codex inherits the
+        # parent process env to spawn the hook subprocess (via
+        # ``AppServerConfig.env``), so the marker var must live there.
+        merged_env[_HOOK_SELFTEST_MARKER_ENV] = str(marker_path)
+        config = AppServerConfig(
+            codex_bin=codex_bin,
+            cwd=str(repo_path),
+            env=merged_env,
+        )
+        # SDK's typed wrappers want SandboxMode / AskForApproval enum
+        # instances; we pass the same string literals codex_client.py
+        # uses and the SDK pydantic-coerces them. ``cast`` keeps ty
+        # quiet without changing runtime behavior.
+        sandbox_value = cast("Any", "read-only")
+        approval_policy_value = cast("Any", "never")
+        async with AsyncCodex(config=config) as codex:
+            thread = await codex.thread_start(
+                model=DEFAULT_CODEX_MODEL,
+                sandbox=sandbox_value,
+                approval_policy=approval_policy_value,
+                cwd=str(repo_path),
+            )
+            # Issue an empty-payload turn. SessionStart hook fires
+            # before any model call; the hook's continue=false aborts
+            # the turn (per session/turn.rs:305-307).
+            await thread.turn(TextInput("ping"))
+            deadline = _time.monotonic() + _HOOK_PROBE_TIMEOUT_SECONDS
+            while _time.monotonic() < deadline:
+                if marker_path.is_file():
+                    try:
+                        return marker_path.read_text(encoding="utf-8")
+                    except OSError:
+                        pass  # mid-write, retry
+                await asyncio.sleep(0.1)
+            raise CodexHookNotActiveError(
+                "Codex did not fire the bundled SessionStart hook within "
+                f"{_HOOK_PROBE_TIMEOUT_SECONDS:.0f}s during the live "
+                "selftest probe. The plugin tree is on disk and "
+                "plugin/list reports it loaded, but the per-handler "
+                "trust evaluation skipped the hook. Likely cause: a "
+                "[hooks.state.<key>] mismatch (wrong key, stale "
+                "trusted_hash) or the plugin_hooks / hooks feature "
+                "flag is off in a higher-priority config layer. Real "
+                "PreToolUse turns would skip the safety hook for the "
+                "same reason.",
+                reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+            )
+
+    async def _drive_with_timeout(marker_path: Path) -> str:
+        return await asyncio.wait_for(
+            _drive_turn(marker_path),
+            timeout=_HOOK_PROBE_TIMEOUT_SECONDS * 3.0,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="mala-codex-session-selftest-") as tmpdir:
+        marker_path = Path(tmpdir) / "marker.json"
+        try:
+            marker_text = asyncio.run(_drive_with_timeout(marker_path))
+        except TimeoutError as exc:
+            raise CodexHookNotActiveError(
+                f"Codex SessionStart-driven hook dispatch did not "
+                f"complete within {_HOOK_PROBE_TIMEOUT_SECONDS * 3.0:.0f}s "
+                "during the live selftest probe. A hung Codex thread or "
+                "RPC stall would block real turns the same way; failing "
+                "closed.",
+                reason=CodexHookNotActiveReason.CODEX_BINARY_MISSING,
+            ) from exc
+        except CodexHookNotActiveError:
+            raise
+        except Exception as exc:
+            raise CodexHookNotActiveError(
+                "Codex app-server failed during SessionStart-driven hook "
+                f"dispatch probe: {exc!r}. Codex's hook dispatch could "
+                "not be exercised even though the SDK / runtime / auth "
+                "/ plugin-list probes succeeded; the safety hook would "
+                "not fire on real turns.",
+                reason=CodexHookNotActiveReason.CODEX_BINARY_MISSING,
+            ) from exc
+
+    try:
+        marker_data = _json.loads(marker_text)
+    except _json.JSONDecodeError as exc:
+        raise CodexHookNotActiveError(
+            "SessionStart hook wrote a malformed selftest marker during "
+            f"the live probe: {exc}. Marker text: {marker_text[:512]!r}.",
+            reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+        ) from exc
+    marker_version = (
+        marker_data.get("version") if isinstance(marker_data, dict) else None
+    )
+    if marker_version != expected_marker_hash:
+        raise CodexHookNotActiveError(
+            "SessionStart hook fired through Codex but emitted a marker "
+            f"version {marker_version!r} that does not match this "
+            f"process's expected hash {expected_marker_hash!r}. The "
+            "on-disk hook script's identity diverged from this mala "
+            "install's modules.",
+            reason=CodexHookNotActiveReason.VERSION_MISMATCH,
+        )
+
+
 def _live_codex_plugin_list_probe(
     env_overlay: dict[str, str],
     repo_path: Path,
@@ -1037,8 +1241,19 @@ def _live_codex_plugin_list_probe(
         load_errors: list[object] = list(response.marketplace_load_errors or [])
         return marketplaces, load_errors
 
+    async def _query_with_timeout() -> tuple[list[object], list[object]]:
+        return await asyncio.wait_for(_query(), timeout=_HOOK_PROBE_TIMEOUT_SECONDS)
+
     try:
-        marketplaces, load_errors = asyncio.run(_query())
+        marketplaces, load_errors = asyncio.run(_query_with_timeout())
+    except TimeoutError as exc:
+        raise CodexHookNotActiveError(
+            f"Codex app-server did not respond to plugin/list within "
+            f"{_HOOK_PROBE_TIMEOUT_SECONDS:.0f}s during the live selftest "
+            "probe. A hung app-server / RPC stall would block the "
+            "orchestrator indefinitely; failing closed instead.",
+            reason=CodexHookNotActiveReason.CODEX_BINARY_MISSING,
+        ) from exc
     except CodexHookNotActiveError:
         raise
     except Exception as exc:
@@ -1241,13 +1456,19 @@ def _default_selftest_probe(
             f"Codex plugin hooks.json at {hooks_json_path} is not valid JSON: {exc}",
             reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
         ) from exc
-    if not _hooks_json_declares_pre_tool_use_command(hooks_payload, _HOOK_COMMAND_NAME):
-        raise CodexHookNotActiveError(
-            f"Codex plugin hooks.json at {hooks_json_path} does not declare a "
-            f"PreToolUse command handler for {_HOOK_COMMAND_NAME!r}; the "
-            "safety hook would not fire on tool use.",
-            reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
-        )
+    for codex_event_name, _ in _HOOK_EVENTS:
+        if not _hooks_json_declares_event_command(
+            hooks_payload,
+            event=codex_event_name,
+            expected_command=_HOOK_COMMAND_NAME,
+        ):
+            raise CodexHookNotActiveError(
+                f"Codex plugin hooks.json at {hooks_json_path} does not "
+                f"declare a {codex_event_name} command handler for "
+                f"{_HOOK_COMMAND_NAME!r}; the safety hook + selftest "
+                "dispatch probe would not fire.",
+                reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+            )
 
     # 3. Hook-module identity check — the SHA-256 of the
     # ``src.infra.hooks.codex_pre_tool_use`` source the on-PATH hook's
@@ -1432,22 +1653,25 @@ def _default_selftest_probe(
                 reason=CodexHookNotActiveReason.VERSION_MISMATCH,
             )
 
-    # 5. Live Codex probe — ask the real ``codex app-server`` whether it
-    # actually loaded the bundled plugin under our user-config writes.
-    # The previous steps each prove a different facet (on-disk tree
-    # shape, hook bytes match, hook script runs end-to-end) but they
-    # all bypass Codex's own plugin loader. A broken
-    # ``[hooks.state.<key>]`` block, a feature-flag toggle Codex
-    # re-evaluates differently, an unexpected ``plugin.json`` schema
-    # change, or any other Codex-side loader mismatch would leave the
-    # on-disk tree looking right while real turns silently skip the
-    # safety hook under ``danger-full-access``. Routing through
-    # ``plugin/list`` JSON-RPC is the cheapest path to ask Codex
-    # directly: no LLM call, no model token cost, no production
-    # ``hooks.json`` change, and the response goes through the same
-    # plugin-discovery + feature-gate + per-plugin enable code path
-    # that real PreToolUse turns rely on. Plan AC-5 / E5.
+    # 5. Live Codex plugin/list probe — verify Codex's own plugin loader
+    # (``Feature::Plugins`` gate, workspace-plugins gate, plugin
+    # discovery, ``[plugins."<id>"] enabled``) considers the bundled
+    # plugin loaded. Cheap RPC; no LLM cost.
     _live_codex_plugin_list_probe(env_overlay, repo_path)
+
+    # 6. Live Codex hook-dispatch probe — drive a one-shot Codex turn
+    # that fires the bundled ``SessionStart`` hook through Codex's full
+    # dispatch pipeline (``Feature::PluginHooks`` /
+    # ``Feature::CodexHooks`` gates, per-handler
+    # ``[hooks.state."<key>"]`` trust evaluation,
+    # ``hook_runtime::run_pending_session_start_hooks``). The hook
+    # writes the same selftest marker the direct-spawn step writes,
+    # then returns ``continue=false`` so the turn aborts BEFORE any
+    # LLM call. Plan AC-5 / E5 (review-2 follow-up): without this step
+    # a wrong ``hook_state_key`` or stale ``trusted_hash`` could pass
+    # plugin/list while Codex skips the safety hook on real PreToolUse
+    # turns under ``danger-full-access``.
+    _live_codex_hook_dispatch_probe(env_overlay, repo_path, our_hash)
 
 
 def _resolve_hook_interpreter(hook_path: str) -> str:
@@ -1511,10 +1735,13 @@ def _resolve_hook_interpreter(hook_path: str) -> str:
     return interpreter
 
 
-def _hooks_json_declares_pre_tool_use_command(
-    payload: object, expected_command: str
+def _hooks_json_declares_event_command(
+    payload: object,
+    *,
+    event: str,
+    expected_command: str,
 ) -> bool:
-    """Return True iff ``payload`` is a HooksFile JSON declaring our hook."""
+    """Return True iff ``payload`` declares ``expected_command`` for ``event``."""
     payload_dict = (
         cast("dict[str, object]", payload) if isinstance(payload, dict) else None
     )
@@ -1526,10 +1753,10 @@ def _hooks_json_declares_pre_tool_use_command(
     )
     if hooks_dict is None:
         return False
-    pre_tool_use = hooks_dict.get("PreToolUse")
-    if not isinstance(pre_tool_use, list):
+    matchers = hooks_dict.get(event)
+    if not isinstance(matchers, list):
         return False
-    for group_obj in pre_tool_use:
+    for group_obj in matchers:
         if not isinstance(group_obj, dict):
             continue
         group = cast("dict[str, object]", group_obj)
@@ -1546,6 +1773,22 @@ def _hooks_json_declares_pre_tool_use_command(
             ):
                 return True
     return False
+
+
+def _hooks_json_declares_pre_tool_use_command(
+    payload: object, expected_command: str
+) -> bool:
+    """Return True iff ``payload`` declares ``expected_command`` for PreToolUse.
+
+    Retained for parity with existing tests; the live selftest probe
+    additionally requires SessionStart to be declared (so the
+    SessionStart-driven dispatch probe in step 6 can fire). Use
+    :func:`_hooks_json_declares_event_command` directly when checking
+    SessionStart.
+    """
+    return _hooks_json_declares_event_command(
+        payload, event="PreToolUse", expected_command=expected_command
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -5331,3 +5331,104 @@ def test_main_swallows_marker_write_errors(
     rc = main()
     assert rc == 0
     assert not bad_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# SessionStart handler (Phase E5 / AC-5 — live-Codex dispatch probe)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_main_aborts_session_start_in_selftest_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A SessionStart payload + ``SELFTEST_MARKER_ENV`` set produces
+    ``{"continue": false, "stopReason": ...}`` so Codex aborts the
+    turn before any LLM call.
+
+    This is the contract the live-Codex hook-dispatch probe relies on:
+    SessionStart fires → marker emitted → continue=false → turn aborts
+    with no model token spent. Without this branch, Codex would parse
+    the PreToolUse-shaped output as a SessionStart response, hit
+    ``deny_unknown_fields`` on the ``decision`` key, and treat the
+    hook as failed — defeating the whole proof.
+    """
+    import json as _json
+
+    from src.infra.hooks.codex_pre_tool_use import SELFTEST_MARKER_ENV, main
+
+    marker_path = tmp_path / "marker.json"
+    monkeypatch.setenv(SELFTEST_MARKER_ENV, str(marker_path))
+    monkeypatch.setattr(
+        "sys.stdin",
+        type(
+            "FakeStdin",
+            (),
+            {
+                "read": staticmethod(
+                    lambda: _json.dumps(
+                        {
+                            "hook_event_name": "SessionStart",
+                            "session_id": "sess-1",
+                            "cwd": str(tmp_path),
+                            "model": "gpt-test",
+                            "permission_mode": "auto",
+                            "transcript_path": None,
+                            "source": "user",
+                        }
+                    )
+                )
+            },
+        )(),
+    )
+
+    main()
+
+    output = _json.loads(capsys.readouterr().out.strip())
+    assert output["continue"] is False
+    assert "stopReason" in output
+    # Marker is still written so the provider can verify hook fired.
+    assert marker_path.exists()
+
+
+@pytest.mark.unit
+def test_main_continues_session_start_in_production(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Outside selftest mode, the SessionStart handler returns
+    ``{"continue": true}`` so real Codex sessions proceed normally.
+
+    Adding SessionStart to the bundled plugin's hooks.json means the
+    hook fires on EVERY Codex session start in production. The handler
+    must be a quiet no-op there (no marker written, no abort signal),
+    just a small subprocess-spawn latency.
+    """
+    import json as _json
+
+    from src.infra.hooks.codex_pre_tool_use import SELFTEST_MARKER_ENV, main
+
+    monkeypatch.delenv(SELFTEST_MARKER_ENV, raising=False)
+    monkeypatch.setattr(
+        "sys.stdin",
+        type(
+            "FakeStdin",
+            (),
+            {
+                "read": staticmethod(
+                    lambda: _json.dumps(
+                        {"hook_event_name": "SessionStart", "session_id": "s"}
+                    )
+                )
+            },
+        )(),
+    )
+
+    main()
+
+    output = _json.loads(capsys.readouterr().out.strip())
+    assert output == {"continue": True}
+    assert list(tmp_path.iterdir()) == []
