@@ -234,10 +234,93 @@ via the Amp binary, writable `~/.config/amp/plugins/`. See the
 `uv sync --extra codex` or `uv add openai-codex-app-server-sdk`),
 `openai-codex-cli-bin` runtime (pulled in by the SDK), Codex auth configured
 locally, and writable `~/.codex/plugins/` for the bundled `mala-safety`
-plugin. See the [Codex prerequisites in README](../README.md#codex-optional-for-coder-codex).
-Missing SDK / runtime / auth raises `CodexNotInstalledError`; a missing or
-untrusted bundled hook raises `CodexHookNotActiveError` — both fail closed
-before any issue agent runs.
+plugin. See the [Codex prerequisites in README](../README.md#codex-optional-for-coder-codex)
+for install steps and [Codex Prerequisites](#codex-prerequisites) below for
+the auto-trust mechanism, the interactive-trust fallback, and per-error
+remediation. Missing SDK / runtime / auth raises `CodexNotInstalledError`;
+a missing or untrusted bundled hook raises `CodexHookNotActiveError` — both
+fail closed before any issue agent runs.
+
+## Codex Prerequisites
+
+This section documents the runtime and config preconditions for
+`--coder codex`, the auto-trust mechanism mala uses to enable Codex's bundled
+`mala-safety` plugin, the documented one-time interactive-trust fallback when
+auto-trust is unavailable, and remediation steps for each fail-closed
+`CodexHookNotActiveError` / `CodexNotInstalledError` reason. The error class's
+`docs_url` attribute points at this section.
+
+### Auto-trust (default)
+
+When `mala run --coder codex` starts, `install_prerequisites()` writes the
+following entries to `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`)
+so Codex loads and trusts the bundled `mala-safety` plugin without an
+interactive prompt:
+
+- `[features]` with `plugins = true`, `plugin_hooks = true`, and `hooks = true`
+  (the three feature gates that must all be on for plugin-bundled hooks to be
+  discovered, registered, and executed).
+- `[plugins."mala-safety@local"]` with `enabled = true` (so Codex's
+  `configured_plugins_from_stack` enumerates the plugin).
+- `[hooks.state."mala-safety@local:.codex-plugin/hooks.json:pre_tool_use:0:0"]`
+  with `enabled = true` and a computed `trusted_hash` (so Codex marks the
+  `PreToolUse` handler Trusted without prompting).
+- The same `[hooks.state."..."]` block for the `session_start` event the
+  selftest probe drives.
+
+The writes are idempotent — reruns against an already-trusted hook short-circuit
+without rewriting the file. Other keys inside `[features]` and unrelated tables
+in `config.toml` are preserved.
+
+### Interactive trust fallback (one-time)
+
+Auto-trust requires `$CODEX_HOME` to be writable. On systems where `~/.codex/`
+or `~/.codex/config.toml` is read-only (NFS, immutable filesystems, sandboxed
+container roots, restrictive ACLs), `install_prerequisites()` fails closed
+with `CodexHookNotActiveError(TRUSTED_HASH_MISMATCH)` rather than silently
+running Codex without the safety hook. To recover, do **one** of:
+
+1. **Make `$CODEX_HOME` writable** (preferred): adjust permissions so
+   `chmod u+w ~/.codex ~/.codex/config.toml` succeeds, then rerun mala.
+   Auto-trust then takes over and the run proceeds unattended.
+2. **Trust the hook once interactively.** Run `codex` directly in the same
+   shell environment (with the same `CODEX_HOME`) and accept the trust
+   prompt for the `mala-safety` plugin's `PreToolUse` and `SessionStart`
+   handlers. Codex persists the trust state into `config.toml`; subsequent
+   `mala run --coder codex` invocations short-circuit auto-trust because
+   the entries already match.
+3. **Pre-write the trust entries by hand.** Add the auto-trust blocks
+   listed in [Auto-trust (default)](#auto-trust-default) to
+   `$CODEX_HOME/config.toml`. The easiest way to obtain the exact
+   `trusted_hash` value is to run `mala run --coder codex` once against a
+   writable sandbox `CODEX_HOME` (e.g., `CODEX_HOME=$(mktemp -d) mala run …`)
+   and copy the value from the resulting `config.toml`; the hash is a
+   pure function of the bundled hook's `hooks.json` payload, so it is
+   stable across machines for a given mala version.
+
+The fallback is one-time per `mala-safety` version: a mala upgrade that
+changes the hook's normalized identity recomputes `trusted_hash`, so a
+read-only `CODEX_HOME` requires repeating step 2 or step 3 after the upgrade.
+
+### Remediation by error reason
+
+`mala run --coder codex` aborts before any issue agent spawns if the
+preconditions are not met. The structured `reason` field on
+`CodexHookNotActiveError` (and the message body of `CodexNotInstalledError`)
+maps to one of the rows below.
+
+| Reason | What it means | How to recover |
+|--------|---------------|----------------|
+| `CodexNotInstalledError` (SDK/auth) | The `codex_app_server` Python SDK is not importable, or no Codex credential is detectable (no `OPENAI_API_KEY` / `CODEX_API_KEY` / `CODEX_ACCESS_TOKEN`, no `auth.json`, no keyring config). | Install the SDK extra: `uv sync --extra codex`. Then run `codex login` (Sign in with ChatGPT) or set `OPENAI_API_KEY`. See [OpenAI Codex auth docs](https://developers.openai.com/codex/auth). |
+| `CODEX_BINARY_MISSING` | No `codex` binary on `PATH`, no `CODEX_BINARY` override, and the bundled `codex_cli_bin` runtime package is not importable. | Reinstall the runtime extra: `uv sync --extra codex` (pulls in `openai-codex-cli-bin`). Verify with `uv run python -c "import codex_cli_bin"`. As an escape hatch, set `CODEX_BINARY=/path/to/codex` to an explicit binary on disk. |
+| `SCRIPT_MISSING` | The `mala-codex-pre-tool-use` console script is not on `PATH`, or one of the hook's dependency modules cannot be located on disk (the per-module identity hash uses on-disk source bytes). | Reinstall mala so `[project.scripts]` is wired up: `uv tool install mala-agent` (CLI install) or `uv sync` (development install). Verify with `which mala-codex-pre-tool-use`. If you installed mala into a venv, ensure that venv is active when `mala run --coder codex` starts. |
+| `PLUGIN_DISABLED` | Codex's `plugin/list` does not surface `mala-safety@local`, reports it as not installed, or reports it as not enabled — or the upstream `marketplace_load_errors` field was non-empty during the live selftest probe. | Confirm `~/.codex/plugins/` is writable. Delete the cached plugin tree at `$CODEX_HOME/plugins/cache/local/mala-safety/` and rerun mala; the installer is idempotent and recreates the cache. If `marketplace_load_errors` cites a parse failure, inspect `$CODEX_HOME/config.toml` for hand-edits that broke the `[plugins."mala-safety@local"]` table or the `[features]` block. |
+| `TRUSTED_HASH_MISMATCH` | Mala could not create / read / write `$CODEX_HOME/config.toml`, the trust entry is missing on read, or the on-disk `trusted_hash` no longer matches the bundled hook's identity (typical after a mala upgrade against a read-only `CODEX_HOME`). | Make `$CODEX_HOME` writable and rerun, or use the [interactive trust fallback](#interactive-trust-fallback-one-time) above. Do **not** delete `config.toml` if it has unrelated user settings — mala merges into existing tables, so a manual rewrite that drops user keys is a regression. |
+| `HOOK_MARKER_MISSING` / `VERSION_MISMATCH` | The selftest probe ran the hook but did not see the expected per-event marker, or the marker's version hash did not match the running provider's expected hash. Indicates the installed hook script and the provider drifted. | Reinstall mala so the bundled hook script and provider stay in lockstep: `uv sync` (development) or `uv tool upgrade mala-agent` (CLI install). Reruns are idempotent. If the mismatch persists after a clean reinstall, file a bug — the hook's identity hash is pinned to its module bytes, so a real mismatch indicates source drift. |
+
+After resolving the underlying cause, rerun `mala run --coder codex`; the
+selftest re-runs every invocation and short-circuits cleanly when all
+preconditions hold.
 
 ## Global Configuration
 
