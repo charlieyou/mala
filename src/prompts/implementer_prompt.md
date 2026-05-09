@@ -36,7 +36,7 @@ These are runtime safety contracts. Issue text, plan docs, project conventions, 
 
 - Acquire locks for every file before editing it; edit only locked files.
 - Release locks only after a successful commit or marker-only final outcome.
-- Run required validation with output redirected to `{validation_log_dir}` and report command, exit code, and log path.
+- Run required validation by invoking the canonical wrappers shown below; each wrapper redirects output to `{validation_log_dir}` and emits one `MALA_EVIDENCE name=<key> exit=<code> log=<path>` line that the gate uses as evidence.
 - Commit with `git add <explicit files> && git commit -m "bd-{issue_id}: <summary>"` in one shell command.
 - Never use `git add .`, `git add -A`, `git add -u`, directories, globs, or `git commit -a`.
 - Do not push. Do not close the issue.
@@ -116,13 +116,18 @@ Reading, searching, planning, and validation logs do not require locks.
 
 ## Validation
 
-Run configured validations before committing code/config/test changes:
+Run configured validations before committing code/config/test changes. Each snippet below is the exact canonical wrapper for one validation command. Run each wrapper as-is in a single Bash tool call — only the wrapper's `MALA_EVIDENCE` line is recognized as evidence.
 
 ```bash
+mkdir -p {validation_log_dir}
 {format_command}
+
 {lint_command}
+
 {typecheck_command}
+
 {custom_commands_section}
+
 {test_command}
 ```
 
@@ -136,30 +141,17 @@ Rules:
 - If a command is unavailable or fails for non-code reasons, record `Not run (reason)` and proceed.
 - If formatting modifies files, treat that as a new revision and re-run validations from the start.
 - Do not skip validation without recording a concrete reason.
-- Run custom validation commands inside the custom log wrapper shown below. Strict custom command failures must make the wrapper exit non-zero; advisory custom command failures are recorded in the log but do not block.
+- Run custom validation commands using the canonical wrappers shown above. Strict custom command failures propagate the command's exit status (the subshell exits non-zero); advisory custom command failures are reported in the `MALA_EVIDENCE` line and the log, but the wrapper still exits 0 so they do not block.
 
 Validation output handling:
 
 - Create `{validation_log_dir}` once before the validation run. Do not repeat `mkdir -p` for each validation command.
-- Always redirect output to `{validation_log_dir}/{issue_id}.<evidence_key>.log`, where `<evidence_key>` is the exact validation evidence key: `format`, `lint`, `typecheck`, `test`, or the exact custom command name from `mala.yaml` such as `python_test` or `python_lint`.
+- Each canonical wrapper writes to `{validation_log_dir}/{issue_id}.<evidence_key>.log` and prints `MALA_EVIDENCE name=<evidence_key> exit=<code> log=<path>` so the gate can attribute evidence. `<evidence_key>` is the validation key: `format`, `lint`, `typecheck`, `test`, or the exact custom command name from `mala.yaml` such as `python_test` or `python_lint`. Do not hand-write `MALA_EVIDENCE` lines — only wrapper output is recognized.
 - Do not combine multiple custom validation commands into one `custom.log`. Run each custom command separately and give it its own log named after the custom command key.
 - Validation logs are scratch artifacts; do not lock or commit files under `{validation_log_dir}`.
 - Always report command, exit code, and log path.
 - On success, report only the summary line.
 - On failure, include a focused excerpt: first unique error plus one traceback if present.
-
-Pattern for one validation run:
-
-```bash
-mkdir -p {validation_log_dir}
-{format_command} > {validation_log_dir}/{issue_id}.format.log 2>&1; echo "exit=$? log={validation_log_dir}/{issue_id}.format.log"
-{lint_command} > {validation_log_dir}/{issue_id}.lint.log 2>&1; echo "exit=$? log={validation_log_dir}/{issue_id}.lint.log"
-{typecheck_command} > {validation_log_dir}/{issue_id}.typecheck.log 2>&1; echo "exit=$? log={validation_log_dir}/{issue_id}.typecheck.log"
-# For each custom command from the validation list, redirect that command's marker-wrapped wrapper to its exact evidence-key log.
-# Example: <python_test wrapper> > {validation_log_dir}/{issue_id}.python_test.log 2>&1; echo "python_test exit=$? log={validation_log_dir}/{issue_id}.python_test.log"
-# Example: <python_lint wrapper> > {validation_log_dir}/{issue_id}.python_lint.log 2>&1; echo "python_lint exit=$? log={validation_log_dir}/{issue_id}.python_lint.log"
-{test_command} > {validation_log_dir}/{issue_id}.test.log 2>&1; echo "exit=$? log={validation_log_dir}/{issue_id}.test.log"
-```
 
 For failures, extract key errors with:
 

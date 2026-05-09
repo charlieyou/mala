@@ -10,64 +10,92 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from src.domain.validation.spec import (
+    DEFAULT_COMMAND_TIMEOUT,
+    CommandKind,
+    ValidationCommand,
+)
+from src.domain.validation_wrapper import build_canonical_wrapper
+
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from src.domain.validation.config import PromptValidationCommands, ValidationConfig
 
 
 def build_custom_commands_section(
     custom_commands: tuple[tuple[str, str, int, bool], ...],
+    *,
+    issue_id: str,
+    validation_log_dir: Path,
 ) -> str:
-    """Build the custom commands section for the implementer prompt.
+    """Build the custom commands section using canonical wrappers.
 
-    Each custom command is wrapped with markers for status tracking.
-    Strict commands (allow_fail=False) exit with the command's status.
-    Advisory commands (allow_fail=True) always exit 0.
+    Each custom command is wrapped with the canonical Bash wrapper from
+    `build_canonical_wrapper`, which emits one `MALA_EVIDENCE` summary line
+    per command. Strict commands (`allow_fail=False`) propagate the
+    command's status; advisory commands (`allow_fail=True`) exit 0 from the
+    subshell so they do not block the pipeline.
 
     Args:
         custom_commands: Tuple of (name, command, timeout, allow_fail) tuples.
+        issue_id: The issue ID used to compose log file names.
+        validation_log_dir: Directory for validation command output logs.
 
     Returns:
-        Formatted custom commands section, or empty string if no custom commands.
+        One canonical wrapper per command, joined by blank lines, or the
+        empty string when there are no custom commands.
     """
     if not custom_commands:
         return ""
 
-    lines = ["# Custom validation commands (run after typecheck, before test)"]
+    wrappers = [
+        build_canonical_wrapper(
+            ValidationCommand(
+                name=name,
+                command=command,
+                kind=CommandKind.CUSTOM,
+                timeout=timeout,
+                allow_fail=allow_fail,
+            ),
+            issue_id=issue_id,
+            validation_log_dir=validation_log_dir,
+        )
+        for name, command, timeout, allow_fail in custom_commands
+    ]
+    return "\n\n".join(wrappers)
 
-    for name, command, timeout, allow_fail in custom_commands:
-        # Build marker-wrapped command pattern
-        # Uses subshell to isolate exit and prevent terminating parent shell
-        # Wrap command in bash -c to handle shell metacharacters (;, &&, ||, pipes, env vars)
-        # Escape single quotes in command by replacing ' with '\''
-        # Note: command names are already validated by CUSTOM_COMMAND_NAME_PATTERN
-        # to only contain [a-zA-Z_][a-zA-Z0-9_]* so no escaping needed for names
-        escaped_command = command.replace("'", "'\\''")
-        if allow_fail:
-            # Advisory: always exit 0 from subshell, note failure but don't block
-            wrapper = (
-                f"(echo '[custom:{name}:start]'; "
-                f"__status=0; timeout {timeout} bash -c '{escaped_command}' || __status=$?; "
-                f"if [ $__status -eq 0 ]; then echo '[custom:{name}:pass]'; "
-                f"elif [ $__status -eq 124 ]; then echo '[custom:{name}:timeout]'; "
-                f'else echo "[custom:{name}:fail exit=$__status]"; fi; '
-                f"exit 0)  # advisory (allow_fail=true)"
-            )
-            lines.append(f"# {name} (advisory - failures don't block)")
-        else:
-            # Strict: exit from subshell with command's status
-            wrapper = (
-                f"(echo '[custom:{name}:start]'; "
-                f"__status=0; timeout {timeout} bash -c '{escaped_command}' || __status=$?; "
-                f"if [ $__status -eq 0 ]; then echo '[custom:{name}:pass]'; "
-                f"elif [ $__status -eq 124 ]; then echo '[custom:{name}:timeout]'; "
-                f'else echo "[custom:{name}:fail exit=$__status]"; fi; '
-                f"exit $__status)"
-            )
-            lines.append(f"# {name}")
 
-        lines.append(wrapper)
+def build_gate_followup_wrappers(
+    missing_commands: Sequence[ValidationCommand],
+    *,
+    issue_id: str,
+    validation_log_dir: Path,
+) -> str:
+    """Emit one canonical wrapper per missing command for gate_followup.md.
 
-    return "\n".join(lines)
+    Args:
+        missing_commands: Validation commands the gate flagged as missing or
+            invalid evidence. Order is preserved in the rendered output.
+        issue_id: The issue ID used to compose log file names.
+        validation_log_dir: Directory for validation command output logs.
+
+    Returns:
+        Canonical wrappers joined by blank lines, or the empty string when
+        no commands are missing.
+    """
+    if not missing_commands:
+        return ""
+
+    wrappers = [
+        build_canonical_wrapper(
+            cmd,
+            issue_id=issue_id,
+            validation_log_dir=validation_log_dir,
+        )
+        for cmd in missing_commands
+    ]
+    return "\n\n".join(wrappers)
 
 
 @dataclass(frozen=True)
@@ -118,6 +146,37 @@ def load_prompts(prompt_dir: Path) -> PromptProvider:
     )
 
 
+# Mapping of built-in command attributes on PromptValidationCommands to their
+# evidence name and kind. Used to render canonical wrappers for built-ins.
+_BUILTIN_COMMANDS: tuple[tuple[str, str, CommandKind], ...] = (
+    ("format", "format", CommandKind.FORMAT),
+    ("lint", "lint", CommandKind.LINT),
+    ("typecheck", "typecheck", CommandKind.TYPECHECK),
+    ("test", "test", CommandKind.TEST),
+)
+
+
+def _builtin_command_records(
+    validation_commands: PromptValidationCommands,
+) -> dict[str, ValidationCommand]:
+    """Build ValidationCommand records for the four built-in commands.
+
+    Returns a dict keyed by evidence name (`format`, `lint`, `typecheck`,
+    `test`) so callers can render each built-in's canonical wrapper into the
+    matching prompt placeholder.
+    """
+    return {
+        name: ValidationCommand(
+            name=name,
+            command=getattr(validation_commands, attr),
+            kind=kind,
+            timeout=DEFAULT_COMMAND_TIMEOUT,
+            allow_fail=False,
+        )
+        for attr, name, kind in _BUILTIN_COMMANDS
+    }
+
+
 def format_implementer_prompt(
     implementer_prompt: str,
     issue_id: str,
@@ -143,9 +202,19 @@ def format_implementer_prompt(
     Returns:
         Formatted prompt string.
     """
-    # Build custom_commands_section from custom_commands tuple
+    builtins = _builtin_command_records(validation_commands)
+    wrappers = {
+        f"{name}_command": build_canonical_wrapper(
+            cmd,
+            issue_id=issue_id,
+            validation_log_dir=validation_log_dir,
+        )
+        for name, cmd in builtins.items()
+    }
     custom_commands_section = build_custom_commands_section(
-        validation_commands.custom_commands
+        validation_commands.custom_commands,
+        issue_id=issue_id,
+        validation_log_dir=validation_log_dir,
     )
 
     return implementer_prompt.format(
@@ -154,15 +223,81 @@ def format_implementer_prompt(
         lock_dir=lock_dir,
         validation_log_dir=validation_log_dir,
         agent_id=agent_id,
-        lint_command=validation_commands.lint,
-        format_command=validation_commands.format,
-        typecheck_command=validation_commands.typecheck,
         custom_commands_section=custom_commands_section,
-        test_command=validation_commands.test,
         issue_description=(issue_description or "No description available")
         .replace("{", "{{")
         .replace("}", "}}"),
+        **wrappers,
     )
+
+
+def format_gate_followup_prompt(
+    gate_followup_template: str,
+    *,
+    attempt: int,
+    max_attempts: int,
+    failure_reasons: str,
+    issue_id: str,
+    missing_commands: Sequence[ValidationCommand],
+    validation_log_dir: Path,
+) -> str:
+    """Format the gate follow-up prompt with canonical wrappers.
+
+    Args:
+        gate_followup_template: Raw gate_followup.md template.
+        attempt: Current retry attempt number.
+        max_attempts: Maximum retry attempts.
+        failure_reasons: Pre-formatted failure-reason text.
+        issue_id: The issue ID being implemented.
+        missing_commands: Validation commands flagged as missing or invalid
+            evidence. One canonical wrapper is rendered per command.
+        validation_log_dir: Directory for validation command output logs.
+
+    Returns:
+        Formatted gate-followup prompt with `{missing_command_wrappers}`
+        substituted by canonical wrappers.
+    """
+    missing_command_wrappers = build_gate_followup_wrappers(
+        missing_commands,
+        issue_id=issue_id,
+        validation_log_dir=validation_log_dir,
+    )
+    return gate_followup_template.format(
+        attempt=attempt,
+        max_attempts=max_attempts,
+        failure_reasons=failure_reasons,
+        issue_id=issue_id,
+        missing_command_wrappers=missing_command_wrappers,
+    )
+
+
+def commands_for_gate_followup(
+    validation_commands: PromptValidationCommands,
+) -> list[ValidationCommand]:
+    """Return ValidationCommand records for every configured command.
+
+    Used by the gate-followup renderer when it must rerun the full validation
+    suite (no per-command evidence map is available yet). Order matches the
+    implementer prompt: format → lint → typecheck → custom → test.
+    """
+    builtins = _builtin_command_records(validation_commands)
+    ordered: list[ValidationCommand] = [
+        builtins["format"],
+        builtins["lint"],
+        builtins["typecheck"],
+    ]
+    for name, command, timeout, allow_fail in validation_commands.custom_commands:
+        ordered.append(
+            ValidationCommand(
+                name=name,
+                command=command,
+                kind=CommandKind.CUSTOM,
+                timeout=timeout,
+                allow_fail=allow_fail,
+            )
+        )
+    ordered.append(builtins["test"])
+    return ordered
 
 
 def get_default_validation_commands() -> PromptValidationCommands:

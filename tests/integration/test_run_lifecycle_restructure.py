@@ -63,7 +63,7 @@ def make_test_prompts() -> SessionPrompts:
         gate_followup=(
             "Gate followup: {issue_id} attempt {attempt}/{max_attempts}\n"
             "Failures: {failure_reasons}\n"
-            "Commands: {lint_command} {format_command} {typecheck_command} {test_command}"
+            "Wrappers:\n{missing_command_wrappers}"
         ),
         review_followup=(
             "Review followup: {issue_id} attempt {attempt}/{max_attempts}\n"
