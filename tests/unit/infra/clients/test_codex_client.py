@@ -401,6 +401,13 @@ async def test_query_uses_compat_thread_start_for_priority_service_tier(
                 {"thread": {"id": "thr_priority"}, "serviceTier": "priority"}
             )
 
+        def _request_raw(
+            self, method: str, params: dict[str, object] | None
+        ) -> dict[str, object]:
+            raise AssertionError(
+                f"structured request should be preferred over _request_raw for {method} {params}"
+            )
+
     class _CompatAsyncCodex:
         config: _FakeAppServerConfig | None = None
 

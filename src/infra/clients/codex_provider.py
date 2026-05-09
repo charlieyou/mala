@@ -11,9 +11,9 @@ Amp provider's posture.
 
 Lazy-import contract (plan ``L733``): importing this module does NOT
 transitively import ``codex_app_server``. The SDK is referenced only
-inside :class:`CodexClient.__aenter__` / :meth:`CodexClient.query` (and
-even those uses are guarded by ``try/except TypeError`` for backward
-compatibility); :class:`CodexClient` itself is imported lazily by
+inside runtime/probe paths such as :class:`CodexClient.__aenter__`,
+:meth:`CodexClient.query`, and the live Codex selftests;
+:class:`CodexClient` itself is imported lazily by
 :meth:`_CodexClientFactory.create` so module-load remains SDK-free.
 :class:`CodexEvidenceProvider` does not pull the SDK either — it reads
 tee'd JSONL only — so eager construction is safe. The plugin installer
@@ -38,6 +38,7 @@ from src.core.constants import (
     DEFAULT_CODEX_SANDBOX,
 )
 from src.infra.clients.codex_evidence_provider import CodexEvidenceProvider
+from src.infra.clients.codex_sdk_compat import start_thread_compat
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1074,21 +1075,9 @@ def _live_codex_hook_dispatch_probe(
     pays at most once per startup.
     """
     import asyncio
-    import inspect
     import json as _json
     import tempfile
     import time as _time
-    from pydantic import BaseModel, ConfigDict
-
-    class _RawThreadStartResponse(BaseModel):
-        model_config = ConfigDict(extra="allow")
-
-        thread: dict[str, object]
-
-    class _RawTurnStartResponse(BaseModel):
-        model_config = ConfigDict(extra="allow")
-
-        turn: dict[str, object]
 
     expected_event_files = ("SessionStart.json", "PreToolUse.json")
 
@@ -1117,111 +1106,27 @@ def _live_codex_hook_dispatch_probe(
         sandbox_value = cast("Any", "read-only")
         approval_policy_value = cast("Any", "never")
 
-        async def _maybe_await(value: object) -> object:
-            if inspect.isawaitable(value):
-                return await value
-            return value
-
         async with AsyncCodex(config=config) as codex:
-            raw_client = getattr(codex, "_client", None)
-            raw_request = getattr(raw_client, "_request_raw", None)
-            sdk_request = getattr(raw_client, "request", None)
-            if callable(raw_request) or callable(sdk_request):
-                # Temporary workaround for openai/codex#21871. Codex CLI
-                # 0.129 can return ``serviceTier = "priority"`` from
-                # ``thread/start`` while the generated Python SDK model only
-                # accepts ``fast`` / ``flex``. This selftest only needs the
-                # thread and turn ids so Codex's real hook dispatch pipeline
-                # runs; use raw JSON-RPC with permissive local response models
-                # here instead of the stale generated response model. Keep this
-                # scoped to the selftest path.
-                async def _compat_request(
-                    method: str,
-                    params: dict[str, object],
-                    *,
-                    response_model: type[BaseModel],
-                ) -> object:
-                    if callable(raw_request):
-                        return await _maybe_await(raw_request(method, params))
-                    return await _maybe_await(
-                        sdk_request(method, params, response_model=response_model)
-                    )
+            thread = await start_thread_compat(
+                codex,
+                {
+                    "model": DEFAULT_CODEX_MODEL,
+                    "sandbox": "read-only",
+                    "approvalPolicy": "never",
+                    "cwd": str(repo_path),
+                },
+                typed_kwargs={
+                    "model": DEFAULT_CODEX_MODEL,
+                    "sandbox": sandbox_value,
+                    "approval_policy": approval_policy_value,
+                    "cwd": str(repo_path),
+                },
+            )
+            turn = await thread.turn(TextInput(_LIVE_DISPATCH_PROBE_PROMPT))
+            turn_id = getattr(turn, "id", None)
 
-                thread_response_obj = await _compat_request(
-                    "thread/start",
-                    {
-                        "model": DEFAULT_CODEX_MODEL,
-                        "sandbox": "read-only",
-                        "approvalPolicy": "never",
-                        "cwd": str(repo_path),
-                    },
-                    response_model=_RawThreadStartResponse,
-                )
-                thread_response = (
-                    thread_response_obj.model_dump()
-                    if isinstance(thread_response_obj, BaseModel)
-                    else thread_response_obj
-                )
-                if not isinstance(thread_response, dict):
-                    raise TypeError("thread/start raw response must be an object")
-                thread_obj = thread_response.get("thread")
-                thread_id = (
-                    thread_obj.get("id") if isinstance(thread_obj, dict) else None
-                )
-                if not isinstance(thread_id, str) or not thread_id:
-                    raise TypeError("thread/start raw response missing thread.id")
-
-                turn_response_obj = await _compat_request(
-                    "turn/start",
-                    {
-                        "threadId": thread_id,
-                        "input": [
-                            {"type": "text", "text": _LIVE_DISPATCH_PROBE_PROMPT}
-                        ],
-                    },
-                    response_model=_RawTurnStartResponse,
-                )
-                turn_response = (
-                    turn_response_obj.model_dump()
-                    if isinstance(turn_response_obj, BaseModel)
-                    else turn_response_obj
-                )
-                if not isinstance(turn_response, dict):
-                    raise TypeError("turn/start raw response must be an object")
-                turn_obj = turn_response.get("turn")
-                turn_id = turn_obj.get("id") if isinstance(turn_obj, dict) else None
-                if not isinstance(turn_id, str) or not turn_id:
-                    raise TypeError("turn/start raw response missing turn.id")
-
-                async def _interrupt_turn() -> None:
-                    if callable(raw_request):
-                        await _maybe_await(
-                            raw_request(
-                                "turn/interrupt",
-                                {"threadId": thread_id, "turnId": turn_id},
-                            )
-                        )
-                        return
-                    await _maybe_await(
-                        sdk_request(
-                            "turn/interrupt",
-                            {"threadId": thread_id, "turnId": turn_id},
-                            response_model=BaseModel,
-                        )
-                    )
-
-            else:
-                thread = await codex.thread_start(
-                    model=DEFAULT_CODEX_MODEL,
-                    sandbox=sandbox_value,
-                    approval_policy=approval_policy_value,
-                    cwd=str(repo_path),
-                )
-                turn = await thread.turn(TextInput(_LIVE_DISPATCH_PROBE_PROMPT))
-                turn_id = getattr(turn, "id", None)
-
-                async def _interrupt_turn() -> None:
-                    await turn.interrupt()
+            async def _interrupt_turn() -> None:
+                await turn.interrupt()
 
             deadline = _time.monotonic() + _HOOK_PROBE_TIMEOUT_SECONDS
             collected: dict[str, str] = {}
