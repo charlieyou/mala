@@ -425,86 +425,30 @@ class TestResidualObfuscation:
 
 
 # ---------------------------------------------------------------------------
-# State-file fallback transport (plan L817-L825)
+# Env transport (plan L815, AC-3 — env injection is the sole transport)
 # ---------------------------------------------------------------------------
 
 
-class TestStateFileFallback:
-    def test_reads_state_file_when_env_missing(
-        self,
-        repo: Path,
-        lock_dir: Path,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        # Force HOME to a temp dir so the hook reads from a controlled
-        # state-file location instead of the real user's config.
-        fake_home = tmp_path / "home"
-        state_dir = fake_home / ".config" / "mala" / "agent-state"
-        state_dir.mkdir(parents=True)
-        session_id = "thr_state_only"
-        (state_dir / f"{session_id}.env").write_text(
-            f"MALA_AGENT_ID=agent-me\n"
-            f"MALA_LOCK_DIR={lock_dir}\n"
-            f"MALA_REPO_NAMESPACE={repo}\n"
-        )
-        monkeypatch.setenv("HOME", str(fake_home))
-        monkeypatch.delenv("MALA_AGENT_ID", raising=False)
-        monkeypatch.delenv("MALA_REPO_NAMESPACE", raising=False)
-        monkeypatch.delenv("MALA_LOCK_DIR", raising=False)
-        # Lock the file *after* unsetting env so try_lock uses the
-        # state-file lock_dir via a manual override.
-        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_dir))
-        target = repo / "src.py"
-        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
-        # Now drop MALA_LOCK_DIR again so the hook is forced to source it
-        # from the state file. The hook re-sets MALA_LOCK_DIR internally
-        # before consulting the lock store.
-        monkeypatch.delenv("MALA_LOCK_DIR", raising=False)
+class TestEnvTransport:
+    """Env injection is the sole supported transport.
 
-        result = decide(
-            make_payload("apply_patch", {"path": str(target)}, session_id=session_id)
-        )
+    The Phase B/C spike confirmed ``codex_app_server.AppServerConfig.env``
+    accepts an explicit per-process env dict, and
+    :class:`CodexRuntimeBuilder.build()` overlays the full
+    ``MALA_AGENT_ID`` + ``MALA_LOCK_DIR`` + ``MALA_REPO_NAMESPACE``
+    bundle onto that dict (plan ``L815``, AC-3). The state-file
+    fallback at ``~/.config/mala/agent-state/{session_id}.env`` is no
+    longer part of the hook contract; the hook reads strictly from
+    ``os.environ``.
+    """
 
-        assert is_allow(result), result
-
-    def test_env_overrides_state_file(
-        self,
-        repo: Path,
-        lock_dir: Path,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        fake_home = tmp_path / "home"
-        state_dir = fake_home / ".config" / "mala" / "agent-state"
-        state_dir.mkdir(parents=True)
-        session_id = "thr_env_wins"
-        (state_dir / f"{session_id}.env").write_text(
-            "MALA_AGENT_ID=agent-state\n"
-            f"MALA_LOCK_DIR={lock_dir}\n"
-            f"MALA_REPO_NAMESPACE={repo}\n"
-        )
-        monkeypatch.setenv("HOME", str(fake_home))
-        # Env says agent-me; state file says agent-state. Lock is held by
-        # agent-me, so allow path proves env won.
-        monkeypatch.setenv("MALA_AGENT_ID", "agent-me")
-        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_dir))
-        monkeypatch.setenv("MALA_REPO_NAMESPACE", str(repo))
-        target = repo / "src.py"
-        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
-
-        result = decide(
-            make_payload("apply_patch", {"path": str(target)}, session_id=session_id)
-        )
-
-        assert is_allow(result), result
-
-    def test_state_file_missing_env_missing_denies(
+    def test_env_missing_denies_apply_patch(
         self,
         repo: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """A missing ``MALA_*`` bundle in ``os.environ`` denies fail-closed."""
         fake_home = tmp_path / "home"
         fake_home.mkdir()
         monkeypatch.setenv("HOME", str(fake_home))
@@ -523,52 +467,40 @@ class TestStateFileFallback:
         assert is_deny(result)
         assert "missing" in deny_reason(result)
 
-    def test_stale_env_agent_id_does_not_merge_with_state_file_coords(
+    def test_state_file_is_ignored(
         self,
         repo: Path,
         lock_dir: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Regression: source selection is atomic, not per-key (plan L820).
+        """A populated state file does NOT supply the env bundle.
 
-        Merging a stale ``MALA_AGENT_ID`` from the parent ``os.environ``
-        with ``MALA_LOCK_DIR``/``MALA_REPO_NAMESPACE`` from the current
-        session's state file would let a Codex agent be evaluated as the
-        wrong identity against the correct lock store, allowing a write
-        to a path the leaked agent happens to own. The atomic-source fix
-        denies (env path is taken because ``MALA_AGENT_ID`` is set, but
-        the env path lacks the lock-store coordinates -> "missing").
+        Pins the AC-3 contract that env is the sole supported transport.
+        Before this fix the hook read the state file as a fallback; with
+        env unset and only the state file populated, the hook would
+        previously have ALLOWED the lock-checked write. Now it must DENY
+        because ``os.environ`` is the only source.
         """
         fake_home = tmp_path / "home"
         state_dir = fake_home / ".config" / "mala" / "agent-state"
         state_dir.mkdir(parents=True)
-        session_id = "thr_no_merge"
-        # State file describes the *current* session's identity and
-        # lock-store coords.
+        session_id = "thr_state_ignored"
         (state_dir / f"{session_id}.env").write_text(
-            f"MALA_AGENT_ID=fresh-agent\n"
+            "MALA_AGENT_ID=agent-me\n"
             f"MALA_LOCK_DIR={lock_dir}\n"
             f"MALA_REPO_NAMESPACE={repo}\n"
         )
         monkeypatch.setenv("HOME", str(fake_home))
-        # The leaked agent happens to hold the lock on the target. The
-        # ``lock_dir`` fixture has already set MALA_LOCK_DIR in env so
-        # try_lock writes into the same lock store the state file
-        # references; we drop MALA_LOCK_DIR / MALA_REPO_NAMESPACE from
-        # env *after* acquiring the lock so the hook is forced to source
-        # them from the state file. Under a per-key merge this would
-        # ALLOW the write (stale identity + correct coords); the
-        # atomic-source contract DENIES it.
+        # MALA_LOCK_DIR is required at try_lock time so the lock store
+        # is real, but the *hook bundle* env vars are unset so only the
+        # state file could provide them.
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_dir))
         target = repo / "src.py"
-        assert try_lock(str(target), "stale-agent", repo_namespace=str(repo))
-        # A *stale* MALA_AGENT_ID has leaked into env from a parent
-        # process. LOCK_DIR / REPO_NAMESPACE are NOT in env. A naive
-        # per-key merge would build {AGENT_ID=stale, LOCK_DIR=...,
-        # REPO_NAMESPACE=...} from env+state and evaluate the lock
-        # store as 'stale-agent'.
-        monkeypatch.setenv("MALA_AGENT_ID", "stale-agent")
-        monkeypatch.delenv("MALA_LOCK_DIR", raising=False)
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        # Now also unset MALA_AGENT_ID / MALA_REPO_NAMESPACE so the only
+        # populated source for those keys is the state file.
+        monkeypatch.delenv("MALA_AGENT_ID", raising=False)
         monkeypatch.delenv("MALA_REPO_NAMESPACE", raising=False)
 
         result = decide(
@@ -934,42 +866,6 @@ class TestApplyPatchPatchBody:
         )
         assert is_deny(result)
         assert "no extractable target paths" in deny_reason(result)
-
-
-class TestEmptyEnvOverridesStateFile:
-    """Regression: ``MALA_DISALLOWED_TOOLS=""`` clears the state-file value.
-
-    Before the fix, ``if env_val:`` treated an explicitly-empty env as
-    absent and silently fell back to the state file, so an operator
-    could not unset a stale state-file disallowed-tools list without
-    deleting the file.
-    """
-
-    def test_empty_env_clears_state_disallowed_tools(
-        self,
-        repo: Path,
-        lock_dir: Path,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        fake_home = tmp_path / "home"
-        state_dir = fake_home / ".config" / "mala" / "agent-state"
-        state_dir.mkdir(parents=True)
-        session_id = "thr_clear"
-        (state_dir / f"{session_id}.env").write_text(
-            "MALA_AGENT_ID=agent-me\n"
-            f"MALA_LOCK_DIR={lock_dir}\n"
-            f"MALA_REPO_NAMESPACE={repo}\n"
-            "MALA_DISALLOWED_TOOLS=TodoWrite\n"
-        )
-        monkeypatch.setenv("HOME", str(fake_home))
-        # Explicitly-empty env should clear the state-file value.
-        monkeypatch.setenv("MALA_DISALLOWED_TOOLS", "")
-
-        # TodoWrite was disallowed by the state file but env clears it.
-        result = decide(make_payload("TodoWrite", {}, session_id=session_id))
-
-        assert is_allow(result), result
 
 
 # ---------------------------------------------------------------------------

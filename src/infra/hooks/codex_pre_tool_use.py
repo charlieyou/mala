@@ -191,74 +191,29 @@ def _deny(reason: str) -> dict[str, Any]:
     }
 
 
-def _load_state_file(session_id: str) -> dict[str, str]:
-    """Read ``~/.config/mala/agent-state/{session_id}.env`` if present.
+def _resolve_env() -> dict[str, str]:
+    """Resolve MALA_* values from ``os.environ``.
 
-    Returns an empty dict if the file is missing or unreadable. Lines must
-    be ``KEY=VALUE``; malformed lines are skipped silently.
+    Env injection is the sole supported transport (plan ``L815``,
+    AC-3): :class:`CodexRuntimeBuilder.build()` overlays the full
+    identity bundle (``MALA_AGENT_ID`` + ``MALA_LOCK_DIR`` +
+    ``MALA_REPO_NAMESPACE``) on the per-process env that the Codex
+    subprocess inherits, so the hook reads them straight from
+    ``os.environ``. ``MALA_DISALLOWED_TOOLS`` is independent operator
+    policy and is read the same way.
+
+    A missing key returns ``{}`` for that slot; ``decide()`` then
+    surfaces ``_MSG_ENV_MISSING`` for any branch that needs the
+    lock-ownership bundle.
     """
-    if not session_id:
-        return {}
-    home = os.environ.get("HOME") or str(Path.home())
-    state_path = Path(home) / ".config" / "mala" / "agent-state" / f"{session_id}.env"
-    if not state_path.is_file():
-        return {}
     out: dict[str, str] = {}
-    try:
-        for raw in state_path.read_text().splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            out[key.strip()] = value.strip()
-    except OSError:
-        return {}
-    return out
-
-
-def _resolve_env(session_id: str) -> dict[str, str]:
-    """Resolve MALA_* values from os.environ, falling back to state file.
-
-    The lock-ownership identity bundle (``MALA_AGENT_ID``,
-    ``MALA_LOCK_DIR``, ``MALA_REPO_NAMESPACE``) is sourced **atomically**,
-    keyed off ``MALA_AGENT_ID`` per plan L820: if ``MALA_AGENT_ID`` is
-    present in ``os.environ``, the hook uses env values for the bundle
-    (the env-injection path); otherwise it falls back to the per-session
-    state file as a single source for the bundle.
-
-    Per-key merging across the identity bundle is unsafe. Identity
-    (``MALA_AGENT_ID``) and lock-store coordinates (``MALA_LOCK_DIR`` /
-    ``MALA_REPO_NAMESPACE``) must come from the same emitter; a stale
-    ``MALA_AGENT_ID`` leaked from the parent process combined with the
-    current session's ``MALA_LOCK_DIR``/``MALA_REPO_NAMESPACE`` from the
-    state file would cause this Codex agent to be evaluated as the
-    wrong identity against the correct lock store, allowing a write to
-    a path the leaked agent happens to own.
-
-    ``MALA_DISALLOWED_TOOLS`` is independent operator policy (not
-    identity-bound) and retains per-key precedence: env wins over the
-    state file when set, even when explicitly empty (so an operator can
-    clear a stale state-file value with ``MALA_DISALLOWED_TOOLS=""``).
-    """
-    state = _load_state_file(session_id)
-    out: dict[str, str] = {}
-    bundle = ("MALA_AGENT_ID", "MALA_LOCK_DIR", "MALA_REPO_NAMESPACE")
-    if "MALA_AGENT_ID" in os.environ:
-        for key in bundle:
-            env_val = os.environ.get(key)
-            if env_val is not None:
-                out[key] = env_val
-    else:
-        for key in bundle:
-            if key in state:
-                out[key] = state[key]
+    for key in ("MALA_AGENT_ID", "MALA_LOCK_DIR", "MALA_REPO_NAMESPACE"):
+        env_val = os.environ.get(key)
+        if env_val is not None:
+            out[key] = env_val
     disallowed_env = os.environ.get("MALA_DISALLOWED_TOOLS")
     if disallowed_env is not None:
         out["MALA_DISALLOWED_TOOLS"] = disallowed_env
-    elif "MALA_DISALLOWED_TOOLS" in state:
-        out["MALA_DISALLOWED_TOOLS"] = state["MALA_DISALLOWED_TOOLS"]
     return out
 
 
@@ -330,8 +285,10 @@ def _check_lock(
         return _deny(_msg_no_lock(target, agent_id))
     if _SHELL_EXPANSION_RE.search(target):
         return _deny(_msg_no_lock(target, agent_id))
-    # Ensure the locking module reads from the configured lock dir even
-    # when MALA_LOCK_DIR was sourced from the state-file fallback.
+    # The locking module reads ``MALA_LOCK_DIR`` from ``os.environ`` at
+    # call time. Reaffirm it here so the lock-key derivation always
+    # matches the value the hook resolved from the env, even if a
+    # caller later mutates the env or imports a stale resolver.
     os.environ["MALA_LOCK_DIR"] = lock_dir
     # Imported lazily so the module-level import does not pin the lock dir
     # before the env is resolved.
@@ -3167,11 +3124,10 @@ def decide(input_payload: dict[str, Any]) -> dict[str, Any]:
     tool_input = input_payload.get("tool_input") or {}
     if not isinstance(tool_input, dict):
         tool_input = {}
-    session_id = str(input_payload.get("session_id") or "")
     cwd = input_payload.get("cwd")
     cwd_str: str | None = cwd if isinstance(cwd, str) and cwd else None
 
-    env = _resolve_env(session_id)
+    env = _resolve_env()
     disallowed = _disallowed_tools(env)
 
     # Disallowed tools: deny first regardless of branch (plan L833).
