@@ -907,6 +907,54 @@ def test_isolated_codex_home_preserves_keyring_credentials_store_opt_in(
 
 
 @pytest.mark.unit
+def test_isolated_codex_home_seed_does_not_inherit_read_only_config_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """Regression: a user whose real ``config.toml`` is read-only (common
+    with NixOS / GNU Stow dotfile managers) must not have that mode bit
+    propagated to the isolated ``CODEX_HOME``'s copy. ``shutil.copy2``
+    preserved permissions; the subsequent
+    ``_write_codex_plugin_config`` ``write_text`` would then crash with
+    ``PermissionError``, surfacing as ``CodexHookNotActiveError`` at
+    ``thread_start``. ``shutil.copyfile`` (contents only) keeps the
+    isolated copy writable.
+    """
+    codex_home, bin_dir = fake_codex_env
+    user_config = codex_home / "config.toml"
+    user_config.write_text('cli_auth_credentials_store = "keyring"\n', encoding="utf-8")
+    user_config.chmod(0o444)
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    provider = CodexAgentProvider(
+        mcp_servers=(
+            (
+                "custom-server",
+                {"command": "/usr/bin/custom-mcp", "args": [], "env": {}},
+            ),
+        ),
+        selftest_probe=_noop_probe,
+    )
+    try:
+        provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+    finally:
+        # Restore writable mode so pytest's tmp_path teardown can clean up.
+        user_config.chmod(0o644)
+
+    isolated_home = _provider_isolated_codex_home(provider)
+    isolated_config_path = isolated_home / "config.toml"
+    # Plugin/hook entries were appended without ``PermissionError``,
+    # proving the seed did not propagate the read-only mode.
+    assert "trusted_hash" in isolated_config_path.read_text(encoding="utf-8")
+    # Owner-write must be set on the isolated copy regardless of source mode.
+    assert isolated_config_path.stat().st_mode & 0o200
+
+
+@pytest.mark.unit
 def test_install_prerequisites_threads_isolated_codex_home_into_runtime_env(
     monkeypatch: pytest.MonkeyPatch,
     fake_codex_env: tuple[Path, Path],

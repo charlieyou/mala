@@ -1818,7 +1818,15 @@ class CodexAgentProvider:
             user_config = user_codex_home / _HOOK_CONFIG_FILENAME
             if user_config.is_file():
                 try:
-                    shutil.copy2(user_config, isolated / _HOOK_CONFIG_FILENAME)
+                    # ``shutil.copyfile`` copies only contents (no mode
+                    # bits): a user whose real ``config.toml`` is
+                    # read-only (common with NixOS / GNU Stow dotfile
+                    # managers) would otherwise see ``shutil.copy2``
+                    # propagate the read-only mode here, then crash
+                    # ``_write_codex_plugin_config`` with
+                    # ``PermissionError`` when it appends the plugin /
+                    # hook trust entries via ``write_text``.
+                    shutil.copyfile(user_config, isolated / _HOOK_CONFIG_FILENAME)
                 except OSError:
                     # Best-effort: a missing copy here means
                     # ``_write_codex_plugin_config`` writes a
