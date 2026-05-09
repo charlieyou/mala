@@ -208,11 +208,16 @@ def test_evidence_check_sees_invocation_1_evidence_after_resume(
         offset=end_of_invocation_1,
     )
 
-    assert evidence.commands_ran[CommandKind.TEST] is True
-    assert evidence.commands_ran[CommandKind.LINT] is True
-    assert evidence.commands_ran[CommandKind.TYPECHECK] is True
-    # Status from invocation 1 is "completed" → no failed_commands.
-    assert evidence.failed_commands == []
+    assert evidence.commands["pytest"].seen is True
+    assert evidence.commands["pytest"].kind == CommandKind.TEST
+    assert evidence.commands["ruff-check"].seen is True
+    assert evidence.commands["ruff-check"].kind == CommandKind.LINT
+    assert evidence.commands["ty"].seen is True
+    assert evidence.commands["ty"].kind == CommandKind.TYPECHECK
+    # Status from invocation 1 is "completed" → no failed commands.
+    assert all(c.status != "failed" for c in evidence.commands.values()), (
+        evidence.commands
+    )
 
 
 def test_iter_thread_evidence_yields_full_history_across_three_invocations(
@@ -318,12 +323,15 @@ def test_failed_pytest_is_routed_to_failed_commands(tmp_path: Path) -> None:
         _spec_with_lint_test_typecheck(),
     )
 
-    assert evidence.commands_ran[CommandKind.TEST] is True
-    assert "uv run pytest -q" in evidence.failed_commands, (
+    pytest_evidence = evidence.commands["pytest"]
+    assert pytest_evidence.seen is True
+    assert pytest_evidence.kind == CommandKind.TEST
+    assert pytest_evidence.status == "failed", (
         "Failed pytest with status=completed + exit_code=1 must be "
-        "tracked in failed_commands; otherwise the gate silently passes "
+        "tracked as a failed command; otherwise the gate silently passes "
         "on a real test failure."
     )
+    assert pytest_evidence.observed_command == "uv run pytest -q"
 
 
 def test_codex_provider_evidence_surface_reads_codex_sessions_dir() -> None:

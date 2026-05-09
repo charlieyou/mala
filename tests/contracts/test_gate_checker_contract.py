@@ -128,6 +128,7 @@ class TestFakeGateCheckerBehavior:
     @pytest.mark.unit
     def test_parse_validation_evidence_returns_configured_value(self) -> None:
         """parse_validation_evidence_with_spec() returns pre-configured evidence."""
+        from src.domain.evidence_check import CommandEvidence
         from src.domain.validation.spec import (
             CommandKind,
             ValidationScope,
@@ -135,7 +136,20 @@ class TestFakeGateCheckerBehavior:
         )
 
         evidence = ValidationEvidence(
-            commands_ran={CommandKind.TEST: True, CommandKind.LINT: True}
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="passed",
+                ),
+                "lint": CommandEvidence(
+                    name="lint",
+                    kind=CommandKind.LINT,
+                    seen=True,
+                    status="passed",
+                ),
+            }
         )
         checker = FakeGateChecker(validation_evidence=evidence)
         spec = ValidationSpec(commands=[], scope=ValidationScope.PER_SESSION)
@@ -144,9 +158,12 @@ class TestFakeGateCheckerBehavior:
             spec=spec,
             offset=0,
         )
-        # Test via protocol-compliant methods
         assert result.has_any_evidence() is True
-        evidence_dict = result.to_evidence_dict()
+        evidence_dict = {
+            c.kind.value: c.seen
+            for c in result.commands.values()
+            if c.kind != CommandKind.CUSTOM
+        }
         assert evidence_dict.get("test") is True
         assert evidence_dict.get("lint") is True
 

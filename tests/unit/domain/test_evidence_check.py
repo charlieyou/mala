@@ -23,6 +23,7 @@ from src.domain.validation.spec import (
 
 from src.core.protocols.evidence import EvidenceProvider
 from src.domain.evidence_check import (
+    CommandEvidence,
     EvidenceCheck,
     ValidationEvidence,
     check_evidence_against_spec,
@@ -80,23 +81,40 @@ def make_evidence(
 ) -> ValidationEvidence:
     """Create ValidationEvidence with convenience arguments.
 
-    This helper allows tests to use the old-style keyword arguments
-    while the underlying structure uses spec-driven dict[CommandKind, bool].
+    This helper translates old-style keyword arguments to populate both the
+    transitional legacy fields (commands_ran/failed_commands) and the unified
+    commands map. T005 will drop the legacy field population once the
+    underlying methods are removed.
     """
-    commands_ran: dict[CommandKind, bool] = {}
+    failed_set: list[str] = list(failed_commands or [])
+    name_kind_pairs: list[tuple[str, CommandKind]] = []
     if pytest_ran:
-        commands_ran[CommandKind.TEST] = True
+        name_kind_pairs.append(("pytest", CommandKind.TEST))
     if ruff_check_ran:
-        commands_ran[CommandKind.LINT] = True
+        name_kind_pairs.append(("ruff-check", CommandKind.LINT))
     if ruff_format_ran:
-        commands_ran[CommandKind.FORMAT] = True
+        name_kind_pairs.append(("ruff-format", CommandKind.FORMAT))
     if ty_check_ran:
-        commands_ran[CommandKind.TYPECHECK] = True
+        name_kind_pairs.append(("ty", CommandKind.TYPECHECK))
     if setup_ran:
-        commands_ran[CommandKind.SETUP] = True
+        name_kind_pairs.append(("setup", CommandKind.SETUP))
+
+    commands_ran: dict[CommandKind, bool] = {
+        kind: True for _name, kind in name_kind_pairs
+    }
+    commands: dict[str, CommandEvidence] = {}
+    for name, kind in name_kind_pairs:
+        commands[name] = CommandEvidence(
+            name=name,
+            kind=kind,
+            seen=True,
+            status="passed",
+            observed_command=name,
+        )
     return ValidationEvidence(
+        commands=commands,
         commands_ran=commands_ran,
-        failed_commands=failed_commands or [],
+        failed_commands=failed_set,
     )
 
 

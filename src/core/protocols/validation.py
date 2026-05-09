@@ -36,30 +36,55 @@ class ValidationSpecProtocol(Protocol):
 
 
 @runtime_checkable
+class CommandEvidenceProtocol(Protocol):
+    """Protocol for a single command's evidence record.
+
+    Matches the shape of evidence_check.CommandEvidence for structural typing.
+    """
+
+    name: str
+    """The configured command name."""
+
+    kind: Any
+    """The CommandKind of the command."""
+
+    seen: bool
+    """Whether the command was observed in the agent session."""
+
+    status: Any
+    """Literal["passed", "failed", "unknown"] - outcome derived from evidence."""
+
+    timed_out: bool
+    """Whether the command timed out."""
+
+    exit_code: int | None
+    """Exit code if known."""
+
+    observed_command: str | None
+    """The full command string as observed in the agent session, if any."""
+
+    log_path: str | None
+    """Path to the per-command validation log, if surfaced via summary line."""
+
+    tool_use_id: str | None
+    """Tool use id of the matching invocation, if any."""
+
+    source: Any
+    """Literal["command+summary", "command+shell_status"] - how status was derived."""
+
+
+@runtime_checkable
 class ValidationEvidenceProtocol(Protocol):
     """Protocol for validation evidence from agent runs.
 
     Matches the shape of evidence_check.ValidationEvidence for structural typing.
     """
 
-    commands_ran: dict[Any, bool]
-    """Mapping of CommandKind to whether it ran."""
-
-    failed_commands: list[str]
-    """List of validation commands that failed."""
-
-    custom_commands_ran: dict[str, bool]
-    """Mapping of custom command name to whether it ran."""
-
-    custom_commands_failed: dict[str, bool]
-    """Mapping of custom command name to whether it failed (exited non-zero)."""
+    commands: dict[str, CommandEvidenceProtocol]
+    """Mapping of configured command name to its CommandEvidence record."""
 
     def has_any_evidence(self) -> bool:
         """Check if any validation command ran."""
-        ...
-
-    def to_evidence_dict(self) -> dict[str, bool]:
-        """Convert evidence to a serializable dict keyed by CommandKind value."""
         ...
 
 

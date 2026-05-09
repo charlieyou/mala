@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 from .validation.spec import (
     CommandKind,
@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "CommandEvidence",
     "CommitResult",
     "EvidenceCheck",
     "GateResult",
@@ -140,19 +141,36 @@ def _shell_segment_matches_configured_command(segment: str, configured: str) -> 
     return True
 
 
+@dataclass(frozen=True)
+class CommandEvidence:
+    """Evidence record for a single configured validation command."""
+
+    name: str
+    kind: CommandKind
+    seen: bool
+    status: Literal["passed", "failed", "unknown"]
+    timed_out: bool = False
+    exit_code: int | None = None
+    observed_command: str | None = None
+    log_path: str | None = None
+    tool_use_id: str | None = None
+    source: Literal["command+summary", "command+shell_status"] = "command+shell_status"
+
+
 @dataclass
 class ValidationEvidence:
     """Evidence of validation commands executed during agent run.
 
-    This class is spec-driven: evidence is stored by CommandKind rather than
-    using hardcoded tool-specific boolean flags. This allows adding new
-    validation commands without code changes to the evidence structure.
-
-    Backward Compatibility:
-        Properties like `pytest_ran`, `ruff_check_ran`, etc. are provided
-        for backward compatibility with existing code that references these
-        directly. Internally, all evidence is stored in `commands_ran`.
+    The unified evidence map ``commands`` keys configured command names to
+    :class:`CommandEvidence` records. The legacy fields (``commands_ran``,
+    ``failed_commands``, ``custom_commands_ran``, ``custom_commands_failed``)
+    and aliases (``pytest_ran``, ``ruff_check_ran``, ``ruff_format_ran``,
+    ``ty_check_ran``) remain populated by the existing parser as a transitional
+    adapter; T005 deletes them once T003 finishes the parser rewrite.
     """
+
+    # Unified evidence map keyed by configured command name.
+    commands: dict[str, CommandEvidence] = field(default_factory=dict)
 
     # Spec-driven evidence storage: CommandKind -> ran boolean
     commands_ran: dict[CommandKind, bool] = field(default_factory=dict)
@@ -209,9 +227,10 @@ class ValidationEvidence:
         """Check if any validation command ran.
 
         Used for progress detection to determine if new validation
-        activity occurred since the last check. Includes both built-in
-        commands (via commands_ran) and custom commands (via custom_commands_ran).
+        activity occurred since the last check.
         """
+        if any(c.seen for c in self.commands.values()):
+            return True
         return any(self.commands_ran.values()) or any(self.custom_commands_ran.values())
 
     def has_minimum_validation(self) -> bool:
@@ -803,7 +822,86 @@ class EvidenceCheck:
                 evidence.custom_commands_ran[name] = True
                 evidence.custom_commands_failed[name] = True
 
+        # Transitional shim: project the legacy fields into evidence.commands so
+        # callers can migrate to the unified shape ahead of T003's parser rewrite.
+        self._derive_commands_map_from_legacy_state(evidence, spec, custom_marker_state)
+
         return evidence
+
+    def _derive_commands_map_from_legacy_state(
+        self,
+        evidence: ValidationEvidence,
+        spec: ValidationSpec,
+        custom_marker_state: dict[str, tuple[bool, str | None]],
+    ) -> None:
+        """Project legacy evidence fields into the unified ``commands`` map.
+
+        Transitional adapter for T002: legacy parsing has already populated
+        ``commands_ran``/``failed_commands``/``custom_commands_ran``/
+        ``custom_commands_failed``. This re-keys that information by configured
+        command name so callers can read from ``evidence.commands`` directly.
+        """
+        for cmd in spec.commands:
+            if cmd.kind == CommandKind.CUSTOM:
+                if not evidence.custom_commands_ran.get(cmd.name, False):
+                    continue
+                failed = evidence.custom_commands_failed.get(cmd.name, False)
+                state = custom_marker_state.get(cmd.name)
+                terminal = state[1] if state is not None else None
+                source: Literal["command+summary", "command+shell_status"]
+                source = (
+                    "command+summary"
+                    if terminal is not None
+                    else ("command+shell_status")
+                )
+                timed_out = terminal == "timeout"
+                exit_code: int | None = None
+                if terminal is not None and terminal.startswith("fail exit="):
+                    try:
+                        exit_code = int(terminal.split("=", 1)[1])
+                    except ValueError:
+                        exit_code = None
+                elif terminal == "pass":
+                    exit_code = 0
+                status: Literal["passed", "failed", "unknown"]
+                status = "failed" if failed else "passed"
+                evidence.commands[cmd.name] = CommandEvidence(
+                    name=cmd.name,
+                    kind=cmd.kind,
+                    seen=True,
+                    status=status,
+                    timed_out=timed_out,
+                    exit_code=exit_code,
+                    observed_command=cmd.command,
+                    log_path=None,
+                    tool_use_id=None,
+                    source=source,
+                )
+                continue
+
+            if not evidence.commands_ran.get(cmd.kind, False):
+                continue
+            observed_full_cmd: str | None = None
+            for full_cmd in evidence.failed_commands:
+                if cmd.detection_pattern is not None and cmd.detection_pattern.search(
+                    full_cmd
+                ):
+                    observed_full_cmd = full_cmd
+                    break
+            built_in_status: Literal["passed", "failed", "unknown"]
+            built_in_status = "failed" if observed_full_cmd is not None else "passed"
+            evidence.commands[cmd.name] = CommandEvidence(
+                name=cmd.name,
+                kind=cmd.kind,
+                seen=True,
+                status=built_in_status,
+                timed_out=False,
+                exit_code=None,
+                observed_command=observed_full_cmd or cmd.command,
+                log_path=None,
+                tool_use_id=None,
+                source="command+shell_status",
+            )
 
     def get_log_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
         """Get the byte offset at the end of a log file.

@@ -12,7 +12,11 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from src.domain.evidence_check import GateResult, ValidationEvidence
+from src.domain.evidence_check import (
+    CommandEvidence,
+    GateResult,
+    ValidationEvidence,
+)
 from src.domain.validation.spec import CommandKind
 from src.pipeline.gate_metadata import (
     build_gate_metadata,
@@ -51,8 +55,20 @@ class TestBuildGateMetadata:
     def test_passed_gate_result(self) -> None:
         """Should extract metadata from a passed gate result."""
         evidence = ValidationEvidence(
-            commands_ran={CommandKind.TEST: True, CommandKind.LINT: True},
-            failed_commands=[],
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="passed",
+                ),
+                "lint": CommandEvidence(
+                    name="lint",
+                    kind=CommandKind.LINT,
+                    seen=True,
+                    status="passed",
+                ),
+            },
         )
         gate_result = GateResult(
             passed=True,
@@ -78,8 +94,21 @@ class TestBuildGateMetadata:
     def test_failed_gate_result(self) -> None:
         """Should extract metadata from a failed gate result."""
         evidence = ValidationEvidence(
-            commands_ran={CommandKind.TEST: True, CommandKind.LINT: True},
-            failed_commands=["ruff check"],
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="passed",
+                ),
+                "lint": CommandEvidence(
+                    name="lint",
+                    kind=CommandKind.LINT,
+                    seen=True,
+                    status="failed",
+                    observed_command="ruff check",
+                ),
+            },
         )
         gate_result = GateResult(
             passed=False,
@@ -101,8 +130,14 @@ class TestBuildGateMetadata:
     def test_passed_override(self) -> None:
         """Should override passed status when overall run passed."""
         evidence = ValidationEvidence(
-            commands_ran={CommandKind.TEST: True},
-            failed_commands=[],
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="passed",
+                ),
+            },
         )
         gate_result = GateResult(
             passed=False,  # Gate failed but overall run passed
@@ -177,8 +212,14 @@ class TestBuildGateMetadataFromLogs:
         log_path.write_text("mock log content")
 
         evidence = ValidationEvidence(
-            commands_ran={CommandKind.TEST: True},
-            failed_commands=[],
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="passed",
+                ),
+            },
         )
 
         gate = FakeGateChecker(validation_evidence=evidence)
@@ -206,8 +247,15 @@ class TestBuildGateMetadataFromLogs:
         log_path.write_text("mock log content")
 
         evidence = ValidationEvidence(
-            commands_ran={CommandKind.TEST: True},
-            failed_commands=["pytest"],
+            commands={
+                "test": CommandEvidence(
+                    name="test",
+                    kind=CommandKind.TEST,
+                    seen=True,
+                    status="failed",
+                    observed_command="pytest",
+                ),
+            },
         )
 
         gate = FakeGateChecker(validation_evidence=evidence)

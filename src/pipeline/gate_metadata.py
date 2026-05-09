@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
+from src.domain.evidence_check import EVIDENCE_CHECK_IGNORED_KINDS
+from src.domain.validation.spec import CommandKind
 from src.infra.io.log_output.run_metadata import (
     EvidenceCheckResult,
     ValidationResult as MetaValidationResult,
@@ -64,7 +66,11 @@ def build_gate_metadata(
     # Build evidence dict from stored evidence
     evidence_dict: dict[str, bool] = {}
     if evidence is not None:
-        evidence_dict = evidence.to_evidence_dict()
+        evidence_dict = {
+            c.kind.value: c.seen
+            for c in evidence.commands.values()
+            if c.kind != CommandKind.CUSTOM
+        }
     evidence_dict["commit_found"] = commit_hash is not None
 
     evidence_check_result = EvidenceCheckResult(
@@ -75,16 +81,20 @@ def build_gate_metadata(
 
     validation_result: MetaValidationResult | None = None
     if evidence is not None:
-        # Use kind.value for human-readable command names
         commands_run = [
-            kind.value for kind, ran in evidence.commands_ran.items() if ran
+            c.kind.value
+            for c in evidence.commands.values()
+            if c.seen and c.kind != CommandKind.CUSTOM
         ]
-        # failed_commands is already filtered by EVIDENCE_CHECK_IGNORED_KINDS
-        # at the source in parse_validation_evidence_with_spec
+        commands_failed = [
+            c.observed_command or c.name
+            for c in evidence.commands.values()
+            if c.status == "failed" and c.kind not in EVIDENCE_CHECK_IGNORED_KINDS
+        ]
         validation_result = MetaValidationResult(
             passed=passed if passed else gate_result.passed,
             commands_run=commands_run,
-            commands_failed=list(evidence.failed_commands),
+            commands_failed=commands_failed,
         )
 
     return GateMetadata(
@@ -128,8 +138,11 @@ def build_gate_metadata_from_logs(
         reasons_part = result_summary.replace("Quality gate failed: ", "")
         failure_reasons = [r.strip() for r in reasons_part.split(";")]
 
-    # Build spec-driven evidence dict
-    evidence_dict = evidence.to_evidence_dict()
+    evidence_dict: dict[str, bool] = {
+        c.kind.value: c.seen
+        for c in evidence.commands.values()
+        if c.kind != CommandKind.CUSTOM
+    }
 
     # Check commit exists (we don't have stored result, so check now)
     # Note: We don't call check_commit_exists here because it's expensive
@@ -142,14 +155,20 @@ def build_gate_metadata_from_logs(
         failure_reasons=failure_reasons,
     )
 
-    # Build validation result from evidence (matches build_gate_metadata behavior)
-    commands_run = [kind.value for kind, ran in evidence.commands_ran.items() if ran]
-    # failed_commands is already filtered by EVIDENCE_CHECK_IGNORED_KINDS
-    # at the source in parse_validation_evidence_with_spec
+    commands_run = [
+        c.kind.value
+        for c in evidence.commands.values()
+        if c.seen and c.kind != CommandKind.CUSTOM
+    ]
+    commands_failed = [
+        c.observed_command or c.name
+        for c in evidence.commands.values()
+        if c.status == "failed" and c.kind not in EVIDENCE_CHECK_IGNORED_KINDS
+    ]
     validation_result = MetaValidationResult(
         passed=result_success,
         commands_run=commands_run,
-        commands_failed=list(evidence.failed_commands),
+        commands_failed=commands_failed,
     )
 
     return GateMetadata(
