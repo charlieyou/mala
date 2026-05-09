@@ -236,7 +236,9 @@ class TestFixerServiceSuccess:
         service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
+        with patch(
+            "src.infra.io.session_log_parser.get_claude_log_path"
+        ) as mock_log_path:
             mock_log_path.return_value = Path("/tmp/fixer.log")
 
             result = await service.run_fixer(ctx)
@@ -255,7 +257,9 @@ class TestFixerServiceSuccess:
         service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
+        with patch(
+            "src.infra.io.session_log_parser.get_claude_log_path"
+        ) as mock_log_path:
             mock_log_path.return_value = tmp_path / "fixer.log"
 
             result = await service.run_fixer(ctx)
@@ -353,7 +357,9 @@ class TestFixerServiceFailure:
         service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context()
 
-        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
+        with patch(
+            "src.infra.io.session_log_parser.get_claude_log_path"
+        ) as mock_log_path:
             mock_log_path.return_value = Path("/tmp/fixer.log")
 
             result = await service.run_fixer(ctx)
@@ -375,7 +381,9 @@ class TestFixerServiceFailure:
         service = FixerService(config, provider, event_sink=event_sink)
         ctx = make_failure_context()
 
-        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
+        with patch(
+            "src.infra.io.session_log_parser.get_claude_log_path"
+        ) as mock_log_path:
             mock_log_path.return_value = Path("/tmp/fixer.log")
 
             result = await service.run_fixer(ctx)
@@ -445,7 +453,9 @@ class TestFixerServiceInterrupt:
         service = FixerService(config, provider)
         ctx = make_failure_context()
 
-        with patch("src.infra.io.session_log_parser.get_claude_log_path") as mock_log_path:
+        with patch(
+            "src.infra.io.session_log_parser.get_claude_log_path"
+        ) as mock_log_path:
             mock_log_path.return_value = Path("/tmp/fixer.log")
 
             # Patch InterruptGuard to return interrupted after first check

@@ -2966,4 +2966,3 @@ def test_live_dispatch_probe_fails_closed_when_raw_thread_id_missing(
 
     assert excinfo.value.reason is CodexHookNotActiveReason.CODEX_BINARY_MISSING
     assert "missing thread.id" in str(excinfo.value)
-

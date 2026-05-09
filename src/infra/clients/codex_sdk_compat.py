@@ -36,7 +36,9 @@ async def _maybe_await(value: object) -> object:
     return value
 
 
-async def _request_thread_id(codex: object, method: str, params: dict[str, object]) -> str | None:
+async def _request_thread_id(
+    codex: object, method: str, params: dict[str, object]
+) -> str | None:
     raw_client = getattr(codex, "_client", None)
     raw_request = getattr(raw_client, "_request_raw", None)
     sdk_request = getattr(raw_client, "request", None)

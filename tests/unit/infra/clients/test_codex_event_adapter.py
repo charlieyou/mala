@@ -154,7 +154,9 @@ def test_empty_agent_message_delta_is_ignored_and_does_not_suppress_completed() 
             method="item/completed",
             payload=SimpleNamespace(
                 item=_wrap_root(
-                    SimpleNamespace(id="msg_1", type="agentMessage", text="full message")
+                    SimpleNamespace(
+                        id="msg_1", type="agentMessage", text="full message"
+                    )
                 ),
                 thread_id="thr_1",
                 turn_id="turn_1",

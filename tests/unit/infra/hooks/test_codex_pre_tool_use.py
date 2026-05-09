@@ -79,7 +79,9 @@ def deny_reason(result: dict[str, Any]) -> str:
 
 def is_allow(result: dict[str, Any]) -> bool:
     spec = result.get("hookSpecificOutput") or {}
-    return spec.get("hookEventName") == "PreToolUse" and "permissionDecision" not in spec
+    return (
+        spec.get("hookEventName") == "PreToolUse" and "permissionDecision" not in spec
+    )
 
 
 # ---------------------------------------------------------------------------
