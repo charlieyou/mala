@@ -37,7 +37,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -50,6 +50,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from types import ModuleType
     from typing import Self
+
+    from pydantic import BaseModel
 
     from src.core.protocols.agent_event import AgentEventValue
     from src.infra.clients.codex_runtime import CodexRuntime
@@ -298,7 +300,7 @@ async def test_aenter_constructs_async_codex_with_runtime_env_and_cwd(
         assert config is not None
         assert config.cwd == str(tmp_path)
         assert config.env is not None
-        env_dict = cast("dict[str, str]", config.env)
+        env_dict = config.env
         assert env_dict["MALA_AGENT_ID"] == "agent-x"
         assert env_dict["MALA_REPO_NAMESPACE"] == str(tmp_path)
         assert client is not None
@@ -384,7 +386,7 @@ async def test_query_uses_compat_thread_start_for_priority_service_tier(
 
     from src.infra.clients.codex_client import CodexClient
 
-    requests: list[tuple[str, dict[str, object] | None, type[object]]] = []
+    requests: list[tuple[str, dict[str, object] | None, type[BaseModel]]] = []
     turn_inputs: list[_FakeTextInput] = []
 
     class _CompatClient:
@@ -393,7 +395,7 @@ async def test_query_uses_compat_thread_start_for_priority_service_tier(
             method: str,
             params: dict[str, object] | None,
             *,
-            response_model: type[object],
+            response_model: type[BaseModel],
         ) -> object:
             requests.append((method, params, response_model))
             assert method == "thread/start"
@@ -465,7 +467,7 @@ async def test_query_uses_compat_thread_resume_for_priority_service_tier(
 
     from src.infra.clients.codex_client import CodexClient
 
-    requests: list[tuple[str, dict[str, object] | None, type[object]]] = []
+    requests: list[tuple[str, dict[str, object] | None, type[BaseModel]]] = []
     turn_inputs: list[_FakeTextInput] = []
 
     class _CompatClient:
@@ -474,7 +476,7 @@ async def test_query_uses_compat_thread_resume_for_priority_service_tier(
             method: str,
             params: dict[str, object] | None,
             *,
-            response_model: type[object],
+            response_model: type[BaseModel],
         ) -> object:
             requests.append((method, params, response_model))
             assert method == "thread/resume"

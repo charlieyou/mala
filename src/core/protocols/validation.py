@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from collections.abc import Sequence  # noqa: TC003 - runtime needed
+from collections.abc import Mapping, Sequence  # noqa: TC003 - runtime needed
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -80,8 +80,10 @@ class ValidationEvidenceProtocol(Protocol):
     Matches the shape of evidence_check.ValidationEvidence for structural typing.
     """
 
-    commands: dict[str, CommandEvidenceProtocol]
-    """Mapping of configured command name to its CommandEvidence record."""
+    @property
+    def commands(self) -> Mapping[str, CommandEvidenceProtocol]:
+        """Mapping of configured command name to its CommandEvidence record."""
+        ...
 
     def has_any_evidence(self) -> bool:
         """Check if any validation command ran."""
