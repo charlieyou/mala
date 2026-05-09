@@ -1503,6 +1503,11 @@ class PromptValidationCommands:
         format: Format command string (e.g., "uvx ruff format ." or "gofmt -l .")
         typecheck: Type check command string (e.g., "uvx ty check" or "go vet ./...")
         test: Test command string (e.g., "uv run pytest" or "go test ./...")
+        lint_timeout: Timeout in seconds enforced by the canonical wrapper for
+            the lint command. Falls back to 120 when not configured.
+        format_timeout: Same as lint_timeout for the format command.
+        typecheck_timeout: Same as lint_timeout for the typecheck command.
+        test_timeout: Same as lint_timeout for the test command.
         custom_commands: Tuple of custom commands as (name, command, timeout, allow_fail) tuples.
             These are run after lint/format/typecheck but before test. Immutable to match
             frozen dataclass contract.
@@ -1513,6 +1518,10 @@ class PromptValidationCommands:
     typecheck: str
     test: str
     custom_commands: tuple[tuple[str, str, int, bool], ...]
+    lint_timeout: int = 120
+    format_timeout: int = 120
+    typecheck_timeout: int = 120
+    test_timeout: int = 120
 
     # Default fallback message for unconfigured commands - exits with code 0
     # since missing optional tooling is not a validation failure
@@ -1542,6 +1551,11 @@ class PromptValidationCommands:
                 (name, custom_cmd.command, timeout, custom_cmd.allow_fail)
             )
 
+        def _timeout(cmd: CommandConfig | None) -> int:
+            if cmd is None or cmd.timeout is None:
+                return 120
+            return cmd.timeout
+
         return cls(
             lint=cmds.lint.command
             if cmds.lint
@@ -1556,4 +1570,8 @@ class PromptValidationCommands:
             if cmds.test
             else cls._NOT_CONFIGURED.format(kind="test"),
             custom_commands=tuple(custom_cmds_list),
+            lint_timeout=_timeout(cmds.lint),
+            format_timeout=_timeout(cmds.format),
+            typecheck_timeout=_timeout(cmds.typecheck),
+            test_timeout=_timeout(cmds.test),
         )

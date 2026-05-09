@@ -585,6 +585,73 @@ class TestCanonicalWrapperPrompts:
         # AC3: no marker syntax remains anywhere in the prompt
         assert "[custom:" not in prompt
 
+    def test_implementer_prompt_honours_configured_builtin_timeouts(
+        self, tmp_path: Path
+    ) -> None:
+        """Configured `commands.<kind>.timeout` flows into the canonical wrapper.
+
+        Regression for the P1 finding: built-ins were rendered with a hardcoded
+        120 s timeout, which would kill long but valid configured checks
+        (e.g., `commands.test.timeout: 600`). The wrapper must use the
+        per-command timeout from `PromptValidationCommands`.
+        """
+        prompts = load_prompts(PROMPTS_DIR)
+        cmds = PromptValidationCommands(
+            lint="uvx ruff check .",
+            format="uvx ruff format .",
+            typecheck="uvx ty check",
+            test="uv run pytest",
+            custom_commands=(),
+            lint_timeout=45,
+            format_timeout=30,
+            typecheck_timeout=180,
+            test_timeout=600,
+        )
+
+        prompt = format_implementer_prompt(
+            prompts.implementer_prompt,
+            issue_id="bd-mala-abc",
+            repo_path=tmp_path,
+            agent_id="test-agent",
+            validation_commands=cmds,
+            lock_dir=tmp_path / "locks",
+            validation_log_dir=tmp_path / "validation-logs",
+            issue_description="Test",
+        )
+
+        assert "if timeout 600 bash -lc 'uv run pytest'" in prompt
+        assert "if timeout 45 bash -lc 'uvx ruff check .'" in prompt
+        assert "if timeout 30 bash -lc 'uvx ruff format .'" in prompt
+        assert "if timeout 180 bash -lc 'uvx ty check'" in prompt
+        # Default 120 should not appear for any built-in here
+        assert "if timeout 120 bash -lc 'uv run pytest'" not in prompt
+
+    def test_prompt_validation_commands_threads_configured_timeouts(
+        self, tmp_path: Path
+    ) -> None:
+        """`mala.yaml` per-command timeouts populate PromptValidationCommands."""
+        mala_yaml = tmp_path / "mala.yaml"
+        mala_yaml.write_text(
+            """
+commands:
+  lint:
+    command: "ruff check ."
+    timeout: 90
+  test:
+    command: "pytest"
+    timeout: 600
+"""
+        )
+
+        result = build_prompt_validation_commands(tmp_path)
+
+        assert result.lint_timeout == 90
+        assert result.test_timeout == 600
+        # Unconfigured commands keep the 120 fallback so the wrapper's
+        # `timeout` invocation has a sane default.
+        assert result.format_timeout == 120
+        assert result.typecheck_timeout == 120
+
     def test_implementer_prompt_embeds_exact_configured_commands(
         self, tmp_path: Path
     ) -> None:

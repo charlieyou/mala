@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.domain.validation.spec import (
-    DEFAULT_COMMAND_TIMEOUT,
     CommandKind,
     ValidationCommand,
 )
@@ -147,12 +146,14 @@ def load_prompts(prompt_dir: Path) -> PromptProvider:
 
 
 # Mapping of built-in command attributes on PromptValidationCommands to their
-# evidence name and kind. Used to render canonical wrappers for built-ins.
-_BUILTIN_COMMANDS: tuple[tuple[str, str, CommandKind], ...] = (
-    ("format", "format", CommandKind.FORMAT),
-    ("lint", "lint", CommandKind.LINT),
-    ("typecheck", "typecheck", CommandKind.TYPECHECK),
-    ("test", "test", CommandKind.TEST),
+# evidence name, kind, and timeout-field name. Used to render canonical
+# wrappers that honour configured per-command timeouts (`commands.<kind>.timeout`
+# from mala.yaml). The timeout-field fallback to 120s is on the dataclass.
+_BUILTIN_COMMANDS: tuple[tuple[str, str, CommandKind, str], ...] = (
+    ("format", "format", CommandKind.FORMAT, "format_timeout"),
+    ("lint", "lint", CommandKind.LINT, "lint_timeout"),
+    ("typecheck", "typecheck", CommandKind.TYPECHECK, "typecheck_timeout"),
+    ("test", "test", CommandKind.TEST, "test_timeout"),
 )
 
 
@@ -163,17 +164,19 @@ def _builtin_command_records(
 
     Returns a dict keyed by evidence name (`format`, `lint`, `typecheck`,
     `test`) so callers can render each built-in's canonical wrapper into the
-    matching prompt placeholder.
+    matching prompt placeholder. Configured per-command timeouts from
+    `mala.yaml` (e.g., `commands.test.timeout: 600`) are threaded through
+    so the wrapper's `timeout` invocation matches the configured budget.
     """
     return {
         name: ValidationCommand(
             name=name,
             command=getattr(validation_commands, attr),
             kind=kind,
-            timeout=DEFAULT_COMMAND_TIMEOUT,
+            timeout=getattr(validation_commands, timeout_attr),
             allow_fail=False,
         )
-        for attr, name, kind in _BUILTIN_COMMANDS
+        for attr, name, kind, timeout_attr in _BUILTIN_COMMANDS
     }
 
 
