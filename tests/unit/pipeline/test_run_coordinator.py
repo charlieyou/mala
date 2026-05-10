@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -3207,3 +3207,209 @@ class TestTriggerCodeReviewEvents:
         assert end_events[0].event_type == "trigger_code_review_error", (
             f"Expected error event, got {end_events[0].event_type}"
         )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("review_status", "expected_event"),
+        [
+            ("success", "trigger_code_review_passed"),
+            ("skipped", "trigger_code_review_skipped"),
+            ("failed", "trigger_code_review_error"),
+        ],
+    )
+    async def test_terminal_event_invariant_for_pass_skip_abort_paths(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
+        review_status: Literal["success", "skipped", "failed"],
+        expected_event: str,
+    ) -> None:
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import CumulativeReviewResult
+        from tests.fakes.event_sink import FakeEventSink
+
+        coordinator, mock_review_runner, event_sink = coordinator_with_review_runner
+        assert isinstance(event_sink, FakeEventSink)
+
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            failure_mode=FailureMode.CONTINUE,
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            code_review=code_review_config,
+        )
+        coordinator.config.validation_config = ValidationConfig(
+            validation_triggers=ValidationTriggersConfig(run_end=trigger_config)
+        )
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status=review_status,
+                findings=(),
+                new_baseline_commit=None,
+                skip_reason="empty_diff"
+                if review_status == "skipped"
+                else "execution_error: timeout"
+                if review_status == "failed"
+                else None,
+            )
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        await coordinator.run_trigger_validation(dry_run=False)
+
+        end_events = self._code_review_end_events(event_sink)
+        assert [event.event_type for event in end_events] == [expected_event]
+
+    @pytest.mark.asyncio
+    async def test_terminal_event_invariant_for_failed_findings_path(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
+    ) -> None:
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import (
+            CumulativeReviewResult,
+            ReviewFinding,
+        )
+        from tests.fakes.event_sink import FakeEventSink
+
+        coordinator, mock_review_runner, event_sink = coordinator_with_review_runner
+        assert isinstance(event_sink, FakeEventSink)
+
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            finding_threshold="P1",
+            failure_mode=FailureMode.CONTINUE,
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            code_review=code_review_config,
+        )
+        coordinator.config.validation_config = ValidationConfig(
+            validation_triggers=ValidationTriggersConfig(run_end=trigger_config)
+        )
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="success",
+                findings=(
+                    ReviewFinding(
+                        file="test.py",
+                        line_start=1,
+                        line_end=1,
+                        priority=0,
+                        title="Blocking",
+                        body="Details",
+                        reviewer="test",
+                    ),
+                ),
+                new_baseline_commit="abc123",
+            )
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        await coordinator.run_trigger_validation(dry_run=False)
+
+        end_events = self._code_review_end_events(event_sink)
+        assert [event.event_type for event in end_events] == [
+            "trigger_code_review_failed"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_terminal_event_invariant_for_interrupted_remediation_path(
+        self,
+        coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
+    ) -> None:
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            RunEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import (
+            CumulativeReviewResult,
+            ReviewFinding,
+        )
+        from src.pipeline.fixer_interface import FixerResult
+        from tests.fakes.event_sink import FakeEventSink
+
+        coordinator, mock_review_runner, event_sink = coordinator_with_review_runner
+        assert isinstance(event_sink, FakeEventSink)
+
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            finding_threshold="P1",
+            failure_mode=FailureMode.REMEDIATE,
+            max_retries=1,
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(),
+            code_review=code_review_config,
+        )
+        coordinator.config.validation_config = ValidationConfig(
+            validation_triggers=ValidationTriggersConfig(run_end=trigger_config)
+        )
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="success",
+                findings=(
+                    ReviewFinding(
+                        file="test.py",
+                        line_start=1,
+                        line_end=1,
+                        priority=0,
+                        title="Blocking",
+                        body="Details",
+                        reviewer="test",
+                    ),
+                ),
+                new_baseline_commit="abc123",
+            )
+        )
+
+        async def interrupting_fixer(
+            context: Any,  # noqa: ANN401
+            interrupt_event: asyncio.Event,
+        ) -> FixerResult:
+            interrupt_event.set()
+            return FixerResult(success=None, interrupted=True)
+
+        coordinator.fixer_service.run_fixer = interrupting_fixer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        result = await coordinator.run_trigger_validation(dry_run=False)
+
+        assert result.status == "aborted"
+        end_events = self._code_review_end_events(event_sink)
+        assert [event.event_type for event in end_events] == [
+            "trigger_code_review_error"
+        ]
+
+    @staticmethod
+    def _code_review_end_events(event_sink: Any) -> list[Any]:  # noqa: ANN401
+        end_event_types = {
+            "trigger_code_review_passed",
+            "trigger_code_review_failed",
+            "trigger_code_review_skipped",
+            "trigger_code_review_error",
+        }
+        return [
+            event for event in event_sink.events if event.event_type in end_event_types
+        ]

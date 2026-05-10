@@ -43,6 +43,7 @@ class RunValidationEvent(Enum):
     REVIEW_REMEDIATION_PASSED = auto()
     REVIEW_REMEDIATION_FAILED = auto()
     REVIEW_REMEDIATION_ABORTED = auto()
+    VALIDATION_INTERRUPTED = auto()
     TERMINAL_EVENT_EMITTED = auto()
 
 
@@ -58,6 +59,7 @@ class RunValidationEffect(Enum):
     EMIT_CODE_REVIEW_PASSED = auto()
     EMIT_CODE_REVIEW_FAILED = auto()
     EMIT_CODE_REVIEW_ERROR = auto()
+    COMPLETE_TRIGGER = auto()
     COMPLETE_PASSED = auto()
     COMPLETE_FAILED = auto()
     COMPLETE_ABORTED = auto()
@@ -120,6 +122,16 @@ def transition(
     """
 
     ctx = context or RunValidationContext()
+
+    if event == RunValidationEvent.VALIDATION_INTERRUPTED:
+        return TransitionResult(
+            state=RunValidationState.EMITTING_TERMINAL_EVENT,
+            context=RunValidationContext(
+                last_failure=ctx.last_failure,
+                terminal_status=TerminalStatus.ABORTED,
+                terminal_details=details or "Validation interrupted by SIGINT",
+            ),
+        )
 
     if state == RunValidationState.PROCESSING_COMMANDS:
         return _transition_processing_commands(event, ctx, failure, details)
@@ -238,6 +250,7 @@ def _transition_running_code_review(
         return TransitionResult(
             state=RunValidationState.PROCESSING_COMMANDS,
             context=RunValidationContext(last_failure=ctx.last_failure),
+            effects=(RunValidationEffect.COMPLETE_TRIGGER,),
         )
     if event == RunValidationEvent.CODE_REVIEW_SKIPPED:
         return TransitionResult(
@@ -261,8 +274,8 @@ def _transition_running_code_review(
                 terminal_details=_failure_details(failure, details),
             ),
             effects=(
-                RunValidationEffect.RECORD_FAILURE,
                 RunValidationEffect.EMIT_CODE_REVIEW_FAILED,
+                RunValidationEffect.RECORD_FAILURE,
             ),
         )
     if event == RunValidationEvent.CODE_REVIEW_FAILED_CONTINUE:
@@ -271,8 +284,9 @@ def _transition_running_code_review(
             state=RunValidationState.PROCESSING_COMMANDS,
             context=RunValidationContext(last_failure=failure),
             effects=(
-                RunValidationEffect.RECORD_FAILURE,
                 RunValidationEffect.EMIT_CODE_REVIEW_FAILED,
+                RunValidationEffect.RECORD_FAILURE,
+                RunValidationEffect.COMPLETE_TRIGGER,
             ),
         )
     if event == RunValidationEvent.CODE_REVIEW_FAILED_REMEDIATE:

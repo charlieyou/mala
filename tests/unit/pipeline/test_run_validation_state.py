@@ -129,7 +129,7 @@ _EXPECTED: dict[
         RunValidationEvent.CODE_REVIEW_DISABLED,
     ): (
         RunValidationState.PROCESSING_COMMANDS,
-        (),
+        (RunValidationEffect.COMPLETE_TRIGGER,),
         _CLEAN_CONTEXT,
     ),
     (
@@ -154,8 +154,8 @@ _EXPECTED: dict[
     ): (
         RunValidationState.EMITTING_TERMINAL_EVENT,
         (
-            RunValidationEffect.RECORD_FAILURE,
             RunValidationEffect.EMIT_CODE_REVIEW_FAILED,
+            RunValidationEffect.RECORD_FAILURE,
         ),
         RunValidationContext(
             last_failure=_CODE_REVIEW_FAILURE,
@@ -169,8 +169,9 @@ _EXPECTED: dict[
     ): (
         RunValidationState.PROCESSING_COMMANDS,
         (
-            RunValidationEffect.RECORD_FAILURE,
             RunValidationEffect.EMIT_CODE_REVIEW_FAILED,
+            RunValidationEffect.RECORD_FAILURE,
+            RunValidationEffect.COMPLETE_TRIGGER,
         ),
         RunValidationContext(last_failure=_CODE_REVIEW_FAILURE),
     ),
@@ -236,6 +237,16 @@ _EXPECTED: dict[
         _TERMINAL_PASSED_CONTEXT,
     ),
 }
+
+for _state in RunValidationState:
+    _EXPECTED[(_state, RunValidationEvent.VALIDATION_INTERRUPTED)] = (
+        RunValidationState.EMITTING_TERMINAL_EVENT,
+        (),
+        RunValidationContext(
+            terminal_status=TerminalStatus.ABORTED,
+            terminal_details="Validation interrupted by SIGINT",
+        ),
+    )
 
 _CONTEXT_OVERRIDES = {
     (
@@ -443,8 +454,9 @@ def test_code_review_continue_returns_to_command_processing() -> None:
         )
     )
     assert result.effects == (
-        RunValidationEffect.RECORD_FAILURE,
         RunValidationEffect.EMIT_CODE_REVIEW_FAILED,
+        RunValidationEffect.RECORD_FAILURE,
+        RunValidationEffect.COMPLETE_TRIGGER,
     )
 
 
