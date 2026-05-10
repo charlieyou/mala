@@ -3918,6 +3918,15 @@ class TestSpecDrivenEvidencePatterns:
             )
             == parallel_test_command
         )
+        assert (
+            _recognize_spec_pattern_command(
+                "uv run pytest --cov-report=html:cov/ "
+                "-o cache_dir=/tmp/pytest-agent -n auto "
+                "tests/unit/domain/test_evidence_check.py",
+                configured,
+            )
+            == parallel_test_command
+        )
 
     def test_command_without_pattern_skipped(
         self,

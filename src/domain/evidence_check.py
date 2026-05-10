@@ -313,7 +313,9 @@ def _recognize_spec_pattern_command(
     stripped_input = bash_input.strip()
     if re.search(r"&&|\|\||[;&|\n]", stripped_input):
         return None
-    input_tokens = strip_leading_env_assignments(shell_words(stripped_input))
+    input_tokens = strip_cache_dir_override(
+        strip_leading_env_assignments(shell_words(stripped_input))
+    )
     if not input_tokens:
         return None
 
