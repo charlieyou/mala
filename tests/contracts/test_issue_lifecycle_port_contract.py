@@ -148,3 +148,16 @@ def test_interrupt_event_can_be_replaced_and_observed(
     )
     assert lifecycle_port.interrupt_event is replacement
     assert lifecycle_port.current_state.interrupt_requested is False
+
+
+@pytest.mark.unit
+def test_none_interrupt_event_is_ignored(lifecycle_port: IssueLifecyclePort) -> None:
+    """Real and fake implementations both retain the existing event for None."""
+    interrupt_event = asyncio.Event()
+
+    lifecycle_port.interrupt_event = interrupt_event
+    lifecycle_port.interrupt_event = None
+    assert lifecycle_port.interrupt_event is interrupt_event
+
+    lifecycle_port.apply_effect(IssueLifecycleEffect(kind="set_interrupt_event"))
+    assert lifecycle_port.interrupt_event is interrupt_event

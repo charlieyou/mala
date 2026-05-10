@@ -91,7 +91,8 @@ class FakeIssueLifecyclePort:
 
     @interrupt_event.setter
     def interrupt_event(self, value: asyncio.Event | None) -> None:
-        self._interrupt_event = value
+        if value is not None:
+            self._interrupt_event = value
 
     @property
     def max_issues(self) -> int | None:
