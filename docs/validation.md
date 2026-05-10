@@ -12,6 +12,40 @@ After an agent completes an issue, the orchestrator runs a quality gate that ver
 
 Evidence requirements are **opt-in**. If `evidence_check` is omitted or `required: []`, the gate does **not** require validation evidence (it still requires a commit).
 Required evidence names must exist in the resolved command pool (built-in or custom); invalid names fail fast at startup.
+Duplicate required command names, after command-name normalization, fail during spec build with `ConfigError`.
+
+## Validation Evidence
+
+When `evidence_check.required` names commands, each required built-in or custom command must be run through the canonical Bash wrapper. The wrapper writes command output to a log file and prints exactly one summary line:
+
+```text
+MALA_EVIDENCE name=<name> exit=<code> log=<path>
+```
+
+The evidence parser validates the summary line shape and the `log=` path string. It does not require the referenced log file to exist when parsing session logs.
+
+The wrapper uses GNU coreutils `timeout`, so `timeout` must be installed on the host that runs validation.
+
+Canonical wrapper format:
+
+```bash
+__mala_log="/tmp/mala-validation-logs/bd-mala-abc.lint.log"
+(
+  if timeout 120 bash -lc 'uvx ruff check .' >"$__mala_log" 2>&1; then
+    __mala_status=0
+  else
+    __mala_status=$?
+  fi
+  printf 'MALA_EVIDENCE name=%s exit=%s log=%s\n' 'lint' "$__mala_status" "$__mala_log"
+  exit "$__mala_status"
+)
+```
+
+Built-in commands and custom commands use the same wrapper shape. The `name=` value must be the evidence key: for example `lint`, `format`, `typecheck`, `test`, or a custom command key from `mala.yaml`.
+
+For debug work, a bare command can still appear in the session log and may be matched as a tool invocation. This is a fallback path for human-readable diagnostics, not the preferred evidence protocol. The canonical wrapper is authoritative because it attributes a specific evidence key, exit status, and log path in one line.
+
+`ValidationCommand.detection_pattern` remains informational. It can help identify likely command invocations in logs, but it is not authoritative gate evidence when `MALA_EVIDENCE` wrapper output is expected.
 
 ### Resolution Markers
 
@@ -238,3 +272,10 @@ When an agent fails (including quality gate failures after all retries), the orc
 - Attempt counts (gate attempts, review attempts)
 
 The next agent (or human) can read the issue notes with `bd show <issue_id>` and grep the log file for context.
+
+## Migration Notes
+
+- **Breaking**: Marker-based custom-command evidence is removed. All built-in and custom validation commands now use the unified `MALA_EVIDENCE` summary-line protocol.
+- **Breaking**: `ValidationEvidence.commands_ran` / `failed_commands` / `custom_commands_ran` / `custom_commands_failed` and `to_evidence_dict()` / `has_minimum_validation()` / `missing_commands()` are removed; consumers should read `evidence.commands` directly.
+- **New**: `evidence_check.required` configurations with duplicate normalized commands now fail at spec build time with `ConfigError`.
+- **Note**: The `mala.yaml` schema is unchanged.

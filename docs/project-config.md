@@ -221,11 +221,20 @@ Notes:
 
 `evidence_check.required` controls which commands must appear (and pass) in agent session logs.
 If omitted or an empty list, the quality gate does **not** require validation evidence.
+Required commands can be built-ins or custom commands; both use the same canonical wrapper and emit `MALA_EVIDENCE name=<name> exit=<code> log=<path>`.
 
 ```yaml
+commands:
+  security-scan:
+    command: "uv run bandit -r src/"
+    timeout: 120
+    allow_fail: true
+
 evidence_check:
-  required: [test, lint]
+  required: [test, lint, security-scan]
 ```
+
+Built-in commands now use the same evidence wrapper as custom commands. The `name=` value in the `MALA_EVIDENCE` line is the command key from `evidence_check.required`, so `test`, `lint`, and `security-scan` are reported uniformly.
 
 ## Built-in Presets
 
