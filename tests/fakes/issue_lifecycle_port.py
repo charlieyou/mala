@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class FakeIssueLifecyclePort:
-    """In-memory implementation of IssueLifecyclePort."""
+    """Dataclass-backed in-memory implementation of IssueLifecyclePort."""
 
     active_tasks: dict[str, asyncio.Task[Any]] = field(default_factory=dict)
     failed_issues: set[str] = field(default_factory=set)

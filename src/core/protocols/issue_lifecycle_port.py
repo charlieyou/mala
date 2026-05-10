@@ -25,7 +25,7 @@ IssueLifecycleEffectKind = Literal[
 
 @dataclass(frozen=True)
 class IssueLifecycleState:
-    """Snapshot of lifecycle state exposed by IssueLifecyclePort."""
+    """Dataclass snapshot of lifecycle state exposed by IssueLifecyclePort."""
 
     active_issue_ids: frozenset[str]
     failed_issues: frozenset[str]
@@ -37,7 +37,7 @@ class IssueLifecycleState:
 
 @dataclass(frozen=True)
 class IssueLifecycleEffect:
-    """Mutation request accepted by IssueLifecyclePort.apply_effect."""
+    """Dataclass mutation request accepted by IssueLifecyclePort.apply_effect."""
 
     kind: IssueLifecycleEffectKind
     issue_id: str | None = None
