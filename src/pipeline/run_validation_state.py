@@ -126,7 +126,10 @@ def transition(
     if event == RunValidationEvent.VALIDATION_INTERRUPTED:
         effects: tuple[RunValidationEffect, ...] = ()
         if state == RunValidationState.REMEDIATING_REVIEW:
-            effects = (RunValidationEffect.EMIT_CODE_REVIEW_ERROR,)
+            effects = (
+                RunValidationEffect.RECORD_RUN_VALIDATION,
+                RunValidationEffect.EMIT_CODE_REVIEW_ERROR,
+            )
         return TransitionResult(
             state=RunValidationState.EMITTING_TERMINAL_EVENT,
             context=RunValidationContext(

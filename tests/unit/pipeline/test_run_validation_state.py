@@ -241,7 +241,10 @@ _EXPECTED: dict[
 for _state in RunValidationState:
     _EXPECTED[(_state, RunValidationEvent.VALIDATION_INTERRUPTED)] = (
         RunValidationState.EMITTING_TERMINAL_EVENT,
-        (RunValidationEffect.EMIT_CODE_REVIEW_ERROR,)
+        (
+            RunValidationEffect.RECORD_RUN_VALIDATION,
+            RunValidationEffect.EMIT_CODE_REVIEW_ERROR,
+        )
         if _state == RunValidationState.REMEDIATING_REVIEW
         else (),
         RunValidationContext(
@@ -518,7 +521,7 @@ def test_review_remediation_failure_waits_for_queue_empty() -> None:
 
 
 @pytest.mark.unit
-def test_interrupted_review_remediation_emits_code_review_error_effect() -> None:
+def test_interrupted_review_remediation_records_validation_before_error() -> None:
     result = transition(
         RunValidationState.REMEDIATING_REVIEW,
         RunValidationEvent.VALIDATION_INTERRUPTED,
@@ -526,7 +529,10 @@ def test_interrupted_review_remediation_emits_code_review_error_effect() -> None
     )
 
     assert result.state == RunValidationState.EMITTING_TERMINAL_EVENT
-    assert result.effects == (RunValidationEffect.EMIT_CODE_REVIEW_ERROR,)
+    assert result.effects == (
+        RunValidationEffect.RECORD_RUN_VALIDATION,
+        RunValidationEffect.EMIT_CODE_REVIEW_ERROR,
+    )
 
 
 @pytest.mark.unit
