@@ -72,11 +72,12 @@ from src.orchestration.types import (
     RuntimeDeps,
 )
 from src.pipeline.session_callback_factory import SessionRunContext
+from src.pipeline.issue_execution_plan import build_issue_execution_plan
 from src.pipeline.issue_result import IssueResult
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Callable
     from pathlib import Path
 
     from src.pipeline.issue_execution_coordinator import AbortResult
@@ -106,7 +107,6 @@ if TYPE_CHECKING:
 
     from src.core.models import (
         PeriodicValidationConfig,
-        RunResult,
         WatchConfig,
     )
 
@@ -1043,129 +1043,6 @@ class MalaOrchestrator:
         )
         return task
 
-    async def _run_main_loop(
-        self,
-        run_metadata: RunMetadata,
-        *,
-        watch_config: WatchConfig | None = None,
-        validation_config: PeriodicValidationConfig | None = None,
-        drain_event: asyncio.Event | None = None,
-        interrupt_event: asyncio.Event | None = None,
-        validation_callback: Callable[[], Awaitable[bool]] | None = None,
-    ) -> RunResult:
-        """Run the main agent spawning and completion loop.
-
-        Delegates to IssueExecutionCoordinator for the main loop logic.
-
-        Args:
-            run_metadata: Metadata for the current run.
-            watch_config: Watch mode configuration.
-            validation_config: Periodic validation configuration.
-            drain_event: Event set to enter drain mode (1st Ctrl-C).
-            interrupt_event: Event set to signal graceful shutdown (e.g., SIGINT).
-            validation_callback: Called periodically in watch mode to run validation.
-
-        Returns:
-            RunResult with issues_spawned, exit_code, and exit_reason.
-        """
-
-        async def finalize_callback(
-            issue_id: str,
-            task: asyncio.Task[Any],
-        ) -> None:
-            """Finalize a completed task."""
-            was_deadlock_victim = issue_id in self._state.deadlock_victim_issues
-            try:
-                result = task.result()
-            except asyncio.CancelledError:
-                if was_deadlock_victim:
-                    summary = (
-                        "Killed as deadlock victim (will retry after blocker completes)"
-                    )
-                elif self.issue_coordinator.abort_reason:
-                    summary = f"Aborted: {self.issue_coordinator.abort_reason}"
-                else:
-                    summary = "Aborted due to task cancellation"
-                result = IssueResult(
-                    issue_id=issue_id,
-                    agent_id=self._state.agent_ids.get(issue_id, "unknown"),
-                    success=False,
-                    summary=summary,
-                    session_log_path=self._state.active_session_log_paths.get(issue_id),
-                )
-            except Exception as e:
-                result = IssueResult(
-                    issue_id=issue_id,
-                    agent_id=self._state.agent_ids.get(issue_id, "unknown"),
-                    success=False,
-                    summary=str(e),
-                    session_log_path=self._state.active_session_log_paths.get(issue_id),
-                )
-            if was_deadlock_victim and not result.success:
-                # The deadlock handler already added the dependency, marked the issue
-                # needs-followup, and reopened it. This cancelled attempt is not a
-                # terminal issue result, so keep it out of completed_ids and the run
-                # totals; otherwise the same run suppresses the reopened issue from
-                # ready polling and it never retries after its blocker completes.
-                self.issue_coordinator.release_task(issue_id)
-                self._cleanup_issue_runtime_state(issue_id)
-                self._state.deadlock_victim_issues.discard(issue_id)
-                return
-            self._state.deadlock_victim_issues.discard(issue_id)
-            await self._finalize_issue_result(issue_id, result, run_metadata)
-            self.issue_coordinator.mark_completed(issue_id)
-
-            # T009: Hook for periodic trigger check after issue completion
-            self._check_and_queue_periodic_trigger(result)
-            # T011: Blocking wait - execute queued triggers before next issue assignment
-            # This covers both PERIODIC triggers (queued above) and EPIC_COMPLETION triggers
-            # (queued via epic_verification_coordinator during _finalize_issue_result)
-            trigger_result = await self.run_coordinator.run_trigger_validation()
-            if trigger_result.status == "aborted":
-                self.issue_coordinator.request_abort(
-                    reason="Trigger validation aborted"
-                )
-
-        async def abort_callback(*, is_interrupt: bool = False) -> AbortResult:
-            """Abort all active tasks."""
-            return await self._abort_active_tasks(
-                run_metadata, is_interrupt=is_interrupt
-            )
-
-        async def verify_startup_eligible_epics() -> bool:
-            try:
-                if self.epic_verifier is not None:
-                    result = await self.epic_verifier.verify_and_close_eligible(
-                        self.epic_override_ids
-                    )
-                    return (
-                        result.verified_count > 0
-                        or len(result.remediation_issues_created) > 0
-                    )
-
-                return await self.beads.close_eligible_epics_async()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Startup epic verification failed")
-                self.event_sink.on_warning(
-                    "Startup epic verification failed; continuing without startup repoll"
-                )
-                return False
-
-        return await self.issue_coordinator.run_loop(
-            spawn_callback=self.spawn_agent,
-            finalize_callback=finalize_callback,
-            abort_callback=abort_callback,
-            watch_config=watch_config,
-            validation_config=validation_config,
-            drain_event=drain_event,
-            interrupt_event=interrupt_event,
-            validation_callback=validation_callback,
-            on_validation_failed=self._mark_validation_failed,
-            on_startup_no_ready=verify_startup_eligible_epics,
-        )
-
     async def _finalize_run(
         self,
         run_metadata: RunMetadata,
@@ -1492,16 +1369,30 @@ class MalaOrchestrator:
             interrupted = False
             try:
                 # Create task and store it so Stage 3 can cancel it
-                run_task = asyncio.create_task(
-                    self._run_main_loop(
-                        run_metadata,
-                        watch_config=watch_config,
-                        validation_config=validation_config,
-                        drain_event=drain_event,
-                        interrupt_event=interrupt_event,
-                        validation_callback=None,
-                    )
+                plan = build_issue_execution_plan(
+                    run_metadata=run_metadata,
+                    state=self._state,
+                    issue_coordinator=self.issue_coordinator,
+                    run_coordinator=self.run_coordinator,
+                    beads=self.beads,
+                    event_sink=self.event_sink,
+                    epic_verifier=self.epic_verifier,
+                    epic_override_ids=self.epic_override_ids,
+                    spawn_agent=self.spawn_agent,
+                    abort_active_tasks=self._abort_active_tasks,
+                    finalize_issue_result=self._finalize_issue_result,
+                    cleanup_issue_runtime_state=self._cleanup_issue_runtime_state,
+                    check_and_queue_periodic_trigger=(
+                        self._check_and_queue_periodic_trigger
+                    ),
+                    mark_validation_failed=self._mark_validation_failed,
+                    watch_config=watch_config,
+                    validation_config=validation_config,
+                    drain_event=drain_event,
+                    interrupt_event=interrupt_event,
+                    validation_callback=None,
                 )
+                run_task = asyncio.create_task(plan.run(self.issue_coordinator))
                 self._lifecycle.run_task = run_task
                 loop_result = await run_task
                 exit_code = loop_result.exit_code
