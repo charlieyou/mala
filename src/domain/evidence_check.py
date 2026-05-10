@@ -265,6 +265,7 @@ def _recognize_spec_pattern_command(
         cmd
         for cmd in configured_by_name.values()
         if cmd.detection_pattern is not None
+        and cmd.kind != CommandKind.CUSTOM
         and cmd.detection_pattern.search(bash_input)
     ]
     non_setup_matches = [
@@ -282,10 +283,6 @@ def _recognize_spec_pattern_command(
         ]
         if narrowed:
             matches = narrowed
-    if len(matches) > 1 and "ruff check" in bash_input:
-        matches = [cmd for cmd in matches if "ruff check" in cmd.command]
-    if len(matches) > 1 and "ruff format" in bash_input:
-        matches = [cmd for cmd in matches if "ruff format" in cmd.command]
     if len(matches) != 1:
         return None
     return matches[0]
@@ -700,15 +697,6 @@ class EvidenceCheck:
                     )
                 if matched is not None:
                     tool_id_to_match[tool_id] = (matched, "bare_command")
-                    evidence.commands[matched.name] = CommandEvidence(
-                        name=matched.name,
-                        kind=matched.kind,
-                        seen=True,
-                        status="passed",
-                        observed_command=matched.command,
-                        tool_use_id=tool_id,
-                        source="command+shell_status",
-                    )
 
             is_error_by_id = dict(self._evidence_provider.extract_tool_results(entry))
             for (

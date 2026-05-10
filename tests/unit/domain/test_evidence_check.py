@@ -136,6 +136,44 @@ def _kind_seen(evidence: ValidationEvidence, kind: CommandKind) -> bool:
     )
 
 
+def _bash_tool_use_json(tool_id: str, command: str) -> str:
+    return json.dumps(
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": tool_id,
+                        "name": "Bash",
+                        "input": {"command": command},
+                    }
+                ]
+            },
+        }
+    )
+
+
+def _tool_result_json(
+    tool_id: str, content: str = "ok", *, is_error: bool = False
+) -> str:
+    return json.dumps(
+        {
+            "type": "user",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "content": content,
+                        "is_error": is_error,
+                    }
+                ]
+            },
+        }
+    )
+
+
 class TestSpecDrivenParsing:
     """Test parse_validation_evidence_with_spec for spec-driven evidence detection."""
 
@@ -147,21 +185,12 @@ class TestSpecDrivenParsing:
     ) -> None:
         """Should return ValidationEvidence from log."""
         log_path = tmp_path / "session.jsonl"
-        log_content = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "name": "Bash",
-                            "input": {"command": "uv run pytest"},
-                        }
-                    ]
-                },
-            }
+        log_path.write_text(
+            _bash_tool_use_json("toolu_test", "uv run pytest")
+            + "\n"
+            + _tool_result_json("toolu_test")
+            + "\n"
         )
-        log_path.write_text(log_content + "\n")
 
         gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
@@ -181,37 +210,21 @@ class TestSpecDrivenParsing:
         """Should only parse log entries after the given byte offset."""
         log_path = tmp_path / "session.jsonl"
 
-        # First entry: pytest (before offset)
-        first_entry = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "name": "Bash",
-                            "input": {"command": "uv run pytest"},
-                        }
-                    ]
-                },
-            }
+        # First command: pytest (before offset)
+        first_entries = (
+            _bash_tool_use_json("toolu_test", "uv run pytest")
+            + "\n"
+            + _tool_result_json("toolu_test")
+            + "\n"
         )
-        # Second entry: ruff check (after offset)
-        second_entry = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "name": "Bash",
-                            "input": {"command": "uvx ruff check ."},
-                        }
-                    ]
-                },
-            }
+        # Second command: ruff check (after offset)
+        second_entries = (
+            _bash_tool_use_json("toolu_lint", "uvx ruff check .")
+            + "\n"
+            + _tool_result_json("toolu_lint")
+            + "\n"
         )
-        log_path.write_text(first_entry + "\n" + second_entry + "\n")
+        log_path.write_text(first_entries + second_entries)
 
         gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
@@ -219,7 +232,7 @@ class TestSpecDrivenParsing:
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
 
         # Offset set to after the first line
-        offset = len(first_entry) + 1  # +1 for newline
+        offset = len(first_entries)
         evidence = gate.parse_validation_evidence_with_spec(
             log_path, spec, offset=offset
         )
@@ -237,21 +250,12 @@ class TestSpecDrivenParsing:
     ) -> None:
         """Offset=0 should parse the entire file (default behavior)."""
         log_path = tmp_path / "session.jsonl"
-        log_content = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "name": "Bash",
-                            "input": {"command": "uv run pytest"},
-                        }
-                    ]
-                },
-            }
+        log_path.write_text(
+            _bash_tool_use_json("toolu_test", "uv run pytest")
+            + "\n"
+            + _tool_result_json("toolu_test")
+            + "\n"
         )
-        log_path.write_text(log_content + "\n")
 
         gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
@@ -360,26 +364,13 @@ class TestSpecDrivenParsing:
         commands = [
             "uv run pytest tests/",
             "uvx ruff check .",
-            "uvx ruff format .",
+            "uvx ruff format --check .",
             "uvx ty check",
         ]
-        for cmd in commands:
-            entries.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
+        for index, cmd in enumerate(commands):
+            tool_id = f"toolu_{index}"
+            entries.append(_bash_tool_use_json(tool_id, cmd))
+            entries.append(_tool_result_json(tool_id))
         log_path.write_text("\n".join(entries) + "\n")
 
         gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
@@ -447,21 +438,12 @@ class TestNoProgressDetection:
     ) -> None:
         """Progress detected: new validation evidence (even with same commit)."""
         log_path = tmp_path / "session.jsonl"
-        log_content = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "name": "Bash",
-                            "input": {"command": "uv run pytest"},
-                        }
-                    ]
-                },
-            }
+        log_path.write_text(
+            _bash_tool_use_json("toolu_test", "uv run pytest")
+            + "\n"
+            + _tool_result_json("toolu_test")
+            + "\n"
         )
-        log_path.write_text(log_content + "\n")
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
 
         gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
@@ -728,23 +710,10 @@ class TestCommitBaselineCheck:
             "uvx ty check",
         ]
         lines = []
-        for cmd in commands:
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
+        for index, cmd in enumerate(commands):
+            tool_id = f"toolu_{index}"
+            lines.append(_bash_tool_use_json(tool_id, cmd))
+            lines.append(_tool_result_json(tool_id))
         log_path.write_text("\n".join(lines) + "\n")
 
         # Create minimal mala.yaml for test
@@ -796,23 +765,10 @@ class TestCommitBaselineCheck:
             "uvx ty check",
         ]
         lines = []
-        for cmd in commands:
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
+        for index, cmd in enumerate(commands):
+            tool_id = f"toolu_{index}"
+            lines.append(_bash_tool_use_json(tool_id, cmd))
+            lines.append(_tool_result_json(tool_id))
         log_path.write_text("\n".join(lines) + "\n")
 
         # Create minimal mala.yaml for test
@@ -1308,23 +1264,10 @@ class TestClearFailureMessages:
             "uvx ty check",
         ]
         lines = []
-        for cmd in commands:
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
+        for index, cmd in enumerate(commands):
+            tool_id = f"toolu_{index}"
+            lines.append(_bash_tool_use_json(tool_id, cmd))
+            lines.append(_tool_result_json(tool_id))
         log_path.write_text("\n".join(lines) + "\n")
 
         # Create minimal mala.yaml for test
@@ -2678,6 +2621,252 @@ class TestEvidenceSummaryParserAndRecognizer:
 
         assert "lint" not in evidence.commands
 
+    def test_pattern_fallback_rejects_custom_command_tool_name_match(
+        self,
+        tmp_path: Path,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        import re
+
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_make",
+                                "name": "Bash",
+                                "input": {"command": "make build"},
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_make",
+                                "content": "build ok",
+                                "is_error": False,
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="python_test",
+                    command="make -C shadow-write-consumer test",
+                    kind=CommandKind.CUSTOM,
+                    detection_pattern=re.compile(r"\bmake\b"),
+                )
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("python_test",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.commands == {}
+
+    def test_ambiguous_detection_pattern_match_credits_nothing(
+        self,
+        tmp_path: Path,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        import re
+
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_ruff",
+                                "name": "Bash",
+                                "input": {"command": "ruff --version"},
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_ruff",
+                                "content": "ok",
+                                "is_error": False,
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="lint",
+                    command="uvx ruff check .",
+                    kind=CommandKind.LINT,
+                    detection_pattern=re.compile(r"\bruff\b"),
+                ),
+                ValidationCommand(
+                    name="format",
+                    command="uvx ruff format --check .",
+                    kind=CommandKind.FORMAT,
+                    detection_pattern=re.compile(r"\bruff\b"),
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("lint", "format"),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.commands == {}
+
+    def test_bare_command_without_tool_result_gets_no_credit(
+        self,
+        tmp_path: Path,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_lint",
+                                "name": "Bash",
+                                "input": {"command": "uvx ruff check ."},
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="lint",
+                    command="uvx ruff check .",
+                    kind=CommandKind.LINT,
+                )
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("lint",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.commands == {}
+
+    def test_incomplete_bare_retry_does_not_overwrite_prior_failure(
+        self,
+        tmp_path: Path,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "id": "toolu_lint_1",
+                                        "name": "Bash",
+                                        "input": {"command": "uvx ruff check ."},
+                                    }
+                                ]
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_result",
+                                        "tool_use_id": "toolu_lint_1",
+                                        "content": "failed",
+                                        "is_error": True,
+                                    }
+                                ]
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "id": "toolu_lint_2",
+                                        "name": "Bash",
+                                        "input": {"command": "uvx ruff check ."},
+                                    }
+                                ]
+                            },
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="lint",
+                    command="uvx ruff check .",
+                    kind=CommandKind.LINT,
+                )
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("lint",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.commands["lint"].status == "failed"
+
     def test_build_validation_spec_rejects_duplicate_resolved_names(
         self, tmp_path: Path
     ) -> None:
@@ -2732,23 +2921,10 @@ class TestCheckWithResolutionSpec:
             "uvx ty check",
         ]
         lines = []
-        for cmd in commands:
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
+        for index, cmd in enumerate(commands):
+            tool_id = f"toolu_{index}"
+            lines.append(_bash_tool_use_json(tool_id, cmd))
+            lines.append(_tool_result_json(tool_id))
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
@@ -3106,19 +3282,10 @@ class TestByteOffsetConsistency:
             }
         )
 
-        validation_entry = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "name": "Bash",
-                            "input": {"command": "uv run pytest"},
-                        }
-                    ]
-                },
-            }
+        validation_entry = (
+            _bash_tool_use_json("toolu_test", "uv run pytest")
+            + "\n"
+            + _tool_result_json("toolu_test")
         )
 
         content = entry_with_emoji + "\n" + validation_entry + "\n"
@@ -3200,19 +3367,10 @@ class TestByteOffsetConsistency:
         """Binary data (invalid UTF-8) should be skipped without crashing."""
         log_path = tmp_path / "session.jsonl"
 
-        valid_entry = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "name": "Bash",
-                            "input": {"command": "uv run pytest"},
-                        }
-                    ]
-                },
-            }
+        valid_entry = (
+            _bash_tool_use_json("toolu_test", "uv run pytest")
+            + "\n"
+            + _tool_result_json("toolu_test")
         )
 
         # Write valid entry, then binary garbage, then valid entry
@@ -3370,24 +3528,11 @@ class TestSpecDrivenEvidencePatterns:
         # Create log with all commands from the spec
         log_path = tmp_path / "session.jsonl"
         lines = []
-        for cmd in spec.commands:
+        for index, cmd in enumerate(spec.commands):
             command_str = cmd.command
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "name": "Bash",
-                                    "input": {"command": command_str},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
+            tool_id = f"toolu_{index}"
+            lines.append(_bash_tool_use_json(tool_id, command_str))
+            lines.append(_tool_result_json(tool_id))
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
@@ -3516,23 +3661,10 @@ class TestSpecDrivenEvidencePatterns:
             "ty check",
         ]
         lines = []
-        for cmd in commands:
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
+        for index, cmd in enumerate(commands):
+            tool_id = f"toolu_{index}"
+            lines.append(_bash_tool_use_json(tool_id, cmd))
+            lines.append(_tool_result_json(tool_id))
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
@@ -3605,23 +3737,10 @@ class TestSpecDrivenEvidencePatterns:
             "ty check",
         ]
         lines = []
-        for cmd in commands:
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
+        for index, cmd in enumerate(commands):
+            tool_id = f"toolu_{index}"
+            lines.append(_bash_tool_use_json(tool_id, cmd))
+            lines.append(_tool_result_json(tool_id))
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
@@ -4890,23 +5009,10 @@ class TestSpecCommandChangesPropagation:
             "ty check",
         ]
         lines = []
-        for cmd in commands:
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
+        for index, cmd in enumerate(commands):
+            tool_id = f"toolu_{index}"
+            lines.append(_bash_tool_use_json(tool_id, cmd))
+            lines.append(_tool_result_json(tool_id))
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
@@ -4932,23 +5038,10 @@ class TestSpecCommandChangesPropagation:
             "ty check",
         ]
         lines2 = []
-        for cmd in commands2:
-            lines2.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
+        for index, cmd in enumerate(commands2):
+            tool_id = f"toolu_{index}"
+            lines2.append(_bash_tool_use_json(tool_id, cmd))
+            lines2.append(_tool_result_json(tool_id))
         log_path2.write_text("\n".join(lines2) + "\n")
 
         evidence2 = gate.parse_validation_evidence_with_spec(log_path2, spec)
@@ -5024,7 +5117,7 @@ class TestEvidenceProviderInjection:
 
             def extract_tool_results(self, entry: JsonlEntry) -> list[tuple[str, bool]]:
                 """Extract tool results from entry."""
-                return []
+                return [("test-1", False)]
 
             def extract_assistant_text_blocks(self, entry: JsonlEntry) -> list[str]:
                 """Extract assistant text blocks from entry."""
@@ -5034,7 +5127,7 @@ class TestEvidenceProviderInjection:
                 self, entry: JsonlEntry
             ) -> list[tuple[str, str]]:
                 """Extract tool result content from entry."""
-                return []
+                return [("test-1", "ok")]
 
         # Create mock entries with pytest command - include typed entry
         tool_use_block = ToolUseBlock(
