@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 from unittest.mock import MagicMock
@@ -13,6 +13,7 @@ import pytest
 from src.core.models import EpicVerificationResult, RunResult
 from src.pipeline.issue_execution_coordinator import AbortResult
 from src.pipeline.issue_execution_plan import (
+    IssueExecutionPlan,
     build_issue_execution_plan,
 )
 from src.pipeline.issue_result import IssueResult
@@ -20,10 +21,6 @@ from src.pipeline.run_coordinator import TriggerValidationResult
 
 if TYPE_CHECKING:
     from src.pipeline.issue_execution_coordinator import IssueExecutionCoordinator
-    from src.pipeline.issue_execution_plan import IssueExecutionPlan
-
-
-BAD_DATACLASS_ARTIFACT = "@src/core/protocols/events/" + "dataclasses.py"
 
 
 @dataclass
@@ -158,31 +155,11 @@ def _build_plan(
 
 
 @pytest.mark.unit
-def test_dataclass_decorator_sources_do_not_contain_bad_artifact() -> None:
-    """Guard against the malformed decorator artifact reported in review."""
-    source_paths = (
-        Path("src/pipeline/issue_execution_plan.py"),
-        Path("tests/unit/pipeline/test_issue_execution_plan.py"),
-    )
-
-    sources = {path: path.read_text(encoding="utf-8") for path in source_paths}
-
-    assert (
-        BAD_DATACLASS_ARTIFACT
-        not in sources[Path("src/pipeline/issue_execution_plan.py")]
-    )
-    assert (
-        BAD_DATACLASS_ARTIFACT
-        not in sources[Path("tests/unit/pipeline/test_issue_execution_plan.py")]
-    )
-    assert (
-        "@dataclass(frozen=True)"
-        in sources[Path("src/pipeline/issue_execution_plan.py")]
-    )
-    assert (
-        "@dataclass\nclass FakeState"
-        in sources[Path("tests/unit/pipeline/test_issue_execution_plan.py")]
-    )
+def test_issue_execution_plan_and_fakes_are_dataclasses() -> None:
+    """Import-time guard for malformed dataclass decorators."""
+    assert is_dataclass(IssueExecutionPlan)
+    assert IssueExecutionPlan.__dataclass_params__.frozen is True
+    assert is_dataclass(FakeState)
 
 
 @pytest.mark.unit
