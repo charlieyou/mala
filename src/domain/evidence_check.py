@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal
@@ -261,28 +262,63 @@ def _recognize_spec_pattern_command(
     configured_by_name: dict[str, ValidationCommand],
 ) -> ValidationCommand | None:
     """Match a Bash tool input against configured detection patterns."""
-    matches = [
-        cmd
-        for cmd in configured_by_name.values()
-        if cmd.detection_pattern is not None
-        and cmd.kind != CommandKind.CUSTOM
-        and cmd.detection_pattern.search(bash_input)
-    ]
+
+    def shell_words(command: str) -> list[str]:
+        try:
+            return shlex.split(command)
+        except ValueError:
+            return []
+
+    def is_argument_token(token: str) -> bool:
+        return token in {".", ".."} or token.startswith("-") or "/" in token
+
+    def strip_leading_env_assignments(tokens: list[str]) -> list[str]:
+        assignment = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+        while tokens and assignment.match(tokens[0]):
+            tokens = tokens[1:]
+        return tokens
+
+    def command_identity_tokens(command: str) -> list[str]:
+        tokens = strip_leading_env_assignments(shell_words(command))
+        identity: list[str] = []
+        for token in tokens:
+            if identity and is_argument_token(token):
+                break
+            identity.append(token)
+        return identity
+
+    def command_identity_variants(command: str) -> list[list[str]]:
+        identity = command_identity_tokens(command)
+        variants = [identity] if identity else []
+        if identity[:1] == ["uvx"] and len(identity) > 1:
+            variants.append(identity[1:])
+        if identity[:2] == ["uv", "run"] and len(identity) > 2:
+            variants.append(identity[2:])
+        return variants
+
+    input_tokens = strip_leading_env_assignments(shell_words(bash_input))
+    shell_separators = {"&&", "||", ";", "|"}
+    if not input_tokens or any(token in shell_separators for token in input_tokens):
+        return None
+
+    matches = []
+    for cmd in configured_by_name.values():
+        identities = command_identity_variants(cmd.command)
+        if (
+            cmd.detection_pattern is not None
+            and cmd.kind != CommandKind.CUSTOM
+            and identities
+            and cmd.detection_pattern.search(bash_input)
+            and any(
+                input_tokens[: len(identity)] == identity for identity in identities
+            )
+        ):
+            matches.append(cmd)
     non_setup_matches = [
         cmd for cmd in matches if cmd.kind not in EVIDENCE_CHECK_IGNORED_KINDS
     ]
     if non_setup_matches:
         matches = non_setup_matches
-    if len(matches) > 1:
-        normalized_input = " ".join(bash_input.split())
-        narrowed = [
-            cmd
-            for cmd in matches
-            if " ".join(cmd.command.split()).endswith(normalized_input)
-            or normalized_input in " ".join(cmd.command.split())
-        ]
-        if narrowed:
-            matches = narrowed
     if len(matches) != 1:
         return None
     return matches[0]
@@ -717,7 +753,7 @@ class EvidenceCheck:
                 )
                 if record is not None:
                     evidence.commands[matched_cmd.name] = record
-                elif matched_via == "bare_command":
+                else:
                     evidence.commands.pop(matched_cmd.name, None)
 
     def get_log_end_offset(self, log_path: Path, start_offset: int = 0) -> int:

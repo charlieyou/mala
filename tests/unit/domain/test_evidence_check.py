@@ -2682,6 +2682,39 @@ class TestEvidenceSummaryParserAndRecognizer:
 
         assert evidence.commands == {}
 
+    def test_pattern_fallback_rejects_built_in_tool_name_mention(
+        self,
+        tmp_path: Path,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        import re
+
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            _bash_tool_use_json("toolu_echo", "echo pytest")
+            + "\n"
+            + _tool_result_json("toolu_echo")
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command="uv run pytest",
+                    kind=CommandKind.TEST,
+                    detection_pattern=re.compile(r"\bpytest\b"),
+                )
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("test",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.commands == {}
+
     def test_ambiguous_detection_pattern_match_credits_nothing(
         self,
         tmp_path: Path,
@@ -2748,6 +2781,54 @@ class TestEvidenceSummaryParserAndRecognizer:
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert evidence.commands == {}
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "uvx ruff check src/",
+            "uvx ruff check . --fix",
+        ],
+    )
+    def test_pattern_fallback_credits_valid_superstring_for_colliding_patterns(
+        self,
+        tmp_path: Path,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+        command: str,
+    ) -> None:
+        import re
+
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            _bash_tool_use_json("toolu_ruff", command)
+            + "\n"
+            + _tool_result_json("toolu_ruff")
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="lint",
+                    command="uvx ruff check .",
+                    kind=CommandKind.LINT,
+                    detection_pattern=re.compile(r"\bruff\b"),
+                ),
+                ValidationCommand(
+                    name="format",
+                    command="uvx ruff format --check .",
+                    kind=CommandKind.FORMAT,
+                    detection_pattern=re.compile(r"\bruff\b"),
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("lint", "format"),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.commands["lint"].status == "passed"
+        assert "format" not in evidence.commands
 
     def test_bare_command_without_tool_result_gets_no_credit(
         self,
@@ -2866,6 +2947,53 @@ class TestEvidenceSummaryParserAndRecognizer:
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert evidence.commands["lint"].status == "failed"
+
+    def test_invalid_canonical_rerun_clears_prior_pass(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(tmp_path))
+        command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            "\n".join(
+                [
+                    _bash_tool_use_json("toolu_lint_1", wrapper),
+                    _tool_result_json(
+                        "toolu_lint_1",
+                        (
+                            "MALA_EVIDENCE name=lint exit=0 "
+                            f"log={tmp_path / 'mala-3gbpn.3.lint.log'}"
+                        ),
+                    ),
+                    _bash_tool_use_json("toolu_lint_2", wrapper),
+                    _tool_result_json("toolu_lint_2", "completed without summary"),
+                ]
+            )
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("lint",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert "lint" not in evidence.commands
 
     def test_build_validation_spec_rejects_duplicate_resolved_names(
         self, tmp_path: Path
