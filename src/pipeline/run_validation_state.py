@@ -83,6 +83,7 @@ class RunValidationContext:
     """State-machine context carried between pure transitions."""
 
     last_failure: FailureRecord | None = None
+    active_failure: FailureRecord | None = None
     terminal_status: TerminalStatus | None = None
     terminal_details: str | None = None
 
@@ -97,15 +98,6 @@ class TransitionResult:
     message: str | None = None
 
 
-_COMMAND_FAILURE = FailureRecord(
-    ref="command_failure",
-    trigger_type="run_validation",
-)
-_CODE_REVIEW_FAILURE = FailureRecord(
-    ref="code_review_findings",
-    trigger_type="run_validation",
-)
-
 _TERMINAL_EFFECTS = {
     TerminalStatus.PASSED: RunValidationEffect.COMPLETE_PASSED,
     TerminalStatus.FAILED: RunValidationEffect.COMPLETE_FAILED,
@@ -117,6 +109,7 @@ def transition(
     state: RunValidationState,
     event: RunValidationEvent,
     context: RunValidationContext | None = None,
+    failure: FailureRecord | None = None,
 ) -> TransitionResult:
     """Apply one pure run validation state transition.
 
@@ -127,11 +120,11 @@ def transition(
     ctx = context or RunValidationContext()
 
     if state == RunValidationState.PROCESSING_COMMANDS:
-        return _transition_processing_commands(event, ctx)
+        return _transition_processing_commands(event, ctx, failure)
     if state == RunValidationState.AWAITING_REMEDIATION:
         return _transition_awaiting_remediation(event, ctx)
     if state == RunValidationState.RUNNING_CODE_REVIEW:
-        return _transition_running_code_review(event, ctx)
+        return _transition_running_code_review(event, ctx, failure)
     if state == RunValidationState.REMEDIATING_REVIEW:
         return _transition_remediating_review(event, ctx)
     if state == RunValidationState.EMITTING_TERMINAL_EVENT:
@@ -143,6 +136,7 @@ def transition(
 def _transition_processing_commands(
     event: RunValidationEvent,
     ctx: RunValidationContext,
+    failure: FailureRecord | None,
 ) -> TransitionResult:
     if event == RunValidationEvent.COMMANDS_PASSED:
         return TransitionResult(
@@ -154,9 +148,10 @@ def _transition_processing_commands(
             ),
         )
     if event == RunValidationEvent.COMMAND_FAILED_CONTINUE:
+        failure = _require_failure(event, failure)
         return TransitionResult(
             state=RunValidationState.RUNNING_CODE_REVIEW,
-            context=RunValidationContext(last_failure=_COMMAND_FAILURE),
+            context=RunValidationContext(last_failure=failure),
             effects=(
                 RunValidationEffect.RECORD_FAILURE,
                 RunValidationEffect.RECORD_RUN_VALIDATION,
@@ -164,18 +159,23 @@ def _transition_processing_commands(
             ),
         )
     if event == RunValidationEvent.COMMAND_FAILED_REMEDIATE:
+        failure = _require_failure(event, failure)
         return TransitionResult(
             state=RunValidationState.AWAITING_REMEDIATION,
-            context=ctx,
+            context=RunValidationContext(
+                last_failure=ctx.last_failure,
+                active_failure=failure,
+            ),
             effects=(RunValidationEffect.RUN_COMMAND_REMEDIATION,),
         )
     if event == RunValidationEvent.COMMAND_FAILED_ABORT:
+        failure = _require_failure(event, failure)
         return TransitionResult(
             state=RunValidationState.EMITTING_TERMINAL_EVENT,
             context=RunValidationContext(
-                last_failure=_COMMAND_FAILURE,
+                last_failure=failure,
                 terminal_status=TerminalStatus.ABORTED,
-                terminal_details="Command failed with abort failure mode",
+                terminal_details=_failure_details(failure),
             ),
             effects=(
                 RunValidationEffect.RECORD_FAILURE,
@@ -193,15 +193,16 @@ def _transition_awaiting_remediation(
     if event == RunValidationEvent.REMEDIATION_PASSED:
         return TransitionResult(
             state=RunValidationState.PROCESSING_COMMANDS,
-            context=ctx,
+            context=RunValidationContext(last_failure=ctx.last_failure),
         )
     if event == RunValidationEvent.REMEDIATION_FAILED:
+        failure = _require_active_failure(event, ctx)
         return TransitionResult(
             state=RunValidationState.EMITTING_TERMINAL_EVENT,
             context=RunValidationContext(
-                last_failure=_COMMAND_FAILURE,
+                last_failure=failure,
                 terminal_status=TerminalStatus.ABORTED,
-                terminal_details="Command remediation failed",
+                terminal_details=_failure_details(failure),
             ),
             effects=(
                 RunValidationEffect.RECORD_FAILURE,
@@ -224,6 +225,7 @@ def _transition_awaiting_remediation(
 def _transition_running_code_review(
     event: RunValidationEvent,
     ctx: RunValidationContext,
+    failure: FailureRecord | None,
 ) -> TransitionResult:
     if event == RunValidationEvent.CODE_REVIEW_DISABLED:
         return _terminal_from_last_failure(ctx, effects=())
@@ -238,12 +240,13 @@ def _transition_running_code_review(
             effects=(RunValidationEffect.EMIT_CODE_REVIEW_PASSED,),
         )
     if event == RunValidationEvent.CODE_REVIEW_FAILED_ABORT:
+        failure = _require_failure(event, failure)
         return TransitionResult(
             state=RunValidationState.EMITTING_TERMINAL_EVENT,
             context=RunValidationContext(
-                last_failure=_CODE_REVIEW_FAILURE,
+                last_failure=failure,
                 terminal_status=TerminalStatus.ABORTED,
-                terminal_details="Code review findings exceeded threshold",
+                terminal_details=_failure_details(failure),
             ),
             effects=(
                 RunValidationEffect.RECORD_FAILURE,
@@ -251,22 +254,23 @@ def _transition_running_code_review(
             ),
         )
     if event == RunValidationEvent.CODE_REVIEW_FAILED_CONTINUE:
+        failure = _require_failure(event, failure)
         return TransitionResult(
-            state=RunValidationState.EMITTING_TERMINAL_EVENT,
-            context=RunValidationContext(
-                last_failure=_CODE_REVIEW_FAILURE,
-                terminal_status=TerminalStatus.FAILED,
-                terminal_details="Code review findings exceeded threshold",
-            ),
+            state=RunValidationState.PROCESSING_COMMANDS,
+            context=RunValidationContext(last_failure=failure),
             effects=(
                 RunValidationEffect.RECORD_FAILURE,
                 RunValidationEffect.EMIT_CODE_REVIEW_FAILED,
             ),
         )
     if event == RunValidationEvent.CODE_REVIEW_FAILED_REMEDIATE:
+        failure = _require_failure(event, failure)
         return TransitionResult(
             state=RunValidationState.REMEDIATING_REVIEW,
-            context=ctx,
+            context=RunValidationContext(
+                last_failure=ctx.last_failure,
+                active_failure=failure,
+            ),
             effects=(RunValidationEffect.RUN_CODE_REVIEW_REMEDIATION,),
         )
     if event == RunValidationEvent.CODE_REVIEW_ERROR:
@@ -292,12 +296,13 @@ def _transition_remediating_review(
             effects=(RunValidationEffect.EMIT_CODE_REVIEW_PASSED,),
         )
     if event == RunValidationEvent.REVIEW_REMEDIATION_FAILED:
+        failure = _require_active_failure(event, ctx)
         return TransitionResult(
             state=RunValidationState.EMITTING_TERMINAL_EVENT,
             context=RunValidationContext(
-                last_failure=_CODE_REVIEW_FAILURE,
+                last_failure=failure,
                 terminal_status=TerminalStatus.FAILED,
-                terminal_details="Code review remediation failed",
+                terminal_details=_failure_details(failure),
             ),
             effects=(
                 RunValidationEffect.RECORD_FAILURE,
@@ -343,10 +348,7 @@ def _terminal_from_last_failure(
         terminal_details = None
     else:
         terminal_status = TerminalStatus.FAILED
-        terminal_details = (
-            f"Command '{ctx.last_failure.ref}' failed in trigger "
-            f"{ctx.last_failure.trigger_type}"
-        )
+        terminal_details = _failure_details(ctx.last_failure)
 
     return TransitionResult(
         state=RunValidationState.EMITTING_TERMINAL_EVENT,
@@ -357,3 +359,25 @@ def _terminal_from_last_failure(
         ),
         effects=effects,
     )
+
+
+def _failure_details(failure: FailureRecord) -> str:
+    return f"Command '{failure.ref}' failed in trigger {failure.trigger_type}"
+
+
+def _require_failure(
+    event: RunValidationEvent,
+    failure: FailureRecord | None,
+) -> FailureRecord:
+    if failure is None:
+        raise ValueError(f"Event {event.name} requires failure details")
+    return failure
+
+
+def _require_active_failure(
+    event: RunValidationEvent,
+    ctx: RunValidationContext,
+) -> FailureRecord:
+    if ctx.active_failure is None:
+        raise ValueError(f"Event {event.name} requires active failure details")
+    return ctx.active_failure

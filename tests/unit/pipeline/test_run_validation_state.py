@@ -19,17 +19,19 @@ from src.pipeline.run_validation_state import (
 )
 
 _COMMAND_FAILURE = FailureRecord(
-    ref="command_failure",
-    trigger_type="run_validation",
+    ref="lint",
+    trigger_type="run_end",
 )
 _CODE_REVIEW_FAILURE = FailureRecord(
     ref="code_review_findings",
-    trigger_type="run_validation",
+    trigger_type="run_end",
 )
-_EXISTING_FAILURE = FailureRecord(ref="lint", trigger_type="run_end")
+_EXISTING_FAILURE = FailureRecord(ref="unit", trigger_type="run_start")
 
 _CLEAN_CONTEXT = RunValidationContext()
 _FAILED_CONTEXT = RunValidationContext(last_failure=_EXISTING_FAILURE)
+_COMMAND_REMEDIATION_CONTEXT = RunValidationContext(active_failure=_COMMAND_FAILURE)
+_REVIEW_REMEDIATION_CONTEXT = RunValidationContext(active_failure=_CODE_REVIEW_FAILURE)
 _TERMINAL_PASSED_CONTEXT = RunValidationContext(terminal_status=TerminalStatus.PASSED)
 _TERMINAL_FAILED_CONTEXT = RunValidationContext(terminal_status=TerminalStatus.FAILED)
 _TERMINAL_ABORTED_CONTEXT = RunValidationContext(terminal_status=TerminalStatus.ABORTED)
@@ -61,7 +63,7 @@ _EXPECTED: dict[
         RunValidationContext(
             last_failure=_COMMAND_FAILURE,
             terminal_status=TerminalStatus.ABORTED,
-            terminal_details="Command failed with abort failure mode",
+            terminal_details="Command 'lint' failed in trigger run_end",
         ),
     ),
     (
@@ -82,7 +84,7 @@ _EXPECTED: dict[
     ): (
         RunValidationState.AWAITING_REMEDIATION,
         (RunValidationEffect.RUN_COMMAND_REMEDIATION,),
-        _CLEAN_CONTEXT,
+        _COMMAND_REMEDIATION_CONTEXT,
     ),
     (
         RunValidationState.AWAITING_REMEDIATION,
@@ -100,7 +102,7 @@ _EXPECTED: dict[
         RunValidationContext(
             last_failure=_COMMAND_FAILURE,
             terminal_status=TerminalStatus.ABORTED,
-            terminal_details="Command remediation failed",
+            terminal_details="Command 'lint' failed in trigger run_end",
         ),
     ),
     (
@@ -150,23 +152,19 @@ _EXPECTED: dict[
         RunValidationContext(
             last_failure=_CODE_REVIEW_FAILURE,
             terminal_status=TerminalStatus.ABORTED,
-            terminal_details="Code review findings exceeded threshold",
+            terminal_details="Command 'code_review_findings' failed in trigger run_end",
         ),
     ),
     (
         RunValidationState.RUNNING_CODE_REVIEW,
         RunValidationEvent.CODE_REVIEW_FAILED_CONTINUE,
     ): (
-        RunValidationState.EMITTING_TERMINAL_EVENT,
+        RunValidationState.PROCESSING_COMMANDS,
         (
             RunValidationEffect.RECORD_FAILURE,
             RunValidationEffect.EMIT_CODE_REVIEW_FAILED,
         ),
-        RunValidationContext(
-            last_failure=_CODE_REVIEW_FAILURE,
-            terminal_status=TerminalStatus.FAILED,
-            terminal_details="Code review findings exceeded threshold",
-        ),
+        RunValidationContext(last_failure=_CODE_REVIEW_FAILURE),
     ),
     (
         RunValidationState.RUNNING_CODE_REVIEW,
@@ -174,7 +172,7 @@ _EXPECTED: dict[
     ): (
         RunValidationState.REMEDIATING_REVIEW,
         (RunValidationEffect.RUN_CODE_REVIEW_REMEDIATION,),
-        _CLEAN_CONTEXT,
+        _REVIEW_REMEDIATION_CONTEXT,
     ),
     (
         RunValidationState.RUNNING_CODE_REVIEW,
@@ -207,7 +205,7 @@ _EXPECTED: dict[
         RunValidationContext(
             last_failure=_CODE_REVIEW_FAILURE,
             terminal_status=TerminalStatus.FAILED,
-            terminal_details="Code review remediation failed",
+            terminal_details="Command 'code_review_findings' failed in trigger run_end",
         ),
     ),
     (
@@ -245,13 +243,52 @@ _CONTEXT_OVERRIDES = {
         RunValidationEvent.CODE_REVIEW_PASSED,
     ): _CLEAN_CONTEXT,
     (
+        RunValidationState.AWAITING_REMEDIATION,
+        RunValidationEvent.REMEDIATION_PASSED,
+    ): _COMMAND_REMEDIATION_CONTEXT,
+    (
         RunValidationState.REMEDIATING_REVIEW,
         RunValidationEvent.REVIEW_REMEDIATION_PASSED,
     ): _CLEAN_CONTEXT,
     (
+        RunValidationState.AWAITING_REMEDIATION,
+        RunValidationEvent.REMEDIATION_FAILED,
+    ): _COMMAND_REMEDIATION_CONTEXT,
+    (
+        RunValidationState.REMEDIATING_REVIEW,
+        RunValidationEvent.REVIEW_REMEDIATION_FAILED,
+    ): _REVIEW_REMEDIATION_CONTEXT,
+    (
         RunValidationState.EMITTING_TERMINAL_EVENT,
         RunValidationEvent.TERMINAL_EVENT_EMITTED,
     ): _TERMINAL_PASSED_CONTEXT,
+}
+
+_FAILURE_OVERRIDES = {
+    (
+        RunValidationState.PROCESSING_COMMANDS,
+        RunValidationEvent.COMMAND_FAILED_ABORT,
+    ): _COMMAND_FAILURE,
+    (
+        RunValidationState.PROCESSING_COMMANDS,
+        RunValidationEvent.COMMAND_FAILED_CONTINUE,
+    ): _COMMAND_FAILURE,
+    (
+        RunValidationState.PROCESSING_COMMANDS,
+        RunValidationEvent.COMMAND_FAILED_REMEDIATE,
+    ): _COMMAND_FAILURE,
+    (
+        RunValidationState.RUNNING_CODE_REVIEW,
+        RunValidationEvent.CODE_REVIEW_FAILED_ABORT,
+    ): _CODE_REVIEW_FAILURE,
+    (
+        RunValidationState.RUNNING_CODE_REVIEW,
+        RunValidationEvent.CODE_REVIEW_FAILED_CONTINUE,
+    ): _CODE_REVIEW_FAILURE,
+    (
+        RunValidationState.RUNNING_CODE_REVIEW,
+        RunValidationEvent.CODE_REVIEW_FAILED_REMEDIATE,
+    ): _CODE_REVIEW_FAILURE,
 }
 
 
@@ -267,6 +304,7 @@ def test_state_event_matrix_is_explicit(
     """Every state/event pair either has an expected result or rejects."""
 
     context = _CONTEXT_OVERRIDES.get((state, event), _CLEAN_CONTEXT)
+    failure = _FAILURE_OVERRIDES.get((state, event))
     expected = _EXPECTED.get((state, event))
 
     if expected is None:
@@ -275,7 +313,7 @@ def test_state_event_matrix_is_explicit(
         return
 
     next_state, effects, next_context = expected
-    result = transition(state, event, context)
+    result = transition(state, event, context, failure=failure)
 
     assert result == TransitionResult(
         state=next_state,
@@ -343,6 +381,53 @@ def test_context_controls_deferred_terminal_status(
         )
 
     assert result.effects == (effect,)
+
+
+@pytest.mark.unit
+def test_failure_events_require_real_failure_details() -> None:
+    with pytest.raises(ValueError, match="requires failure details"):
+        transition(
+            RunValidationState.PROCESSING_COMMANDS,
+            RunValidationEvent.COMMAND_FAILED_CONTINUE,
+        )
+
+
+@pytest.mark.unit
+def test_command_failure_details_are_preserved_for_terminal_result() -> None:
+    result = transition(
+        RunValidationState.PROCESSING_COMMANDS,
+        RunValidationEvent.COMMAND_FAILED_ABORT,
+        failure=FailureRecord(ref="mypy", trigger_type="run_start"),
+    )
+
+    assert result.context.last_failure == FailureRecord(
+        ref="mypy",
+        trigger_type="run_start",
+    )
+    assert result.context.terminal_details == (
+        "Command 'mypy' failed in trigger run_start"
+    )
+
+
+@pytest.mark.unit
+def test_code_review_continue_returns_to_command_processing() -> None:
+    result = transition(
+        RunValidationState.RUNNING_CODE_REVIEW,
+        RunValidationEvent.CODE_REVIEW_FAILED_CONTINUE,
+        failure=FailureRecord(ref="code_review_findings", trigger_type="run_end"),
+    )
+
+    assert result.state == RunValidationState.PROCESSING_COMMANDS
+    assert result.context == RunValidationContext(
+        last_failure=FailureRecord(
+            ref="code_review_findings",
+            trigger_type="run_end",
+        )
+    )
+    assert result.effects == (
+        RunValidationEffect.RECORD_FAILURE,
+        RunValidationEffect.EMIT_CODE_REVIEW_FAILED,
+    )
 
 
 @pytest.mark.unit
