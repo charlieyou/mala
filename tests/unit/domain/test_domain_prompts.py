@@ -592,7 +592,7 @@ class TestCanonicalWrapperPrompts:
         assert advisory_exits == 1
 
         # AC3: no marker syntax remains anywhere in the prompt
-        assert "[custom:" not in prompt
+        assert "[custom" + ":" not in prompt
 
     def test_implementer_prompt_honours_configured_builtin_timeouts(
         self, tmp_path: Path
@@ -712,7 +712,7 @@ commands:
 
         strict_exits = prompt.count('exit "$__mala_status"')
         assert strict_exits == 4
-        assert "[custom:" not in prompt
+        assert "[custom" + ":" not in prompt
         assert "{custom_commands_section}" not in prompt
 
     def test_gate_followup_renders_one_wrapper_per_missing_command(
@@ -758,7 +758,7 @@ commands:
         assert "{missing_command_wrappers}" not in prompt
         assert "{format_command}" not in prompt
         assert "{test_command}" not in prompt
-        assert "[custom:" not in prompt
+        assert "[custom" + ":" not in prompt
 
     def test_gate_followup_with_no_missing_commands_omits_wrappers(
         self, tmp_path: Path
@@ -815,7 +815,7 @@ commands:
         assert "echo it's fine" not in prompt or "it'\\''s" in prompt
 
     def test_no_marker_syntax_in_any_rendered_prompt(self, tmp_path: Path) -> None:
-        """AC3: `[custom:` does not appear in any rendered prompt for any spec."""
+        """AC3: legacy custom markers do not appear in rendered prompts."""
         from src.domain.prompts import format_gate_followup_prompt
         from src.domain.validation.spec import CommandKind, ValidationCommand
 
@@ -838,7 +838,7 @@ commands:
                 validation_log_dir=validation_log_dir,
                 issue_description="Test",
             )
-            assert "[custom:" not in impl_prompt
+            assert "[custom" + ":" not in impl_prompt
 
             missing = [
                 ValidationCommand(
@@ -866,4 +866,4 @@ commands:
                 missing_commands=missing,
                 validation_log_dir=validation_log_dir,
             )
-            assert "[custom:" not in gate_prompt
+            assert "[custom" + ":" not in gate_prompt

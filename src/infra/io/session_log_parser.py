@@ -331,7 +331,7 @@ class SessionLogParser:
 
         Used for marker detection in custom validation commands. Returns content
         from all tool results (not just Bash) since custom command markers have
-        a specific format `[custom:<name>:<status>]` that avoids false positives.
+        a specific summary line format that avoids false positives.
 
         Args:
             entry: A JsonlEntry or JsonlEntryProtocol from iter_jsonl_entries.

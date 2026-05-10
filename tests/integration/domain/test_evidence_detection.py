@@ -3,7 +3,7 @@
 These tests validate the end-to-end evidence detection path:
 JSONL log → SessionLogParser → parse_validation_evidence_with_spec() → ValidationEvidence
 
-The tests exercise custom command marker parsing as specified in R5 (Evidence Detection).
+The tests exercise canonical wrapper evidence detection.
 Integration marker is applied automatically via path-based pytest configuration.
 """
 
@@ -96,464 +96,8 @@ def _make_validation_spec_with_custom_commands(
     )
 
 
-class TestEvidenceDetectionCustomCommandsIntegration:
-    """Integration test for custom command evidence detection (R5).
-
-    This test exercises the full log parse → evidence → gate check path.
-    """
-
-    def test_detects_custom_command_from_exact_configured_command(
-        self, tmp_path: Path
-    ) -> None:
-        """Exact configured custom command invocation counts as named evidence."""
-        log_path = tmp_path / "session.jsonl"
-        entries = [
-            _make_bash_tool_use_entry(
-                "toolu_1",
-                "make -C shadow-write-consumer test > /tmp/issue.python_test.log 2>&1",
-            ),
-            _make_tool_result_entry(
-                "toolu_1",
-                "python_test exit=0 log=/tmp/issue.python_test.log",
-                is_error=False,
-            ),
-        ]
-        _create_jsonl_log(log_path, entries)
-
-        spec = _make_validation_spec_with_custom_commands(
-            [("python_test", "make -C shadow-write-consumer test", False)]
-        )
-
-        gate = EvidenceCheck(
-            tmp_path, FileSystemLogProvider(), CommandRunner(cwd=tmp_path)
-        )
-
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert evidence.custom_commands_ran["python_test"] is True
-        assert evidence.custom_commands_failed.get("python_test", False) is False
-
-    def test_named_exit_line_overrides_single_command_shell_success(
-        self, tmp_path: Path
-    ) -> None:
-        """Single custom fallback uses named exit evidence before shell status."""
-        log_path = tmp_path / "session.jsonl"
-        entries = [
-            _make_bash_tool_use_entry(
-                "toolu_1",
-                "make -C shadow-write-consumer test > /tmp/issue.python_test.log 2>&1; "
-                "echo 'python_test exit=1 log=/tmp/issue.python_test.log'",
-            ),
-            _make_tool_result_entry(
-                "toolu_1",
-                "python_test exit=1 log=/tmp/issue.python_test.log",
-                is_error=False,
-            ),
-        ]
-        _create_jsonl_log(log_path, entries)
-
-        spec = _make_validation_spec_with_custom_commands(
-            [("python_test", "make -C shadow-write-consumer test", False)]
-        )
-
-        gate = EvidenceCheck(
-            tmp_path, FileSystemLogProvider(), CommandRunner(cwd=tmp_path)
-        )
-
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert evidence.custom_commands_ran["python_test"] is True
-        assert evidence.custom_commands_failed["python_test"] is True
-
-    def test_named_exit_line_overrides_single_command_shell_failure(
-        self, tmp_path: Path
-    ) -> None:
-        """A named zero exit line can credit the custom command despite later shell failure."""
-        log_path = tmp_path / "session.jsonl"
-        entries = [
-            _make_bash_tool_use_entry(
-                "toolu_1",
-                "make -C shadow-write-consumer test > /tmp/issue.python_test.log 2>&1; "
-                "echo 'python_test exit=0 log=/tmp/issue.python_test.log'; false",
-            ),
-            _make_tool_result_entry(
-                "toolu_1",
-                "python_test exit=0 log=/tmp/issue.python_test.log",
-                is_error=True,
-            ),
-        ]
-        _create_jsonl_log(log_path, entries)
-
-        spec = _make_validation_spec_with_custom_commands(
-            [("python_test", "make -C shadow-write-consumer test", False)]
-        )
-
-        gate = EvidenceCheck(
-            tmp_path, FileSystemLogProvider(), CommandRunner(cwd=tmp_path)
-        )
-
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert evidence.custom_commands_ran["python_test"] is True
-        assert evidence.custom_commands_failed.get("python_test", False) is False
-
-    def test_detects_multiple_custom_commands_with_per_command_exit_lines(
-        self, tmp_path: Path
-    ) -> None:
-        """A combined shell command needs per-custom exit lines for attribution."""
-        log_path = tmp_path / "session.jsonl"
-        entries = [
-            _make_bash_tool_use_entry(
-                "toolu_1",
-                "make -C shadow-write-consumer test > /tmp/issue.python_test.log 2>&1; "
-                "echo 'python_test exit=0 log=/tmp/issue.python_test.log'; "
-                "make -C shadow-write-consumer lint > /tmp/issue.python_lint.log 2>&1; "
-                "echo 'python_lint exit=0 log=/tmp/issue.python_lint.log'",
-            ),
-            _make_tool_result_entry(
-                "toolu_1",
-                "python_test exit=0 log=/tmp/issue.python_test.log\n"
-                "python_lint exit=0 log=/tmp/issue.python_lint.log",
-                is_error=False,
-            ),
-        ]
-        _create_jsonl_log(log_path, entries)
-
-        spec = _make_validation_spec_with_custom_commands(
-            [
-                ("python_test", "make -C shadow-write-consumer test", False),
-                ("python_lint", "make -C shadow-write-consumer lint", False),
-            ]
-        )
-
-        gate = EvidenceCheck(
-            tmp_path, FileSystemLogProvider(), CommandRunner(cwd=tmp_path)
-        )
-
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert evidence.custom_commands_ran["python_test"] is True
-        assert evidence.custom_commands_ran["python_lint"] is True
-        assert evidence.custom_commands_failed.get("python_test", False) is False
-        assert evidence.custom_commands_failed.get("python_lint", False) is False
-
-    def test_does_not_credit_unlabeled_combined_custom_commands(
-        self, tmp_path: Path
-    ) -> None:
-        """One aggregate shell success is not enough for multiple custom checks."""
-        log_path = tmp_path / "session.jsonl"
-        entries = [
-            _make_bash_tool_use_entry(
-                "toolu_1",
-                "make -C shadow-write-consumer test; make -C shadow-write-consumer lint",
-            ),
-            _make_tool_result_entry("toolu_1", "custom exit=0", is_error=False),
-        ]
-        _create_jsonl_log(log_path, entries)
-
-        spec = _make_validation_spec_with_custom_commands(
-            [
-                ("python_test", "make -C shadow-write-consumer test", False),
-                ("python_lint", "make -C shadow-write-consumer lint", False),
-            ]
-        )
-
-        gate = EvidenceCheck(
-            tmp_path, FileSystemLogProvider(), CommandRunner(cwd=tmp_path)
-        )
-
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert "python_test" not in evidence.custom_commands_ran
-        assert "python_lint" not in evidence.custom_commands_ran
-
-    def test_marker_failure_overrides_raw_custom_command_success(
-        self, tmp_path: Path
-    ) -> None:
-        """Explicit custom markers remain authoritative over raw command status."""
-        log_path = tmp_path / "session.jsonl"
-        entries = [
-            _make_bash_tool_use_entry("toolu_1", "make -C shadow-write-consumer test"),
-            _make_tool_result_entry(
-                "toolu_1",
-                "[custom:python_test:start]\n[custom:python_test:fail exit=2]",
-                is_error=False,
-            ),
-        ]
-        _create_jsonl_log(log_path, entries)
-
-        spec = _make_validation_spec_with_custom_commands(
-            [("python_test", "make -C shadow-write-consumer test", False)]
-        )
-
-        gate = EvidenceCheck(
-            tmp_path, FileSystemLogProvider(), CommandRunner(cwd=tmp_path)
-        )
-
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert evidence.custom_commands_ran["python_test"] is True
-        assert evidence.custom_commands_failed["python_test"] is True
-
-    def test_generic_make_command_does_not_credit_custom_command(
-        self, tmp_path: Path
-    ) -> None:
-        """Only exact configured custom commands are credited by fallback."""
-        log_path = tmp_path / "session.jsonl"
-        entries = [
-            _make_bash_tool_use_entry("toolu_1", "make build"),
-            _make_tool_result_entry("toolu_1", "build ok", is_error=False),
-        ]
-        _create_jsonl_log(log_path, entries)
-
-        spec = _make_validation_spec_with_custom_commands(
-            [("python_test", "make -C shadow-write-consumer test", False)]
-        )
-
-        gate = EvidenceCheck(
-            tmp_path, FileSystemLogProvider(), CommandRunner(cwd=tmp_path)
-        )
-
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert "python_test" not in evidence.custom_commands_ran
-
-    def test_quoted_custom_command_does_not_credit_custom_command(
-        self, tmp_path: Path
-    ) -> None:
-        """Mentioning a configured command in output text is not evidence."""
-        log_path = tmp_path / "session.jsonl"
-        entries = [
-            _make_bash_tool_use_entry(
-                "toolu_1", "echo 'make -C shadow-write-consumer test'"
-            ),
-            _make_tool_result_entry("toolu_1", "make -C shadow-write-consumer test"),
-        ]
-        _create_jsonl_log(log_path, entries)
-
-        spec = _make_validation_spec_with_custom_commands(
-            [("python_test", "make -C shadow-write-consumer test", False)]
-        )
-
-        gate = EvidenceCheck(
-            tmp_path, FileSystemLogProvider(), CommandRunner(cwd=tmp_path)
-        )
-
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert "python_test" not in evidence.custom_commands_ran
-
-    def test_compound_custom_command_without_named_exit_line_does_not_credit_pass(
-        self, tmp_path: Path
-    ) -> None:
-        """Compound shell success is not enough to credit a custom command."""
-        log_path = tmp_path / "session.jsonl"
-        entries = [
-            _make_bash_tool_use_entry(
-                "toolu_1", "make -C shadow-write-consumer test || true"
-            ),
-            _make_tool_result_entry("toolu_1", "done", is_error=False),
-        ]
-        _create_jsonl_log(log_path, entries)
-
-        spec = _make_validation_spec_with_custom_commands(
-            [("python_test", "make -C shadow-write-consumer test", False)]
-        )
-
-        gate = EvidenceCheck(
-            tmp_path, FileSystemLogProvider(), CommandRunner(cwd=tmp_path)
-        )
-
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert "python_test" not in evidence.custom_commands_ran
-
-    def test_marker_failure_is_not_overridden_by_later_raw_custom_command(
-        self, tmp_path: Path
-    ) -> None:
-        """Explicit marker state remains authoritative over later raw fallback."""
-        log_path = tmp_path / "session.jsonl"
-        entries = [
-            _make_bash_tool_use_entry("toolu_1", "make -C shadow-write-consumer test"),
-            _make_tool_result_entry(
-                "toolu_1",
-                "[custom:python_test:start]\n[custom:python_test:fail exit=2]",
-                is_error=True,
-            ),
-            _make_bash_tool_use_entry("toolu_2", "make -C shadow-write-consumer test"),
-            _make_tool_result_entry("toolu_2", "python_test exit=0", is_error=False),
-        ]
-        _create_jsonl_log(log_path, entries)
-
-        spec = _make_validation_spec_with_custom_commands(
-            [("python_test", "make -C shadow-write-consumer test", False)]
-        )
-
-        gate = EvidenceCheck(
-            tmp_path, FileSystemLogProvider(), CommandRunner(cwd=tmp_path)
-        )
-
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert evidence.custom_commands_ran["python_test"] is True
-        assert evidence.custom_commands_failed["python_test"] is True
-
-    def test_similar_custom_command_prefix_does_not_credit_custom_command(
-        self, tmp_path: Path
-    ) -> None:
-        """Configured custom command matches must end on a shell token boundary."""
-        log_path = tmp_path / "session.jsonl"
-        entries = [
-            _make_bash_tool_use_entry(
-                "toolu_1", "make -C shadow-write-consumer test-extra"
-            ),
-            _make_tool_result_entry("toolu_1", "python_test exit=0", is_error=False),
-        ]
-        _create_jsonl_log(log_path, entries)
-
-        spec = _make_validation_spec_with_custom_commands(
-            [("python_test", "make -C shadow-write-consumer test", False)]
-        )
-
-        gate = EvidenceCheck(
-            tmp_path, FileSystemLogProvider(), CommandRunner(cwd=tmp_path)
-        )
-
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert "python_test" not in evidence.custom_commands_ran
-
-    def test_detects_custom_command_pass_marker(self, tmp_path: Path) -> None:
-        """Custom command pass marker populates custom_commands_ran.
-
-        This test creates a log with:
-        1. Bash tool_use running a custom command
-        2. tool_result with success marker [custom:import_lint:pass]
-
-        Expected behavior (after T007):
-        - custom_commands_ran["import_lint"] == True
-        - custom_commands_failed["import_lint"] == False
-
-        Current behavior (stub):
-        - custom_commands_ran is empty (test FAILS)
-        """
-        log_path = tmp_path / "session.jsonl"
-        entries = [
-            _make_bash_tool_use_entry("toolu_1", "python scripts/import_lint.py"),
-            _make_tool_result_entry(
-                "toolu_1",
-                "Running import lint...\n[custom:import_lint:pass]\nDone.",
-                is_error=False,
-            ),
-        ]
-        _create_jsonl_log(log_path, entries)
-
-        spec = _make_validation_spec_with_custom_commands(
-            [
-                ("import_lint", "python scripts/import_lint.py", False),
-            ]
-        )
-
-        evidence_provider = FileSystemLogProvider()
-        command_runner = CommandRunner(cwd=tmp_path)
-        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner)
-
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        # This assertion will FAIL until T007 implements marker parsing
-        assert "import_lint" in evidence.custom_commands_ran
-        assert evidence.custom_commands_ran["import_lint"] is True
-        assert evidence.custom_commands_failed.get("import_lint", False) is False
-
-    def test_detects_custom_command_fail_marker(self, tmp_path: Path) -> None:
-        """Custom command fail marker populates custom_commands_failed.
-
-        This test creates a log with:
-        1. Bash tool_use running a custom command
-        2. tool_result with failure marker [custom:import_lint:fail exit=1]
-
-        Expected behavior (after T007):
-        - custom_commands_ran["import_lint"] == True
-        - custom_commands_failed["import_lint"] == True
-        """
-        log_path = tmp_path / "session.jsonl"
-        entries = [
-            _make_bash_tool_use_entry("toolu_1", "python scripts/import_lint.py"),
-            _make_tool_result_entry(
-                "toolu_1",
-                "Running import lint...\n[custom:import_lint:fail exit=1]\nError found.",
-                is_error=True,
-            ),
-        ]
-        _create_jsonl_log(log_path, entries)
-
-        spec = _make_validation_spec_with_custom_commands(
-            [
-                ("import_lint", "python scripts/import_lint.py", False),
-            ]
-        )
-
-        evidence_provider = FileSystemLogProvider()
-        command_runner = CommandRunner(cwd=tmp_path)
-        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner)
-
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        # This assertion will FAIL until T007 implements marker parsing
-        assert "import_lint" in evidence.custom_commands_ran
-        assert evidence.custom_commands_ran["import_lint"] is True
-        assert evidence.custom_commands_failed["import_lint"] is True
-
-    def test_detects_multiple_custom_commands(self, tmp_path: Path) -> None:
-        """Multiple custom commands are tracked independently.
-
-        This test creates a log with two custom commands:
-        - import_lint: passes
-        - security_check: fails
-
-        Expected behavior (after T007):
-        - Both commands tracked in custom_commands_ran
-        - Only security_check marked as failed
-        """
-        log_path = tmp_path / "session.jsonl"
-        entries = [
-            # First command: import_lint passes
-            _make_bash_tool_use_entry("toolu_1", "python scripts/import_lint.py"),
-            _make_tool_result_entry(
-                "toolu_1",
-                "[custom:import_lint:pass]",
-                is_error=False,
-            ),
-            # Second command: security_check fails
-            _make_bash_tool_use_entry("toolu_2", "python scripts/security_check.py"),
-            _make_tool_result_entry(
-                "toolu_2",
-                "[custom:security_check:fail exit=1]",
-                is_error=True,
-            ),
-        ]
-        _create_jsonl_log(log_path, entries)
-
-        spec = _make_validation_spec_with_custom_commands(
-            [
-                ("import_lint", "python scripts/import_lint.py", False),
-                ("security_check", "python scripts/security_check.py", False),
-            ]
-        )
-
-        evidence_provider = FileSystemLogProvider()
-        command_runner = CommandRunner(cwd=tmp_path)
-        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner)
-
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        # This assertion will FAIL until T007 implements marker parsing
-        assert "import_lint" in evidence.custom_commands_ran
-        assert "security_check" in evidence.custom_commands_ran
-        assert evidence.custom_commands_ran["import_lint"] is True
-        assert evidence.custom_commands_ran["security_check"] is True
-        assert evidence.custom_commands_failed.get("import_lint", False) is False
-        assert evidence.custom_commands_failed["security_check"] is True
+def _summary(name: str, exit_code: int, log_path: Path) -> str:
+    return f"MALA_EVIDENCE name={name} exit={exit_code} log={log_path}"
 
 
 class TestCanonicalEvidenceDetectionIntegration:
@@ -563,6 +107,207 @@ class TestCanonicalEvidenceDetectionIntegration:
         return EvidenceCheck(
             tmp_path, FileSystemLogProvider(), CommandRunner(cwd=tmp_path)
         )
+
+    def test_does_not_credit_unlabeled_combined_custom_commands(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(tmp_path))
+        commands = [
+            ValidationCommand(
+                name="python_test",
+                command="make -C shadow-write-consumer test",
+                kind=CommandKind.CUSTOM,
+            ),
+            ValidationCommand(
+                name="python_lint",
+                command="make -C shadow-write-consumer lint",
+                kind=CommandKind.CUSTOM,
+            ),
+        ]
+        log_path = tmp_path / "session.jsonl"
+        entries = [
+            _make_bash_tool_use_entry(
+                "toolu_1",
+                "make -C shadow-write-consumer test; make -C shadow-write-consumer lint",
+            ),
+            _make_tool_result_entry("toolu_1", "all done", is_error=False),
+        ]
+        _create_jsonl_log(log_path, entries)
+        spec = ValidationSpec(
+            commands=commands,
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("python_test", "python_lint"),
+        )
+
+        evidence = self._make_gate(tmp_path).parse_validation_evidence_with_spec(
+            log_path, spec
+        )
+
+        assert "python_test" not in evidence.commands
+        assert "python_lint" not in evidence.commands
+
+    def test_mala_evidence_rerun_failure_overrides_prior_success(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(tmp_path))
+        command = ValidationCommand(
+            name="python_test",
+            command="make -C shadow-write-consumer test",
+            kind=CommandKind.CUSTOM,
+        )
+        first_wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+        second_wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+        log_path = tmp_path / "session.jsonl"
+        entries = [
+            _make_bash_tool_use_entry("toolu_1", first_wrapper),
+            _make_tool_result_entry(
+                "toolu_1",
+                _summary("python_test", 0, tmp_path / "mala-3gbpn.3.python_test.log"),
+            ),
+            _make_bash_tool_use_entry("toolu_2", second_wrapper),
+            _make_tool_result_entry(
+                "toolu_2",
+                _summary("python_test", 2, tmp_path / "mala-3gbpn.3.python_test.log"),
+                is_error=True,
+            ),
+        ]
+        _create_jsonl_log(log_path, entries)
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("python_test",),
+        )
+
+        evidence = self._make_gate(tmp_path).parse_validation_evidence_with_spec(
+            log_path, spec
+        )
+
+        record = evidence.commands["python_test"]
+        assert record.status == "failed"
+        assert record.exit_code == 2
+
+    def test_mala_evidence_rerun_success_overrides_prior_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(tmp_path))
+        command = ValidationCommand(
+            name="python_test",
+            command="make -C shadow-write-consumer test",
+            kind=CommandKind.CUSTOM,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+        log_path = tmp_path / "session.jsonl"
+        entries = [
+            _make_bash_tool_use_entry("toolu_1", wrapper),
+            _make_tool_result_entry(
+                "toolu_1",
+                _summary("python_test", 2, tmp_path / "mala-3gbpn.3.python_test.log"),
+                is_error=True,
+            ),
+            _make_bash_tool_use_entry("toolu_2", wrapper),
+            _make_tool_result_entry(
+                "toolu_2",
+                _summary("python_test", 0, tmp_path / "mala-3gbpn.3.python_test.log"),
+            ),
+        ]
+        _create_jsonl_log(log_path, entries)
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("python_test",),
+        )
+
+        evidence = self._make_gate(tmp_path).parse_validation_evidence_with_spec(
+            log_path, spec
+        )
+
+        assert evidence.commands["python_test"].status == "passed"
+
+    def test_gate_followup_satisfied_by_rerunning_missing_command(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(tmp_path))
+        command = ValidationCommand(
+            name="python_test",
+            command="make -C shadow-write-consumer test",
+            kind=CommandKind.CUSTOM,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+        log_path = tmp_path / "session.jsonl"
+        entries = [
+            _make_bash_tool_use_entry("toolu_1", wrapper),
+            _make_tool_result_entry(
+                "toolu_1",
+                _summary("python_test", 0, tmp_path / "mala-3gbpn.3.python_test.log"),
+            ),
+        ]
+        _create_jsonl_log(log_path, entries)
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("python_test",),
+        )
+        evidence = self._make_gate(tmp_path).parse_validation_evidence_with_spec(
+            log_path, spec
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        assert passed is True
+        assert missing == []
+        assert failed_strict == []
+
+    def test_gate_followup_rejects_manual_summary_without_rerun(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(tmp_path))
+        command = ValidationCommand(
+            name="python_test",
+            command="make -C shadow-write-consumer test",
+            kind=CommandKind.CUSTOM,
+        )
+        log_path = tmp_path / "session.jsonl"
+        entries = [
+            _make_bash_tool_use_entry(
+                "toolu_1",
+                f"echo '{_summary('python_test', 0, tmp_path / 'mala-3gbpn.3.python_test.log')}'",
+            ),
+            _make_tool_result_entry(
+                "toolu_1",
+                _summary("python_test", 0, tmp_path / "mala-3gbpn.3.python_test.log"),
+            ),
+        ]
+        _create_jsonl_log(log_path, entries)
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("python_test",),
+        )
+        evidence = self._make_gate(tmp_path).parse_validation_evidence_with_spec(
+            log_path, spec
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        assert passed is False
+        assert missing == ["python_test"]
+        assert failed_strict == []
 
     def test_builtin_canonical_wrapper_records_summary_evidence(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -843,8 +588,7 @@ evidence_check:
                     seen=True,
                     status="passed",
                 ),
-            },
-            commands_ran={CommandKind.LINT: True},
+            }
         )
 
         passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)

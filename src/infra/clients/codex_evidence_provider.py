@@ -415,7 +415,7 @@ class CodexEvidenceProvider:
         """Extract ``(item_id, content)`` tuples for marker-detection scans.
 
         Used by :class:`EvidenceCheck` to look for custom-validation
-        markers (``[custom:<name>:<status>]``) in Bash output. Returns the
+        validation summaries in Bash output. Returns the
         ``aggregated_output`` of completed ``commandExecution`` items;
         other item types do not carry textual output that gate parsers
         consume so they are skipped.

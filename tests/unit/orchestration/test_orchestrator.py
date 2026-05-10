@@ -31,6 +31,8 @@ from src.infra.tools.command_runner import CommandRunner
 
 from src.core.models import EpicVerificationResult, OrderPreference
 from src.core.protocols.evidence import EvidenceProvider
+from src.domain.evidence_check import CommandEvidence, ValidationEvidence
+from src.domain.validation.spec import CommandKind
 from tests.fakes.issue_provider import FakeIssueProvider, FakeIssue
 
 
@@ -2814,11 +2816,33 @@ class TestReviewUsesIssueCommits:
         mock_evidence_check.get_log_end_offset = MagicMock(return_value=0)
         mock_evidence_check.check_no_progress = MagicMock(return_value=False)
         mock_evidence_check.parse_validation_evidence_with_spec = MagicMock(
-            return_value=MagicMock(
-                pytest_ran=True,
-                ruff_check_ran=True,
-                ruff_format_ran=True,
-                ty_check_ran=True,
+            return_value=ValidationEvidence(
+                commands={
+                    "test": CommandEvidence(
+                        name="test",
+                        kind=CommandKind.TEST,
+                        seen=True,
+                        status="passed",
+                    ),
+                    "lint": CommandEvidence(
+                        name="lint",
+                        kind=CommandKind.LINT,
+                        seen=True,
+                        status="passed",
+                    ),
+                    "format": CommandEvidence(
+                        name="format",
+                        kind=CommandKind.FORMAT,
+                        seen=True,
+                        status="passed",
+                    ),
+                    "typecheck": CommandEvidence(
+                        name="typecheck",
+                        kind=CommandKind.TYPECHECK,
+                        seen=True,
+                        status="passed",
+                    ),
+                }
             )
         )
 

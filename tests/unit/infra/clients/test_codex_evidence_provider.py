@@ -6,8 +6,8 @@ Covers the test cases enumerated in the issue's Verification section:
     :class:`FileSystemLogProvider` produces (AC #7 / AC #18 — protocol
     parity across Claude / Amp / Codex).
   * ``CommandExecutionThreadItem.aggregated_output`` is observable via
-    :meth:`extract_tool_result_content` so custom-validation markers
-    (``[custom:<name>:<status>]``) can be detected by the gate.
+    :meth:`extract_tool_result_content` so validation summaries can be
+    detected by the gate.
   * Tool results pair with item ids: status mapping (``completed`` →
     ``is_error=False``; ``failed``/``error``/``cancelled`` →
     ``is_error=True``).
@@ -455,15 +455,15 @@ def test_extract_tool_results_skips_agent_messages(tmp_path: Path) -> None:
 
 @pytest.mark.unit
 def test_extract_tool_result_content_returns_aggregated_output(tmp_path: Path) -> None:
-    """Custom-validation markers ride on ``aggregated_output``.
+    """Validation summaries ride on ``aggregated_output``.
 
     :class:`EvidenceCheck` scans this content for
-    ``[custom:<name>:<status>]`` markers; without surfacing
-    ``aggregated_output`` here, custom commands would always read as
-    "marker absent" and the gate would loop on a passing build.
+    ``MALA_EVIDENCE`` lines; without surfacing ``aggregated_output`` here,
+    custom commands would always read as absent and the gate would loop on a
+    passing build.
     """
     log_path = tmp_path / "thr_test.jsonl"
-    output = "running\n[custom:python_test:pass]\n"
+    output = "running\nMALA_EVIDENCE name=python_test exit=0 log=/tmp/test.log\n"
     _write_jsonl(
         log_path,
         [

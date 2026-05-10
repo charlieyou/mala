@@ -67,95 +67,6 @@ __all__ = [
 # block gate passing if omitted or failed.
 EVIDENCE_CHECK_IGNORED_KINDS: set[CommandKind] = {CommandKind.SETUP}
 
-# Regex for parsing custom command markers from tool_result content.
-# Matches: [custom:<name>:start], [custom:<name>:pass],
-#          [custom:<name>:fail exit=<code>], [custom:<name>:timeout]
-# Group 1: command name (alphanumeric, underscore, hyphen - valid YAML dict keys)
-# Group 2: marker type (start|pass|fail exit=\d+|timeout)
-CUSTOM_MARKER_PATTERN = re.compile(
-    r"\[custom:([\w-]+):(start|pass|fail exit=\d+|timeout)\]"
-)
-
-CUSTOM_EXIT_PATTERN_TEMPLATE = r"(?:^|\s|;){}\s+exit=(\d+)\b"
-
-
-@dataclass(frozen=True)
-class CustomCommandFallbackMatch:
-    """Custom command fallback match derived from shell command structure."""
-
-    name: str
-    shell_status_is_authoritative: bool
-
-
-def _normalize_shell_command(command: str) -> str:
-    """Normalize shell command text for exact configured-command matching."""
-    return " ".join(command.split())
-
-
-def _split_shell_segments(command: str) -> list[str]:
-    """Split a shell command into conservative top-level command segments."""
-    segments: list[str] = []
-    current: list[str] = []
-    quote: str | None = None
-    index = 0
-
-    while index < len(command):
-        char = command[index]
-        next_char = command[index + 1] if index + 1 < len(command) else ""
-
-        if quote is not None:
-            current.append(char)
-            if char == quote:
-                quote = None
-            elif char == "\\" and quote == '"' and next_char:
-                index += 1
-                current.append(command[index])
-            index += 1
-            continue
-
-        if char in {"'", '"'}:
-            quote = char
-            current.append(char)
-            index += 1
-            continue
-
-        if char == "\n" or char == ";" or (char in {"&", "|"} and next_char == char):
-            segment = "".join(current).strip()
-            if segment:
-                segments.append(segment)
-            current = []
-            index += 2 if char in {"&", "|"} and next_char == char else 1
-            continue
-
-        current.append(char)
-        index += 1
-
-    segment = "".join(current).strip()
-    if segment:
-        segments.append(segment)
-    return segments
-
-
-def _shell_segment_matches_configured_command(segment: str, configured: str) -> bool:
-    """Return whether a segment executes configured directly with redirections."""
-    if not segment.startswith(configured):
-        return False
-
-    remainder = segment[len(configured) :].strip()
-    if not remainder:
-        return True
-
-    redirection_pattern = re.compile(
-        r"^(?:(?:\d?>&\d)|(?:(?:\d?>|\d?>>|&>|<)\s*(?:'[^']*'|\"[^\"]*\"|\S+)))(?:\s+|$)"
-    )
-    while remainder:
-        match = redirection_pattern.match(remainder)
-        if match is None:
-            return False
-        remainder = remainder[match.end() :].strip()
-    return True
-
-
 # Regex matching the MALA_EVIDENCE summary line per plan §Evidence Line Format.
 # Anchored to MULTILINE so it matches lines inside multi-line tool result content.
 _EVIDENCE_SUMMARY_LINE_PATTERN = re.compile(r"^MALA_EVIDENCE\b.*$", re.MULTILINE)
@@ -302,25 +213,79 @@ def _recognize_bare_command(
 ) -> ValidationCommand | None:
     """Match a Bash tool input against bare configured commands.
 
-    A bare match is the entire input equal to the configured command (after
-    whitespace normalization), optionally followed by trailing redirections.
-    Reuses :func:`_normalize_shell_command` and
-    :func:`_shell_segment_matches_configured_command` so this layer remains
-    purely textual — no shell-semantic equivalence beyond ``" ".join(s.split())``.
+    A bare match is the entire input equal to the configured command after
+    whitespace normalization, optionally followed by trailing redirections.
 
     Returns the matched :class:`ValidationCommand` only when exactly one
     configured command bare-matches the input, otherwise ``None``.
     """
-    normalized_input = _normalize_shell_command(bash_input)
+
+    def normalize(command: str) -> str:
+        return " ".join(command.split())
+
+    def matches_direct_command(command: str, configured: str) -> bool:
+        if not command.startswith(configured):
+            return False
+
+        remainder = command[len(configured) :].strip()
+        if not remainder:
+            return True
+
+        redirection_pattern = re.compile(
+            r"^(?:(?:\d?>&\d)|(?:(?:\d?>|\d?>>|&>|<)\s*(?:'[^']*'|\"[^\"]*\"|\S+)))(?:\s+|$)"
+        )
+        while remainder:
+            match = redirection_pattern.match(remainder)
+            if match is None:
+                return False
+            remainder = remainder[match.end() :].strip()
+        return True
+
+    normalized_input = normalize(bash_input)
     if not normalized_input:
         return None
     matches: list[ValidationCommand] = []
     for cmd in configured_by_name.values():
-        configured = _normalize_shell_command(cmd.command)
+        configured = normalize(cmd.command)
         if not configured:
             continue
-        if _shell_segment_matches_configured_command(normalized_input, configured):
+        if matches_direct_command(normalized_input, configured):
             matches.append(cmd)
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def _recognize_spec_pattern_command(
+    bash_input: str,
+    configured_by_name: dict[str, ValidationCommand],
+) -> ValidationCommand | None:
+    """Match a Bash tool input against configured detection patterns."""
+    matches = [
+        cmd
+        for cmd in configured_by_name.values()
+        if cmd.detection_pattern is not None
+        and cmd.detection_pattern.search(bash_input)
+    ]
+    non_setup_matches = [
+        cmd for cmd in matches if cmd.kind not in EVIDENCE_CHECK_IGNORED_KINDS
+    ]
+    if non_setup_matches:
+        matches = non_setup_matches
+    if len(matches) > 1:
+        normalized_input = " ".join(bash_input.split())
+        narrowed = [
+            cmd
+            for cmd in matches
+            if " ".join(cmd.command.split()).endswith(normalized_input)
+            or normalized_input in " ".join(cmd.command.split())
+        ]
+        if narrowed:
+            matches = narrowed
+    if len(matches) > 1 and "ruff check" in bash_input:
+        matches = [cmd for cmd in matches if "ruff check" in cmd.command]
+    if len(matches) > 1 and "ruff format" in bash_input:
+        matches = [cmd for cmd in matches if "ruff format" in cmd.command]
     if len(matches) != 1:
         return None
     return matches[0]
@@ -424,66 +389,11 @@ class ValidationEvidence:
     """Evidence of validation commands executed during agent run.
 
     The unified evidence map ``commands`` keys configured command names to
-    :class:`CommandEvidence` records. The legacy fields (``commands_ran``,
-    ``failed_commands``, ``custom_commands_ran``, ``custom_commands_failed``)
-    and aliases (``pytest_ran``, ``ruff_check_ran``, ``ruff_format_ran``,
-    ``ty_check_ran``) remain populated by the existing parser as a transitional
-    adapter; T005 deletes them once T003 finishes the parser rewrite.
+    :class:`CommandEvidence` records.
     """
 
     # Unified evidence map keyed by configured command name.
     commands: dict[str, CommandEvidence] = field(default_factory=dict)
-
-    # Spec-driven evidence storage: CommandKind -> ran boolean
-    commands_ran: dict[CommandKind, bool] = field(default_factory=dict)
-
-    # Track which validation commands failed (exited non-zero)
-    failed_commands: list[str] = field(default_factory=list)
-
-    # Custom command evidence: command_name -> ran/failed boolean
-    custom_commands_ran: dict[str, bool] = field(default_factory=dict)
-    custom_commands_failed: dict[str, bool] = field(default_factory=dict)
-
-    # Backward-compatible properties for external consumers
-    @property
-    def pytest_ran(self) -> bool:
-        """Whether pytest (TEST) command ran."""
-        return self.commands_ran.get(CommandKind.TEST, False)
-
-    @pytest_ran.setter
-    def pytest_ran(self, value: bool) -> None:
-        """Set pytest (TEST) evidence."""
-        self.commands_ran[CommandKind.TEST] = value
-
-    @property
-    def ruff_check_ran(self) -> bool:
-        """Whether ruff check (LINT) command ran."""
-        return self.commands_ran.get(CommandKind.LINT, False)
-
-    @ruff_check_ran.setter
-    def ruff_check_ran(self, value: bool) -> None:
-        """Set ruff check (LINT) evidence."""
-        self.commands_ran[CommandKind.LINT] = value
-
-    @property
-    def ruff_format_ran(self) -> bool:
-        """Whether ruff format (FORMAT) command ran."""
-        return self.commands_ran.get(CommandKind.FORMAT, False)
-
-    @ruff_format_ran.setter
-    def ruff_format_ran(self, value: bool) -> None:
-        """Set ruff format (FORMAT) evidence."""
-        self.commands_ran[CommandKind.FORMAT] = value
-
-    @property
-    def ty_check_ran(self) -> bool:
-        """Whether ty check (TYPECHECK) command ran."""
-        return self.commands_ran.get(CommandKind.TYPECHECK, False)
-
-    @ty_check_ran.setter
-    def ty_check_ran(self, value: bool) -> None:
-        """Set ty check (TYPECHECK) evidence."""
-        self.commands_ran[CommandKind.TYPECHECK] = value
 
     def has_any_evidence(self) -> bool:
         """Check if any validation command ran.
@@ -491,52 +401,7 @@ class ValidationEvidence:
         Used for progress detection to determine if new validation
         activity occurred since the last check.
         """
-        if any(c.seen for c in self.commands.values()):
-            return True
-        return any(self.commands_ran.values()) or any(self.custom_commands_ran.values())
-
-    def has_minimum_validation(self) -> bool:
-        """Check if minimum required validation was performed.
-
-        Requires the full validation suite:
-        - pytest (run tests)
-        - ruff check (lint)
-        - ruff format (format)
-        - ty check (type check)
-        """
-        return (
-            self.pytest_ran
-            and self.ruff_check_ran
-            and self.ruff_format_ran
-            and self.ty_check_ran
-        )
-
-    def missing_commands(self) -> list[str]:
-        """List validation commands that didn't run."""
-        missing = []
-        if not self.pytest_ran:
-            missing.append("pytest")
-        if not self.ruff_check_ran:
-            missing.append("ruff check")
-        if not self.ruff_format_ran:
-            missing.append("ruff format")
-        if not self.ty_check_ran:
-            missing.append("ty check")
-        return missing
-
-    def to_evidence_dict(self) -> dict[str, bool]:
-        """Convert evidence to a serializable dict keyed by CommandKind value.
-
-        This is the spec-driven alternative to accessing individual properties.
-        Returns a dict with keys like "test", "lint", "format", "typecheck"
-        based on what commands were detected.
-
-        Use this method when building metadata to avoid hardcoded property access.
-
-        Returns:
-            Dict mapping CommandKind.value strings to their ran status.
-        """
-        return {kind.value: ran for kind, ran in self.commands_ran.items()}
+        return any(c.seen for c in self.commands.values())
 
 
 def get_required_evidence_kinds(spec: ValidationSpec) -> set[CommandKind]:
@@ -698,196 +563,6 @@ class EvidenceCheck:
                 )
         return None
 
-    def _match_spec_pattern_with_kinds(
-        self,
-        command: str,
-        evidence: ValidationEvidence,
-        kind_patterns: dict[CommandKind, list[re.Pattern[str]]],
-    ) -> list[CommandKind]:
-        """Check command against spec-defined patterns and return all matched kinds.
-
-        A command may match multiple kinds (e.g., "ruff" matches both LINT and FORMAT
-        patterns). This method returns all matching kinds for proper evidence tracking.
-
-        Args:
-            command: The bash command string.
-            evidence: ValidationEvidence to update.
-            kind_patterns: Mapping of CommandKind to detection patterns.
-
-        Returns:
-            List of matched CommandKinds (may be empty if no match).
-        """
-        matched_kinds: list[CommandKind] = []
-        for kind, patterns in kind_patterns.items():
-            for pattern in patterns:
-                if pattern.search(command):
-                    # Spec-driven: record any CommandKind directly
-                    evidence.commands_ran[kind] = True
-                    matched_kinds.append(kind)
-                    break  # Found match for this kind, try next kind
-        return matched_kinds
-
-    def _build_spec_patterns(
-        self, spec: ValidationSpec
-    ) -> dict[CommandKind, list[re.Pattern[str]]]:
-        """Build pattern mapping from a ValidationSpec.
-
-        Args:
-            spec: The ValidationSpec defining commands and their detection patterns.
-
-        Returns:
-            Mapping of CommandKind to list of detection patterns.
-        """
-        kind_patterns: dict[CommandKind, list[re.Pattern[str]]] = {}
-        for cmd in spec.commands:
-            if cmd.kind not in kind_patterns:
-                kind_patterns[cmd.kind] = []
-            if cmd.detection_pattern is not None:
-                kind_patterns[cmd.kind].append(cmd.detection_pattern)
-        return kind_patterns
-
-    def _match_custom_commands_by_configured_command(
-        self, command: str, spec: ValidationSpec
-    ) -> list[CustomCommandFallbackMatch]:
-        """Match shell text to custom command names using exact configured commands.
-
-        Built-in custom detection patterns are intentionally broad because they
-        derive from tool names such as ``make`` or ``python``. Named custom
-        evidence needs a stricter fallback: only credit a custom command when
-        a shell segment directly executes its full configured shell command.
-        """
-        normalized_command = _normalize_shell_command(command)
-        normalized_segments = [
-            _normalize_shell_command(segment)
-            for segment in _split_shell_segments(command)
-        ]
-        matches: list[tuple[str, str, bool]] = []
-
-        for custom_cmd in spec.commands:
-            if custom_cmd.kind != CommandKind.CUSTOM:
-                continue
-            normalized_custom = _normalize_shell_command(custom_cmd.command)
-            if not normalized_custom:
-                continue
-            for segment in normalized_segments:
-                if _shell_segment_matches_configured_command(
-                    segment, normalized_custom
-                ):
-                    matches.append(
-                        (
-                            normalized_custom,
-                            custom_cmd.name,
-                            len(normalized_segments) == 1
-                            and segment == normalized_command,
-                        )
-                    )
-                    break
-
-        if not matches:
-            return []
-
-        non_overlapped_matches = [
-            (matched_command, name, shell_status_is_authoritative)
-            for matched_command, name, shell_status_is_authoritative in matches
-            if not any(
-                matched_command != other_command and matched_command in other_command
-                for other_command, _other_name, _other_safe in matches
-            )
-        ]
-        return [
-            CustomCommandFallbackMatch(
-                name=name,
-                shell_status_is_authoritative=shell_status_is_authoritative,
-            )
-            for _matched_command, name, shell_status_is_authoritative in sorted(
-                non_overlapped_matches, key=lambda match: match[1]
-            )
-        ]
-
-    def _apply_custom_command_fallback(
-        self,
-        matches: list[CustomCommandFallbackMatch],
-        is_error: bool,
-        content: str,
-        state: dict[str, tuple[bool, str | None]],
-        fallback_credited_names: set[str],
-    ) -> None:
-        """Credit custom evidence from exact command matches when markers are absent.
-
-        A single exact custom command match can use the shell tool result status.
-        Multiple matches in one shell invocation are only credited when the tool
-        output reports per-command ``<name> exit=<code>`` lines, which avoids
-        treating one aggregate shell exit code as proof for several checks.
-        Explicit ``[custom:<name>:...]`` markers always win over this fallback.
-        Names credited via this path are tracked in ``fallback_credited_names``
-        so callers can attribute the resulting evidence to ``command+shell_status``.
-        """
-        if not matches:
-            return
-
-        for fallback_match in matches:
-            name = fallback_match.name
-            if name in state:
-                continue
-            pattern = re.compile(
-                CUSTOM_EXIT_PATTERN_TEMPLATE.format(re.escape(name)), re.MULTILINE
-            )
-            match = pattern.search(content)
-            if match is not None:
-                exit_code = int(match.group(1))
-                state[name] = (
-                    True,
-                    "pass" if exit_code == 0 else f"fail exit={exit_code}",
-                )
-                fallback_credited_names.add(name)
-            elif len(matches) == 1 and fallback_match.shell_status_is_authoritative:
-                state[name] = (True, "fail exit=1" if is_error else "pass")
-                fallback_credited_names.add(name)
-
-    def _parse_custom_markers(
-        self,
-        content: str,
-        state: dict[str, tuple[bool, str | None]],
-        fallback_credited_names: set[str],
-    ) -> None:
-        """Parse custom command markers from tool result content.
-
-        Updates state in-place to track marker occurrences. For each command name,
-        tracks whether a start marker was seen and the latest terminal marker.
-
-        A new `start` marker resets the terminal state to None, so incomplete
-        retries (start without terminal) are correctly treated as failures.
-        Latest terminal marker wins within a single attempt.
-
-        Markers always win over the bare-command fallback, so names matched here
-        are removed from ``fallback_credited_names``.
-
-        Args:
-            content: Tool result content to scan for markers.
-            state: Mutable dict tracking (has_start, latest_terminal) per command name.
-            fallback_credited_names: Mutable set of names credited via the
-                bare-command fallback; names found here are discarded so that
-                source attribution reflects the marker-based update.
-        """
-        for match in CUSTOM_MARKER_PATTERN.finditer(content):
-            name = match.group(1)
-            marker_type = match.group(2)
-
-            # Get or initialize state for this command
-            has_start, terminal = state.get(name, (False, None))
-
-            if marker_type == "start":
-                # New attempt: reset terminal state so incomplete retry is detected
-                has_start = True
-                terminal = None
-            else:
-                # Terminal marker: pass, fail exit=N, timeout
-                # Latest wins (allows retries to override earlier failures)
-                terminal = marker_type
-
-            state[name] = (has_start, terminal)
-            fallback_credited_names.discard(name)
-
     def _iter_jsonl_entries(
         self, log_path: Path, offset: int = 0
     ) -> Iterator[JsonlEntryProtocol]:
@@ -969,13 +644,8 @@ class EvidenceCheck:
     ) -> ValidationEvidence:
         """Parse JSONL log for validation evidence.
 
-        The new parser drives ``evidence.commands`` via canonical-wrapper
-        recognition (preferred) followed by a bare-command fallback. The legacy
-        detection-pattern + ``[custom:...]`` marker parsers continue to populate
-        the legacy fields (``commands_ran``, ``failed_commands``,
-        ``custom_commands_ran``, ``custom_commands_failed``) for transitional
-        backward compatibility — T005 deletes both the legacy helpers and the
-        legacy fields together.
+        The parser drives ``evidence.commands`` via canonical-wrapper
+        recognition (preferred) followed by a bare-command fallback.
         """
         evidence = ValidationEvidence()
         if not log_path.exists():
@@ -984,12 +654,6 @@ class EvidenceCheck:
         # New evidence path: drives evidence.commands directly. Last correlated
         # invocation per command name wins (later reruns supersede earlier passes).
         self._populate_commands_via_canonical_wrapper(evidence, log_path, spec, offset)
-
-        # Transitional shim: legacy parser populates legacy fields only. The
-        # legacy helpers are no longer reachable through the new evidence path
-        # but remain defined here so the existing test surface keeps passing
-        # until T005 removes both the helpers and the legacy fields.
-        self._populate_legacy_evidence_fields(evidence, log_path, spec, offset)
 
         return evidence
 
@@ -1030,8 +694,21 @@ class EvidenceCheck:
                     tool_id_to_match[tool_id] = (matched, "canonical_wrapper")
                     continue
                 matched = _recognize_bare_command(command, configured_by_name)
+                if matched is None:
+                    matched = _recognize_spec_pattern_command(
+                        command, configured_by_name
+                    )
                 if matched is not None:
                     tool_id_to_match[tool_id] = (matched, "bare_command")
+                    evidence.commands[matched.name] = CommandEvidence(
+                        name=matched.name,
+                        kind=matched.kind,
+                        seen=True,
+                        status="passed",
+                        observed_command=matched.command,
+                        tool_use_id=tool_id,
+                        source="command+shell_status",
+                    )
 
             is_error_by_id = dict(self._evidence_provider.extract_tool_results(entry))
             for (
@@ -1052,176 +729,8 @@ class EvidenceCheck:
                 )
                 if record is not None:
                     evidence.commands[matched_cmd.name] = record
-
-    def _populate_legacy_evidence_fields(
-        self,
-        evidence: ValidationEvidence,
-        log_path: Path,
-        spec: ValidationSpec,
-        offset: int,
-    ) -> None:
-        """Populate legacy evidence fields (transitional shim; T005 removes).
-
-        This keeps ``commands_ran`` / ``failed_commands`` / ``custom_commands_ran``
-        / ``custom_commands_failed`` populated so existing callers and tests
-        continue to work while the unified ``commands`` map becomes the
-        authoritative gate-decision input. The helpers it calls
-        (:meth:`_match_custom_commands_by_configured_command`,
-        :meth:`_apply_custom_command_fallback`, :meth:`_parse_custom_markers`,
-        :meth:`_match_spec_pattern_with_kinds`, :meth:`_build_spec_patterns`) are
-        no longer reachable from the new evidence path and will be deleted in T005
-        along with the legacy fields they populate.
-        """
-        kind_patterns = self._build_spec_patterns(spec)
-        tool_id_to_info: dict[str, list[tuple[CommandKind, str]]] = {}
-        kind_failed: dict[CommandKind, tuple[bool, str]] = {}
-        tool_id_to_custom_matches: dict[str, list[CustomCommandFallbackMatch]] = {}
-        custom_marker_state: dict[str, tuple[bool, str | None]] = {}
-        fallback_credited_names: set[str] = set()
-
-        for entry in self._evidence_provider.iter_thread_evidence(log_path, offset):
-            for tool_id, command in self._evidence_provider.extract_bash_commands(
-                entry
-            ):
-                matched_kinds = self._match_spec_pattern_with_kinds(
-                    command, evidence, kind_patterns
-                )
-                if matched_kinds:
-                    tool_id_to_info[tool_id] = [
-                        (kind, command) for kind in matched_kinds
-                    ]
-                matched_custom_matches = (
-                    self._match_custom_commands_by_configured_command(command, spec)
-                )
-                if matched_custom_matches:
-                    tool_id_to_custom_matches[tool_id] = matched_custom_matches
-            for tool_use_id, is_error in self._evidence_provider.extract_tool_results(
-                entry
-            ):
-                if tool_use_id in tool_id_to_info:
-                    for kind, full_cmd in tool_id_to_info[tool_use_id]:
-                        kind_failed[kind] = (is_error, full_cmd)
-
-            for (
-                _tool_use_id,
-                content,
-            ) in self._evidence_provider.extract_tool_result_content(entry):
-                self._parse_custom_markers(
-                    content, custom_marker_state, fallback_credited_names
-                )
-                if _tool_use_id in tool_id_to_custom_matches:
-                    result_status = dict(
-                        self._evidence_provider.extract_tool_results(entry)
-                    ).get(_tool_use_id, False)
-                    self._apply_custom_command_fallback(
-                        tool_id_to_custom_matches[_tool_use_id],
-                        result_status,
-                        content,
-                        custom_marker_state,
-                        fallback_credited_names,
-                    )
-
-        evidence.failed_commands = list(
-            dict.fromkeys(
-                full_cmd
-                for kind, (is_failed, full_cmd) in kind_failed.items()
-                if is_failed
-                and kind not in EVIDENCE_CHECK_IGNORED_KINDS
-                and kind != CommandKind.CUSTOM
-            )
-        )
-
-        for name, (has_start, terminal) in custom_marker_state.items():
-            if terminal is not None:
-                evidence.custom_commands_ran[name] = True
-                evidence.custom_commands_failed[name] = (
-                    terminal.startswith("fail") or terminal == "timeout"
-                )
-            elif has_start:
-                evidence.custom_commands_ran[name] = True
-                evidence.custom_commands_failed[name] = True
-
-    def _derive_commands_map_from_legacy_state(
-        self,
-        evidence: ValidationEvidence,
-        spec: ValidationSpec,
-        custom_marker_state: dict[str, tuple[bool, str | None]],
-        fallback_credited_names: set[str],
-    ) -> None:
-        """Project legacy evidence fields into the unified ``commands`` map.
-
-        Transitional adapter for T002: legacy parsing has already populated
-        ``commands_ran``/``failed_commands``/``custom_commands_ran``/
-        ``custom_commands_failed``. This re-keys that information by configured
-        command name so callers can read from ``evidence.commands`` directly.
-        """
-        for cmd in spec.commands:
-            if cmd.kind == CommandKind.CUSTOM:
-                if not evidence.custom_commands_ran.get(cmd.name, False):
-                    continue
-                failed = evidence.custom_commands_failed.get(cmd.name, False)
-                state = custom_marker_state.get(cmd.name)
-                terminal = state[1] if state is not None else None
-                # Names credited via the bare-command fallback derive their
-                # status from shell exit status, not summary markers; the
-                # documented contract requires `command+shell_status` for that
-                # path even when fallback synthesized a "pass"/"fail exit=N"
-                # terminal string.
-                source: Literal["command+summary", "command+shell_status"]
-                if cmd.name in fallback_credited_names:
-                    source = "command+shell_status"
-                elif terminal is not None:
-                    source = "command+summary"
-                else:
-                    source = "command+shell_status"
-                timed_out = terminal == "timeout"
-                exit_code: int | None = None
-                if terminal is not None and terminal.startswith("fail exit="):
-                    try:
-                        exit_code = int(terminal.split("=", 1)[1])
-                    except ValueError:
-                        exit_code = None
-                elif terminal == "pass":
-                    exit_code = 0
-                status: Literal["passed", "failed", "unknown"]
-                status = "failed" if failed else "passed"
-                evidence.commands[cmd.name] = CommandEvidence(
-                    name=cmd.name,
-                    kind=cmd.kind,
-                    seen=True,
-                    status=status,
-                    timed_out=timed_out,
-                    exit_code=exit_code,
-                    observed_command=cmd.command,
-                    log_path=None,
-                    tool_use_id=None,
-                    source=source,
-                )
-                continue
-
-            if not evidence.commands_ran.get(cmd.kind, False):
-                continue
-            observed_full_cmd: str | None = None
-            for full_cmd in evidence.failed_commands:
-                if cmd.detection_pattern is not None and cmd.detection_pattern.search(
-                    full_cmd
-                ):
-                    observed_full_cmd = full_cmd
-                    break
-            built_in_status: Literal["passed", "failed", "unknown"]
-            built_in_status = "failed" if observed_full_cmd is not None else "passed"
-            evidence.commands[cmd.name] = CommandEvidence(
-                name=cmd.name,
-                kind=cmd.kind,
-                seen=True,
-                status=built_in_status,
-                timed_out=False,
-                exit_code=None,
-                observed_command=observed_full_cmd or cmd.command,
-                log_path=None,
-                tool_use_id=None,
-                source="command+shell_status",
-            )
+                elif matched_via == "bare_command":
+                    evidence.commands.pop(matched_cmd.name, None)
 
     def get_log_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
         """Get the byte offset at the end of a log file.

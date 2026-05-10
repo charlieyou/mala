@@ -265,7 +265,7 @@ class EvidenceProvider(Protocol):
 
         Used for marker detection in custom validation commands. Returns
         content from all tool results (not just Bash) since custom
-        command markers have a specific format ``[custom:<name>:<status>]``
+        validation summaries have a specific line format
         that avoids false positives.
 
         Args:

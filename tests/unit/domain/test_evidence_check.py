@@ -85,36 +85,27 @@ def make_git_log_response_runner(
 
 def make_evidence(
     *,
-    pytest_ran: bool = False,
-    ruff_check_ran: bool = False,
-    ruff_format_ran: bool = False,
-    ty_check_ran: bool = False,
+    test_seen: bool = False,
+    lint_seen: bool = False,
+    format_seen: bool = False,
+    typecheck_seen: bool = False,
     setup_ran: bool = False,
-    failed_commands: list[str] | None = None,
+    failed_command_texts: list[str] | None = None,
 ) -> ValidationEvidence:
-    """Create ValidationEvidence with convenience arguments.
-
-    This helper translates old-style keyword arguments to populate both the
-    transitional legacy fields (commands_ran/failed_commands) and the unified
-    commands map. T005 will drop the legacy field population once the
-    underlying methods are removed.
-    """
-    failed_set: list[str] = list(failed_commands or [])
+    """Create ValidationEvidence with convenience arguments."""
+    failed_set: list[str] = list(failed_command_texts or [])
     name_kind_pairs: list[tuple[str, CommandKind]] = []
-    if pytest_ran:
+    if test_seen:
         name_kind_pairs.append(("test", CommandKind.TEST))
-    if ruff_check_ran:
+    if lint_seen:
         name_kind_pairs.append(("lint", CommandKind.LINT))
-    if ruff_format_ran:
+    if format_seen:
         name_kind_pairs.append(("format", CommandKind.FORMAT))
-    if ty_check_ran:
+    if typecheck_seen:
         name_kind_pairs.append(("typecheck", CommandKind.TYPECHECK))
     if setup_ran:
         name_kind_pairs.append(("setup", CommandKind.SETUP))
 
-    commands_ran: dict[CommandKind, bool] = {
-        kind: True for _name, kind in name_kind_pairs
-    }
     commands: dict[str, CommandEvidence] = {}
     for name, kind in name_kind_pairs:
         observed = next(
@@ -131,10 +122,17 @@ def make_evidence(
             status=status_lit,
             observed_command=observed if observed is not None else name,
         )
-    return ValidationEvidence(
-        commands=commands,
-        commands_ran=commands_ran,
-        failed_commands=failed_set,
+    return ValidationEvidence(commands=commands)
+
+
+def _command_seen(evidence: ValidationEvidence, name: str) -> bool:
+    record = evidence.commands.get(name)
+    return record is not None and record.seen
+
+
+def _kind_seen(evidence: ValidationEvidence, kind: CommandKind) -> bool:
+    return any(
+        record.kind == kind and record.seen for record in evidence.commands.values()
     )
 
 
@@ -172,7 +170,7 @@ class TestSpecDrivenParsing:
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert isinstance(evidence, ValidationEvidence)
-        assert evidence.pytest_ran is True
+        assert _command_seen(evidence, "test") is True
 
     def test_starts_from_given_offset(
         self,
@@ -227,9 +225,9 @@ class TestSpecDrivenParsing:
         )
 
         # Should NOT detect pytest (before offset)
-        assert evidence.pytest_ran is False
+        assert _command_seen(evidence, "test") is False
         # Should detect ruff check (after offset)
-        assert evidence.ruff_check_ran is True
+        assert _kind_seen(evidence, CommandKind.LINT) is True
 
     def test_offset_zero_parses_entire_file(
         self,
@@ -261,7 +259,7 @@ class TestSpecDrivenParsing:
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        assert evidence.pytest_ran is True
+        assert _command_seen(evidence, "test") is True
 
     def test_offset_at_end_returns_empty_evidence(
         self,
@@ -297,10 +295,10 @@ class TestSpecDrivenParsing:
             log_path, spec, offset=file_size
         )
 
-        assert evidence.pytest_ran is False
-        assert evidence.ruff_check_ran is False
-        assert evidence.ruff_format_ran is False
-        assert evidence.ty_check_ran is False
+        assert _command_seen(evidence, "test") is False
+        assert _command_seen(evidence, "lint") is False
+        assert _command_seen(evidence, "format") is False
+        assert _command_seen(evidence, "typecheck") is False
 
     def test_new_offset_points_to_end_of_file(
         self,
@@ -346,7 +344,7 @@ class TestSpecDrivenParsing:
 
         evidence = gate.parse_validation_evidence_with_spec(nonexistent, spec)
 
-        assert evidence.pytest_ran is False
+        assert _command_seen(evidence, "test") is False
 
     def test_detects_all_validation_commands(
         self,
@@ -390,10 +388,10 @@ class TestSpecDrivenParsing:
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        assert evidence.pytest_ran is True
-        assert evidence.ruff_check_ran is True
-        assert evidence.ruff_format_ran is True
-        assert evidence.ty_check_ran is True
+        assert _command_seen(evidence, "test") is True
+        assert _kind_seen(evidence, CommandKind.LINT) is True
+        assert _kind_seen(evidence, CommandKind.FORMAT) is True
+        assert _kind_seen(evidence, CommandKind.TYPECHECK) is True
 
 
 class TestNoProgressDetection:
@@ -627,154 +625,6 @@ class TestGateResultNoProgress:
 
         result = GateResult(passed=True)
         assert result.no_progress is False
-
-
-class TestHasMinimumValidation:
-    """Test has_minimum_validation() requires full validation suite."""
-
-    def test_fails_when_only_pytest_ran(self) -> None:
-        """Should fail when only pytest ran (missing ruff, ty check)."""
-        evidence = make_evidence(pytest_ran=True)
-        assert evidence.has_minimum_validation() is False
-
-    def test_fails_when_only_ruff_ran(self) -> None:
-        """Should fail when only ruff check/format ran (missing pytest, ty check)."""
-        evidence = make_evidence(ruff_check_ran=True, ruff_format_ran=True)
-        assert evidence.has_minimum_validation() is False
-
-    def test_fails_when_missing_ty_check(self) -> None:
-        """Should fail when ty check is missing."""
-        evidence = make_evidence(
-            pytest_ran=True,
-            ruff_check_ran=True,
-            ruff_format_ran=True,
-            ty_check_ran=False,
-        )
-        assert evidence.has_minimum_validation() is False
-
-    def test_fails_when_missing_pytest(self) -> None:
-        """Should fail when pytest is missing."""
-        evidence = make_evidence(
-            pytest_ran=False,
-            ruff_check_ran=True,
-            ruff_format_ran=True,
-            ty_check_ran=True,
-        )
-        assert evidence.has_minimum_validation() is False
-
-    def test_fails_when_missing_ruff_check(self) -> None:
-        """Should fail when ruff check is missing."""
-        evidence = make_evidence(
-            pytest_ran=True,
-            ruff_check_ran=False,
-            ruff_format_ran=True,
-            ty_check_ran=True,
-        )
-        assert evidence.has_minimum_validation() is False
-
-    def test_fails_when_missing_ruff_format(self) -> None:
-        """Should fail when ruff format is missing."""
-        evidence = make_evidence(
-            pytest_ran=True,
-            ruff_check_ran=True,
-            ruff_format_ran=False,
-            ty_check_ran=True,
-        )
-        assert evidence.has_minimum_validation() is False
-
-    def test_passes_when_all_commands_ran(self) -> None:
-        """Should pass when all required commands ran."""
-        evidence = make_evidence(
-            pytest_ran=True,
-            ruff_check_ran=True,
-            ruff_format_ran=True,
-            ty_check_ran=True,
-        )
-        assert evidence.has_minimum_validation() is True
-
-
-class TestMissingCommands:
-    """Test missing_commands() includes ty check."""
-
-    def test_includes_ty_check_when_missing(self) -> None:
-        """Should include 'ty check' when it didn't run."""
-        evidence = make_evidence(ty_check_ran=False)
-        missing = evidence.missing_commands()
-        assert "ty check" in missing
-
-    def test_includes_all_missing_commands(self) -> None:
-        """Should list all missing commands."""
-        evidence = make_evidence()  # All default to False
-        missing = evidence.missing_commands()
-        assert "pytest" in missing
-        assert "ruff check" in missing
-        assert "ruff format" in missing
-        assert "ty check" in missing
-
-    def test_excludes_commands_that_ran(self) -> None:
-        """Should not list commands that ran."""
-        evidence = make_evidence(
-            pytest_ran=True,
-            ruff_check_ran=True,
-            ruff_format_ran=True,
-            ty_check_ran=True,
-        )
-        missing = evidence.missing_commands()
-        assert len(missing) == 0
-
-
-class TestToEvidenceDict:
-    """Test to_evidence_dict() spec-driven serialization method."""
-
-    def test_returns_empty_dict_when_no_commands_ran(self) -> None:
-        """Should return empty dict for fresh evidence."""
-        evidence = ValidationEvidence()
-        result = evidence.to_evidence_dict()
-        assert result == {}
-
-    def test_returns_dict_keyed_by_command_kind_value(self) -> None:
-        """Should return dict with CommandKind.value as keys."""
-        evidence = make_evidence(
-            pytest_ran=True,
-            ruff_check_ran=True,
-            ruff_format_ran=False,
-            ty_check_ran=True,
-        )
-        result = evidence.to_evidence_dict()
-
-        # Keys should be CommandKind.value strings
-        assert result.get("test") is True
-        assert result.get("lint") is True
-        assert result.get("typecheck") is True
-        # format wasn't set (make_evidence only sets True values)
-        assert "format" not in result
-
-    def test_includes_all_command_kinds_that_ran(self) -> None:
-        """Should include all command kinds that were detected."""
-        evidence = make_evidence(
-            pytest_ran=True,
-            ruff_check_ran=True,
-            ruff_format_ran=True,
-            ty_check_ran=True,
-            setup_ran=True,
-        )
-        result = evidence.to_evidence_dict()
-
-        assert result.get("test") is True
-        assert result.get("lint") is True
-        assert result.get("format") is True
-        assert result.get("typecheck") is True
-        assert result.get("setup") is True
-
-    def test_dict_is_suitable_for_json_serialization(self) -> None:
-        """Returned dict should be JSON-serializable without conversion."""
-        evidence = make_evidence(pytest_ran=True, ruff_check_ran=True)
-        result = evidence.to_evidence_dict()
-
-        # Should be directly JSON-serializable
-        serialized = json.dumps(result)
-        deserialized = json.loads(serialized)
-        assert deserialized == result
 
 
 class TestCommitBaselineCheck:
@@ -1399,7 +1249,7 @@ class TestEvidenceGateSkipsValidation:
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         # Without detection_pattern, pytest should NOT be detected
-        assert evidence.pytest_ran is False
+        assert _command_seen(evidence, "test") is False
 
     def test_obsolete_skips_commit_and_validation(
         self, tmp_path: Path, evidence_provider: EvidenceProvider
@@ -1617,10 +1467,10 @@ class TestCheckEvidenceAgainstSpec:
     def test_passes_when_all_required_evidence_present(self) -> None:
         """Should pass when all required commands ran."""
         evidence = make_evidence(
-            pytest_ran=True,
-            ruff_check_ran=True,
-            ruff_format_ran=True,
-            ty_check_ran=True,
+            test_seen=True,
+            lint_seen=True,
+            format_seen=True,
+            typecheck_seen=True,
         )
         # Construct spec directly with evidence_required
         spec = ValidationSpec(
@@ -1659,10 +1509,10 @@ class TestCheckEvidenceAgainstSpec:
     def test_fails_when_missing_required_evidence(self) -> None:
         """Should fail and list missing commands."""
         evidence = make_evidence(
-            pytest_ran=False,  # Missing pytest
-            ruff_check_ran=True,
-            ruff_format_ran=True,
-            ty_check_ran=True,
+            test_seen=False,  # Missing pytest
+            lint_seen=True,
+            format_seen=True,
+            typecheck_seen=True,
         )
         # Construct spec directly with evidence_required
         spec = ValidationSpec(
@@ -1704,10 +1554,10 @@ class TestCheckEvidenceAgainstSpec:
         When evidence_required doesn't include 'e2e', it won't be checked.
         """
         evidence = make_evidence(
-            pytest_ran=True,
-            ruff_check_ran=True,
-            ruff_format_ran=True,
-            ty_check_ran=True,
+            test_seen=True,
+            lint_seen=True,
+            format_seen=True,
+            typecheck_seen=True,
             # No E2E evidence - should still pass for per-session
         )
         # Construct spec with per-session commands (no E2E)
@@ -1757,10 +1607,10 @@ class TestCheckEvidenceAgainstSpec:
         catches this at load time. This test covers the runtime fail-safe.
         """
         evidence = make_evidence(
-            pytest_ran=False,  # Not run
-            ruff_check_ran=False,  # Not run
-            ruff_format_ran=False,  # Not run
-            ty_check_ran=False,  # Not run
+            test_seen=False,  # Not run
+            lint_seen=False,  # Not run
+            format_seen=False,  # Not run
+            typecheck_seen=False,  # Not run
         )
         # Spec with no commands but evidence_required set
         # This is an inconsistent spec that should fail at runtime
@@ -1796,10 +1646,10 @@ class TestEvidenceRequiredFiltering:
         Test 14: spec.evidence_required=() → no evidence required, returns (True, [], [])
         """
         evidence = make_evidence(
-            pytest_ran=False,  # Not run
-            ruff_check_ran=False,  # Not run
-            ruff_format_ran=False,  # Not run
-            ty_check_ran=False,  # Not run
+            test_seen=False,  # Not run
+            lint_seen=False,  # Not run
+            format_seen=False,  # Not run
+            typecheck_seen=False,  # Not run
         )
         # Spec with commands but empty evidence_required
         spec = ValidationSpec(
@@ -1828,8 +1678,8 @@ class TestEvidenceRequiredFiltering:
     def test_evidence_required_with_matching_evidence_passes(self) -> None:
         """Test 15: spec.evidence_required=("test",) with test evidence → passes."""
         evidence = make_evidence(
-            pytest_ran=True,  # Ran
-            ruff_check_ran=False,  # Not run but not required
+            test_seen=True,  # Ran
+            lint_seen=False,  # Not run but not required
         )
         spec = ValidationSpec(
             commands=[
@@ -1857,10 +1707,10 @@ class TestEvidenceRequiredFiltering:
     def test_evidence_required_checks_only_specified_commands(self) -> None:
         """Test 16: spec.evidence_required=("test", "lint") → checks only those commands."""
         evidence = make_evidence(
-            pytest_ran=True,  # Ran
-            ruff_check_ran=True,  # Ran
-            ruff_format_ran=False,  # Not run but not in evidence_required
-            ty_check_ran=False,  # Not run but not in evidence_required
+            test_seen=True,  # Ran
+            lint_seen=True,  # Ran
+            format_seen=False,  # Not run but not in evidence_required
+            typecheck_seen=False,  # Not run but not in evidence_required
         )
         spec = ValidationSpec(
             commands=[
@@ -1898,10 +1748,10 @@ class TestEvidenceRequiredFiltering:
     def test_commands_not_in_evidence_required_not_reported_missing(self) -> None:
         """Test 17: Commands not in evidence_required are NOT reported as missing."""
         evidence = make_evidence(
-            pytest_ran=True,  # Ran
-            ruff_check_ran=False,  # Not run
-            ruff_format_ran=False,  # Not run
-            ty_check_ran=False,  # Not run
+            test_seen=True,  # Ran
+            lint_seen=False,  # Not run
+            format_seen=False,  # Not run
+            typecheck_seen=False,  # Not run
         )
         spec = ValidationSpec(
             commands=[
@@ -1942,8 +1792,8 @@ class TestEvidenceRequiredFiltering:
     def test_evidence_required_missing_command_fails(self) -> None:
         """evidence_required with missing evidence fails and lists missing."""
         evidence = make_evidence(
-            pytest_ran=False,  # Not run but required
-            ruff_check_ran=True,  # Ran
+            test_seen=False,  # Not run but required
+            lint_seen=True,  # Ran
         )
         spec = ValidationSpec(
             commands=[
@@ -1970,12 +1820,7 @@ class TestEvidenceRequiredFiltering:
 
     def test_custom_command_allow_fail_not_run_fails(self) -> None:
         """Test 19: allow_fail + not run → fails for missing evidence."""
-        evidence = ValidationEvidence(
-            commands_ran={},
-            failed_commands=[],
-            custom_commands_ran={},  # Command not run
-            custom_commands_failed={},
-        )
+        evidence = ValidationEvidence()
         spec = ValidationSpec(
             commands=[
                 ValidationCommand(
@@ -2006,10 +1851,6 @@ class TestEvidenceRequiredFiltering:
                     status="failed",
                 ),
             },
-            commands_ran={},
-            failed_commands=[],
-            custom_commands_ran={"import_lint": True},  # Ran
-            custom_commands_failed={"import_lint": True},  # Failed
         )
         spec = ValidationSpec(
             commands=[
@@ -2053,13 +1894,6 @@ class TestEvidenceRequiredFiltering:
                     status="passed",
                 ),
             },
-            commands_ran={},
-            failed_commands=[],
-            custom_commands_ran={
-                "import_lint": True,
-                "doc_check": True,
-            },
-            custom_commands_failed={},
         )
         # Two CUSTOM commands, both in evidence_required
         spec = ValidationSpec(
@@ -2094,7 +1928,7 @@ class TestEvidenceRequiredFiltering:
         function should report it as missing rather than silently passing.
         """
         evidence = make_evidence(
-            pytest_ran=True,  # test command exists and ran
+            test_seen=True,  # test command exists and ran
         )
         spec = ValidationSpec(
             commands=[
@@ -2130,10 +1964,6 @@ class TestEvidenceRequiredFiltering:
                     status="passed",
                 ),
             },
-            commands_ran={},
-            failed_commands=[],
-            custom_commands_ran={"existing_check": True},
-            custom_commands_failed={},
         )
         spec = ValidationSpec(
             commands=[
@@ -2159,7 +1989,7 @@ class TestEvidenceRequiredFiltering:
 class TestCheckEvidenceAgainstSpecReadsFromCommandsMap:
     """Regression: check_evidence_against_spec must read from evidence.commands.
 
-    The legacy fields (commands_ran/custom_commands_ran/custom_commands_failed)
+    The legacy fields (command_kind_flags/custom_command_kind_flags/custom_command_failed)
     are removed in T005. Until then they are still populated by the parser as
     a transitional shim, but the gate decision must come from the unified
     commands map so behaviour is correct after T005's deletion.
@@ -3308,7 +3138,7 @@ class TestByteOffsetConsistency:
         )
 
         # Should find the pytest command
-        assert evidence.pytest_ran is True, (
+        assert _command_seen(evidence, "test") is True, (
             "Evidence parser should correctly find pytest after byte-offset with unicode"
         )
 
@@ -3398,7 +3228,7 @@ class TestByteOffsetConsistency:
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         # Should still parse valid entries
-        assert evidence.pytest_ran is True
+        assert _command_seen(evidence, "test") is True
 
     def test_truncated_json_skipped_without_crash(
         self,
@@ -3434,7 +3264,7 @@ class TestByteOffsetConsistency:
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         # Should not crash and should return a valid evidence object
-        # (no pytest command in this log, so pytest_ran is False)
+        # (no pytest command in this log, so test_seen is False)
         assert evidence is not None
 
     def test_offset_beyond_eof_returns_empty_evidence(
@@ -3463,7 +3293,7 @@ class TestByteOffsetConsistency:
             log_path, spec, offset=10000
         )
 
-        assert not evidence.pytest_ran
+        assert not _command_seen(evidence, "test")
 
 
 class TestSpecDrivenEvidencePatterns:
@@ -3569,7 +3399,7 @@ class TestSpecDrivenEvidencePatterns:
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         # Should detect pytest command via spec patterns
-        assert evidence.pytest_ran is True
+        assert _command_seen(evidence, "test") is True
 
     def test_command_without_pattern_skipped(
         self,
@@ -3620,7 +3450,7 @@ class TestSpecDrivenEvidencePatterns:
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         # Without detection_pattern, pytest should NOT be detected
-        assert evidence.pytest_ran is False
+        assert _command_seen(evidence, "test") is False
 
     def test_check_with_resolution_uses_spec_patterns(
         self,
@@ -3709,10 +3539,7 @@ class TestSpecDrivenEvidencePatterns:
         # Use the custom spec (not build_validation_spec which would overwrite it)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        # custom_test was detected as TEST command via custom spec pattern
-        # pytest_ran is an alias for commands_ran[CommandKind.TEST]
-        assert evidence.commands_ran.get(CommandKind.TEST, False) is True
-        assert evidence.pytest_ran is True  # True because TEST command ran
+        assert _kind_seen(evidence, CommandKind.TEST) is True
 
     def test_check_with_resolution_uses_spec_patterns_with_offset(
         self,
@@ -3801,10 +3628,7 @@ class TestSpecDrivenEvidencePatterns:
         # Use the custom spec (not build_validation_spec which would overwrite it)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        # custom_test was detected as TEST command via custom spec pattern
-        # pytest_ran is an alias for commands_ran[CommandKind.TEST]
-        assert evidence.commands_ran.get(CommandKind.TEST, False) is True
-        assert evidence.pytest_ran is True  # True because TEST command ran
+        assert _kind_seen(evidence, CommandKind.TEST) is True
 
 
 class TestValidationExitCodeParsing:
@@ -3863,8 +3687,7 @@ class TestValidationExitCodeParsing:
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        # Should have full command in failed_commands for better error messages
-        assert "uv run pytest" in evidence.failed_commands
+        assert evidence.commands["test"].status == "failed"
 
     def test_gate_fails_when_ruff_check_exits_nonzero(
         self,
@@ -3933,10 +3756,8 @@ class TestValidationExitCodeParsing:
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        # Should have full command in failed_commands (ruff_check failed with is_error=True)
-        assert "uvx ruff check ." in evidence.failed_commands
-        # Other commands succeeded, so they should not be in failed_commands
-        assert "uv run pytest" not in evidence.failed_commands
+        assert evidence.commands["lint"].status == "failed"
+        assert evidence.commands["test"].status == "passed"
 
     def test_gate_passes_when_all_commands_succeed(
         self,
@@ -3999,9 +3820,8 @@ class TestValidationExitCodeParsing:
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        # All commands succeeded - failed_commands should be empty
-        assert len(evidence.failed_commands) == 0
-        assert evidence.pytest_ran is True
+        assert all(record.status == "passed" for record in evidence.commands.values())
+        assert _command_seen(evidence, "test") is True
 
     def test_failure_reason_includes_exit_details(
         self,
@@ -4068,8 +3888,7 @@ class TestValidationExitCodeParsing:
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        # Should have full command in failed_commands for better error messages
-        assert "uvx ty check" in evidence.failed_commands
+        assert evidence.commands["typecheck"].status == "failed"
 
     def test_gate_passes_when_command_fails_then_succeeds(
         self,
@@ -4206,9 +4025,8 @@ class TestValidationExitCodeParsing:
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        # Final pytest run succeeded, so failed_commands should be empty
-        assert len(evidence.failed_commands) == 0
-        assert evidence.pytest_ran is True
+        assert all(record.status == "passed" for record in evidence.commands.values())
+        assert _command_seen(evidence, "test") is True
 
 
 class TestAlreadyCompleteResolution:
@@ -5095,15 +4913,15 @@ class TestSpecCommandChangesPropagation:
         # Use the custom strict spec (not build_validation_spec which would overwrite it)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
-        # pytest_ran should be False because bare "pytest" doesn't match strict pattern
-        assert evidence.pytest_ran is False, (
+        # test_seen should be False because bare "pytest" doesn't match strict pattern
+        assert _command_seen(evidence, "test") is False, (
             "Spec pattern change should propagate: bare 'pytest' should NOT match "
             "'uv run pytest' pattern"
         )
         # Other commands should still match
-        assert evidence.ruff_check_ran is True
-        assert evidence.ruff_format_ran is True
-        assert evidence.ty_check_ran is True
+        assert _kind_seen(evidence, CommandKind.LINT) is True
+        assert _kind_seen(evidence, CommandKind.FORMAT) is True
+        assert _kind_seen(evidence, CommandKind.TYPECHECK) is True
 
         # Now test with "uv run pytest" which SHOULD match
         log_path2 = tmp_path / "session2.jsonl"
@@ -5134,13 +4952,13 @@ class TestSpecCommandChangesPropagation:
         log_path2.write_text("\n".join(lines2) + "\n")
 
         evidence2 = gate.parse_validation_evidence_with_spec(log_path2, spec)
-        assert evidence2.pytest_ran is True, (
+        assert _kind_seen(evidence2, CommandKind.TEST) is True, (
             "'uv run pytest' should match the strict pattern"
         )
         # Other commands should still match
-        assert evidence2.ruff_check_ran is True
-        assert evidence2.ruff_format_ran is True
-        assert evidence2.ty_check_ran is True
+        assert _kind_seen(evidence2, CommandKind.LINT) is True
+        assert _kind_seen(evidence2, CommandKind.FORMAT) is True
+        assert _kind_seen(evidence2, CommandKind.TYPECHECK) is True
 
 
 class TestEvidenceProviderInjection:
@@ -5263,7 +5081,7 @@ class TestEvidenceProviderInjection:
         fake_log.touch()
         evidence = gate.parse_validation_evidence_with_spec(fake_log, spec)
 
-        assert evidence.pytest_ran is True
+        assert _command_seen(evidence, "test") is True
 
     def test_get_log_end_offset_uses_provider(
         self,
@@ -5317,739 +5135,3 @@ class TestEvidenceProviderInjection:
 
         # Verify the injected provider is used directly
         assert gate._evidence_provider is mock_provider
-
-
-class TestExtractedToolNames:
-    """Test that quality gate shows full commands for better error messages.
-
-    These tests verify that:
-    - ValidationEvidence.failed_commands contains full commands for clarity
-    - Users can see exactly what command failed
-    """
-
-    def test_failed_commands_shows_full_pytest_command(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Failed commands should show full command like 'uv run pytest'."""
-        log_path = tmp_path / "session.jsonl"
-
-        # Tool use for pytest
-        tool_use_entry = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "id": "toolu_pytest_123",
-                            "name": "Bash",
-                            "input": {"command": "uv run pytest"},
-                        }
-                    ]
-                },
-            }
-        )
-        # Tool result showing pytest FAILED
-        tool_result_entry = json.dumps(
-            {
-                "type": "user",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": "toolu_pytest_123",
-                            "content": "Exit code 1\n1 failed",
-                            "is_error": True,
-                        }
-                    ]
-                },
-            }
-        )
-        log_path.write_text(tool_use_entry + "\n" + tool_result_entry + "\n")
-
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
-
-        # Should have full command in failed_commands for better error messages
-        assert "uv run pytest" in evidence.failed_commands
-
-    def test_failed_commands_shows_full_ruff_command(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Failed commands should show full command like 'uvx ruff check .'."""
-        log_path = tmp_path / "session.jsonl"
-
-        # Tool use for ruff check
-        tool_use_entry = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "id": "toolu_ruff_123",
-                            "name": "Bash",
-                            "input": {"command": "uvx ruff check ."},
-                        }
-                    ]
-                },
-            }
-        )
-        # Tool result showing ruff check FAILED
-        tool_result_entry = json.dumps(
-            {
-                "type": "user",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": "toolu_ruff_123",
-                            "content": "Exit code 1\nFound 3 errors",
-                            "is_error": True,
-                        }
-                    ]
-                },
-            }
-        )
-        log_path.write_text(tool_use_entry + "\n" + tool_result_entry + "\n")
-
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
-
-        # Should have full command in failed_commands for better error messages
-        assert "uvx ruff check ." in evidence.failed_commands
-
-    def test_gate_failure_message_shows_full_commands(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Gate failure messages should show full commands for clarity."""
-        log_path = tmp_path / "session.jsonl"
-
-        # All commands succeed except pytest (which fails)
-        # Ruff check must come AFTER ruff format because both match \bruff\b pattern
-        # and the later tool_result overwrites earlier failure tracking
-        commands = [
-            ("toolu_pytest_1", "uv run pytest", True, "Exit code 1\n1 failed"),
-            ("toolu_ruff_check_1", "uvx ruff check .", False, "All good"),
-            ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
-            ("toolu_ty_check_1", "uvx ty check", False, "No errors"),
-        ]
-        lines = []
-        for tool_id, cmd, is_error, output in commands:
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "id": tool_id,
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "user",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": tool_id,
-                                    "content": output,
-                                    "is_error": is_error,
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
-        log_path.write_text("\n".join(lines) + "\n")
-
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
-
-        # Should have full command in failed_commands for better error messages
-        assert "uv run pytest" in evidence.failed_commands
-
-    def test_failed_commands_deduplicates_same_command_multiple_kinds(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Failed commands should deduplicate when same command matches multiple kinds.
-
-        When ruff fails and matches both LINT and FORMAT kinds, the
-        failed_commands list should contain the command only once, not duplicated.
-        """
-        log_path = tmp_path / "session.jsonl"
-
-        # Tool use for ruff (matches both lint and format kinds)
-        tool_use_entry = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "id": "toolu_ruff_both",
-                            "name": "Bash",
-                            "input": {"command": "uvx ruff check ."},
-                        }
-                    ]
-                },
-            }
-        )
-        # Tool result showing ruff FAILED
-        tool_result_entry = json.dumps(
-            {
-                "type": "user",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": "toolu_ruff_both",
-                            "content": "Exit code 1\nFound 3 errors",
-                            "is_error": True,
-                        }
-                    ]
-                },
-            }
-        )
-        log_path.write_text(tool_use_entry + "\n" + tool_result_entry + "\n")
-
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
-
-        # Should have full command in failed_commands, not duplicated
-        assert evidence.failed_commands.count("uvx ruff check .") == 1
-        assert evidence.failed_commands == ["uvx ruff check ."]
-
-
-class TestCustomCommandMarkerParsing:
-    """Unit tests for custom command marker parsing and gate logic."""
-
-    def _make_tool_result_entry(
-        self, tool_use_id: str, content: str, is_error: bool = False
-    ) -> str:
-        """Create a user message with a tool_result block."""
-        return json.dumps(
-            {
-                "type": "user",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_use_id,
-                            "content": content,
-                            "is_error": is_error,
-                        }
-                    ]
-                },
-            }
-        )
-
-    def _make_custom_spec(
-        self, commands: list[tuple[str, str, bool]]
-    ) -> ValidationSpec:
-        """Create a ValidationSpec with only custom commands.
-
-        Args:
-            commands: List of (name, command, allow_fail) tuples.
-        """
-        command_names = tuple(name for name, _, _ in commands)
-        return ValidationSpec(
-            scope=ValidationScope.PER_SESSION,
-            commands=[
-                ValidationCommand(
-                    name=name,
-                    command=cmd,
-                    kind=CommandKind.CUSTOM,
-                    allow_fail=allow_fail,
-                )
-                for name, cmd, allow_fail in commands
-            ],
-            evidence_required=command_names,  # Require all custom commands
-        )
-
-    def test_parse_custom_marker_pass(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Pass marker sets ran=True and failed=False."""
-        log_path = tmp_path / "session.jsonl"
-        log_path.write_text(
-            self._make_tool_result_entry(
-                "toolu_1",
-                "Running import lint...\n[custom:import_lint:pass]\nDone.",
-                is_error=False,
-            )
-            + "\n"
-        )
-
-        spec = self._make_custom_spec(
-            [("import_lint", "python scripts/lint.py", False)]
-        )
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert evidence.custom_commands_ran.get("import_lint") is True
-        assert evidence.custom_commands_failed.get("import_lint", False) is False
-
-    def test_parse_custom_marker_fail_with_exit_code(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Fail marker with exit code sets ran=True and failed=True."""
-        log_path = tmp_path / "session.jsonl"
-        log_path.write_text(
-            self._make_tool_result_entry(
-                "toolu_1",
-                "[custom:import_lint:fail exit=1]",
-                is_error=True,
-            )
-            + "\n"
-        )
-
-        spec = self._make_custom_spec(
-            [("import_lint", "python scripts/lint.py", False)]
-        )
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert evidence.custom_commands_ran.get("import_lint") is True
-        assert evidence.custom_commands_failed.get("import_lint") is True
-
-    def test_parse_custom_marker_timeout(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Timeout marker sets ran=True and failed=True."""
-        log_path = tmp_path / "session.jsonl"
-        log_path.write_text(
-            self._make_tool_result_entry(
-                "toolu_1",
-                "[custom:slow_check:timeout]",
-                is_error=True,
-            )
-            + "\n"
-        )
-
-        spec = self._make_custom_spec([("slow_check", "python scripts/slow.py", False)])
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert evidence.custom_commands_ran.get("slow_check") is True
-        assert evidence.custom_commands_failed.get("slow_check") is True
-
-    def test_parse_custom_marker_start_only_is_failure(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Start marker without terminal marker is a failure (incomplete run)."""
-        log_path = tmp_path / "session.jsonl"
-        log_path.write_text(
-            self._make_tool_result_entry(
-                "toolu_1",
-                "[custom:import_lint:start]\nRunning...",
-                is_error=False,
-            )
-            + "\n"
-        )
-
-        spec = self._make_custom_spec(
-            [("import_lint", "python scripts/lint.py", False)]
-        )
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        # Start-only means command ran but failed (incomplete)
-        assert evidence.custom_commands_ran.get("import_lint") is True
-        assert evidence.custom_commands_failed.get("import_lint") is True
-
-    def test_parse_custom_marker_terminal_without_start_is_ran(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Terminal marker without start marker still counts as ran."""
-        log_path = tmp_path / "session.jsonl"
-        log_path.write_text(
-            self._make_tool_result_entry(
-                "toolu_1",
-                "[custom:import_lint:pass]",  # No start marker, just pass
-                is_error=False,
-            )
-            + "\n"
-        )
-
-        spec = self._make_custom_spec(
-            [("import_lint", "python scripts/lint.py", False)]
-        )
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        # Terminal marker implies "ran" even without start marker
-        assert evidence.custom_commands_ran.get("import_lint") is True
-        assert evidence.custom_commands_failed.get("import_lint", False) is False
-
-    def test_parse_custom_marker_latest_wins(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Latest terminal marker wins (retry scenario)."""
-        log_path = tmp_path / "session.jsonl"
-        # First attempt fails, second attempt passes
-        entries = [
-            self._make_tool_result_entry(
-                "toolu_1",
-                "[custom:import_lint:start]\n[custom:import_lint:fail exit=1]",
-                is_error=True,
-            ),
-            self._make_tool_result_entry(
-                "toolu_2",
-                "[custom:import_lint:start]\n[custom:import_lint:pass]",
-                is_error=False,
-            ),
-        ]
-        log_path.write_text("\n".join(entries) + "\n")
-
-        spec = self._make_custom_spec(
-            [("import_lint", "python scripts/lint.py", False)]
-        )
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        # Latest marker (pass) should win
-        assert evidence.custom_commands_ran.get("import_lint") is True
-        assert evidence.custom_commands_failed.get("import_lint", False) is False
-
-    def test_parse_custom_marker_incomplete_retry_is_failure(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Incomplete retry (pass then start-only) is treated as failure."""
-        log_path = tmp_path / "session.jsonl"
-        # First attempt passes, second attempt starts but never completes
-        entries = [
-            self._make_tool_result_entry(
-                "toolu_1",
-                "[custom:import_lint:start]\n[custom:import_lint:pass]",
-                is_error=False,
-            ),
-            self._make_tool_result_entry(
-                "toolu_2",
-                "[custom:import_lint:start]\n... command crashed ...",
-                is_error=True,
-            ),
-        ]
-        log_path.write_text("\n".join(entries) + "\n")
-
-        spec = self._make_custom_spec(
-            [("import_lint", "python scripts/lint.py", False)]
-        )
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        # Latest attempt was incomplete (start-only) so should be marked as failed
-        assert evidence.custom_commands_ran.get("import_lint") is True
-        assert evidence.custom_commands_failed.get("import_lint") is True
-
-    def test_gate_advisory_failure_passes(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Advisory failure (allow_fail=True + failed) passes the gate."""
-        evidence = ValidationEvidence()
-        evidence.custom_commands_ran["import_lint"] = True
-        evidence.custom_commands_failed["import_lint"] = True
-        evidence.commands["import_lint"] = CommandEvidence(
-            name="import_lint",
-            kind=CommandKind.CUSTOM,
-            seen=True,
-            status="failed",
-        )
-
-        # allow_fail=True means this is an advisory failure
-        spec = self._make_custom_spec([("import_lint", "python scripts/lint.py", True)])
-
-        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
-
-        assert passed is True  # Advisory failure doesn't block gate
-        assert len(missing) == 0
-        assert len(failed_strict) == 0  # Not a strict failure
-
-    def test_gate_strict_failure_fails(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Strict failure (allow_fail=False + failed) fails the gate."""
-        evidence = ValidationEvidence()
-        evidence.custom_commands_ran["import_lint"] = True
-        evidence.custom_commands_failed["import_lint"] = True
-        evidence.commands["import_lint"] = CommandEvidence(
-            name="import_lint",
-            kind=CommandKind.CUSTOM,
-            seen=True,
-            status="failed",
-        )
-
-        # allow_fail=False means this is a strict failure
-        spec = self._make_custom_spec(
-            [("import_lint", "python scripts/lint.py", False)]
-        )
-
-        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
-
-        assert passed is False  # Strict failure blocks gate
-        assert len(missing) == 0  # Command ran, so not missing
-        assert "import_lint" in failed_strict
-
-    def test_gate_not_run_distinct_from_failed(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Not run (no markers) is distinct from failed (markers present)."""
-        evidence = ValidationEvidence()
-        # Neither ran nor failed - no markers at all for this spec'd command
-
-        spec = self._make_custom_spec(
-            [("import_lint", "python scripts/lint.py", False)]
-        )
-
-        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
-
-        assert passed is False  # Missing = gate fails
-        assert "import_lint" in missing  # Listed as missing, not failed
-        assert len(failed_strict) == 0  # Not a failure, just not run
-
-    def test_extract_tool_result_content_list_type(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Content as list is concatenated correctly."""
-        log_path = tmp_path / "session.jsonl"
-        # Content as a list of strings (some tools return this format)
-        entry = json.dumps(
-            {
-                "type": "user",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": "toolu_1",
-                            "content": [
-                                "Running...\n",
-                                "[custom:test_cmd:pass]\n",
-                                "Done.",
-                            ],
-                            "is_error": False,
-                        }
-                    ]
-                },
-            }
-        )
-        log_path.write_text(entry + "\n")
-
-        spec = self._make_custom_spec([("test_cmd", "python test.py", False)])
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        # Should detect marker even when content is a list
-        assert evidence.custom_commands_ran.get("test_cmd") is True
-        assert evidence.custom_commands_failed.get("test_cmd", False) is False
-
-    def test_parse_custom_marker_hyphenated_name(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Hyphenated command names (valid YAML keys) are parsed correctly."""
-        log_path = tmp_path / "session.jsonl"
-        log_path.write_text(
-            self._make_tool_result_entry(
-                "toolu_1",
-                "[custom:docs-check:pass]",
-                is_error=False,
-            )
-            + "\n"
-        )
-
-        spec = self._make_custom_spec([("docs-check", "python docs_check.py", False)])
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert evidence.custom_commands_ran.get("docs-check") is True
-        assert evidence.custom_commands_failed.get("docs-check", False) is False
-
-    def test_extract_tool_result_content_dict_blocks(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Content as list of dicts with 'text' key is extracted correctly."""
-        log_path = tmp_path / "session.jsonl"
-        # Content as a list of content block dicts (Anthropic API format)
-        entry = json.dumps(
-            {
-                "type": "user",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": "toolu_1",
-                            "content": [
-                                {"type": "text", "text": "Running...\n"},
-                                {"type": "text", "text": "[custom:test_cmd:pass]\n"},
-                            ],
-                            "is_error": False,
-                        }
-                    ]
-                },
-            }
-        )
-        log_path.write_text(entry + "\n")
-
-        spec = self._make_custom_spec([("test_cmd", "python test.py", False)])
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        # Should detect marker even when content is a list of dicts
-        assert evidence.custom_commands_ran.get("test_cmd") is True
-        assert evidence.custom_commands_failed.get("test_cmd", False) is False
-
-    def _make_bash_tool_use_entry(self, tool_use_id: str, command: str) -> str:
-        """Create an assistant message with a Bash tool_use block."""
-        return json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "id": tool_use_id,
-                            "name": "Bash",
-                            "input": {"command": command},
-                        }
-                    ]
-                },
-            }
-        )
-
-    def test_bare_command_fallback_source_is_shell_status(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Custom command credited via bare-command fallback uses shell_status source.
-
-        When a configured custom command is invoked directly without any
-        ``[custom:<name>:...]`` markers, the bare-command fallback synthesizes a
-        terminal string (e.g. ``"pass"`` or ``"fail exit=1"``) from the shell
-        tool result status. The documented contract requires the resulting
-        ``CommandEvidence.source`` to be ``"command+shell_status"`` so callers
-        can distinguish marker-driven evidence from shell-status fallback.
-        """
-        log_path = tmp_path / "session.jsonl"
-        entries = [
-            self._make_bash_tool_use_entry("toolu_1", "python scripts/lint.py"),
-            self._make_tool_result_entry(
-                "toolu_1",
-                "Linted 42 files in 0.3s.\nNo issues found.",
-                is_error=False,
-            ),
-        ]
-        log_path.write_text("\n".join(entries) + "\n")
-
-        spec = self._make_custom_spec(
-            [("import_lint", "python scripts/lint.py", False)]
-        )
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert "import_lint" in evidence.commands
-        assert evidence.commands["import_lint"].source == "command+shell_status"
-        assert evidence.commands["import_lint"].status == "passed"
-
-    def test_marker_does_not_override_bare_command_source(
-        self,
-        tmp_path: Path,
-        evidence_provider: EvidenceProvider,
-        mock_command_runner: FakeCommandRunner,
-    ) -> None:
-        """Legacy custom markers no longer write authoritative command evidence."""
-        log_path = tmp_path / "session.jsonl"
-        entries = [
-            self._make_bash_tool_use_entry("toolu_1", "python scripts/lint.py"),
-            # First tool result: bare run, fallback credits "pass" from shell status.
-            self._make_tool_result_entry("toolu_1", "OK", is_error=False),
-            self._make_bash_tool_use_entry("toolu_2", "python scripts/lint.py"),
-            # Second tool result: explicit fail marker overrides earlier fallback.
-            self._make_tool_result_entry(
-                "toolu_2",
-                "[custom:import_lint:fail exit=2]",
-                is_error=True,
-            ),
-        ]
-        log_path.write_text("\n".join(entries) + "\n")
-
-        spec = self._make_custom_spec(
-            [("import_lint", "python scripts/lint.py", False)]
-        )
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert "import_lint" in evidence.commands
-        assert evidence.commands["import_lint"].source == "command+shell_status"
-        assert evidence.commands["import_lint"].status == "failed"
