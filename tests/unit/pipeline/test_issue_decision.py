@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import is_dataclass
+
 import pytest
 
 from src.pipeline.issue_decision import (
@@ -12,7 +14,16 @@ from src.pipeline.issue_decision import (
     periodic_validation,
     spawn_capacity,
 )
-from src.pipeline.work_queue import WorkQueueSnapshot
+from src.pipeline.work_queue import PollResult, WorkQueueConfig, WorkQueueSnapshot
+
+
+def test_decision_and_queue_shapes_are_dataclasses() -> None:
+    assert is_dataclass(ExitDecision)
+    assert is_dataclass(PeriodicValidationDecision)
+    assert is_dataclass(InterruptDrainDecision)
+    assert is_dataclass(WorkQueueConfig)
+    assert is_dataclass(WorkQueueSnapshot)
+    assert is_dataclass(PollResult)
 
 
 @pytest.mark.parametrize(
