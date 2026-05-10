@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import is_dataclass
+from pathlib import Path
 
 import pytest
 
@@ -62,6 +63,23 @@ def test_lifecycle_state_effect_and_fake_are_dataclasses() -> None:
     assert is_dataclass(IssueLifecycleState)
     assert is_dataclass(IssueLifecycleEffect)
     assert is_dataclass(FakeIssueLifecyclePort)
+
+
+@pytest.mark.unit
+def test_lifecycle_sources_do_not_use_invalid_decorator_paths() -> None:
+    """Lifecycle sources must not contain path-like decorator spellings."""
+    repo_root = Path(__file__).resolve().parents[2]
+    sources = [
+        repo_root / "src/core/protocols/issue_lifecycle_port.py",
+        repo_root / "tests/fakes/issue_lifecycle_port.py",
+    ]
+    invalid_decorator_prefix = "@" + "src"
+    invalid_dataclass_path = "dataclasses" + ".py"
+
+    for source in sources:
+        text = source.read_text()
+        assert invalid_decorator_prefix not in text
+        assert invalid_dataclass_path not in text
 
 
 @pytest.mark.unit
