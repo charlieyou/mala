@@ -135,6 +135,26 @@ class TestIssueExecutionCoordinator:
         coordinator.register_task("issue-1", task)
         assert coordinator.active_tasks["issue-1"] is task
 
+    @pytest.mark.asyncio
+    async def test_run_loop_port_uses_passed_interrupt_event(
+        self, coordinator: IssueExecutionCoordinator
+    ) -> None:
+        """run_loop wires the passed lifecycle interrupt event into the port."""
+        interrupt_event = asyncio.Event()
+        interrupt_event.set()
+        abort_callback = AsyncMock(return_value=AbortResult(aborted_count=0))
+
+        result = await coordinator.run_loop(
+            AsyncMock(),
+            AsyncMock(),
+            abort_callback,
+            interrupt_event=interrupt_event,
+        )
+
+        assert result.exit_reason == "interrupted"
+        assert coordinator.interrupt_event is interrupt_event
+        assert coordinator.current_state.interrupt_requested is True
+
 
 class TestRunLoop:
     """Tests for run_loop execution flow."""

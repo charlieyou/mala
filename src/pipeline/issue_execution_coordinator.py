@@ -335,6 +335,8 @@ class IssueExecutionCoordinator:
         # Track interrupt_task outside the loop to ensure cleanup on any exit path
         interrupt_task: asyncio.Task[object] | None = None
         startup_no_ready_check_pending = True
+        if interrupt_event is not None:
+            self.interrupt_event = interrupt_event
 
         async def _finalize_task(issue_id: str, task: asyncio.Task[Any]) -> bool:
             """Finalize a task and report whether it reached a terminal state."""
