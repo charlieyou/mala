@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Protocol
 
 from src.core.models import OrderPreference, RunResult, WatchState
@@ -566,6 +566,17 @@ class IssueExecutionCoordinator:
                         startup_no_ready_check_pending=startup_no_ready_check_pending,
                         drain_event=drain_event,
                     )
+                    if snapshot.interrupt_requested or snapshot.abort_requested:
+                        decision = exit_reason(snapshot)
+                        return await self._interpret_exit(
+                            decision,
+                            abort_callback,
+                            validation_callback,
+                            on_validation_failed,
+                            watch_state,
+                            issues_spawned,
+                            finalize_task,
+                        )
                     validation_decision = periodic_validation(snapshot, validate_every)
                     validation_result = await self._interpret_periodic_validation(
                         validation_decision,
@@ -615,7 +626,7 @@ class IssueExecutionCoordinator:
         startup_no_ready_check_pending: bool,
         drain_event: asyncio.Event | None,
     ) -> WorkQueueSnapshot:
-        return work_queue.snapshot(
+        snapshot = work_queue.snapshot(
             active_issue_ids=set(self.active_tasks),
             completed_issue_ids=self.completed_ids,
             failed_issue_ids=self.failed_issues,
@@ -630,6 +641,7 @@ class IssueExecutionCoordinator:
             interrupt_requested=self._interrupt_event.is_set(),
             is_draining=self._event_is_set(drain_event),
         )
+        return replace(snapshot, max_issues=self.config.max_issues)
 
     async def _interpret_exit(
         self,

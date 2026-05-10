@@ -603,6 +603,37 @@ class TestRunLoop:
         assert ("no_more_issues", ("limit_reached (2)",)) in event_sink.events
 
     @pytest.mark.asyncio
+    async def test_runtime_max_issues_update_stops_next_poll(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Lifecycle max_issues updates are visible to subsequent queue snapshots."""
+        beads = MockIssueProvider(ready_issues=[["issue-1"], ["issue-2"]])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            config=CoordinatorConfig(max_issues=None, max_agents=1),
+        )
+        spawned_ids: list[str] = []
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None] | None:
+            spawned_ids.append(issue_id)
+
+            async def work() -> None:
+                pass
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+            coord.max_issues = 1
+
+        result = await coord.run_loop(spawn_callback, finalize_callback, AsyncMock())
+
+        assert spawned_ids == ["issue-1"]
+        assert result.exit_reason == "limit_reached"
+        assert ("no_more_issues", ("limit_reached (1)",)) in event_sink.events
+
+    @pytest.mark.asyncio
     async def test_released_attempt_does_not_count_toward_max_issues(
         self, event_sink: MockEventSink
     ) -> None:
@@ -1081,6 +1112,64 @@ class TestDrainMode:
 
         assert result.exit_reason == "interrupted"
         assert abort_called
+
+    @pytest.mark.asyncio
+    async def test_interrupt_after_completion_preempts_periodic_validation(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Interrupts observed after a task wait skip periodic validation."""
+        beads = MockIssueProvider(ready_issues=[["issue-1", "issue-2"]])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            config=CoordinatorConfig(max_agents=2),
+        )
+        pending_event = asyncio.Event()
+        interrupt_event = asyncio.Event()
+        validation_called = False
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None] | None:
+            async def work() -> None:
+                if issue_id == "issue-2":
+                    await pending_event.wait()
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+            if issue_id == "issue-1":
+                interrupt_event.set()
+
+        async def abort_callback(*, is_interrupt: bool = False) -> AbortResult:
+            tasks = list(coord.active_tasks.values())
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            coord.active_tasks.clear()
+            return AbortResult(
+                aborted_count=len(tasks),
+                has_unresponsive_tasks=False,
+            )
+
+        async def validation_callback() -> bool:
+            nonlocal validation_called
+            validation_called = True
+            return True
+
+        result = await asyncio.wait_for(
+            coord.run_loop(
+                spawn_callback,
+                finalize_callback,
+                abort_callback,
+                validation_config=PeriodicValidationConfig(validate_every=1),
+                interrupt_event=interrupt_event,
+                validation_callback=validation_callback,
+            ),
+            timeout=1,
+        )
+
+        assert result.exit_reason == "interrupted"
+        assert validation_called is False
 
     @pytest.mark.asyncio
     async def test_existing_behavior_unchanged_when_drain_none(
