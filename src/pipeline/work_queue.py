@@ -37,7 +37,7 @@ class WorkQueueSnapshot:
     failed_issue_ids: frozenset[str] = field(default_factory=frozenset)
     completed_count: int = 0
     last_validation_at: int = 0
-    next_validation_threshold: int = 10
+    next_validation_threshold: int | None = None
     consecutive_poll_failures: int = 0
     max_agents: int | None = None
     max_issues: int | None = None
@@ -164,7 +164,7 @@ class WorkQueue:
         ready_issue_ids: list[str] | tuple[str, ...] = (),
         completed_count: int | None = None,
         last_validation_at: int = 0,
-        next_validation_threshold: int = 10,
+        next_validation_threshold: int | None = None,
         consecutive_poll_failures: int = 0,
         watch_enabled: bool = False,
         startup_no_ready_check_pending: bool = False,

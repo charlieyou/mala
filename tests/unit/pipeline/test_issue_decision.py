@@ -134,6 +134,11 @@ def test_exit_reason(snapshot: WorkQueueSnapshot, expected: ExitDecision) -> Non
             PeriodicValidationDecision(True, threshold=3),
         ),
         (
+            WorkQueueSnapshot(completed_count=5),
+            5,
+            PeriodicValidationDecision(True, threshold=5),
+        ),
+        (
             WorkQueueSnapshot(
                 completed_count=3,
                 next_validation_threshold=3,

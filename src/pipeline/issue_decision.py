@@ -129,12 +129,13 @@ def periodic_validation(
 
     if validate_every is None:
         return PeriodicValidationDecision(False)
-    if snapshot.completed_count < snapshot.next_validation_threshold:
+    threshold = snapshot.next_validation_threshold or validate_every
+    if snapshot.completed_count < threshold:
         return PeriodicValidationDecision(False)
     return PeriodicValidationDecision(
         True,
         block_for_active_work=snapshot.has_active_work,
-        threshold=snapshot.next_validation_threshold,
+        threshold=threshold,
     )
 
 
