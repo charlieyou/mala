@@ -176,6 +176,22 @@ async def test_poll_failure_records_error_and_uses_strategy_wait() -> None:
 
 
 @pytest.mark.asyncio
+async def test_terminal_poll_failure_returns_without_retry_wait() -> None:
+    error = RuntimeError("provider unavailable")
+    provider = FakeIssueProvider(error=error)
+    strategy = RecordingPollStrategy()
+    queue = make_queue(provider, strategy)
+
+    result = await queue.poll(queue.snapshot(consecutive_poll_failures=2))
+
+    assert result.succeeded is False
+    assert result.error is error
+    assert result.consecutive_poll_failures == 3
+    assert strategy.failure_waits == []
+    assert strategy.idle_waits == []
+
+
+@pytest.mark.asyncio
 async def test_empty_watch_poll_uses_strategy_idle_wait_without_active_work() -> None:
     provider = FakeIssueProvider(ready=[])
     strategy = RecordingPollStrategy()

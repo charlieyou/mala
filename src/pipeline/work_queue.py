@@ -219,7 +219,8 @@ class WorkQueue:
             failed = snapshot.with_ready(
                 (), consecutive_poll_failures=snapshot.consecutive_poll_failures + 1
             )
-            await self._poll_strategy.wait_after_poll_failure(failed, error)
+            if failed.consecutive_poll_failures < 3:
+                await self._poll_strategy.wait_after_poll_failure(failed, error)
             return PollResult(snapshot=failed, poll_attempted=True, error=error)
 
         polled = snapshot.with_ready(ready_issue_ids, consecutive_poll_failures=0)
