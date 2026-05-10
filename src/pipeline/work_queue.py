@@ -227,6 +227,7 @@ class WorkQueue:
             not ready_issue_ids
             and snapshot.watch_enabled
             and not snapshot.has_active_work
+            and not snapshot.startup_no_ready_check_pending
         ):
             await self._poll_strategy.wait_until_next_poll(polled)
         return PollResult(snapshot=polled, poll_attempted=True)

@@ -85,6 +85,8 @@ def exit_reason(snapshot: WorkQueueSnapshot) -> ExitDecision:
             0,
             run_final_validation=_has_unvalidated_completions(snapshot),
         )
+    if snapshot.has_active_work:
+        return ExitDecision(False)
     if snapshot.consecutive_poll_failures >= 3:
         return ExitDecision(
             True,
@@ -92,8 +94,6 @@ def exit_reason(snapshot: WorkQueueSnapshot) -> ExitDecision:
             3,
             run_final_validation=_has_unvalidated_completions(snapshot),
         )
-    if snapshot.has_active_work:
-        return ExitDecision(False)
     if snapshot.issue_limit_reached:
         return ExitDecision(
             True,

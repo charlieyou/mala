@@ -190,6 +190,20 @@ async def test_empty_watch_poll_uses_strategy_idle_wait_without_active_work() ->
 
 
 @pytest.mark.asyncio
+async def test_empty_startup_watch_poll_defers_idle_wait_for_startup_check() -> None:
+    provider = FakeIssueProvider(ready=[])
+    strategy = RecordingPollStrategy()
+    queue = make_queue(provider, strategy)
+    snapshot = queue.snapshot(watch_enabled=True, startup_no_ready_check_pending=True)
+
+    result = await queue.poll(snapshot)
+
+    assert result.succeeded is True
+    assert result.ready_issue_ids == ()
+    assert strategy.idle_waits == []
+
+
+@pytest.mark.asyncio
 async def test_empty_poll_with_active_work_does_not_idle_wait() -> None:
     provider = FakeIssueProvider(ready=[])
     strategy = RecordingPollStrategy()
