@@ -84,7 +84,12 @@ def test_spawn_capacity(snapshot: WorkQueueSnapshot, expected: int) -> None:
                 consecutive_poll_failures=3,
                 active_issue_ids=frozenset({"active"}),
             ),
-            ExitDecision(False),
+            ExitDecision(
+                True,
+                "poll_failed",
+                3,
+                wait_for_active_work=True,
+            ),
         ),
         (
             WorkQueueSnapshot(completed_count=3, max_issues=3, last_validation_at=2),

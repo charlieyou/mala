@@ -26,6 +26,7 @@ class ExitDecision:
     reason: ExitReason | None = None
     exit_code: int | None = None
     run_final_validation: bool = False
+    wait_for_active_work: bool = False
 
 
 @dataclass(frozen=True)
@@ -92,15 +93,16 @@ def exit_reason(snapshot: WorkQueueSnapshot) -> ExitDecision:
             0,
             run_final_validation=_has_unvalidated_completions(snapshot),
         )
-    if snapshot.has_active_work:
-        return ExitDecision(False)
     if snapshot.consecutive_poll_failures >= 3:
         return ExitDecision(
             True,
             "poll_failed",
             3,
             run_final_validation=_has_unvalidated_completions(snapshot),
+            wait_for_active_work=snapshot.has_active_work,
         )
+    if snapshot.has_active_work:
+        return ExitDecision(False)
     if snapshot.issue_limit_reached:
         return ExitDecision(
             True,
