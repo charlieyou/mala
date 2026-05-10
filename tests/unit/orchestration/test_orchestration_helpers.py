@@ -127,15 +127,8 @@ class TestBuildGateMetadata:
         assert metadata.validation_result.passed is False
         assert "ruff check" in metadata.validation_result.commands_failed
 
-    def test_failed_custom_command_excluded_from_commands_failed(self) -> None:
-        """Failed CUSTOM commands must not surface in commands_failed.
-
-        Legacy parity: parse_validation_evidence_with_spec excludes CUSTOM
-        kinds from failed_commands because custom failures are reported via
-        the strict/advisory path. The new commands-map derivation must keep
-        the same exclusion or commands_run/commands_failed will diverge for
-        the same input.
-        """
+    def test_failed_custom_command_included_in_validation_metadata(self) -> None:
+        """Failed CUSTOM commands surface the same as built-in commands."""
         evidence = ValidationEvidence(
             commands={
                 "test": CommandEvidence(
@@ -163,10 +156,10 @@ class TestBuildGateMetadata:
         metadata = build_gate_metadata(gate_result, passed=False)
 
         assert metadata.validation_result is not None
-        assert "uvx lint-imports" not in metadata.validation_result.commands_failed
-        assert "import_lint" not in metadata.validation_result.commands_failed
-        # Custom commands also must not appear in commands_run (matches legacy).
-        assert "custom" not in metadata.validation_result.commands_run
+        assert "uvx lint-imports" in metadata.validation_result.commands_failed
+        assert "import_lint" in metadata.validation_result.commands_run
+        assert metadata.evidence_check_result is not None
+        assert metadata.evidence_check_result.evidence["import_lint"] is True
 
     def test_commands_run_and_failed_are_deduplicated(self) -> None:
         """commands_run/commands_failed must dedupe duplicate kinds and commands.
@@ -354,15 +347,10 @@ class TestBuildGateMetadataFromLogs:
         assert "tests failed" in metadata.evidence_check_result.failure_reasons
         assert "lint failed" in metadata.evidence_check_result.failure_reasons
 
-    def test_failed_custom_command_excluded_from_commands_failed(
+    def test_failed_custom_command_included_in_log_validation_metadata(
         self, tmp_path: Path
     ) -> None:
-        """Failed CUSTOM commands must not surface in commands_failed via the log path.
-
-        The stored-result path filters CUSTOM kinds from commands_failed; the
-        log-fallback path must apply the same exclusion or IssueFinalizer's
-        fallback metadata diverges from the canonical path for the same input.
-        """
+        """Log fallback metadata includes CUSTOM commands like built-ins."""
         from src.domain.validation.spec import ValidationScope, ValidationSpec
 
         log_path = tmp_path / "session.log"
@@ -397,9 +385,10 @@ class TestBuildGateMetadataFromLogs:
         )
 
         assert metadata.validation_result is not None
-        assert "uvx lint-imports" not in metadata.validation_result.commands_failed
-        assert "import_lint" not in metadata.validation_result.commands_failed
-        assert "custom" not in metadata.validation_result.commands_run
+        assert "uvx lint-imports" in metadata.validation_result.commands_failed
+        assert "import_lint" in metadata.validation_result.commands_run
+        assert metadata.evidence_check_result is not None
+        assert metadata.evidence_check_result.evidence["import_lint"] is True
 
     def test_commands_run_and_failed_are_deduplicated(self, tmp_path: Path) -> None:
         """Multiple commands sharing a kind must not produce duplicate entries.

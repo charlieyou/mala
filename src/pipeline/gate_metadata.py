@@ -20,12 +20,20 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.validation import (
+        CommandEvidenceProtocol,
         GateChecker,
         GateResultProtocol,
         ValidationSpecProtocol,
     )
     from src.domain.evidence_check import GateResult
     from src.domain.validation.spec import ValidationSpec
+
+
+def _metadata_command_key(command: CommandEvidenceProtocol) -> str:
+    """Return the stable metadata key for a parsed command."""
+    if command.kind == CommandKind.CUSTOM:
+        return command.name
+    return command.kind.value
 
 
 @dataclass
@@ -67,9 +75,7 @@ def build_gate_metadata(
     evidence_dict: dict[str, bool] = {}
     if evidence is not None:
         evidence_dict = {
-            c.kind.value: c.seen
-            for c in evidence.commands.values()
-            if c.kind != CommandKind.CUSTOM
+            _metadata_command_key(c): c.seen for c in evidence.commands.values()
         }
     evidence_dict["commit_found"] = commit_hash is not None
 
@@ -85,20 +91,16 @@ def build_gate_metadata(
         # map to the same observed command (e.g., LINT+FORMAT for a single ruff run).
         commands_run = list(
             dict.fromkeys(
-                c.kind.value
+                c.kind.value if c.kind != CommandKind.CUSTOM else c.name
                 for c in evidence.commands.values()
-                if c.seen and c.kind != CommandKind.CUSTOM
+                if c.seen
             )
         )
-        # Match legacy parser semantics: failed CUSTOM commands are surfaced
-        # via the strict/advisory custom-command path, not via commands_failed.
         commands_failed = list(
             dict.fromkeys(
                 c.observed_command or c.name
                 for c in evidence.commands.values()
-                if c.status == "failed"
-                and c.kind not in EVIDENCE_CHECK_IGNORED_KINDS
-                and c.kind != CommandKind.CUSTOM
+                if c.status == "failed" and c.kind not in EVIDENCE_CHECK_IGNORED_KINDS
             )
         )
         validation_result = MetaValidationResult(
@@ -149,9 +151,7 @@ def build_gate_metadata_from_logs(
         failure_reasons = [r.strip() for r in reasons_part.split(";")]
 
     evidence_dict: dict[str, bool] = {
-        c.kind.value: c.seen
-        for c in evidence.commands.values()
-        if c.kind != CommandKind.CUSTOM
+        _metadata_command_key(c): c.seen for c in evidence.commands.values()
     }
 
     # Check commit exists (we don't have stored result, so check now)
@@ -165,22 +165,18 @@ def build_gate_metadata_from_logs(
         failure_reasons=failure_reasons,
     )
 
-    # Deduplicate and exclude CUSTOM kinds to match build_gate_metadata semantics.
-    # Failed CUSTOM commands are surfaced via the strict/advisory path, not here.
     commands_run = list(
         dict.fromkeys(
-            c.kind.value
+            c.kind.value if c.kind != CommandKind.CUSTOM else c.name
             for c in evidence.commands.values()
-            if c.seen and c.kind != CommandKind.CUSTOM
+            if c.seen
         )
     )
     commands_failed = list(
         dict.fromkeys(
             c.observed_command or c.name
             for c in evidence.commands.values()
-            if c.status == "failed"
-            and c.kind not in EVIDENCE_CHECK_IGNORED_KINDS
-            and c.kind != CommandKind.CUSTOM
+            if c.status == "failed" and c.kind not in EVIDENCE_CHECK_IGNORED_KINDS
         )
     )
     validation_result = MetaValidationResult(

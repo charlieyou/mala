@@ -322,7 +322,6 @@ def _recognize_spec_pattern_command(
         identities = command_identity_variants(cmd.command)
         if (
             cmd.detection_pattern is not None
-            and cmd.kind != CommandKind.CUSTOM
             and identities
             and cmd.detection_pattern.search(stripped_input)
             and any(
@@ -492,7 +491,7 @@ def check_evidence_against_spec(
     This is scope-aware: a per-session spec won't require E2E evidence because
     per-session specs don't include E2E commands in evidence_required.
 
-    For custom commands (CommandKind.CUSTOM), checks:
+    For commands with evidence requirements, checks:
     - "not run" (no markers for spec'd command) → missing
     - "ran and passed" → OK
     - "ran and failed" with allow_fail=True → advisory failure (doesn't block gate)
@@ -505,7 +504,7 @@ def check_evidence_against_spec(
     Returns:
         Tuple of (passed, missing_commands, failed_strict) where:
         - missing_commands lists commands that didn't run
-        - failed_strict lists strict (allow_fail=False) custom commands that failed
+        - failed_strict lists strict (allow_fail=False) commands that failed
     """
     # Early return if no evidence required (BREAKING CHANGE: empty means pass)
     if not spec.evidence_required:
@@ -1263,7 +1262,7 @@ class EvidenceCheck:
         # Gate 3: Check validation evidence (spec-driven)
         evidence = self.parse_validation_evidence_with_spec(log_path, spec, log_offset)
 
-        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+        passed, missing, _failed_strict = check_evidence_against_spec(evidence, spec)
 
         # Check for missing validation commands
         if missing:
@@ -1271,29 +1270,22 @@ class EvidenceCheck:
                 f"Missing validation evidence for: {', '.join(missing)}"
             )
 
-        # Check for strict custom command failures (allow_fail=False)
-        if failed_strict:
-            failure_reasons.append(
-                f"Custom command(s) failed: {', '.join(failed_strict)}"
-            )
-
-        # Check for failed built-in validation commands (excludes CUSTOM,
-        # which is reported via the strict/advisory custom-command path above).
-        failed_built_ins = [
+        strict_command_names = {cmd.name for cmd in spec.commands if not cmd.allow_fail}
+        failed_commands = [
             c.observed_command or c.name
             for c in evidence.commands.values()
             if c.status == "failed"
             and c.kind not in EVIDENCE_CHECK_IGNORED_KINDS
-            and c.kind != CommandKind.CUSTOM
+            and c.name in strict_command_names
         ]
         # Deduplicate while preserving order: multiple kinds may map to the
         # same observed command (e.g., a single ruff invocation matched as
         # both LINT and FORMAT in legacy parsing).
-        failed_built_ins = list(dict.fromkeys(failed_built_ins))
-        if failed_built_ins:
+        failed_commands = list(dict.fromkeys(failed_commands))
+        if failed_commands:
             passed = False
             failure_reasons.append(
-                f"Validation command(s) failed: {', '.join(failed_built_ins)}"
+                f"Validation command(s) failed: {', '.join(failed_commands)}"
             )
 
         return GateResult(

@@ -2684,6 +2684,38 @@ class TestEvidenceSummaryParserAndRecognizer:
 
         assert evidence.commands == {}
 
+    def test_pattern_fallback_accepts_custom_command_identity(
+        self,
+        tmp_path: Path,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            _bash_tool_use_json("toolu_make", "make -C shadow-write-consumer test")
+            + "\n"
+            + _tool_result_json("toolu_make")
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="python_test",
+                    command="make -C shadow-write-consumer test",
+                    kind=CommandKind.CUSTOM,
+                    detection_pattern=re.compile(r"\bmake\b"),
+                )
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("python_test",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.commands["python_test"].kind == CommandKind.CUSTOM
+        assert evidence.commands["python_test"].source == "command+shell_status"
+
     def test_pattern_fallback_rejects_built_in_tool_name_mention(
         self,
         tmp_path: Path,
