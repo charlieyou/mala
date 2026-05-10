@@ -483,16 +483,9 @@ class TestEvidenceCheckConfigIntegration:
         1. evidence_check.required: [test]
         2. Minimal commands config
 
-        Expected behavior (after T002-T004):
+        Expected behavior:
         - ValidationSpec.evidence_required contains "test"
         - Evidence filtering respects the required list
-
-        Current behavior (stub):
-        - evidence_check parsing returns None (test FAILS)
-
-        Note: This test MUST fail with "assertion error" on evidence_required,
-        NOT with import errors or syntax errors. The skeleton infrastructure
-        must be wired correctly for downstream tasks.
         """
         from src.domain.validation.config_loader import load_config
         from src.domain.validation.spec import ValidationScope, build_validation_spec
@@ -514,7 +507,6 @@ evidence_check:
         config = load_config(tmp_path)
 
         # Verify evidence_check field exists on ValidationConfig
-        # This will be None because _parse_evidence_check_config() stub returns None
         assert hasattr(config, "evidence_check")
 
         # Build validation spec passing the loaded config explicitly
@@ -525,13 +517,9 @@ evidence_check:
             validation_config=config,
         )
 
-        # This assertion FAILS because:
-        # 1. _parse_evidence_check_config() returns None (stub)
-        # 2. build_validation_spec() doesn't yet propagate evidence_required from config
-        # T002 will implement parsing, T004 will wire build_validation_spec()
         assert spec.evidence_required == ("test",), (
             f"Expected evidence_required=('test',) but got {spec.evidence_required!r}. "
-            "This failure is expected until T002 implements evidence_check parsing."
+            "evidence_check.required should propagate into ValidationSpec."
         )
 
     def test_full_flow_with_filtering(self, tmp_path: Path) -> None:

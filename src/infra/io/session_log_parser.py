@@ -329,9 +329,9 @@ class SessionLogParser:
     ) -> list[tuple[str, str]]:
         """Extract textual content from all tool_result blocks.
 
-        Used for marker detection in custom validation commands. Returns content
-        from all tool results (not just Bash) since custom command markers have
-        a specific summary line format that avoids false positives.
+        Used for MALA_EVIDENCE summary-line extraction in validation commands.
+        Returns content from all tool results (not just Bash) since validation
+        evidence uses a specific summary line format that avoids false positives.
 
         Args:
             entry: A JsonlEntry or JsonlEntryProtocol from iter_jsonl_entries.

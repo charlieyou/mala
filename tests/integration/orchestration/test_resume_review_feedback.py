@@ -338,7 +338,7 @@ def test_build_resume_prompt_returns_none_when_no_issues(tmp_path: Path) -> None
     assert result is None
 
 
-# --- Integration test (expected to fail until T005) ---
+# --- Integration coverage for finalized resume review feedback behavior ---
 
 
 def _read_latest_run_metadata(runs_dir: Path, repo_path: Path) -> dict[str, Any]:
