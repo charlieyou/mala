@@ -69,8 +69,6 @@ class FakeIssueLifecyclePort:
             if self.abort_requested:
                 return
             self.abort_reason = effect.reason
-            if self._interrupt_event is not None:
-                self._interrupt_event.set()
             return
 
         if effect.kind == "set_max_issues":

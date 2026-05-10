@@ -158,6 +158,7 @@ class IssueExecutionCoordinator:
         self.abort_run: bool = False
         self.abort_reason: str | None = None
         self.abort_event: asyncio.Event = asyncio.Event()
+        self._interrupt_event: asyncio.Event = asyncio.Event()
 
     @property
     def current_state(self) -> IssueLifecycleState:
@@ -168,7 +169,7 @@ class IssueExecutionCoordinator:
             abort_requested=self.abort_run,
             abort_reason=self.abort_reason,
             max_issues=self.config.max_issues,
-            interrupt_requested=self.abort_event.is_set(),
+            interrupt_requested=self._interrupt_event.is_set(),
         )
 
     def apply_effect(self, effect: IssueLifecycleEffect) -> None:
@@ -216,13 +217,13 @@ class IssueExecutionCoordinator:
 
     @property
     def interrupt_event(self) -> asyncio.Event | None:
-        """Event used by lifecycle consumers to detect abort requests."""
-        return self.abort_event
+        """Event used by lifecycle consumers to detect run interruption."""
+        return self._interrupt_event
 
     @interrupt_event.setter
     def interrupt_event(self, value: asyncio.Event | None) -> None:
         if value is not None:
-            self.abort_event = value
+            self._interrupt_event = value
 
     @property
     def max_issues(self) -> int | None:

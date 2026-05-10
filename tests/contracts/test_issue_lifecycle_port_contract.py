@@ -101,6 +101,7 @@ async def test_state_snapshot_reflects_task_failure_abort_and_limit(
         assert state.abort_requested is True
         assert state.abort_reason == "fatal error"
         assert state.max_issues == 2
+        assert state.interrupt_requested is False
         assert lifecycle_port.abort_requested is True
         assert lifecycle_port.max_issues == 2
     finally:
@@ -187,3 +188,21 @@ def test_abort_request_preserves_first_reason(
 
     assert lifecycle_port.current_state.abort_requested is True
     assert lifecycle_port.current_state.abort_reason == "first"
+
+
+@pytest.mark.unit
+def test_interrupt_event_is_separate_from_abort_request(
+    lifecycle_port: IssueLifecyclePort,
+) -> None:
+    """The port's interrupt state follows the lifecycle interrupt event."""
+    interrupt_event = asyncio.Event()
+    lifecycle_port.interrupt_event = interrupt_event
+
+    lifecycle_port.apply_effect(
+        IssueLifecycleEffect(kind="request_abort", reason="fatal error")
+    )
+    assert lifecycle_port.current_state.abort_requested is True
+    assert lifecycle_port.current_state.interrupt_requested is False
+
+    interrupt_event.set()
+    assert lifecycle_port.current_state.interrupt_requested is True
