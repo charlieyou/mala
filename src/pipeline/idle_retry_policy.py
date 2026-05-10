@@ -38,8 +38,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Timeout for disconnect() call
-DISCONNECT_TIMEOUT = 10.0
+# Timeout for disconnect() call. Keep this above CodexClient's bounded teardown
+# budget (interrupt + close) so the shared retry path does not cancel Codex
+# cleanup before close gets its own chance to run.
+DISCONNECT_TIMEOUT = 30.0
 
 _RETRYABLE_SUBPROCESS_EXIT_MARKER = "amp subprocess exited with code 1"
 

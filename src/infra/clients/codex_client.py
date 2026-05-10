@@ -47,6 +47,7 @@ Phase C scope (plan ``L723-L740``):
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import logging
@@ -58,7 +59,7 @@ from src.infra.clients.codex_evidence_provider import CODEX_SESSIONS_DIR
 from src.infra.clients.codex_sdk_compat import resume_thread_compat, start_thread_compat
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Coroutine
     from pathlib import Path
     from types import TracebackType
     from typing import Self
@@ -75,6 +76,16 @@ _TEE_DIR_ENV_VAR = "MALA_CODEX_SESSIONS_DIR"
 Tests set this to a ``tmp_path`` so they do not pollute
 ``~/.config/mala/codex-sessions/``; production runs leave it unset and the
 client tees to :data:`CODEX_SESSIONS_DIR`.
+"""
+
+_DISCONNECT_STEP_TIMEOUT_SECONDS = 10.0
+"""Bound each Codex SDK teardown await.
+
+Codex can leave ``AsyncTurnHandle.interrupt()`` waiting on the app-server
+even after the turn has been marked aborted. The session-level
+``asyncio.timeout`` cannot finish while ``async with CodexClient`` is still
+unwinding through ``__aexit__``, so every teardown await must have its own
+small hard ceiling.
 """
 
 
@@ -480,6 +491,66 @@ class CodexClient:
         finally:
             self._tee_file = None
 
+    async def _run_disconnect_step(
+        self,
+        step_name: str,
+        awaitable: Coroutine[Any, Any, object],
+    ) -> None:
+        """Run one SDK teardown step without letting it hang disconnect().
+
+        ``asyncio.wait_for()`` waits for the cancelled awaitable to unwind after
+        a timeout. That is normally desirable, but it is exactly the failure
+        mode this method is guarding against: a stuck Codex SDK teardown await
+        would keep the session-level timeout from ever surfacing. Instead,
+        create an explicit task, wait for a bounded grace period, cancel it on
+        timeout, attach a callback to consume its eventual result, and continue
+        with the remaining teardown steps.
+        """
+        task = asyncio.create_task(awaitable)
+        try:
+            done, _pending = await asyncio.wait(
+                {task}, timeout=_DISCONNECT_STEP_TIMEOUT_SECONDS
+            )
+        except asyncio.CancelledError:
+            task.cancel()
+            task.add_done_callback(
+                lambda t: self._consume_late_disconnect_step(step_name, t)
+            )
+            raise
+
+        if task in done:
+            try:
+                await task
+            except Exception as exc:
+                logger.debug("CodexClient: %s raised on disconnect: %s", step_name, exc)
+            return
+
+        logger.warning(
+            "CodexClient: %s timed out after %.1fs during disconnect; "
+            "continuing teardown",
+            step_name,
+            _DISCONNECT_STEP_TIMEOUT_SECONDS,
+        )
+        task.cancel()
+        task.add_done_callback(
+            lambda t: self._consume_late_disconnect_step(step_name, t)
+        )
+
+    def _consume_late_disconnect_step(
+        self, step_name: str, task: asyncio.Task[object]
+    ) -> None:
+        """Drain a teardown task that was cancelled after a bounded wait."""
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.debug(
+                "CodexClient: late %s result raised after disconnect timeout: %s",
+                step_name,
+                exc,
+            )
+
     async def disconnect(self) -> None:
         """Idempotently interrupt the active turn and close ``AsyncCodex``.
 
@@ -514,23 +585,13 @@ class CodexClient:
 
         try:
             if turn is not None:
-                try:
-                    await turn.interrupt()
-                except Exception as exc:
-                    logger.debug(
-                        "CodexClient: TurnHandle.interrupt raised on disconnect: %s",
-                        exc,
-                    )
+                await self._run_disconnect_step(
+                    "TurnHandle.interrupt", turn.interrupt()
+                )
         finally:
             try:
                 if codex is not None:
-                    try:
-                        await codex.close()
-                    except Exception as exc:
-                        logger.debug(
-                            "CodexClient: AsyncCodex.close raised on disconnect: %s",
-                            exc,
-                        )
+                    await self._run_disconnect_step("AsyncCodex.close", codex.close())
             finally:
                 # Close tee file last so a bad SDK teardown does not strand
                 # a buffered final write on disk; the inner ``finally``

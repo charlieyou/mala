@@ -1101,6 +1101,107 @@ async def test_disconnect_swallows_sdk_close_errors(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_disconnect_bounds_hung_turn_interrupt_and_still_closes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stuck Codex interrupt must not block session timeout completion.
+
+    Production regression: the per-session ``asyncio.timeout`` cancelled a
+    Codex turn, Codex marked the turn aborted, but ``TurnHandle.interrupt()``
+    never returned. Because that await lived in ``CodexClient.__aexit__``, the
+    outer timeout could not finish raising ``TimeoutError`` and the mala run
+    stayed active for hours.
+    """
+    import asyncio
+
+    import src.infra.clients.codex_client as codex_client
+    from src.infra.clients.codex_client import CodexClient
+
+    monkeypatch.setattr(codex_client, "_DISCONNECT_STEP_TIMEOUT_SECONDS", 0.01)
+    fake_codex = _install_fake_sdk(monkeypatch)
+    runtime = _build_runtime(tmp_path)
+    thread = _FakeThread(id="thr_hung_interrupt")
+    fake_codex.next_thread = thread
+
+    client = CodexClient(runtime)
+    await client.__aenter__()
+    await client.query("mid-turn prompt")
+
+    turn = thread.turn_handles[0]
+    interrupt_cancelled = asyncio.Event()
+
+    async def hung_interrupt() -> None:
+        turn.interrupt_calls += 1
+        try:
+            await asyncio.Event().wait()
+        finally:
+            interrupt_cancelled.set()
+
+    turn.interrupt = hung_interrupt  # type: ignore[method-assign,assignment]  # ty:ignore[invalid-assignment]
+
+    await asyncio.wait_for(client.disconnect(), timeout=1.0)
+    await asyncio.wait_for(interrupt_cancelled.wait(), timeout=1.0)
+
+    assert turn.interrupt_calls == 1
+    assert fake_codex.close_calls == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_disconnect_bounds_hung_close_and_closes_tee(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _redirect_codex_tee_dir: Path,
+) -> None:
+    """A stuck Codex close must not strand the tee file or hang timeout."""
+    import asyncio
+
+    import src.infra.clients.codex_client as codex_client
+    from src.infra.clients.codex_client import CodexClient
+
+    monkeypatch.setattr(codex_client, "_DISCONNECT_STEP_TIMEOUT_SECONDS", 0.01)
+    fake_codex = _install_fake_sdk(monkeypatch)
+    runtime = _build_runtime(tmp_path)
+    thread = _FakeThread(id="thr_hung_close")
+    fake_codex.next_thread = thread
+
+    client = CodexClient(runtime)
+    await client.__aenter__()
+    await client.query("mid-turn prompt")
+
+    thread.turn_handles[0].notifications.append(
+        _FakeNotification(
+            method="item/agentMessage/delta",
+            payload=SimpleNamespace(delta="hi", item_id="msg_1"),
+        )
+    )
+    async for _ in client.receive_response():
+        pass
+
+    tee_path = _redirect_codex_tee_dir / "thr_hung_close.jsonl"
+    assert tee_path.exists()
+    assert client._tee_file is not None
+
+    close_cancelled = asyncio.Event()
+
+    async def hung_close() -> None:
+        fake_codex.close_calls += 1
+        try:
+            await asyncio.Event().wait()
+        finally:
+            close_cancelled.set()
+
+    fake_codex.close = hung_close  # type: ignore[method-assign,assignment]  # ty:ignore[invalid-assignment]
+
+    await asyncio.wait_for(client.disconnect(), timeout=1.0)
+    await asyncio.wait_for(close_cancelled.wait(), timeout=1.0)
+
+    assert fake_codex.close_calls == 1
+    assert client._tee_file is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_sigint_mid_turn_cancellation_invokes_interrupt_and_close_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

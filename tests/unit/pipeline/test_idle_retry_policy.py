@@ -1336,6 +1336,20 @@ class TestRetryWithoutSessionId:
 class TestDisconnectBehavior:
     """Tests for client disconnect behavior on timeout."""
 
+    def test_disconnect_timeout_covers_codex_bounded_teardown(self) -> None:
+        """Shared retry disconnect timeout must not cut off Codex cleanup.
+
+        CodexClient bounds ``interrupt`` and ``close`` independently; the outer
+        retry-policy timeout needs to exceed both steps so a retry timeout does
+        not cancel Codex teardown before ``close`` gets its chance to run.
+        """
+        import src.infra.clients.codex_client as codex_client
+        import src.pipeline.idle_retry_policy as idle_retry_policy
+
+        assert idle_retry_policy.DISCONNECT_TIMEOUT > (
+            codex_client._DISCONNECT_STEP_TIMEOUT_SECONDS * 2
+        )
+
     @pytest.mark.asyncio
     async def test_disconnect_called_on_timeout(
         self,
