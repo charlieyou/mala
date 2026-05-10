@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field, is_dataclass
+import dataclasses
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 from unittest.mock import MagicMock
@@ -23,11 +23,11 @@ if TYPE_CHECKING:
     from src.pipeline.issue_execution_coordinator import IssueExecutionCoordinator
 
 
-@dataclass
+@dataclasses.dataclass
 class FakeState:
-    agent_ids: dict[str, str] = field(default_factory=dict)
-    active_session_log_paths: dict[str, Path] = field(default_factory=dict)
-    deadlock_victim_issues: set[str] = field(default_factory=set)
+    agent_ids: dict[str, str] = dataclasses.field(default_factory=dict)
+    active_session_log_paths: dict[str, Path] = dataclasses.field(default_factory=dict)
+    deadlock_victim_issues: set[str] = dataclasses.field(default_factory=set)
 
 
 class FakeIssueCoordinator:
@@ -157,9 +157,9 @@ def _build_plan(
 @pytest.mark.unit
 def test_issue_execution_plan_and_fakes_are_dataclasses() -> None:
     """Import-time guard for malformed dataclass decorators."""
-    assert is_dataclass(IssueExecutionPlan)
+    assert dataclasses.is_dataclass(IssueExecutionPlan)
     assert IssueExecutionPlan.__dataclass_params__.frozen is True
-    assert is_dataclass(FakeState)
+    assert dataclasses.is_dataclass(FakeState)
 
 
 @pytest.mark.unit

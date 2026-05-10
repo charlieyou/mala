@@ -9,8 +9,8 @@ coordinator needs for a run.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
 from src.pipeline.issue_result import IssueResult
@@ -87,7 +87,7 @@ class _AbortActiveTasks(Protocol):
     ) -> AbortResult: ...
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class IssueExecutionPlan:
     """Callbacks and options required to run issue execution."""
 
