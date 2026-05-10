@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from src.core.protocols.agent_event import AgentResultEvent, AgentTextEvent
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -165,15 +167,11 @@ def _amp_session_log_contains_tool_use(log_path: Path) -> bool:
 
 
 def _assistant_text(messages: list[object]) -> str:
-    """Collect text blocks from synthetic Amp ``AssistantMessage`` objects."""
+    """Collect text from coder-agnostic response events."""
     chunks: list[str] = []
     for message in messages:
-        if type(message).__name__ != "AssistantMessage":
-            continue
-        for block in getattr(message, "content", []):
-            text = getattr(block, "text", None)
-            if isinstance(text, str):
-                chunks.append(text)
+        if isinstance(message, AgentTextEvent):
+            chunks.append(message.text)
     return "\n".join(chunks)
 
 
@@ -360,8 +358,11 @@ Do not edit files. Do not run any other command.
     )
     assert client.session_id is not None, "AmpClient did not capture a session id"
     assert messages, "AmpClient yielded no messages"
-    assert any(type(message).__name__ == "ResultMessage" for message in messages), (
-        "AmpClient did not yield a result message"
+    assert any(isinstance(message, AgentResultEvent) for message in messages), (
+        "AmpClient did not yield a result event"
+    )
+    assert any(isinstance(message, AgentTextEvent) for message in messages), (
+        "AmpClient did not yield a coder-agnostic text event"
     )
     assert "AMP_E2E_OK" in _assistant_text(messages), (
         "Amp did not produce the expected completion marker"

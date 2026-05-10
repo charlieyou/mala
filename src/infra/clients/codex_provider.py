@@ -27,9 +27,10 @@ import importlib.util
 import os
 import shutil
 import tempfile
+import threading
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from src.core.constants import (
     DEFAULT_CODEX_APPROVAL_POLICY,
@@ -38,10 +39,14 @@ from src.core.constants import (
     DEFAULT_CODEX_SANDBOX,
 )
 from src.infra.clients.codex_evidence_provider import CodexEvidenceProvider
-from src.infra.clients.codex_sdk_compat import start_thread_compat
+from src.infra.clients.codex_sdk_compat import (
+    codex_runtime_resolvable,
+    resolve_codex_bin_for_app_server,
+    start_thread_compat,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Coroutine
 
     from src.core.protocols.agent_provider import CoderRuntimeBuilder
     from src.core.protocols.evidence import EvidenceProvider
@@ -51,6 +56,48 @@ if TYPE_CHECKING:
         SDKClientFactoryProtocol,
         SDKClientProtocol,
     )
+
+
+_T = TypeVar("_T")
+
+
+def _run_coro_sync(coro_factory: Callable[[], Coroutine[Any, Any, _T]]) -> _T:
+    """Run an async Codex SDK probe from sync prerequisite code.
+
+    ``install_prerequisites`` is intentionally synchronous because it is
+    used by the CLI/provider setup path. Some tests and embedding callers
+    invoke that sync API from an existing event loop, where ``asyncio.run``
+    is illegal. In that case, run the SDK coroutine on a short-lived helper
+    thread with its own event loop and propagate the original result or
+    exception back to the caller.
+    """
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        has_running_loop = False
+    else:
+        has_running_loop = True
+
+    if not has_running_loop:
+        return asyncio.run(coro_factory())
+
+    outcome: dict[str, object] = {}
+
+    def _runner() -> None:
+        try:
+            outcome["result"] = asyncio.run(coro_factory())
+        except BaseException as exc:
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=_runner, name="mala-codex-sdk-probe")
+    thread.start()
+    thread.join()
+    error = outcome.get("error")
+    if error is not None:
+        raise cast("BaseException", error)
+    return cast("_T", outcome.get("result"))
 
 # ---------------------------------------------------------------------------
 # Public exception + reason enum (Phase E5, T015)
@@ -321,31 +368,13 @@ class _CodexClientFactory:
 
 
 def _codex_runtime_resolvable() -> bool:
-    """Return True iff Codex can find a ``codex`` binary at session-start.
+    """Return True iff Codex can find a runtime at session-start.
 
-    Mirrors the resolution path :func:`codex_app_server.client.resolve_codex_bin`
-    walks (``codex/sdk/python/src/codex_app_server/client.py:107-117``):
-
-      1. ``CODEX_BINARY`` env (operator override) — if set, accept and let
-         the SDK validate the path.
-      2. ``codex`` on ``PATH`` — accept if found.
-      3. SDK-bundled ``codex_cli_bin`` package — accept if importable.
-
-    Returning True when only the bundled runtime is present matches the
-    SDK's ``AppServerConfig(codex_bin=None)`` default that
-    :class:`CodexClient.__aenter__` relies on
-    (``src/infra/clients/codex_client.py:226-228``). Returning False
-    raises :class:`CodexHookNotActiveError(CODEX_BINARY_MISSING)`.
+    Kept as a provider-local wrapper because tests and the e2e gate import
+    it directly. The underlying helper is also used by the SDK client/probes,
+    so the gate and the real ``AppServerConfig`` code path stay aligned.
     """
-    if os.environ.get("CODEX_BINARY"):
-        return True
-    if shutil.which("codex") is not None:
-        return True
-    try:
-        spec = importlib.util.find_spec("codex_cli_bin")
-    except (ImportError, ValueError):
-        spec = None
-    return spec is not None
+    return codex_runtime_resolvable()
 
 
 _CODEX_AUTH_ENV_VARS: tuple[str, ...] = (
@@ -1083,13 +1112,13 @@ def _live_codex_hook_dispatch_probe(
     expected_event_files = ("SessionStart.json", "PreToolUse.json")
 
     async def _drive_turn(marker_dir: Path) -> dict[str, str]:
-        from codex_app_server import (  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]
+        from codex_app_server import (  # type: ignore[import-not-found]
             AppServerConfig,
             AsyncCodex,
             TextInput,
         )
 
-        codex_bin = os.environ.get("CODEX_BINARY") or None
+        codex_bin = resolve_codex_bin_for_app_server()
         merged_env = dict(os.environ)
         merged_env.update(env_overlay)
         # Wire the marker dir + target event so the bundled hook can
@@ -1202,7 +1231,7 @@ def _live_codex_hook_dispatch_probe(
     with tempfile.TemporaryDirectory(prefix="mala-codex-dispatch-selftest-") as tmpdir:
         marker_dir = Path(tmpdir)
         try:
-            collected = asyncio.run(_drive_with_timeout(marker_dir))
+            collected = _run_coro_sync(lambda: _drive_with_timeout(marker_dir))
         except TimeoutError as exc:
             raise CodexHookNotActiveError(
                 f"Codex hook-dispatch selftest did not complete within "
@@ -1309,15 +1338,15 @@ def _live_codex_plugin_list_probe(
         # `install_prerequisites`: the SDK is only imported when the live
         # probe actually runs (which only happens after the upstream
         # SDK importability + binary + auth checks already passed).
-        from codex_app_server import (  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]
+        from codex_app_server import (  # type: ignore[import-not-found]
             AppServerConfig,
             AsyncCodex,
         )
-        from codex_app_server.generated.v2_all import (  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]
+        from codex_app_server.generated.v2_all import (  # type: ignore[import-not-found]
             PluginListResponse,
         )
 
-        codex_bin = os.environ.get("CODEX_BINARY") or None
+        codex_bin = resolve_codex_bin_for_app_server()
         merged_env = dict(os.environ)
         merged_env.update(env_overlay)
         config = AppServerConfig(
@@ -1345,7 +1374,7 @@ def _live_codex_plugin_list_probe(
         return await asyncio.wait_for(_query(), timeout=_HOOK_PROBE_TIMEOUT_SECONDS)
 
     try:
-        marketplaces, load_errors = asyncio.run(_query_with_timeout())
+        marketplaces, load_errors = _run_coro_sync(_query_with_timeout)
     except TimeoutError as exc:
         raise CodexHookNotActiveError(
             f"Codex app-server did not respond to plugin/list within "
@@ -1358,7 +1387,7 @@ def _live_codex_plugin_list_probe(
         raise
     except Exception as exc:
         # Catch-all for SDK / RPC / spawn failures: any exception out of
-        # ``asyncio.run(_query())`` means Codex's app-server could not
+        # the async ``plugin/list`` request means Codex's app-server could not
         # respond, which is a fail-closed signal regardless of the
         # underlying cause.
         raise CodexHookNotActiveError(
@@ -2272,11 +2301,11 @@ class CodexAgentProvider:
             )
 
         # 2. Codex runtime resolvable. Either an external ``codex`` binary
-        # on PATH, or the SDK-bundled ``codex_cli_bin`` runtime package
-        # (which ``codex_app_server.client.resolve_codex_bin`` falls back
-        # to when ``AppServerConfig.codex_bin`` is None — the same path
-        # ``CodexClient.__aenter__`` exercises). Honors ``CODEX_BINARY``
-        # so an explicit operator override skips both lookups.
+        # on PATH (passed explicitly as ``AppServerConfig.codex_bin``), or
+        # the SDK-bundled ``codex_cli_bin`` runtime package (which
+        # ``codex_app_server.client.resolve_codex_bin`` falls back to when
+        # ``AppServerConfig.codex_bin`` is None). Honors ``CODEX_BINARY`` so
+        # an explicit operator override skips both lookups.
         if not _codex_runtime_resolvable():
             raise CodexHookNotActiveError(
                 "Codex runtime not resolvable: no `codex` binary on PATH, "

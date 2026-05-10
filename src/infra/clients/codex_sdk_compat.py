@@ -14,9 +14,39 @@ thread response is received and an ``AsyncThread`` wrapper is needed.
 from __future__ import annotations
 
 import inspect
-from typing import Any
+import importlib.util
+import os
+import shutil
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict
+
+
+def resolve_codex_bin_for_app_server() -> str | None:
+    """Return the explicit Codex binary path to give ``AppServerConfig``.
+
+    The Python app-server SDK only resolves its bundled ``codex_cli_bin``
+    package when ``codex_bin`` is ``None``; it does not search ``PATH`` on
+    its own. Mala supports a normal on-PATH ``codex`` install too, so pass
+    that resolved path explicitly. ``CODEX_BINARY`` remains the highest
+    precedence operator override and is returned even if stale so the SDK
+    can report the precise invalid-path error.
+    """
+    override = os.environ.get("CODEX_BINARY")
+    if override:
+        return override
+    return shutil.which("codex")
+
+
+def codex_runtime_resolvable() -> bool:
+    """Return True iff the SDK app-server can resolve a Codex runtime."""
+    if resolve_codex_bin_for_app_server() is not None:
+        return True
+    try:
+        spec = importlib.util.find_spec("codex_cli_bin")
+    except (ImportError, ValueError):
+        spec = None
+    return spec is not None
 
 
 class _ThreadCompatResponse(BaseModel):
@@ -80,11 +110,11 @@ async def start_thread_compat(
         typed_thread_start = getattr(codex, "thread_start")
         return await typed_thread_start(**typed_kwargs)
 
-    from codex_app_server import (  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]
+    from codex_app_server import (  # type: ignore[import-not-found]
         AsyncThread,
     )
 
-    return AsyncThread(codex, thread_id)
+    return AsyncThread(cast("Any", codex), thread_id)
 
 
 async def resume_thread_compat(codex: object, thread_id: str) -> Any:  # noqa: ANN401 - codex_app_server.AsyncThread, avoid lazy-import
@@ -98,8 +128,8 @@ async def resume_thread_compat(codex: object, thread_id: str) -> Any:  # noqa: A
         typed_thread_resume = getattr(codex, "thread_resume")
         return await typed_thread_resume(thread_id)
 
-    from codex_app_server import (  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]
+    from codex_app_server import (  # type: ignore[import-not-found]
         AsyncThread,
     )
 
-    return AsyncThread(codex, resumed_thread_id)
+    return AsyncThread(cast("Any", codex), resumed_thread_id)

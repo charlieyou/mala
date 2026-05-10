@@ -331,14 +331,10 @@ async def test_codex_real_sdk_one_line_prompt_round_trip(
         "CodexClient.session_id was empty after a completed turn; the SDK "
         "did not surface a usable thread id."
     )
-    # Codex thread ids are documented as ``thr_<...>`` (see
-    # ``codex_app_server`` Thread.id); a prefix change is itself SDK-drift
-    # the canary should surface, so assert it strictly rather than
-    # short-circuiting through an ``or thread_id`` clause that would
-    # silently accept any non-empty string.
-    assert thread_id.startswith("thr_"), (
-        f"Codex thread id has unexpected shape: {thread_id!r} (expected `thr_` prefix)"
-    )
+    # Treat the Codex thread id as an opaque provider token. Current real
+    # Codex CLIs can return UUID-shaped ids rather than the older ``thr_``
+    # prefix; the production contract only requires a non-empty id that can
+    # key tee'd evidence and be passed back to ``thread/resume``.
     print(
         f"[codex-e2e] thread_id={thread_id}; "
         f"text_events={len(text_events)}; "

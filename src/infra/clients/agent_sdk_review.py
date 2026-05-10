@@ -368,80 +368,49 @@ class AgentSDKReviewer:
         result_subtype: str | None = None
         was_interrupted = False
 
-        response_iter = None
         async with client:
             await client.query(query, session_id=session_id)
 
-            response_iter = client.receive_response()
-            try:
-                async for msg in response_iter:
-                    # Check for interrupt during iteration (Finding 4)
-                    if guard.is_interrupted():
-                        logger.info("Review interrupted during SDK session iteration")
-                        was_interrupted = True
-                        break
+            async for msg in client.receive_response():
+                # Check for interrupt during iteration (Finding 4)
+                if guard.is_interrupted():
+                    logger.info("Review interrupted during SDK session iteration")
+                    was_interrupted = True
+                    break
 
-                    msg_type = getattr(msg, "type", None)
-                    msg_subtype = getattr(msg, "subtype", None)
-                    msg_class = type(msg).__name__
+                msg_type = getattr(msg, "type", None)
+                msg_subtype = getattr(msg, "subtype", None)
+                msg_class = type(msg).__name__
 
-                    # Extract text from assistant messages (SDK dataclass or dict-like)
-                    if (
-                        msg_subtype == "assistant"
-                        or msg_type == "assistant"
-                        or msg_class == "AssistantMessage"
-                    ):
-                        content = getattr(msg, "content", None)
-                        if content is not None and isinstance(content, list):
-                            for block in content:
-                                # Handle both SDK TextBlock objects and dict format
-                                if type(block).__name__ == "TextBlock":
-                                    response_text += getattr(block, "text", "")
-                                elif (
-                                    isinstance(block, dict)
-                                    and block.get("type") == "text"
-                                ):
-                                    response_text += block.get("text", "")
+                # Extract text from assistant messages (SDK dataclass or dict-like)
+                if (
+                    msg_subtype == "assistant"
+                    or msg_type == "assistant"
+                    or msg_class == "AssistantMessage"
+                ):
+                    content = getattr(msg, "content", None)
+                    if content is not None and isinstance(content, list):
+                        for block in content:
+                            # Handle both SDK TextBlock objects and dict format
+                            if type(block).__name__ == "TextBlock":
+                                response_text += getattr(block, "text", "")
+                            elif isinstance(block, dict) and block.get("type") == "text":
+                                response_text += block.get("text", "")
 
-                    # Extract session info from result message
-                    if (
-                        msg_type == "result"
-                        or msg_subtype == "result"
-                        or msg_class == "ResultMessage"
-                    ):
-                        result_subtype = msg_subtype
-                        result_session_id = getattr(msg, "session_id", None)
-                        structured_output = getattr(msg, "structured_output", None)
-                        result_text = getattr(msg, "result", None)
-                        if structured_output is None and isinstance(result_text, dict):
-                            structured_output = result_text
-                        if isinstance(result_text, str) and not response_text.strip():
-                            response_text = result_text
-            finally:
-                if response_iter is not None:
-                    aclose = getattr(response_iter, "aclose", None)
-                    if callable(aclose):
-                        try:
-                            await aclose()
-                        except Exception as e:  # pragma: no cover - best effort cleanup
-                            logger.debug(f"Failed to close SDK response iterator: {e}")
-
-                query_handle = getattr(client, "_query", None)
-                if query_handle is not None:
-                    for stream_name in ("_message_send", "_message_receive"):
-                        stream = getattr(query_handle, stream_name, None)
-                        aclose = getattr(stream, "aclose", None)
-                        if callable(aclose):
-                            try:
-                                await aclose()
-                            except (
-                                Exception
-                            ) as e:  # pragma: no cover - best effort cleanup
-                                logger.debug(
-                                    "Failed to close SDK query stream %s: %s",
-                                    stream_name,
-                                    e,
-                                )
+                # Extract session info from result message
+                if (
+                    msg_type == "result"
+                    or msg_subtype == "result"
+                    or msg_class == "ResultMessage"
+                ):
+                    result_subtype = msg_subtype
+                    result_session_id = getattr(msg, "session_id", None)
+                    structured_output = getattr(msg, "structured_output", None)
+                    result_text = getattr(msg, "result", None)
+                    if structured_output is None and isinstance(result_text, dict):
+                        structured_output = result_text
+                    if isinstance(result_text, str) and not response_text.strip():
+                        response_text = result_text
 
         try:
             await client.disconnect()

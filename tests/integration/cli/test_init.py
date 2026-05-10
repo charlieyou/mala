@@ -10,14 +10,13 @@ Most tests will fail initially until T002 implements the full command.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import importlib
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
 import yaml
 from typer.testing import CliRunner
-
-from src.cli.cli import app
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -25,6 +24,17 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.integration
 
 runner = CliRunner()
+
+
+def _current_cli_app() -> Any:  # noqa: ANN401
+    """Return the currently imported CLI app.
+
+    Some CLI unit tests reload ``src.cli.cli`` to verify import-time behavior.
+    Resolve the app at invocation time so these integration tests do not hold
+    a stale Typer app whose command callbacks close over an old module globals
+    dict.
+    """
+    return importlib.import_module("src.cli.cli").app
 
 
 def _extract_yaml_from_output(output: str) -> str:
@@ -60,7 +70,7 @@ class TestInitHelp:
 
     def test_help_shows_dry_run_option(self) -> None:
         """Verify 'mala init --help' shows --dry-run option."""
-        result = runner.invoke(app, ["init", "--help"])
+        result = runner.invoke(_current_cli_app(), ["init", "--help"])
         assert result.exit_code == 0
         assert "--dry-run" in result.output
 
@@ -71,7 +81,7 @@ class TestInitDryRun:
     def test_dry_run_preset(self) -> None:
         """--dry-run with --preset outputs valid YAML to stdout."""
         result = runner.invoke(
-            app,
+            _current_cli_app(),
             ["init", "--dry-run", "--preset", "go", "--yes"],
         )
         assert result.exit_code == 0
@@ -92,7 +102,7 @@ class TestInitDryRun:
         mala_yaml.write_text(original_content)
 
         result = runner.invoke(
-            app,
+            _current_cli_app(),
             ["init", "--dry-run", "--preset", "go", "--yes"],
         )
         # Command outputs to stdout, doesn't touch file
@@ -102,7 +112,7 @@ class TestInitDryRun:
     def test_dry_run_skip_evidence_triggers(self) -> None:
         """--dry-run with --skip-evidence --skip-triggers omits those sections."""
         result = runner.invoke(
-            app,
+            _current_cli_app(),
             [
                 "init",
                 "--dry-run",
@@ -148,7 +158,7 @@ class TestInitCustomFlow:
 
         monkeypatch.setattr("src.cli.cli.questionary.text", make_text)
 
-        result = runner.invoke(app, ["init"])
+        result = runner.invoke(_current_cli_app(), ["init"])
 
         assert result.exit_code == 0
         mala_yaml = tmp_path / "mala.yaml"
@@ -171,7 +181,7 @@ class TestInitBackup:
         mala_yaml.write_text(old_content)
 
         result = runner.invoke(
-            app,
+            _current_cli_app(),
             ["init", "--preset", "go", "--yes"],
         )
 
@@ -214,7 +224,7 @@ class TestInitValidation:
 
         monkeypatch.setattr("src.cli.cli.questionary.text", make_text)
 
-        result = runner.invoke(app, ["init"])
+        result = runner.invoke(_current_cli_app(), ["init"])
 
         assert result.exit_code == 1
 
@@ -224,19 +234,21 @@ class TestInitInputValidation:
 
     def test_yes_without_preset_fails(self) -> None:
         """--yes without --preset shows error."""
-        result = runner.invoke(app, ["init", "--yes"])
+        result = runner.invoke(_current_cli_app(), ["init", "--yes"])
         assert result.exit_code == 1
         assert "--yes requires --preset" in result.output
 
     def test_non_tty_without_flags_fails(self) -> None:
         """Non-TTY mode without proper flags shows error."""
-        result = runner.invoke(app, ["init"])
+        result = runner.invoke(_current_cli_app(), ["init"])
         assert result.exit_code == 1
         assert "non-interactive" in result.output.lower()
 
     def test_invalid_preset_fails(self) -> None:
         """Unknown preset shows error."""
-        result = runner.invoke(app, ["init", "--preset", "nonexistent", "--yes"])
+        result = runner.invoke(
+            _current_cli_app(), ["init", "--preset", "nonexistent", "--yes"]
+        )
         assert result.exit_code == 1
         assert "unknown preset" in result.output.lower()
 

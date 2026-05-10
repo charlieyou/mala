@@ -326,6 +326,28 @@ async def test_aenter_honors_codex_binary_env_var(
         assert config.codex_bin == "/opt/codex/bin/codex"
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_aenter_passes_on_path_codex_binary_to_app_server_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An on-PATH ``codex`` is passed explicitly to the app-server SDK."""
+    from src.infra.clients.codex_client import CodexClient
+
+    fake_codex = _install_fake_sdk(monkeypatch)
+    monkeypatch.delenv("CODEX_BINARY", raising=False)
+    monkeypatch.setattr(
+        "src.infra.clients.codex_sdk_compat.shutil.which",
+        lambda name: "/opt/homebrew/bin/codex" if name == "codex" else None,
+    )
+    runtime = _build_runtime(tmp_path)
+
+    async with CodexClient(runtime):
+        config = fake_codex.config
+        assert config is not None
+        assert config.codex_bin == "/opt/homebrew/bin/codex"
+
+
 # ---------------------------------------------------------------------------
 # query() — thread_start / thread_resume / reuse
 # ---------------------------------------------------------------------------

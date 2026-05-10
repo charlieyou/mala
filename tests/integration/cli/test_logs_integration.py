@@ -13,14 +13,24 @@ Stub command tests use dynamic pytest.xfail() so they:
 
 from __future__ import annotations
 
+import importlib
+from typing import Any
+
 import pytest
 from typer.testing import CliRunner
-
-from src.cli.cli import app
 
 pytestmark = pytest.mark.integration
 
 runner = CliRunner()
+
+
+def _current_cli_app() -> Any:  # noqa: ANN401
+    """Return the currently imported CLI app.
+
+    CLI unit tests intentionally reload ``src.cli.cli``. Resolve the app at
+    invocation time so this module does not hold a stale Typer app.
+    """
+    return importlib.import_module("src.cli.cli").app
 
 
 class TestLogsSubcommandRegistration:
@@ -28,7 +38,7 @@ class TestLogsSubcommandRegistration:
 
     def test_logs_help_shows_subcommands(self) -> None:
         """Verify 'mala logs --help' shows available subcommands."""
-        result = runner.invoke(app, ["logs", "--help"])
+        result = runner.invoke(_current_cli_app(), ["logs", "--help"])
         assert result.exit_code == 0
         assert "list" in result.output
         assert "sessions" in result.output
@@ -36,14 +46,14 @@ class TestLogsSubcommandRegistration:
 
     def test_logs_list_help_shows_options(self) -> None:
         """Verify 'mala logs list --help' shows --json and --all options."""
-        result = runner.invoke(app, ["logs", "list", "--help"])
+        result = runner.invoke(_current_cli_app(), ["logs", "list", "--help"])
         assert result.exit_code == 0
         assert "--json" in result.output
         assert "--all" in result.output
 
     def test_logs_sessions_help_shows_options(self) -> None:
         """Verify 'mala logs sessions --help' shows --issue, --json, --all."""
-        result = runner.invoke(app, ["logs", "sessions", "--help"])
+        result = runner.invoke(_current_cli_app(), ["logs", "sessions", "--help"])
         assert result.exit_code == 0
         assert "--issue" in result.output
         assert "--json" in result.output
@@ -51,7 +61,7 @@ class TestLogsSubcommandRegistration:
 
     def test_logs_show_help_shows_run_id_and_json(self) -> None:
         """Verify 'mala logs show --help' shows run_id argument and --json."""
-        result = runner.invoke(app, ["logs", "show", "--help"])
+        result = runner.invoke(_current_cli_app(), ["logs", "show", "--help"])
         assert result.exit_code == 0
         assert "RUN_ID" in result.output or "run_id" in result.output.lower()
         assert "--json" in result.output
@@ -62,14 +72,14 @@ class TestLogsListCommand:
 
     def test_list_basic_invocation(self) -> None:
         """Test basic 'mala logs list' invocation."""
-        result = runner.invoke(app, ["logs", "list"])
+        result = runner.invoke(_current_cli_app(), ["logs", "list"])
         assert result.exit_code == 0
         # Empty runs is valid - shows "No runs found" message
         assert result.exception is None
 
     def test_list_with_json_flag(self) -> None:
         """Test 'mala logs list --json' produces valid JSON output."""
-        result = runner.invoke(app, ["logs", "list", "--json"])
+        result = runner.invoke(_current_cli_app(), ["logs", "list", "--json"])
         assert result.exit_code == 0
         assert result.exception is None
         # Output should be valid JSON (either [] or list of runs)
@@ -80,7 +90,7 @@ class TestLogsListCommand:
 
     def test_list_with_all_flag(self) -> None:
         """Test 'mala logs list --all' shows all runs."""
-        result = runner.invoke(app, ["logs", "list", "--all"])
+        result = runner.invoke(_current_cli_app(), ["logs", "list", "--all"])
         assert result.exit_code == 0
         assert result.exception is None
 
@@ -90,14 +100,16 @@ class TestLogsSessionsCommand:
 
     def test_sessions_requires_issue(self) -> None:
         """Test 'mala logs sessions' without --issue fails."""
-        result = runner.invoke(app, ["logs", "sessions"])
+        result = runner.invoke(_current_cli_app(), ["logs", "sessions"])
         assert result.exit_code != 0
         # Should indicate missing required option
         assert "--issue" in result.output
 
     def test_sessions_with_issue_filter(self) -> None:
         """Test 'mala logs sessions --issue test-123' filters by issue."""
-        result = runner.invoke(app, ["logs", "sessions", "--issue", "test-123"])
+        result = runner.invoke(
+            _current_cli_app(), ["logs", "sessions", "--issue", "test-123"]
+        )
         assert result.exit_code == 0
         # Empty result expected when no matching sessions
         assert "No sessions found" in result.output
@@ -105,7 +117,8 @@ class TestLogsSessionsCommand:
     def test_sessions_with_json_flag(self) -> None:
         """Test 'mala logs sessions --json --issue' produces valid JSON output."""
         result = runner.invoke(
-            app, ["logs", "sessions", "--issue", "test-123", "--json"]
+            _current_cli_app(),
+            ["logs", "sessions", "--issue", "test-123", "--json"],
         )
         assert result.exit_code == 0
         # Should produce valid JSON (empty array when no sessions)
@@ -118,7 +131,8 @@ class TestLogsSessionsCommand:
     def test_sessions_with_all_flag(self) -> None:
         """Test 'mala logs sessions --all --issue' runs without error."""
         result = runner.invoke(
-            app, ["logs", "sessions", "--issue", "test-123", "--all"]
+            _current_cli_app(),
+            ["logs", "sessions", "--issue", "test-123", "--all"],
         )
         assert result.exit_code == 0
         # When no sessions match, should show "No sessions found"
@@ -130,7 +144,7 @@ class TestLogsShowCommand:
 
     def test_show_basic_invocation(self) -> None:
         """Test 'mala logs show <run_id>' returns not-found for nonexistent run."""
-        result = runner.invoke(app, ["logs", "show", "abc12345"])
+        result = runner.invoke(_current_cli_app(), ["logs", "show", "abc12345"])
         # Exit code 1 for not found
         assert result.exit_code == 1
         assert "No run found" in result.output
@@ -139,7 +153,9 @@ class TestLogsShowCommand:
         """Test 'mala logs show <run_id> --json' produces valid JSON error for not found."""
         import json
 
-        result = runner.invoke(app, ["logs", "show", "abc12345", "--json"])
+        result = runner.invoke(
+            _current_cli_app(), ["logs", "show", "abc12345", "--json"]
+        )
         # Exit code 1 for not found
         assert result.exit_code == 1
         output = json.loads(result.output)
@@ -147,6 +163,6 @@ class TestLogsShowCommand:
 
     def test_show_missing_run_id_fails(self) -> None:
         """Test 'mala logs show' without run_id argument fails."""
-        result = runner.invoke(app, ["logs", "show"])
+        result = runner.invoke(_current_cli_app(), ["logs", "show"])
         # Missing required argument should cause non-zero exit
         assert result.exit_code != 0

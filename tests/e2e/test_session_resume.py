@@ -19,7 +19,6 @@ See GitHub issue #5012 for SDK bug details.
 """
 
 import uuid
-from typing import Any
 
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
@@ -48,47 +47,20 @@ def clean_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def _collect_session_id(client: ClaudeSDKClient) -> str | None:
     session_id: str | None = None
-    response: object = client.receive_response()
-    try:
-        async for message in response:
-            if hasattr(message, "session_id"):
-                session_id = getattr(message, "session_id")
-    finally:
-        aclose: Any = getattr(response, "aclose", None)
-        if aclose is not None:
-            await aclose()
-        await _close_query_streams(client)
+    async for message in client.receive_response():
+        if hasattr(message, "session_id"):
+            session_id = getattr(message, "session_id")
     return session_id
 
 
 async def _collect_response_text(client: ClaudeSDKClient) -> str:
     parts: list[str] = []
-    response: object = client.receive_response()
-    try:
-        async for message in response:
-            if hasattr(message, "content"):
-                for block in getattr(message, "content", []):
-                    if hasattr(block, "text"):
-                        parts.append(getattr(block, "text", ""))
-    finally:
-        aclose: Any = getattr(response, "aclose", None)
-        if aclose is not None:
-            await aclose()
-        await _close_query_streams(client)
+    async for message in client.receive_response():
+        if hasattr(message, "content"):
+            for block in getattr(message, "content", []):
+                if hasattr(block, "text"):
+                    parts.append(getattr(block, "text", ""))
     return "".join(parts)
-
-
-async def _close_query_streams(client: ClaudeSDKClient) -> None:
-    query = getattr(client, "_query", None)
-    if query is None:
-        return
-    for name in ("_message_receive", "_message_send"):
-        stream = getattr(query, name, None)
-        if stream is None:
-            continue
-        aclose: Any = getattr(stream, "aclose", None)
-        if aclose is not None:
-            await aclose()
 
 
 class TestSessionResume:

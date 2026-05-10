@@ -56,7 +56,11 @@ from typing import TYPE_CHECKING, Any
 
 from src.infra.clients.codex_event_adapter import CodexEventAdapter
 from src.infra.clients.codex_evidence_provider import CODEX_SESSIONS_DIR
-from src.infra.clients.codex_sdk_compat import resume_thread_compat, start_thread_compat
+from src.infra.clients.codex_sdk_compat import (
+    resolve_codex_bin_for_app_server,
+    resume_thread_compat,
+    start_thread_compat,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Coroutine
@@ -223,19 +227,17 @@ class CodexClient:
         ``MALA_AGENT_ID`` and deny every shell write fail-closed.
 
         ``CODEX_BINARY`` is honored when set so users can point at an
-        external ``codex`` binary; otherwise the SDK's bundled
-        ``codex_cli_bin`` resolution applies (see the spike's
-        ``_resolve_codex_bin`` helper in
-        ``tests/spike/test_codex_thread_read_evidence.py``).
+        external ``codex`` binary. Otherwise, mala passes an on-PATH
+        ``codex`` binary explicitly because the Python SDK only falls back
+        to its bundled ``codex_cli_bin`` package when ``codex_bin`` is
+        ``None``; it does not search ``PATH`` itself.
         """
-        import os
-
-        from codex_app_server import (  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]
+        from codex_app_server import (  # type: ignore[import-not-found]
             AppServerConfig,
             AsyncCodex,
         )
 
-        codex_bin = os.environ.get("CODEX_BINARY") or None
+        codex_bin = resolve_codex_bin_for_app_server()
         config = AppServerConfig(
             codex_bin=codex_bin,
             cwd=str(self._runtime.cwd),
@@ -318,7 +320,7 @@ class CodexClient:
                     },
                 )
 
-        from codex_app_server import (  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]
+        from codex_app_server import (  # type: ignore[import-not-found]
             TextInput,
         )
 
