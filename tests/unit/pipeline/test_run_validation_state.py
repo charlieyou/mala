@@ -42,6 +42,14 @@ _EXPECTED: dict[
 ] = {
     (
         RunValidationState.PROCESSING_COMMANDS,
+        RunValidationEvent.QUEUE_EMPTY,
+    ): (
+        RunValidationState.EMITTING_TERMINAL_EVENT,
+        (),
+        RunValidationContext(terminal_status=TerminalStatus.PASSED),
+    ),
+    (
+        RunValidationState.PROCESSING_COMMANDS,
         RunValidationEvent.COMMANDS_PASSED,
     ): (
         RunValidationState.RUNNING_CODE_REVIEW,
@@ -120,25 +128,25 @@ _EXPECTED: dict[
         RunValidationState.RUNNING_CODE_REVIEW,
         RunValidationEvent.CODE_REVIEW_DISABLED,
     ): (
-        RunValidationState.EMITTING_TERMINAL_EVENT,
+        RunValidationState.PROCESSING_COMMANDS,
         (),
-        RunValidationContext(terminal_status=TerminalStatus.PASSED),
+        _CLEAN_CONTEXT,
     ),
     (
         RunValidationState.RUNNING_CODE_REVIEW,
         RunValidationEvent.CODE_REVIEW_SKIPPED,
     ): (
-        RunValidationState.EMITTING_TERMINAL_EVENT,
+        RunValidationState.PROCESSING_COMMANDS,
         (RunValidationEffect.EMIT_CODE_REVIEW_SKIPPED,),
-        RunValidationContext(terminal_status=TerminalStatus.PASSED),
+        _CLEAN_CONTEXT,
     ),
     (
         RunValidationState.RUNNING_CODE_REVIEW,
         RunValidationEvent.CODE_REVIEW_PASSED,
     ): (
-        RunValidationState.EMITTING_TERMINAL_EVENT,
+        RunValidationState.PROCESSING_COMMANDS,
         (RunValidationEffect.EMIT_CODE_REVIEW_PASSED,),
-        RunValidationContext(terminal_status=TerminalStatus.PASSED),
+        _CLEAN_CONTEXT,
     ),
     (
         RunValidationState.RUNNING_CODE_REVIEW,
@@ -189,9 +197,9 @@ _EXPECTED: dict[
         RunValidationState.REMEDIATING_REVIEW,
         RunValidationEvent.REVIEW_REMEDIATION_PASSED,
     ): (
-        RunValidationState.EMITTING_TERMINAL_EVENT,
+        RunValidationState.PROCESSING_COMMANDS,
         (RunValidationEffect.EMIT_CODE_REVIEW_PASSED,),
-        RunValidationContext(terminal_status=TerminalStatus.PASSED),
+        _CLEAN_CONTEXT,
     ),
     (
         RunValidationState.REMEDIATING_REVIEW,
@@ -369,11 +377,21 @@ def test_context_controls_deferred_terminal_status(
         result = transition(RunValidationState.REMEDIATING_REVIEW, event, context)
         result = transition(
             result.state,
+            RunValidationEvent.QUEUE_EMPTY,
+            result.context,
+        )
+        result = transition(
+            result.state,
             RunValidationEvent.TERMINAL_EVENT_EMITTED,
             result.context,
         )
     else:
         result = transition(RunValidationState.RUNNING_CODE_REVIEW, event, context)
+        result = transition(
+            result.state,
+            RunValidationEvent.QUEUE_EMPTY,
+            result.context,
+        )
         result = transition(
             result.state,
             RunValidationEvent.TERMINAL_EVENT_EMITTED,
@@ -427,6 +445,50 @@ def test_code_review_continue_returns_to_command_processing() -> None:
     assert result.effects == (
         RunValidationEffect.RECORD_FAILURE,
         RunValidationEffect.EMIT_CODE_REVIEW_FAILED,
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "event",
+    [
+        RunValidationEvent.CODE_REVIEW_DISABLED,
+        RunValidationEvent.CODE_REVIEW_SKIPPED,
+        RunValidationEvent.CODE_REVIEW_PASSED,
+    ],
+)
+def test_non_aborting_review_completion_waits_for_queue_empty(
+    event: RunValidationEvent,
+) -> None:
+    result = transition(
+        RunValidationState.RUNNING_CODE_REVIEW,
+        event,
+        RunValidationContext(last_failure=_COMMAND_FAILURE),
+    )
+
+    assert result.state == RunValidationState.PROCESSING_COMMANDS
+    assert result.context == RunValidationContext(last_failure=_COMMAND_FAILURE)
+
+    terminal = transition(
+        result.state,
+        RunValidationEvent.QUEUE_EMPTY,
+        result.context,
+    )
+    assert terminal.state == RunValidationState.EMITTING_TERMINAL_EVENT
+    assert terminal.context.terminal_status == TerminalStatus.FAILED
+
+
+@pytest.mark.unit
+def test_custom_terminal_details_are_preserved() -> None:
+    result = transition(
+        RunValidationState.RUNNING_CODE_REVIEW,
+        RunValidationEvent.CODE_REVIEW_FAILED_ABORT,
+        failure=FailureRecord(ref="code_review_findings", trigger_type="run_end"),
+        details="Code review findings exceed threshold (P1) in trigger run_end",
+    )
+
+    assert result.context.terminal_details == (
+        "Code review findings exceed threshold (P1) in trigger run_end"
     )
 
 
