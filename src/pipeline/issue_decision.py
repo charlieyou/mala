@@ -110,6 +110,8 @@ def exit_reason(snapshot: WorkQueueSnapshot) -> ExitDecision:
             0,
             run_final_validation=_has_unvalidated_completions(snapshot),
         )
+    if snapshot.consecutive_poll_failures > 0:
+        return ExitDecision(False)
     if snapshot.ready_issue_ids:
         return ExitDecision(False)
     if snapshot.watch_enabled or snapshot.startup_no_ready_check_pending:
