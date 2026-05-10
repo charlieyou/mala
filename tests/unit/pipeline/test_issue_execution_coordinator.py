@@ -483,6 +483,84 @@ class TestRunLoop:
         await loop_task
 
     @pytest.mark.asyncio
+    async def test_spawn_capacity_counts_successful_spawns(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Spawn failures do not consume available agent capacity."""
+        beads = MockIssueProvider(ready_issues=[["locked", "issue-1"], []])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            config=CoordinatorConfig(max_agents=1),
+        )
+        attempted: list[str] = []
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None] | None:
+            attempted.append(issue_id)
+            if issue_id == "locked":
+                return None
+
+            async def work() -> None:
+                pass
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+
+        result = await coord.run_loop(
+            spawn_callback,
+            finalize_callback,
+            AsyncMock(),
+        )
+
+        assert attempted == ["locked", "issue-1"]
+        assert result.issues_spawned == 1
+        assert coord.completed_ids == {"issue-1"}
+
+    @pytest.mark.asyncio
+    async def test_spawn_capacity_skips_active_ready_ids(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Already-active ready IDs do not consume available agent capacity."""
+        coordinator = IssueExecutionCoordinator(
+            beads=MockIssueProvider(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            config=CoordinatorConfig(),
+        )
+        active_task = asyncio.create_task(asyncio.Event().wait())
+        spawned_task: asyncio.Task[None] | None = None
+        coordinator.register_task("active", active_task)
+        attempted: list[str] = []
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None] | None:
+            nonlocal spawned_task
+            attempted.append(issue_id)
+
+            async def work() -> None:
+                pass
+
+            spawned_task = asyncio.create_task(work())
+            return spawned_task
+
+        try:
+            spawned, remaining = await coordinator._spawn_ready_issues(
+                ["active", "issue-1", "issue-2"],
+                capacity=1,
+                spawn_callback=spawn_callback,
+            )
+        finally:
+            active_task.cancel()
+            await asyncio.gather(active_task, return_exceptions=True)
+            if spawned_task is not None:
+                await spawned_task
+
+        assert attempted == ["issue-1"]
+        assert spawned == 1
+        assert remaining == ["issue-2"]
+        assert "issue-1" in coordinator.active_tasks
+
+    @pytest.mark.asyncio
     async def test_respects_max_issues(self, event_sink: MockEventSink) -> None:
         """Loop exits with limit_reached after max_issues completions."""
         # max_issues counts terminal states (completions), not spawn attempts

@@ -736,8 +736,8 @@ class IssueExecutionCoordinator:
     ) -> tuple[int, list[str]]:
         spawned = 0
         remaining = list(ready)
-        for issue_id in ready[:capacity]:
-            remaining.pop(0)
+        while remaining and spawned < capacity:
+            issue_id = remaining.pop(0)
             if issue_id in self.active_tasks:
                 continue
             task = await spawn_callback(issue_id)
