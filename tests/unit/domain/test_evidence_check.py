@@ -6,6 +6,7 @@ Tests for:
 """
 
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 from collections.abc import Callable
@@ -30,6 +31,7 @@ from src.domain.evidence_check import (
     _parse_evidence_summary_line,
     _recognize_bare_command,
     _recognize_canonical_wrapper,
+    _recognize_spec_pattern_command,
     check_evidence_against_spec,
 )
 from src.domain.validation.config import (
@@ -3815,6 +3817,43 @@ class TestSpecDrivenEvidencePatterns:
 
         # Should detect pytest command via spec patterns
         assert _command_seen(evidence, "test") is True
+
+    def test_spec_pattern_fallback_requires_configured_flags(self) -> None:
+        """Configured flags must be part of the matched command prefix."""
+
+        test_command = ValidationCommand(
+            name="test",
+            command="uv run pytest --cov=src --cov-fail-under=72",
+            kind=CommandKind.TEST,
+            detection_pattern=re.compile(r"\bpytest\b"),
+        )
+        format_command = ValidationCommand(
+            name="format",
+            command="uvx ruff format --check .",
+            kind=CommandKind.FORMAT,
+            detection_pattern=re.compile(r"\bruff\s+format\b"),
+        )
+        configured = {
+            test_command.name: test_command,
+            format_command.name: format_command,
+        }
+
+        assert _recognize_spec_pattern_command("uv run pytest", configured) is None
+        assert _recognize_spec_pattern_command("uvx ruff format .", configured) is None
+        assert (
+            _recognize_spec_pattern_command(
+                "uv run pytest --cov=src --cov-fail-under=72 -q",
+                configured,
+            )
+            == test_command
+        )
+        assert (
+            _recognize_spec_pattern_command(
+                "uvx ruff format --check . src/package",
+                configured,
+            )
+            == format_command
+        )
 
     def test_command_without_pattern_skipped(
         self,
