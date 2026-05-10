@@ -13,6 +13,7 @@ This module provides:
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -459,6 +460,17 @@ def build_validation_spec(
     if not skip_tests:
         commands = _build_commands_from_config(commands_config, custom_commands)
 
+    duplicate_names = [
+        (name, count)
+        for name, count in Counter(cmd.name for cmd in commands).items()
+        if count > 1
+    ]
+    if duplicate_names:
+        name, count = duplicate_names[0]
+        raise ConfigError(
+            f"Duplicate validation command name: '{name}' appears in {count} commands"
+        )
+
     # Determine if coverage is enabled
     coverage_enabled = (
         merged_config.coverage is not None
@@ -526,13 +538,46 @@ def _validate_evidence_check_refs(config: ValidationConfig) -> None:
     if config.evidence_check is None:
         return  # No evidence_check configured
 
+    normalized_commands: dict[str, str] = {}
+    base_cmds = config.commands
+    builtin_command_names = (
+        "setup",
+        "build",
+        "test",
+        "lint",
+        "format",
+        "typecheck",
+        "e2e",
+    )
+    for name in builtin_command_names:
+        base_cmd = getattr(base_cmds, name, None)
+        if base_cmd is None:
+            continue
+        normalized = _normalize_command_for_duplicate_check(base_cmd.command)
+        existing = normalized_commands.get(normalized)
+        if existing is not None:
+            raise ConfigError(
+                f"Duplicate validation command text after whitespace normalization: "
+                f"'{base_cmd.command}' is used by '{existing}' and '{name}'"
+            )
+        normalized_commands[normalized] = name
+
+    for name, custom_cmd in base_cmds.custom_commands.items():
+        normalized = _normalize_command_for_duplicate_check(custom_cmd.command)
+        existing = normalized_commands.get(normalized)
+        if existing is not None:
+            raise ConfigError(
+                f"Duplicate validation command text after whitespace normalization: "
+                f"'{custom_cmd.command}' is used by '{existing}' and '{name}'"
+            )
+        normalized_commands[normalized] = name
+
     required_keys = config.evidence_check.required
     if not required_keys:
         return  # Empty required list is valid
 
     # Build resolved command map (same logic as _validate_trigger_command_refs)
     resolved_commands: set[str] = set()
-    base_cmds = config.commands
 
     # Add built-in commands
     for cmd_name in BUILTIN_COMMAND_NAMES:
@@ -554,6 +599,11 @@ def _validate_evidence_check_refs(config: ValidationConfig) -> None:
                 f"evidence_check.required references unknown command "
                 f"'{key}'. Available: {available}"
             )
+
+
+def _normalize_command_for_duplicate_check(command: str) -> str:
+    """Collapse whitespace for duplicate configured-command detection."""
+    return " ".join(command.split())
 
 
 def _build_commands_from_config(

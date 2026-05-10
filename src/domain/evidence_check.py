@@ -158,6 +158,7 @@ def _shell_segment_matches_configured_command(segment: str, configured: str) -> 
 
 # Regex matching the MALA_EVIDENCE summary line per plan §Evidence Line Format.
 # Anchored to MULTILINE so it matches lines inside multi-line tool result content.
+_EVIDENCE_SUMMARY_LINE_PATTERN = re.compile(r"^MALA_EVIDENCE\b.*$", re.MULTILINE)
 _EVIDENCE_SUMMARY_PATTERN = re.compile(
     r"^MALA_EVIDENCE name=([A-Za-z_][A-Za-z0-9_-]*) exit=(\d+) log=(\S+)$",
     re.MULTILINE,
@@ -180,10 +181,12 @@ def _parse_evidence_summary_line(content: str) -> _ParsedEvidenceSummary | None:
     The recognizer treats both as "credit nothing" — multiple summary lines in
     one tool result are ambiguous, so the gate refuses to attribute evidence.
     """
-    matches = list(_EVIDENCE_SUMMARY_PATTERN.finditer(content))
-    if len(matches) != 1:
+    summary_lines = list(_EVIDENCE_SUMMARY_LINE_PATTERN.finditer(content))
+    if len(summary_lines) != 1:
         return None
-    match = matches[0]
+    match = _EVIDENCE_SUMMARY_PATTERN.match(summary_lines[0].group(0))
+    if match is None:
+        return None
     return _ParsedEvidenceSummary(
         name=match.group(1),
         exit_code=int(match.group(2)),
@@ -226,6 +229,7 @@ def _recognize_canonical_wrapper(
     bash_input: str,
     configured_by_name: dict[str, ValidationCommand],
     *,
+    issue_id: str | None = None,
     validation_log_dir: Path,
 ) -> ValidationCommand | None:
     """Match a Bash tool input against canonical wrappers for configured commands.
@@ -274,8 +278,10 @@ def _recognize_canonical_wrapper(
         name_suffix = "." + cmd.name
         if not base.endswith(name_suffix):
             continue
-        candidate_issue_id = base[: -len(name_suffix)]
+        candidate_issue_id = issue_id or base[: -len(name_suffix)]
         if not candidate_issue_id:
+            continue
+        if issue_id is not None and base != f"{issue_id}.{cmd.name}":
             continue
         expected = build_canonical_wrapper(
             cmd,
@@ -340,12 +346,14 @@ def _build_command_evidence_for_match(
       - Zero summary lines on a canonical-wrapper match → credit nothing
         (the wrapper is contractually required to emit one).
     """
-    summary_match_count = sum(1 for _ in _EVIDENCE_SUMMARY_PATTERN.finditer(content))
-    if summary_match_count > 1:
-        return None
-    summary = (
-        _parse_evidence_summary_line(content) if summary_match_count == 1 else None
+    summary_line_count = sum(
+        1 for _ in _EVIDENCE_SUMMARY_LINE_PATTERN.finditer(content)
     )
+    if summary_line_count > 1:
+        return None
+    summary = _parse_evidence_summary_line(content) if summary_line_count == 1 else None
+    if summary_line_count == 1 and summary is None:
+        return None
 
     if summary is not None:
         if summary.name != matched_cmd.name:
@@ -583,64 +591,21 @@ def check_evidence_against_spec(
     if not spec.evidence_required:
         return (True, [], [])
 
-    # Build set of required command names for O(1) lookup
-    required_keys = set(spec.evidence_required)
-
     missing: list[str] = []
     failed_strict: list[str] = []
 
-    # Build kind-to-name mapping from spec (spec-driven display names)
-    # Also track all command names present in spec.commands
-    kind_to_name: dict[CommandKind, str] = {}
-    spec_command_names: set[str] = set()
-    for cmd in spec.commands:
-        spec_command_names.add(cmd.name)
-        # Use first command name for each kind as the display name
-        if cmd.kind not in kind_to_name:
-            kind_to_name[cmd.kind] = cmd.name
-
-    # Check each required kind from the spec (non-CUSTOM kinds)
-    # Only check kinds whose display names are in evidence_required
-    for kind in get_required_evidence_kinds(spec):
-        if kind == CommandKind.CUSTOM:
-            # Custom commands are checked individually by name below
-            continue
-        name = kind_to_name.get(kind, kind.value)
-        if name not in required_keys:
-            # This command is not in evidence_required, skip it
-            continue
-        ran = any(
-            c.seen and c.status != "unknown"
-            for c in evidence.commands.values()
-            if c.kind == kind
-        )
-        if not ran:
+    commands_by_name = {cmd.name: cmd for cmd in spec.commands}
+    for name in spec.evidence_required:
+        cmd = commands_by_name.get(name)
+        if cmd is None:
             missing.append(name)
-
-    # Check custom commands individually by name
-    # Only check commands whose names are in evidence_required
-    for cmd in spec.commands:
-        if cmd.kind != CommandKind.CUSTOM:
-            continue
-        name = cmd.name
-        if name not in required_keys:
-            # This command is not in evidence_required, skip it
             continue
         record = evidence.commands.get(name)
         if record is None or not record.seen or record.status == "unknown":
             missing.append(name)
         elif record.status == "failed":
-            # Command ran but failed (includes timed_out=True / exit 124)
             if not cmd.allow_fail:
-                # Strict failure (or timeout for strict) - blocks gate
                 failed_strict.append(name)
-            # Advisory failure (allow_fail=True) - doesn't block gate, just noted
-
-    # Check for required keys that have no corresponding command in spec.commands
-    # These are treated as missing evidence (config bug or stale config)
-    for key in required_keys:
-        if key not in spec_command_names:
-            missing.append(key)
 
     passed = len(missing) == 0 and len(failed_strict) == 0
     return passed, missing, failed_strict

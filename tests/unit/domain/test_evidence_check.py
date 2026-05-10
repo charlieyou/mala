@@ -8,6 +8,7 @@ Tests for:
 import json
 from dataclasses import replace
 from pathlib import Path
+from collections.abc import Callable
 from typing import Literal, cast
 
 import pytest
@@ -26,8 +27,20 @@ from src.domain.evidence_check import (
     CommandEvidence,
     EvidenceCheck,
     ValidationEvidence,
+    _parse_evidence_summary_line,
+    _recognize_bare_command,
+    _recognize_canonical_wrapper,
     check_evidence_against_spec,
 )
+from src.domain.validation.config import (
+    CommandConfig,
+    CommandsConfig,
+    ConfigError,
+    CustomCommandConfig,
+    EvidenceCheckConfig,
+    ValidationConfig,
+)
+from src.domain.validation_wrapper import build_canonical_wrapper
 from tests.fakes import FakeCommandRunner
 
 
@@ -89,13 +102,13 @@ def make_evidence(
     failed_set: list[str] = list(failed_commands or [])
     name_kind_pairs: list[tuple[str, CommandKind]] = []
     if pytest_ran:
-        name_kind_pairs.append(("pytest", CommandKind.TEST))
+        name_kind_pairs.append(("test", CommandKind.TEST))
     if ruff_check_ran:
-        name_kind_pairs.append(("ruff-check", CommandKind.LINT))
+        name_kind_pairs.append(("lint", CommandKind.LINT))
     if ruff_format_ran:
-        name_kind_pairs.append(("ruff-format", CommandKind.FORMAT))
+        name_kind_pairs.append(("format", CommandKind.FORMAT))
     if ty_check_ran:
-        name_kind_pairs.append(("ty", CommandKind.TYPECHECK))
+        name_kind_pairs.append(("typecheck", CommandKind.TYPECHECK))
     if setup_ran:
         name_kind_pairs.append(("setup", CommandKind.SETUP))
 
@@ -2212,6 +2225,662 @@ class TestCheckEvidenceAgainstSpecReadsFromCommandsMap:
         assert passed is False
         assert missing == []
         assert "import_lint" in failed_strict
+
+
+class TestEvidenceSummaryParserAndRecognizer:
+    """Focused regressions for the MALA_EVIDENCE parser and wrapper recognizer."""
+
+    @pytest.mark.parametrize(
+        "content,name,exit_code,log_path",
+        [
+            (
+                "MALA_EVIDENCE name=lint exit=0 log=/tmp/mala-validation-logs/a.lint.log",
+                "lint",
+                0,
+                "/tmp/mala-validation-logs/a.lint.log",
+            ),
+            (
+                "prefix\nMALA_EVIDENCE name=python_test-extra exit=124 log=/tmp/x.log\nsuffix",
+                "python_test-extra",
+                124,
+                "/tmp/x.log",
+            ),
+        ],
+    )
+    def test_summary_parser_accepts_valid_lines(
+        self, content: str, name: str, exit_code: int, log_path: str
+    ) -> None:
+        parsed = _parse_evidence_summary_line(content)
+
+        assert parsed is not None
+        assert parsed.name == name
+        assert parsed.exit_code == exit_code
+        assert parsed.log_path == log_path
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "MALA_EVIDENCE name=9bad exit=0 log=/tmp/x.log",
+            "MALA_EVIDENCE name=bad name exit=0 log=/tmp/x.log",
+            "MALA_EVIDENCE name=lint exit=0",
+            "MALA_EVIDENCE name=lint exit=nope log=/tmp/x.log",
+            "MALA_EVIDENCE_v2 name=lint exit=0 log=/tmp/x.log",
+        ],
+    )
+    def test_summary_parser_rejects_invalid_lines(self, content: str) -> None:
+        assert _parse_evidence_summary_line(content) is None
+
+    def test_summary_parser_rejects_extra_malformed_evidence_line(self) -> None:
+        content = (
+            "MALA_EVIDENCE name=lint exit=0 log=/tmp/mala-validation-logs/a.lint.log\n"
+            "MALA_EVIDENCE name=9bad exit=0 log=/tmp/mala-validation-logs/a.bad.log"
+        )
+
+        assert _parse_evidence_summary_line(content) is None
+
+    def test_canonical_wrapper_matches_generated_wrapper(self, tmp_path: Path) -> None:
+        command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+
+        matched = _recognize_canonical_wrapper(
+            wrapper,
+            {"lint": command},
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+
+        assert matched == command
+
+    def test_canonical_wrapper_matches_single_quote_and_shell_operators(
+        self, tmp_path: Path
+    ) -> None:
+        command = ValidationCommand(
+            name="python_test",
+            command="FOO=bar printf '%s\\n' ok | tee /tmp/out; test -s /tmp/out",
+            kind=CommandKind.CUSTOM,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+
+        matched = _recognize_canonical_wrapper(
+            wrapper,
+            {"python_test": command},
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+
+        assert matched == command
+
+    def test_canonical_wrapper_rejects_subshell_wrapped_wrapper(
+        self, tmp_path: Path
+    ) -> None:
+        command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+
+        matched = _recognize_canonical_wrapper(
+            f"({wrapper})",
+            {"lint": command},
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+
+        assert matched is None
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            lambda wrapper: wrapper.replace("(\n", '(\n  echo "running lint"\n', 1),
+            lambda wrapper: wrapper.replace('exit "$__mala_status"', "exit 0"),
+            lambda wrapper: wrapper.replace("bash -lc", "bash -c"),
+        ],
+    )
+    def test_canonical_wrapper_rejects_near_misses(
+        self, tmp_path: Path, mutation: Callable[[str], str]
+    ) -> None:
+        command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+
+        matched = _recognize_canonical_wrapper(
+            mutation(wrapper),
+            {"lint": command},
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+
+        assert matched is None
+
+    def test_bare_command_matches_exact_and_trailing_redirection(self) -> None:
+        command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+
+        assert _recognize_bare_command("uvx ruff check .", {"lint": command}) == command
+        assert (
+            _recognize_bare_command(
+                "uvx ruff check . > /tmp/lint.log 2>&1", {"lint": command}
+            )
+            == command
+        )
+
+    @pytest.mark.parametrize(
+        "bash_input",
+        [
+            'echo "uvx ruff check ."',
+            "uvx ruff check . && uv run pytest",
+            "uvx ruff check .; uv run pytest",
+        ],
+    )
+    def test_bare_command_rejects_mentions_and_compound_shell(
+        self, bash_input: str
+    ) -> None:
+        command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+
+        assert _recognize_bare_command(bash_input, {"lint": command}) is None
+
+    def test_bare_command_handles_prefix_collision(self) -> None:
+        test = ValidationCommand(name="test", command="test", kind=CommandKind.TEST)
+        test_extra = ValidationCommand(
+            name="test-extra", command="test-extra", kind=CommandKind.CUSTOM
+        )
+
+        matched = _recognize_bare_command(
+            "test-extra", {"test": test, "test-extra": test_extra}
+        )
+
+        assert matched == test_extra
+
+    def test_parse_validation_evidence_rejects_name_mismatch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(tmp_path))
+        command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_lint",
+                                "name": "Bash",
+                                "input": {"command": wrapper},
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_lint",
+                                "content": (
+                                    "MALA_EVIDENCE name=test exit=0 "
+                                    f"log={tmp_path / 'mala-3gbpn.3.lint.log'}"
+                                ),
+                                "is_error": False,
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("lint",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert "lint" not in evidence.commands
+
+    def test_parse_validation_evidence_rejects_log_outside_validation_dir(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(tmp_path))
+        command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_lint",
+                                "name": "Bash",
+                                "input": {"command": wrapper},
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_lint",
+                                "content": "MALA_EVIDENCE name=lint exit=0 log=/tmp/outside.log",
+                                "is_error": False,
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("lint",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert "lint" not in evidence.commands
+
+    def test_parse_validation_evidence_rejects_multiple_summary_lines(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(tmp_path))
+        command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_lint",
+                                "name": "Bash",
+                                "input": {"command": wrapper},
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_lint",
+                                "content": (
+                                    "MALA_EVIDENCE name=lint exit=0 "
+                                    f"log={tmp_path / 'mala-3gbpn.3.lint.log'}\n"
+                                    "MALA_EVIDENCE name=test exit=0 "
+                                    f"log={tmp_path / 'mala-3gbpn.3.test.log'}"
+                                ),
+                                "is_error": False,
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("lint",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert "lint" not in evidence.commands
+
+    def test_parse_validation_evidence_credits_nothing_without_matched_tool_use(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(tmp_path))
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_echo",
+                                "name": "Bash",
+                                "input": {
+                                    "command": 'echo "MALA_EVIDENCE name=lint exit=0 log=/tmp/mala-validation-logs/a.lint.log"'
+                                },
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_echo",
+                                "content": (
+                                    "MALA_EVIDENCE name=lint exit=0 "
+                                    f"log={tmp_path / 'mala-3gbpn.3.lint.log'}"
+                                ),
+                                "is_error": False,
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+        )
+        command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("lint",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.commands == {}
+
+    def test_parse_validation_evidence_last_rerun_wins(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(tmp_path))
+        command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "id": "toolu_lint_1",
+                                        "name": "Bash",
+                                        "input": {"command": wrapper},
+                                    }
+                                ]
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_result",
+                                        "tool_use_id": "toolu_lint_1",
+                                        "content": (
+                                            "MALA_EVIDENCE name=lint exit=0 "
+                                            f"log={tmp_path / 'mala-3gbpn.3.lint.log'}"
+                                        ),
+                                        "is_error": False,
+                                    }
+                                ]
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "id": "toolu_lint_2",
+                                        "name": "Bash",
+                                        "input": {"command": wrapper},
+                                    }
+                                ]
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_result",
+                                        "tool_use_id": "toolu_lint_2",
+                                        "content": (
+                                            "MALA_EVIDENCE name=lint exit=1 "
+                                            f"log={tmp_path / 'mala-3gbpn.3.lint.log'}"
+                                        ),
+                                        "is_error": True,
+                                    }
+                                ]
+                            },
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("lint",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.commands["lint"].status == "failed"
+        assert evidence.commands["lint"].exit_code == 1
+
+    def test_bare_command_with_malformed_summary_gets_no_shell_status_credit(
+        self,
+        tmp_path: Path,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_lint",
+                                "name": "Bash",
+                                "input": {"command": "uvx ruff check ."},
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_lint",
+                                "content": "MALA_EVIDENCE name=9bad exit=0 log=/tmp/x.log",
+                                "is_error": False,
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="lint",
+                    command="uvx ruff check .",
+                    kind=CommandKind.LINT,
+                )
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("lint",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert "lint" not in evidence.commands
+
+    def test_build_validation_spec_rejects_duplicate_resolved_names(
+        self, tmp_path: Path
+    ) -> None:
+        config = ValidationConfig(
+            commands=CommandsConfig(
+                lint=CommandConfig("uvx ruff check ."),
+                custom_commands={"lint": CustomCommandConfig("python scripts/lint.py")},
+            ),
+            evidence_check=EvidenceCheckConfig(required=("lint",)),
+        )
+
+        with pytest.raises(
+            ConfigError,
+            match="Duplicate validation command name: 'lint' appears in 2 commands",
+        ):
+            build_validation_spec(tmp_path, validation_config=config)
+
+    def test_validate_evidence_refs_rejects_duplicate_normalized_commands(
+        self, tmp_path: Path
+    ) -> None:
+        config = ValidationConfig(
+            commands=CommandsConfig(
+                lint=CommandConfig("uvx   ruff   check ."),
+                format=CommandConfig("uvx ruff check ."),
+            ),
+            evidence_check=EvidenceCheckConfig(required=("lint",)),
+        )
+
+        with pytest.raises(
+            ConfigError,
+            match="Duplicate validation command text after whitespace normalization",
+        ):
+            build_validation_spec(tmp_path, validation_config=config)
 
 
 class TestCheckWithResolutionSpec:
@@ -5353,20 +6022,13 @@ class TestCustomCommandMarkerParsing:
         assert evidence.commands["import_lint"].source == "command+shell_status"
         assert evidence.commands["import_lint"].status == "passed"
 
-    def test_marker_overrides_bare_command_fallback_source(
+    def test_marker_does_not_override_bare_command_source(
         self,
         tmp_path: Path,
         evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
-        """Explicit terminal markers always set source to command+summary.
-
-        If a later tool result for the same custom command emits a
-        ``[custom:<name>:...]`` marker, that marker wins over an earlier
-        bare-command fallback credit and the source attribution must reflect
-        the marker-based decision rather than the shell status that the
-        fallback used.
-        """
+        """Legacy custom markers no longer write authoritative command evidence."""
         log_path = tmp_path / "session.jsonl"
         entries = [
             self._make_bash_tool_use_entry("toolu_1", "python scripts/lint.py"),
@@ -5389,5 +6051,5 @@ class TestCustomCommandMarkerParsing:
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert "import_lint" in evidence.commands
-        assert evidence.commands["import_lint"].source == "command+summary"
+        assert evidence.commands["import_lint"].source == "command+shell_status"
         assert evidence.commands["import_lint"].status == "failed"

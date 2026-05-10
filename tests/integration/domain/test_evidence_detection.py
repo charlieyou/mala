@@ -12,18 +12,21 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from src.domain.evidence_check import EvidenceCheck
+from src.domain.evidence_check import EvidenceCheck, check_evidence_against_spec
 from src.domain.validation.spec import (
     CommandKind,
     ValidationCommand,
     ValidationScope,
     ValidationSpec,
 )
+from src.domain.validation_wrapper import build_canonical_wrapper
 from src.infra.tools.command_runner import CommandRunner
 from src.infra.io.session_log_parser import FileSystemLogProvider
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 
 def _create_jsonl_log(log_path: Path, entries: list[dict]) -> None:
@@ -551,6 +554,175 @@ class TestEvidenceDetectionCustomCommandsIntegration:
         assert evidence.custom_commands_ran["security_check"] is True
         assert evidence.custom_commands_failed.get("import_lint", False) is False
         assert evidence.custom_commands_failed["security_check"] is True
+
+
+class TestCanonicalEvidenceDetectionIntegration:
+    """Integration tests for generated-wrapper evidence recognition."""
+
+    def _make_gate(self, tmp_path: Path) -> EvidenceCheck:
+        return EvidenceCheck(
+            tmp_path, FileSystemLogProvider(), CommandRunner(cwd=tmp_path)
+        )
+
+    def test_builtin_canonical_wrapper_records_summary_evidence(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(tmp_path))
+        command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+        log_path = tmp_path / "session.jsonl"
+        entries = [
+            _make_bash_tool_use_entry("toolu_lint", wrapper),
+            _make_tool_result_entry(
+                "toolu_lint",
+                f"MALA_EVIDENCE name=lint exit=0 log={tmp_path / 'mala-3gbpn.3.lint.log'}",
+            ),
+        ]
+        _create_jsonl_log(log_path, entries)
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("lint",),
+        )
+
+        evidence = self._make_gate(tmp_path).parse_validation_evidence_with_spec(
+            log_path, spec
+        )
+
+        record = evidence.commands["lint"]
+        assert record.seen is True
+        assert record.status == "passed"
+        assert record.source == "command+summary"
+
+    def test_custom_canonical_wrapper_records_failure_evidence(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(tmp_path))
+        command = ValidationCommand(
+            name="python_test",
+            command="make -C shadow-write-consumer test",
+            kind=CommandKind.CUSTOM,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+        log_path = tmp_path / "session.jsonl"
+        entries = [
+            _make_bash_tool_use_entry("toolu_python_test", wrapper),
+            _make_tool_result_entry(
+                "toolu_python_test",
+                "MALA_EVIDENCE name=python_test exit=1 "
+                f"log={tmp_path / 'mala-3gbpn.3.python_test.log'}",
+                is_error=True,
+            ),
+        ]
+        _create_jsonl_log(log_path, entries)
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("python_test",),
+        )
+
+        evidence = self._make_gate(tmp_path).parse_validation_evidence_with_spec(
+            log_path, spec
+        )
+
+        record = evidence.commands["python_test"]
+        assert record.status == "failed"
+        assert record.exit_code == 1
+        assert record.source == "command+summary"
+
+    def test_advisory_custom_failure_does_not_fail_gate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(tmp_path))
+        command = ValidationCommand(
+            name="python_test",
+            command="make -C shadow-write-consumer test",
+            kind=CommandKind.CUSTOM,
+            allow_fail=True,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+        log_path = tmp_path / "session.jsonl"
+        entries = [
+            _make_bash_tool_use_entry("toolu_python_test", wrapper),
+            _make_tool_result_entry(
+                "toolu_python_test",
+                "MALA_EVIDENCE name=python_test exit=1 "
+                f"log={tmp_path / 'mala-3gbpn.3.python_test.log'}",
+                is_error=False,
+            ),
+        ]
+        _create_jsonl_log(log_path, entries)
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("python_test",),
+        )
+        evidence = self._make_gate(tmp_path).parse_validation_evidence_with_spec(
+            log_path, spec
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        assert passed is True
+        assert missing == []
+        assert failed_strict == []
+
+    def test_strict_custom_failure_fails_gate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(tmp_path))
+        command = ValidationCommand(
+            name="python_test",
+            command="make -C shadow-write-consumer test",
+            kind=CommandKind.CUSTOM,
+            allow_fail=False,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+        log_path = tmp_path / "session.jsonl"
+        entries = [
+            _make_bash_tool_use_entry("toolu_python_test", wrapper),
+            _make_tool_result_entry(
+                "toolu_python_test",
+                "MALA_EVIDENCE name=python_test exit=1 "
+                f"log={tmp_path / 'mala-3gbpn.3.python_test.log'}",
+                is_error=True,
+            ),
+        ]
+        _create_jsonl_log(log_path, entries)
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("python_test",),
+        )
+        evidence = self._make_gate(tmp_path).parse_validation_evidence_with_spec(
+            log_path, spec
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        assert passed is False
+        assert missing == []
+        assert failed_strict == ["python_test"]
 
 
 class TestEvidenceCheckConfigIntegration:
