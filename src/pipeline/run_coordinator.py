@@ -35,8 +35,10 @@ from src.pipeline.run_validation_state import (
     RunValidationState,
     transition,
 )
+from src.pipeline.trigger_plan import resolve_trigger
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
     from types import FrameType
 
@@ -66,7 +68,8 @@ if TYPE_CHECKING:
         ReviewFinding,
     )
     from src.pipeline.fixer_service import FixerService
-    from src.pipeline.trigger_engine import ResolvedCommand, TriggerEngine
+    from src.pipeline.trigger_engine import TriggerEngine
+    from src.pipeline.trigger_plan import TriggerPlan
 
 
 class _FixerPromptNotSet:
@@ -139,13 +142,14 @@ class TriggerCommandResult:
 
 @dataclass
 class _RunValidationRuntime:
+    validation_config: ValidationConfig
     triggers_config: ValidationTriggersConfig
     dry_run: bool
     interrupt_event: asyncio.Event
     trigger_type: TriggerType | None = None
     trigger_context: dict[str, Any] = field(default_factory=dict)
     trigger_config: BaseTriggerConfig | None = None
-    resolved_commands: list[ResolvedCommand] = field(default_factory=list)
+    resolved_commands: tuple[TriggerPlan, ...] = field(default_factory=tuple)
     trigger_start_time: float = 0.0
     results: list[TriggerCommandResult] = field(default_factory=list)
     current_index: int = 0
@@ -415,7 +419,9 @@ class RunCoordinator:
         Returns:
             TriggerValidationResult with status and details.
         """
+        assert self.config.validation_config is not None
         runtime = _RunValidationRuntime(
+            validation_config=self.config.validation_config,
             triggers_config=triggers_config,
             dry_run=dry_run,
             interrupt_event=interrupt_event,
@@ -487,9 +493,9 @@ class RunCoordinator:
             )
             if trigger_config is None:
                 continue
-            resolved_commands = self.trigger_engine.resolve_commands(
-                trigger_config, trigger_type
-            )
+            resolved_commands = resolve_trigger(
+                runtime.validation_config, trigger_config, trigger_type
+            ).commands
             if self.event_sink is not None:
                 self.event_sink.on_trigger_validation_started(
                     trigger_type.value, [cmd.ref for cmd in resolved_commands]
@@ -848,7 +854,7 @@ class RunCoordinator:
         runtime.trigger_type = None
         runtime.trigger_context = {}
         runtime.trigger_config = None
-        runtime.resolved_commands = []
+        runtime.resolved_commands = ()
         runtime.results = []
         runtime.current_index = 0
         runtime.failed_result = None
@@ -922,7 +928,7 @@ class RunCoordinator:
         self,
         trigger_type: TriggerType,
         trigger_config: BaseTriggerConfig,
-        resolved_commands: list[ResolvedCommand],
+        resolved_commands: tuple[TriggerPlan, ...],
         failed_result: TriggerCommandResult,
         failed_index: int,
         dry_run: bool,
@@ -1118,7 +1124,7 @@ class RunCoordinator:
 
     async def _execute_trigger_commands(
         self,
-        commands: list[ResolvedCommand],
+        commands: Sequence[TriggerPlan],
         *,
         dry_run: bool = False,
     ) -> list[TriggerCommandResult]:
@@ -1184,7 +1190,7 @@ class RunCoordinator:
 
     async def _execute_trigger_commands_interruptible(
         self,
-        commands: list[ResolvedCommand],
+        commands: Sequence[TriggerPlan],
         *,
         trigger_type: TriggerType,
         dry_run: bool = False,

@@ -1229,6 +1229,85 @@ class TestRunEndRunMetadata:
         assert meta.coverage_percent == pytest.approx(75.0)
 
     @pytest.mark.asyncio
+    async def test_run_end_records_validation_metadata_when_remediation_interrupted(
+        self,
+        tmp_path: Path,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        """Interrupted command remediation should still record run validation."""
+        from src.domain.validation.config import (
+            CommandConfig,
+            CommandsConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerCommandRef,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.infra.tools.command_runner import CommandResult
+
+        failing_runner = MagicMock()
+        failing_runner.run_async = AsyncMock(
+            return_value=CommandResult(
+                command="build_cmd",
+                returncode=1,
+                stdout="",
+                stderr="Build failed",
+            )
+        )
+        mock_run_metadata = MagicMock()
+
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.REMEDIATE,
+            max_retries=1,
+            commands=(TriggerCommandRef(ref="build"),),
+            fire_on=FireOn.SUCCESS,
+        )
+        validation_config = ValidationConfig(
+            commands=CommandsConfig(build=CommandConfig(command="build_cmd")),
+            validation_triggers=ValidationTriggersConfig(run_end=trigger_config),
+        )
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix: {failure_output}",
+            validation_config=validation_config,
+        )
+        coordinator = _make_coordinator(
+            config=config,
+            gate_checker=MagicMock(),
+            command_runner=failing_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
+            run_metadata=mock_run_metadata,
+        )
+
+        async def interrupting_fixer(
+            context: Any,  # noqa: ANN401
+            interrupt_event: asyncio.Event,
+        ) -> FixerResult:
+            interrupt_event.set()
+            return FixerResult(success=None, interrupted=True)
+
+        coordinator.fixer_service.run_fixer = interrupting_fixer  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        result = await coordinator.run_trigger_validation(dry_run=False)
+
+        assert result.status == "aborted"
+        mock_run_metadata.record_run_validation.assert_called_once()
+        meta = mock_run_metadata.record_run_validation.call_args[0][0]
+        assert meta.passed is False
+        assert meta.commands_run == ["build"]
+        assert meta.commands_failed == ["build"]
+
+    @pytest.mark.asyncio
     async def test_execution_error_aborts_validation(
         self,
         tmp_path: Path,
