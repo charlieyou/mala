@@ -105,11 +105,15 @@ relies on a bundled `PreToolUse` command hook (`mala-codex-pre-tool-use`)
 plus the bundled `mala-locking` MCP server for dangerous-command blocking,
 lock-ownership enforcement, and `MALA_DISALLOWED_TOOLS` enforcement. Both
 are packaged as a Mala-shipped Codex plugin
-(`plugins/codex/mala-safety/.codex-plugin/`) installed idempotently to
-`~/.codex/plugins/`. Before any issue agent is spawned, mala runs a
-fail-closed runtime self-test that proves both `SessionStart` and
-`PreToolUse` hook handlers are active and trusted; if either handler is
-missing, disabled, untrusted, or stale, the run aborts with a clear error.
+(`plugins/codex/mala-safety/.codex-plugin/`). Mala installs and trusts that
+plugin inside a per-run temporary `CODEX_HOME` seeded from your normal Codex
+auth/config, then passes that `CODEX_HOME` only to the `codex app-server`
+subprocess it launches. Your normal `~/.codex` is not mutated, so ordinary
+Codex CLI sessions do not load Mala's safety hook. Before any issue agent is
+spawned, mala runs a fail-closed runtime self-test that proves both
+`SessionStart` and `PreToolUse` hook handlers are active and trusted; if either
+handler is missing, disabled, untrusted, or stale, the run aborts with a clear
+error.
 
 **Prerequisites:**
 
@@ -136,11 +140,9 @@ missing, disabled, untrusted, or stale, the run aborts with a clear error.
   via `codex login`) — see [Codex docs](https://developers.openai.com/codex/sdk)
   for the current auth flow. Mala's `install_prerequisites()` fails closed
   with `CodexNotInstalledError` when the SDK, runtime, or auth is missing.
-- `~/.codex/plugins/` writable. Mala installs the bundled `mala-safety`
-  plugin (with hook + locking MCP) idempotently on every run.
-- `$CODEX_HOME/config.toml` writable for automatic hook trust. If it is
-  read-only, use the one-time interactive trust fallback documented in
-  [CLI Reference: Codex Prerequisites](docs/cli-reference.md#codex-prerequisites).
+- Your normal `$CODEX_HOME` must be readable enough for mala to detect Codex
+  auth (`auth.json`, keyring config, or auth env vars). Plugin files and hook
+  trust entries are written only to mala's temporary `CODEX_HOME` for the run.
 
 **Defaults under `coder: codex`:**
 

@@ -609,7 +609,8 @@ def _write_codex_plugin_config(
         gate on hook execution). A user-level opt-out leaves hooks
         registered/trusted but not executed, so we always pin it to
         ``true`` before trusting the unattended safety install.
-      * The plugin is enabled in user config: ``[plugins."<id>"] enabled = true``
+      * The plugin is enabled in the active config:
+        ``[plugins."<id>"] enabled = true``
         (per ``codex-rs/core-plugins/src/manager.rs::configured_plugins_from_stack``
         — only ``[plugins."<key>"]`` entries are surfaced as "configured
         plugins" and only those whose ``enabled`` is True are loaded).
@@ -625,9 +626,9 @@ def _write_codex_plugin_config(
     bridge between "plugin tree on disk" and "hook actually loaded"
     (decision #16). I/O failures here raise
     :class:`CodexHookNotActiveError(TRUSTED_HASH_MISMATCH)` so
-    :meth:`install_prerequisites` aborts the run; the documented
-    one-time interactive trust fallback (plan E6) covers users whose
-    ``CODEX_HOME`` is read-only.
+    :meth:`install_prerequisites` aborts the run. The provider calls
+    this helper with a per-run isolated ``CODEX_HOME`` so the writes
+    do not mutate the user's normal Codex config.
 
     The "already correct" short-circuit (when all entries already
     match the desired content) returns without writing. The
@@ -1970,19 +1971,16 @@ class CodexAgentProvider:
         # with a placeholder coder version.
         self._selftest_cache_key: tuple[str, str] | None = None
         # Per-provider isolated ``CODEX_HOME`` populated by
-        # :meth:`install_prerequisites` when the user configures
-        # ``coder_options.codex.mcp_servers``. Codex's plugin tree is
-        # shared per ``CODEX_HOME``; concurrent mala processes with
-        # different MCP configs would otherwise race on the installed
-        # ``.mcp.json`` (the plugin file Codex actually reads at
-        # ``thread_start``). Routing user-MCP runs through a
-        # provider-private CODEX_HOME means each invocation owns its
-        # plugin cache + ``config.toml`` and cannot be silently reverted
-        # by another invocation's installer. ``None`` until
-        # :meth:`install_prerequisites` decides to allocate (it does not
-        # for the default-no-user-MCP case so the no-MCP path keeps
-        # writing into the user's real ``$CODEX_HOME`` — preserving the
-        # existing posture for the common case).
+        # :meth:`install_prerequisites`. Codex's plugin tree and hook
+        # trust state are global to a ``CODEX_HOME``; writing the
+        # bundled ``mala-safety`` plugin into the user's real
+        # ``~/.codex`` makes normal, non-mala Codex sessions discover
+        # the safety hook too. Routing every mala Codex invocation
+        # through a provider-private CODEX_HOME keeps the plugin scoped
+        # to the Codex app-server subprocesses mala launches, while
+        # also preserving the previous user-MCP race fix (each
+        # invocation owns its merged ``.mcp.json`` and ``config.toml``).
+        # ``None`` until :meth:`install_prerequisites` allocates it.
         self._isolated_codex_home: tempfile.TemporaryDirectory[str] | None = None
 
     # ------------------------------------------------------------------
@@ -2060,14 +2058,12 @@ class CodexAgentProvider:
             approval_policy=self._approval_policy,
             sandbox=self._sandbox,
         )
-        # When :meth:`install_prerequisites` allocated a per-provider
-        # isolated ``CODEX_HOME`` (because the user configured
-        # ``coder_options.codex.mcp_servers``), thread that path into
-        # the runtime's per-process env so the spawned ``codex
-        # app-server`` reads the merged plugin tree from the isolated
-        # location instead of the shared user ``$CODEX_HOME``. Without
-        # this overlay the runtime would inherit the user's
-        # ``CODEX_HOME`` and the isolation would be cosmetic.
+        # Thread the per-provider isolated ``CODEX_HOME`` into the
+        # runtime's per-process env so the spawned ``codex app-server``
+        # reads the mala-scoped plugin tree from the isolated location
+        # instead of the user's normal Codex home. Without this overlay
+        # the installation would be isolated on disk but Codex would
+        # still inherit the user's ``CODEX_HOME`` at runtime.
         if self._isolated_codex_home is not None:
             builder.with_env(
                 extra={"CODEX_HOME": str(Path(self._isolated_codex_home.name))}
@@ -2089,17 +2085,19 @@ class CodexAgentProvider:
         seed it with the user's auth credential.
 
         The plugin tree + ``config.toml`` Codex reads at
-        ``thread_start`` live under ``$CODEX_HOME``; if the user has
-        configured ``coder_options.codex.mcp_servers``, a concurrent
-        mala invocation with a different MCP config running through the
-        same shared ``CODEX_HOME`` would silently overwrite the user's
-        merged ``.mcp.json`` with its own (potentially bundled-only)
-        version, so Codex would launch without the user's servers —
-        violating G3 / AC-3 even though *this* run wired the merge
-        correctly. Allocating a per-provider ``TemporaryDirectory``
-        whose path is fed to the spawned Codex via
-        :meth:`runtime_builder` removes the shared-state race entirely:
-        no other process can name this directory.
+        ``thread_start`` live under ``$CODEX_HOME``. Installing Mala's
+        safety plugin into the user's real Codex home makes it visible
+        to ordinary Codex CLI sessions, where ``MALA_AGENT_ID`` /
+        ``MALA_LOCK_DIR`` are absent and the hook fails closed on
+        edits. Allocating a per-provider ``TemporaryDirectory`` whose
+        path is fed to the spawned Codex via :meth:`runtime_builder`
+        scopes the plugin and trust entries to this mala run only.
+
+        The same isolation also removes the user-MCP race the prior
+        design fixed only for ``coder_options.codex.mcp_servers``: a
+        concurrent mala invocation with a different MCP config cannot
+        overwrite this invocation's merged ``.mcp.json`` because no
+        other process can name this directory.
 
         Auth.json is symlinked from the user's real ``$CODEX_HOME`` so
         Codex's auth manager finds the credential at the same logical
@@ -2208,14 +2206,14 @@ class CodexAgentProvider:
              runs never trip an interactive ``Sign in with ChatGPT``
              prompt.
           4. Run :class:`CodexPluginInstaller` to copy the bundled plugin
-             tree into Codex's PluginStore cache at
-             ``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/.codex-plugin/``
+             tree into a per-run isolated Codex home at
+             ``<isolated CODEX_HOME>/plugins/cache/<marketplace>/<plugin>/<version>/.codex-plugin/``
              (per ``codex-rs/core-plugins/src/store.rs::PluginStore.plugin_root``).
           5. Verify the ``mala-codex-pre-tool-use`` console script is on
              ``PATH`` (raise
              :class:`CodexHookNotActiveError(SCRIPT_MISSING)`).
-          6. Auto-write the five Codex-config preconditions to
-             ``$CODEX_HOME/config.toml`` (decision #16):
+          6. Auto-write the five Codex-config preconditions to the
+             isolated ``CODEX_HOME/config.toml`` (decision #16):
              ``[features] plugins = true`` to override an opt-out
              setting that would short-circuit plugin loading entirely
              (``plugins_for_config_with_force_reload`` early-returns
@@ -2318,28 +2316,15 @@ class CodexAgentProvider:
             plugin_root_dir,
         )
 
-        # Choose the active ``CODEX_HOME`` for the rest of install:
-        #   * If the user configured ``coder_options.codex.mcp_servers``,
-        #     allocate a provider-private isolated ``CODEX_HOME`` so a
-        #     concurrent mala invocation cannot silently overwrite the
-        #     merged ``.mcp.json`` (or ``config.toml``) the spawned
-        #     Codex will read at ``thread_start``. The isolated path is
-        #     also threaded into the runtime env via
-        #     :meth:`runtime_builder` so the spawned subprocess actually
-        #     reads from it.
-        #   * Otherwise, keep using the user's real ``CODEX_HOME``: the
-        #     no-user-MCP installer payload is byte-identical across
-        #     concurrent runs (the ``mcp_json_override`` reduces to
-        #     bundled-only and the trusted_hash is computed from
-        #     hook-identity bytes alone), so the existing posture is
-        #     race-free for that path.
+        # Choose the active ``CODEX_HOME`` for the rest of install.
+        # Always allocate a provider-private isolated home so the
+        # bundled plugin + hook trust entries are visible only to Codex
+        # app-server subprocesses launched by this mala provider, never
+        # to the user's ordinary Codex CLI sessions. The isolated path
+        # is also threaded into runtime env via :meth:`runtime_builder`.
         user_codex_home = _resolve_codex_home()
-        if self._mcp_servers:
-            codex_home = self._ensure_isolated_codex_home(user_codex_home)
-            install_target = plugin_root_dir(codex_home) / PLUGIN_DIRNAME
-        else:
-            codex_home = user_codex_home
-            install_target = None  # installer falls back to default_plugin_target_dir
+        codex_home = self._ensure_isolated_codex_home(user_codex_home)
+        install_target = plugin_root_dir(codex_home) / PLUGIN_DIRNAME
 
         # Build the merged ``.mcp.json`` payload (Phase G3 / AC-3) and
         # hand it to the installer as ``mcp_json_override`` so the
@@ -2353,9 +2338,11 @@ class CodexAgentProvider:
         # installer would silently revert Process A's merged file to a
         # bundled-only payload because B's own user config builds a
         # different override; with isolation, B writes to its own
-        # ``CODEX_HOME`` and A's plugin tree is untouched (plan ``L954``:
-        # bundled is mandatory, never replaced; non-conflicting user
-        # keys pass through).
+        # ``CODEX_HOME`` and A's plugin tree is untouched. The same
+        # isolation now applies to the default bundled-only path, so a
+        # mala run never mutates the user's normal Codex plugin state
+        # (plan ``L954``: bundled is mandatory, never replaced;
+        # non-conflicting user keys pass through).
         mcp_json_override = _build_merged_codex_plugin_mcp_json(self._mcp_servers)
         try:
             install_result = CodexPluginInstaller(
@@ -2380,8 +2367,8 @@ class CodexAgentProvider:
             )
 
         # 6. Auto-write the five config-side preconditions to
-        # ``<codex_home>/config.toml`` (decision #16). Codex requires
-        # ALL FIVE for the hook to fire: ``[features] plugins = true``
+        # ``<isolated codex_home>/config.toml`` (decision #16). Codex
+        # requires ALL FIVE for the hook to fire: ``[features] plugins = true``
         # to override an opt-out user config that early-returns from
         # ``plugins_for_config_with_force_reload``;
         # ``[features] plugin_hooks = true`` to enable plugin-bundled

@@ -247,9 +247,11 @@ modes drove the design:
   unattended tool execution.
   See [architecture.md §10a](architecture.md#10a-codex-safety-model--bundled-hook--plugin-self-test).
 - **"User skipped the trust step."** Codex's hook framework requires
-  `trusted_hash` matching for the hook to fire. `CodexPluginInstaller`
-  writes the expected hash into Codex's `HookStateToml` automatically so
-  there is no manual trust step. If a future Codex UX change requires
+  `trusted_hash` matching for the hook to fire. The provider creates a
+  temporary `CODEX_HOME` for mala-launched Codex sessions and
+  `CodexPluginInstaller` writes the expected hash into that isolated home's
+  hook state automatically, so there is no manual trust step and no mutation
+  of the user's normal `~/.codex`. If a future Codex UX change requires
   user-interactive trust acceptance, the self-test catches the resulting
   silent-dormant state and surfaces a `TRUSTED_HASH_MISMATCH` reason.
 

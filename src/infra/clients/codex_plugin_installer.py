@@ -7,6 +7,9 @@ Codex's PluginStore cache at
 so Codex's loader discovers the plugin on every run via its standard
 discovery path
 (``codex-rs/core-plugins/src/store.rs::PluginStore.active_plugin_root``).
+Production mala Codex runs pass an explicit target under a provider-private
+temporary ``CODEX_HOME``; the ambient ``~/.codex`` default is kept for the
+low-level installer contract and tests, not for normal mala orchestration.
 The installer is concurrent-safe (per-file write-temp-then-rename) and
 idempotent (SHA-256 content comparison per file).
 

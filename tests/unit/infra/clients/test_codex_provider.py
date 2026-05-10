@@ -156,6 +156,18 @@ def _noop_probe(repo: Path, env: dict[str, str], plugin_hash: str) -> None:
     return None
 
 
+def _codex_plugin_dir(codex_home: Path) -> Path:
+    return (
+        codex_home
+        / "plugins"
+        / "cache"
+        / "local"
+        / "mala-safety"
+        / "local"
+        / ".codex-plugin"
+    )
+
+
 def _install_fake_sdk(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -469,16 +481,9 @@ def test_install_prerequisites_accepts_auth_env_var(
     provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
-    plugin_dir = (
-        codex_home
-        / "plugins"
-        / "cache"
-        / "local"
-        / "mala-safety"
-        / "local"
-        / ".codex-plugin"
-    )
+    plugin_dir = _codex_plugin_dir(_provider_isolated_codex_home(provider))
     assert (plugin_dir / "plugin.json").is_file()
+    assert not (_codex_plugin_dir(codex_home) / "plugin.json").exists()
 
 
 @pytest.mark.unit
@@ -510,16 +515,12 @@ def test_install_prerequisites_accepts_keyring_credentials_store(
     provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
-    plugin_dir = (
-        codex_home
-        / "plugins"
-        / "cache"
-        / "local"
-        / "mala-safety"
-        / "local"
-        / ".codex-plugin"
-    )
+    isolated_home = _provider_isolated_codex_home(provider)
+    plugin_dir = _codex_plugin_dir(isolated_home)
     assert (plugin_dir / "plugin.json").is_file()
+    isolated_config = (isolated_home / "config.toml").read_text(encoding="utf-8")
+    assert 'cli_auth_credentials_store = "keyring"' in isolated_config
+    assert not (_codex_plugin_dir(codex_home) / "plugin.json").exists()
 
 
 @pytest.mark.unit
@@ -593,7 +594,7 @@ def test_install_prerequisites_accepts_sdk_bundled_codex_runtime(
     no external ``codex`` binary fails install_prerequisites even though
     a real Codex session would actually run.
     """
-    codex_home, bin_dir = fake_codex_env
+    _codex_home, bin_dir = fake_codex_env
     _install_fake_sdk(monkeypatch, present=True, codex_cli_bin_present=True)
     monkeypatch.delenv("CODEX_BINARY", raising=False)
     # mala-codex-pre-tool-use must be on PATH for the install to succeed,
@@ -610,17 +611,12 @@ def test_install_prerequisites_accepts_sdk_bundled_codex_runtime(
     # Plugin tree must be installed and config.toml must carry the
     # trusted_hash entry — the happy path completed end-to-end without
     # an external codex binary.
-    plugin_dir = (
-        codex_home
-        / "plugins"
-        / "cache"
-        / "local"
-        / "mala-safety"
-        / "local"
-        / ".codex-plugin"
-    )
+    isolated_home = _provider_isolated_codex_home(provider)
+    plugin_dir = _codex_plugin_dir(isolated_home)
     assert (plugin_dir / "plugin.json").is_file()
-    assert "trusted_hash" in (codex_home / "config.toml").read_text(encoding="utf-8")
+    assert "trusted_hash" in (isolated_home / "config.toml").read_text(
+        encoding="utf-8"
+    )
 
 
 @pytest.mark.unit
@@ -637,7 +633,7 @@ def test_install_prerequisites_accepts_codex_binary_env_override(
     points anywhere, the SDK accepts and validates the path itself —
     the provider should not gate on independent PATH / package checks.
     """
-    codex_home, bin_dir = fake_codex_env
+    _codex_home, bin_dir = fake_codex_env
     _install_fake_sdk(monkeypatch, present=True, codex_cli_bin_present=False)
     monkeypatch.setenv("CODEX_BINARY", str(tmp_path / "anywhere" / "codex"))
     _make_executable(bin_dir / "mala-codex-pre-tool-use")
@@ -646,15 +642,7 @@ def test_install_prerequisites_accepts_codex_binary_env_override(
     provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
-    plugin_dir = (
-        codex_home
-        / "plugins"
-        / "cache"
-        / "local"
-        / "mala-safety"
-        / "local"
-        / ".codex-plugin"
-    )
+    plugin_dir = _codex_plugin_dir(_provider_isolated_codex_home(provider))
     assert (plugin_dir / "plugin.json").is_file()
 
 
@@ -678,35 +666,35 @@ def test_install_prerequisites_raises_script_missing(
 
 
 @pytest.mark.unit
-def test_install_prerequisites_raises_trusted_hash_mismatch_on_unwritable_config(
+def test_install_prerequisites_does_not_mutate_unwritable_user_config(
     monkeypatch: pytest.MonkeyPatch,
     fake_codex_env: tuple[Path, Path],
     fake_mcp_factory: Callable[..., dict[str, object]],
     tmp_path: Path,
 ) -> None:
-    """Unwritable ``$CODEX_HOME/config.toml`` → ``TRUSTED_HASH_MISMATCH``.
+    """A bad user ``config.toml`` path does not block mala's isolated config.
 
-    Auto-trust is the bridge that lets Codex load the bundled hook;
-    when we cannot persist ``trusted_hash``, Codex marks the hook
-    Untrusted and silently skips it on PreToolUse
-    (``codex-rs/hooks/src/engine/discovery.rs::hook_trust_status``).
-    The provider must therefore fail-closed instead of caching success.
-
-    Drives the failure by making ``config.toml`` itself a directory so
-    every ``write_text`` call raises ``IsADirectoryError`` — the same
-    surface a read-only ``CODEX_HOME`` would expose to ``write_text``.
+    The plugin/trust writes now happen under a per-provider temporary
+    ``CODEX_HOME``. A normal Codex config that is read-only, managed by
+    dotfiles, or even accidentally a directory must not be mutated by a
+    mala run; the isolated copy is where auto-trust is written.
     """
     codex_home, bin_dir = fake_codex_env
     _install_fake_sdk(monkeypatch, present=True)
     _make_executable(bin_dir / "codex")
     _make_executable(bin_dir / "mala-codex-pre-tool-use")
-    # Place a directory at the config.toml path so write_text fails.
+    # Place a directory at the user's config.toml path. The isolated
+    # home should skip copying it and write its own config.toml.
     (codex_home / "config.toml").mkdir()
 
-    provider = CodexAgentProvider()
-    with pytest.raises(CodexHookNotActiveError) as excinfo:
-        provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
-    assert excinfo.value.reason is CodexHookNotActiveReason.TRUSTED_HASH_MISMATCH
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    isolated_home = _provider_isolated_codex_home(provider)
+    assert "trusted_hash" in (isolated_home / "config.toml").read_text(
+        encoding="utf-8"
+    )
+    assert (codex_home / "config.toml").is_dir()
 
 
 @pytest.mark.unit
@@ -729,18 +717,12 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
-    plugin_dir = (
-        codex_home
-        / "plugins"
-        / "cache"
-        / "local"
-        / "mala-safety"
-        / "local"
-        / ".codex-plugin"
-    )
+    isolated_home = _provider_isolated_codex_home(provider)
+    plugin_dir = _codex_plugin_dir(isolated_home)
     assert (plugin_dir / "plugin.json").is_file()
     assert (plugin_dir / "hooks.json").is_file()
     assert (plugin_dir / ".mcp.json").is_file()
+    assert not (_codex_plugin_dir(codex_home) / "plugin.json").exists()
     import json as _json
 
     mcp_payload = _json.loads((plugin_dir / ".mcp.json").read_text(encoding="utf-8"))
@@ -751,7 +733,7 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
         "MALA_REPO_NAMESPACE",
     ]
 
-    config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
+    config_toml = (isolated_home / "config.toml").read_text(encoding="utf-8")
     # Codex requires ALL FIVE preconditions for the bundled hook to fire:
     # (a) ``[features] plugins = true`` per ``codex-rs/features/src/lib.rs:951``
     #     (Feature::Plugins defaults to True but a user can opt out with
@@ -790,14 +772,15 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
 
 def _provider_isolated_codex_home(provider: CodexAgentProvider) -> Path:
     """Return the per-provider isolated ``CODEX_HOME`` allocated by
-    :meth:`CodexAgentProvider.install_prerequisites` when the user
-    configured MCP servers. Tests use this to read the actual install
-    target instead of guessing the user's real ``$CODEX_HOME``.
+    :meth:`CodexAgentProvider.install_prerequisites`.
+
+    Tests use this to read the actual install target instead of
+    guessing the user's real ``$CODEX_HOME``; mala-scoped Codex runs
+    must never install the safety plugin into the user's normal home.
     """
     handle = provider._isolated_codex_home
     assert handle is not None, (
-        "Provider did not allocate an isolated CODEX_HOME — expected when "
-        "``coder_options.codex.mcp_servers`` is non-empty."
+        "Provider did not allocate an isolated CODEX_HOME for a mala Codex run."
     )
     return Path(handle.name)
 
@@ -816,8 +799,7 @@ def test_install_prerequisites_renders_user_mcp_servers_into_installed_mcp_json(
     bundled launcher (bundled is mandatory, never replaced).
 
     The installed file lives under the provider's *isolated*
-    ``CODEX_HOME`` (allocated lazily because the user has MCP servers
-    configured) — that home is what
+    ``CODEX_HOME`` — that home is what
     :meth:`CodexAgentProvider.runtime_builder` plumbs into the spawned
     Codex's env, so it is the directory Codex actually reads at
     ``thread_start``.
@@ -851,15 +833,7 @@ def test_install_prerequisites_renders_user_mcp_servers_into_installed_mcp_json(
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
     isolated_home = _provider_isolated_codex_home(provider)
-    plugin_dir = (
-        isolated_home
-        / "plugins"
-        / "cache"
-        / "local"
-        / "mala-safety"
-        / "local"
-        / ".codex-plugin"
-    )
+    plugin_dir = _codex_plugin_dir(isolated_home)
     payload = _json.loads((plugin_dir / ".mcp.json").read_text(encoding="utf-8"))
     servers = payload["mcpServers"]
     # Non-clashing user entry passes through unchanged.
@@ -878,9 +852,9 @@ def test_isolated_codex_home_preserves_keyring_credentials_store_opt_in(
     fake_mcp_factory: Callable[..., dict[str, object]],
     tmp_path: Path,
 ) -> None:
-    """Regression: keyring-backed users with user MCP servers configured
-    must see ``cli_auth_credentials_store = "keyring"`` carried into the
-    isolated ``CODEX_HOME``'s ``config.toml``.
+    """Regression: keyring-backed users must see
+    ``cli_auth_credentials_store = "keyring"`` carried into the isolated
+    ``CODEX_HOME``'s ``config.toml``.
 
     Codex's keyring backend deletes ``auth.json`` after a successful
     save, so a keyring user has neither the file nor any auth env var
@@ -902,15 +876,7 @@ def test_isolated_codex_home_preserves_keyring_credentials_store_opt_in(
     _make_executable(bin_dir / "codex")
     _make_executable(bin_dir / "mala-codex-pre-tool-use")
 
-    provider = CodexAgentProvider(
-        mcp_servers=(
-            (
-                "custom-server",
-                {"command": "/usr/bin/custom-mcp", "args": [], "env": {}},
-            ),
-        ),
-        selftest_probe=_noop_probe,
-    )
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
     isolated_home = _provider_isolated_codex_home(provider)
@@ -947,15 +913,7 @@ def test_isolated_codex_home_seed_does_not_inherit_read_only_config_mode(
     _make_executable(bin_dir / "codex")
     _make_executable(bin_dir / "mala-codex-pre-tool-use")
 
-    provider = CodexAgentProvider(
-        mcp_servers=(
-            (
-                "custom-server",
-                {"command": "/usr/bin/custom-mcp", "args": [], "env": {}},
-            ),
-        ),
-        selftest_probe=_noop_probe,
-    )
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
     try:
         provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
     finally:
@@ -982,22 +940,14 @@ def test_install_prerequisites_threads_isolated_codex_home_into_runtime_env(
     runtime env overlay; without that overlay, Codex would inherit the
     user's real ``CODEX_HOME`` and read the wrong (shared) plugin tree.
 
-    Pins the runtime side of the cross-process race fix.
+    Pins the runtime side of the mala-scoped plugin install.
     """
     _codex_home, bin_dir = fake_codex_env
     _install_fake_sdk(monkeypatch, present=True)
     _make_executable(bin_dir / "codex")
     _make_executable(bin_dir / "mala-codex-pre-tool-use")
 
-    provider = CodexAgentProvider(
-        mcp_servers=(
-            (
-                "custom-server",
-                {"command": "/usr/bin/custom-mcp", "args": [], "env": {}},
-            ),
-        ),
-        selftest_probe=_noop_probe,
-    )
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
     isolated_home = _provider_isolated_codex_home(provider)
@@ -1017,8 +967,8 @@ def test_concurrent_install_with_different_mcp_configs_does_not_collide(
     tmp_path: Path,
 ) -> None:
     """Regression: two providers with *different* user MCP configs
-    sharing the user's real ``CODEX_HOME`` MUST NOT trample each
-    other's installed ``.mcp.json``.
+    that share the user's real ``CODEX_HOME`` MUST NOT trample each
+    other's installed ``.mcp.json`` or mutate the user home.
 
     Models the cross-process race the prior shared-CODEX_HOME design
     exposed: Process A (with ``custom-server``) installs; Process B
@@ -1030,8 +980,9 @@ def test_concurrent_install_with_different_mcp_configs_does_not_collide(
 
     Asserts:
       * Provider A's isolated home carries A's ``custom-server``.
-      * Provider B's CODEX_HOME (the user's real home) carries no
-        ``custom-server`` — B never saw it and never wrote it.
+      * Provider B's isolated home carries no ``custom-server`` — B
+        never saw it and never wrote it.
+      * The user's real CODEX_HOME has no mala-safety plugin tree.
       * The two install targets are distinct paths.
     """
     import json as _json
@@ -1058,30 +1009,14 @@ def test_concurrent_install_with_different_mcp_configs_does_not_collide(
     provider_b.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
     isolated_a = _provider_isolated_codex_home(provider_a)
-    plugin_a_mcp = (
-        isolated_a
-        / "plugins"
-        / "cache"
-        / "local"
-        / "mala-safety"
-        / "local"
-        / ".codex-plugin"
-        / ".mcp.json"
-    )
-    plugin_b_mcp = (
-        user_codex_home
-        / "plugins"
-        / "cache"
-        / "local"
-        / "mala-safety"
-        / "local"
-        / ".codex-plugin"
-        / ".mcp.json"
-    )
+    isolated_b = _provider_isolated_codex_home(provider_b)
+    plugin_a_mcp = _codex_plugin_dir(isolated_a) / ".mcp.json"
+    plugin_b_mcp = _codex_plugin_dir(isolated_b) / ".mcp.json"
     # The two install targets are distinct paths — that is the heart
     # of the race fix.
     assert plugin_a_mcp != plugin_b_mcp
-    assert provider_b._isolated_codex_home is None
+    assert isolated_a != isolated_b
+    assert not (_codex_plugin_dir(user_codex_home) / ".mcp.json").exists()
 
     payload_a = _json.loads(plugin_a_mcp.read_text(encoding="utf-8"))
     payload_b = _json.loads(plugin_b_mcp.read_text(encoding="utf-8"))
@@ -1166,12 +1101,16 @@ def test_install_prerequisites_preserves_existing_features_block(
     provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
-    config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
+    isolated_home = _provider_isolated_codex_home(provider)
+    config_toml = (isolated_home / "config.toml").read_text(encoding="utf-8")
     # All four keys must coexist inside [features] after the write.
     assert "plugins = true" in config_toml
     assert "remote_plugin = false" in config_toml
     assert "plugin_hooks = true" in config_toml
     assert "hooks = true" in config_toml
+    assert (codex_home / "config.toml").read_text(encoding="utf-8") == (
+        "[features]\nplugins = true\nremote_plugin = false\n"
+    )
 
 
 @pytest.mark.unit
@@ -1196,9 +1135,14 @@ def test_install_prerequisites_overwrites_disabled_plugin_hooks(
     provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
-    config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
+    config_toml = (
+        _provider_isolated_codex_home(provider) / "config.toml"
+    ).read_text(encoding="utf-8")
     assert "plugin_hooks = true" in config_toml
     assert "plugin_hooks = false" not in config_toml
+    assert (codex_home / "config.toml").read_text(encoding="utf-8") == (
+        "[features]\nplugin_hooks = false\n"
+    )
 
 
 @pytest.mark.unit
@@ -1230,13 +1174,18 @@ def test_install_prerequisites_overwrites_user_plugins_opt_out(
     provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
-    config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
+    config_toml = (
+        _provider_isolated_codex_home(provider) / "config.toml"
+    ).read_text(encoding="utf-8")
     assert "plugins = true" in config_toml
     assert "plugins = false" not in config_toml
     # The other hook-loading gates must also have been added inside the
     # same block.
     assert "plugin_hooks = true" in config_toml
     assert "hooks = true" in config_toml
+    assert (codex_home / "config.toml").read_text(encoding="utf-8") == (
+        "[features]\nplugins = false\n"
+    )
 
 
 @pytest.mark.unit
@@ -1264,11 +1213,16 @@ def test_install_prerequisites_overwrites_disabled_global_hooks(
     provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
-    config_toml = (codex_home / "config.toml").read_text(encoding="utf-8")
+    config_toml = (
+        _provider_isolated_codex_home(provider) / "config.toml"
+    ).read_text(encoding="utf-8")
     assert "hooks = true" in config_toml
     assert "hooks = false" not in config_toml
     assert "plugins = true" in config_toml
     assert "plugin_hooks = true" in config_toml
+    assert (codex_home / "config.toml").read_text(encoding="utf-8") == (
+        "[features]\nhooks = false\nplugins = false\nplugin_hooks = false\n"
+    )
 
 
 @pytest.mark.unit
@@ -2799,26 +2753,20 @@ def test_install_prerequisites_reinstall_replaces_stale_plugin(
     _make_executable(bin_dir / "codex")
     _make_executable(bin_dir / "mala-codex-pre-tool-use")
 
-    plugin_dir = (
-        codex_home
-        / "plugins"
-        / "cache"
-        / "local"
-        / "mala-safety"
-        / "local"
-        / ".codex-plugin"
-    )
+    # Focus is the installer's stale-replace behavior; bypass the probe.
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
+    isolated_home = provider._ensure_isolated_codex_home(codex_home)
+    plugin_dir = _codex_plugin_dir(isolated_home)
     plugin_dir.mkdir(parents=True)
     (plugin_dir / "plugin.json").write_text("// stale\n", encoding="utf-8")
     (plugin_dir / "hooks.json").write_text("// stale\n", encoding="utf-8")
     (plugin_dir / ".mcp.json").write_text("// stale\n", encoding="utf-8")
 
-    # Focus is the installer's stale-replace behavior; bypass the probe.
-    provider = CodexAgentProvider(selftest_probe=_noop_probe)
     # First call replaces stale content.
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
     fresh_bytes = (plugin_dir / "plugin.json").read_bytes()
     assert fresh_bytes != b"// stale\n"
+    assert not (_codex_plugin_dir(codex_home) / "plugin.json").exists()
 
     # Second call short-circuits via the in-memory cache; the on-disk
     # bytes do not change.

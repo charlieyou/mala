@@ -786,9 +786,12 @@ three files:
   same module).
 
 `CodexPluginInstaller` performs an idempotent straight-copy of the bundled
-tree into Codex's user-plugin directory (`~/.codex/plugins/`) and writes
-the expected `trusted_hash` into Codex's `HookStateToml` so Codex
-auto-trusts the hook on next launch.
+tree into a provider-private temporary `CODEX_HOME` plugin cache. The provider
+seeds that temporary home from the user's normal Codex auth/config, writes the
+expected `trusted_hash` into the temporary `config.toml`, and passes that
+`CODEX_HOME` only to mala-launched `codex app-server` subprocesses. Normal
+Codex CLI sessions keep using the user's real `~/.codex` and do not discover
+Mala's safety hook.
 
 **The fail-closed safety invariant.**
 `CodexAgentProvider.install_prerequisites()` runs the same shape of
@@ -797,8 +800,9 @@ fail-closed gate as the Amp provider before any issue agent is spawned:
 1. Probe SDK (`importlib.util.find_spec("codex_app_server")`), runtime
    (`shutil.which("codex")`), and Codex auth — raise
    `CodexNotInstalledError` with actionable remediation on any miss.
-2. Copy the bundled plugin tree via write-temp-then-rename; verify content
-   hashes match the bundled copies; write the trusted-hash entry.
+2. Allocate the isolated `CODEX_HOME`; copy the bundled plugin tree via
+   write-temp-then-rename; verify content hashes match the bundled copies;
+   write the trusted-hash entry into the isolated `config.toml`.
 3. Spawn a self-test Codex turn that drives Codex's real hook dispatch:
    `SessionStart` fires first, then the test prompt nudges a real tool call
    so `PreToolUse` fires. The hook writes atomic per-event marker files
