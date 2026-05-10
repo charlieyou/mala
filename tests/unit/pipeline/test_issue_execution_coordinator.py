@@ -4,16 +4,22 @@ These tests verify the coordinator's loop logic without SDK dependencies.
 """
 
 import asyncio
+import ast
+import inspect
+import textwrap
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from src.core.models import OrderPreference, PeriodicValidationConfig
+import src.pipeline.issue_execution_coordinator as coordinator_module
 from src.pipeline.issue_execution_coordinator import (
     AbortResult,
     CoordinatorConfig,
     IssueExecutionCoordinator,
 )
+from src.pipeline.work_queue import PollResult, WorkQueueConfig, WorkQueueSnapshot
 
 
 class MockIssueProvider:
@@ -72,6 +78,9 @@ class MockEventSink:
 
     def on_tasks_aborting(self, count: int, reason: str) -> None:
         self.events.append(("tasks_aborting", (count, reason)))
+
+    def on_watch_idle(self, wait_seconds: float, issues_blocked: int | None) -> None:
+        self.events.append(("watch_idle", (wait_seconds, issues_blocked)))
 
 
 class TestIssueExecutionCoordinator:
@@ -162,6 +171,95 @@ class TestRunLoop:
     @pytest.fixture
     def event_sink(self) -> MockEventSink:
         return MockEventSink()
+
+    def test_run_loop_body_does_not_sleep_directly(self) -> None:
+        """Polling waits live behind WorkQueue/PollStrategy effects."""
+        source = textwrap.dedent(inspect.getsource(IssueExecutionCoordinator.run_loop))
+        tree = ast.parse(source)
+        calls = [node.func for node in ast.walk(tree) if isinstance(node, ast.Call)]
+
+        for func in calls:
+            if not isinstance(func, ast.Attribute):
+                continue
+            assert func.attr != "sleep"
+
+    @pytest.mark.asyncio
+    async def test_run_loop_polls_through_work_queue(
+        self, event_sink: MockEventSink, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """run_loop gets ready work from WorkQueue instead of provider polling."""
+
+        class FakeWorkQueue:
+            polls = 0
+
+            def __init__(
+                self, _beads: object, config: WorkQueueConfig, _strategy: object
+            ) -> None:
+                self.config = config
+
+            def snapshot(self, **kwargs: object) -> WorkQueueSnapshot:
+                return WorkQueueSnapshot(
+                    active_issue_ids=frozenset(
+                        cast("set[str]", kwargs["active_issue_ids"])
+                    ),
+                    completed_issue_ids=frozenset(
+                        cast("set[str]", kwargs["completed_issue_ids"])
+                    ),
+                    failed_issue_ids=frozenset(
+                        cast("set[str]", kwargs["failed_issue_ids"])
+                    ),
+                    completed_count=cast("int", kwargs["completed_count"]),
+                    last_validation_at=cast("int", kwargs["last_validation_at"]),
+                    next_validation_threshold=cast(
+                        "int | None", kwargs["next_validation_threshold"]
+                    ),
+                    consecutive_poll_failures=cast(
+                        "int", kwargs["consecutive_poll_failures"]
+                    ),
+                    watch_enabled=cast("bool", kwargs["watch_enabled"]),
+                    startup_no_ready_check_pending=cast(
+                        "bool", kwargs["startup_no_ready_check_pending"]
+                    ),
+                    abort_requested=cast("bool", kwargs["abort_requested"]),
+                    interrupt_requested=cast("bool", kwargs["interrupt_requested"]),
+                    is_draining=cast("bool", kwargs["is_draining"]),
+                    max_agents=self.config.max_agents,
+                    max_issues=self.config.max_issues,
+                ).with_ready(cast("list[str]", kwargs["ready_issue_ids"]))
+
+            async def poll(self, snapshot: WorkQueueSnapshot) -> PollResult:
+                type(self).polls += 1
+                return PollResult(
+                    snapshot=snapshot.with_ready(["issue-from-queue"]),
+                    poll_attempted=True,
+                )
+
+        beads = MockIssueProvider(ready_issues=[["issue-from-provider"]])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            config=CoordinatorConfig(max_issues=1),
+        )
+        monkeypatch.setattr(coordinator_module, "WorkQueue", FakeWorkQueue)
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None] | None:
+            async def work() -> None:
+                pass
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+
+        result = await coord.run_loop(
+            spawn_callback,
+            finalize_callback,
+            AsyncMock(),
+        )
+
+        assert FakeWorkQueue.polls == 1
+        assert result.issues_spawned == 1
+        assert coord.completed_ids == {"issue-from-queue"}
 
     @pytest.mark.asyncio
     async def test_exits_when_no_ready_issues(self, event_sink: MockEventSink) -> None:
