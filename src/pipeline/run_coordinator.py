@@ -768,19 +768,23 @@ class RunCoordinator:
         failure = context.active_failure or context.last_failure
         if failure is None:
             return
-        mode = self._event_failure_mode(runtime)
+        mode = self._event_failure_mode(runtime, failure)
         self.event_sink.on_trigger_validation_failed(
             runtime.trigger_type.value, failure.ref, mode
         )
 
-    def _event_failure_mode(self, runtime: _RunValidationRuntime) -> str:
+    def _event_failure_mode(
+        self,
+        runtime: _RunValidationRuntime,
+        failure: FailureRecord,
+    ) -> str:
         from src.domain.validation.config import FailureMode
 
         if runtime.trigger_config is None:
             return "abort"
         code_review_config = runtime.trigger_config.code_review
         if (
-            runtime.failed_result is None
+            failure.ref == "code_review_findings"
             and code_review_config is not None
             and code_review_config.enabled
         ):
@@ -826,6 +830,8 @@ class RunCoordinator:
         prefix = "Code review execution failed"
         if error.startswith(prefix):
             error = error.split(": ", 1)[1] if ": " in error else error
+        elif "interrupted by SIGINT" in error:
+            error = "SIGINT"
         self.event_sink.on_trigger_code_review_error(runtime.trigger_type.value, error)
 
     def _finish_current_trigger_if_passing(

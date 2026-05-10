@@ -3402,6 +3402,186 @@ class TestTriggerCodeReviewEvents:
             "trigger_code_review_error"
         ]
 
+    @pytest.mark.asyncio
+    async def test_command_continue_then_code_review_abort_reports_review_mode(
+        self,
+        tmp_path: Path,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            CommandConfig,
+            CommandsConfig,
+            FailureMode,
+            RunEndTriggerConfig,
+            TriggerCommandRef,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.infra.tools.command_runner import CommandResult
+        from src.pipeline.cumulative_review_runner import (
+            CumulativeReviewResult,
+            ReviewFinding,
+        )
+
+        failing_runner = FakeCommandRunner()
+        failing_runner.responses[("lint_cmd",)] = CommandResult(
+            command="lint_cmd", returncode=1, stdout="", stderr="Lint failed"
+        )
+        mock_review_runner = MagicMock()
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="success",
+                findings=(
+                    ReviewFinding(
+                        file="test.py",
+                        line_start=1,
+                        line_end=1,
+                        priority=0,
+                        title="Blocking",
+                        body="Details",
+                        reviewer="test",
+                    ),
+                ),
+                new_baseline_commit="abc123",
+            )
+        )
+        mock_event_sink = MagicMock()
+
+        code_review_config = CodeReviewConfig(
+            enabled=True,
+            finding_threshold="P1",
+            failure_mode=FailureMode.ABORT,
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.CONTINUE,
+            commands=(TriggerCommandRef(ref="lint"),),
+            code_review=code_review_config,
+        )
+        validation_config = ValidationConfig(
+            commands=CommandsConfig(lint=CommandConfig(command="lint_cmd")),
+            validation_triggers=ValidationTriggersConfig(run_end=trigger_config),
+        )
+        coordinator = _make_coordinator(
+            config=RunCoordinatorConfig(
+                repo_path=tmp_path,
+                timeout_seconds=60,
+                fixer_prompt="Fix: {failure_output}",
+                validation_config=validation_config,
+            ),
+            gate_checker=MagicMock(),
+            command_runner=failing_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=MagicMock(),
+            event_sink=mock_event_sink,
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        result = await coordinator.run_trigger_validation(dry_run=False)
+
+        assert result.status == "aborted"
+        mock_event_sink.on_trigger_validation_failed.assert_any_call(
+            "run_end", "code_review_findings", "abort"
+        )
+
+    @pytest.mark.asyncio
+    async def test_review_remediation_exhaustion_continues_queued_triggers(
+        self,
+        tmp_path: Path,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+    ) -> None:
+        from src.domain.validation.config import (
+            CodeReviewConfig,
+            FailureMode,
+            RunEndTriggerConfig,
+            SessionEndTriggerConfig,
+            TriggerType,
+            ValidationConfig,
+            ValidationTriggersConfig,
+        )
+        from src.pipeline.cumulative_review_runner import (
+            CumulativeReviewResult,
+            ReviewFinding,
+        )
+        from src.pipeline.fixer_interface import FixerResult
+
+        mock_review_runner = MagicMock()
+        mock_review_runner.run_review = AsyncMock(
+            return_value=CumulativeReviewResult(
+                status="success",
+                findings=(
+                    ReviewFinding(
+                        file="test.py",
+                        line_start=1,
+                        line_end=1,
+                        priority=0,
+                        title="Blocking",
+                        body="Details",
+                        reviewer="test",
+                    ),
+                ),
+                new_baseline_commit="abc123",
+            )
+        )
+        mock_event_sink = MagicMock()
+
+        validation_config = ValidationConfig(
+            validation_triggers=ValidationTriggersConfig(
+                run_end=RunEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                    code_review=CodeReviewConfig(
+                        enabled=True,
+                        finding_threshold="P1",
+                        failure_mode=FailureMode.REMEDIATE,
+                        max_retries=1,
+                    ),
+                ),
+                session_end=SessionEndTriggerConfig(
+                    failure_mode=FailureMode.CONTINUE,
+                    commands=(),
+                ),
+            )
+        )
+        coordinator = _make_coordinator(
+            config=RunCoordinatorConfig(
+                repo_path=tmp_path,
+                timeout_seconds=60,
+                fixer_prompt="Fix: {failure_output}",
+                validation_config=validation_config,
+            ),
+            gate_checker=MagicMock(),
+            command_runner=FakeCommandRunner(allow_unregistered=True),
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=MagicMock(),
+            event_sink=mock_event_sink,
+        )
+        coordinator.fixer_service.run_fixer = AsyncMock(  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            return_value=FixerResult(success=True, interrupted=False)
+        )
+
+        coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
+        coordinator.queue_trigger_validation(TriggerType.SESSION_END, {})
+        result = await coordinator.run_trigger_validation(dry_run=False)
+
+        assert result.status == "failed"
+        assert coordinator._trigger_queue == []
+        mock_event_sink.on_trigger_validation_failed.assert_any_call(
+            "run_end", "code_review_findings", "remediate"
+        )
+        mock_event_sink.on_trigger_validation_started.assert_any_call("session_end", [])
+
     @staticmethod
     def _code_review_end_events(event_sink: Any) -> list[Any]:  # noqa: ANN401
         end_event_types = {

@@ -206,16 +206,13 @@ _EXPECTED: dict[
         RunValidationState.REMEDIATING_REVIEW,
         RunValidationEvent.REVIEW_REMEDIATION_FAILED,
     ): (
-        RunValidationState.EMITTING_TERMINAL_EVENT,
+        RunValidationState.PROCESSING_COMMANDS,
         (
             RunValidationEffect.RECORD_FAILURE,
             RunValidationEffect.EMIT_CODE_REVIEW_FAILED,
+            RunValidationEffect.COMPLETE_TRIGGER,
         ),
-        RunValidationContext(
-            last_failure=_CODE_REVIEW_FAILURE,
-            terminal_status=TerminalStatus.FAILED,
-            terminal_details="Command 'code_review_findings' failed in trigger run_end",
-        ),
+        RunValidationContext(last_failure=_CODE_REVIEW_FAILURE),
     ),
     (
         RunValidationState.REMEDIATING_REVIEW,
@@ -241,7 +238,9 @@ _EXPECTED: dict[
 for _state in RunValidationState:
     _EXPECTED[(_state, RunValidationEvent.VALIDATION_INTERRUPTED)] = (
         RunValidationState.EMITTING_TERMINAL_EVENT,
-        (),
+        (RunValidationEffect.EMIT_CODE_REVIEW_ERROR,)
+        if _state == RunValidationState.REMEDIATING_REVIEW
+        else (),
         RunValidationContext(
             terminal_status=TerminalStatus.ABORTED,
             terminal_details="Validation interrupted by SIGINT",
@@ -488,6 +487,43 @@ def test_non_aborting_review_completion_waits_for_queue_empty(
     )
     assert terminal.state == RunValidationState.EMITTING_TERMINAL_EVENT
     assert terminal.context.terminal_status == TerminalStatus.FAILED
+
+
+@pytest.mark.unit
+def test_review_remediation_failure_waits_for_queue_empty() -> None:
+    result = transition(
+        RunValidationState.REMEDIATING_REVIEW,
+        RunValidationEvent.REVIEW_REMEDIATION_FAILED,
+        _REVIEW_REMEDIATION_CONTEXT,
+    )
+
+    assert result.state == RunValidationState.PROCESSING_COMMANDS
+    assert result.context == RunValidationContext(last_failure=_CODE_REVIEW_FAILURE)
+    assert RunValidationEffect.COMPLETE_FAILED not in result.effects
+
+    terminal = transition(
+        result.state,
+        RunValidationEvent.QUEUE_EMPTY,
+        result.context,
+    )
+    terminal = transition(
+        terminal.state,
+        RunValidationEvent.TERMINAL_EVENT_EMITTED,
+        terminal.context,
+    )
+    assert terminal.effects == (RunValidationEffect.COMPLETE_FAILED,)
+
+
+@pytest.mark.unit
+def test_interrupted_review_remediation_emits_code_review_error_effect() -> None:
+    result = transition(
+        RunValidationState.REMEDIATING_REVIEW,
+        RunValidationEvent.VALIDATION_INTERRUPTED,
+        _REVIEW_REMEDIATION_CONTEXT,
+    )
+
+    assert result.state == RunValidationState.EMITTING_TERMINAL_EVENT
+    assert result.effects == (RunValidationEffect.EMIT_CODE_REVIEW_ERROR,)
 
 
 @pytest.mark.unit
