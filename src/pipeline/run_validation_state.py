@@ -345,7 +345,10 @@ def _transition_remediating_review(
                 terminal_status=TerminalStatus.ABORTED,
                 terminal_details=details or "Code review remediation aborted",
             ),
-            effects=(RunValidationEffect.EMIT_CODE_REVIEW_ERROR,),
+            effects=(
+                RunValidationEffect.RECORD_RUN_VALIDATION,
+                RunValidationEffect.EMIT_CODE_REVIEW_ERROR,
+            ),
         )
 
     raise ValueError(f"Unexpected event for REMEDIATING_REVIEW: {event}")

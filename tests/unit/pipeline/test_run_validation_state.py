@@ -219,7 +219,10 @@ _EXPECTED: dict[
         RunValidationEvent.REVIEW_REMEDIATION_ABORTED,
     ): (
         RunValidationState.EMITTING_TERMINAL_EVENT,
-        (RunValidationEffect.EMIT_CODE_REVIEW_ERROR,),
+        (
+            RunValidationEffect.RECORD_RUN_VALIDATION,
+            RunValidationEffect.EMIT_CODE_REVIEW_ERROR,
+        ),
         RunValidationContext(
             terminal_status=TerminalStatus.ABORTED,
             terminal_details="Code review remediation aborted",
