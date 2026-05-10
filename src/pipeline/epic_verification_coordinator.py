@@ -58,7 +58,6 @@ class EpicVerificationCoordinator:
     - Tracking verified epics to avoid re-verification
     - Re-entrant guard for epics being verified
     - Retry loop with remediation issue execution
-    - Fallback for mock providers
 
     Attributes:
         config: Verification configuration.
@@ -119,20 +118,18 @@ class EpicVerificationCoordinator:
         if parent_epic in self.epics_being_verified:
             return
 
-        if self._has_epic_verifier():
-            # Mark as being verified to prevent parallel verification loops
-            self.epics_being_verified.add(parent_epic)
-            try:
-                await self._verify_epic_with_retries(
-                    parent_epic, run_metadata, interrupt_event=interrupt_event
-                )
-            finally:
-                # Always remove from being_verified set when done
-                self.epics_being_verified.discard(parent_epic)
+        if not self._has_epic_verifier():
+            return
 
-        elif await self.issue_provider.close_eligible_epics_async():
-            # Fallback for mock providers without EpicVerifier
-            self.event_sink.on_epic_closed(issue_id)
+        # Mark as being verified to prevent parallel verification loops
+        self.epics_being_verified.add(parent_epic)
+        try:
+            await self._verify_epic_with_retries(
+                parent_epic, run_metadata, interrupt_event=interrupt_event
+            )
+        finally:
+            # Always remove from being_verified set when done
+            self.epics_being_verified.discard(parent_epic)
 
     async def _verify_epic_with_retries(
         self,

@@ -530,12 +530,12 @@ class TestRemediationExecution:
         assert any("2 downstream" in w for w in fake_callbacks.warnings)
 
 
-class TestFallbackBehavior:
-    """Tests for fallback behavior when EpicVerifier is not available."""
+class TestNoVerifierBehavior:
+    """Tests for behavior when EpicVerifier is not available."""
 
     @pytest.mark.asyncio
-    async def test_uses_fallback_when_no_epic_verifier(self) -> None:
-        """Should use close_eligible_epics fallback when no EpicVerifier."""
+    async def test_skips_legacy_epic_closure_when_no_epic_verifier(self) -> None:
+        """Should not use close_eligible_epics fallback when no EpicVerifier."""
         fake_verifier = FakeVerificationResults(results=[make_passing_result()])
         fake_callbacks = FakeCallbacks(
             fake_verifier=fake_verifier, has_epic_verifier=False
@@ -547,10 +547,10 @@ class TestFallbackBehavior:
 
         # Should NOT call verify
         assert len(fake_verifier.attempts) == 0
-        # Should call close_eligible_epics fallback
-        assert fake_callbacks.eligible_epics_closed is True
-        # Should emit on_epic_closed
-        assert "child-1" in fake_callbacks.closed_epics
+        # Should NOT call the legacy close_eligible_epics fallback
+        assert fake_callbacks.eligible_epics_closed is False
+        # Should NOT emit on_epic_closed without verification
+        assert fake_callbacks.closed_epics == []
 
 
 class TestMalaConfigEpicVerificationRetries:
