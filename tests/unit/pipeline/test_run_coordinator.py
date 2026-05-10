@@ -1301,11 +1301,8 @@ class TestRunEndRunMetadata:
         result = await coordinator.run_trigger_validation(dry_run=False)
 
         assert result.status == "aborted"
-        mock_run_metadata.record_run_validation.assert_called_once()
-        meta = mock_run_metadata.record_run_validation.call_args[0][0]
-        assert meta.passed is False
-        assert meta.commands_run == ["build"]
-        assert meta.commands_failed == ["build"]
+        assert result.details == "Validation interrupted by SIGINT"
+        mock_run_metadata.record_run_validation.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_execution_error_aborts_validation(

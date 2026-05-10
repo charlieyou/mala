@@ -586,13 +586,13 @@ class RunCoordinator:
             runtime.dry_run,
             runtime.interrupt_event,
         )
+        if runtime.interrupt_event.is_set():
+            return _RunValidationAction(RunValidationEvent.VALIDATION_INTERRUPTED)
         if remediation_result is not None:
             return _RunValidationAction(
                 RunValidationEvent.REMEDIATION_ABORTED,
                 details=remediation_result.details,
             )
-        if runtime.interrupt_event.is_set():
-            return _RunValidationAction(RunValidationEvent.VALIDATION_INTERRUPTED)
         if remediated_result is not None:
             runtime.results[runtime.failed_index] = remediated_result
         runtime.current_index = runtime.failed_index + 1
