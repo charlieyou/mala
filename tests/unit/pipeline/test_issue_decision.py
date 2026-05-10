@@ -29,6 +29,14 @@ from src.pipeline.work_queue import WorkQueueSnapshot
         ),
         (
             WorkQueueSnapshot(
+                ready_issue_ids=("active",),
+                active_issue_ids=frozenset({"active"}),
+                max_agents=2,
+            ),
+            0,
+        ),
+        (
+            WorkQueueSnapshot(
                 ready_issue_ids=("a", "b", "c"),
                 completed_count=4,
                 max_issues=5,

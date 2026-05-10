@@ -58,7 +58,14 @@ def spawn_capacity(snapshot: WorkQueueSnapshot) -> int:
     ):
         return 0
 
-    agent_capacity = snapshot.ready_count
+    spawnable_ready_count = len(
+        [
+            issue_id
+            for issue_id in snapshot.ready_issue_ids
+            if issue_id not in snapshot.active_issue_ids
+        ]
+    )
+    agent_capacity = spawnable_ready_count
     if snapshot.max_agents is not None:
         agent_capacity = min(
             agent_capacity, snapshot.max_agents - snapshot.active_count
