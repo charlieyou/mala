@@ -19,15 +19,13 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from src.core.models import OrderPreference, RunResult, WatchState
 from src.core.protocols.issue_lifecycle_port import IssueLifecycleState
-from src.pipeline.issue_decision import (
-    exit_reason,
-    next_validation_threshold,
-    periodic_validation,
-    spawn_capacity,
-)
 from src.pipeline.work_queue import (
     WorkQueue,
     WorkQueueConfig,
+    capacity_decision,
+    exit_reason,
+    next_validation_threshold,
+    periodic_validation,
 )
 
 if TYPE_CHECKING:
@@ -37,8 +35,11 @@ if TYPE_CHECKING:
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.issue import IssueProvider
     from src.core.protocols.issue_lifecycle_port import IssueLifecycleEffect
-    from src.pipeline.issue_decision import ExitDecision, PeriodicValidationDecision
-    from src.pipeline.work_queue import WorkQueueSnapshot
+    from src.pipeline.work_queue import (
+        ExitDecision,
+        PeriodicValidationDecision,
+        WorkQueueSnapshot,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -509,7 +510,7 @@ class IssueExecutionCoordinator:
                     if repoll:
                         continue
 
-                capacity = spawn_capacity(snapshot)
+                capacity = capacity_decision(snapshot).capacity
                 spawned_now, ready = await self._spawn_ready_issues(
                     ready,
                     capacity,

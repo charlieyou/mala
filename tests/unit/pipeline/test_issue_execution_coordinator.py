@@ -19,7 +19,12 @@ from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
 )
-from src.pipeline.work_queue import PollResult, WorkQueueConfig, WorkQueueSnapshot
+from src.pipeline.work_queue import (
+    PollDecision,
+    PollResult,
+    WorkQueueConfig,
+    WorkQueueSnapshot,
+)
 
 
 class MockIssueProvider:
@@ -232,6 +237,7 @@ class TestRunLoop:
                 return PollResult(
                     snapshot=snapshot.with_ready(["issue-from-queue"]),
                     poll_attempted=True,
+                    decision=PollDecision("ready"),
                 )
 
         beads = MockIssueProvider(ready_issues=[["issue-from-provider"]])

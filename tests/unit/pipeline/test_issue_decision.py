@@ -4,23 +4,29 @@ from dataclasses import is_dataclass
 
 import pytest
 
-from src.pipeline.issue_decision import (
+from src.pipeline.work_queue import (
+    CapacityDecision,
     ExitDecision,
     InterruptDrainDecision,
     PeriodicValidationDecision,
+    PollDecision,
+    PollResult,
+    WorkQueueConfig,
+    WorkQueueSnapshot,
+    capacity_decision,
     exit_reason,
     interrupt_drain,
     next_validation_threshold,
     periodic_validation,
-    spawn_capacity,
 )
-from src.pipeline.work_queue import PollResult, WorkQueueConfig, WorkQueueSnapshot
 
 
 def test_decision_and_queue_shapes_are_dataclasses() -> None:
+    assert is_dataclass(CapacityDecision)
     assert is_dataclass(ExitDecision)
     assert is_dataclass(PeriodicValidationDecision)
     assert is_dataclass(InterruptDrainDecision)
+    assert is_dataclass(PollDecision)
     assert is_dataclass(WorkQueueConfig)
     assert is_dataclass(WorkQueueSnapshot)
     assert is_dataclass(PollResult)
@@ -69,7 +75,10 @@ def test_decision_and_queue_shapes_are_dataclasses() -> None:
     ],
 )
 def test_spawn_capacity(snapshot: WorkQueueSnapshot, expected: int) -> None:
-    assert spawn_capacity(snapshot) == expected
+    decision = capacity_decision(snapshot)
+
+    assert decision.kind == "capacity"
+    assert decision.capacity == expected
 
 
 @pytest.mark.parametrize(

@@ -122,6 +122,7 @@ async def test_poll_fetches_ready_issues_and_resets_failures() -> None:
     result = await queue.poll(snapshot)
 
     assert result.succeeded is True
+    assert result.decision.kind == "ready"
     assert result.ready_issue_ids == ("issue-1", "issue-2")
     assert result.consecutive_poll_failures == 0
     assert provider.calls == [
@@ -150,8 +151,10 @@ async def test_poll_suppressed_when_limit_reached_or_draining() -> None:
     draining = await queue.poll(queue.snapshot(is_draining=True))
 
     assert limited.poll_attempted is False
+    assert limited.decision.kind == "terminal_drain"
     assert limited.ready_issue_ids == ()
     assert draining.poll_attempted is False
+    assert draining.decision.kind == "terminal_drain"
     assert draining.ready_issue_ids == ()
     assert provider.calls == []
     assert strategy.failure_waits == []
@@ -168,6 +171,7 @@ async def test_poll_failure_records_error_and_uses_strategy_wait() -> None:
     result = await queue.poll(queue.snapshot(consecutive_poll_failures=1))
 
     assert result.succeeded is False
+    assert result.decision.kind == "transient_error"
     assert result.error is error
     assert result.ready_issue_ids == ()
     assert result.consecutive_poll_failures == 2
@@ -201,6 +205,7 @@ async def test_empty_watch_poll_uses_strategy_idle_wait_without_active_work() ->
     result = await queue.poll(snapshot)
 
     assert result.succeeded is True
+    assert result.decision.kind == "empty"
     assert result.ready_issue_ids == ()
     assert strategy.idle_waits == [result.snapshot]
 
