@@ -10,13 +10,15 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from src.domain.validation.config import (
-    ConfigError,
     EpicDepth,
     FireOn,
     TriggerType,
 )
+from src.pipeline.trigger_plan import resolve_trigger
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from src.domain.validation.config import (
         BaseTriggerConfig,
         FailureMode,
@@ -24,21 +26,7 @@ if TYPE_CHECKING:
         ValidationTriggersConfig,
     )
     from src.pipeline.issue_result import IssueResult
-
-
-@dataclass(frozen=True)
-class ResolvedCommand:
-    """A trigger command resolved from the base pool with overrides applied.
-
-    Attributes:
-        ref: The command reference name (e.g., "test", "lint").
-        effective_command: The resolved command string to execute.
-        effective_timeout: The resolved timeout in seconds (None for system default).
-    """
-
-    ref: str
-    effective_command: str
-    effective_timeout: int | None
+    from src.pipeline.trigger_plan import TriggerPlan
 
 
 @dataclass(frozen=True)
@@ -54,7 +42,7 @@ class TriggerActions:
     """
 
     should_run: bool
-    commands: list[ResolvedCommand]
+    commands: Sequence[TriggerPlan]
     failure_mode: FailureMode
     trigger_type: TriggerType | None = None
     trigger_config: BaseTriggerConfig | None = None
@@ -78,11 +66,9 @@ class TriggerEngine:
         """
         self._validation_config = validation_config
         self._triggers_config: ValidationTriggersConfig | None = None
-        self._base_pool: dict[str, tuple[str, int | None]] = {}
 
         if validation_config is not None:
             self._triggers_config = validation_config.validation_triggers
-            self._base_pool = self._build_base_pool(validation_config)
 
     def on_issue_completed(
         self, issue_id: str, result: IssueResult
@@ -201,7 +187,7 @@ class TriggerEngine:
 
     def resolve_commands(
         self, trigger_config: BaseTriggerConfig, trigger_type: TriggerType
-    ) -> list[ResolvedCommand]:
+    ) -> tuple[TriggerPlan, ...]:
         """Resolve commands for a trigger configuration.
 
         Public interface for command resolution. Used by callers that need
@@ -212,7 +198,7 @@ class TriggerEngine:
             trigger_type: The trigger type (for error messages).
 
         Returns:
-            List of resolved commands.
+            Tuple of resolved commands.
 
         Raises:
             ConfigError: If a command ref is not found in the base pool.
@@ -237,45 +223,9 @@ class TriggerEngine:
             return not success
         return False
 
-    def _build_base_pool(
-        self, validation_config: ValidationConfig
-    ) -> dict[str, tuple[str, int | None]]:
-        """Build the base command pool from validation config.
-
-        The base pool maps command names to (command_string, timeout) tuples.
-
-        Args:
-            validation_config: The validation configuration.
-
-        Returns:
-            Dict mapping command ref names to (command, timeout) tuples.
-        """
-        pool: dict[str, tuple[str, int | None]] = {}
-        base_cmds = validation_config.commands
-
-        # Add built-in commands
-        for cmd_name in (
-            "test",
-            "lint",
-            "format",
-            "typecheck",
-            "e2e",
-            "setup",
-            "build",
-        ):
-            cmd = getattr(base_cmds, cmd_name, None)
-            if cmd is not None:
-                pool[cmd_name] = (cmd.command, cmd.timeout)
-
-        # Add custom commands
-        for name, custom_cmd in base_cmds.custom_commands.items():
-            pool[name] = (custom_cmd.command, custom_cmd.timeout)
-
-        return pool
-
     def _resolve_commands(
         self, trigger_type: TriggerType, trigger_config: BaseTriggerConfig
-    ) -> list[ResolvedCommand]:
+    ) -> tuple[TriggerPlan, ...]:
         """Resolve trigger command refs to executable commands.
 
         For each TriggerCommandRef in the trigger config, looks up the command
@@ -286,37 +236,12 @@ class TriggerEngine:
             trigger_config: The trigger configuration with command refs.
 
         Returns:
-            List of ResolvedCommand with effective command and timeout.
+            Tuple of TriggerPlan with effective command and timeout.
 
         Raises:
             ConfigError: If a ref is not found in the base pool.
         """
-        resolved: list[ResolvedCommand] = []
-
-        for cmd_ref in trigger_config.commands:
-            if cmd_ref.ref not in self._base_pool:
-                available = ", ".join(sorted(self._base_pool.keys()))
-                raise ConfigError(
-                    f"trigger {trigger_type.value} references unknown command "
-                    f"'{cmd_ref.ref}'. Available: {available}"
-                )
-
-            base_cmd, base_timeout = self._base_pool[cmd_ref.ref]
-
-            # Apply overrides - use `is not None` to allow falsy values like timeout=0
-            effective_command = (
-                cmd_ref.command if cmd_ref.command is not None else base_cmd
-            )
-            effective_timeout = (
-                cmd_ref.timeout if cmd_ref.timeout is not None else base_timeout
-            )
-
-            resolved.append(
-                ResolvedCommand(
-                    ref=cmd_ref.ref,
-                    effective_command=effective_command,
-                    effective_timeout=effective_timeout,
-                )
-            )
-
-        return resolved
+        assert self._validation_config is not None
+        return resolve_trigger(
+            self._validation_config, trigger_config, trigger_type
+        ).commands

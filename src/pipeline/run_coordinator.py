@@ -493,9 +493,10 @@ class RunCoordinator:
             )
             if trigger_config is None:
                 continue
-            resolved_commands = resolve_trigger(
+            trigger_command_outcome = resolve_trigger(
                 runtime.validation_config, trigger_config, trigger_type
-            ).commands
+            )
+            resolved_commands = trigger_command_outcome.commands
             if self.event_sink is not None:
                 self.event_sink.on_trigger_validation_started(
                     trigger_type.value, [cmd.ref for cmd in resolved_commands]
@@ -585,13 +586,13 @@ class RunCoordinator:
             runtime.dry_run,
             runtime.interrupt_event,
         )
-        if runtime.interrupt_event.is_set():
-            return _RunValidationAction(RunValidationEvent.VALIDATION_INTERRUPTED)
         if remediation_result is not None:
             return _RunValidationAction(
                 RunValidationEvent.REMEDIATION_ABORTED,
                 details=remediation_result.details,
             )
+        if runtime.interrupt_event.is_set():
+            return _RunValidationAction(RunValidationEvent.VALIDATION_INTERRUPTED)
         if remediated_result is not None:
             runtime.results[runtime.failed_index] = remediated_result
         runtime.current_index = runtime.failed_index + 1

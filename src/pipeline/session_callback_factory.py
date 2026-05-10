@@ -29,6 +29,8 @@ from src.core.session_end_result import (
     CommandOutcome,
     SessionEndResult,
 )
+from src.domain.validation.config import ConfigError, TriggerType
+from src.pipeline.trigger_plan import resolve_trigger
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -56,7 +58,6 @@ if TYPE_CHECKING:
     )
     from src.domain.validation.config import (
         SessionEndTriggerConfig,
-        TriggerCommandRef,
         ValidationConfig,
     )
     from src.domain.validation.spec import ValidationSpec
@@ -306,17 +307,21 @@ class SessionCallbackFactory:
                             reason="SIGINT received",
                         )
 
-                    # Resolve command from base pool
-                    resolved_cmd, resolved_timeout = self._resolve_command(
-                        cmd_ref, validation_config
-                    )
-                    if resolved_cmd is None:
+                    try:
+                        trigger_command_outcome = resolve_trigger(
+                            validation_config,
+                            session_end_config,
+                            TriggerType.SESSION_END,
+                            command_ref=cmd_ref,
+                        )
+                    except ConfigError:
                         logger.warning(
                             "session_end command ref '%s' not found in base pool",
                             cmd_ref.ref,
                         )
                         all_passed = False
                         break
+                    command_plan = trigger_command_outcome.commands[0]
 
                     # Execute the command
                     # Per R10: "complete current command" on SIGINT (but not on timeout)
@@ -324,8 +329,8 @@ class SessionCallbackFactory:
                     if self._command_runner is not None:
                         cmd_task = asyncio.create_task(
                             self._command_runner.run_async(
-                                resolved_cmd,
-                                timeout=resolved_timeout,
+                                command_plan.effective_command,
+                                timeout=command_plan.effective_timeout,
                                 shell=True,
                                 cwd=self._repo_path,
                             )
@@ -528,57 +533,6 @@ class SessionCallbackFactory:
             error_message=error_message,
         )
 
-    def _resolve_command(
-        self,
-        cmd_ref: TriggerCommandRef,
-        validation_config: ValidationConfig,
-    ) -> tuple[str | None, int | None]:
-        """Resolve a command reference from the base pool.
-
-        Args:
-            cmd_ref: The command reference with optional overrides.
-            validation_config: The validation config containing base pool.
-
-        Returns:
-            Tuple of (resolved_command, resolved_timeout) or (None, None) if not found.
-        """
-        # Build base pool from commands
-        base_pool: dict[str, tuple[str, int | None]] = {}
-
-        # Standard commands from commands
-        commands_config = validation_config.commands
-
-        for name in ["test", "lint", "format", "typecheck", "e2e", "setup", "build"]:
-            cmd_config = getattr(commands_config, name, None)
-            if cmd_config is not None:
-                base_pool[name] = (
-                    cmd_config.command,
-                    getattr(cmd_config, "timeout", None),
-                )
-
-        # Add custom commands from commands.custom_commands (repo-level)
-        if commands_config and commands_config.custom_commands:
-            for name, custom_config in commands_config.custom_commands.items():
-                if custom_config is not None:
-                    base_pool[name] = (
-                        custom_config.command,
-                        getattr(custom_config, "timeout", None),
-                    )
-
-        # Look up the ref
-        if cmd_ref.ref not in base_pool:
-            return None, None
-
-        base_cmd, base_timeout = base_pool[cmd_ref.ref]
-
-        # Apply overrides
-        effective_cmd = cmd_ref.command if cmd_ref.command is not None else base_cmd
-        effective_timeout = (
-            cmd_ref.timeout if cmd_ref.timeout is not None else base_timeout
-        )
-
-        return effective_cmd, effective_timeout
-
     async def _run_remediation_loop(
         self,
         issue_id: str,
@@ -731,11 +685,14 @@ class SessionCallbackFactory:
                         reason="SIGINT received",
                     )
 
-                # Resolve and execute command
-                resolved_cmd, resolved_timeout = self._resolve_command(
-                    cmd_ref, validation_config
-                )
-                if resolved_cmd is None:
+                try:
+                    trigger_command_outcome = resolve_trigger(
+                        validation_config,
+                        session_end_config,
+                        TriggerType.SESSION_END,
+                        command_ref=cmd_ref,
+                    )
+                except ConfigError:
                     # Config error: command ref not found. Cannot be fixed by retrying.
                     logger.error(
                         "session_end remediation: command ref '%s' not found for %s",
@@ -749,13 +706,14 @@ class SessionCallbackFactory:
                         commands=list(command_outcomes),
                         reason="command_ref_not_found",
                     )
+                command_plan = trigger_command_outcome.commands[0]
 
                 # Execute command (command_runner guaranteed non-None from check above)
                 # Shield command execution to complete current command on SIGINT
                 cmd_task = asyncio.create_task(
                     self._command_runner.run_async(
-                        resolved_cmd,
-                        timeout=resolved_timeout,
+                        command_plan.effective_command,
+                        timeout=command_plan.effective_timeout,
                         shell=True,
                         cwd=self._repo_path,
                     )
