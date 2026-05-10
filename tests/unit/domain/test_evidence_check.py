@@ -2684,6 +2684,37 @@ class TestEvidenceSummaryParserAndRecognizer:
 
         assert evidence.commands == {}
 
+    def test_pattern_fallback_rejects_custom_command_with_different_args(
+        self,
+        tmp_path: Path,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            _bash_tool_use_json("toolu_python", "python other.py")
+            + "\n"
+            + _tool_result_json("toolu_python")
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="python_docs",
+                    command="python scripts/check_docs.py",
+                    kind=CommandKind.CUSTOM,
+                    detection_pattern=re.compile(r"\bpython\b"),
+                )
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("python_docs",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.commands == {}
+
     def test_pattern_fallback_accepts_custom_command_identity(
         self,
         tmp_path: Path,
@@ -3264,6 +3295,64 @@ class TestCheckWithResolutionSpec:
 
         # Should pass since pytest is not required when post-validate is disabled
         assert result.passed is True
+
+    def test_failed_non_required_custom_command_does_not_block(
+        self,
+        tmp_path: Path,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            _bash_tool_use_json("toolu_test", "uv run pytest")
+            + "\n"
+            + _tool_result_json("toolu_test")
+            + "\n"
+            + _bash_tool_use_json("toolu_docs", "python scripts/check_docs.py")
+            + "\n"
+            + _tool_result_json("toolu_docs", "docs failed", is_error=True)
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command="uv run pytest",
+                    kind=CommandKind.TEST,
+                    allow_fail=False,
+                ),
+                ValidationCommand(
+                    name="python_docs",
+                    command="python scripts/check_docs.py",
+                    kind=CommandKind.CUSTOM,
+                    detection_pattern=re.compile(r"\bpython\b"),
+                    allow_fail=False,
+                ),
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("test",),
+        )
+        fake_runner = make_git_log_response_runner(
+            "test-123",
+            CommandResult(
+                command=[],
+                returncode=0,
+                stdout="abc1234 1703502000 bd-test-123: Fix\n",
+                stderr="",
+            ),
+            with_timestamp=True,
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, command_runner=fake_runner)
+
+        result = gate.check_with_resolution(
+            issue_id="test-123",
+            log_path=log_path,
+            baseline_timestamp=1703501000,
+            spec=spec,
+        )
+
+        assert result.passed is True
+        assert result.failure_reasons == []
 
     def test_raises_without_spec(
         self,

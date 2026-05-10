@@ -293,16 +293,25 @@ def _recognize_spec_pattern_command(
             index += 1
         return stripped
 
-    def command_identity_tokens(command: str) -> list[str]:
+    def command_identity_tokens(
+        command: str, *, preserve_trailing_args: bool = False
+    ) -> list[str]:
         tokens = strip_cache_dir_override(
             strip_leading_env_assignments(shell_words(command))
         )
-        while len(tokens) > 1 and is_trailing_argument_token(tokens[-1]):
+        while (
+            not preserve_trailing_args
+            and len(tokens) > 1
+            and is_trailing_argument_token(tokens[-1])
+        ):
             tokens = tokens[:-1]
         return tokens
 
-    def command_identity_variants(command: str) -> list[list[str]]:
-        identity = command_identity_tokens(command)
+    def command_identity_variants(cmd: ValidationCommand) -> list[list[str]]:
+        identity = command_identity_tokens(
+            cmd.command,
+            preserve_trailing_args=cmd.kind == CommandKind.CUSTOM,
+        )
         variants = [identity] if identity else []
         if identity[:1] == ["uvx"] and len(identity) > 1:
             variants.append(identity[1:])
@@ -321,7 +330,7 @@ def _recognize_spec_pattern_command(
 
     matches = []
     for cmd in configured_by_name.values():
-        identities = command_identity_variants(cmd.command)
+        identities = command_identity_variants(cmd)
         if (
             cmd.detection_pattern is not None
             and identities
@@ -1272,7 +1281,11 @@ class EvidenceCheck:
                 f"Missing validation evidence for: {', '.join(missing)}"
             )
 
-        strict_command_names = {cmd.name for cmd in spec.commands if not cmd.allow_fail}
+        strict_command_names = {
+            cmd.name
+            for cmd in spec.commands
+            if not cmd.allow_fail and cmd.name in spec.evidence_required
+        }
         failed_commands = [
             c.observed_command or c.name
             for c in evidence.commands.values()
