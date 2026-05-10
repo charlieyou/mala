@@ -66,6 +66,8 @@ class FakeIssueLifecyclePort:
             if effect.reason is None:
                 msg = "request_abort effect requires reason"
                 raise ValueError(msg)
+            if self.abort_requested:
+                return
             self.abort_reason = effect.reason
             if self._interrupt_event is not None:
                 self._interrupt_event.set()

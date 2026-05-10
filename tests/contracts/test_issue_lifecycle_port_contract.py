@@ -161,3 +161,19 @@ def test_none_interrupt_event_is_ignored(lifecycle_port: IssueLifecyclePort) -> 
 
     lifecycle_port.apply_effect(IssueLifecycleEffect(kind="set_interrupt_event"))
     assert lifecycle_port.interrupt_event is interrupt_event
+
+
+@pytest.mark.unit
+def test_abort_request_preserves_first_reason(
+    lifecycle_port: IssueLifecyclePort,
+) -> None:
+    """Repeated abort requests are idempotent and keep the original reason."""
+    lifecycle_port.apply_effect(
+        IssueLifecycleEffect(kind="request_abort", reason="first")
+    )
+    lifecycle_port.apply_effect(
+        IssueLifecycleEffect(kind="request_abort", reason="second")
+    )
+
+    assert lifecycle_port.current_state.abort_requested is True
+    assert lifecycle_port.current_state.abort_reason == "first"
