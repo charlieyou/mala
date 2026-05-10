@@ -297,7 +297,7 @@ class MalaOrchestrator:
         self.repo_path = orch_config.repo_path.resolve()
         self.max_agents = orch_config.max_agents
         self.timeout_seconds = derived.timeout_seconds
-        self.max_issues = orch_config.max_issues
+        self._max_issues = orch_config.max_issues
         self.epic_id = orch_config.epic_id
         self.only_ids = orch_config.only_ids
         # Use derived.max_gate_retries from mala.yaml session_end config if set,
@@ -613,47 +613,35 @@ class MalaOrchestrator:
         return DeadlockHandler(callbacks=callbacks)
 
     # Delegate state to issue_coordinator (single source of truth)
-    # These properties return empty containers if accessed before coordinator init
     @property
     def active_tasks(self) -> dict[str, asyncio.Task[Any]]:
         """Active agent tasks, delegated to issue_coordinator."""
-        if not hasattr(self, "issue_coordinator"):
-            return {}
         return self.issue_coordinator.active_tasks
 
     @property
     def failed_issues(self) -> set[str]:
         """Failed issue IDs, delegated to issue_coordinator."""
-        if not hasattr(self, "issue_coordinator"):
-            return set()
         return self.issue_coordinator.failed_issues
 
     @property
     def max_issues(self) -> int | None:
         """Maximum issues to process, synced with issue_coordinator."""
-        if not hasattr(self, "issue_coordinator"):
-            return self._max_issues if hasattr(self, "_max_issues") else None
         return self.issue_coordinator.config.max_issues
 
     @max_issues.setter
     def max_issues(self, value: int | None) -> None:
         """Set max_issues and sync to issue_coordinator."""
         self._max_issues = value
-        if hasattr(self, "issue_coordinator"):
-            self.issue_coordinator.config.max_issues = value
+        self.issue_coordinator.config.max_issues = value
 
     @property
     def abort_run(self) -> bool:
         """Whether run should abort, delegated to issue_coordinator."""
-        if not hasattr(self, "issue_coordinator"):
-            return False
         return self.issue_coordinator.abort_run
 
     @property
     def abort_reason(self) -> str | None:
         """Abort reason, delegated to issue_coordinator."""
-        if not hasattr(self, "issue_coordinator"):
-            return None
         return self.issue_coordinator.abort_reason
 
     @property
@@ -673,19 +661,17 @@ class MalaOrchestrator:
     def _interrupt_event(self) -> asyncio.Event | None:
         """Interrupt event, delegated to lifecycle controller.
 
-        The event is available immediately after __init__ (LifecycleController
-        creates it in its default_factory). Returns None only if accessed before
-        _lifecycle is initialized.
+        The event is available immediately after __init__ because
+        LifecycleController creates it in its default_factory.
         """
-        return self._lifecycle.interrupt_event if hasattr(self, "_lifecycle") else None
+        return self._lifecycle.interrupt_event
 
     @_interrupt_event.setter
     def _interrupt_event(self, value: asyncio.Event | None) -> None:
         """Set interrupt event (for test compatibility)."""
-        if value is not None and hasattr(self, "_lifecycle"):
+        if value is not None:
             self._lifecycle.interrupt_event = value
-            if hasattr(self, "issue_coordinator"):
-                self.issue_coordinator.interrupt_event = value
+            self.issue_coordinator.interrupt_event = value
 
     def _cleanup_agent_locks(self, agent_id: str) -> None:
         """Remove locks held by a specific agent (crash/timeout cleanup).

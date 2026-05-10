@@ -23,13 +23,28 @@ from claude_agent_sdk.types import ResultMessage
 from src.orchestration.orchestrator import (
     MalaOrchestrator,
 )
-from src.orchestration.orchestration_wiring import build_finalizer_callback_refs
+from src.orchestration.orchestration_wiring import (
+    build_epic_callback_refs,
+    build_epic_callbacks,
+    build_finalizer_callback_refs,
+    build_finalizer_callbacks,
+    build_issue_coordinator,
+    build_run_coordinator,
+)
+from src.orchestration.types import IssueFilterConfig, PipelineConfig
 from src.pipeline.agent_session_runner import AgentSessionInput, AgentSessionOutput
 from src.pipeline.issue_result import IssueResult
-from src.domain.prompts import load_prompts
+from src.pipeline.epic_verification_coordinator import (
+    EpicVerificationConfig,
+    EpicVerificationCoordinator,
+)
+from src.pipeline.issue_finalizer import IssueFinalizeConfig, IssueFinalizer
+from src.domain.prompts import build_prompt_validation_commands, load_prompts
 from src.infra.io.config import MalaConfig
+from src.infra.tools.env import EnvConfig
 from src.infra.tools.env import PROMPTS_DIR
 from src.infra.tools.command_runner import CommandRunner
+from src.infra.tools.locking import LockManager
 
 from src.core.models import EpicVerificationResult, OrderPreference
 from src.core.protocols.evidence import EvidenceProvider
@@ -37,6 +52,10 @@ from src.domain.evidence_check import CommandEvidence, ValidationEvidence
 from src.domain.validation.spec import CommandKind
 from tests.fakes.issue_provider import FakeIssueProvider, FakeIssue
 from tests.fakes.issue_lifecycle_port import FakeIssueLifecyclePort
+from tests.fakes.agent_provider import FakeAgentProvider
+from tests.fakes.event_sink import FakeEventSink
+from tests.fakes.gate_checker import FakeGateChecker
+from tests.fakes.sdk_client import FakeSDKClientFactory
 
 if TYPE_CHECKING:
     from src.orchestration.types import RuntimeDeps
@@ -104,6 +123,95 @@ async def test_finalizer_callbacks_use_issue_lifecycle_port_interrupt_event() ->
         run_metadata,
         interrupt_event=interrupt_event,
     )
+
+
+def test_pipeline_components_construct_without_orchestrator(tmp_path: Path) -> None:
+    """Wiring builders should only need explicit ports and callback refs."""
+    issue_provider = FakeIssueProvider()
+    event_sink = FakeEventSink()
+    runtime = cast(
+        "RuntimeDeps",
+        SimpleNamespace(
+            evidence_check=FakeGateChecker(),
+            code_reviewer=MagicMock(),
+            beads=issue_provider,
+            event_sink=event_sink,
+            agent_provider=FakeAgentProvider(FakeSDKClientFactory()),
+            command_runner=CommandRunner(cwd=tmp_path),
+            env_config=EnvConfig(),
+            lock_manager=LockManager(),
+            mala_config=MalaConfig(
+                runs_dir=tmp_path / "runs",
+                lock_dir=tmp_path / "locks",
+                coder="claude",
+            ),
+        ),
+    )
+    pipeline = PipelineConfig(
+        repo_path=tmp_path,
+        timeout_seconds=60,
+        max_gate_retries=1,
+        max_review_retries=1,
+        disabled_validations=None,
+        max_idle_retries=0,
+        idle_timeout_seconds=None,
+        prompts=load_prompts(PROMPTS_DIR),
+        prompt_validation_commands=build_prompt_validation_commands(tmp_path),
+    )
+    issue_coordinator = build_issue_coordinator(
+        IssueFilterConfig(max_agents=2, max_issues=3),
+        runtime,
+    )
+    run_coordinator = build_run_coordinator(runtime, pipeline)
+
+    async def spawn_remediation(
+        issue_id: str,
+        flow: str,
+    ) -> asyncio.Task[IssueResult] | None:
+        del issue_id, flow
+        return None
+
+    async def finalize_remediation(
+        issue_id: str,
+        result: IssueResult,
+        run_metadata: object,
+    ) -> None:
+        del issue_id, result, run_metadata
+
+    epic_verification_coordinator = EpicVerificationCoordinator(
+        config=EpicVerificationConfig(),
+        callbacks=build_epic_callbacks(
+            build_epic_callback_refs(
+                runtime,
+                issue_coordinator,
+                run_coordinator,
+                epic_verifier_getter=lambda: None,
+                spawn_remediation=spawn_remediation,
+                finalize_remediation=finalize_remediation,
+                is_issue_failed=lambda issue_id: (
+                    issue_id in issue_coordinator.failed_issues
+                ),
+                get_agent_id=lambda issue_id: issue_id,
+                get_epic_completion_trigger=lambda: None,
+            )
+        ),
+    )
+    issue_finalizer = IssueFinalizer(
+        config=IssueFinalizeConfig(),
+        callbacks=build_finalizer_callbacks(
+            build_finalizer_callback_refs(
+                runtime,
+                issue_coordinator,
+                epic_verification_coordinator,
+            )
+        ),
+        evidence_check=runtime.evidence_check,
+    )
+
+    assert issue_coordinator.config.max_issues == 3
+    assert run_coordinator.config.repo_path == tmp_path
+    assert epic_verification_coordinator.callbacks.has_epic_verifier() is False
+    assert issue_finalizer.config.track_review_issues is False
 
 
 class TestPromptTemplate:
