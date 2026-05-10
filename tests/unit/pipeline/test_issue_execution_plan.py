@@ -23,6 +23,9 @@ if TYPE_CHECKING:
     from src.pipeline.issue_execution_plan import IssueExecutionPlan
 
 
+BAD_DATACLASS_ARTIFACT = "@src/core/protocols/events/" + "dataclasses.py"
+
+
 @dataclass
 class FakeState:
     agent_ids: dict[str, str] = field(default_factory=dict)
@@ -151,6 +154,34 @@ def _build_plan(
             result.issue_id
         ),
         mark_validation_failed=lambda: trigger_checked.append("validation_failed"),
+    )
+
+
+@pytest.mark.unit
+def test_dataclass_decorator_sources_do_not_contain_bad_artifact() -> None:
+    """Guard against the malformed decorator artifact reported in review."""
+    source_paths = (
+        Path("src/pipeline/issue_execution_plan.py"),
+        Path("tests/unit/pipeline/test_issue_execution_plan.py"),
+    )
+
+    sources = {path: path.read_text(encoding="utf-8") for path in source_paths}
+
+    assert (
+        BAD_DATACLASS_ARTIFACT
+        not in sources[Path("src/pipeline/issue_execution_plan.py")]
+    )
+    assert (
+        BAD_DATACLASS_ARTIFACT
+        not in sources[Path("tests/unit/pipeline/test_issue_execution_plan.py")]
+    )
+    assert (
+        "@dataclass(frozen=True)"
+        in sources[Path("src/pipeline/issue_execution_plan.py")]
+    )
+    assert (
+        "@dataclass\nclass FakeState"
+        in sources[Path("tests/unit/pipeline/test_issue_execution_plan.py")]
     )
 
 
