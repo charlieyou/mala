@@ -59,10 +59,6 @@ from src.orchestration.orchestration_wiring import (
     build_review_runner,
     build_run_coordinator,
     build_issue_coordinator,
-    build_finalizer_callback_refs,
-    build_finalizer_callbacks,
-    build_epic_callback_refs,
-    build_epic_callbacks,
     build_session_callback_factory,
     build_session_config,
 )
@@ -411,7 +407,7 @@ class MalaOrchestrator:
         )
         self.issue_coordinator = build_issue_coordinator(filters, runtime)
 
-        # Build coordinators with callbacks.
+        # Build coordinators with protocol ports.
         self.epic_verification_coordinator = self._build_epic_verification_coordinator(
             runtime
         )
@@ -510,22 +506,18 @@ class MalaOrchestrator:
     def _build_issue_finalizer(
         self, runtime: RuntimeDeps, issue_lifecycle: IssueLifecyclePort
     ) -> IssueFinalizer:
-        """Build IssueFinalizer with callbacks."""
+        """Build IssueFinalizer with protocol ports."""
         from src.pipeline.issue_finalizer import IssueFinalizer, IssueFinalizeConfig
 
         config = IssueFinalizeConfig(
             track_review_issues=self._get_track_review_issues(),
         )
-        callbacks = build_finalizer_callbacks(
-            build_finalizer_callback_refs(
-                runtime,
-                issue_lifecycle,
-                self.epic_verification_coordinator,
-            )
-        )
         return IssueFinalizer(
             config=config,
-            callbacks=callbacks,
+            issue_provider=runtime.beads,
+            event_sink=runtime.event_sink,
+            issue_lifecycle=issue_lifecycle,
+            epic_verification_coordinator=self.epic_verification_coordinator,
             evidence_check=self.evidence_check,
             per_session_spec=None,
         )
@@ -534,7 +526,7 @@ class MalaOrchestrator:
         self,
         runtime: RuntimeDeps,
     ) -> EpicVerificationCoordinator:
-        """Build EpicVerificationCoordinator with callbacks."""
+        """Build EpicVerificationCoordinator with protocol ports."""
         from src.pipeline.epic_verification_coordinator import (
             EpicVerificationCoordinator,
             EpicVerificationConfig,
@@ -550,22 +542,17 @@ class MalaOrchestrator:
         config = EpicVerificationConfig(
             max_retries=max_epic_verification_retries,
         )
-        callbacks = build_epic_callbacks(
-            build_epic_callback_refs(
-                runtime,
-                self.issue_coordinator,
-                self.run_coordinator,
-                epic_verifier_getter=self._get_epic_verifier,
-                spawn_remediation=self._spawn_epic_remediation,
-                finalize_remediation=self._finalize_issue_result,
-                is_issue_failed=self._is_issue_failed,
-                get_agent_id=self._get_agent_id,
-                get_epic_completion_trigger=self._get_epic_completion_trigger,
-            )
-        )
         return EpicVerificationCoordinator(
             config=config,
-            callbacks=callbacks,
+            issue_provider=runtime.beads,
+            event_sink=runtime.event_sink,
+            issue_lifecycle=self.issue_coordinator,
+            epic_verifier_getter=self._get_epic_verifier,
+            spawn_remediation=self._spawn_epic_remediation,
+            finalize_remediation=self._finalize_issue_result,
+            get_agent_id=self._get_agent_id,
+            queue_trigger_validation=self.run_coordinator.queue_trigger_validation,
+            get_epic_completion_trigger=self._get_epic_completion_trigger,
             epic_override_ids=self.epic_override_ids,
         )
 

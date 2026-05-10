@@ -19,7 +19,6 @@ import pytest
 from src.infra.io.config import MalaConfig
 from src.pipeline.issue_result import IssueResult
 from src.pipeline.epic_verification_coordinator import (
-    EpicVerificationCallbacks,
     EpicVerificationConfig,
     EpicVerificationCoordinator,
 )
@@ -31,6 +30,11 @@ from tests.fakes import (
 )
 
 if TYPE_CHECKING:
+    from src.core.protocols.issue_lifecycle_port import IssueLifecycleEffect
+    from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.issue import IssueProvider
+    from src.core.protocols.issue_lifecycle_port import IssueLifecyclePort
+    from src.core.protocols.validation import EpicVerifierProtocol
     from src.core.models import EpicVerificationResult
     from src.domain.validation.config import EpicCompletionTriggerConfig, TriggerType
     from src.infra.io.log_output.run_metadata import RunMetadata
@@ -76,8 +80,11 @@ class FakeCallbacks:
     closed_epics: list[str] = field(default_factory=list)
     eligible_epics_closed: bool = field(default=False)
 
-    async def get_parent_epic(self, issue_id: str) -> str | None:
+    async def get_parent_epic_async(self, issue_id: str) -> str | None:
         return self.parent_epic
+
+    async def get_parent_epic(self, issue_id: str) -> str | None:
+        return await self.get_parent_epic_async(issue_id)
 
     async def verify_epic(self, epic_id: str, force: bool) -> EpicVerificationResult:
         return await self.fake_verifier.verify(epic_id, force)
@@ -116,9 +123,12 @@ class FakeCallbacks:
     def is_issue_failed(self, issue_id: str) -> bool:
         return issue_id in self.failed_issues
 
-    async def close_eligible_epics(self) -> bool:
+    async def close_eligible_epics_async(self) -> bool:
         self.eligible_epics_closed = True
         return True
+
+    async def close_eligible_epics(self) -> bool:
+        return await self.close_eligible_epics_async()
 
     def on_epic_closed(self, issue_id: str) -> None:
         self.closed_epics.append(issue_id)
@@ -137,19 +147,30 @@ class FakeCallbacks:
     def get_epic_completion_trigger(self) -> EpicCompletionTriggerConfig | None:
         return None
 
-    def to_callbacks(self) -> EpicVerificationCallbacks:
-        """Convert to EpicVerificationCallbacks for coordinator injection."""
-        return EpicVerificationCallbacks(
-            get_parent_epic=self.get_parent_epic,
-            verify_epic=self.verify_epic,
+    async def verify_and_close_epic(
+        self,
+        epic_id: str,
+        *,
+        human_override: bool,
+    ) -> EpicVerificationResult:
+        return await self.verify_epic(epic_id, human_override)
+
+    def apply_effect(self, effect: IssueLifecycleEffect) -> None:
+        if effect.kind == "mark_completed" and effect.issue_id is not None:
+            self.mark_completed(effect.issue_id)
+
+    def to_coordinator(self, max_retries: int) -> EpicVerificationCoordinator:
+        """Build an EpicVerificationCoordinator using this fake as its ports."""
+        return EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=max_retries),
+            issue_provider=cast("IssueProvider", self),
+            event_sink=cast("MalaEventSink", self),
+            issue_lifecycle=cast("IssueLifecyclePort", self),
+            epic_verifier_getter=lambda: (
+                cast("EpicVerifierProtocol", self) if self.has_epic_verifier else None
+            ),
             spawn_remediation=self.spawn_remediation,
             finalize_remediation=self.finalize_remediation,
-            mark_completed=self.mark_completed,
-            is_issue_failed=self.is_issue_failed,
-            close_eligible_epics=self.close_eligible_epics,
-            on_epic_closed=self.on_epic_closed,
-            on_warning=self.on_warning,
-            has_epic_verifier=lambda: self.has_epic_verifier,
             get_agent_id=self.get_agent_id,
             queue_trigger_validation=self.queue_trigger_validation,
             get_epic_completion_trigger=self.get_epic_completion_trigger,
@@ -217,10 +238,7 @@ class TestEpicVerificationRetryLoop:
         fake_verifier = FakeVerificationResults(results=verdict_sequence)
         fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=3),
-            callbacks=fake_callbacks.to_callbacks(),
-        )
+        coordinator = fake_callbacks.to_coordinator(max_retries=3)
 
         await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
@@ -241,10 +259,7 @@ class TestEpicVerificationRetryLoop:
         )
         fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=3),
-            callbacks=fake_callbacks.to_callbacks(),
-        )
+        coordinator = fake_callbacks.to_coordinator(max_retries=3)
 
         await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
@@ -267,10 +282,7 @@ class TestEpicVerificationRetryLoop:
         )
         fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=3),
-            callbacks=fake_callbacks.to_callbacks(),
-        )
+        coordinator = fake_callbacks.to_coordinator(max_retries=3)
 
         await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
@@ -289,10 +301,7 @@ class TestEpicVerificationSkipConditions:
         fake_verifier = FakeVerificationResults(results=[make_passing_result()])
         fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=3),
-            callbacks=fake_callbacks.to_callbacks(),
-        )
+        coordinator = fake_callbacks.to_coordinator(max_retries=3)
         coordinator.verified_epics.add("epic-1")  # Already verified
 
         await coordinator.check_epic_closure("child-1", stub_run_metadata())
@@ -306,10 +315,7 @@ class TestEpicVerificationSkipConditions:
         fake_verifier = FakeVerificationResults(results=[make_passing_result()])
         fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier, parent_epic=None)
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=3),
-            callbacks=fake_callbacks.to_callbacks(),
-        )
+        coordinator = fake_callbacks.to_coordinator(max_retries=3)
 
         await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
@@ -322,10 +328,7 @@ class TestEpicVerificationSkipConditions:
         fake_verifier = FakeVerificationResults(results=[make_not_eligible_result()])
         fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=3),
-            callbacks=fake_callbacks.to_callbacks(),
-        )
+        coordinator = fake_callbacks.to_coordinator(max_retries=3)
 
         await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
@@ -344,10 +347,7 @@ class TestReentryGuard:
         fake_verifier = FakeVerificationResults(results=[make_passing_result()])
         fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=3),
-            callbacks=fake_callbacks.to_callbacks(),
-        )
+        coordinator = fake_callbacks.to_coordinator(max_retries=3)
         coordinator.epics_being_verified.add("epic-1")  # Already being verified
 
         await coordinator.check_epic_closure("child-1", stub_run_metadata())
@@ -361,10 +361,7 @@ class TestReentryGuard:
         fake_verifier = FakeVerificationResults(results=[make_passing_result()])
         fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=3),
-            callbacks=fake_callbacks.to_callbacks(),
-        )
+        coordinator = fake_callbacks.to_coordinator(max_retries=3)
 
         await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
@@ -383,10 +380,7 @@ class TestReentryGuard:
 
         fake_callbacks.verify_epic = raise_error  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=3),
-            callbacks=fake_callbacks.to_callbacks(),
-        )
+        coordinator = fake_callbacks.to_coordinator(max_retries=3)
 
         with pytest.raises(RuntimeError, match="Test error"):
             await coordinator.check_epic_closure("child-1", stub_run_metadata())
@@ -409,10 +403,7 @@ class TestRemediationExecution:
         )
         fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=3),
-            callbacks=fake_callbacks.to_callbacks(),
-        )
+        coordinator = fake_callbacks.to_coordinator(max_retries=3)
 
         await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
@@ -440,10 +431,7 @@ class TestRemediationExecution:
             fake_verifier=fake_verifier, task_error=RuntimeError("Task failed!")
         )
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=3),
-            callbacks=fake_callbacks.to_callbacks(),
-        )
+        coordinator = fake_callbacks.to_coordinator(max_retries=3)
 
         await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
@@ -465,10 +453,7 @@ class TestRemediationExecution:
         )
         fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier, task_success=False)
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=3),
-            callbacks=fake_callbacks.to_callbacks(),
-        )
+        coordinator = fake_callbacks.to_coordinator(max_retries=3)
 
         await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
@@ -491,10 +476,7 @@ class TestRemediationExecution:
             fake_verifier=fake_verifier, spawn_returns_task=False
         )
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=3),
-            callbacks=fake_callbacks.to_callbacks(),
-        )
+        coordinator = fake_callbacks.to_coordinator(max_retries=3)
 
         await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
@@ -516,10 +498,7 @@ class TestRemediationExecution:
             fake_verifier=fake_verifier, spawn_raises=RuntimeError("Spawn failed!")
         )
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=3),
-            callbacks=fake_callbacks.to_callbacks(),
-        )
+        coordinator = fake_callbacks.to_coordinator(max_retries=3)
 
         await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
@@ -540,10 +519,7 @@ class TestRemediationExecution:
         fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
         fake_callbacks.failed_issues.add("rem-1")
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=3),
-            callbacks=fake_callbacks.to_callbacks(),
-        )
+        coordinator = fake_callbacks.to_coordinator(max_retries=3)
 
         await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
@@ -565,10 +541,7 @@ class TestFallbackBehavior:
             fake_verifier=fake_verifier, has_epic_verifier=False
         )
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=3),
-            callbacks=fake_callbacks.to_callbacks(),
-        )
+        coordinator = fake_callbacks.to_coordinator(max_retries=3)
 
         await coordinator.check_epic_closure("child-1", stub_run_metadata())
 

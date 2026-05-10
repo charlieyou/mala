@@ -8,7 +8,7 @@ This module handles:
 - Graceful cancellation of remediation tasks on interrupt
 
 Design principles:
-- Protocol-based callbacks for orchestrator-owned operations
+- Protocol ports for issue/event/lifecycle operations
 - State management: verified_epics, epics_being_verified sets
 - Explicit config for retry behavior
 - InterruptGuard for consistent interrupt checking
@@ -21,10 +21,16 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from src.core.protocols.issue_lifecycle_port import IssueLifecycleEffect
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from src.core.models import EpicVerificationResult
+    from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.issue import IssueProvider
+    from src.core.protocols.issue_lifecycle_port import IssueLifecyclePort
+    from src.core.protocols.validation import EpicVerifierProtocol
     from src.domain.validation.config import EpicCompletionTriggerConfig, TriggerType
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.pipeline.issue_result import IssueResult
@@ -44,44 +50,6 @@ class EpicVerificationConfig:
 
 
 @dataclass
-class EpicVerificationCallbacks:
-    """Callbacks for orchestrator-owned operations during epic verification.
-
-    These callbacks allow the coordinator to trigger orchestrator operations
-    without taking dependencies on orchestrator internals.
-
-    Attributes:
-        get_parent_epic: Get the parent epic ID for an issue.
-        verify_epic: Run epic verification, returns verification result.
-        spawn_remediation: Spawn an agent for a remediation issue (issue_id, flow).
-        finalize_remediation: Finalize a remediation issue result.
-        mark_completed: Mark an issue as completed in the coordinator.
-        is_issue_failed: Check if an issue has failed.
-        close_eligible_epics: Fallback for mock providers without EpicVerifier.
-        on_epic_closed: Emit epic closed event.
-        on_warning: Emit warning event.
-        has_epic_verifier: Check if an EpicVerifier is available (callable for test patching).
-        get_agent_id: Get the agent ID for an issue (for error attribution).
-        queue_trigger_validation: Queue a trigger for validation (trigger_type, context).
-        get_epic_completion_trigger: Get the epic_completion trigger config (or None).
-    """
-
-    get_parent_epic: Callable[[str], Awaitable[str | None]]
-    verify_epic: Callable[[str, bool], Awaitable[EpicVerificationResult]]
-    spawn_remediation: Callable[[str, str], Awaitable[asyncio.Task[IssueResult] | None]]
-    finalize_remediation: Callable[[str, IssueResult, RunMetadata], Awaitable[None]]
-    mark_completed: Callable[[str], None]
-    is_issue_failed: Callable[[str], bool]
-    close_eligible_epics: Callable[[], Awaitable[bool]]
-    on_epic_closed: Callable[[str], None]
-    on_warning: Callable[[str], None]
-    has_epic_verifier: Callable[[], bool]
-    get_agent_id: Callable[[str], str]
-    queue_trigger_validation: Callable[[TriggerType, dict[str, Any]], None]
-    get_epic_completion_trigger: Callable[[], EpicCompletionTriggerConfig | None]
-
-
-@dataclass
 class EpicVerificationCoordinator:
     """Epic verification pipeline stage.
 
@@ -94,12 +62,28 @@ class EpicVerificationCoordinator:
 
     Attributes:
         config: Verification configuration.
-        callbacks: Callbacks for orchestrator-owned operations.
+        issue_provider: Issue tracking port.
+        event_sink: Event emission port.
+        issue_lifecycle: Issue lifecycle state/effect port.
+        epic_verifier_getter: Returns the current epic verifier, if configured.
+        spawn_remediation: Spawn an agent for a remediation issue.
+        finalize_remediation: Finalize a remediation issue result.
+        get_agent_id: Get an agent ID for fallback error attribution.
+        queue_trigger_validation: Queue a trigger validation request.
+        get_epic_completion_trigger: Return epic_completion trigger config, if any.
         epic_override_ids: Set of epic IDs to force human override.
     """
 
     config: EpicVerificationConfig
-    callbacks: EpicVerificationCallbacks
+    issue_provider: IssueProvider
+    event_sink: MalaEventSink
+    issue_lifecycle: IssueLifecyclePort
+    epic_verifier_getter: Callable[[], EpicVerifierProtocol | None]
+    spawn_remediation: Callable[[str, str], Awaitable[asyncio.Task[IssueResult] | None]]
+    finalize_remediation: Callable[[str, IssueResult, RunMetadata], Awaitable[None]]
+    get_agent_id: Callable[[str], str]
+    queue_trigger_validation: Callable[[TriggerType, dict[str, Any]], None]
+    get_epic_completion_trigger: Callable[[], EpicCompletionTriggerConfig | None]
     epic_override_ids: set[str] = field(default_factory=set)
 
     # State: Tracked across multiple check_epic_closure calls
@@ -127,7 +111,7 @@ class EpicVerificationCoordinator:
             interrupt_event: Optional event to signal interrupt. When set, the
                 verification loop exits early and remediation tasks are cancelled.
         """
-        parent_epic = await self.callbacks.get_parent_epic(issue_id)
+        parent_epic = await self.issue_provider.get_parent_epic_async(issue_id)
         if parent_epic is None or parent_epic in self.verified_epics:
             return
 
@@ -135,7 +119,7 @@ class EpicVerificationCoordinator:
         if parent_epic in self.epics_being_verified:
             return
 
-        if self.callbacks.has_epic_verifier():
+        if self._has_epic_verifier():
             # Mark as being verified to prevent parallel verification loops
             self.epics_being_verified.add(parent_epic)
             try:
@@ -146,9 +130,9 @@ class EpicVerificationCoordinator:
                 # Always remove from being_verified set when done
                 self.epics_being_verified.discard(parent_epic)
 
-        elif await self.callbacks.close_eligible_epics():
+        elif await self.issue_provider.close_eligible_epics_async():
             # Fallback for mock providers without EpicVerifier
-            self.callbacks.on_epic_closed(issue_id)
+            self.event_sink.on_epic_closed(issue_id)
 
     async def _verify_epic_with_retries(
         self,
@@ -181,13 +165,11 @@ class EpicVerificationCoordinator:
 
             # Log attempt if retrying (attempt > 1)
             if attempt > 1:
-                self.callbacks.on_warning(
+                self.event_sink.on_warning(
                     f"Epic verification retry {attempt - 1}/{max_retries} for {epic_id}"
                 )
 
-            verification_result = await self.callbacks.verify_epic(
-                epic_id, human_override
-            )
+            verification_result = await self._verify_epic(epic_id, human_override)
 
             # If epic wasn't eligible (children still open), don't mark as verified
             # so it can be re-checked when more children close
@@ -210,7 +192,7 @@ class EpicVerificationCoordinator:
                 or attempt >= max_attempts
             ):
                 if attempt >= max_attempts and verification_result.failed_count > 0:
-                    self.callbacks.on_warning(
+                    self.event_sink.on_warning(
                         f"Epic verification failed after {max_retries} retries for {epic_id}"
                     )
                 self.verified_epics.add(epic_id)
@@ -244,12 +226,12 @@ class EpicVerificationCoordinator:
         """
         from src.domain.validation.config import EpicDepth, FireOn, TriggerType
 
-        trigger_config = self.callbacks.get_epic_completion_trigger()
+        trigger_config = self.get_epic_completion_trigger()
         if trigger_config is None:
             return
 
         # Cache parent lookup to avoid double await
-        epic_parent = await self.callbacks.get_parent_epic(epic_id)
+        epic_parent = await self.issue_provider.get_parent_epic_async(epic_id)
 
         # Check epic_depth filter
         if trigger_config.epic_depth == EpicDepth.TOP_LEVEL:
@@ -269,7 +251,7 @@ class EpicVerificationCoordinator:
             "depth": "top_level" if epic_parent is None else "nested",
             "verification_result": "passed" if verification_passed else "failed",
         }
-        self.callbacks.queue_trigger_validation(TriggerType.EPIC_COMPLETION, context)
+        self.queue_trigger_validation(TriggerType.EPIC_COMPLETION, context)
 
     async def _execute_remediation_issues(
         self,
@@ -304,21 +286,19 @@ class EpicVerificationCoordinator:
 
             remaining = issue_ids[idx + 1 :]
 
-            if self.callbacks.is_issue_failed(issue_id):
+            if issue_id in self.issue_lifecycle.failed_issues:
                 if remaining:
-                    self.callbacks.on_warning(
+                    self.event_sink.on_warning(
                         f"Stopping remediation chain: {issue_id} already failed; "
                         f"{len(remaining)} downstream issue(s) remain blocked"
                     )
                 return
 
             try:
-                task = await self.callbacks.spawn_remediation(
-                    issue_id, "epic_remediation"
-                )
+                task = await self.spawn_remediation(issue_id, "epic_remediation")
             except Exception as e:
                 if remaining:
-                    self.callbacks.on_warning(
+                    self.event_sink.on_warning(
                         f"Stopping remediation chain: failed to spawn {issue_id}: {e}; "
                         f"{len(remaining)} downstream issue(s) remain blocked"
                     )
@@ -326,7 +306,7 @@ class EpicVerificationCoordinator:
 
             if not task:
                 if remaining:
-                    self.callbacks.on_warning(
+                    self.event_sink.on_warning(
                         f"Stopping remediation chain: no task for {issue_id}; "
                         f"{len(remaining)} downstream issue(s) remain blocked"
                     )
@@ -335,22 +315,22 @@ class EpicVerificationCoordinator:
             result = await self._wait_for_task(task, issue_id, interrupt_event)
 
             try:
-                await self.callbacks.finalize_remediation(
-                    issue_id, result, run_metadata
-                )
+                await self.finalize_remediation(issue_id, result, run_metadata)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                self.callbacks.on_warning(
+                self.event_sink.on_warning(
                     f"Failed to finalize remediation result for {issue_id} "
                     f"(agent: {result.agent_id}): {e}",
                 )
 
-            self.callbacks.mark_completed(issue_id)
+            self.issue_lifecycle.apply_effect(
+                IssueLifecycleEffect(kind="mark_completed", issue_id=issue_id)
+            )
 
             if not result.success:
                 if remaining:
-                    self.callbacks.on_warning(
+                    self.event_sink.on_warning(
                         f"Stopping remediation chain: {issue_id} failed; "
                         f"{len(remaining)} downstream issue(s) remain blocked"
                     )
@@ -414,14 +394,30 @@ class EpicVerificationCoordinator:
         except asyncio.CancelledError:
             return IssueResult(
                 issue_id=issue_id,
-                agent_id=self.callbacks.get_agent_id(issue_id),
+                agent_id=self.get_agent_id(issue_id),
                 success=False,
                 summary="Remediation task was cancelled",
             )
         except Exception as e:
             return IssueResult(
                 issue_id=issue_id,
-                agent_id=self.callbacks.get_agent_id(issue_id),
+                agent_id=self.get_agent_id(issue_id),
                 success=False,
                 summary=str(e),
             )
+
+    def _has_epic_verifier(self) -> bool:
+        """Return whether an epic verifier is configured."""
+        return self.epic_verifier_getter() is not None
+
+    async def _verify_epic(
+        self, epic_id: str, human_override: bool
+    ) -> EpicVerificationResult:
+        """Run epic verification through the configured verifier."""
+        epic_verifier = self.epic_verifier_getter()
+        if epic_verifier is None:
+            raise RuntimeError("Epic verifier is not available")
+        return await epic_verifier.verify_and_close_epic(
+            epic_id,
+            human_override=human_override,
+        )

@@ -15,6 +15,8 @@ import pytest
 
 from src.infra.io.log_output.run_metadata import RunMetadata
 from src.orchestration.factory import OrchestratorConfig, OrchestratorDependencies
+from src.pipeline.issue_finalizer import IssueFinalizeInput
+from src.pipeline.issue_result import IssueResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -67,19 +69,19 @@ class TestInterruptWiring:
         assert orchestrator._interrupt_event is not None
         assert not orchestrator._interrupt_event.is_set()
 
-    async def test_trigger_epic_closure_callback_passes_interrupt_event(
+    async def test_issue_finalizer_passes_interrupt_event_to_epic_closure(
         self, tmp_path: Path, tmp_runs_dir: Path
     ) -> None:
-        """trigger_epic_closure callback passes interrupt_event to check_epic_closure.
+        """IssueFinalizer passes interrupt_event to check_epic_closure.
 
-        This audit test verifies the callback defined in _build_issue_finalizer
+        This audit test verifies the finalizer built by _build_issue_finalizer
         correctly passes self._interrupt_event to EpicVerificationCoordinator.
         """
         from src.orchestration.factory import create_orchestrator
         from tests.fakes.event_sink import FakeEventSink
-        from tests.fakes.issue_provider import FakeIssueProvider
+        from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 
-        provider = FakeIssueProvider()
+        provider = FakeIssueProvider({"test-issue": FakeIssue("test-issue")})
         event_sink = FakeEventSink()
 
         config = OrchestratorConfig(
@@ -114,11 +116,20 @@ class TestInterruptWiring:
             mock_check_epic_closure
         )
 
-        # Call the trigger_epic_closure callback via issue_finalizer
+        # Finalize a successful issue so the finalizer triggers epic closure.
         mock_run_metadata = MagicMock(spec=RunMetadata)
-        trigger_callback = orchestrator.issue_finalizer.callbacks.trigger_epic_closure
-
-        await trigger_callback("test-issue", mock_run_metadata)
+        await orchestrator.issue_finalizer.finalize(
+            IssueFinalizeInput(
+                issue_id="test-issue",
+                result=IssueResult(
+                    issue_id="test-issue",
+                    agent_id="agent-1",
+                    success=True,
+                    summary="done",
+                ),
+                run_metadata=mock_run_metadata,
+            )
+        )
 
         # Verify interrupt_event was passed
         assert captured_interrupt_event is interrupt_event

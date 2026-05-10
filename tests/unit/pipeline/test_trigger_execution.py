@@ -13,7 +13,7 @@ Tests for RunCoordinator trigger validation:
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -49,6 +49,9 @@ from tests.fakes.lock_manager import FakeLockManager
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.issue import IssueProvider
+    from src.core.protocols.validation import EpicVerifierProtocol
 
 
 def make_coordinator(
@@ -867,7 +870,7 @@ class TestEpicCompletionTriggerIntegration:
         trigger_config: EpicCompletionTriggerConfig | None = None,
         parent_epic_map: dict[str, str | None] | None = None,
     ) -> tuple:
-        """Create EpicVerificationCoordinator with mock callbacks for trigger testing.
+        """Create EpicVerificationCoordinator with mock ports for trigger testing.
 
         Args:
             trigger_config: The epic_completion trigger config (or None if not configured).
@@ -878,16 +881,39 @@ class TestEpicCompletionTriggerIntegration:
         """
         from src.core.models import EpicVerificationResult, EpicVerdict
         from src.pipeline.epic_verification_coordinator import (
-            EpicVerificationCallbacks,
             EpicVerificationConfig,
             EpicVerificationCoordinator,
         )
+        from tests.fakes.issue_lifecycle_port import FakeIssueLifecyclePort
 
         parent_map = parent_epic_map or {}
         queued_triggers: list[tuple[TriggerType, dict]] = []
 
-        async def get_parent_epic(issue_id: str) -> str | None:
-            return parent_map.get(issue_id)
+        class FakeEpicPorts:
+            verify_epic: Any
+
+            def __init__(self) -> None:
+                self.issue_lifecycle = FakeIssueLifecyclePort()
+
+            async def get_parent_epic_async(self, issue_id: str) -> str | None:
+                return parent_map.get(issue_id)
+
+            async def close_eligible_epics_async(self) -> bool:
+                return False
+
+            def on_epic_closed(self, issue_id: str) -> None:
+                pass
+
+            def on_warning(self, msg: str) -> None:
+                pass
+
+            async def verify_and_close_epic(
+                self,
+                epic_id: str,
+                *,
+                human_override: bool,
+            ) -> EpicVerificationResult:
+                return await self.verify_epic(epic_id, human_override)
 
         # Default verification result: passed
         verification_result = EpicVerificationResult(
@@ -907,29 +933,24 @@ class TestEpicCompletionTriggerIntegration:
         ) -> EpicVerificationResult:
             return verification_result
 
-        callbacks = EpicVerificationCallbacks(
-            get_parent_epic=get_parent_epic,
-            verify_epic=verify_epic,
+        ports = FakeEpicPorts()
+        ports.verify_epic = verify_epic
+
+        config = EpicVerificationConfig(max_retries=0)
+        coordinator = EpicVerificationCoordinator(
+            config=config,
+            issue_provider=cast("IssueProvider", ports),
+            event_sink=cast("MalaEventSink", ports),
+            issue_lifecycle=ports.issue_lifecycle,
+            epic_verifier_getter=lambda: cast("EpicVerifierProtocol", ports),
             spawn_remediation=lambda issue_id, flow: None,  # type: ignore[return-value, arg-type]  # ty:ignore[invalid-argument-type]
             finalize_remediation=lambda issue_id, result, metadata: None,  # type: ignore[return-value, arg-type]  # ty:ignore[invalid-argument-type]
-            mark_completed=lambda issue_id: None,
-            is_issue_failed=lambda issue_id: False,
-            close_eligible_epics=lambda: None,  # type: ignore[return-value, arg-type]  # ty:ignore[invalid-argument-type]
-            on_epic_closed=lambda issue_id: None,
-            on_warning=lambda msg: None,
-            has_epic_verifier=lambda: True,
             get_agent_id=lambda issue_id: "test-agent",
             queue_trigger_validation=lambda t, c: queued_triggers.append((t, c)),
             get_epic_completion_trigger=lambda: trigger_config,
         )
 
-        config = EpicVerificationConfig(max_retries=0)
-        coordinator = EpicVerificationCoordinator(
-            config=config,
-            callbacks=callbacks,
-        )
-
-        return coordinator, queued_triggers, callbacks
+        return coordinator, queued_triggers, ports
 
     @pytest.mark.asyncio
     async def test_epic_depth_top_level_nested_epic_does_not_fire(

@@ -11,7 +11,7 @@ The IssueFinalizer receives explicit inputs and returns explicit outputs,
 making it testable without orchestrator dependencies.
 
 Design principles:
-- Callback-based dependencies for orchestrator-owned operations
+- Port-based dependencies for issue/event/lifecycle operations
 - Explicit input/output types for clarity
 - Reuses existing gate_metadata helpers
 """
@@ -30,13 +30,16 @@ from src.pipeline.gate_metadata import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
     from pathlib import Path
 
     from src.core.protocols.review import ReviewIssueProtocol
+    from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.issue import IssueProvider
+    from src.core.protocols.issue_lifecycle_port import IssueLifecyclePort
     from src.core.protocols.validation import GateChecker, GateResultProtocol
     from src.domain.evidence_check import GateResult
     from src.domain.validation.spec import ValidationSpec
+    from src.pipeline.epic_verification_coordinator import EpicVerificationCoordinator
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.pipeline.issue_result import IssueResult
 
@@ -91,36 +94,12 @@ class IssueFinalizeOutput:
 
 
 @dataclass
-class IssueFinalizeCallbacks:
-    """Callbacks for orchestrator-owned operations during finalization.
-
-    These callbacks allow the finalizer to trigger orchestrator operations
-    without taking dependencies on orchestrator internals.
-
-    Attributes:
-        close_issue: Close an issue in beads. Returns True if closed successfully.
-        mark_needs_followup: Mark an issue as needing followup in beads.
-        on_issue_closed: Emit issue closed event.
-        on_issue_completed: Emit issue completed event.
-        trigger_epic_closure: Trigger epic closure check.
-        create_tracking_issues: Create tracking issues for P2/P3 review findings.
-    """
-
-    close_issue: Callable[[str], Awaitable[bool]]
-    mark_needs_followup: Callable[[str, str, Path | None], Awaitable[bool]]
-    on_issue_closed: Callable[[str, str], None]
-    on_issue_completed: Callable[[str, str, bool, float, str], None]
-    trigger_epic_closure: Callable[[str, RunMetadata], Awaitable[None]]
-    create_tracking_issues: Callable[[str, list[ReviewIssueProtocol]], Awaitable[None]]
-
-
-@dataclass
 class IssueFinalizer:
     """Issue finalization pipeline stage.
 
     This class encapsulates the finalization logic that was previously
     inline in MalaOrchestrator._finalize_issue_result. It receives
-    callbacks for orchestrator-owned operations.
+    protocol ports for issue tracking, events, and lifecycle state.
 
     The IssueFinalizer is responsible for:
     - Building gate metadata from stored results or logs
@@ -132,13 +111,19 @@ class IssueFinalizer:
 
     Attributes:
         config: Finalization configuration.
-        callbacks: Callbacks for orchestrator-owned operations.
+        issue_provider: Issue tracking port.
+        event_sink: Event emission port.
+        issue_lifecycle: Issue lifecycle state/effect port.
+        epic_verification_coordinator: Coordinator for parent epic closure checks.
         evidence_check: Quality gate checker for fallback metadata extraction.
         per_session_spec: Validation spec for fallback metadata extraction.
     """
 
     config: IssueFinalizeConfig
-    callbacks: IssueFinalizeCallbacks
+    issue_provider: IssueProvider
+    event_sink: MalaEventSink
+    issue_lifecycle: IssueLifecyclePort
+    epic_verification_coordinator: EpicVerificationCoordinator
     evidence_check: GateChecker | None = None
     per_session_spec: ValidationSpec | None = None
 
@@ -165,16 +150,19 @@ class IssueFinalizer:
         # Failed issues are excluded via failed_issues set and may be retried
         closed = False
         if result.success:
-            closed = await self.callbacks.close_issue(issue_id)
+            closed = await self.issue_provider.close_async(issue_id)
             if closed:
-                self.callbacks.on_issue_closed(issue_id, issue_id)
-                await self.callbacks.trigger_epic_closure(issue_id, input.run_metadata)
+                self.event_sink.on_issue_closed(issue_id, issue_id)
+                await self.epic_verification_coordinator.check_epic_closure(
+                    issue_id,
+                    input.run_metadata,
+                    interrupt_event=self.issue_lifecycle.interrupt_event,
+                )
 
             # Create tracking issues for P2/P3 review findings (if enabled)
             if self.config.track_review_issues and result.low_priority_review_issues:
-                await self.callbacks.create_tracking_issues(
-                    issue_id,
-                    result.low_priority_review_issues,
+                await self._create_tracking_issues(
+                    issue_id, result.low_priority_review_issues
                 )
 
         # Record to run metadata
@@ -264,7 +252,7 @@ class IssueFinalizer:
         issue_id = input.issue_id
         log_path = input.log_path
 
-        self.callbacks.on_issue_completed(
+        self.event_sink.on_issue_completed(
             issue_id,
             issue_id,
             result.success,
@@ -272,4 +260,23 @@ class IssueFinalizer:
             truncate_text(result.summary, 50) if result.success else result.summary,
         )
         if not result.success:
-            await self.callbacks.mark_needs_followup(issue_id, result.summary, log_path)
+            await self.issue_provider.mark_needs_followup_async(
+                issue_id, result.summary, log_path
+            )
+
+    async def _create_tracking_issues(
+        self,
+        issue_id: str,
+        review_issues: list[ReviewIssueProtocol],
+    ) -> None:
+        """Create tracking issues for non-blocking review findings."""
+        from src.pipeline.review_tracking import create_review_tracking_issues
+
+        parent_epic_id = await self.issue_provider.get_parent_epic_async(issue_id)
+        await create_review_tracking_issues(
+            self.issue_provider,
+            self.event_sink,
+            issue_id,
+            review_issues,
+            parent_epic_id=parent_epic_id,
+        )

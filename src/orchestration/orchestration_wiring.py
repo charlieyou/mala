@@ -5,7 +5,6 @@ providing a clean separation between wiring logic and runtime orchestration.
 
 The wiring module handles:
 - Creating and configuring pipeline runners (GateRunner, ReviewRunner, etc.)
-- Building callback structures for coordinators
 - Initializing the session callback factory
 
 Design principles:
@@ -16,9 +15,6 @@ Design principles:
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.infra.io.log_output.console import is_verbose_enabled
@@ -28,8 +24,6 @@ from src.pipeline.gate_runner import (
     GateRunner,
     GateRunnerConfig,
 )
-from src.pipeline.issue_finalizer import IssueFinalizeCallbacks
-from src.pipeline.epic_verification_coordinator import EpicVerificationCallbacks
 from src.pipeline.review_runner import (
     ReviewRunner,
     ReviewRunnerConfig,
@@ -39,7 +33,6 @@ from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
 )
-from src.orchestration.review_tracking import create_review_tracking_issues
 from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,
@@ -49,26 +42,14 @@ from src.pipeline.trigger_engine import TriggerEngine
 from src.pipeline.fixer_service import FixerService, FixerServiceConfig
 
 if TYPE_CHECKING:
-    import asyncio
-    from typing import Any
+    from collections.abc import Callable
 
-    from collections.abc import Awaitable, Callable
-    from pathlib import Path
-
-    from src.core.protocols.review import ReviewIssueProtocol
-    from src.core.protocols.issue_lifecycle_port import IssueLifecyclePort
-    from src.core.models import EpicVerificationResult
-    from src.core.protocols.validation import EpicVerifierProtocol
-    from src.domain.validation.config import EpicCompletionTriggerConfig, TriggerType
-    from src.infra.io.log_output.run_metadata import RunMetadata
-    from src.pipeline.epic_verification_coordinator import EpicVerificationCoordinator
     from src.orchestration.types import (
         IssueFilterConfig,
         PipelineConfig,
         RuntimeDeps,
     )
     from src.pipeline.session_callback_factory import SessionRunContext
-    from src.pipeline.issue_result import IssueResult
 
 
 def build_gate_runner(
@@ -207,195 +188,6 @@ def build_issue_coordinator(
         beads=runtime.beads,
         event_sink=runtime.event_sink,
         config=config,
-    )
-
-
-@dataclass
-class FinalizerCallbackRefs:
-    """References for building finalizer callbacks.
-
-    These are callable getters that allow late binding to orchestrator state.
-    """
-
-    close_issue: Callable[[str], Awaitable[bool]]
-    mark_needs_followup: Callable[[str, str, Path | None], Awaitable[bool]]
-    on_issue_closed: Callable[[str, str], None]
-    on_issue_completed: Callable[[str, str, bool, float, str], None]
-    trigger_epic_closure: Callable[[str, RunMetadata], Awaitable[None]]
-    create_tracking_issues: Callable[[str, list[ReviewIssueProtocol]], Awaitable[None]]
-
-
-def build_finalizer_callback_refs(
-    runtime: RuntimeDeps,
-    issue_lifecycle: IssueLifecyclePort,
-    epic_verification_coordinator: EpicVerificationCoordinator,
-) -> FinalizerCallbackRefs:
-    """Build callback references for issue finalization."""
-
-    async def close_issue(issue_id: str) -> bool:
-        return await runtime.beads.close_async(issue_id)
-
-    async def mark_needs_followup(
-        issue_id: str,
-        summary: str,
-        log_path: Path | None,
-    ) -> bool:
-        return await runtime.beads.mark_needs_followup_async(
-            issue_id,
-            summary,
-            log_path=log_path,
-        )
-
-    def on_issue_closed(agent_id: str, issue_id: str) -> None:
-        runtime.event_sink.on_issue_closed(agent_id, issue_id)
-
-    def on_issue_completed(
-        agent_id: str,
-        issue_id: str,
-        success: bool,
-        duration: float,
-        summary: str,
-    ) -> None:
-        runtime.event_sink.on_issue_completed(
-            agent_id,
-            issue_id,
-            success,
-            duration,
-            summary,
-        )
-
-    async def trigger_epic_closure(issue_id: str, run_metadata: RunMetadata) -> None:
-        await epic_verification_coordinator.check_epic_closure(
-            issue_id,
-            run_metadata,
-            interrupt_event=issue_lifecycle.interrupt_event,
-        )
-
-    async def create_tracking_issues(
-        issue_id: str,
-        review_issues: list[ReviewIssueProtocol],
-    ) -> None:
-        parent_epic_id = await runtime.beads.get_parent_epic_async(issue_id)
-        await create_review_tracking_issues(
-            runtime.beads,
-            runtime.event_sink,
-            issue_id,
-            review_issues,
-            parent_epic_id=parent_epic_id,
-        )
-
-    return FinalizerCallbackRefs(
-        close_issue=close_issue,
-        mark_needs_followup=mark_needs_followup,
-        on_issue_closed=on_issue_closed,
-        on_issue_completed=on_issue_completed,
-        trigger_epic_closure=trigger_epic_closure,
-        create_tracking_issues=create_tracking_issues,
-    )
-
-
-def build_finalizer_callbacks(refs: FinalizerCallbackRefs) -> IssueFinalizeCallbacks:
-    """Build IssueFinalizeCallbacks from callback references."""
-    return IssueFinalizeCallbacks(
-        close_issue=refs.close_issue,
-        mark_needs_followup=refs.mark_needs_followup,
-        on_issue_closed=refs.on_issue_closed,
-        on_issue_completed=refs.on_issue_completed,
-        trigger_epic_closure=refs.trigger_epic_closure,
-        create_tracking_issues=refs.create_tracking_issues,
-    )
-
-
-@dataclass
-class EpicCallbackRefs:
-    """References for building epic verification callbacks."""
-
-    get_parent_epic: Callable[[str], Awaitable[str | None]]
-    verify_epic: Callable[[str, bool], Awaitable[EpicVerificationResult]]
-    spawn_remediation: Callable[[str, str], Awaitable[asyncio.Task[IssueResult] | None]]
-    finalize_remediation: Callable[[str, IssueResult, RunMetadata], Awaitable[None]]
-    mark_completed: Callable[[str], None]
-    is_issue_failed: Callable[[str], bool]
-    close_eligible_epics: Callable[[], Awaitable[bool]]
-    on_epic_closed: Callable[[str], None]
-    on_warning: Callable[[str], None]
-    has_epic_verifier: Callable[[], bool]
-    get_agent_id: Callable[[str], str]
-    queue_trigger_validation: Callable[[TriggerType, dict[str, Any]], None]
-    get_epic_completion_trigger: Callable[[], EpicCompletionTriggerConfig | None]
-
-
-def build_epic_callback_refs(
-    runtime: RuntimeDeps,
-    issue_coordinator: IssueExecutionCoordinator,
-    run_coordinator: RunCoordinator,
-    *,
-    epic_verifier_getter: Callable[[], EpicVerifierProtocol | None],
-    spawn_remediation: Callable[
-        [str, str], Awaitable[asyncio.Task[IssueResult] | None]
-    ],
-    finalize_remediation: Callable[[str, IssueResult, RunMetadata], Awaitable[None]],
-    is_issue_failed: Callable[[str], bool],
-    get_agent_id: Callable[[str], str],
-    get_epic_completion_trigger: Callable[[], EpicCompletionTriggerConfig | None],
-) -> EpicCallbackRefs:
-    """Build callback references for epic verification.
-
-    Epic issue operations are sourced from IssueProvider. The remaining
-    callables are orchestrator-owned runtime operations passed explicitly.
-    """
-
-    async def verify_epic(epic_id: str, human_override: bool) -> EpicVerificationResult:
-        epic_verifier = epic_verifier_getter()
-        if epic_verifier is None:
-            raise RuntimeError("Epic verifier is not available")
-        return await epic_verifier.verify_and_close_epic(
-            epic_id,
-            human_override=human_override,
-        )
-
-    def has_epic_verifier() -> bool:
-        return epic_verifier_getter() is not None
-
-    async def get_parent_epic(issue_id: str) -> str | None:
-        return await runtime.beads.get_parent_epic_async(issue_id)
-
-    async def close_eligible_epics() -> bool:
-        return await runtime.beads.close_eligible_epics_async()
-
-    return EpicCallbackRefs(
-        get_parent_epic=get_parent_epic,
-        verify_epic=verify_epic,
-        spawn_remediation=spawn_remediation,
-        finalize_remediation=finalize_remediation,
-        mark_completed=issue_coordinator.mark_completed,
-        is_issue_failed=is_issue_failed,
-        close_eligible_epics=close_eligible_epics,
-        on_epic_closed=runtime.event_sink.on_epic_closed,
-        on_warning=runtime.event_sink.on_warning,
-        has_epic_verifier=has_epic_verifier,
-        get_agent_id=get_agent_id,
-        queue_trigger_validation=run_coordinator.queue_trigger_validation,
-        get_epic_completion_trigger=get_epic_completion_trigger,
-    )
-
-
-def build_epic_callbacks(refs: EpicCallbackRefs) -> EpicVerificationCallbacks:
-    """Build EpicVerificationCallbacks from callback references."""
-    return EpicVerificationCallbacks(
-        get_parent_epic=refs.get_parent_epic,
-        verify_epic=refs.verify_epic,
-        spawn_remediation=refs.spawn_remediation,
-        finalize_remediation=refs.finalize_remediation,
-        mark_completed=refs.mark_completed,
-        is_issue_failed=refs.is_issue_failed,
-        close_eligible_epics=refs.close_eligible_epics,
-        on_epic_closed=refs.on_epic_closed,
-        on_warning=refs.on_warning,
-        has_epic_verifier=refs.has_epic_verifier,
-        get_agent_id=refs.get_agent_id,
-        queue_trigger_validation=refs.queue_trigger_validation,
-        get_epic_completion_trigger=refs.get_epic_completion_trigger,
     )
 
 

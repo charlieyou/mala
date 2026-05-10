@@ -19,7 +19,6 @@ from src.pipeline.agent_session_runner import (
     AgentSessionRunner,
 )
 from src.pipeline.epic_verification_coordinator import (
-    EpicVerificationCallbacks,
     EpicVerificationConfig,
     EpicVerificationCoordinator,
 )
@@ -34,7 +33,6 @@ from src.pipeline.issue_execution_coordinator import (
     IssueExecutionCoordinator,
 )
 from src.pipeline.issue_finalizer import (
-    IssueFinalizeCallbacks,
     IssueFinalizeConfig,
     IssueFinalizeInput,
     IssueFinalizeOutput,
@@ -53,13 +51,11 @@ __all__ = [
     "AgentSessionOutput",
     "AgentSessionRunner",
     "CoordinatorConfig",
-    "EpicVerificationCallbacks",
     "EpicVerificationConfig",
     "EpicVerificationCoordinator",
     "GateRunner",
     "GateRunnerConfig",
     "IssueExecutionCoordinator",
-    "IssueFinalizeCallbacks",
     "IssueFinalizeConfig",
     "IssueFinalizeInput",
     "IssueFinalizeOutput",

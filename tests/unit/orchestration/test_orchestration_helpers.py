@@ -22,7 +22,7 @@ from src.pipeline.gate_metadata import (
     build_gate_metadata,
     build_gate_metadata_from_logs,
 )
-from src.orchestration.review_tracking import (
+from src.pipeline.review_tracking import (
     _extract_existing_fingerprints,
     _get_finding_fingerprint,
     _update_header_count,

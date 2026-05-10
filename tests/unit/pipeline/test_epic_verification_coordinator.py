@@ -9,17 +9,21 @@ Tests verify that epic verification properly handles interrupt events:
 """
 
 import asyncio
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from src.core.models import EpicVerificationResult
 from src.pipeline.epic_verification_coordinator import (
-    EpicVerificationCallbacks,
     EpicVerificationConfig,
     EpicVerificationCoordinator,
 )
 from src.pipeline.issue_result import IssueResult
+from tests.fakes.issue_lifecycle_port import FakeIssueLifecyclePort
+
+if TYPE_CHECKING:
+    from src.core.protocols.validation import EpicVerifierProtocol
 
 
 def make_verification_result(
@@ -49,27 +53,56 @@ def make_issue_result(issue_id: str, *, success: bool = True) -> IssueResult:
     )
 
 
+class EpicVerificationHarness:
+    """Mutable test harness for EpicVerificationCoordinator ports."""
+
+    def __init__(self) -> None:
+        self.issue_provider = MagicMock()
+        self.issue_provider.get_parent_epic_async = AsyncMock(return_value="epic-1")
+        self.issue_provider.close_eligible_epics_async = AsyncMock(return_value=False)
+        self.event_sink = MagicMock()
+        self.issue_lifecycle = FakeIssueLifecyclePort()
+        self.verify_epic = AsyncMock(return_value=make_verification_result())
+        self.spawn_remediation = AsyncMock(return_value=None)
+        self.finalize_remediation = AsyncMock()
+        self.get_agent_id = MagicMock(return_value="agent-1")
+        self.has_epic_verifier = MagicMock(return_value=True)
+        self.queue_trigger_validation = MagicMock()
+        self.get_epic_completion_trigger = MagicMock(return_value=None)
+
+    async def verify_and_close_epic(
+        self,
+        epic_id: str,
+        *,
+        human_override: bool,
+    ) -> EpicVerificationResult:
+        return await self.verify_epic(epic_id, human_override)
+
+    def to_coordinator(self, max_retries: int) -> EpicVerificationCoordinator:
+        """Build a coordinator from the current harness attributes."""
+        return EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=max_retries),
+            issue_provider=self.issue_provider,
+            event_sink=self.event_sink,
+            issue_lifecycle=self.issue_lifecycle,
+            epic_verifier_getter=lambda: (
+                cast("EpicVerifierProtocol", self) if self.has_epic_verifier() else None
+            ),
+            spawn_remediation=self.spawn_remediation,
+            finalize_remediation=self.finalize_remediation,
+            get_agent_id=self.get_agent_id,
+            queue_trigger_validation=self.queue_trigger_validation,
+            get_epic_completion_trigger=self.get_epic_completion_trigger,
+        )
+
+
 class TestEpicVerificationInterruptHandling:
     """Tests for interrupt handling in EpicVerificationCoordinator."""
 
     @pytest.fixture
-    def callbacks(self) -> EpicVerificationCallbacks:
-        """Create mock callbacks."""
-        return EpicVerificationCallbacks(
-            get_parent_epic=AsyncMock(return_value="epic-1"),
-            verify_epic=AsyncMock(return_value=make_verification_result()),
-            spawn_remediation=AsyncMock(return_value=None),
-            finalize_remediation=AsyncMock(),
-            mark_completed=MagicMock(),
-            is_issue_failed=MagicMock(return_value=False),
-            close_eligible_epics=AsyncMock(return_value=False),
-            on_epic_closed=MagicMock(),
-            on_warning=MagicMock(),
-            has_epic_verifier=MagicMock(return_value=True),
-            get_agent_id=MagicMock(return_value="agent-1"),
-            queue_trigger_validation=MagicMock(),
-            get_epic_completion_trigger=MagicMock(return_value=None),
-        )
+    def callbacks(self) -> EpicVerificationHarness:
+        """Create mutable coordinator harness."""
+        return EpicVerificationHarness()
 
     @pytest.fixture
     def run_metadata(self) -> MagicMock:
@@ -79,7 +112,7 @@ class TestEpicVerificationInterruptHandling:
     @pytest.mark.asyncio
     async def test_epic_verification_checks_interrupt_before_retry(
         self,
-        callbacks: EpicVerificationCallbacks,
+        callbacks: EpicVerificationHarness,
         run_metadata: MagicMock,
     ) -> None:
         """Verify that interrupt is checked before each retry iteration."""
@@ -111,10 +144,7 @@ class TestEpicVerificationInterruptHandling:
         callbacks.spawn_remediation = AsyncMock(side_effect=spawn_remediation)
 
         # Create coordinator with retries allowed
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=2),
-            callbacks=callbacks,
-        )
+        coordinator = callbacks.to_coordinator(max_retries=2)
 
         # Create interrupt event that will be set after first verification
         interrupt_event = asyncio.Event()
@@ -146,7 +176,7 @@ class TestEpicVerificationInterruptHandling:
     @pytest.mark.asyncio
     async def test_epic_verification_cancels_remediation_on_interrupt(
         self,
-        callbacks: EpicVerificationCallbacks,
+        callbacks: EpicVerificationHarness,
         run_metadata: MagicMock,
     ) -> None:
         """Verify that remediation tasks are cancelled when interrupted."""
@@ -177,10 +207,7 @@ class TestEpicVerificationInterruptHandling:
             )
         )
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=1),
-            callbacks=callbacks,
-        )
+        coordinator = callbacks.to_coordinator(max_retries=1)
 
         interrupt_event = asyncio.Event()
 
@@ -207,7 +234,7 @@ class TestEpicVerificationInterruptHandling:
     @pytest.mark.asyncio
     async def test_epic_verification_stops_spawning_on_interrupt(
         self,
-        callbacks: EpicVerificationCallbacks,
+        callbacks: EpicVerificationHarness,
         run_metadata: MagicMock,
     ) -> None:
         """Verify that no new remediation tasks are spawned after interrupt."""
@@ -231,10 +258,7 @@ class TestEpicVerificationInterruptHandling:
             )
         )
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=1),
-            callbacks=callbacks,
-        )
+        coordinator = callbacks.to_coordinator(max_retries=1)
 
         # Pre-set interrupt before starting
         interrupt_event = asyncio.Event()
@@ -251,7 +275,7 @@ class TestEpicVerificationInterruptHandling:
     @pytest.mark.asyncio
     async def test_epic_verification_works_without_interrupt_event(
         self,
-        callbacks: EpicVerificationCallbacks,
+        callbacks: EpicVerificationHarness,
         run_metadata: MagicMock,
     ) -> None:
         """Verify that verification works normally when no interrupt event is provided."""
@@ -262,10 +286,7 @@ class TestEpicVerificationInterruptHandling:
             )
         )
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=1),
-            callbacks=callbacks,
-        )
+        coordinator = callbacks.to_coordinator(max_retries=1)
 
         # Call without interrupt_event (default None)
         await coordinator.check_epic_closure("issue-1", run_metadata)
@@ -277,7 +298,7 @@ class TestEpicVerificationInterruptHandling:
     @pytest.mark.asyncio
     async def test_spawn_remediation_passes_flow_parameter(
         self,
-        callbacks: EpicVerificationCallbacks,
+        callbacks: EpicVerificationHarness,
         run_metadata: MagicMock,
     ) -> None:
         """Verify that spawn_remediation is called with flow='epic_remediation'."""
@@ -301,10 +322,7 @@ class TestEpicVerificationInterruptHandling:
             )
         )
 
-        coordinator = EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=1),
-            callbacks=callbacks,
-        )
+        coordinator = callbacks.to_coordinator(max_retries=1)
 
         await coordinator.check_epic_closure("issue-1", run_metadata)
 

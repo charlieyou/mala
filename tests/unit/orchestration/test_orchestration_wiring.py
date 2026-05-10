@@ -5,8 +5,7 @@ and the build functions that construct pipeline components.
 """
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -15,7 +14,6 @@ from src.domain.validation.config import PromptValidationCommands
 from src.infra.io.config import MalaConfig
 from src.infra.clients.amp_provider import _create_amp_mcp_server_factory
 from src.orchestration.orchestration_wiring import (
-    build_epic_callback_refs,
     build_gate_runner,
     build_issue_coordinator,
     build_review_runner,
@@ -34,16 +32,12 @@ from src.pipeline.issue_execution_coordinator import IssueExecutionCoordinator
 from src.pipeline.review_runner import ReviewRunner
 from src.pipeline.run_coordinator import RunCoordinator
 from src.pipeline.session_callback_factory import SessionCallbackFactory
-from src.core.models import EpicVerificationResult
 from tests.fakes import (
     FakeCommandRunner,
     FakeEventSink,
     FakeLockManager,
     FakeSDKClientFactory,
 )
-
-if TYPE_CHECKING:
-    from src.core.protocols.validation import EpicVerifierProtocol
 
 
 @pytest.fixture
@@ -243,83 +237,6 @@ class TestBuildIssueCoordinator:
         assert coordinator.config.include_wip is True
         assert coordinator.config.focus is True
         assert coordinator.config.orphans_only is False
-
-
-@pytest.mark.unit
-class TestBuildEpicCallbackRefs:
-    """Tests for epic verification callback reference wiring."""
-
-    @pytest.mark.asyncio
-    async def test_uses_issue_provider_for_epic_issue_operations(
-        self,
-        mock_runtime_deps: RuntimeDeps,
-    ) -> None:
-        """Epic issue operations come from the IssueProvider port."""
-        issue_coordinator = MagicMock()
-        run_coordinator = MagicMock()
-        beads = cast("Any", mock_runtime_deps.beads)
-        beads.get_parent_epic_async = AsyncMock(return_value="epic-1")
-        beads.close_eligible_epics_async = AsyncMock(return_value=True)
-
-        refs = build_epic_callback_refs(
-            mock_runtime_deps,
-            issue_coordinator,
-            run_coordinator,
-            epic_verifier_getter=lambda: None,
-            spawn_remediation=MagicMock(),
-            finalize_remediation=MagicMock(),
-            is_issue_failed=MagicMock(),
-            get_agent_id=MagicMock(),
-            get_epic_completion_trigger=MagicMock(),
-        )
-
-        assert await refs.get_parent_epic("child-1") == "epic-1"
-        assert await refs.close_eligible_epics() is True
-        beads.get_parent_epic_async.assert_awaited_once_with("child-1")
-        beads.close_eligible_epics_async.assert_awaited_once_with()
-        assert refs.mark_completed is issue_coordinator.mark_completed
-        assert refs.queue_trigger_validation is run_coordinator.queue_trigger_validation
-
-    @pytest.mark.asyncio
-    async def test_verify_epic_uses_current_epic_verifier(
-        self,
-        mock_runtime_deps: RuntimeDeps,
-    ) -> None:
-        """verify_epic resolves the verifier lazily from the injected getter."""
-
-        class FakeEpicVerifier:
-            async def verify_and_close_epic(
-                self,
-                epic_id: str,
-                *,
-                human_override: bool,
-            ) -> EpicVerificationResult:
-                assert epic_id == "epic-1"
-                assert human_override is True
-                return EpicVerificationResult(
-                    verified_count=1,
-                    passed_count=1,
-                    failed_count=0,
-                    verdicts={},
-                    remediation_issues_created=[],
-                )
-
-        verifier = cast("EpicVerifierProtocol", FakeEpicVerifier())
-        refs = build_epic_callback_refs(
-            mock_runtime_deps,
-            MagicMock(),
-            MagicMock(),
-            epic_verifier_getter=lambda: verifier,
-            spawn_remediation=MagicMock(),
-            finalize_remediation=MagicMock(),
-            is_issue_failed=MagicMock(),
-            get_agent_id=MagicMock(),
-            get_epic_completion_trigger=MagicMock(),
-        )
-
-        assert refs.has_epic_verifier() is True
-        result = await refs.verify_epic("epic-1", True)
-        assert result.passed_count == 1
 
 
 @pytest.mark.unit

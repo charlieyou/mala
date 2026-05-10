@@ -6,15 +6,17 @@ Tests for last_review_issues passthrough and persistence.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from src.pipeline.issue_finalizer import (
     IssueFinalizer,
     IssueFinalizeInput,
-    IssueFinalizeCallbacks,
     IssueFinalizeConfig,
 )
 from src.pipeline.issue_result import IssueResult
+from tests.fakes.event_sink import FakeEventSink
+from tests.fakes.issue_lifecycle_port import FakeIssueLifecyclePort
+from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -45,15 +47,16 @@ def make_minimal_result(
     )
 
 
-def make_callbacks() -> IssueFinalizeCallbacks:
-    """Create mock callbacks for testing."""
-    return IssueFinalizeCallbacks(
-        close_issue=AsyncMock(return_value=True),
-        mark_needs_followup=AsyncMock(return_value=True),
-        on_issue_closed=MagicMock(),
-        on_issue_completed=MagicMock(),
-        trigger_epic_closure=AsyncMock(),
-        create_tracking_issues=AsyncMock(),
+def make_finalizer(config: IssueFinalizeConfig) -> IssueFinalizer:
+    """Create an IssueFinalizer with fake ports."""
+    return IssueFinalizer(
+        config=config,
+        issue_provider=FakeIssueProvider({"test-issue": FakeIssue("test-issue")}),
+        event_sink=FakeEventSink(),
+        issue_lifecycle=FakeIssueLifecyclePort(),
+        epic_verification_coordinator=MagicMock(check_epic_closure=AsyncMock()),
+        evidence_check=None,
+        per_session_spec=None,
     )
 
 
@@ -88,14 +91,8 @@ class TestIssueFinalizer:
             review_log_path=None,
         )
 
-        callbacks = make_callbacks()
         config = IssueFinalizeConfig(track_review_issues=False)
-        finalizer = IssueFinalizer(
-            config=config,
-            callbacks=callbacks,
-            evidence_check=None,
-            per_session_spec=None,
-        )
+        finalizer = make_finalizer(config)
 
         # Call _record_issue_run directly to test the persistence logic
         finalizer._record_issue_run(input, MagicMock())
@@ -127,14 +124,8 @@ class TestIssueFinalizer:
             review_log_path=None,
         )
 
-        callbacks = make_callbacks()
         config = IssueFinalizeConfig(track_review_issues=False)
-        finalizer = IssueFinalizer(
-            config=config,
-            callbacks=callbacks,
-            evidence_check=None,
-            per_session_spec=None,
-        )
+        finalizer = make_finalizer(config)
 
         finalizer._record_issue_run(input, MagicMock())
 
@@ -163,14 +154,8 @@ class TestIssueFinalizer:
             review_log_path=None,
         )
 
-        callbacks = make_callbacks()
         config = IssueFinalizeConfig(track_review_issues=False)
-        finalizer = IssueFinalizer(
-            config=config,
-            callbacks=callbacks,
-            evidence_check=None,
-            per_session_spec=None,
-        )
+        finalizer = make_finalizer(config)
 
         finalizer._record_issue_run(input, MagicMock())
 
