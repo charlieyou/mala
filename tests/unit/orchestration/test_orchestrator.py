@@ -13,7 +13,8 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, Callable, Generator, Sequence
 from pathlib import Path
-from typing import Self, cast
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Self, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,6 +23,7 @@ from claude_agent_sdk.types import ResultMessage
 from src.orchestration.orchestrator import (
     MalaOrchestrator,
 )
+from src.orchestration.orchestration_wiring import build_finalizer_callback_refs
 from src.pipeline.agent_session_runner import AgentSessionInput, AgentSessionOutput
 from src.pipeline.issue_result import IssueResult
 from src.domain.prompts import load_prompts
@@ -34,6 +36,10 @@ from src.core.protocols.evidence import EvidenceProvider
 from src.domain.evidence_check import CommandEvidence, ValidationEvidence
 from src.domain.validation.spec import CommandKind
 from tests.fakes.issue_provider import FakeIssueProvider, FakeIssue
+from tests.fakes.issue_lifecycle_port import FakeIssueLifecyclePort
+
+if TYPE_CHECKING:
+    from src.orchestration.types import RuntimeDeps
 
 
 @pytest.fixture
@@ -62,6 +68,41 @@ def make_subprocess_result(
         returncode=returncode,
         stdout=stdout,
         stderr=stderr,
+    )
+
+
+@pytest.mark.asyncio
+async def test_finalizer_callbacks_use_issue_lifecycle_port_interrupt_event() -> None:
+    """Finalizer epic closure callback should read interrupt state from the port."""
+    interrupt_event = asyncio.Event()
+    issue_lifecycle = FakeIssueLifecyclePort()
+    issue_lifecycle.interrupt_event = interrupt_event
+
+    beads = MagicMock()
+    beads.close_async = AsyncMock(return_value=True)
+    beads.mark_needs_followup_async = AsyncMock(return_value=True)
+    beads.get_parent_epic_async = AsyncMock(return_value=None)
+
+    runtime = cast(
+        "RuntimeDeps",
+        SimpleNamespace(beads=beads, event_sink=MagicMock()),
+    )
+    epic_verification_coordinator = MagicMock()
+    epic_verification_coordinator.check_epic_closure = AsyncMock()
+    run_metadata = MagicMock()
+
+    refs = build_finalizer_callback_refs(
+        runtime,
+        issue_lifecycle,
+        epic_verification_coordinator,
+    )
+
+    await refs.trigger_epic_closure("issue-1", run_metadata)
+
+    epic_verification_coordinator.check_epic_closure.assert_awaited_once_with(
+        "issue-1",
+        run_metadata,
+        interrupt_event=interrupt_event,
     )
 
 

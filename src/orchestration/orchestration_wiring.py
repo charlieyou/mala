@@ -39,6 +39,7 @@ from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
 )
+from src.orchestration.review_tracking import create_review_tracking_issues
 from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,
@@ -55,9 +56,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.review import ReviewIssueProtocol
+    from src.core.protocols.issue_lifecycle_port import IssueLifecyclePort
     from src.core.models import EpicVerificationResult
     from src.domain.validation.config import EpicCompletionTriggerConfig, TriggerType
     from src.infra.io.log_output.run_metadata import RunMetadata
+    from src.pipeline.epic_verification_coordinator import EpicVerificationCoordinator
     from src.orchestration.types import (
         IssueFilterConfig,
         PipelineConfig,
@@ -219,6 +222,75 @@ class FinalizerCallbackRefs:
     on_issue_completed: Callable[[str, str, bool, float, str], None]
     trigger_epic_closure: Callable[[str, RunMetadata], Awaitable[None]]
     create_tracking_issues: Callable[[str, list[ReviewIssueProtocol]], Awaitable[None]]
+
+
+def build_finalizer_callback_refs(
+    runtime: RuntimeDeps,
+    issue_lifecycle: IssueLifecyclePort,
+    epic_verification_coordinator: EpicVerificationCoordinator,
+) -> FinalizerCallbackRefs:
+    """Build callback references for issue finalization."""
+
+    async def close_issue(issue_id: str) -> bool:
+        return await runtime.beads.close_async(issue_id)
+
+    async def mark_needs_followup(
+        issue_id: str,
+        summary: str,
+        log_path: Path | None,
+    ) -> bool:
+        return await runtime.beads.mark_needs_followup_async(
+            issue_id,
+            summary,
+            log_path=log_path,
+        )
+
+    def on_issue_closed(agent_id: str, issue_id: str) -> None:
+        runtime.event_sink.on_issue_closed(agent_id, issue_id)
+
+    def on_issue_completed(
+        agent_id: str,
+        issue_id: str,
+        success: bool,
+        duration: float,
+        summary: str,
+    ) -> None:
+        runtime.event_sink.on_issue_completed(
+            agent_id,
+            issue_id,
+            success,
+            duration,
+            summary,
+        )
+
+    async def trigger_epic_closure(issue_id: str, run_metadata: RunMetadata) -> None:
+        await epic_verification_coordinator.check_epic_closure(
+            issue_id,
+            run_metadata,
+            interrupt_event=issue_lifecycle.interrupt_event,
+        )
+
+    async def create_tracking_issues(
+        issue_id: str,
+        review_issues: list[ReviewIssueProtocol],
+    ) -> None:
+        parent_epic_id = await runtime.beads.get_parent_epic_async(issue_id)
+        await create_review_tracking_issues(
+            runtime.beads,
+            runtime.event_sink,
+            issue_id,
+            review_issues,
+            parent_epic_id=parent_epic_id,
+        )
+
+    return FinalizerCallbackRefs(
+        close_issue=close_issue,
+        mark_needs_followup=mark_needs_followup,
+        on_issue_closed=on_issue_closed,
+        on_issue_completed=on_issue_completed,
+        trigger_epic_closure=trigger_epic_closure,
+        create_tracking_issues=create_tracking_issues,
+    )
 
 
 def build_finalizer_callbacks(refs: FinalizerCallbackRefs) -> IssueFinalizeCallbacks:

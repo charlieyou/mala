@@ -55,12 +55,12 @@ from src.pipeline.issue_finalizer import (
 )
 from src.domain.validation.config import FireOn, TriggerType
 from src.orchestration.orchestration_wiring import (
-    FinalizerCallbackRefs,
     EpicCallbackRefs,
     build_gate_runner,
     build_review_runner,
     build_run_coordinator,
     build_issue_coordinator,
+    build_finalizer_callback_refs,
     build_finalizer_callbacks,
     build_epic_callbacks,
     build_session_callback_factory,
@@ -73,7 +73,6 @@ from src.orchestration.types import (
 )
 from src.pipeline.session_callback_factory import SessionRunContext
 from src.pipeline.issue_result import IssueResult
-from src.orchestration.review_tracking import create_review_tracking_issues
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
 
 if TYPE_CHECKING:
@@ -92,6 +91,7 @@ if TYPE_CHECKING:
     from src.core.protocols.issue import IssueProvider
     from src.core.protocols.review import CodeReviewer
     from src.core.protocols.validation import EpicVerifierProtocol, GateChecker
+    from src.core.protocols.issue_lifecycle_port import IssueLifecyclePort
     from src.domain.prompts import PromptProvider
     from src.domain.validation.config import PromptValidationCommands
     from src.infra.io.config import MalaConfig
@@ -409,9 +409,11 @@ class MalaOrchestrator:
         )
         self.issue_coordinator = build_issue_coordinator(filters, runtime)
 
-        # Build coordinators with callbacks (callbacks need self references)
-        self.issue_finalizer = self._build_issue_finalizer()
+        # Build coordinators with callbacks.
         self.epic_verification_coordinator = self._build_epic_verification_coordinator()
+        self.issue_finalizer = self._build_issue_finalizer(
+            runtime, self.issue_coordinator
+        )
 
         # Build session infrastructure
         context = SessionRunContext(
@@ -501,7 +503,9 @@ class MalaOrchestrator:
         # Fall back to env var setting
         return self._mala_config.track_review_issues
 
-    def _build_issue_finalizer(self) -> IssueFinalizer:
+    def _build_issue_finalizer(
+        self, runtime: RuntimeDeps, issue_lifecycle: IssueLifecyclePort
+    ) -> IssueFinalizer:
         """Build IssueFinalizer with callbacks."""
         from src.pipeline.issue_finalizer import IssueFinalizer, IssueFinalizeConfig
 
@@ -509,27 +513,10 @@ class MalaOrchestrator:
             track_review_issues=self._get_track_review_issues(),
         )
         callbacks = build_finalizer_callbacks(
-            FinalizerCallbackRefs(
-                close_issue=lambda issue_id: self.beads.close_async(issue_id),
-                mark_needs_followup=lambda issue_id, summary, log_path: (
-                    self.beads.mark_needs_followup_async(
-                        issue_id, summary, log_path=log_path
-                    )
-                ),
-                on_issue_closed=lambda agent_id, issue_id: (
-                    self.event_sink.on_issue_closed(agent_id, issue_id)
-                ),
-                on_issue_completed=lambda agent_id, issue_id, success, duration, summary: (
-                    self.event_sink.on_issue_completed(
-                        agent_id, issue_id, success, duration, summary
-                    )
-                ),
-                trigger_epic_closure=lambda issue_id, run_metadata: (
-                    self.epic_verification_coordinator.check_epic_closure(
-                        issue_id, run_metadata, interrupt_event=self._interrupt_event
-                    )
-                ),
-                create_tracking_issues=self._create_review_tracking_issues,
+            build_finalizer_callback_refs(
+                runtime,
+                issue_lifecycle,
+                self.epic_verification_coordinator,
             )
         )
         return IssueFinalizer(
@@ -633,22 +620,6 @@ class MalaOrchestrator:
         )
         return DeadlockHandler(callbacks=callbacks)
 
-    async def _create_review_tracking_issues(
-        self,
-        issue_id: str,
-        review_issues: list,
-    ) -> None:
-        """Create tracking issues for P2/P3 review findings."""
-        # Get parent epic so review tracking issues stay in the same epic
-        parent_epic_id = await self.beads.get_parent_epic_async(issue_id)
-        await create_review_tracking_issues(
-            self.beads,
-            self.event_sink,
-            issue_id,
-            review_issues,
-            parent_epic_id=parent_epic_id,
-        )
-
     # Delegate state to issue_coordinator (single source of truth)
     # These properties return empty containers if accessed before coordinator init
     @property
@@ -721,6 +692,8 @@ class MalaOrchestrator:
         """Set interrupt event (for test compatibility)."""
         if value is not None and hasattr(self, "_lifecycle"):
             self._lifecycle.interrupt_event = value
+            if hasattr(self, "issue_coordinator"):
+                self.issue_coordinator.interrupt_event = value
 
     def _cleanup_agent_locks(self, agent_id: str) -> None:
         """Remove locks held by a specific agent (crash/timeout cleanup).
@@ -1263,6 +1236,7 @@ class MalaOrchestrator:
     def _reset_sigint_state(self) -> None:
         """Reset SIGINT escalation state for a new run."""
         self._lifecycle.reset()
+        self.issue_coordinator.interrupt_event = self._lifecycle.interrupt_event
         self._lifecycle.configure_callbacks(
             get_active_task_count=lambda: len(self.issue_coordinator.active_tasks),
             on_drain_started=self.event_sink.on_drain_started,
