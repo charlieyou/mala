@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import is_dataclass
 
 import pytest
 
 from src.core.protocols.issue_lifecycle_port import (
     IssueLifecycleEffect,
     IssueLifecyclePort,
+    IssueLifecycleState,
 )
 from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
@@ -52,6 +54,14 @@ def test_issue_lifecycle_port_declares_expected_surface() -> None:
             "max_issues",
         }
     )
+
+
+@pytest.mark.unit
+def test_lifecycle_state_effect_and_fake_are_dataclasses() -> None:
+    """Lifecycle models and fake use valid dataclass decorators."""
+    assert is_dataclass(IssueLifecycleState)
+    assert is_dataclass(IssueLifecycleEffect)
+    assert is_dataclass(FakeIssueLifecyclePort)
 
 
 @pytest.mark.unit
