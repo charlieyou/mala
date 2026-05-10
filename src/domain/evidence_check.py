@@ -269,8 +269,13 @@ def _recognize_spec_pattern_command(
         except ValueError:
             return []
 
-    def is_argument_token(token: str) -> bool:
-        return token in {".", ".."} or token.startswith("-") or "/" in token
+    def is_trailing_argument_token(token: str) -> bool:
+        return (
+            token in {".", ".."}
+            or token.startswith("-")
+            or "/" in token
+            or "=" in token
+        )
 
     def strip_leading_env_assignments(tokens: list[str]) -> list[str]:
         assignment = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -280,12 +285,9 @@ def _recognize_spec_pattern_command(
 
     def command_identity_tokens(command: str) -> list[str]:
         tokens = strip_leading_env_assignments(shell_words(command))
-        identity: list[str] = []
-        for token in tokens:
-            if identity and is_argument_token(token):
-                break
-            identity.append(token)
-        return identity
+        while len(tokens) > 1 and is_trailing_argument_token(tokens[-1]):
+            tokens = tokens[:-1]
+        return tokens
 
     def command_identity_variants(command: str) -> list[list[str]]:
         identity = command_identity_tokens(command)
@@ -296,9 +298,10 @@ def _recognize_spec_pattern_command(
             variants.append(identity[2:])
         return variants
 
+    if re.search(r"&&|\|\||[;|]", bash_input):
+        return None
     input_tokens = strip_leading_env_assignments(shell_words(bash_input))
-    shell_separators = {"&&", "||", ";", "|"}
-    if not input_tokens or any(token in shell_separators for token in input_tokens):
+    if not input_tokens:
         return None
 
     matches = []
