@@ -84,9 +84,16 @@ Prompt instructions must tell agents to run the provided wrapper exactly as show
 ```python
 @dataclass
 class CommandEvidence:
-    passed: bool
+    name: str
+    kind: CommandKind
+    seen: bool
+    status: Literal["passed", "failed", "unknown"]
+    timed_out: bool = False
     exit_code: int | None = None
+    observed_command: str | None = None
     log_path: str | None = None
+    tool_use_id: str | None = None
+    source: Literal["command+summary", "command+shell_status"] = "command+shell_status"
 
 
 @dataclass
