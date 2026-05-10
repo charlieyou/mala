@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from src.core.protocols.review import ReviewIssueProtocol
     from src.core.protocols.issue_lifecycle_port import IssueLifecyclePort
     from src.core.models import EpicVerificationResult
+    from src.core.protocols.validation import EpicVerifierProtocol
     from src.domain.validation.config import EpicCompletionTriggerConfig, TriggerType
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.pipeline.epic_verification_coordinator import EpicVerificationCoordinator
@@ -322,6 +323,61 @@ class EpicCallbackRefs:
     get_agent_id: Callable[[str], str]
     queue_trigger_validation: Callable[[TriggerType, dict[str, Any]], None]
     get_epic_completion_trigger: Callable[[], EpicCompletionTriggerConfig | None]
+
+
+def build_epic_callback_refs(
+    runtime: RuntimeDeps,
+    issue_coordinator: IssueExecutionCoordinator,
+    run_coordinator: RunCoordinator,
+    *,
+    epic_verifier_getter: Callable[[], EpicVerifierProtocol | None],
+    spawn_remediation: Callable[
+        [str, str], Awaitable[asyncio.Task[IssueResult] | None]
+    ],
+    finalize_remediation: Callable[[str, IssueResult, RunMetadata], Awaitable[None]],
+    is_issue_failed: Callable[[str], bool],
+    get_agent_id: Callable[[str], str],
+    get_epic_completion_trigger: Callable[[], EpicCompletionTriggerConfig | None],
+) -> EpicCallbackRefs:
+    """Build callback references for epic verification.
+
+    Epic issue operations are sourced from IssueProvider. The remaining
+    callables are orchestrator-owned runtime operations passed explicitly.
+    """
+
+    async def verify_epic(epic_id: str, human_override: bool) -> EpicVerificationResult:
+        epic_verifier = epic_verifier_getter()
+        if epic_verifier is None:
+            raise RuntimeError("Epic verifier is not available")
+        return await epic_verifier.verify_and_close_epic(
+            epic_id,
+            human_override=human_override,
+        )
+
+    def has_epic_verifier() -> bool:
+        return epic_verifier_getter() is not None
+
+    async def get_parent_epic(issue_id: str) -> str | None:
+        return await runtime.beads.get_parent_epic_async(issue_id)
+
+    async def close_eligible_epics() -> bool:
+        return await runtime.beads.close_eligible_epics_async()
+
+    return EpicCallbackRefs(
+        get_parent_epic=get_parent_epic,
+        verify_epic=verify_epic,
+        spawn_remediation=spawn_remediation,
+        finalize_remediation=finalize_remediation,
+        mark_completed=issue_coordinator.mark_completed,
+        is_issue_failed=is_issue_failed,
+        close_eligible_epics=close_eligible_epics,
+        on_epic_closed=runtime.event_sink.on_epic_closed,
+        on_warning=runtime.event_sink.on_warning,
+        has_epic_verifier=has_epic_verifier,
+        get_agent_id=get_agent_id,
+        queue_trigger_validation=run_coordinator.queue_trigger_validation,
+        get_epic_completion_trigger=get_epic_completion_trigger,
+    )
 
 
 def build_epic_callbacks(refs: EpicCallbackRefs) -> EpicVerificationCallbacks:

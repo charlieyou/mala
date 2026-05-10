@@ -55,13 +55,13 @@ from src.pipeline.issue_finalizer import (
 )
 from src.domain.validation.config import FireOn, TriggerType
 from src.orchestration.orchestration_wiring import (
-    EpicCallbackRefs,
     build_gate_runner,
     build_review_runner,
     build_run_coordinator,
     build_issue_coordinator,
     build_finalizer_callback_refs,
     build_finalizer_callbacks,
+    build_epic_callback_refs,
     build_epic_callbacks,
     build_session_callback_factory,
     build_session_config,
@@ -93,7 +93,10 @@ if TYPE_CHECKING:
     from src.core.protocols.validation import EpicVerifierProtocol, GateChecker
     from src.core.protocols.issue_lifecycle_port import IssueLifecyclePort
     from src.domain.prompts import PromptProvider
-    from src.domain.validation.config import PromptValidationCommands
+    from src.domain.validation.config import (
+        EpicCompletionTriggerConfig,
+        PromptValidationCommands,
+    )
     from src.infra.io.config import MalaConfig
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.infra.telemetry import TelemetryProvider
@@ -102,7 +105,6 @@ if TYPE_CHECKING:
     from src.pipeline.session_callback_factory import SessionRunnerAdapters
 
     from src.core.models import (
-        EpicVerificationResult,
         PeriodicValidationConfig,
         RunResult,
         WatchConfig,
@@ -410,7 +412,9 @@ class MalaOrchestrator:
         self.issue_coordinator = build_issue_coordinator(filters, runtime)
 
         # Build coordinators with callbacks.
-        self.epic_verification_coordinator = self._build_epic_verification_coordinator()
+        self.epic_verification_coordinator = self._build_epic_verification_coordinator(
+            runtime
+        )
         self.issue_finalizer = self._build_issue_finalizer(
             runtime, self.issue_coordinator
         )
@@ -526,21 +530,15 @@ class MalaOrchestrator:
             per_session_spec=None,
         )
 
-    def _build_epic_verification_coordinator(self) -> EpicVerificationCoordinator:
+    def _build_epic_verification_coordinator(
+        self,
+        runtime: RuntimeDeps,
+    ) -> EpicVerificationCoordinator:
         """Build EpicVerificationCoordinator with callbacks."""
         from src.pipeline.epic_verification_coordinator import (
             EpicVerificationCoordinator,
             EpicVerificationConfig,
         )
-
-        async def verify_epic(
-            epic_id: str, human_override: bool
-        ) -> EpicVerificationResult:
-            if self.epic_verifier is None:
-                raise RuntimeError("Epic verifier is not available")
-            return await self.epic_verifier.verify_and_close_epic(
-                epic_id, human_override=human_override
-            )
 
         # Prefer derived.max_epic_verification_retries from mala.yaml epic_completion config,
         # otherwise fall back to MalaConfig (env var or default of 3)
@@ -553,43 +551,16 @@ class MalaOrchestrator:
             max_retries=max_epic_verification_retries,
         )
         callbacks = build_epic_callbacks(
-            EpicCallbackRefs(
-                get_parent_epic=lambda issue_id: self.beads.get_parent_epic_async(
-                    issue_id
-                ),
-                verify_epic=verify_epic,
-                spawn_remediation=lambda issue_id, flow="implementer": self.spawn_agent(
-                    issue_id, flow=flow
-                ),
-                finalize_remediation=lambda issue_id, result, run_metadata: (
-                    self._finalize_issue_result(issue_id, result, run_metadata)
-                ),
-                mark_completed=lambda issue_id: self.issue_coordinator.mark_completed(
-                    issue_id
-                ),
-                is_issue_failed=lambda issue_id: issue_id in self.failed_issues,
-                close_eligible_epics=lambda: self.beads.close_eligible_epics_async(),
-                on_epic_closed=lambda issue_id: self.event_sink.on_epic_closed(
-                    issue_id
-                ),
-                on_warning=lambda msg: self.event_sink.on_warning(msg),
-                has_epic_verifier=lambda: self.epic_verifier is not None,
-                get_agent_id=lambda issue_id: self._state.agent_ids.get(
-                    issue_id, "unknown"
-                ),
-                queue_trigger_validation=(
-                    lambda trigger_type, context: (
-                        self.run_coordinator.queue_trigger_validation(
-                            trigger_type, context
-                        )
-                    )
-                ),
-                get_epic_completion_trigger=lambda: (
-                    self._validation_config.validation_triggers.epic_completion
-                    if self._validation_config
-                    and self._validation_config.validation_triggers
-                    else None
-                ),
+            build_epic_callback_refs(
+                runtime,
+                self.issue_coordinator,
+                self.run_coordinator,
+                epic_verifier_getter=self._get_epic_verifier,
+                spawn_remediation=self._spawn_epic_remediation,
+                finalize_remediation=self._finalize_issue_result,
+                is_issue_failed=self._is_issue_failed,
+                get_agent_id=self._get_agent_id,
+                get_epic_completion_trigger=self._get_epic_completion_trigger,
             )
         )
         return EpicVerificationCoordinator(
@@ -597,6 +568,27 @@ class MalaOrchestrator:
             callbacks=callbacks,
             epic_override_ids=self.epic_override_ids,
         )
+
+    def _get_epic_verifier(self) -> EpicVerifierProtocol | None:
+        return self.epic_verifier
+
+    async def _spawn_epic_remediation(
+        self,
+        issue_id: str,
+        flow: str = "implementer",
+    ) -> asyncio.Task[IssueResult] | None:
+        return await self.spawn_agent(issue_id, flow=flow)
+
+    def _is_issue_failed(self, issue_id: str) -> bool:
+        return issue_id in self.failed_issues
+
+    def _get_agent_id(self, issue_id: str) -> str:
+        return self._state.agent_ids.get(issue_id, "unknown")
+
+    def _get_epic_completion_trigger(self) -> EpicCompletionTriggerConfig | None:
+        if self._validation_config and self._validation_config.validation_triggers:
+            return self._validation_config.validation_triggers.epic_completion
+        return None
 
     def _build_deadlock_handler(self) -> DeadlockHandler:
         """Build DeadlockHandler with callbacks."""
