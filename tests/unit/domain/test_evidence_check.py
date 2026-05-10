@@ -2748,17 +2748,26 @@ class TestEvidenceSummaryParserAndRecognizer:
 
         assert evidence.commands == {}
 
-    def test_pattern_fallback_rejects_attached_shell_separator(
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "uvx ruff check .; true",
+            "uvx ruff check .\ntrue",
+            "uvx ruff check . & true",
+        ],
+    )
+    def test_pattern_fallback_rejects_shell_separators(
         self,
         tmp_path: Path,
         evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
+        command: str,
     ) -> None:
         import re
 
         log_path = tmp_path / "session.jsonl"
         log_path.write_text(
-            _bash_tool_use_json("toolu_lint", "uvx ruff check .; true")
+            _bash_tool_use_json("toolu_lint", command)
             + "\n"
             + _tool_result_json("toolu_lint")
             + "\n"

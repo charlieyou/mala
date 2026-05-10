@@ -298,7 +298,7 @@ def _recognize_spec_pattern_command(
             variants.append(identity[2:])
         return variants
 
-    if re.search(r"&&|\|\||[;|]", bash_input):
+    if re.search(r"&&|\|\||[;&|\n]", bash_input):
         return None
     input_tokens = strip_leading_env_assignments(shell_words(bash_input))
     if not input_tokens:
