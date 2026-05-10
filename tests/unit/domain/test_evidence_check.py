@@ -3833,13 +3833,31 @@ class TestSpecDrivenEvidencePatterns:
             kind=CommandKind.FORMAT,
             detection_pattern=re.compile(r"\bruff\s+format\b"),
         )
+        lint_command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check --config=config/ruff.toml .",
+            kind=CommandKind.LINT,
+            detection_pattern=re.compile(r"\bruff\s+check\b"),
+        )
+        parallel_test_command = ValidationCommand(
+            name="parallel-test",
+            command=(
+                "uv run pytest --cov-report=html:cov/ "
+                "-o cache_dir=/tmp/pytest-${AGENT_ID:-default} -n auto"
+            ),
+            kind=CommandKind.TEST,
+            detection_pattern=re.compile(r"\bpytest\b"),
+        )
         configured = {
             test_command.name: test_command,
             format_command.name: format_command,
+            lint_command.name: lint_command,
+            parallel_test_command.name: parallel_test_command,
         }
 
         assert _recognize_spec_pattern_command("uv run pytest", configured) is None
         assert _recognize_spec_pattern_command("uvx ruff format .", configured) is None
+        assert _recognize_spec_pattern_command("uvx ruff check .", configured) is None
         assert (
             _recognize_spec_pattern_command(
                 "uv run pytest --cov=src --cov-fail-under=72 -q",
@@ -3853,6 +3871,20 @@ class TestSpecDrivenEvidencePatterns:
                 configured,
             )
             == format_command
+        )
+        assert (
+            _recognize_spec_pattern_command(
+                "uvx ruff check --config=config/ruff.toml .",
+                configured,
+            )
+            == lint_command
+        )
+        assert (
+            _recognize_spec_pattern_command(
+                "uv run pytest --cov-report=html:cov/ -n auto",
+                configured,
+            )
+            == parallel_test_command
         )
 
     def test_command_without_pattern_skipped(

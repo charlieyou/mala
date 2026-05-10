@@ -270,7 +270,7 @@ def _recognize_spec_pattern_command(
             return []
 
     def is_trailing_argument_token(token: str) -> bool:
-        return token in {".", ".."} or "/" in token
+        return token in {".", ".."} or ("/" in token and not token.startswith("-"))
 
     def strip_leading_env_assignments(tokens: list[str]) -> list[str]:
         assignment = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -278,17 +278,23 @@ def _recognize_spec_pattern_command(
             tokens = tokens[1:]
         return tokens
 
-    def strip_trailing_cache_dir_override(tokens: list[str]) -> list[str]:
-        if (
-            len(tokens) > 2
-            and tokens[-2] == "-o"
-            and tokens[-1].startswith("cache_dir=")
-        ):
-            return tokens[:-2]
-        return tokens
+    def strip_cache_dir_override(tokens: list[str]) -> list[str]:
+        stripped: list[str] = []
+        index = 0
+        while index < len(tokens):
+            if (
+                index + 1 < len(tokens)
+                and tokens[index] == "-o"
+                and tokens[index + 1].startswith("cache_dir=")
+            ):
+                index += 2
+                continue
+            stripped.append(tokens[index])
+            index += 1
+        return stripped
 
     def command_identity_tokens(command: str) -> list[str]:
-        tokens = strip_trailing_cache_dir_override(
+        tokens = strip_cache_dir_override(
             strip_leading_env_assignments(shell_words(command))
         )
         while len(tokens) > 1 and is_trailing_argument_token(tokens[-1]):
