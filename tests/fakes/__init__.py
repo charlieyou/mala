@@ -36,6 +36,7 @@ from tests.fakes.agent_provider import FakeAgentProvider
 from tests.fakes.event_sink import FakeEventSink, RecordedEvent
 from tests.fakes.gate_checker import FakeGateChecker
 from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
+from tests.fakes.issue_lifecycle_port import FakeIssueLifecyclePort
 from tests.fakes.lint_cache import FakeLintCache
 from tests.fakes.lock_manager import FakeLockManager, LockAcquireCall
 from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
@@ -53,6 +54,7 @@ __all__ = [
     "FakeFinalizeCallback",
     "FakeGateChecker",
     "FakeIssue",
+    "FakeIssueLifecyclePort",
     "FakeIssueProvider",
     "FakeLintCache",
     "FakeLockManager",

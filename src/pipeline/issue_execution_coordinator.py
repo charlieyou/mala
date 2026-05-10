@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 from src.core.models import OrderPreference, RunResult, WatchState
+from src.core.protocols.issue_lifecycle_port import IssueLifecycleState
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from src.core.models import PeriodicValidationConfig, WatchConfig
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.issue import IssueProvider
+    from src.core.protocols.issue_lifecycle_port import IssueLifecycleEffect
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +158,80 @@ class IssueExecutionCoordinator:
         self.abort_run: bool = False
         self.abort_reason: str | None = None
         self.abort_event: asyncio.Event = asyncio.Event()
+
+    @property
+    def current_state(self) -> IssueLifecycleState:
+        """Return a snapshot of issue lifecycle state."""
+        return IssueLifecycleState(
+            active_issue_ids=frozenset(self.active_tasks),
+            failed_issues=frozenset(self.failed_issues),
+            abort_requested=self.abort_run,
+            abort_reason=self.abort_reason,
+            max_issues=self.config.max_issues,
+            interrupt_requested=self.abort_event.is_set(),
+        )
+
+    def apply_effect(self, effect: IssueLifecycleEffect) -> None:
+        """Apply an explicit lifecycle state mutation."""
+        if effect.kind == "mark_failed":
+            if effect.issue_id is None:
+                msg = "mark_failed effect requires issue_id"
+                raise ValueError(msg)
+            self.mark_failed(effect.issue_id)
+            return
+
+        if effect.kind == "mark_completed":
+            if effect.issue_id is None:
+                msg = "mark_completed effect requires issue_id"
+                raise ValueError(msg)
+            self.mark_completed(effect.issue_id)
+            return
+
+        if effect.kind == "release_task":
+            if effect.issue_id is None:
+                msg = "release_task effect requires issue_id"
+                raise ValueError(msg)
+            self.release_task(effect.issue_id)
+            return
+
+        if effect.kind == "request_abort":
+            if effect.reason is None:
+                msg = "request_abort effect requires reason"
+                raise ValueError(msg)
+            self.request_abort(effect.reason)
+            return
+
+        if effect.kind == "set_max_issues":
+            self.max_issues = effect.max_issues
+            return
+
+        if effect.kind == "set_interrupt_event":
+            self.interrupt_event = effect.interrupt_event
+            return
+
+    @property
+    def abort_requested(self) -> bool:
+        """Whether the current run has been asked to abort."""
+        return self.abort_run
+
+    @property
+    def interrupt_event(self) -> asyncio.Event | None:
+        """Event used by lifecycle consumers to detect abort requests."""
+        return self.abort_event
+
+    @interrupt_event.setter
+    def interrupt_event(self, value: asyncio.Event | None) -> None:
+        if value is not None:
+            self.abort_event = value
+
+    @property
+    def max_issues(self) -> int | None:
+        """Maximum issues to process."""
+        return self.config.max_issues
+
+    @max_issues.setter
+    def max_issues(self, value: int | None) -> None:
+        self.config.max_issues = value
 
     def request_abort(self, reason: str) -> None:
         """Signal that the current run should stop due to a fatal error.
