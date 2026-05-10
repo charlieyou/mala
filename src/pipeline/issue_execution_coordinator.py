@@ -15,7 +15,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, assert_never
 
 from src.core.models import OrderPreference, RunResult, WatchState
 from src.core.protocols.issue_lifecycle_port import IssueLifecycleState
@@ -481,8 +481,10 @@ class IssueExecutionCoordinator:
                     poll_result.consecutive_poll_failures
                 )
 
-                if poll_result.error is not None:
-                    logger.error("Poll failed", exc_info=poll_result.error)
+                poll_decision = poll_result.decision
+                if poll_decision.kind == "transient_error":
+                    if poll_result.error is not None:
+                        logger.error("Poll failed", exc_info=poll_result.error)
                     decision = exit_reason(snapshot)
                     if decision.should_exit:
                         return await self._interpret_exit(
@@ -496,12 +498,13 @@ class IssueExecutionCoordinator:
                         )
                     continue
 
-                ready = list(poll_result.ready_issue_ids)
-                if ready:
+                if poll_decision.kind == "ready":
+                    ready = list(poll_result.ready_issue_ids)
                     startup_no_ready_check_pending = False
                     self.event_sink.on_ready_issues(ready)
                     poll_strategy.clear_idle()
-                if not ready:
+                elif poll_decision.kind == "empty":
+                    ready = []
                     repoll = await self._handle_startup_no_ready(
                         startup_no_ready_check_pending,
                         on_startup_no_ready,
@@ -509,6 +512,10 @@ class IssueExecutionCoordinator:
                     startup_no_ready_check_pending = False
                     if repoll:
                         continue
+                elif poll_decision.kind == "terminal_drain":
+                    ready = []
+                else:
+                    assert_never(poll_decision.kind)
 
                 capacity = capacity_decision(snapshot).capacity
                 spawned_now, ready = await self._spawn_ready_issues(

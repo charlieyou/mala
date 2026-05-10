@@ -268,6 +268,70 @@ class TestRunLoop:
         assert coord.completed_ids == {"issue-from-queue"}
 
     @pytest.mark.asyncio
+    async def test_run_loop_consumes_empty_poll_decision(
+        self, event_sink: MockEventSink, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PollDecision, not incidental snapshot contents, drives poll handling."""
+
+        class FakeWorkQueue:
+            def __init__(
+                self, _beads: object, config: WorkQueueConfig, _strategy: object
+            ) -> None:
+                self.config = config
+
+            def snapshot(self, **kwargs: object) -> WorkQueueSnapshot:
+                return WorkQueueSnapshot(
+                    active_issue_ids=frozenset(
+                        cast("set[str]", kwargs["active_issue_ids"])
+                    ),
+                    completed_issue_ids=frozenset(
+                        cast("set[str]", kwargs["completed_issue_ids"])
+                    ),
+                    failed_issue_ids=frozenset(
+                        cast("set[str]", kwargs["failed_issue_ids"])
+                    ),
+                    completed_count=cast("int", kwargs["completed_count"]),
+                    last_validation_at=cast("int", kwargs["last_validation_at"]),
+                    next_validation_threshold=cast(
+                        "int | None", kwargs["next_validation_threshold"]
+                    ),
+                    consecutive_poll_failures=cast(
+                        "int", kwargs["consecutive_poll_failures"]
+                    ),
+                    watch_enabled=cast("bool", kwargs["watch_enabled"]),
+                    startup_no_ready_check_pending=cast(
+                        "bool", kwargs["startup_no_ready_check_pending"]
+                    ),
+                    abort_requested=cast("bool", kwargs["abort_requested"]),
+                    interrupt_requested=cast("bool", kwargs["interrupt_requested"]),
+                    is_draining=cast("bool", kwargs["is_draining"]),
+                    max_agents=self.config.max_agents,
+                    max_issues=self.config.max_issues,
+                ).with_ready(cast("list[str]", kwargs["ready_issue_ids"]))
+
+            async def poll(self, snapshot: WorkQueueSnapshot) -> PollResult:
+                return PollResult(
+                    snapshot=snapshot.with_ready(["stale-ready"]),
+                    poll_attempted=True,
+                    decision=PollDecision("empty"),
+                )
+
+        coord = IssueExecutionCoordinator(
+            beads=MockIssueProvider(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            config=CoordinatorConfig(),
+        )
+        monkeypatch.setattr(coordinator_module, "WorkQueue", FakeWorkQueue)
+
+        spawn_callback = AsyncMock(return_value=None)
+
+        result = await coord.run_loop(spawn_callback, AsyncMock(), AsyncMock())
+
+        assert result.issues_spawned == 0
+        spawn_callback.assert_not_called()
+        assert ("no_more_issues", ("none_ready",)) in event_sink.events
+
+    @pytest.mark.asyncio
     async def test_exits_when_no_ready_issues(self, event_sink: MockEventSink) -> None:
         """Loop exits immediately when no issues are ready."""
         beads = MockIssueProvider(ready_issues=[[]])
