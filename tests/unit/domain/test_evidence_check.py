@@ -2790,6 +2790,73 @@ class TestEvidenceSummaryParserAndRecognizer:
 
         assert evidence.commands == {}
 
+    def test_pattern_fallback_allows_trailing_newline(
+        self,
+        tmp_path: Path,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        import re
+
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            _bash_tool_use_json("toolu_lint", "uvx ruff check . --fix\n")
+            + "\n"
+            + _tool_result_json("toolu_lint")
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="lint",
+                    command="uvx ruff check .",
+                    kind=CommandKind.LINT,
+                    detection_pattern=re.compile(r"\bruff\b"),
+                )
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("lint",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.commands["lint"].status == "passed"
+
+    def test_pattern_fallback_preserves_observed_command_text(
+        self,
+        tmp_path: Path,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        import re
+
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            _bash_tool_use_json("toolu_test", "uv run pytest -q")
+            + "\n"
+            + _tool_result_json("toolu_test", "failed", is_error=True)
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command="uv run pytest",
+                    kind=CommandKind.TEST,
+                    detection_pattern=re.compile(r"\bpytest\b"),
+                )
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("test",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.commands["test"].status == "failed"
+        assert evidence.commands["test"].observed_command == "uv run pytest -q"
+
     def test_ambiguous_detection_pattern_match_credits_nothing(
         self,
         tmp_path: Path,

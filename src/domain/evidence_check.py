@@ -298,9 +298,10 @@ def _recognize_spec_pattern_command(
             variants.append(identity[2:])
         return variants
 
-    if re.search(r"&&|\|\||[;&|\n]", bash_input):
+    stripped_input = bash_input.strip()
+    if re.search(r"&&|\|\||[;&|\n]", stripped_input):
         return None
-    input_tokens = strip_leading_env_assignments(shell_words(bash_input))
+    input_tokens = strip_leading_env_assignments(shell_words(stripped_input))
     if not input_tokens:
         return None
 
@@ -311,7 +312,7 @@ def _recognize_spec_pattern_command(
             cmd.detection_pattern is not None
             and cmd.kind != CommandKind.CUSTOM
             and identities
-            and cmd.detection_pattern.search(bash_input)
+            and cmd.detection_pattern.search(stripped_input)
             and any(
                 input_tokens[: len(identity)] == identity for identity in identities
             )
@@ -334,6 +335,7 @@ def _build_command_evidence_for_match(
     tool_use_id: str,
     *,
     matched_via: Literal["canonical_wrapper", "bare_command"],
+    observed_command: str,
     validation_log_dir: Path,
 ) -> CommandEvidence | None:
     """Build a :class:`CommandEvidence` record for a matched tool use + result.
@@ -357,6 +359,11 @@ def _build_command_evidence_for_match(
         return None
 
     if summary is not None:
+        command_text = (
+            matched_cmd.command
+            if matched_via == "canonical_wrapper"
+            else observed_command.strip()
+        )
         if summary.name != matched_cmd.name:
             return None
         log_path = Path(summary.log_path)
@@ -378,7 +385,7 @@ def _build_command_evidence_for_match(
             status=status,
             timed_out=timed_out,
             exit_code=exit_code,
-            observed_command=matched_cmd.command,
+            observed_command=command_text,
             log_path=summary.log_path,
             tool_use_id=tool_use_id,
             source="command+summary",
@@ -397,7 +404,7 @@ def _build_command_evidence_for_match(
         status=bare_status,
         timed_out=False,
         exit_code=None,
-        observed_command=matched_cmd.command,
+        observed_command=observed_command.strip(),
         log_path=None,
         tool_use_id=tool_use_id,
         source="command+shell_status",
@@ -714,7 +721,8 @@ class EvidenceCheck:
 
         validation_log_dir = _resolve_validation_log_dir()
         tool_id_to_match: dict[
-            str, tuple[ValidationCommand, Literal["canonical_wrapper", "bare_command"]]
+            str,
+            tuple[ValidationCommand, Literal["canonical_wrapper", "bare_command"], str],
         ] = {}
 
         for entry in self._evidence_provider.iter_thread_evidence(log_path, offset):
@@ -727,7 +735,11 @@ class EvidenceCheck:
                     validation_log_dir=validation_log_dir,
                 )
                 if matched is not None:
-                    tool_id_to_match[tool_id] = (matched, "canonical_wrapper")
+                    tool_id_to_match[tool_id] = (
+                        matched,
+                        "canonical_wrapper",
+                        command,
+                    )
                     continue
                 matched = _recognize_bare_command(command, configured_by_name)
                 if matched is None:
@@ -735,7 +747,7 @@ class EvidenceCheck:
                         command, configured_by_name
                     )
                 if matched is not None:
-                    tool_id_to_match[tool_id] = (matched, "bare_command")
+                    tool_id_to_match[tool_id] = (matched, "bare_command", command)
 
             is_error_by_id = dict(self._evidence_provider.extract_tool_results(entry))
             for (
@@ -744,7 +756,9 @@ class EvidenceCheck:
             ) in self._evidence_provider.extract_tool_result_content(entry):
                 if tool_use_id not in tool_id_to_match:
                     continue
-                matched_cmd, matched_via = tool_id_to_match[tool_use_id]
+                matched_cmd, matched_via, observed_command = tool_id_to_match[
+                    tool_use_id
+                ]
                 is_error = is_error_by_id.get(tool_use_id, False)
                 record = _build_command_evidence_for_match(
                     matched_cmd,
@@ -752,6 +766,7 @@ class EvidenceCheck:
                     is_error,
                     tool_use_id,
                     matched_via=matched_via,
+                    observed_command=observed_command,
                     validation_log_dir=validation_log_dir,
                 )
                 if record is not None:
