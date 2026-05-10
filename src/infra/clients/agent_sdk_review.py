@@ -394,7 +394,9 @@ class AgentSDKReviewer:
                             # Handle both SDK TextBlock objects and dict format
                             if type(block).__name__ == "TextBlock":
                                 response_text += getattr(block, "text", "")
-                            elif isinstance(block, dict) and block.get("type") == "text":
+                            elif (
+                                isinstance(block, dict) and block.get("type") == "text"
+                            ):
                                 response_text += block.get("text", "")
 
                 # Extract session info from result message

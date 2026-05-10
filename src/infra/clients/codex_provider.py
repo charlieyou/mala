@@ -99,6 +99,7 @@ def _run_coro_sync(coro_factory: Callable[[], Coroutine[Any, Any, _T]]) -> _T:
         raise cast("BaseException", error)
     return cast("_T", outcome.get("result"))
 
+
 # ---------------------------------------------------------------------------
 # Public exception + reason enum (Phase E5, T015)
 # ---------------------------------------------------------------------------

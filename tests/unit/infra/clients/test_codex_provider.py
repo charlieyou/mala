@@ -614,9 +614,7 @@ def test_install_prerequisites_accepts_sdk_bundled_codex_runtime(
     isolated_home = _provider_isolated_codex_home(provider)
     plugin_dir = _codex_plugin_dir(isolated_home)
     assert (plugin_dir / "plugin.json").is_file()
-    assert "trusted_hash" in (isolated_home / "config.toml").read_text(
-        encoding="utf-8"
-    )
+    assert "trusted_hash" in (isolated_home / "config.toml").read_text(encoding="utf-8")
 
 
 @pytest.mark.unit
@@ -691,9 +689,7 @@ def test_install_prerequisites_does_not_mutate_unwritable_user_config(
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
     isolated_home = _provider_isolated_codex_home(provider)
-    assert "trusted_hash" in (isolated_home / "config.toml").read_text(
-        encoding="utf-8"
-    )
+    assert "trusted_hash" in (isolated_home / "config.toml").read_text(encoding="utf-8")
     assert (codex_home / "config.toml").is_dir()
 
 
@@ -1135,9 +1131,9 @@ def test_install_prerequisites_overwrites_disabled_plugin_hooks(
     provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
-    config_toml = (
-        _provider_isolated_codex_home(provider) / "config.toml"
-    ).read_text(encoding="utf-8")
+    config_toml = (_provider_isolated_codex_home(provider) / "config.toml").read_text(
+        encoding="utf-8"
+    )
     assert "plugin_hooks = true" in config_toml
     assert "plugin_hooks = false" not in config_toml
     assert (codex_home / "config.toml").read_text(encoding="utf-8") == (
@@ -1174,9 +1170,9 @@ def test_install_prerequisites_overwrites_user_plugins_opt_out(
     provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
-    config_toml = (
-        _provider_isolated_codex_home(provider) / "config.toml"
-    ).read_text(encoding="utf-8")
+    config_toml = (_provider_isolated_codex_home(provider) / "config.toml").read_text(
+        encoding="utf-8"
+    )
     assert "plugins = true" in config_toml
     assert "plugins = false" not in config_toml
     # The other hook-loading gates must also have been added inside the
@@ -1213,9 +1209,9 @@ def test_install_prerequisites_overwrites_disabled_global_hooks(
     provider = CodexAgentProvider(selftest_probe=_noop_probe)
     provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
 
-    config_toml = (
-        _provider_isolated_codex_home(provider) / "config.toml"
-    ).read_text(encoding="utf-8")
+    config_toml = (_provider_isolated_codex_home(provider) / "config.toml").read_text(
+        encoding="utf-8"
+    )
     assert "hooks = true" in config_toml
     assert "hooks = false" not in config_toml
     assert "plugins = true" in config_toml

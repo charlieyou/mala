@@ -120,7 +120,9 @@ def test_run_coder_codex_fails_closed_on_missing_prerequisites(tmp_path: Path) -
         "Structured fail-closed error class missing from CLI output; the "
         f"CLI may have swallowed the exception. Output:\n{combined}"
     )
-    assert "missing-codex-binary" in combined and "Codex binary not found" in combined, (
+    assert (
+        "missing-codex-binary" in combined and "Codex binary not found" in combined
+    ), (
         "CLI output did not mention the forced missing CODEX_BINARY path; "
         f"the smoke test may not have reached the intended branch. Output:\n{combined}"
     )
