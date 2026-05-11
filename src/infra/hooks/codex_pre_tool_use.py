@@ -2467,7 +2467,7 @@ def _compute_selftest_identity_hash() -> str | None:
     """Return the combined SHA-256 over the identity modules, or ``None``.
 
     Mirrors :func:`src.infra.clients.codex_provider._compute_combined_module_hash`'s
-    iteration / length-prefix scheme byte-for-byte so the same five
+    iteration / length-prefix scheme byte-for-byte so the same
     module files yield the same digest in both processes. Returns
     ``None`` when any module cannot be located or read so a
     constrained interpreter (locked-down site-packages, missing
