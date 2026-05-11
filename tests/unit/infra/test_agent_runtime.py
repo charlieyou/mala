@@ -717,3 +717,60 @@ class TestRuntimeComponentsInjection:
 
         assert runtime.lint_cache.lint_tools == {"ruff"}
         assert runtime.lint_cache is not components.lint_cache
+
+    @pytest.mark.unit
+    def test_noop_with_lint_tools_preserves_injection(
+        self, repo_path: Path, factory: FakeSDKClientFactory
+    ) -> None:
+        """``with_lint_tools(None)`` does not discard provider-injected components.
+
+        Regression for the AgentSessionRunner path: it unconditionally calls
+        ``builder.with_lint_tools(self.config.lint_tools)`` (commonly
+        ``None``); the injected default composition from the provider must
+        survive that no-op so ``build()`` doesn't fall back to rebuilding
+        the caches/hooks via the helper.
+        """
+        components = build_default_runtime_components(repo_path, "agent-noop-lint")
+
+        runtime = (
+            ClaudeAgentRuntimeBuilder(
+                repo_path,
+                "agent-noop-lint",
+                factory,
+                runtime_components=components,
+            )
+            .with_lint_tools(None)
+            .with_mcp(servers={})
+            .build()
+        )
+
+        # Injection survived: same lint_cache / hook list objects.
+        assert runtime.lint_cache is components.lint_cache
+        assert runtime.pre_tool_hooks is components.pre_tool_hooks
+
+    @pytest.mark.unit
+    def test_noop_with_hooks_preserves_injection(
+        self, repo_path: Path, factory: FakeSDKClientFactory
+    ) -> None:
+        """``with_hooks(...)`` with unchanged flags preserves injection.
+
+        Fixer service calls ``with_hooks(include_stop_hook=True, ...)``;
+        ``include_stop_hook=True`` matches the builder default, so that
+        argument alone must not invalidate the injection.
+        """
+        components = build_default_runtime_components(repo_path, "agent-noop-hooks")
+
+        runtime = (
+            ClaudeAgentRuntimeBuilder(
+                repo_path,
+                "agent-noop-hooks",
+                factory,
+                runtime_components=components,
+            )
+            .with_hooks(include_stop_hook=True)  # default value, no-op
+            .with_mcp(servers={})
+            .build()
+        )
+
+        assert runtime.pre_tool_hooks is components.pre_tool_hooks
+        assert runtime.stop_hooks is components.stop_hooks

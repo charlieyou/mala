@@ -383,17 +383,34 @@ class ClaudeAgentRuntimeBuilder:
         Returns:
             Self for chaining.
         """
-        if include_stop_hook is not _UNSET:
+        changed = False
+        if (
+            include_stop_hook is not _UNSET
+            and include_stop_hook != self._include_stop_hook
+        ):
             self._include_stop_hook = include_stop_hook
-        if include_mala_disallowed_tools_hook is not _UNSET:
+            changed = True
+        if (
+            include_mala_disallowed_tools_hook is not _UNSET
+            and include_mala_disallowed_tools_hook
+            != self._include_mala_disallowed_tools_hook
+        ):
             self._include_mala_disallowed_tools_hook = (
                 include_mala_disallowed_tools_hook
             )
-        if include_lock_enforcement_hook is not _UNSET:
+            changed = True
+        if (
+            include_lock_enforcement_hook is not _UNSET
+            and include_lock_enforcement_hook != self._include_lock_enforcement_hook
+        ):
             self._include_lock_enforcement_hook = include_lock_enforcement_hook
-        # Invalidate pre-built components so the next build() rebuilds with
-        # the updated flags via :func:`build_default_runtime_components`.
-        self._runtime_components = None
+            changed = True
+        # Only invalidate pre-built components when a flag actually changed;
+        # no-op calls preserve provider-injected components so the default
+        # composition contract still holds (e.g. AgentSessionRunner's
+        # unconditional ``with_lint_tools``/``with_hooks`` no-ops).
+        if changed:
+            self._runtime_components = None
         return self
 
     def with_resume(self, resume_id: str | None) -> ClaudeAgentRuntimeBuilder:
@@ -510,10 +527,13 @@ class ClaudeAgentRuntimeBuilder:
         Returns:
             Self for chaining.
         """
-        self._lint_tools = lint_tools
-        # Invalidate pre-built components so the next build() rebuilds with
-        # the updated lint_tools via :func:`build_default_runtime_components`.
-        self._runtime_components = None
+        # Only invalidate pre-built components when the lint set actually
+        # changes. AgentSessionRunner unconditionally forwards
+        # ``self.config.lint_tools`` (typically ``None``); preserving the
+        # injection on no-ops keeps the provider's default composition.
+        if lint_tools != self._lint_tools:
+            self._lint_tools = lint_tools
+            self._runtime_components = None
         return self
 
     def _build_mcp_servers(
