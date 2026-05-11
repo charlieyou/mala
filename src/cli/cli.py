@@ -15,17 +15,17 @@ from __future__ import annotations
 
 import shutil
 import sys
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import questionary
 
+from ..orchestration.cli_overrides import CLIOverrideOptions, apply_cli_overrides
 from ..orchestration.cli_support import USER_CONFIG_DIR, get_runs_dir, load_user_env
 
 if TYPE_CHECKING:
     from src.core.models import OrderPreference
-    from src.infra.io.config import MalaConfig
 
 # Bootstrap state: tracks whether bootstrap() has been called
 _bootstrapped = False
@@ -424,70 +424,6 @@ def _validate_codex_sandbox_option(value: str | None) -> str | None:
     return parsed
 
 
-def _apply_cli_overrides(
-    config: MalaConfig,
-    *,
-    claude_settings_sources: str | None,
-    coder: str | None,
-    amp_mode: str | None,
-    effort: str | None,
-    codex_model: str | None = None,
-    codex_effort: str | None = None,
-    codex_approval_policy: str | None = None,
-    codex_sandbox: str | None = None,
-) -> MalaConfig:
-    """Apply CLI overrides to MalaConfig.
-
-    Uses build_resolved_config so CLI > env > yaml > default precedence and
-    cross-coder ignored-flag info logging stay in one place.
-    """
-    if (
-        claude_settings_sources is None
-        and coder is None
-        and amp_mode is None
-        and effort is None
-        and codex_model is None
-        and codex_effort is None
-        and codex_approval_policy is None
-        and codex_sandbox is None
-    ):
-        return config
-
-    from src.infra.io.config import CLIOverrides, build_resolved_config
-
-    overrides = CLIOverrides(
-        claude_settings_sources=claude_settings_sources,
-        coder=coder,
-        amp_mode=amp_mode,
-        effort=effort,
-        codex_model=codex_model,
-        codex_effort=codex_effort,
-        codex_approval_policy=codex_approval_policy,
-        codex_sandbox=codex_sandbox,
-    )
-    resolved = build_resolved_config(config, overrides)
-
-    init_kwargs = {
-        field.name: getattr(config, field.name)
-        for field in fields(config)
-        if field.init
-        and field.name
-        not in {
-            "claude_settings_sources_init",
-            "coder",
-            "coder_options",
-            "effort",
-        }
-    }
-    return _lazy("MalaConfig")(
-        **init_kwargs,
-        claude_settings_sources_init=resolved.claude_settings_sources,
-        coder=resolved.coder,
-        coder_options=resolved.coder_options,
-        effort=resolved.effort,
-    )
-
-
 def _handle_dry_run(
     repo_path: Path,
     scope_config: ScopeConfig | None,
@@ -853,16 +789,18 @@ def run(
     # Apply CLI overrides (claude_settings_sources, coder, amp_mode, effort,
     # codex_model, codex_effort, codex_approval_policy, codex_sandbox)
     try:
-        config = _apply_cli_overrides(
+        config = apply_cli_overrides(
             config,
-            claude_settings_sources=claude_settings_sources,
-            coder=coder,
-            amp_mode=amp_mode,
-            effort=effort,
-            codex_model=codex_model,
-            codex_effort=codex_effort,
-            codex_approval_policy=codex_approval_policy,
-            codex_sandbox=codex_sandbox,
+            CLIOverrideOptions(
+                claude_settings_sources=claude_settings_sources,
+                coder=coder,
+                amp_mode=amp_mode,
+                effort=effort,
+                codex_model=codex_model,
+                codex_effort=codex_effort,
+                codex_approval_policy=codex_approval_policy,
+                codex_sandbox=codex_sandbox,
+            ),
         )
     except ValueError as exc:
         log("✗", str(exc), Colors.RED)
@@ -1063,16 +1001,18 @@ def epic_verify(
     )
 
     try:
-        config = _apply_cli_overrides(
+        config = apply_cli_overrides(
             config,
-            claude_settings_sources=claude_settings_sources,
-            coder=coder,
-            amp_mode=amp_mode,
-            effort=effort,
-            codex_model=codex_model,
-            codex_effort=codex_effort,
-            codex_approval_policy=codex_approval_policy,
-            codex_sandbox=codex_sandbox,
+            CLIOverrideOptions(
+                claude_settings_sources=claude_settings_sources,
+                coder=coder,
+                amp_mode=amp_mode,
+                effort=effort,
+                codex_model=codex_model,
+                codex_effort=codex_effort,
+                codex_approval_policy=codex_approval_policy,
+                codex_sandbox=codex_sandbox,
+            ),
         )
     except ValueError as exc:
         log("✗", str(exc), Colors.RED)
