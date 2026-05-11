@@ -7,9 +7,11 @@ segment splitting, env-assignment / reserved-word stripping, shell
 comment stripping, command-substitution body extraction, and redirection
 operator handling.
 
-The hook re-exports every name defined here so existing imports
-(``from .codex_pre_tool_use import _split_segments`` etc.) keep working
-without behavior drift.
+The hook imports the helpers it actually consumes from this module;
+unit tests under ``tests/unit/infra/hooks/codex/`` import the broader
+set declared in ``__all__`` (constants, regex tables, fd helpers). Each
+public name here may be referenced from either consumer, so don't rely
+on the hook's import list as an exhaustive index.
 """
 
 from __future__ import annotations

@@ -2447,6 +2447,7 @@ LLM cost: bounded to one shot at the first tool call.
 
 SELFTEST_IDENTITY_MODULES: tuple[str, ...] = (
     "src.infra.hooks.codex_pre_tool_use",
+    "src.infra.hooks.codex.shell_parser",
     "src.infra.hooks.dangerous_commands",
     "src.infra.tool_config",
     "src.infra.tools.locking",
