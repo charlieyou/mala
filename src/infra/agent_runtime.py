@@ -336,10 +336,19 @@ class ClaudeAgentRuntimeBuilder:
         self._include_mala_disallowed_tools_hook: bool = True
         self._include_lock_enforcement_hook: bool = True
 
-        # Pre-constructed components (Finding #13). ``None`` means
-        # ``build()`` calls :func:`build_default_runtime_components` to
-        # construct the standard composition.
-        self._runtime_components: RuntimeComponents | None = runtime_components
+        # Pre-constructed components (Finding #13). ``build()`` never
+        # invokes :func:`build_default_runtime_components`; the helper is
+        # called eagerly here (when no injection is supplied) and from
+        # :meth:`with_hooks` / :meth:`with_lint_tools` on config change, so
+        # ``_runtime_components`` is always populated before ``build()``
+        # runs. ``build()``'s body then only formats the components into
+        # the SDK struct.
+        if runtime_components is None:
+            self._runtime_components: RuntimeComponents = (
+                self._compose_components_from_config()
+            )
+        else:
+            self._runtime_components = runtime_components
 
         # Environment and options. ``_disallowed_tools`` defaults to the
         # standard MALA_DISALLOWED_TOOLS list so coder-agnostic pipeline
@@ -352,6 +361,25 @@ class ClaudeAgentRuntimeBuilder:
         self._disallowed_tools: list[str] | None = list(MALA_DISALLOWED_TOOLS)
         self._agent_timeout_seconds: float | None = None
         self._resume_id: str | None = None
+
+    def _compose_components_from_config(self) -> RuntimeComponents:
+        """Build :class:`RuntimeComponents` via the external helper.
+
+        Single dispatch point to :func:`build_default_runtime_components`
+        used by :meth:`__init__` (no-injection fallback) and the eager
+        rebuild paths in :meth:`with_hooks` / :meth:`with_lint_tools`.
+        Keeping the helper call out of :meth:`build` ensures the build
+        body does no hook/cache instantiation (Finding #13).
+        """
+        return build_default_runtime_components(
+            self._repo_path,
+            self._agent_id,
+            lint_tools=self._lint_tools,
+            include_stop_hook=self._include_stop_hook,
+            include_mala_disallowed_tools_hook=self._include_mala_disallowed_tools_hook,
+            include_lock_enforcement_hook=self._include_lock_enforcement_hook,
+            deadlock_monitor=self._deadlock_monitor,
+        )
 
     def with_hooks(
         self,
@@ -405,12 +433,12 @@ class ClaudeAgentRuntimeBuilder:
         ):
             self._include_lock_enforcement_hook = include_lock_enforcement_hook
             changed = True
-        # Only invalidate pre-built components when a flag actually changed;
-        # no-op calls preserve provider-injected components so the default
-        # composition contract still holds (e.g. AgentSessionRunner's
-        # unconditional ``with_lint_tools``/``with_hooks`` no-ops).
+        # Only rebuild components when a flag actually changed; no-op
+        # calls preserve provider-injected components. The rebuild
+        # happens eagerly via the external helper so ``build()``'s body
+        # never instantiates hooks/caches itself (Finding #13).
         if changed:
-            self._runtime_components = None
+            self._runtime_components = self._compose_components_from_config()
         return self
 
     def with_resume(self, resume_id: str | None) -> ClaudeAgentRuntimeBuilder:
@@ -527,13 +555,16 @@ class ClaudeAgentRuntimeBuilder:
         Returns:
             Self for chaining.
         """
-        # Only invalidate pre-built components when the lint set actually
-        # changes. AgentSessionRunner unconditionally forwards
-        # ``self.config.lint_tools`` (typically ``None``); preserving the
-        # injection on no-ops keeps the provider's default composition.
+        # Only rebuild components when the lint set actually changes.
+        # AgentSessionRunner unconditionally forwards
+        # ``self.config.lint_tools``; the no-op case preserves the
+        # provider's injected components. When it changes, the rebuild
+        # uses the external :func:`build_default_runtime_components`
+        # helper, so ``build()``'s body never instantiates hooks/caches
+        # (Finding #13).
         if lint_tools != self._lint_tools:
             self._lint_tools = lint_tools
-            self._runtime_components = None
+            self._runtime_components = self._compose_components_from_config()
         return self
 
     def _build_mcp_servers(
@@ -568,14 +599,13 @@ class ClaudeAgentRuntimeBuilder:
     def build(self) -> AgentRuntime:
         """Build the agent runtime configuration.
 
-        Formats injected (or default) :class:`RuntimeComponents` into the
-        SDK ``hooks`` dict and :class:`ClaudeAgentOptions` — no hook or
-        cache instantiation happens in this body (Finding #13). When
-        ``runtime_components`` was not supplied at construction (and
-        :meth:`with_hooks` / :meth:`with_lint_tools` did not invalidate
-        the components), :func:`build_default_runtime_components` is
-        called once with the recorded config to preserve default
-        composition.
+        Formats the pre-populated :class:`RuntimeComponents` into the SDK
+        ``hooks`` dict and :class:`ClaudeAgentOptions` — no hook or cache
+        instantiation happens in this body (Finding #13). Components are
+        always populated before ``build()`` runs: by injection at
+        construction, by :func:`build_default_runtime_components` called
+        eagerly in :meth:`__init__` (no-injection case), or by the
+        eager rebuild path in :meth:`with_hooks` / :meth:`with_lint_tools`.
 
         Returns:
             AgentRuntime with all configured components.
@@ -583,18 +613,6 @@ class ClaudeAgentRuntimeBuilder:
         Raises:
             RuntimeError: If required configuration is missing.
         """
-        # Resolve runtime components: use injected or build defaults via the
-        # external helper (which owns ALL hook/cache instantiation).
-        if self._runtime_components is None:
-            self._runtime_components = build_default_runtime_components(
-                self._repo_path,
-                self._agent_id,
-                lint_tools=self._lint_tools,
-                include_stop_hook=self._include_stop_hook,
-                include_mala_disallowed_tools_hook=self._include_mala_disallowed_tools_hook,
-                include_lock_enforcement_hook=self._include_lock_enforcement_hook,
-                deadlock_monitor=self._deadlock_monitor,
-            )
         components = self._runtime_components
 
         # Build environment if not explicitly set

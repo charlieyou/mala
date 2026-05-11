@@ -749,6 +749,93 @@ class TestRuntimeComponentsInjection:
         assert runtime.pre_tool_hooks is components.pre_tool_hooks
 
     @pytest.mark.unit
+    def test_build_does_not_invoke_helper(
+        self,
+        repo_path: Path,
+        factory: FakeSDKClientFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``build()`` body never calls ``build_default_runtime_components``.
+
+        Regression for Finding #13's acceptance criterion: "No hook/cache
+        instantiation inside the builder." The helper is invoked eagerly
+        in ``__init__`` / ``with_hooks`` / ``with_lint_tools`` (outside
+        the build body), so calling ``build()`` after construction +
+        config tweaks must not re-enter the helper.
+        """
+        from unittest.mock import patch
+
+        import src.infra.agent_runtime as agent_runtime_mod
+
+        components = build_default_runtime_components(repo_path, "agent-build-clean")
+        builder = ClaudeAgentRuntimeBuilder(
+            repo_path,
+            "agent-build-clean",
+            factory,
+            runtime_components=components,
+        )
+        # Apply no-op fluent calls then build under a patched helper. If
+        # ``build()`` invokes the helper, the spy would record a call.
+        with patch.object(
+            agent_runtime_mod,
+            "build_default_runtime_components",
+            wraps=agent_runtime_mod.build_default_runtime_components,
+        ) as spy:
+            runtime = (
+                builder.with_lint_tools(None)
+                .with_hooks(include_stop_hook=True)
+                .with_env()
+                .with_mcp(servers={})
+                .build()
+            )
+
+        assert spy.call_count == 0, (
+            "build() body must not call build_default_runtime_components; "
+            "components must be pre-populated before build()."
+        )
+        # The runtime exposes the injected components (no re-instantiation).
+        assert runtime.pre_tool_hooks is components.pre_tool_hooks
+        assert runtime.lint_cache is components.lint_cache
+
+    @pytest.mark.unit
+    def test_changed_lint_tools_rebuilds_outside_build(
+        self,
+        repo_path: Path,
+        factory: FakeSDKClientFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A real lint-tool change rebuilds in ``with_lint_tools``, not ``build()``.
+
+        Regression covering the AgentSessionRunner path where
+        ``self.config.lint_tools`` is non-empty: the rebuild happens
+        eagerly inside the ``with_lint_tools`` method body (which calls
+        the external helper), and ``build()`` then only formats the
+        already-built components into the SDK struct.
+        """
+        from unittest.mock import patch
+
+        import src.infra.agent_runtime as agent_runtime_mod
+
+        components = build_default_runtime_components(repo_path, "agent-lint-change")
+        builder = ClaudeAgentRuntimeBuilder(
+            repo_path,
+            "agent-lint-change",
+            factory,
+            runtime_components=components,
+        )
+        with patch.object(
+            agent_runtime_mod,
+            "build_default_runtime_components",
+            wraps=agent_runtime_mod.build_default_runtime_components,
+        ) as spy:
+            builder.with_lint_tools({"ruff"})
+            # The helper was called by with_lint_tools (rebuild).
+            assert spy.call_count == 1
+            builder.with_mcp(servers={}).build()
+            # build() did not invoke the helper.
+            assert spy.call_count == 1
+
+    @pytest.mark.unit
     def test_noop_with_hooks_preserves_injection(
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
