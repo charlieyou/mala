@@ -63,11 +63,11 @@ def _stub_live_codex_probes(monkeypatch: pytest.MonkeyPatch) -> None:
     themselves re-monkeypatch the symbols explicitly.
     """
     monkeypatch.setattr(
-        "src.infra.clients.codex_provider._live_codex_plugin_list_probe",
+        "src.infra.clients.codex_selftest._live_codex_plugin_list_probe",
         lambda env_overlay, repo_path, *, marketplace="local": None,
     )
     monkeypatch.setattr(
-        "src.infra.clients.codex_provider._live_codex_hook_dispatch_probe",
+        "src.infra.clients.codex_selftest._live_codex_hook_dispatch_probe",
         lambda env_overlay, repo_path, expected_marker_hash: None,
     )
 
@@ -1303,7 +1303,7 @@ def test_default_marketplace_matches_installer_constant() -> None:
     This regression test fails if either side drifts.
     """
     from src.infra.clients.codex_plugin_installer import PLUGIN_MARKETPLACE
-    from src.infra.clients.codex_provider import _DEFAULT_PLUGIN_MARKETPLACE
+    from src.infra.clients.codex_selftest import _DEFAULT_PLUGIN_MARKETPLACE
 
     assert _DEFAULT_PLUGIN_MARKETPLACE == PLUGIN_MARKETPLACE
 
@@ -1368,7 +1368,7 @@ def test_hook_identity_modules_cover_safety_critical_dependencies() -> None:
       * ``src.infra.tools.env`` — lock-dir resolution
         (``locking.py:14``).
     """
-    from src.infra.clients.codex_provider import _HOOK_IDENTITY_MODULES
+    from src.infra.clients.codex_selftest import _HOOK_IDENTITY_MODULES
 
     expected = {
         "src.infra.hooks.codex_pre_tool_use",
@@ -1403,7 +1403,7 @@ def test_combined_module_hash_changes_when_dangerous_commands_diverges(
     import hashlib
     import importlib.util
 
-    from src.infra.clients.codex_provider import (
+    from src.infra.clients.codex_selftest import (
         _HOOK_IDENTITY_MODULES,
         _compute_combined_module_hash,
     )
@@ -1458,7 +1458,7 @@ def test_combined_module_hash_changes_when_shell_parser_diverges() -> None:
     import hashlib
     import importlib.util
 
-    from src.infra.clients.codex_provider import (
+    from src.infra.clients.codex_selftest import (
         _HOOK_IDENTITY_MODULES,
         _compute_combined_module_hash,
     )
@@ -1505,7 +1505,7 @@ def test_combined_module_hash_changes_when_lock_policy_diverges() -> None:
     import hashlib
     import importlib.util
 
-    from src.infra.clients.codex_provider import (
+    from src.infra.clients.codex_selftest import (
         _HOOK_IDENTITY_MODULES,
         _compute_combined_module_hash,
     )
@@ -1557,7 +1557,7 @@ def test_combined_module_hash_changes_when_codex_dangerous_commands_diverges() -
     import hashlib
     import importlib.util
 
-    from src.infra.clients.codex_provider import (
+    from src.infra.clients.codex_selftest import (
         _HOOK_IDENTITY_MODULES,
         _compute_combined_module_hash,
     )
@@ -1672,7 +1672,7 @@ def test_default_probe_raises_plugin_disabled_when_manifest_paths_wrong(
     """
     import json as _json
 
-    from src.infra.clients.codex_provider import _default_selftest_probe
+    from src.infra.clients.codex_selftest import _default_selftest_probe
 
     codex_home, _bin_dir = fake_codex_env
     plugin_dir = (
@@ -1740,7 +1740,7 @@ def test_default_probe_raises_hook_marker_missing_when_command_absent(
     (plugin_dir / "hooks.json").write_text(_json.dumps({"hooks": {}}), encoding="utf-8")
     (plugin_dir / ".mcp.json").write_text("{}", encoding="utf-8")
 
-    from src.infra.clients.codex_provider import _default_selftest_probe
+    from src.infra.clients.codex_selftest import _default_selftest_probe
 
     with pytest.raises(CodexHookNotActiveError) as excinfo:
         _default_selftest_probe(
@@ -1824,7 +1824,7 @@ def test_default_probe_passes_when_hook_module_hash_matches(
     backed by the same Python that runs mala, the module bytes are
     identical and the run continues.
     """
-    from src.infra.clients.codex_provider import _default_selftest_probe
+    from src.infra.clients.codex_selftest import _default_selftest_probe
 
     codex_home, bin_dir = fake_codex_env
     _install_valid_plugin_tree(codex_home)
@@ -1877,7 +1877,7 @@ def test_default_probe_raises_version_mismatch_on_diverging_module_hash(
     *any* logic difference because a single byte change in
     ``codex_pre_tool_use.py`` flips the SHA-256.
     """
-    from src.infra.clients.codex_provider import _default_selftest_probe
+    from src.infra.clients.codex_selftest import _default_selftest_probe
 
     codex_home, bin_dir = fake_codex_env
     _install_valid_plugin_tree(codex_home)
@@ -1927,7 +1927,7 @@ def test_default_probe_raises_hook_marker_missing_when_module_unimportable(
     bare ``exited 2`` message instead of which dependency is missing
     (regression: review-20 P2).
     """
-    from src.infra.clients.codex_provider import _default_selftest_probe
+    from src.infra.clients.codex_selftest import _default_selftest_probe
 
     codex_home, bin_dir = fake_codex_env
     _install_valid_plugin_tree(codex_home)
@@ -1966,7 +1966,7 @@ def test_default_probe_raises_hook_marker_missing_when_no_shebang(
     """A hook executable without a Python shebang surfaces
     ``HOOK_MARKER_MISSING`` — without the shebang we cannot identify
     the interpreter that would resolve the hook module."""
-    from src.infra.clients.codex_provider import _default_selftest_probe
+    from src.infra.clients.codex_selftest import _default_selftest_probe
 
     codex_home, bin_dir = fake_codex_env
     _install_valid_plugin_tree(codex_home)
@@ -1991,7 +1991,7 @@ def test_default_probe_raises_hook_marker_missing_when_interpreter_crashes(
     """A hook interpreter that crashes during the module-identity
     probe surfaces ``HOOK_MARKER_MISSING`` rather than masking the
     failure as success."""
-    from src.infra.clients.codex_provider import _default_selftest_probe
+    from src.infra.clients.codex_selftest import _default_selftest_probe
 
     codex_home, bin_dir = fake_codex_env
     _install_valid_plugin_tree(codex_home)
@@ -2022,7 +2022,7 @@ def test_selftest_marker_env_constant_matches_hook_module() -> None:
     import-linter forbids ``src.infra.clients`` from importing
     ``src.infra.hooks``. Pin equality so they cannot drift.
     """
-    from src.infra.clients.codex_provider import _HOOK_SELFTEST_MARKER_ENV
+    from src.infra.clients.codex_selftest import _HOOK_SELFTEST_MARKER_ENV
     from src.infra.hooks.codex.selftest_policy import SELFTEST_MARKER_ENV
 
     assert _HOOK_SELFTEST_MARKER_ENV == SELFTEST_MARKER_ENV
@@ -2034,7 +2034,7 @@ def test_selftest_identity_modules_match_provider_list() -> None:
     the provider expects. Drift would surface as a runtime
     ``VERSION_MISMATCH`` from the live-hook step, but pinning the
     equality here makes the regression visible directly."""
-    from src.infra.clients.codex_provider import _HOOK_IDENTITY_MODULES
+    from src.infra.clients.codex_selftest import _HOOK_IDENTITY_MODULES
     from src.infra.hooks.codex.selftest_policy import SELFTEST_IDENTITY_MODULES
 
     assert SELFTEST_IDENTITY_MODULES == _HOOK_IDENTITY_MODULES
@@ -2055,7 +2055,7 @@ def test_default_probe_raises_hook_marker_missing_when_live_hook_writes_no_marke
     emits valid hook output without writing the marker — exactly the
     shape a regression that drops the marker-emit call would produce.
     """
-    from src.infra.clients.codex_provider import _default_selftest_probe
+    from src.infra.clients.codex_selftest import _default_selftest_probe
 
     codex_home, bin_dir = fake_codex_env
     _install_valid_plugin_tree(codex_home)
@@ -2096,7 +2096,7 @@ def test_default_probe_raises_version_mismatch_when_live_marker_hash_diverges(
     logic) drifted from the provider's. Belt-and-suspenders gate on
     top of step 3's static module-bytes hash.
     """
-    from src.infra.clients.codex_provider import _default_selftest_probe
+    from src.infra.clients.codex_selftest import _default_selftest_probe
 
     codex_home, bin_dir = fake_codex_env
     _install_valid_plugin_tree(codex_home)
@@ -2145,7 +2145,7 @@ def test_default_probe_raises_hook_marker_missing_when_live_hook_exits_nonzero(
     the safety guarantee the orchestrator depends on is gone, so the
     selftest must catch it.
     """
-    from src.infra.clients.codex_provider import _default_selftest_probe
+    from src.infra.clients.codex_selftest import _default_selftest_probe
 
     codex_home, bin_dir = fake_codex_env
     _install_valid_plugin_tree(codex_home)
@@ -2312,7 +2312,7 @@ def test_live_codex_plugin_list_probe_passes_when_plugin_installed_and_enabled(
     """Happy path: Codex reports our plugin installed+enabled → probe succeeds."""
     # Override the autouse stub so we drive the real implementation.
     monkeypatch.undo()
-    from src.infra.clients.codex_provider import _live_codex_plugin_list_probe
+    from src.infra.clients.codex_selftest import _live_codex_plugin_list_probe
 
     _patch_async_codex(
         monkeypatch,
@@ -2348,7 +2348,7 @@ def test_live_codex_plugin_list_probe_raises_plugin_disabled_when_plugin_missing
     (different cache root, manifest field rename, etc.).
     """
     monkeypatch.undo()
-    from src.infra.clients.codex_provider import _live_codex_plugin_list_probe
+    from src.infra.clients.codex_selftest import _live_codex_plugin_list_probe
 
     _patch_async_codex(
         monkeypatch,
@@ -2369,7 +2369,7 @@ def test_live_codex_plugin_list_probe_raises_plugin_disabled_when_not_installed(
 ) -> None:
     """Codex sees the plugin but reports installed=False → PLUGIN_DISABLED."""
     monkeypatch.undo()
-    from src.infra.clients.codex_provider import _live_codex_plugin_list_probe
+    from src.infra.clients.codex_selftest import _live_codex_plugin_list_probe
 
     _patch_async_codex(
         monkeypatch,
@@ -2409,7 +2409,7 @@ def test_live_codex_plugin_list_probe_raises_plugin_disabled_when_not_enabled(
     only signal that catches this discrepancy.
     """
     monkeypatch.undo()
-    from src.infra.clients.codex_provider import _live_codex_plugin_list_probe
+    from src.infra.clients.codex_selftest import _live_codex_plugin_list_probe
 
     _patch_async_codex(
         monkeypatch,
@@ -2448,7 +2448,7 @@ def test_live_codex_plugin_list_probe_raises_plugin_disabled_on_marketplace_load
     error, missing referenced file).
     """
     monkeypatch.undo()
-    from src.infra.clients.codex_provider import _live_codex_plugin_list_probe
+    from src.infra.clients.codex_selftest import _live_codex_plugin_list_probe
 
     _patch_async_codex(
         monkeypatch,
@@ -2478,7 +2478,7 @@ def test_live_codex_plugin_list_probe_raises_codex_binary_missing_when_spawn_fai
     ``CODEX_BINARY`` env var pointing at a deleted path, etc.).
     """
     monkeypatch.undo()
-    from src.infra.clients.codex_provider import _live_codex_plugin_list_probe
+    from src.infra.clients.codex_selftest import _live_codex_plugin_list_probe
 
     _patch_async_codex(
         monkeypatch,
@@ -2504,7 +2504,7 @@ def test_default_probe_invokes_both_live_codex_probes_after_other_checks(
     feature gates, and the SessionStart-dispatch probe validates the
     per-handler trust state + actual hook firing through Codex.
     """
-    from src.infra.clients.codex_provider import (
+    from src.infra.clients.codex_selftest import (
         _compute_combined_module_hash,
         _default_selftest_probe,
         _HOOK_IDENTITY_MODULES,
@@ -2529,11 +2529,11 @@ def test_default_probe_invokes_both_live_codex_probes_after_other_checks(
         dispatch_calls.append((dict(env), repo, expected_marker_hash))
 
     monkeypatch.setattr(
-        "src.infra.clients.codex_provider._live_codex_plugin_list_probe",
+        "src.infra.clients.codex_selftest._live_codex_plugin_list_probe",
         _record_plugin_call,
     )
     monkeypatch.setattr(
-        "src.infra.clients.codex_provider._live_codex_hook_dispatch_probe",
+        "src.infra.clients.codex_selftest._live_codex_hook_dispatch_probe",
         _record_dispatch_call,
     )
 
@@ -2573,7 +2573,7 @@ def test_live_codex_hook_dispatch_probe_raises_hook_marker_missing_when_marker_a
     for the same reason.
     """
     monkeypatch.undo()
-    from src.infra.clients.codex_provider import _live_codex_hook_dispatch_probe
+    from src.infra.clients.codex_selftest import _live_codex_hook_dispatch_probe
 
     # Fake AsyncCodex whose thread/turn complete normally but the
     # SessionStart hook never fires (so the marker file stays absent).
@@ -2611,7 +2611,7 @@ def test_live_codex_hook_dispatch_probe_raises_hook_marker_missing_when_marker_a
     # Shrink the timeout so the test does not wait for the production
     # ``_HOOK_PROBE_TIMEOUT_SECONDS`` (10s).
     monkeypatch.setattr(
-        "src.infra.clients.codex_provider._HOOK_PROBE_TIMEOUT_SECONDS", 0.5
+        "src.infra.clients.codex_selftest._HOOK_PROBE_TIMEOUT_SECONDS", 0.5
     )
 
     with pytest.raises(CodexHookNotActiveError) as excinfo:
@@ -2632,7 +2632,7 @@ def test_live_codex_hook_dispatch_probe_passes_when_both_event_markers_present(
     appear with matching hashes (review-4 P1 — per-handler trust
     paths exercised independently)."""
     monkeypatch.undo()
-    from src.infra.clients.codex_provider import _live_codex_hook_dispatch_probe
+    from src.infra.clients.codex_selftest import _live_codex_hook_dispatch_probe
 
     expected_hash = "abcd1234" * 8
 
@@ -2728,7 +2728,7 @@ def test_live_codex_hook_dispatch_probe_raises_version_mismatch_on_wrong_hash(
     even if Codex evaluated the trust state correctly.
     """
     monkeypatch.undo()
-    from src.infra.clients.codex_provider import _live_codex_hook_dispatch_probe
+    from src.infra.clients.codex_selftest import _live_codex_hook_dispatch_probe
 
     captured_marker_env: dict[str, str] = {}
 
@@ -2809,7 +2809,7 @@ def test_live_codex_hook_dispatch_probe_raises_codex_binary_missing_on_spawn_fai
 ) -> None:
     """SDK spawn fails → ``CODEX_BINARY_MISSING`` (parity with plugin/list step)."""
     monkeypatch.undo()
-    from src.infra.clients.codex_provider import _live_codex_hook_dispatch_probe
+    from src.infra.clients.codex_selftest import _live_codex_hook_dispatch_probe
 
     class _SpawnFailureAsyncCodex:
         def __init__(self, *, config: object) -> None:
@@ -2857,7 +2857,7 @@ def test_live_codex_plugin_list_probe_raises_codex_binary_missing_on_timeout(
     monkeypatch.undo()
     import asyncio as _asyncio
 
-    from src.infra.clients.codex_provider import _live_codex_plugin_list_probe
+    from src.infra.clients.codex_selftest import _live_codex_plugin_list_probe
 
     class _HangingClient:
         async def request(
@@ -2897,7 +2897,7 @@ def test_live_codex_plugin_list_probe_raises_codex_binary_missing_on_timeout(
     monkeypatch.setitem(_sys.modules, "codex_app_server.generated.v2_all", fake_v2)
 
     monkeypatch.setattr(
-        "src.infra.clients.codex_provider._HOOK_PROBE_TIMEOUT_SECONDS", 0.5
+        "src.infra.clients.codex_selftest._HOOK_PROBE_TIMEOUT_SECONDS", 0.5
     )
 
     with pytest.raises(CodexHookNotActiveError) as excinfo:
@@ -2948,7 +2948,7 @@ def test_live_dispatch_probe_uses_raw_rpc_to_tolerate_priority_service_tier(
 ) -> None:
     """Raw JSON-RPC bypasses stale SDK response validation for selftest only."""
     monkeypatch.undo()
-    from src.infra.clients.codex_provider import _live_codex_hook_dispatch_probe
+    from src.infra.clients.codex_selftest import _live_codex_hook_dispatch_probe
 
     expected_hash = "feedface" * 8
     calls: list[str] = []
@@ -3038,7 +3038,7 @@ def test_live_dispatch_probe_fails_closed_when_raw_thread_id_missing(
 ) -> None:
     """Malformed raw selftest responses still fail closed with context."""
     monkeypatch.undo()
-    from src.infra.clients.codex_provider import _live_codex_hook_dispatch_probe
+    from src.infra.clients.codex_selftest import _live_codex_hook_dispatch_probe
 
     class _RawClient:
         def _request_raw(
