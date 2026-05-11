@@ -89,7 +89,7 @@ stream-json contract.
 - No devcontainer integration: Amp install/auth is a user prerequisite, not
   baked into mala's DevContainer image.
 
-### Codex (Optional, for `coder: codex`)
+### Codex (for `coder: codex`)
 
 Mala can drive its per-issue implementation agent on OpenAI's
 [`codex app-server`](https://developers.openai.com/codex/sdk) (`gpt-5.5`
@@ -117,21 +117,9 @@ error.
 
 **Prerequisites:**
 
-- **Codex Python SDK.** Install via the `mala[codex]` extra:
-
-  ```bash
-  uv sync --extra codex
-  ```
-
-  or add the SDK directly:
-
-  ```bash
-  uv add openai-codex-app-server-sdk
-  ```
-
-  The SDK is **experimental** ("expect breaking changes"); mala pins to
-  the upstream tag in `pyproject.toml`. See `[project.optional-dependencies]`
-  for the current pin.
+- **Codex Python SDK.** Installed with mala by default. The SDK is
+  **experimental** ("expect breaking changes"); mala pins to the upstream tag
+  in `pyproject.toml`.
 - **Codex runtime binary** (`openai-codex-cli-bin`). The SDK pulls this in
   as a transitive dependency; it is platform-specific (mac/linux/windows
   wheels) and pinned to an exact version matching the SDK release. Mala

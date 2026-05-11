@@ -230,14 +230,14 @@ MALA_CODER=codex MALA_CODEX_MODEL=gpt-5.5 mala run /path/to/repo
 via the Amp binary, writable `~/.config/amp/plugins/`. See the
 [Amp prerequisites in README](../README.md#amp-optional-for-coder-amp).
 
-**Codex prerequisites:** `openai-codex-app-server-sdk` (Python SDK, install via
-`uv sync --extra codex` or `uv add openai-codex-app-server-sdk`),
-`openai-codex-cli-bin` runtime (pulled in by the SDK), Codex auth configured
-locally (via `codex login`, keyring config, or auth env vars). Mala installs
-the bundled `mala-safety` plugin into a per-run temporary `CODEX_HOME`, not
-your normal `~/.codex`, so ordinary Codex CLI sessions do not load Mala hooks.
-See the [Codex prerequisites in README](../README.md#codex-optional-for-coder-codex)
-for install steps and [Codex Prerequisites](#codex-prerequisites) below for
+**Codex prerequisites:** `openai-codex-app-server-sdk` Python SDK (installed
+with mala by default), `openai-codex-cli-bin` runtime (pulled in by the SDK),
+Codex auth configured locally (via `codex login`, keyring config, or auth env
+vars). Mala installs the bundled `mala-safety` plugin into a per-run temporary
+`CODEX_HOME`, not your normal `~/.codex`, so ordinary Codex CLI sessions do not
+load Mala hooks. See the
+[Codex prerequisites in README](../README.md#codex-for-coder-codex) for install
+steps and [Codex Prerequisites](#codex-prerequisites) below for
 the scoped auto-trust mechanism and per-error remediation. Missing SDK /
 runtime / auth raises `CodexNotInstalledError`; a missing or untrusted bundled
 hook raises `CodexHookNotActiveError` — both fail closed before any issue agent
@@ -327,8 +327,8 @@ maps to one of the rows below.
 
 | Reason | What it means | How to recover |
 |--------|---------------|----------------|
-| `CodexNotInstalledError` (SDK/auth) | The `codex_app_server` Python SDK is not importable, or no Codex credential is detectable (no `OPENAI_API_KEY` / `CODEX_API_KEY` / `CODEX_ACCESS_TOKEN`, no `auth.json`, no keyring config). | Install the SDK extra: `uv sync --extra codex`. Then run `codex login` (Sign in with ChatGPT) or set `OPENAI_API_KEY`. See [OpenAI Codex auth docs](https://developers.openai.com/codex/auth). |
-| `CODEX_BINARY_MISSING` | No `codex` binary on `PATH`, no `CODEX_BINARY` override, and the bundled `codex_cli_bin` runtime package is not importable. | Reinstall the runtime extra: `uv sync --extra codex` (pulls in `openai-codex-cli-bin`). Verify with `uv run python -c "import codex_cli_bin"`. As an escape hatch, set `CODEX_BINARY=/path/to/codex` to an explicit binary on disk. |
+| `CodexNotInstalledError` (SDK/auth) | The `codex_app_server` Python SDK is not importable, or no Codex credential is detectable (no `OPENAI_API_KEY` / `CODEX_API_KEY` / `CODEX_ACCESS_TOKEN`, no `auth.json`, no keyring config). | Reinstall mala so the default SDK dependency is present. Then run `codex login` (Sign in with ChatGPT) or set `OPENAI_API_KEY`. See [OpenAI Codex auth docs](https://developers.openai.com/codex/auth). |
+| `CODEX_BINARY_MISSING` | No `codex` binary on `PATH`, no `CODEX_BINARY` override, and the bundled `codex_cli_bin` runtime package is not importable. | Reinstall mala so the default runtime dependency is present (pulled in through `openai-codex-app-server-sdk`). Verify with `uv run python -c "import codex_cli_bin"`. As an escape hatch, set `CODEX_BINARY=/path/to/codex` to an explicit binary on disk. |
 | `SCRIPT_MISSING` | The `mala-codex-pre-tool-use` console script is not on `PATH`, or one of the hook's dependency modules cannot be located on disk (the per-module identity hash uses on-disk source bytes). | Reinstall mala so `[project.scripts]` is wired up: `uv tool install mala-agent` (CLI install) or `uv sync` (development install). Verify with `which mala-codex-pre-tool-use`. If you installed mala into a venv, ensure that venv is active when `mala run --coder codex` starts. |
 | `PLUGIN_DISABLED` | Codex's `plugin/list` inside mala's isolated `CODEX_HOME` does not surface `mala-safety@local`, reports it as not installed, or reports it as not enabled — or the upstream `marketplace_load_errors` field was non-empty during the live selftest probe. | Rerun mala; the isolated plugin install is idempotent and recreated each provider run. If this persists, inspect the error for `marketplace_load_errors` and file a bug with the full selftest error, because normal `~/.codex/plugins/` permissions are no longer part of this path. |
 | `TRUSTED_HASH_MISMATCH` | Mala could not create / read / write the isolated `CODEX_HOME/config.toml`, the trust entry is missing on read, or the on-disk `trusted_hash` no longer matches the bundled hook's identity. | Ensure your system temporary directory is writable and rerun. Do **not** delete your normal `~/.codex/config.toml` to fix this — mala writes trust entries to an isolated temporary copy, not to your user config. |

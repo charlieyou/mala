@@ -217,10 +217,10 @@ plugin), and the SDK manages the `codex app-server` subprocess in-process
 
 The `codex_app_server` Python SDK is officially **experimental** ("expect
 breaking changes"). Mala pins to a known-good upstream tag in
-`pyproject.toml` under the `codex` extra. When the upstream release shifts
-the notification or item schema:
+`pyproject.toml` as a default dependency. When the upstream release shifts the
+notification or item schema:
 
-1. Bump the pinned tag in `pyproject.toml` (`[project.optional-dependencies].codex`).
+1. Bump the pinned tag in `pyproject.toml` (`[project].dependencies`).
 2. Run the real-Codex e2e test (gated on SDK + runtime + auth):
    `uv run pytest -m e2e tests/e2e/test_codex_real_sdk.py`.
 3. Update `src/infra/clients/codex_event_adapter.py` (notification → `AgentEvent`

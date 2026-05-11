@@ -765,8 +765,8 @@ class CodexAgentProvider:
             sdk_spec = None
         if sdk_spec is None:
             raise CodexNotInstalledError(
-                "codex_app_server SDK is not importable. Install it with "
-                "`uv add openai-codex-app-server-sdk` and rerun mala. "
+                "codex_app_server SDK is not importable. Reinstall mala so "
+                "the default Codex SDK dependency is present, then rerun mala. "
                 "See the docs for the full Codex prerequisites."
             )
 

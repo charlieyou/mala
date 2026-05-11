@@ -17,7 +17,7 @@ Skip semantics
 
 The runtime path requires:
 
-- ``codex_app_server`` SDK importable (``uv add openai-codex-app-server-sdk``);
+- ``codex_app_server`` SDK importable (installed with mala by default);
 - ``codex`` binary on ``PATH`` (or ``CODEX_BINARY`` set);
 - a logged-in Codex auth state on the host.
 
@@ -133,7 +133,7 @@ def _resolve_codex_bin() -> str | None:
     Honours ``CODEX_BINARY`` first (operator override), then ``PATH``. Falling
     back to ``None`` lets ``AppServerConfig`` use its bundled
     ``codex_cli_bin`` resolution — important so the spike still runs in
-    environments where Codex is installed only via the SDK extras package.
+    environments where Codex is installed through mala's default dependencies.
     """
     explicit = os.environ.get("CODEX_BINARY")
     if explicit:

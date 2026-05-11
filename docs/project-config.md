@@ -623,9 +623,9 @@ for the full list.
 ### Codex Prerequisites
 
 Selecting `coder: codex` requires the `openai-codex-app-server-sdk` Python
-SDK (install via `uv sync --extra codex`), the `openai-codex-cli-bin`
-runtime (pulled in by the SDK), Codex auth configured locally, and a
-readable Codex auth source (`auth.json`, keyring config, or auth env vars).
+SDK (installed with mala by default), the `openai-codex-cli-bin` runtime
+(pulled in by the SDK), Codex auth configured locally, and a readable Codex
+auth source (`auth.json`, keyring config, or auth env vars).
 Mala installs the bundled `mala-safety` plugin into a per-run temporary
 `CODEX_HOME` and passes that home only to mala-launched `codex app-server`
 subprocesses; it does not mutate the user's normal `~/.codex` plugin cache or
@@ -635,7 +635,7 @@ policies are not inherited by Mala workers. Mala runs a fail-closed prerequisite
 check + plugin self-test before any issue agent is spawned: missing SDK/runtime/auth raises
 `CodexNotInstalledError`, and a missing/untrusted/disabled bundled
 `SessionStart` or `PreToolUse` hook raises `CodexHookNotActiveError`. See the
-[Codex prerequisites in README](../README.md#codex-optional-for-coder-codex)
+[Codex prerequisites in README](../README.md#codex-for-coder-codex)
 for the full list.
 
 ### Codex Coder Options
