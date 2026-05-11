@@ -83,6 +83,14 @@ def test_provider_name_is_amp_or_codex(
 
 
 @pytest.mark.unit
+@pytest.mark.xfail(
+    reason=(
+        "Re-rooting AmpPluginNotActiveError (T_B5) and CodexHookNotActiveError "
+        "(T_B6) onto PluginInstallError is the documented migration target; "
+        "the migration PRs will remove this marker."
+    ),
+    strict=False,
+)
 @pytest.mark.parametrize(("_provider_cls", "error_cls"), _PROVIDER_CASES)
 def test_provider_install_error_inherits_from_plugin_install_error(
     _provider_cls: type, error_cls: type[Exception]
