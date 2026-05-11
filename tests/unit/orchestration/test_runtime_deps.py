@@ -14,7 +14,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.infra.io.config import MalaConfig
-from src.orchestration.factory import _ReviewerConfig, _build_dependencies
+from src.orchestration.config_resolution import _ReviewerConfig
+from src.orchestration.factory import _build_dependencies
 from src.orchestration.runtime_deps import RuntimeDeps
 from src.orchestration.types import (
     OrchestratorConfig,

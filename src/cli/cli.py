@@ -838,7 +838,7 @@ def run(
         yaml_codex_options,
     ) = _lazy("load_yaml_coder_resolution")(repo_path)
 
-    from ..orchestration.factory import _resolve_yaml_codex_options
+    from ..orchestration.config_resolution import _resolve_yaml_codex_options
 
     # Build and configure MalaConfig from environment
     config = _lazy("MalaConfig").from_env(
@@ -1051,7 +1051,7 @@ def epic_verify(
         yaml_codex_options,
     ) = _lazy("load_yaml_coder_resolution")(repo_path)
 
-    from ..orchestration.factory import _resolve_yaml_codex_options
+    from ..orchestration.config_resolution import _resolve_yaml_codex_options
 
     config = _lazy("MalaConfig").from_env(
         validate=False,
