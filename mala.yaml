@@ -4,6 +4,7 @@ effort: xhigh
 preset: python-uv
 
 commands:
+  test: "uv run pytest -m unit -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
   import-linter: "uvx --from import-linter lint-imports"
 
 per_issue_review:
