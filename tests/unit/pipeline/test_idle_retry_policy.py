@@ -562,6 +562,50 @@ class TestSubprocessExitRetry:
         assert state.idle_retry_count == 0
 
     @pytest.mark.asyncio
+    async def test_unsuccessful_result_uses_coder_neutral_subprocess_error(
+        self,
+        sdk_factory: FakeSDKClientFactory,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: FakeLintCache,
+    ) -> None:
+        """Provider result failures should not be reported as Amp-only errors."""
+        sdk_factory.configure_next_client(responses=[])
+        processor = FakeStreamProcessor(
+            result=MessageIterationResult(
+                success=False,
+                error="API Error: Request rejected (429)",
+            )
+        )
+        config = RetryConfig(
+            max_idle_retries=0,
+            idle_resume_prompt="Continue {issue_id}",
+            max_subprocess_exit_attempts=1,
+            subprocess_exit_retry_backoff=(0.0,),
+        )
+        policy = IdleTimeoutRetryPolicy(
+            sdk_client_factory=sdk_factory,
+            stream_processor_factory=lambda: processor,
+            config=config,
+        )
+
+        state = MessageIterationState()
+        with pytest.raises(
+            RuntimeError,
+            match="agent subprocess exited with code 1: API Error",
+        ) as exc_info:
+            await policy.execute_iteration(
+                query="Initial query",
+                issue_id="TEST-13A",
+                runtime={},
+                state=state,
+                lifecycle_ctx=lifecycle_ctx,
+                lint_cache=lint_cache,
+                idle_timeout_seconds=300.0,
+            )
+
+        assert "amp subprocess" not in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
     async def test_retryable_subprocess_exit_uses_exponential_backoff(
         self,
         sdk_factory: FakeSDKClientFactory,

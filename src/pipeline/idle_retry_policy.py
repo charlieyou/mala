@@ -43,12 +43,17 @@ logger = logging.getLogger(__name__)
 # cleanup before close gets its own chance to run.
 DISCONNECT_TIMEOUT = 30.0
 
-_RETRYABLE_SUBPROCESS_EXIT_MARKER = "amp subprocess exited with code 1"
+_AGENT_SUBPROCESS_EXIT_MARKER = "agent subprocess exited with code 1"
+_RETRYABLE_SUBPROCESS_EXIT_MARKERS = (
+    _AGENT_SUBPROCESS_EXIT_MARKER,
+    "amp subprocess exited with code 1",
+)
 
 
 def _is_retryable_subprocess_exit(exc: Exception) -> bool:
-    """Return True for the transient Amp subprocess exit seen in the stream."""
-    return _RETRYABLE_SUBPROCESS_EXIT_MARKER in str(exc).lower()
+    """Return True for transient agent subprocess exits seen in the stream."""
+    error_text = str(exc).lower()
+    return any(marker in error_text for marker in _RETRYABLE_SUBPROCESS_EXIT_MARKERS)
 
 
 def _client_session_id(client: object) -> str | None:
@@ -253,7 +258,7 @@ class IdleTimeoutRetryPolicy:
                         if not result.success:
                             error_text = result.error or "SDK result reported an error"
                             exc = RuntimeError(
-                                f"amp subprocess exited with code 1: {error_text}"
+                                f"{_AGENT_SUBPROCESS_EXIT_MARKER}: {error_text}"
                             )
                             retry_query = self._prepare_subprocess_retry(
                                 state,
@@ -315,7 +320,7 @@ class IdleTimeoutRetryPolicy:
 
                         elapsed = time.time() - query_start
                         logger.warning(
-                            "Session %s: amp subprocess exited after %.1fs, "
+                            "Session %s: agent subprocess exited after %.1fs, "
                             "first_msg=%s, %d tool calls, disconnecting subprocess",
                             issue_id,
                             elapsed,
@@ -367,7 +372,7 @@ class IdleTimeoutRetryPolicy:
             await asyncio.sleep(backoff)
 
     async def _apply_subprocess_exit_backoff(self, retry_count: int) -> None:
-        """Apply exponential backoff before retrying Amp exit-code-1 failures."""
+        """Apply exponential backoff before retrying subprocess exit failures."""
         if self._config.subprocess_exit_retry_backoff:
             backoff_idx = min(
                 retry_count - 1,
@@ -378,7 +383,7 @@ class IdleTimeoutRetryPolicy:
             backoff = 0.0
         if backoff > 0:
             logger.info(
-                "Amp subprocess retry %d/%d: waiting %.1fs",
+                "Agent subprocess retry %d/%d: waiting %.1fs",
                 retry_count + 1,
                 self._config.max_subprocess_exit_attempts,
                 backoff,
@@ -480,7 +485,7 @@ class IdleTimeoutRetryPolicy:
             state,
             lifecycle_ctx,
             issue_id,
-            retry_reason="amp subprocess exit",
+            retry_reason="agent subprocess exit",
             resume_id=resume_id,
             increment_idle_retry_count=False,
             attempt_number=subprocess_exit_retries + 1,
