@@ -14,12 +14,12 @@ if TYPE_CHECKING:
     from pytest import LogCaptureFixture
 
 from src.domain.validation.config_types import ConfigError, FailureMode
-from src.domain.validation.config_loader import (
+from src.domain.validation.config_loader import validate_generated_config
+from src.domain.validation.config_parser import (
     _parse_cerberus_config,
     _parse_code_review_config,
     _parse_evidence_check_config,
     _parse_periodic_trigger,
-    validate_generated_config,
 )
 
 

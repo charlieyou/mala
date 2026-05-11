@@ -1178,14 +1178,14 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_none_returns_none(self) -> None:
         """None input returns None."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         result = _parse_validation_triggers(None)
         assert result is None
 
     def test_parse_empty_dict_returns_empty_config(self) -> None:
         """Empty dict returns ValidationTriggersConfig with all None."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         result = _parse_validation_triggers({})
         assert result is not None
@@ -1196,7 +1196,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_all_triggers_with_all_fields(self) -> None:
         """All trigger types parse correctly with all fields."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "epic_completion": {
@@ -1255,7 +1255,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_enum_failure_mode_values(self) -> None:
         """All FailureMode enum values parse correctly."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         for mode in ["abort", "continue", "remediate"]:
             data = {
@@ -1272,7 +1272,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_enum_epic_depth_values(self) -> None:
         """All EpicDepth enum values parse correctly."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         for depth in ["top_level", "all"]:
             data = {
@@ -1290,7 +1290,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_enum_fire_on_values(self) -> None:
         """All FireOn enum values parse correctly."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         for fire_on in ["success", "failure", "both"]:
             data = {
@@ -1308,7 +1308,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_trigger_command_ref_with_overrides(self) -> None:
         """TriggerCommandRef parses with command and timeout overrides."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1329,7 +1329,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_trigger_command_ref_ref_only(self) -> None:
         """TriggerCommandRef parses with just ref."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1348,7 +1348,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_trigger_command_ref_string_shorthand(self) -> None:
         """Command can be a plain string (ref shorthand)."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1366,7 +1366,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_empty_commands_list_is_valid(self) -> None:
         """Empty commands list is valid (parsed as empty tuple)."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1382,7 +1382,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_failure_mode_missing_raises_error(self) -> None:
         """Missing failure_mode raises ConfigError."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1397,7 +1397,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_max_retries_required_when_remediate(self) -> None:
         """max_retries required when failure_mode=remediate."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1414,7 +1414,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_epic_completion_missing_epic_depth_raises_error(self) -> None:
         """epic_completion without epic_depth raises ConfigError."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "epic_completion": {
@@ -1431,7 +1431,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_epic_completion_missing_fire_on_raises_error(self) -> None:
         """epic_completion without fire_on raises ConfigError."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "epic_completion": {
@@ -1448,7 +1448,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_periodic_missing_interval_raises_error(self) -> None:
         """periodic without interval raises ConfigError."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "periodic": {
@@ -1462,7 +1462,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_run_end_trigger_defaults(self) -> None:
         """run_end trigger uses default fire_on=success when not specified."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "run_end": {
@@ -1479,7 +1479,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_run_end_trigger_with_fire_on(self) -> None:
         """run_end trigger parses fire_on field."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         for fire_on, expected in [
             ("success", FireOn.SUCCESS),
@@ -1501,7 +1501,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_run_end_trigger_invalid_fire_on(self) -> None:
         """run_end trigger rejects invalid fire_on value."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "run_end": {
@@ -1516,7 +1516,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_run_end_trigger_with_code_review(self) -> None:
         """run_end trigger parses code_review block."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "run_end": {
@@ -1539,7 +1539,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_invalid_failure_mode_raises_error(self) -> None:
         """Invalid failure_mode string raises ConfigError."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1553,7 +1553,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_invalid_epic_depth_raises_error(self) -> None:
         """Invalid epic_depth string raises ConfigError."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "epic_completion": {
@@ -1569,7 +1569,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_invalid_fire_on_raises_error(self) -> None:
         """Invalid fire_on string raises ConfigError."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "epic_completion": {
@@ -1585,7 +1585,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_trigger_not_dict_raises_error(self) -> None:
         """Trigger value that's not a dict raises ConfigError."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {"session_end": "not_a_dict"}
 
@@ -1594,7 +1594,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_commands_not_list_raises_error(self) -> None:
         """commands that's not a list raises ConfigError."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1608,7 +1608,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_command_ref_missing_ref_raises_error(self) -> None:
         """Command dict without 'ref' raises ConfigError."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1624,7 +1624,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_command_invalid_type_raises_error(self) -> None:
         """Command that's not string or dict raises ConfigError."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1640,7 +1640,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_validation_triggers_not_dict_raises_error(self) -> None:
         """validation_triggers must be a dict, not a list or other type."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         with pytest.raises(ConfigError, match="validation_triggers must be an object"):
             _parse_validation_triggers(cast("Any", []))
@@ -1650,7 +1650,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_unknown_trigger_key_raises_error(self) -> None:
         """Unknown keys under validation_triggers raise ConfigError."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_endd": {  # typo
@@ -1665,7 +1665,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_unknown_field_in_trigger_raises_error(self) -> None:
         """Unknown fields within a trigger config raise ConfigError."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1681,7 +1681,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_unknown_field_in_command_ref_raises_error(self) -> None:
         """Unknown fields in command ref raise ConfigError with context."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1698,7 +1698,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_boolean_timeout_raises_error(self) -> None:
         """Boolean values for timeout are rejected (bool is subclass of int)."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1712,7 +1712,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_boolean_max_retries_raises_error(self) -> None:
         """Boolean values for max_retries are rejected."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1726,7 +1726,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_negative_max_retries_raises_error(self) -> None:
         """Negative max_retries values are rejected."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1740,7 +1740,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_boolean_interval_raises_error(self) -> None:
         """Boolean values for interval are rejected."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "periodic": {
@@ -1754,7 +1754,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_zero_interval_raises_error(self) -> None:
         """Zero interval is rejected (would cause division by zero)."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "periodic": {
@@ -1768,7 +1768,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_negative_interval_raises_error(self) -> None:
         """Negative interval values are rejected."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "periodic": {
@@ -1782,7 +1782,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_empty_ref_string_raises_error(self) -> None:
         """Empty ref string in command raises ConfigError."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1799,7 +1799,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_empty_command_string_shorthand_raises_error(self) -> None:
         """Empty string shorthand for command raises ConfigError."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {
@@ -1815,7 +1815,7 @@ class TestValidationTriggersConfigParsing:
 
     def test_parse_empty_command_override_raises_error(self) -> None:
         """Empty command override string raises ConfigError."""
-        from src.domain.validation.config_loader import _parse_validation_triggers
+        from src.domain.validation.config_parser import _parse_validation_triggers
 
         data = {
             "session_end": {

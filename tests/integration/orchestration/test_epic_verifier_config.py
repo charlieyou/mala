@@ -53,21 +53,21 @@ class TestParseEpicVerificationConfig:
 
     def test_returns_defaults_when_data_is_none(self) -> None:
         """Parser returns default config when data is None."""
-        from src.domain.validation.config_loader import _parse_epic_verification_config
+        from src.domain.validation.config_parser import _parse_epic_verification_config
 
         config = _parse_epic_verification_config(None)
         assert config.reviewer_type == "agent_sdk"
 
     def test_parses_reviewer_type_agent_sdk(self) -> None:
         """Parser correctly parses reviewer_type: agent_sdk."""
-        from src.domain.validation.config_loader import _parse_epic_verification_config
+        from src.domain.validation.config_parser import _parse_epic_verification_config
 
         config = _parse_epic_verification_config({"reviewer_type": "agent_sdk"})
         assert config.reviewer_type == "agent_sdk"
 
     def test_parses_reviewer_type_cerberus(self) -> None:
         """Parser correctly parses reviewer_type: cerberus."""
-        from src.domain.validation.config_loader import _parse_epic_verification_config
+        from src.domain.validation.config_parser import _parse_epic_verification_config
 
         config = _parse_epic_verification_config({"reviewer_type": "cerberus"})
         assert config.reviewer_type == "cerberus"
@@ -75,7 +75,7 @@ class TestParseEpicVerificationConfig:
     def test_rejects_invalid_reviewer_type(self) -> None:
         """Parser raises ConfigError for invalid reviewer_type."""
         from src.domain.validation.config_types import ConfigError
-        from src.domain.validation.config_loader import _parse_epic_verification_config
+        from src.domain.validation.config_parser import _parse_epic_verification_config
 
         with pytest.raises(ConfigError, match="must be 'cerberus' or 'agent_sdk'"):
             _parse_epic_verification_config({"reviewer_type": "invalid"})
@@ -83,7 +83,7 @@ class TestParseEpicVerificationConfig:
     def test_rejects_unknown_fields(self) -> None:
         """Parser raises ConfigError for unknown fields."""
         from src.domain.validation.config_types import ConfigError
-        from src.domain.validation.config_loader import _parse_epic_verification_config
+        from src.domain.validation.config_parser import _parse_epic_verification_config
 
         with pytest.raises(ConfigError, match="Unknown field 'unknown'"):
             _parse_epic_verification_config({"unknown": "value"})
@@ -91,7 +91,7 @@ class TestParseEpicVerificationConfig:
     def test_rejects_non_dict_data(self) -> None:
         """Parser raises ConfigError when data is not a dict."""
         from src.domain.validation.config_types import ConfigError
-        from src.domain.validation.config_loader import _parse_epic_verification_config
+        from src.domain.validation.config_parser import _parse_epic_verification_config
 
         with pytest.raises(ConfigError, match="must be an object"):
             _parse_epic_verification_config("not a dict")  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
@@ -346,7 +346,7 @@ class TestEpicVerifierConfigIntegration:
 
     def test_full_path_agent_sdk(self, tmp_path: Path) -> None:
         """Integration: parse config → check availability → create model for agent_sdk."""
-        from src.domain.validation.config_loader import _parse_epic_verification_config
+        from src.domain.validation.config_parser import _parse_epic_verification_config
         from src.infra.epic_verifier import ClaudeEpicVerificationModel
         from src.orchestration.factory import (
             _check_epic_verifier_availability,
@@ -373,7 +373,7 @@ class TestEpicVerifierConfigIntegration:
         self, tmp_path: Path
     ) -> None:
         """Integration: cerberus path fails when binary unavailable."""
-        from src.domain.validation.config_loader import _parse_epic_verification_config
+        from src.domain.validation.config_parser import _parse_epic_verification_config
         from src.orchestration.factory import _check_epic_verifier_availability
 
         # Step 1: Parse config
@@ -393,7 +393,7 @@ class TestEpicVerifierConfigIntegration:
         import os
         import stat
 
-        from src.domain.validation.config_loader import _parse_epic_verification_config
+        from src.domain.validation.config_parser import _parse_epic_verification_config
         from src.infra.clients.cerberus_epic_verifier import CerberusEpicVerifier
         from src.infra.io.config import MalaConfig
         from src.orchestration.factory import (

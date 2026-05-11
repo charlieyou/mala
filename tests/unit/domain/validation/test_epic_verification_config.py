@@ -20,7 +20,7 @@ from src.domain.validation.config_types import (
     ConfigError,
     FailureMode,
 )
-from src.domain.validation.config_loader import (
+from src.domain.validation.config_parser import (
     _parse_epic_verification_config,
     _parse_retry_policy,
 )

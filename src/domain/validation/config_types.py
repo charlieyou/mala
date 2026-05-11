@@ -8,9 +8,9 @@ These dataclasses represent the deserialized configuration. They are immutable
 (frozen) to ensure configuration cannot be accidentally modified after loading.
 
 The pure type definitions live here so that ``config_parser`` (the YAML/dict
-parser) can import them without creating a circular dependency with the
-``ValidationConfig.from_dict`` entry point. Parser helpers (``_parse_coder_options``
-and friends) live in ``config_parser`` itself.
+parser) can import them without creating a circular dependency. All parsing
+logic — including helpers for the heavyweight sections — lives in
+``config_parser``.
 
 Key types:
 - CommandConfig: A single command with optional timeout
@@ -952,9 +952,12 @@ class ValidationConfig:
     def from_dict(cls, data: dict[str, object]) -> ValidationConfig:
         """Create ValidationConfig from a parsed YAML dict.
 
-        Thin delegate to :func:`config_parser.parse_validation_config`. All
-        section parsing, type validation, and ``_fields_set`` tracking lives
-        there; this dataclass is a pure data container.
+        Thin compatibility wrapper that defers to
+        :func:`config_parser.parse_validation_config`. The function-scope import
+        is required because ``config_parser`` imports ``ValidationConfig`` at
+        module level; a top-level import here would form a cycle. New callers
+        should use :func:`config_parser.parse_validation_config` directly so
+        ``ValidationConfig`` stays a pure dataclass boundary.
 
         Args:
             data: Dict representing the parsed mala.yaml content.
@@ -965,9 +968,6 @@ class ValidationConfig:
         Raises:
             ConfigError: If any field is invalid.
         """
-        # Lazy import keeps this types module free of any runtime dependency on
-        # config_parser; parser imports ValidationConfig at module level, so a
-        # top-level import here would create a cycle.
         from src.domain.validation.config_parser import parse_validation_config
 
         return parse_validation_config(data)
