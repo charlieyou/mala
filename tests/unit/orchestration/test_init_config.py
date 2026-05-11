@@ -14,7 +14,6 @@ from src.orchestration.init_config import (
     build_validation_triggers_dict,
     compute_evidence_defaults,
     compute_trigger_defaults,
-    get_preset_command_names,
 )
 
 pytestmark = pytest.mark.unit
@@ -91,17 +90,3 @@ class TestBuildValidationTriggersDict:
         assert build_validation_triggers_dict([]) == {
             "run_end": {"failure_mode": "continue", "commands": []}
         }
-
-
-class TestGetPresetCommandNames:
-    def test_known_preset_returns_commands(self) -> None:
-        result = get_preset_command_names("python-uv")
-        assert "test" in result
-        assert "lint" in result
-        assert "setup" in result
-
-    def test_unknown_preset_raises(self) -> None:
-        from src.domain.validation.preset_registry import PresetNotFoundError
-
-        with pytest.raises(PresetNotFoundError):
-            get_preset_command_names("nonexistent-preset")

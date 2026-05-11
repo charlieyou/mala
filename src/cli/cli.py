@@ -31,7 +31,12 @@ from ..orchestration.cli_options import (
     validate_effort_option,
 )
 from ..orchestration.cli_overrides import CLIOverrideOptions, apply_cli_overrides
-from ..orchestration.cli_support import USER_CONFIG_DIR, get_runs_dir, load_user_env
+from ..orchestration.cli_support import (
+    USER_CONFIG_DIR,
+    get_preset_config_commands,
+    get_runs_dir,
+    load_user_env,
+)
 from ..orchestration.dry_run import compute_dry_run_outcome
 from ..orchestration.init_config import (
     build_evidence_check_dict,
@@ -39,7 +44,6 @@ from ..orchestration.init_config import (
     build_validation_triggers_dict,
     compute_evidence_defaults,
     compute_trigger_defaults,
-    get_preset_command_names,
 )
 
 if TYPE_CHECKING:
@@ -1360,14 +1364,14 @@ def init(
                 typer.echo(f"Error: Unknown preset '{preset}'", err=True)
                 raise typer.Exit(1)
             is_preset = True
-            commands = get_preset_command_names(preset)
+            commands = get_preset_config_commands(preset)
             config_data = {"preset": preset}
         elif is_tty:
             # Interactive preset selection
             selected_preset = _prompt_preset_selection(presets)
             if selected_preset:
                 is_preset = True
-                commands = get_preset_command_names(selected_preset)
+                commands = get_preset_config_commands(selected_preset)
                 config_data = {"preset": selected_preset}
             else:
                 # Custom flow via questionary

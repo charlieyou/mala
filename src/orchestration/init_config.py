@@ -17,23 +17,6 @@ _EVIDENCE_PRESET_CANDIDATES = frozenset({"test", "lint"})
 _TRIGGER_PRESET_EXCLUDED = frozenset({"setup", "e2e"})
 
 
-def get_preset_command_names(preset_name: str) -> list[str]:
-    """Return command names defined in a preset.
-
-    Args:
-        preset_name: Name of the preset (e.g., 'python-uv', 'go').
-
-    Returns:
-        Sorted list of command names defined in the preset.
-
-    Raises:
-        PresetNotFoundError: If the preset name is not recognized.
-    """
-    from src.orchestration.cli_support import get_preset_config_commands
-
-    return get_preset_config_commands(preset_name)
-
-
 def compute_evidence_defaults(commands: list[str], is_preset: bool) -> list[str]:
     """Compute default evidence check commands.
 
@@ -117,5 +100,4 @@ __all__ = [
     "build_validation_triggers_dict",
     "compute_evidence_defaults",
     "compute_trigger_defaults",
-    "get_preset_command_names",
 ]
