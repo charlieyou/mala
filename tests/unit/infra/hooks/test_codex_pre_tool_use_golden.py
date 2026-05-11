@@ -117,13 +117,16 @@ def test_golden_case(
     2. Applies env overrides / unsets after the baseline fixture.
     3. Acquires the case's locks (each ``try_lock`` must succeed).
     4. Pipes the payload JSON to ``sys.stdin`` and captures ``sys.stdout``
-       while calling :func:`main`, then compares ``json.dumps`` of the
-       parsed output to ``json.dumps`` of the case's ``expected`` field —
-       the byte-identical contract the B.3 extraction commits must
-       preserve. Going through ``main`` (not ``decide`` directly) also
-       exercises the event-routing branches (e.g. the selftest-target
-       PreToolUse dispatch) so future changes to the CLI wrapper cannot
-       silently alter the hook's wire output.
+       while calling :func:`main`, then compares the captured stdout
+       string directly to ``json.dumps(expected) + "\n"`` — the
+       byte-identical wire contract the B.3 extraction commits must
+       preserve. Comparing raw stdout (not a reparsed/redumped value)
+       means a change to ``main``'s serialization (pretty-printing,
+       extra whitespace, missing trailing newline) is caught here.
+       Going through ``main`` (not ``decide`` directly) also exercises
+       the event-routing branches (e.g. the selftest-target PreToolUse
+       dispatch) so future changes to the CLI wrapper cannot silently
+       alter the hook's wire output.
     """
     repo, lock_dir = golden_env
     raw = json.loads(case_path.read_text(encoding="utf-8"))
@@ -158,16 +161,13 @@ def test_golden_case(
     output = fake_stdout.getvalue()
     assert exit_code == 0, f"main() exited {exit_code} (output={output!r})"
 
-    actual = json.loads(output)
     expected = case["expected"]
-
-    actual_bytes = json.dumps(actual)
-    expected_bytes = json.dumps(expected)
-    assert actual_bytes == expected_bytes, (
+    expected_output = json.dumps(expected) + "\n"
+    assert output == expected_output, (
         f"\ncase: {case_path.name}\n"
         f"description: {case.get('description', '')}\n"
-        f"expected: {expected_bytes}\n"
-        f"actual:   {actual_bytes}\n"
+        f"expected: {expected_output!r}\n"
+        f"actual:   {output!r}\n"
     )
 
 
