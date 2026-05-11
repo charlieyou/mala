@@ -182,9 +182,7 @@ class TestBuildResolvedMalaConfig:
         """A valid mala.yaml ``coder:`` value reaches MalaConfig through from_env."""
         # Preset provides the required commands so the yaml validator does
         # not abort before reaching the coder fields under test.
-        (tmp_path / "mala.yaml").write_text(
-            "preset: go\ncoder: amp\namp_mode: rush\n"
-        )
+        (tmp_path / "mala.yaml").write_text("preset: go\ncoder: amp\namp_mode: rush\n")
         config = build_resolved_mala_config(tmp_path, CLIOverrideOptions())
         assert config.coder == "amp"
         assert config.coder_options.amp.mode == "rush"
