@@ -17,15 +17,13 @@ import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import questionary
 
 from ..orchestration.cli_overrides import CLIOverrideOptions, apply_cli_overrides
 from ..orchestration.cli_support import USER_CONFIG_DIR, get_runs_dir, load_user_env
-
-if TYPE_CHECKING:
-    from src.core.models import OrderPreference
+from ..orchestration.dry_run import compute_dry_run_outcome
 
 # Bootstrap state: tracks whether bootstrap() has been called
 _bootstrapped = False
@@ -424,47 +422,6 @@ def _validate_codex_sandbox_option(value: str | None) -> str | None:
     return parsed
 
 
-def _handle_dry_run(
-    repo_path: Path,
-    scope_config: ScopeConfig | None,
-    resume: bool,
-    order_preference: OrderPreference,
-) -> Never:
-    """Execute dry-run mode: display task order and exit.
-
-    Args:
-        repo_path: Path to the repository.
-        scope_config: Parsed scope configuration (epic, ids, orphans, or all).
-        resume: Whether to include WIP issues (--resume flag).
-        order_preference: Issue ordering preference (OrderPreference enum).
-
-    Raises:
-        typer.Exit: Always exits with code 0.
-    """
-    epic_id = scope_config.epic_id if scope_config else None
-    only_ids = scope_config.ids if scope_config else None
-    orphans_only = scope_config.scope_type == "orphans" if scope_config else False
-    focus = order_preference in (
-        _lazy("OrderPreference").FOCUS,
-        _lazy("OrderPreference").EPIC_PRIORITY,
-    )
-
-    async def _dry_run() -> None:
-        beads = _lazy("create_issue_provider")(repo_path)
-        issues = await beads.get_ready_issues_async(
-            epic_id=epic_id,
-            only_ids=only_ids,
-            include_wip=resume,
-            focus=focus,
-            orphans_only=orphans_only,
-            order_preference=order_preference,
-        )
-        display_dry_run_tasks(issues, focus=focus)
-
-    asyncio.run(_dry_run())
-    raise typer.Exit(0)
-
-
 app = typer.Typer(
     name="mala",
     help="Parallel issue processing with Claude Agent SDK",
@@ -756,12 +713,16 @@ def run(
 
     # Handle dry-run mode: display task order and exit
     if dry_run:
-        _handle_dry_run(
+        outcome = compute_dry_run_outcome(
             repo_path=repo_path,
-            scope_config=scope_config,
-            resume=resume,
+            epic_id=epic_id,
+            only_ids=only_ids,
+            orphans_only=orphans_only,
+            include_wip=resume,
             order_preference=order_preference,
         )
+        display_dry_run_tasks(outcome.issues, focus=outcome.focus)
+        raise typer.Exit(0)
 
     # Load yaml coder selection so the base MalaConfig honors the
     # CLI > env > yaml > default precedence (AC-3) before CLI overrides
