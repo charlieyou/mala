@@ -39,6 +39,7 @@ from src.core.constants import (
 )
 
 # Import shared types from types module (breaks circular import)
+from .runtime_deps import RuntimeDeps
 from .types import (
     DEFAULT_AGENT_TIMEOUT_MINUTES,
     DEFAULT_MAX_IDLE_RETRIES,
@@ -910,19 +911,7 @@ def _build_dependencies(
     epic_verifier_cerberus_config: CerberusConfig | None = None,
     epic_verifier_timeout_seconds: int = 600,
     epic_verifier_retry_policy: VerificationRetryPolicy | None = None,
-) -> tuple[
-    IssueProvider,
-    CodeReviewer,
-    GateChecker,
-    EvidenceProvider,
-    TelemetryProvider,
-    MalaEventSink,
-    EpicVerifierProtocol | None,
-    CommandRunnerPort,
-    EnvConfigPort,
-    LockManagerPort,
-    AgentProvider,
-]:
+) -> RuntimeDeps:
     """Build all dependencies, using provided ones or creating defaults.
 
     Args:
@@ -937,7 +926,8 @@ def _build_dependencies(
         epic_verifier_retry_policy: Per-category retry limits for verification failures.
 
     Returns:
-        Tuple of all required dependencies.
+        RuntimeDeps bundling every protocol implementation the orchestrator
+        and pipeline wiring consume.
     """
     from src.domain.evidence_check import EvidenceCheck
     from src.infra.clients.beads_client import BeadsClient
@@ -1079,18 +1069,19 @@ def _build_dependencies(
     else:
         telemetry_provider = cast("TelemetryProvider", NullTelemetryProvider())
 
-    return (
-        issue_provider,
-        code_reviewer,
-        gate_checker,
-        evidence_provider,
-        telemetry_provider,
-        event_sink,
-        epic_verifier,
-        command_runner,
-        env_config,
-        lock_manager,
-        agent_provider,
+    return RuntimeDeps(
+        evidence_check=gate_checker,
+        code_reviewer=code_reviewer,
+        beads=issue_provider,
+        event_sink=event_sink,
+        agent_provider=agent_provider,
+        command_runner=command_runner,
+        env_config=env_config,
+        lock_manager=lock_manager,
+        mala_config=mala_config,
+        evidence_provider=evidence_provider,
+        telemetry_provider=telemetry_provider,
+        epic_verifier=epic_verifier,
     )
 
 
@@ -1242,19 +1233,7 @@ def create_orchestrator(
     )
 
     # Build dependencies (pass reviewer_config to avoid second config load)
-    (
-        issue_provider,
-        code_reviewer,
-        gate_checker,
-        evidence_provider,
-        telemetry_provider,
-        event_sink,
-        epic_verifier,
-        command_runner,
-        env_config,
-        lock_manager,
-        agent_provider,
-    ) = _build_dependencies(
+    runtime = _build_dependencies(
         config,
         mala_config,
         derived,
@@ -1271,9 +1250,9 @@ def create_orchestrator(
     # plugin-load self-test (T013). The provider owns its MCP factory shape
     # so the self-test exercises the SAME --mcp-config payload real sessions
     # use (plan ``L302-L312``).
-    agent_provider.install_prerequisites(
+    runtime.agent_provider.install_prerequisites(
         config.repo_path.resolve(),
-        mcp_server_factory=agent_provider.mcp_server_factory(),
+        mcp_server_factory=runtime.agent_provider.mcp_server_factory(),
     )
 
     # Create orchestrator using internal constructor
@@ -1281,23 +1260,23 @@ def create_orchestrator(
         "Orchestrator created: max_agents=%d timeout=%ds coder=%s",
         config.max_agents or 0,
         derived.timeout_seconds,
-        agent_provider.name,
+        runtime.agent_provider.name,
     )
     return MalaOrchestrator(
         _config=config,
         _mala_config=mala_config,
         _derived=derived,
-        _issue_provider=issue_provider,
-        _code_reviewer=code_reviewer,
-        _gate_checker=gate_checker,
-        _evidence_provider=evidence_provider,
-        _telemetry_provider=telemetry_provider,
-        _event_sink=event_sink,
-        _epic_verifier=epic_verifier,
-        _command_runner=command_runner,
-        _env_config=env_config,
-        _lock_manager=lock_manager,
-        _agent_provider=agent_provider,
+        _issue_provider=runtime.beads,
+        _code_reviewer=runtime.code_reviewer,
+        _gate_checker=runtime.evidence_check,
+        _evidence_provider=runtime.evidence_provider,
+        _telemetry_provider=runtime.telemetry_provider,
+        _event_sink=runtime.event_sink,
+        _epic_verifier=runtime.epic_verifier,
+        _command_runner=runtime.command_runner,
+        _env_config=runtime.env_config,
+        _lock_manager=runtime.lock_manager,
+        _agent_provider=runtime.agent_provider,
         runs_dir=deps.runs_dir if deps else None,
         lock_releaser=deps.lock_releaser if deps else None,
     )

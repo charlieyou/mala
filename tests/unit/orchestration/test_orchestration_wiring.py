@@ -21,10 +21,10 @@ from src.orchestration.orchestration_wiring import (
     build_session_callback_factory,
     build_session_config,
 )
+from src.orchestration.runtime_deps import RuntimeDeps
 from src.orchestration.types import (
     IssueFilterConfig,
     PipelineConfig,
-    RuntimeDeps,
 )
 from src.pipeline.session_callback_factory import SessionRunContext
 from src.pipeline.gate_runner import AsyncGateRunner, GateRunner
@@ -87,6 +87,9 @@ def mock_runtime_deps() -> RuntimeDeps:
         env_config=MagicMock(),
         lock_manager=FakeLockManager(),
         mala_config=mock_config,
+        evidence_provider=MagicMock(),
+        telemetry_provider=MagicMock(),
+        epic_verifier=None,
     )
 
 

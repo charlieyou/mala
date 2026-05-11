@@ -44,10 +44,10 @@ from src.pipeline.fixer_service import FixerService, FixerServiceConfig
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from src.orchestration.runtime_deps import RuntimeDeps
     from src.orchestration.types import (
         IssueFilterConfig,
         PipelineConfig,
-        RuntimeDeps,
     )
     from src.pipeline.session_callback_factory import SessionRunContext
 

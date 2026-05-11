@@ -62,10 +62,10 @@ from src.orchestration.orchestration_wiring import (
     build_session_callback_factory,
     build_session_config,
 )
+from src.orchestration.runtime_deps import RuntimeDeps
 from src.orchestration.types import (
     IssueFilterConfig,
     PipelineConfig,
-    RuntimeDeps,
 )
 from src.pipeline.session_callback_factory import SessionRunContext
 from src.pipeline.issue_execution_plan import build_issue_execution_plan
@@ -390,6 +390,9 @@ class MalaOrchestrator:
             env_config=self._env_config,
             lock_manager=self._lock_manager,
             mala_config=self._mala_config,
+            evidence_provider=self.evidence_provider,
+            telemetry_provider=self.telemetry_provider,
+            epic_verifier=self.epic_verifier,
         )
         pipeline = self._build_pipeline_config()
         filters = self._build_issue_filter_config()

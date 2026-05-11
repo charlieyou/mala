@@ -49,7 +49,8 @@ async def test_epic_completion_trigger_invokes_cumulative_review(
         ValidationTriggersConfig,
     )
     from src.orchestration.orchestration_wiring import build_run_coordinator
-    from src.orchestration.types import PipelineConfig, RuntimeDeps
+    from src.orchestration.runtime_deps import RuntimeDeps
+    from src.orchestration.types import PipelineConfig
     from tests.fakes import FakeEnvConfig, FakeIssueProvider
     from tests.fakes.agent_provider import FakeAgentProvider
     from tests.fakes.command_runner import FakeCommandRunner
@@ -91,6 +92,9 @@ async def test_epic_completion_trigger_invokes_cumulative_review(
         env_config=FakeEnvConfig(),
         lock_manager=FakeLockManager(),
         mala_config=MagicMock(),
+        evidence_provider=MagicMock(),
+        telemetry_provider=MagicMock(),
+        epic_verifier=None,
     )
 
     # Create PipelineConfig

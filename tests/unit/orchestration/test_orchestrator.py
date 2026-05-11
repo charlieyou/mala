@@ -58,7 +58,7 @@ from tests.fakes.gate_checker import FakeGateChecker
 from tests.fakes.sdk_client import FakeSDKClientFactory
 
 if TYPE_CHECKING:
-    from src.orchestration.types import RuntimeDeps
+    from src.orchestration.runtime_deps import RuntimeDeps
 
 
 @pytest.fixture

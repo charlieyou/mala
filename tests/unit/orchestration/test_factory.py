@@ -968,25 +968,10 @@ class TestBuildDependenciesRuntimeDeps:
             config, mala_config, derived, None, reviewer_config
         )
 
-        # Unpack result (11 elements: agent_provider added in T007)
-        (
-            _issue_provider,
-            _code_reviewer,
-            _gate_checker,
-            _evidence_provider,
-            _telemetry_provider,
-            _event_sink,
-            _epic_verifier,
-            command_runner,
-            env_config,
-            lock_manager,
-            _agent_provider,
-        ) = result
-
         # Verify types are concrete implementations
-        assert isinstance(command_runner, CommandRunner)
-        assert isinstance(env_config, EnvConfig)
-        assert isinstance(lock_manager, LockManager)
+        assert isinstance(result.command_runner, CommandRunner)
+        assert isinstance(result.env_config, EnvConfig)
+        assert isinstance(result.lock_manager, LockManager)
 
     def test_uses_provided_command_runner(self, tmp_path: Path) -> None:
         """Factory uses provided command_runner instead of creating default."""
@@ -1009,9 +994,8 @@ class TestBuildDependenciesRuntimeDeps:
         result = _build_dependencies(
             config, mala_config, derived, deps, reviewer_config
         )
-        command_runner = result[7]
 
-        assert command_runner is fake_runner
+        assert result.command_runner is fake_runner
 
     def test_uses_provided_env_config(self, tmp_path: Path) -> None:
         """Factory uses provided env_config instead of creating default."""
@@ -1034,9 +1018,8 @@ class TestBuildDependenciesRuntimeDeps:
         result = _build_dependencies(
             config, mala_config, derived, deps, reviewer_config
         )
-        env_config = result[8]
 
-        assert env_config is fake_env
+        assert result.env_config is fake_env
 
     def test_uses_provided_lock_manager(self, tmp_path: Path) -> None:
         """Factory uses provided lock_manager instead of creating default."""
@@ -1059,9 +1042,8 @@ class TestBuildDependenciesRuntimeDeps:
         result = _build_dependencies(
             config, mala_config, derived, deps, reviewer_config
         )
-        lock_manager = result[9]
 
-        assert lock_manager is fake_manager
+        assert result.lock_manager is fake_manager
 
     def test_fills_gaps_with_defaults(self, tmp_path: Path) -> None:
         """Factory fills None fields with defaults while respecting provided ones."""
@@ -1092,12 +1074,9 @@ class TestBuildDependenciesRuntimeDeps:
         result = _build_dependencies(
             config, mala_config, derived, deps, reviewer_config
         )
-        command_runner = result[7]
-        env_config = result[8]
-        lock_manager = result[9]
 
         # Provided values are used
-        assert command_runner is fake_runner
-        assert env_config is fake_env
+        assert result.command_runner is fake_runner
+        assert result.env_config is fake_env
         # Missing value is filled with default
-        assert isinstance(lock_manager, LockManager)
+        assert isinstance(result.lock_manager, LockManager)

@@ -7,10 +7,11 @@ Design principles:
 - OrchestratorConfig: All scalar configuration (timeouts, flags, limits)
 - OrchestratorDependencies: All protocol implementations (DI for testability)
 - _DerivedConfig: Internal computed configuration values
-- RuntimeDeps: Protocol implementations for pipeline components
 - PipelineConfig: Configuration for pipeline stages
 - IssueFilterConfig: Filtering criteria for issue selection
 - DEFAULT_AGENT_TIMEOUT_MINUTES: Default timeout constant
+
+RuntimeDeps lives in `src/orchestration/runtime_deps.py`.
 """
 
 from __future__ import annotations
@@ -44,7 +45,6 @@ if TYPE_CHECKING:
         PromptValidationCommands,
         ValidationConfig,
     )
-    from src.infra.io.config import MalaConfig
     from src.infra.telemetry import TelemetryProvider
 
 # Default timeout for agent execution (protects against hung MCP server subprocesses)
@@ -164,37 +164,6 @@ class _DerivedConfig:
     per_issue_review: CodeReviewConfig | None = None
     validation_config: ValidationConfig | None = None
     validation_config_missing: bool = False
-
-
-@dataclass(frozen=True)
-class RuntimeDeps:
-    """Runtime dependencies for pipeline wiring.
-
-    Protocol implementations and service objects injected at startup.
-
-    Attributes:
-        evidence_check: GateChecker for quality gate validation.
-        code_reviewer: CodeReviewer for post-commit code reviews.
-        beads: IssueProvider for issue tracking operations.
-        event_sink: MalaEventSink for run lifecycle logging.
-        agent_provider: AgentProvider for the chosen coder backend; threaded
-            into AgentSessionRunner and FixerService so all SDK-style calls
-            go through one selection point.
-        command_runner: CommandRunnerPort for executing shell commands.
-        env_config: EnvConfigPort for environment configuration.
-        lock_manager: LockManagerPort for file locking coordination.
-        mala_config: MalaConfig for orchestrator configuration.
-    """
-
-    evidence_check: GateChecker
-    code_reviewer: CodeReviewer
-    beads: IssueProvider
-    event_sink: MalaEventSink
-    agent_provider: AgentProvider
-    command_runner: CommandRunnerPort
-    env_config: EnvConfigPort
-    lock_manager: LockManagerPort
-    mala_config: MalaConfig
 
 
 @dataclass(frozen=True)
