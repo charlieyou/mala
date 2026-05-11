@@ -48,7 +48,10 @@ from ..orchestration.init_config import (
     build_validation_triggers_dict,
     compute_evidence_defaults,
     compute_trigger_defaults,
+    resolve_preset_selection,
+    validate_init_invocation,
 )
+from ..orchestration.run_command import execute_run_command
 
 if TYPE_CHECKING:
     from ..orchestration.cli_options import ScopeConfig
@@ -567,7 +570,7 @@ def run(
 
     # Handle dry-run mode: display task order and exit
     if dry_run:
-        outcome = compute_dry_run_outcome(
+        dry_run_outcome = compute_dry_run_outcome(
             repo_path=repo_path,
             epic_id=epic_id,
             only_ids=only_ids,
@@ -575,63 +578,36 @@ def run(
             include_wip=resume,
             order_preference=order_resolution.preference,
         )
-        display_dry_run_tasks(outcome.issues, focus=outcome.focus)
+        display_dry_run_tasks(dry_run_outcome.issues, focus=dry_run_outcome.focus)
         raise typer.Exit(0)
 
-    # Resolve MalaConfig with CLI > env > yaml > default precedence (AC-3).
-    # ConfigError propagates so invalid mala.yaml fails fast.
-    try:
-        config = build_resolved_mala_config(
-            repo_path,
-            CLIOverrideOptions(
-                claude_settings_sources=claude_settings_sources,
-                coder=coder,
-                amp_mode=amp_mode,
-                effort=effort,
-                codex_model=codex_model,
-                codex_effort=codex_effort,
-                codex_approval_policy=codex_approval_policy,
-                codex_sandbox=codex_sandbox,
-            ),
-        )
-    except ValueError as exc:
-        log("✗", str(exc), Colors.RED)
-        raise typer.Exit(1)
-
-    # Build OrchestratorConfig and run
-    orch_config = _lazy("OrchestratorConfig")(
+    # Hand workflow assembly to the orchestration helper; CLI stays as an
+    # argument adapter that renders the helper's outcome.
+    outcome = execute_run_command(
         repo_path=repo_path,
         max_agents=max_agents,
-        timeout_minutes=timeout,
+        timeout=timeout,
         max_issues=max_issues,
-        epic_id=epic_id,
-        only_ids=only_ids,
-        include_wip=resume,
-        strict_resume=strict,
-        fresh_session=fresh,
-        focus=order_resolution.focus,
-        order_preference=order_resolution.preference,
-        cli_args={"wip": resume, "max_issues": max_issues, "watch": watch},
-        orphans_only=orphans_only,
+        scope_config=scope_config,
+        order_resolution=order_resolution,
+        resume=resume,
+        strict=strict,
+        fresh=fresh,
+        watch=watch,
+        override_options=CLIOverrideOptions(
+            claude_settings_sources=claude_settings_sources,
+            coder=coder,
+            amp_mode=amp_mode,
+            effort=effort,
+            codex_model=codex_model,
+            codex_effort=codex_effort,
+            codex_approval_policy=codex_approval_policy,
+            codex_sandbox=codex_sandbox,
+        ),
     )
-
-    orchestrator = _lazy("create_orchestrator")(
-        orch_config,
-        mala_config=config,
-    )
-
-    # Build WatchConfig, then run orchestrator
-    watch_config = _lazy("WatchConfig")(enabled=watch)
-    success_count, total = asyncio.run(orchestrator.run(watch_config=watch_config))
-
-    # Determine exit code:
-    # - Use orchestrator.exit_code for interrupt (130), validation failure (1), abort (3)
-    # - Otherwise: exit 0 if no issues to process or at least one succeeded
-    # - Exit 1 only if issues were processed but all failed
-    orch_exit = orchestrator.exit_code
-    if orch_exit != 0:
-        raise typer.Exit(orch_exit)
-    raise typer.Exit(0 if success_count > 0 or total == 0 else 1)
+    if outcome.error_message:
+        log("✗", outcome.error_message, Colors.RED)
+    raise typer.Exit(outcome.exit_code)
 
 
 @app.command("epic-verify")
@@ -1244,19 +1220,17 @@ def init(
         # TTY detection
         is_tty = _is_interactive()
 
-        # Flag validation
-        if yes and not preset:
-            typer.echo("Error: --yes requires --preset", err=True)
-            raise typer.Exit(1)
-
-        # Non-TTY validation: needs --yes or (--preset + --skip-evidence + --skip-triggers)
-        prompts_needed = not (skip_evidence and skip_triggers and preset)
-        if not is_tty and not yes and prompts_needed:
-            typer.echo(
-                "Error: Non-interactive mode requires --yes with --preset, "
-                "or --preset with --skip-evidence and --skip-triggers",
-                err=True,
-            )
+        # Flag/TTY combination validation lives in the orchestration helper;
+        # CLI converts the helper's error message into typer.Exit(1).
+        invocation_check = validate_init_invocation(
+            yes=yes,
+            preset=preset,
+            skip_evidence=skip_evidence,
+            skip_triggers=skip_triggers,
+            is_tty=is_tty,
+        )
+        if invocation_check.error_message:
+            typer.echo(f"Error: {invocation_check.error_message}", err=True)
             raise typer.Exit(1)
 
         presets = get_init_presets()
@@ -1265,13 +1239,15 @@ def init(
         config_data: ConfigData
 
         if preset:
-            # Validate preset exists
-            if preset not in presets:
-                typer.echo(f"Error: Unknown preset '{preset}'", err=True)
+            selection = resolve_preset_selection(
+                preset, presets, get_preset_config_commands
+            )
+            if selection.error_message:
+                typer.echo(f"Error: {selection.error_message}", err=True)
                 raise typer.Exit(1)
-            is_preset = True
-            commands = get_preset_config_commands(preset)
-            config_data = {"preset": preset}
+            is_preset = selection.is_preset
+            commands = selection.commands
+            config_data = dict(selection.config_data)
         elif is_tty:
             # Interactive preset selection
             selected_preset = _prompt_preset_selection(presets)
