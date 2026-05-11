@@ -18,11 +18,15 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import yaml
 
 from src.domain.validation.config import (
+    BUILTIN_COMMAND_NAMES,
+    CerberusConfig,
+    CodeReviewConfig,
     ConfigError,
     DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS,
     DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS,
     EpicCompletionTriggerConfig,
     EpicDepth,
+    EpicVerifierConfig,
     EvidenceCheckConfig,
     FailureMode,
     FireOn,
@@ -30,21 +34,17 @@ from src.domain.validation.config import (
     RunEndTriggerConfig,
     SessionEndTriggerConfig,
     TriggerCommandRef,
+    TriggerType,
     ValidationConfig,
     ValidationTriggersConfig,
+    VerificationRetryPolicy,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from src.domain.validation.config import (
-        BaseTriggerConfig,
-        CerberusConfig,
-        CodeReviewConfig,
-        EpicVerifierConfig,
-        VerificationRetryPolicy,
-    )
+    from src.domain.validation.config import BaseTriggerConfig
 
 
 class ConfigMissingError(ConfigError):
@@ -427,9 +427,6 @@ def _parse_cerberus_config(data: dict[str, Any]) -> CerberusConfig:
     Raises:
         ConfigError: If data has invalid types or unknown fields.
     """
-    # Import here to avoid circular import at module level
-    from src.domain.validation.config import CerberusConfig as CerberusConfigClass
-
     # Validate unknown fields
     unknown = set(data.keys()) - _CERBERUS_FIELDS
     if unknown:
@@ -500,7 +497,7 @@ def _parse_cerberus_config(data: dict[str, Any]) -> CerberusConfig:
             env_list.append((key, value))
         env = tuple(sorted(env_list))
 
-    return CerberusConfigClass(
+    return CerberusConfig(
         timeout=timeout,
         spawn_args=spawn_args,
         wait_args=wait_args,
@@ -541,12 +538,8 @@ def _parse_retry_policy(
     Raises:
         ConfigError: If fields are invalid or unknown fields present.
     """
-    from src.domain.validation.config import (
-        VerificationRetryPolicy as VerificationRetryPolicyClass,
-    )
-
     if data is None:
-        return VerificationRetryPolicyClass()
+        return VerificationRetryPolicy()
 
     if not isinstance(data, dict):
         raise ConfigError(
@@ -608,7 +601,7 @@ def _parse_retry_policy(
             )
         parse_retries = val
 
-    return VerificationRetryPolicyClass(
+    return VerificationRetryPolicy(
         timeout_retries=timeout_retries,
         execution_retries=execution_retries,
         parse_retries=parse_retries,
@@ -629,12 +622,8 @@ def _parse_epic_verification_config(
     Raises:
         ConfigError: If fields are invalid or unknown fields present.
     """
-    from src.domain.validation.config import (
-        EpicVerifierConfig as EpicVerifierConfigClass,
-    )
-
     if data is None:
-        return EpicVerifierConfigClass()
+        return EpicVerifierConfig()
 
     if not isinstance(data, dict):
         raise ConfigError(
@@ -759,7 +748,7 @@ def _parse_epic_verification_config(
     # Parse retry_policy (optional nested block for per-category retry limits)
     retry_policy = _parse_retry_policy(data.get("retry_policy"))
 
-    return EpicVerifierConfigClass(
+    return EpicVerifierConfig(
         enabled=enabled,
         reviewer_type=reviewer_type,
         timeout=timeout,
@@ -795,9 +784,6 @@ def _parse_code_review_config(
         ConfigError: If required fields missing, invalid, or unknown fields present.
     """
     import logging
-
-    # Import here to avoid circular import at module level
-    from src.domain.validation.config import CodeReviewConfig as CodeReviewConfigClass
 
     logger = logging.getLogger(__name__)
 
@@ -1006,7 +992,7 @@ def _parse_code_review_config(
             )
         track_review_issues = tri_val
 
-    return CodeReviewConfigClass(
+    return CodeReviewConfig(
         enabled=enabled,
         reviewer_type=reviewer_type,
         failure_mode=failure_mode,
@@ -1504,8 +1490,6 @@ def _validate_trigger_command_refs(config: ValidationConfig) -> None:
     Raises:
         ConfigError: If any trigger references a command that doesn't exist in the base pool.
     """
-    from src.domain.validation.config import BUILTIN_COMMAND_NAMES, TriggerType
-
     triggers = config.validation_triggers
     if triggers is None:
         return  # No triggers configured
