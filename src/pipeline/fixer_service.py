@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.sdk import McpServerFactory
     from src.domain.validation.spec import ValidationSpec
+    from src.pipeline.config_views import FixerServiceView
 
 
 def _noop_mcp_server_factory(
@@ -72,25 +73,6 @@ class FailureContext:
     spec: ValidationSpec | None = None
 
 
-@dataclass
-class FixerServiceConfig:
-    """Configuration for FixerService.
-
-    Attributes:
-        repo_path: Path to the repository.
-        timeout_seconds: Session timeout in seconds.
-        fixer_prompt: Template for the fixer agent prompt. Must support
-            .format() with keys: attempt, max_attempts, failure_output,
-            failed_command, validation_commands.
-        mcp_server_factory: Optional factory for creating MCP server configs.
-    """
-
-    repo_path: Path
-    timeout_seconds: int
-    fixer_prompt: str
-    mcp_server_factory: McpServerFactory | None = None
-
-
 class FixerService:
     """Service for spawning fixer agents to address validation failures.
 
@@ -107,21 +89,25 @@ class FixerService:
 
     def __init__(
         self,
-        config: FixerServiceConfig,
+        view: FixerServiceView,
         agent_provider: AgentProvider,
+        mcp_server_factory: McpServerFactory | None = None,
         event_sink: MalaEventSink | None = None,
     ) -> None:
         """Initialize the fixer service.
 
         Args:
-            config: Service configuration.
+            view: Narrow view of PipelineConfig with repo_path, timeout_seconds,
+                and fixer_prompt.
             agent_provider: AgentProvider for the run's chosen coder backend.
                 Fixers spawn through the same provider as the main run, so
                 ``coder=amp`` runs spawn Amp fixers (per plan L165, AC#5).
+            mcp_server_factory: Optional factory for creating MCP server configs.
             event_sink: Optional event sink for fixer progress events.
         """
-        self._config = config
+        self._view = view
         self._agent_provider = agent_provider
+        self._mcp_server_factory = mcp_server_factory
         self._event_sink = event_sink
         self._active_fixer_ids: list[str] = []
 
@@ -154,7 +140,7 @@ class FixerService:
                 failure_context.spec
             )
 
-        prompt = self._config.fixer_prompt.format(
+        prompt = self._view.fixer_prompt.format(
             attempt=failure_context.attempt,
             max_attempts=failure_context.max_attempts,
             failure_output=failure_context.failure_output,
@@ -162,7 +148,7 @@ class FixerService:
             validation_commands=validation_commands,
         )
 
-        fixer_cwd = self._config.repo_path
+        fixer_cwd = self._view.repo_path
 
         # Build runtime via the AgentProvider's runtime builder. The
         # cross-coder chain only uses :class:`CoderRuntimeBuilder` methods
@@ -170,18 +156,18 @@ class FixerService:
         # are applied by downcasting to
         # :class:`ClaudeAgentRuntimeBuilder` via ``isinstance``.
         lint_tools = extract_lint_tools_from_spec(failure_context.spec)
-        mcp_factory = self._config.mcp_server_factory or _noop_mcp_server_factory
+        mcp_factory = self._mcp_server_factory or _noop_mcp_server_factory
         builder = self._agent_provider.runtime_builder(
             fixer_cwd,
             agent_id,
             mcp_server_factory=mcp_factory,
             deadlock_monitor=None,
         )
-        builder = builder.with_agent_timeout(self._config.timeout_seconds).with_env(
+        builder = builder.with_agent_timeout(self._view.timeout_seconds).with_env(
             extra={"MALA_SDK_FLOW": "fixer"}
         )
         # Configure MCP: use factory if available, otherwise empty (no MCP tools)
-        if self._config.mcp_server_factory is not None:
+        if self._mcp_server_factory is not None:
             builder = builder.with_mcp()
         else:
             # No MCP tools means no lock_acquire - disable lock enforcement
@@ -219,7 +205,7 @@ class FixerService:
             if is_amp_provider and runtime_log_path is not None
             else str(
                 self._agent_provider.evidence_provider.get_log_path(
-                    self._config.repo_path, agent_id
+                    self._view.repo_path, agent_id
                 )
             )
         )
@@ -235,14 +221,14 @@ class FixerService:
                 if thread_id is not None:
                     return str(
                         self._agent_provider.evidence_provider.get_log_path(
-                            self._config.repo_path, thread_id
+                            self._view.repo_path, thread_id
                         )
                     )
             return log_path
 
         pending_text_delta = ""
         try:
-            async with asyncio.timeout(self._config.timeout_seconds):
+            async with asyncio.timeout(self._view.timeout_seconds):
                 async with client:
                     await client.query(
                         prompt,

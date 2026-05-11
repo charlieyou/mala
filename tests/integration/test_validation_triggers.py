@@ -152,7 +152,8 @@ def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None
         ValidationConfig,
         ValidationTriggersConfig,
     )
-    from src.pipeline.run_coordinator import RunCoordinator, RunCoordinatorConfig
+    from src.pipeline.config_views import RunCoordinatorView
+    from src.pipeline.run_coordinator import RunCoordinator
     from src.pipeline.fixer_service import FixerService
     from src.pipeline.trigger_engine import TriggerEngine
     from tests.fakes import FakeEnvConfig
@@ -178,10 +179,14 @@ def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None
     # Create command runner that allows any command (intent is testing queue/execution flow)
     command_runner = FakeCommandRunner(allow_unregistered=True)
 
-    config = RunCoordinatorConfig(
+    view = RunCoordinatorView(
         repo_path=tmp_path,
         timeout_seconds=60,
+        max_gate_retries=3,
+        disabled_validations=None,
+        fixer_prompt="Fix: {failure_output}",
         validation_config=validation_config,
+        validation_config_missing=False,
     )
 
     trigger_engine = TriggerEngine(validation_config=validation_config)
@@ -189,7 +194,7 @@ def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None
     mock_fixer_service.cleanup_locks = MagicMock()
 
     coordinator = RunCoordinator(
-        config=config,
+        view=view,
         gate_checker=MagicMock(),
         command_runner=command_runner,
         env_config=FakeEnvConfig(),
@@ -348,7 +353,8 @@ def test_trigger_code_review_emits_lifecycle_events(tmp_path: Path) -> None:
         ValidationConfig,
         ValidationTriggersConfig,
     )
-    from src.pipeline.run_coordinator import RunCoordinator, RunCoordinatorConfig
+    from src.pipeline.config_views import RunCoordinatorView
+    from src.pipeline.run_coordinator import RunCoordinator
     from src.pipeline.fixer_service import FixerService
     from src.pipeline.trigger_engine import TriggerEngine
     from tests.fakes import FakeEnvConfig
@@ -378,10 +384,14 @@ def test_trigger_code_review_emits_lifecycle_events(tmp_path: Path) -> None:
     # Create FakeEventSink to capture events
     event_sink = FakeEventSink()
 
-    config = RunCoordinatorConfig(
+    view = RunCoordinatorView(
         repo_path=tmp_path,
         timeout_seconds=60,
+        max_gate_retries=3,
+        disabled_validations=None,
+        fixer_prompt="Fix: {failure_output}",
         validation_config=validation_config,
+        validation_config_missing=False,
     )
 
     trigger_engine = TriggerEngine(validation_config=validation_config)
@@ -389,7 +399,7 @@ def test_trigger_code_review_emits_lifecycle_events(tmp_path: Path) -> None:
     mock_fixer_service.cleanup_locks = MagicMock()
 
     coordinator = RunCoordinator(
-        config=config,
+        view=view,
         gate_checker=MagicMock(),
         command_runner=command_runner,
         env_config=FakeEnvConfig(),

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -24,6 +25,8 @@ from src.domain.lifecycle import (
     LifecycleContext,
     LifecycleState,
 )
+from src.domain.validation.config_types import PromptValidationCommands
+from src.pipeline.config_views import AgentSessionView
 from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionRunner,
@@ -41,6 +44,24 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.evidence import EvidenceProvider, JsonlEntryProtocol
+    from src.domain.prompts import PromptProvider
+
+
+def _make_view(repo_path: Path, *, timeout_seconds: int = 300) -> AgentSessionView:
+    """Build an :class:`AgentSessionView` with stub PromptProvider/commands."""
+    return AgentSessionView(
+        repo_path=repo_path,
+        timeout_seconds=timeout_seconds,
+        prompts=cast("PromptProvider", MagicMock()),
+        max_gate_retries=3,
+        max_review_retries=2,
+        prompt_validation_commands=PromptValidationCommands(
+            lint="", format="", typecheck="", test="", custom_commands=()
+        ),
+        max_idle_retries=3,
+        idle_timeout_seconds=None,
+        deadlock_monitor=None,
+    )
 
 
 def _make_prompts() -> SessionPrompts:
@@ -119,13 +140,13 @@ def _make_runner(
     log_path: Path,
     evidence_provider: EvidenceProvider,
 ) -> AgentSessionRunner:
+    view = _make_view(repo_path)
     config = AgentSessionConfig(
-        repo_path=repo_path,
-        timeout_seconds=300,
         prompts=_make_prompts(),
         review_enabled=False,
     )
     return AgentSessionRunner(
+        view=view,
         config=config,
         agent_provider=FakeAgentProvider(
             FakeSDKClientFactory(),
@@ -255,13 +276,13 @@ class TestHandleLogWaiting:
         injected = StubEvidenceProvider(log_path=log_path)
         agent_default = StubEvidenceProvider(log_path=log_path, raise_timeout=True)
 
+        view = _make_view(tmp_path)
         config = AgentSessionConfig(
-            repo_path=tmp_path,
-            timeout_seconds=300,
             prompts=_make_prompts(),
             review_enabled=False,
         )
         runner = AgentSessionRunner(
+            view=view,
             config=config,
             agent_provider=FakeAgentProvider(
                 FakeSDKClientFactory(),

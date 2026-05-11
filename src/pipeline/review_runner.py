@@ -18,7 +18,7 @@ Design principles:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from src.core.protocols.validation import GateChecker, ValidationSpecProtocol
     from src.core.session_end_result import SessionEndResult
     from src.domain.validation.spec import ValidationSpec
+    from src.pipeline.config_views import ReviewRunnerView
 
 
 @dataclass
@@ -66,25 +67,6 @@ class _FatalReviewResult:
     fatal_error: bool
     review_log_path: Path | None
     interrupted: bool = False
-
-
-@dataclass
-class ReviewRunnerConfig:
-    """Configuration for ReviewRunner behavior.
-
-    Attributes:
-        max_review_retries: Maximum number of review retry attempts.
-        review_timeout: Timeout in seconds for review operations. None delegates
-            to the configured reviewer default.
-        thinking_mode: Deprecated, kept for backward compatibility.
-        capture_session_log: Deprecated, kept for backward compatibility.
-    """
-
-    max_review_retries: int = 3
-    review_timeout: int | None = None
-    # Deprecated fields (kept for backward compatibility with orchestrator)
-    thinking_mode: str | None = None
-    capture_session_log: bool = False
 
 
 @dataclass
@@ -197,18 +179,19 @@ class ReviewRunner:
     Usage:
         runner = ReviewRunner(
             code_reviewer=reviewer,
-            config=ReviewRunnerConfig(max_review_retries=3),
+            view=pipeline.review_runner_view,
         )
         output = await runner.run_review(input)
 
     Attributes:
         code_reviewer: CodeReviewer implementation for running reviews.
-        config: Configuration for review behavior.
+        view: Narrow view of PipelineConfig with max_review_retries and
+            review_timeout_seconds.
         gate_checker: Optional GateChecker for no-progress detection.
     """
 
     code_reviewer: CodeReviewer
-    config: ReviewRunnerConfig = field(default_factory=ReviewRunnerConfig)
+    view: ReviewRunnerView
     gate_checker: GateChecker | None = None
 
     async def run_review(
@@ -324,7 +307,7 @@ class ReviewRunner:
                 temp_file.write(context_text)
                 temp_file.close()
 
-            if self.config.review_timeout is None:
+            if self.view.review_timeout_seconds is None:
                 result = await self.code_reviewer(
                     context_file=context_file,
                     claude_session_id=input.claude_session_id,
@@ -335,7 +318,7 @@ class ReviewRunner:
             else:
                 result = await self.code_reviewer(
                     context_file=context_file,
-                    timeout=self.config.review_timeout,
+                    timeout=self.view.review_timeout_seconds,
                     claude_session_id=input.claude_session_id,
                     author_context=input.author_context,
                     commit_shas=input.commit_shas,

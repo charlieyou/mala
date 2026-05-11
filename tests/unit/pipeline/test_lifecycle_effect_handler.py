@@ -5,7 +5,8 @@ Tests the gate/review side-effect processing logic extracted from AgentSessionRu
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -18,6 +19,8 @@ from src.domain.lifecycle import (
     LifecycleState,
 )
 from src.domain.evidence_check import GateResult
+from src.domain.validation.config_types import PromptValidationCommands
+from src.pipeline.config_views import AgentSessionView
 from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,
@@ -33,6 +36,31 @@ from tests.helpers.protocol_stubs import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from src.domain.prompts import PromptProvider
+
+
+def _make_test_view(
+    *,
+    repo_path: Path,
+    timeout_seconds: int = 600,
+    max_gate_retries: int = 3,
+    max_review_retries: int = 2,
+) -> AgentSessionView:
+    """Build an :class:`AgentSessionView` with stub PromptProvider/commands."""
+    return AgentSessionView(
+        repo_path=repo_path,
+        timeout_seconds=timeout_seconds,
+        prompts=cast("PromptProvider", MagicMock()),
+        max_gate_retries=max_gate_retries,
+        max_review_retries=max_review_retries,
+        prompt_validation_commands=PromptValidationCommands(
+            lint="", format="", typecheck="", test="", custom_commands=()
+        ),
+        max_idle_retries=3,
+        idle_timeout_seconds=None,
+        deadlock_monitor=None,
+    )
 
 
 @dataclass
@@ -210,25 +238,32 @@ class TestProcessGateCheck:
         return log_path
 
     @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
-        """Create a session config for testing."""
-        return AgentSessionConfig(
+    def session_view(self, tmp_path: Path) -> AgentSessionView:
+        """Create an AgentSessionView for testing."""
+        return _make_test_view(
             repo_path=tmp_path,
-            timeout_seconds=600,
-            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=2,
+        )
+
+    @pytest.fixture
+    def session_config(self) -> AgentSessionConfig:
+        """Create a session config for testing."""
+        return AgentSessionConfig(
+            prompts=make_test_prompts(),
             review_enabled=False,
         )
 
     @pytest.mark.unit
     def test_emits_validation_started_event(
         self,
+        session_view: AgentSessionView,
         session_config: AgentSessionConfig,
     ) -> None:
         """process_gate_check should emit validation_started event."""
         fake_sink = FakeEventSink()
         handler = LifecycleEffectHandler(
+            view=session_view,
             config=session_config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
@@ -254,25 +289,32 @@ class TestProcessGateEffect:
     """Unit tests for process_gate_effect method."""
 
     @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
-        """Create a session config for testing."""
-        return AgentSessionConfig(
+    def session_view(self, tmp_path: Path) -> AgentSessionView:
+        """Create an AgentSessionView for testing."""
+        return _make_test_view(
             repo_path=tmp_path,
-            timeout_seconds=600,
-            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=2,
+        )
+
+    @pytest.fixture
+    def session_config(self) -> AgentSessionConfig:
+        """Create a session config for testing."""
+        return AgentSessionConfig(
+            prompts=make_test_prompts(),
             review_enabled=False,
         )
 
     @pytest.mark.unit
     def test_gate_passed_emits_events(
         self,
+        session_view: AgentSessionView,
         session_config: AgentSessionConfig,
     ) -> None:
         """process_gate_effect should emit passed events on gate pass."""
         fake_sink = FakeEventSink()
         handler = LifecycleEffectHandler(
+            view=session_view,
             config=session_config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
@@ -302,11 +344,13 @@ class TestProcessGateEffect:
     @pytest.mark.unit
     def test_gate_failed_with_retry_returns_query(
         self,
+        session_view: AgentSessionView,
         session_config: AgentSessionConfig,
     ) -> None:
         """process_gate_effect should return retry query on failure with retries left."""
         fake_sink = FakeEventSink()
         handler = LifecycleEffectHandler(
+            view=session_view,
             config=session_config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
@@ -341,25 +385,32 @@ class TestProcessReviewCheck:
     """Unit tests for process_review_check method."""
 
     @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
-        """Create a session config for testing."""
-        return AgentSessionConfig(
+    def session_view(self, tmp_path: Path) -> AgentSessionView:
+        """Create an AgentSessionView for testing."""
+        return _make_test_view(
             repo_path=tmp_path,
-            timeout_seconds=600,
-            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=3,
+        )
+
+    @pytest.fixture
+    def session_config(self) -> AgentSessionConfig:
+        """Create a session config for testing."""
+        return AgentSessionConfig(
+            prompts=make_test_prompts(),
             review_enabled=True,
         )
 
     @pytest.mark.unit
     def test_emits_gate_passed_on_first_attempt(
         self,
+        session_view: AgentSessionView,
         session_config: AgentSessionConfig,
     ) -> None:
         """process_review_check should emit gate_passed on first review attempt."""
         fake_sink = FakeEventSink()
         handler = LifecycleEffectHandler(
+            view=session_view,
             config=session_config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
@@ -383,25 +434,32 @@ class TestProcessReviewEffect:
     """Unit tests for process_review_effect method."""
 
     @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
-        """Create a session config for testing."""
-        return AgentSessionConfig(
+    def session_view(self, tmp_path: Path) -> AgentSessionView:
+        """Create an AgentSessionView for testing."""
+        return _make_test_view(
             repo_path=tmp_path,
-            timeout_seconds=600,
-            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=3,
+        )
+
+    @pytest.fixture
+    def session_config(self) -> AgentSessionConfig:
+        """Create a session config for testing."""
+        return AgentSessionConfig(
+            prompts=make_test_prompts(),
             review_enabled=True,
         )
 
     @pytest.mark.unit
     def test_review_passed_returns_no_retry(
         self,
+        session_view: AgentSessionView,
         session_config: AgentSessionConfig,
     ) -> None:
         """process_review_effect should return no retry on pass."""
         fake_sink = FakeEventSink()
         handler = LifecycleEffectHandler(
+            view=session_view,
             config=session_config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
@@ -431,11 +489,13 @@ class TestProcessReviewEffect:
     @pytest.mark.unit
     def test_review_failed_with_retry_returns_query(
         self,
+        session_view: AgentSessionView,
         session_config: AgentSessionConfig,
     ) -> None:
         """process_review_effect should return retry query on failure with retries left."""
         fake_sink = FakeEventSink()
         handler = LifecycleEffectHandler(
+            view=session_view,
             config=session_config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
@@ -488,20 +548,26 @@ class TestCheckReviewNoProgress:
         return log_path
 
     @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
-        """Create a session config for testing."""
-        return AgentSessionConfig(
+    def session_view(self, tmp_path: Path) -> AgentSessionView:
+        """Create an AgentSessionView for testing."""
+        return _make_test_view(
             repo_path=tmp_path,
-            timeout_seconds=600,
-            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=3,
+        )
+
+    @pytest.fixture
+    def session_config(self) -> AgentSessionConfig:
+        """Create a session config for testing."""
+        return AgentSessionConfig(
+            prompts=make_test_prompts(),
             review_enabled=True,
         )
 
     @pytest.mark.unit
     def test_skips_on_no_progress(
         self,
+        session_view: AgentSessionView,
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
     ) -> None:
@@ -512,6 +578,7 @@ class TestCheckReviewNoProgress:
         review_runner = StubReviewRunner(no_progress_result=True)
 
         handler = LifecycleEffectHandler(
+            view=session_view,
             config=session_config,
             gate_runner=StubGateRunner(),
             review_runner=review_runner,
@@ -544,6 +611,7 @@ class TestCheckReviewNoProgress:
     @pytest.mark.unit
     def test_returns_none_on_first_attempt(
         self,
+        session_view: AgentSessionView,
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
     ) -> None:
@@ -552,6 +620,7 @@ class TestCheckReviewNoProgress:
         review_runner = StubReviewRunner(no_progress_result=True)
 
         handler = LifecycleEffectHandler(
+            view=session_view,
             config=session_config,
             gate_runner=StubGateRunner(),
             review_runner=review_runner,
@@ -577,6 +646,7 @@ class TestCheckReviewNoProgress:
     @pytest.mark.unit
     def test_returns_none_when_progress_detected(
         self,
+        session_view: AgentSessionView,
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
     ) -> None:
@@ -585,6 +655,7 @@ class TestCheckReviewNoProgress:
         review_runner = StubReviewRunner(no_progress_result=False)
 
         handler = LifecycleEffectHandler(
+            view=session_view,
             config=session_config,
             gate_runner=StubGateRunner(),
             review_runner=review_runner,

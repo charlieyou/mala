@@ -13,10 +13,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.pipeline.config_views import FixerServiceView
 from src.pipeline.fixer_service import (
     FailureContext,
     FixerService,
-    FixerServiceConfig,
 )
 from tests.fakes.agent_provider import FakeAgentProvider
 from tests.fakes.sdk_client import (
@@ -119,17 +119,21 @@ def install_mock_runtime_builder(
     return mock_builder
 
 
-def make_config(
+def make_view(
     repo_path: Path | None = None,
     timeout_seconds: int = 600,
     fixer_prompt: str = "Fix: {failure_output}",
-) -> FixerServiceConfig:
-    """Create a FixerServiceConfig for testing."""
-    return FixerServiceConfig(
+) -> FixerServiceView:
+    """Create a FixerServiceView for testing."""
+    return FixerServiceView(
         repo_path=repo_path or Path("/test/repo"),
         timeout_seconds=timeout_seconds,
         fixer_prompt=fixer_prompt,
     )
+
+
+# Backwards-compatible name used throughout the test bodies; constructs a view.
+make_config = make_view
 
 
 def make_failure_context(
@@ -195,31 +199,34 @@ class TestFailureContext:
             ctx.attempt = 2  # type: ignore[misc]  # ty:ignore[invalid-assignment]
 
 
-class TestFixerServiceConfig:
-    """Test the FixerServiceConfig dataclass."""
+class TestFixerServiceView:
+    """Test the FixerServiceView dataclass."""
 
     def test_required_fields(self) -> None:
         """Verify required fields must be provided."""
-        config = FixerServiceConfig(
+        view = FixerServiceView(
             repo_path=Path("/repo"),
             timeout_seconds=300,
             fixer_prompt="Fix it: {failure_output}",
         )
-        assert config.repo_path == Path("/repo")
-        assert config.timeout_seconds == 300
-        assert config.fixer_prompt == "Fix it: {failure_output}"
-        assert config.mcp_server_factory is None
+        assert view.repo_path == Path("/repo")
+        assert view.timeout_seconds == 300
+        assert view.fixer_prompt == "Fix it: {failure_output}"
 
     def test_with_mcp_factory(self) -> None:
-        """Verify MCP factory can be set."""
+        """Verify MCP factory can be passed as a constructor kwarg."""
         factory = MagicMock()
-        config = FixerServiceConfig(
+        view = FixerServiceView(
             repo_path=Path("/repo"),
             timeout_seconds=300,
             fixer_prompt="Fix: {failure_output}",
+        )
+        service = FixerService(
+            view=view,
+            agent_provider=FakeAgentProvider(make_mock_sdk_client_factory()),
             mcp_server_factory=factory,
         )
-        assert config.mcp_server_factory is factory
+        assert service._mcp_server_factory is factory
 
 
 class TestFixerServiceSuccess:

@@ -39,10 +39,10 @@ import pytest
 
 from src.infra.clients.codex_client import CodexClient
 from src.infra.clients.codex_provider import CodexAgentProvider
+from src.pipeline.config_views import FixerServiceView
 from src.pipeline.fixer_service import (
     FailureContext,
     FixerService,
-    FixerServiceConfig,
 )
 
 if TYPE_CHECKING:
@@ -226,7 +226,7 @@ async def test_fixer_runs_through_codex_provider_starts_fresh_thread(
     )
 
     provider = CodexAgentProvider()
-    config = FixerServiceConfig(
+    view = FixerServiceView(
         repo_path=tmp_path,
         timeout_seconds=600,
         fixer_prompt=(
@@ -236,9 +236,7 @@ async def test_fixer_runs_through_codex_provider_starts_fresh_thread(
             "Run validations:\n{validation_commands}"
         ),
     )
-    service = FixerService(
-        config=config, agent_provider=cast("AgentProvider", provider)
-    )
+    service = FixerService(view=view, agent_provider=cast("AgentProvider", provider))
     failure_ctx = FailureContext(
         failure_output="ruff: 1 lint violation",
         attempt=1,
@@ -319,14 +317,12 @@ async def test_fixer_uses_codex_provider_runtime_builder_and_client_factory(
         raising=True,
     )
 
-    config = FixerServiceConfig(
+    view = FixerServiceView(
         repo_path=tmp_path,
         timeout_seconds=300,
         fixer_prompt="Fix {failure_output}: {validation_commands}",
     )
-    service = FixerService(
-        config=config, agent_provider=cast("AgentProvider", provider)
-    )
+    service = FixerService(view=view, agent_provider=cast("AgentProvider", provider))
     failure_ctx = FailureContext(
         failure_output="boom",
         attempt=1,

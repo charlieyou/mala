@@ -216,7 +216,7 @@ def test_pipeline_components_construct_without_orchestrator(tmp_path: Path) -> N
     )
 
     assert issue_coordinator.config.max_issues == 3
-    assert run_coordinator.config.repo_path == tmp_path
+    assert run_coordinator.view.repo_path == tmp_path
     assert epic_verification_coordinator._has_epic_verifier() is False
     assert issue_finalizer.config.track_review_issues is False
 

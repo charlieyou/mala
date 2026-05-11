@@ -36,10 +36,8 @@ from src.domain.validation.config_types import (
 )
 from src.infra.tools.command_runner import CommandResult
 from src.pipeline.issue_result import IssueResult
-from src.pipeline.run_coordinator import (
-    RunCoordinator,
-    RunCoordinatorConfig,
-)
+from src.pipeline.config_views import RunCoordinatorView
+from src.pipeline.run_coordinator import RunCoordinator
 from src.pipeline.fixer_service import FixerService
 from src.pipeline.trigger_engine import TriggerEngine
 from tests.fakes import FakeEnvConfig
@@ -62,18 +60,21 @@ def make_coordinator(
     fixer_prompt: str | None = None,
 ) -> RunCoordinator:
     """Create a RunCoordinator with minimal fakes for trigger testing."""
-    config = RunCoordinatorConfig(
+    view = RunCoordinatorView(
         repo_path=tmp_path,
         timeout_seconds=60,
-        validation_config=validation_config,
+        max_gate_retries=3,
+        disabled_validations=None,
         fixer_prompt=fixer_prompt
         or "Fix attempt {attempt}/{max_attempts}: {failure_output}",
+        validation_config=validation_config,
+        validation_config_missing=False,
     )
     trigger_engine = TriggerEngine(validation_config=validation_config)
     mock_fixer_service = MagicMock(spec=FixerService)
     mock_fixer_service.cleanup_locks = MagicMock()
     return RunCoordinator(
-        config=config,
+        view=view,
         gate_checker=MagicMock(),
         command_runner=command_runner or FakeCommandRunner(allow_unregistered=True),
         env_config=FakeEnvConfig(),

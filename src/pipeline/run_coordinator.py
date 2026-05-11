@@ -39,7 +39,6 @@ from src.pipeline.trigger_plan import resolve_trigger
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
     from types import FrameType
 
     from src.core.protocols.agent_provider import AgentProvider
@@ -49,7 +48,6 @@ if TYPE_CHECKING:
         EnvConfigPort,
         LockManagerPort,
     )
-    from src.core.protocols.sdk import McpServerFactory
     from src.core.protocols.validation import GateChecker
     from src.domain.validation.result import ValidationResult
     from src.domain.validation.config_types import (
@@ -58,6 +56,7 @@ if TYPE_CHECKING:
         ValidationConfig,
         ValidationTriggersConfig,
     )
+    from src.pipeline.config_views import RunCoordinatorView
     from src.infra.io.log_output.run_metadata import (
         RunMetadata,
         ValidationResult as MetaValidationResult,
@@ -70,44 +69,6 @@ if TYPE_CHECKING:
     from src.pipeline.fixer_service import FixerService
     from src.pipeline.trigger_engine import TriggerEngine
     from src.pipeline.trigger_plan import TriggerPlan
-
-
-class _FixerPromptNotSet:
-    """Sentinel indicating fixer_prompt was not set.
-
-    Raises RuntimeError if used, preventing silent failures from empty prompts.
-    """
-
-    def format(self, **kwargs: object) -> str:
-        raise RuntimeError(
-            "fixer_prompt not configured. "
-            "Pass fixer_prompt to RunCoordinatorConfig or use build_run_coordinator()."
-        )
-
-
-_FIXER_PROMPT_NOT_SET = _FixerPromptNotSet()
-
-
-@dataclass
-class RunCoordinatorConfig:
-    """Configuration for RunCoordinator.
-
-    Attributes:
-        repo_path: Path to the repository.
-        timeout_seconds: Session timeout in seconds.
-        max_gate_retries: Maximum gate retry attempts.
-        disable_validations: Set of validation names to disable.
-        fixer_prompt: Template for the fixer agent prompt.
-    """
-
-    repo_path: Path
-    timeout_seconds: int
-    max_gate_retries: int = 3
-    disable_validations: set[str] | None = None
-    fixer_prompt: str | _FixerPromptNotSet = _FIXER_PROMPT_NOT_SET
-    mcp_server_factory: McpServerFactory | None = None
-    validation_config: ValidationConfig | None = None
-    validation_config_missing: bool = False
 
 
 @dataclass(frozen=True)
@@ -241,7 +202,9 @@ class RunCoordinator:
     while retaining per-session coordination.
 
     Attributes:
-        config: Configuration for run behavior.
+        view: Narrow view of PipelineConfig with repo_path, timeout_seconds,
+            max_gate_retries, disabled_validations, fixer_prompt,
+            validation_config, validation_config_missing.
         gate_checker: GateChecker for global validation.
         command_runner: CommandRunner for executing validation commands.
         env_config: Environment configuration for paths.
@@ -256,7 +219,7 @@ class RunCoordinator:
         event_sink: Optional event sink for structured logging.
     """
 
-    config: RunCoordinatorConfig
+    view: RunCoordinatorView
     gate_checker: GateChecker
     command_runner: CommandRunnerPort
     env_config: EnvConfigPort
@@ -371,7 +334,7 @@ class RunCoordinator:
             return TriggerValidationResult(status="passed")
 
         # Get validation config
-        validation_config = self.config.validation_config
+        validation_config = self.view.validation_config
         if validation_config is None:
             # No validation config - clear queue and return passed
             self._trigger_queue.clear()
@@ -419,9 +382,9 @@ class RunCoordinator:
         Returns:
             TriggerValidationResult with status and details.
         """
-        assert self.config.validation_config is not None
+        assert self.view.validation_config is not None
         runtime = _RunValidationRuntime(
-            validation_config=self.config.validation_config,
+            validation_config=self.view.validation_config,
             triggers_config=triggers_config,
             dry_run=dry_run,
             interrupt_event=interrupt_event,
@@ -902,7 +865,7 @@ class RunCoordinator:
             return
 
         coverage_percent: float | None = None
-        validation_config = self.config.validation_config
+        validation_config = self.view.validation_config
         if validation_config is not None and validation_config.coverage is not None:
             from pathlib import Path
 
@@ -910,7 +873,7 @@ class RunCoordinator:
 
             report_path = Path(validation_config.coverage.file)
             if not report_path.is_absolute():
-                report_path = self.config.repo_path / report_path
+                report_path = self.view.repo_path / report_path
             coverage_result = parse_coverage_xml(report_path)
             if coverage_result.percent is not None:
                 coverage_percent = coverage_result.percent
@@ -1161,7 +1124,7 @@ class RunCoordinator:
                 cmd.effective_command,
                 timeout=cmd.effective_timeout,
                 shell=True,
-                cwd=self.config.repo_path,
+                cwd=self.view.repo_path,
             )
 
             passed = cmd_result.returncode == 0 and not cmd_result.timed_out
@@ -1260,7 +1223,7 @@ class RunCoordinator:
                     cmd.effective_command,
                     timeout=cmd.effective_timeout,
                     shell=True,
-                    cwd=self.config.repo_path,
+                    cwd=self.view.repo_path,
                 )
             )
 
@@ -1404,7 +1367,7 @@ class RunCoordinator:
             trigger_type=trigger_type,
             config=trigger_config.code_review,
             run_metadata=self.run_metadata,
-            repo_path=self.config.repo_path,
+            repo_path=self.view.repo_path,
             interrupt_event=interrupt_event,
             issue_id=context.get("issue_id"),
             epic_id=context.get("epic_id"),

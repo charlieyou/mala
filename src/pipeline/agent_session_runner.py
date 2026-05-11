@@ -66,17 +66,16 @@ if TYPE_CHECKING:
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.review import ReviewIssueProtocol
     from src.core.protocols.sdk import McpServerFactory
-    from src.domain.deadlock import DeadlockMonitor
     from src.domain.lifecycle import (
         GateOutcome,
         RetryState,
         ReviewOutcome,
         TransitionResult,
     )
-    from src.domain.validation.config_types import PromptValidationCommands
     from src.infra.hooks import LintCache
     from src.infra.telemetry import TelemetrySpan
     from src.core.session_end_result import SessionEndResult
+    from src.pipeline.config_views import AgentSessionView
 
 
 # Module-level logger for idle retry messages
@@ -199,46 +198,33 @@ class SessionPrompts:
 
 @dataclass
 class AgentSessionConfig:
-    """Configuration for agent session execution.
+    """Runner-specific configuration for agent session execution.
 
-    Bundles all configuration needed to run an agent session.
+    Holds session-runner fields that are NOT in :class:`AgentSessionView`
+    (canonical fields derived from PipelineConfig). Canonical fields (e.g.
+    ``repo_path``, ``timeout_seconds``, ``max_gate_retries``) are read from
+    the view passed alongside this config to :class:`AgentSessionRunner`.
 
     Attributes:
-        repo_path: Path to the repository.
-        timeout_seconds: Session timeout in seconds.
-        prompts: Provider for session prompts (gate, review, idle resume).
-        max_gate_retries: Maximum gate retry attempts.
-        max_review_retries: Maximum review retry attempts.
+        prompts: Session-specific prompt templates (derived from PromptProvider).
         review_enabled: Whether Cerberus external review is enabled.
             When enabled, code changes are reviewed after the gate passes.
         log_file_wait_timeout: Seconds to wait for log file after session
             completes. Default 60s allows time for SDK to flush logs under load.
-        idle_timeout_seconds: Seconds to wait for SDK message when not waiting
-            for tool execution. If None, defaults to min(900, max(300, timeout_seconds * 0.2))
-            which scales with session timeout (300-900s range). During tool execution
-            (after ToolUseBlock, before result), timeout is disabled. Set to 0 to
-            disable timeout entirely.
+        idle_retry_backoff: Per-attempt backoff in seconds before issuing the
+            idle resume prompt.
         lint_tools: Set of lint tool names for LintCache. If None, uses default
             lint tools. Populated from ValidationSpec commands.
-        prompt_validation_commands: Validation commands for prompt templates.
-            If None, uses default Python/uv commands.
+        mcp_server_factory: Optional factory for creating MCP server configs.
         strict_resume: When True and session resumption fails (stale session),
             fail the session instead of retrying with a fresh session.
     """
 
-    repo_path: Path
-    timeout_seconds: int
     prompts: SessionPrompts
-    max_gate_retries: int = 3
-    max_review_retries: int = 3
     review_enabled: bool = True
     log_file_wait_timeout: float = 60.0
-    idle_timeout_seconds: float | None = None
-    max_idle_retries: int = 2
     idle_retry_backoff: tuple[float, ...] = (0.0, 5.0, 15.0)
     lint_tools: frozenset[str] | None = None
-    prompt_validation_commands: PromptValidationCommands | None = None
-    deadlock_monitor: DeadlockMonitor | None = None
     mcp_server_factory: McpServerFactory | None = None
     strict_resume: bool = False
 
@@ -324,7 +310,8 @@ class AgentSessionRunner:
 
     Usage:
         runner = AgentSessionRunner(
-            config=AgentSessionConfig(repo_path=repo_path, ...),
+            view=pipeline.agent_session_view,
+            config=AgentSessionConfig(prompts=...),
             agent_provider=ClaudeAgentProvider(),
             gate_runner=gate_runner_impl,
             review_runner=review_runner_impl,
@@ -333,7 +320,9 @@ class AgentSessionRunner:
         output = await runner.run_session(input)
 
     Attributes:
-        config: Session configuration.
+        view: Narrow view of PipelineConfig with canonical session fields
+            (repo_path, timeout_seconds, max_gate_retries, etc.).
+        config: Runner-specific configuration (prompts, lint_tools, etc.).
         agent_provider: Bundles ``client_factory`` (for SDK-style streaming),
             ``runtime_builder()`` (for per-session env/options assembly), and
             ``evidence_provider`` (for evidence parsing). One
@@ -352,6 +341,7 @@ class AgentSessionRunner:
             location the lifecycle uses for log-path computation.
     """
 
+    view: AgentSessionView
     config: AgentSessionConfig
     agent_provider: AgentProvider
     gate_runner: IGateRunner
@@ -368,7 +358,7 @@ class AgentSessionRunner:
             self.evidence_provider = self.agent_provider.evidence_provider
         # Initialize retry policy with stream processor factory
         retry_config = RetryConfig(
-            max_idle_retries=self.config.max_idle_retries,
+            max_idle_retries=self.view.max_idle_retries,
             idle_retry_backoff=self.config.idle_retry_backoff,
             idle_resume_prompt=self.config.prompts.idle_resume,
         )
@@ -379,6 +369,7 @@ class AgentSessionRunner:
         )
         # Initialize lifecycle effect handler
         self._effect_handler = LifecycleEffectHandler(
+            view=self.view,
             config=self.config,
             event_sink=self.event_sink,
             gate_runner=self.gate_runner,
@@ -409,8 +400,8 @@ class AgentSessionRunner:
 
         # Initialize lifecycle
         lifecycle_config = LifecycleConfig(
-            max_gate_retries=self.config.max_gate_retries,
-            max_review_retries=self.config.max_review_retries,
+            max_gate_retries=self.view.max_gate_retries,
+            max_review_retries=self.view.max_review_retries,
             review_enabled=self.config.review_enabled,
         )
         lifecycle = ImplementerLifecycle(lifecycle_config)
@@ -427,13 +418,13 @@ class AgentSessionRunner:
         # the SDK-hook side of it is Claude-private.
         mcp_factory = self.config.mcp_server_factory or _noop_mcp_server_factory
         builder = self.agent_provider.runtime_builder(
-            self.config.repo_path,
+            self.view.repo_path,
             agent_id,
             mcp_server_factory=mcp_factory,
-            deadlock_monitor=self.config.deadlock_monitor,
+            deadlock_monitor=self.view.deadlock_monitor,
         )
         runtime = (
-            builder.with_agent_timeout(self.config.timeout_seconds)
+            builder.with_agent_timeout(self.view.timeout_seconds)
             .with_env(extra={"MALA_SDK_FLOW": input.flow})
             .with_mcp()
             .with_lint_tools(self.config.lint_tools)
@@ -441,9 +432,9 @@ class AgentSessionRunner:
         )
 
         # Calculate idle timeout
-        idle_timeout_seconds = self.config.idle_timeout_seconds
+        idle_timeout_seconds = self.view.idle_timeout_seconds
         if idle_timeout_seconds is None:
-            derived = self.config.timeout_seconds * 0.2
+            derived = self.view.timeout_seconds * 0.2
             idle_timeout_seconds = min(900.0, max(300.0, derived))
         if idle_timeout_seconds <= 0:
             idle_timeout_seconds = None
@@ -517,7 +508,7 @@ class AgentSessionRunner:
                 # The hard per-task timeout applies only while the coder is
                 # running. Post-session checks have their own timeouts and
                 # should not reduce the budget for the next coder start.
-                async with asyncio.timeout(self.config.timeout_seconds):
+                async with asyncio.timeout(self.view.timeout_seconds):
                     iter_result = await self._retry_policy.execute_iteration(
                         query=pending_query,
                         issue_id=input.issue_id,
@@ -694,7 +685,7 @@ class AgentSessionRunner:
                     "Session %s: starting review (attempt %d/%d, session_id=%s)",
                     input.issue_id,
                     lifecycle_ctx.retry_state.review_attempt,
-                    self.config.max_review_retries,
+                    self.view.max_review_retries,
                     lifecycle_ctx.session_id[:8] if lifecycle_ctx.session_id else None,
                 )
                 review_start = time.time()
@@ -913,7 +904,7 @@ class AgentSessionRunner:
         assert self.evidence_provider is not None
         try:
             await self.evidence_provider.wait_for_session_ready(
-                self.config.repo_path,
+                self.view.repo_path,
                 session_id,
                 timeout=log_file_wait_timeout,
                 poll_interval=log_file_poll_interval,
@@ -1095,7 +1086,7 @@ class AgentSessionRunner:
                 state.final_result = state.lifecycle_ctx.final_result
                 break
             except TimeoutError:
-                timeout_mins = self.config.timeout_seconds // 60
+                timeout_mins = self.view.timeout_seconds // 60
                 state.lifecycle.on_timeout(state.lifecycle_ctx, timeout_mins)
                 state.final_result = state.lifecycle_ctx.final_result
                 break

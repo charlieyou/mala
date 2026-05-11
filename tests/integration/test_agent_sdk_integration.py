@@ -19,7 +19,8 @@ from src.core.models import ReviewInput
 from src.infra.clients.agent_sdk_review import AgentSDKReviewer
 from src.infra.clients.cerberus_review import DefaultReviewer
 from src.orchestration.factory import _create_code_reviewer, _get_reviewer_config
-from src.pipeline.review_runner import ReviewRunner, ReviewRunnerConfig
+from src.pipeline.config_views import ReviewRunnerView
+from src.pipeline.review_runner import ReviewRunner
 from tests.fakes.event_sink import FakeEventSink
 from tests.fakes.sdk_client import FakeSDKClientFactory
 
@@ -389,9 +390,9 @@ class TestReviewRunnerIntegration:
             # Create ReviewRunner with the factory-created reviewer
             runner = ReviewRunner(
                 code_reviewer=reviewer,
-                config=ReviewRunnerConfig(
+                view=ReviewRunnerView(
                     max_review_retries=3,
-                    review_timeout=60,
+                    review_timeout_seconds=60,
                 ),
             )
 

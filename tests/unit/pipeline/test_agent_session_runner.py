@@ -10,6 +10,7 @@ import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -19,6 +20,8 @@ from src.domain.lifecycle import (
     LifecycleContext,
     RetryState,
 )
+from src.domain.validation.config_types import PromptValidationCommands
+from src.pipeline.config_views import AgentSessionView
 from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,
@@ -40,6 +43,30 @@ from tests.fakes.sdk_client import (
 
 if TYPE_CHECKING:
     from src.core.protocols.sdk import SDKClientProtocol
+    from src.domain.prompts import PromptProvider
+
+
+def _make_view(
+    *,
+    repo_path: Path,
+    timeout_seconds: int = 300,
+    max_gate_retries: int = 3,
+    max_review_retries: int = 2,
+) -> AgentSessionView:
+    """Build an :class:`AgentSessionView` with stub PromptProvider/commands."""
+    return AgentSessionView(
+        repo_path=repo_path,
+        timeout_seconds=timeout_seconds,
+        prompts=cast("PromptProvider", MagicMock()),
+        max_gate_retries=max_gate_retries,
+        max_review_retries=max_review_retries,
+        prompt_validation_commands=PromptValidationCommands(
+            lint="", format="", typecheck="", test="", custom_commands=()
+        ),
+        max_idle_retries=3,
+        idle_timeout_seconds=None,
+        deadlock_monitor=None,
+    )
 
 
 @dataclass
@@ -475,12 +502,12 @@ class TestEarlyInterruptPath:
         interrupt_event = asyncio.Event()
         interrupt_event.set()
 
+        view = _make_view(repo_path=Path("/tmp/test-repo"), timeout_seconds=300)
         config = AgentSessionConfig(
-            repo_path=Path("/tmp/test-repo"),
-            timeout_seconds=300,
             prompts=make_prompts(),
         )
         runner = AgentSessionRunner(
+            view=view,
             config=config,
             agent_provider=FakeAgentProvider(FakeSDKClientFactory()),
             gate_runner=StubGateRunner(),
@@ -510,12 +537,12 @@ class TestEarlyInterruptPath:
         interrupt_event = asyncio.Event()
         interrupt_event.set()
 
+        view = _make_view(repo_path=Path("/tmp/test-repo"), timeout_seconds=300)
         config = AgentSessionConfig(
-            repo_path=Path("/tmp/test-repo"),
-            timeout_seconds=300,
             prompts=make_prompts(),
         )
         runner = AgentSessionRunner(
+            view=view,
             config=config,
             agent_provider=FakeAgentProvider(FakeSDKClientFactory()),
             gate_runner=StubGateRunner(),
@@ -545,12 +572,12 @@ class TestEarlyInterruptPath:
         interrupt_event = asyncio.Event()
         interrupt_event.set()
 
+        view = _make_view(repo_path=Path("/tmp/test-repo"), timeout_seconds=300)
         config = AgentSessionConfig(
-            repo_path=Path("/tmp/test-repo"),
-            timeout_seconds=300,
             prompts=make_prompts(),
         )
         runner = AgentSessionRunner(
+            view=view,
             config=config,
             agent_provider=FakeAgentProvider(FakeSDKClientFactory()),
             gate_runner=StubGateRunner(),
@@ -588,13 +615,13 @@ class TestCoderTimeoutBudget:
         client_factory.configure_next_client(
             result_message=ResultMessage(session_id="session-1", result="done")
         )
+        view = _make_view(repo_path=tmp_path, timeout_seconds=1800)
         config = AgentSessionConfig(
-            repo_path=tmp_path,
-            timeout_seconds=1800,
             prompts=make_prompts(),
             review_enabled=False,
         )
         runner = AgentSessionRunner(
+            view=view,
             config=config,
             agent_provider=FakeAgentProvider(client_factory),
             gate_runner=StubGateRunner(),
@@ -639,13 +666,16 @@ class TestCoderTimeoutBudget:
         client_factory.configure_next_client(
             result_message=ResultMessage(session_id="session-1", result="second pass")
         )
-        config = AgentSessionConfig(
+        view = _make_view(
             repo_path=tmp_path,
             timeout_seconds=cast("int", 0.2),
-            prompts=make_prompts(),
             max_gate_retries=2,
         )
+        config = AgentSessionConfig(
+            prompts=make_prompts(),
+        )
         runner = AgentSessionRunner(
+            view=view,
             config=config,
             agent_provider=FakeAgentProvider(client_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
@@ -731,14 +761,14 @@ class TestProtocolInterfaceAcceptance:
             def on_agent_text(self, agent_id: str, text: str) -> None:
                 pass
 
+        view = _make_view(repo_path=Path("/tmp/test-repo"), timeout_seconds=300)
         config = AgentSessionConfig(
-            repo_path=Path("/tmp/test-repo"),
-            timeout_seconds=300,
             prompts=make_prompts(),
         )
 
         # Should not raise
         runner = AgentSessionRunner(
+            view=view,
             config=config,
             agent_provider=FakeAgentProvider(FakeSDKClientFactory()),
             gate_runner=FakeGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
@@ -822,13 +852,13 @@ class TestProtocolInterfaceAcceptance:
             ) -> bool:
                 return False
 
+        view = _make_view(repo_path=Path("/tmp/test-repo"), timeout_seconds=300)
         config = AgentSessionConfig(
-            repo_path=Path("/tmp/test-repo"),
-            timeout_seconds=300,
             prompts=make_prompts(),
         )
 
         runner = AgentSessionRunner(
+            view=view,
             config=config,
             agent_provider=FakeAgentProvider(FakeSDKClientFactory()),
             gate_runner=FakeGateRunner(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]

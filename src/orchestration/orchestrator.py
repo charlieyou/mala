@@ -438,6 +438,7 @@ class MalaOrchestrator:
             context,
             cumulative_review_runner=self.run_coordinator.cumulative_review_runner,
         )
+        self._session_view = pipeline.agent_session_view
         self._session_config = build_session_config(
             pipeline,
             review_enabled=self._is_review_enabled(),
@@ -951,6 +952,7 @@ class MalaOrchestrator:
 
         adapters = self._build_session_adapters(issue_id)
         runner = AgentSessionRunner(
+            view=self._session_view,
             config=self._session_config,
             agent_provider=self._agent_provider,
             gate_runner=adapters.gate_runner,

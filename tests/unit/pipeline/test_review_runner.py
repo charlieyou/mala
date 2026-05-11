@@ -15,13 +15,26 @@ import pytest
 
 from src.core.models import ReviewInput
 from src.core.protocols.review import ReviewResultProtocol
+from src.pipeline.config_views import ReviewRunnerView
 from src.pipeline.review_runner import (
     NoProgressInput,
     ReviewOutput,
     ReviewRunner,
-    ReviewRunnerConfig,
 )
 from tests.fakes.gate_checker import FakeGateChecker
+
+
+def _make_view(
+    *,
+    max_review_retries: int = 3,
+    review_timeout_seconds: int | None = None,
+) -> ReviewRunnerView:
+    """Build a ReviewRunnerView for tests."""
+    return ReviewRunnerView(
+        max_review_retries=max_review_retries,
+        review_timeout_seconds=review_timeout_seconds,
+    )
+
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -106,21 +119,21 @@ class TestReviewRunnerBasics:
         return FakeCodeReviewer()
 
     @pytest.fixture
-    def config(self) -> ReviewRunnerConfig:
-        """Create a default config."""
-        return ReviewRunnerConfig()
+    def view(self) -> ReviewRunnerView:
+        """Create a default view."""
+        return _make_view()
 
     @pytest.mark.asyncio
     async def test_run_review_returns_output(
         self,
         fake_reviewer: FakeCodeReviewer,
-        config: ReviewRunnerConfig,
+        view: ReviewRunnerView,
         tmp_path: Path,
     ) -> None:
         """Runner should return ReviewOutput with result."""
         runner = ReviewRunner(
             code_reviewer=cast("CodeReviewer", fake_reviewer),
-            config=config,
+            view=view,
         )
 
         review_input = ReviewInput(
@@ -142,12 +155,10 @@ class TestReviewRunnerBasics:
         tmp_path: Path,
     ) -> None:
         """Runner should pass all parameters to code reviewer."""
-        config = ReviewRunnerConfig(
-            review_timeout=600,
-        )
+        view = _make_view(review_timeout_seconds=600)
         runner = ReviewRunner(
             code_reviewer=cast("CodeReviewer", fake_reviewer),
-            config=config,
+            view=view,
         )
 
         review_input = ReviewInput(
@@ -182,10 +193,10 @@ class TestReviewRunnerBasics:
         )
         fake_reviewer = FakeCodeReviewer(result=result)
 
-        config = ReviewRunnerConfig()
+        view = _make_view()
         runner = ReviewRunner(
             code_reviewer=cast("CodeReviewer", fake_reviewer),
-            config=config,
+            view=view,
         )
 
         review_input = ReviewInput(
@@ -202,13 +213,13 @@ class TestReviewRunnerBasics:
     async def test_run_review_no_context_file_without_description(
         self,
         fake_reviewer: FakeCodeReviewer,
-        config: ReviewRunnerConfig,
+        view: ReviewRunnerView,
         tmp_path: Path,
     ) -> None:
         """Runner should not create context file when no issue_description."""
         runner = ReviewRunner(
             code_reviewer=cast("CodeReviewer", fake_reviewer),
-            config=config,
+            view=view,
         )
 
         review_input = ReviewInput(
@@ -228,13 +239,13 @@ class TestReviewRunnerBasics:
     async def test_run_review_skips_when_no_commits(
         self,
         fake_reviewer: FakeCodeReviewer,
-        config: ReviewRunnerConfig,
+        view: ReviewRunnerView,
         tmp_path: Path,
     ) -> None:
         """Runner should skip review when commit list is empty."""
         runner = ReviewRunner(
             code_reviewer=cast("CodeReviewer", fake_reviewer),
-            config=config,
+            view=view,
         )
 
         review_input = ReviewInput(
@@ -256,7 +267,9 @@ class TestReviewRunnerResults:
         """Runner should return passed result correctly."""
         result = FakeReviewResult(passed=True, issues=[])
         fake_reviewer = FakeCodeReviewer(result=result)
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", fake_reviewer), view=_make_view()
+        )
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -285,7 +298,9 @@ class TestReviewRunnerResults:
         ]
         result = FakeReviewResult(passed=False, issues=issues)
         fake_reviewer = FakeCodeReviewer(result=result)
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", fake_reviewer), view=_make_view()
+        )
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -308,7 +323,9 @@ class TestReviewRunnerResults:
             parse_error="Invalid JSON output",
         )
         fake_reviewer = FakeCodeReviewer(result=result)
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", fake_reviewer), view=_make_view()
+        )
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -341,7 +358,9 @@ class TestReviewRunnerResults:
             ) -> FakeReviewResult:
                 raise RuntimeError("boom")
 
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", ExplodingReviewer()))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", ExplodingReviewer()), view=_make_view()
+        )
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -381,6 +400,7 @@ class TestReviewRunnerNoProgress:
         fake_reviewer = FakeCodeReviewer()
         runner = ReviewRunner(
             code_reviewer=cast("CodeReviewer", fake_reviewer),
+            view=_make_view(),
             gate_checker=cast("GateChecker", fake_gate_checker),
         )
 
@@ -405,6 +425,7 @@ class TestReviewRunnerNoProgress:
         fake_reviewer = FakeCodeReviewer()
         runner = ReviewRunner(
             code_reviewer=cast("CodeReviewer", fake_reviewer),
+            view=_make_view(),
             gate_checker=cast("GateChecker", fake_gate_checker),
         )
 
@@ -428,6 +449,7 @@ class TestReviewRunnerNoProgress:
         fake_reviewer = FakeCodeReviewer()
         runner = ReviewRunner(
             code_reviewer=cast("CodeReviewer", fake_reviewer),
+            view=_make_view(),
             gate_checker=cast("GateChecker", fake_gate_checker),
         )
 
@@ -457,6 +479,7 @@ class TestReviewRunnerNoProgress:
         fake_reviewer = FakeCodeReviewer()
         runner = ReviewRunner(
             code_reviewer=cast("CodeReviewer", fake_reviewer),
+            view=_make_view(),
             gate_checker=None,  # Not set
         )
 
@@ -469,21 +492,6 @@ class TestReviewRunnerNoProgress:
 
         with pytest.raises(ValueError, match="gate_checker must be set"):
             runner.check_no_progress(no_progress_input)
-
-
-class TestReviewRunnerConfig:
-    """Test configuration handling."""
-
-    def test_config_deprecated_fields_still_accepted(self) -> None:
-        """Config should accept deprecated fields for backward compatibility."""
-        config = ReviewRunnerConfig(
-            thinking_mode="high",
-            capture_session_log=True,
-        )
-
-        # These fields are deprecated but still accepted for backward compat
-        assert config.thinking_mode == "high"
-        assert config.capture_session_log is True
 
 
 class TestContextFileCleanup:
@@ -519,7 +527,9 @@ class TestContextFileCleanup:
                 captured_text = context_file.read_text()
                 return FakeReviewResult(passed=True, issues=[])
 
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", CapturingReviewer()))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", CapturingReviewer()), view=_make_view()
+        )
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -570,7 +580,9 @@ class TestContextFileCleanup:
                 assert context_file.exists()
                 return FakeReviewResult(passed=True, issues=[])
 
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", CapturingReviewer()))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", CapturingReviewer()), view=_make_view()
+        )
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -617,7 +629,9 @@ class TestContextFileCleanup:
                 assert context_file.exists()
                 raise RuntimeError("Review failed")
 
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", FailingReviewer()))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", FailingReviewer()), view=_make_view()
+        )
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -642,7 +656,9 @@ class TestContextFileCleanup:
     ) -> None:
         """No cleanup needed when no issue_description provided."""
         fake_reviewer = FakeCodeReviewer()
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", fake_reviewer), view=_make_view()
+        )
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -667,7 +683,9 @@ class TestReviewRunnerInterruptHandling:
     ) -> None:
         """Runner should return interrupted=True when event is set before starting."""
         fake_reviewer = FakeCodeReviewer()
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", fake_reviewer), view=_make_view()
+        )
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -693,7 +711,9 @@ class TestReviewRunnerInterruptHandling:
     ) -> None:
         """Runner should pass interrupt_event to the code reviewer."""
         fake_reviewer = FakeCodeReviewer()
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", fake_reviewer), view=_make_view()
+        )
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -737,7 +757,8 @@ class TestReviewRunnerInterruptHandling:
                 return FakeReviewResult(passed=True, issues=[])
 
         runner = ReviewRunner(
-            code_reviewer=cast("CodeReviewer", InterruptSettingReviewer())
+            code_reviewer=cast("CodeReviewer", InterruptSettingReviewer()),
+            view=_make_view(),
         )
 
         review_input = ReviewInput(
@@ -761,7 +782,9 @@ class TestReviewRunnerInterruptHandling:
     ) -> None:
         """Runner should return interrupted=False when event is never set."""
         fake_reviewer = FakeCodeReviewer()
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", fake_reviewer), view=_make_view()
+        )
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -783,7 +806,9 @@ class TestReviewRunnerInterruptHandling:
     ) -> None:
         """Runner should return interrupted=False when no event provided."""
         fake_reviewer = FakeCodeReviewer()
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", fake_reviewer), view=_make_view()
+        )
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -833,7 +858,9 @@ class TestSessionEndEvidence:
                 captured_text = context_file.read_text()
                 return FakeReviewResult(passed=True, issues=[])
 
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", CapturingReviewer()))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", CapturingReviewer()), view=_make_view()
+        )
 
         session_end = SessionEndResult(status="pass", reason="all checks passed")
         review_input = ReviewInput(
@@ -862,7 +889,9 @@ class TestSessionEndEvidence:
         fake_reviewer = FakeCodeReviewer(
             result=FakeReviewResult(passed=True, issues=[])
         )
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", fake_reviewer), view=_make_view()
+        )
 
         session_end = SessionEndResult(status="fail", reason="gate_failed")
         review_input = ReviewInput(
@@ -910,7 +939,9 @@ class TestSessionEndEvidence:
                     captured_text = context_file.read_text()
                 return FakeReviewResult(passed=True, issues=[])
 
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", CapturingReviewer()))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", CapturingReviewer()), view=_make_view()
+        )
 
         session_end = SessionEndResult(status="skipped", reason="not_configured")
         review_input = ReviewInput(
@@ -937,7 +968,9 @@ class TestSessionEndEvidence:
         fake_reviewer = FakeCodeReviewer(
             result=FakeReviewResult(passed=True, issues=[])
         )
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", fake_reviewer), view=_make_view()
+        )
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -983,7 +1016,9 @@ class TestSessionEndEvidence:
                 captured_text = context_file.read_text()
                 return FakeReviewResult(passed=True, issues=[])
 
-        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", CapturingReviewer()))
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", CapturingReviewer()), view=_make_view()
+        )
 
         cmd_pass = CommandOutcome(
             ref="test",

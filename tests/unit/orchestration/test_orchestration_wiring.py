@@ -155,8 +155,8 @@ class TestBuildGateRunner:
     ) -> None:
         """GateRunner is configured with PipelineConfig values."""
         gate_runner, _ = build_gate_runner(mock_runtime_deps, mock_pipeline_config)
-        assert gate_runner.config.max_gate_retries == 3
-        assert gate_runner.config.disable_validations == {"lint"}
+        assert gate_runner.view.max_gate_retries == 3
+        assert gate_runner.view.disabled_validations == {"lint"}
 
 
 @pytest.mark.unit
@@ -179,8 +179,8 @@ class TestBuildReviewRunner:
     ) -> None:
         """ReviewRunner is configured with values from RuntimeDeps and PipelineConfig."""
         review_runner = build_review_runner(mock_runtime_deps, mock_pipeline_config)
-        assert review_runner.config.max_review_retries == 3
-        assert review_runner.config.review_timeout == 300
+        assert review_runner.view.max_review_retries == 3
+        assert review_runner.view.review_timeout_seconds == 300
 
 
 @pytest.mark.unit
@@ -204,9 +204,9 @@ class TestBuildRunCoordinator:
     ) -> None:
         """RunCoordinator is configured with values from deps and config."""
         run_coordinator = build_run_coordinator(mock_runtime_deps, mock_pipeline_config)
-        assert run_coordinator.config.repo_path == tmp_path
-        assert run_coordinator.config.timeout_seconds == 3600
-        assert run_coordinator.config.max_gate_retries == 3
+        assert run_coordinator.view.repo_path == tmp_path
+        assert run_coordinator.view.timeout_seconds == 3600
+        assert run_coordinator.view.max_gate_retries == 3
 
 
 @pytest.mark.unit
@@ -258,12 +258,18 @@ class TestBuildSessionConfig:
     def test_session_config_uses_pipeline_values(
         self, mock_pipeline_config: PipelineConfig, tmp_path: Path
     ) -> None:
-        """AgentSessionConfig is configured with PipelineConfig values."""
+        """AgentSessionConfig + view are configured with PipelineConfig values.
+
+        Canonical fields (repo_path, timeout_seconds, max_*_retries) live on
+        ``PipelineConfig.agent_session_view``; the slim ``AgentSessionConfig``
+        only carries runner-specific fields (prompts/review_enabled/etc.).
+        """
         session_config = build_session_config(mock_pipeline_config, review_enabled=True)
-        assert session_config.repo_path == tmp_path
-        assert session_config.timeout_seconds == 3600
-        assert session_config.max_gate_retries == 3
-        assert session_config.max_review_retries == 3
+        view = mock_pipeline_config.agent_session_view
+        assert view.repo_path == tmp_path
+        assert view.timeout_seconds == 3600
+        assert view.max_gate_retries == 3
+        assert view.max_review_retries == 3
         assert session_config.review_enabled is True
 
     def test_session_config_review_disabled(

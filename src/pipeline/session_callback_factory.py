@@ -952,6 +952,7 @@ class SessionRunnerAdapters:
         factory = SessionCallbackFactory(...)
         adapters = factory.build_adapters(issue_id)
         runner = AgentSessionRunner(
+            view=view,
             config=config,
             agent_provider=agent_provider,
             gate_runner=adapters.gate_runner,
@@ -1039,9 +1040,6 @@ class _ReviewRunnerAdapter:
             has_tree_changes,
         )
 
-        self._factory._review_runner.config.capture_session_log = (
-            self._factory._is_verbose()
-        )
         commit_shas = await get_issue_commits_async(
             self._factory._repo_path,
             issue_id,

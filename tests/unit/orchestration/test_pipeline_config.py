@@ -13,12 +13,12 @@ import pytest
 
 from src.domain.prompts import PromptProvider
 from src.domain.validation.config_types import PromptValidationCommands
-from src.orchestration.types import (
+from src.orchestration.types import PipelineConfig
+from src.pipeline.config_views import (
     AgentSessionView,
     CumulativeReviewView,
     FixerServiceView,
     GateRunnerView,
-    PipelineConfig,
     ReviewRunnerView,
     RunCoordinatorView,
 )

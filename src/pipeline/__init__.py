@@ -24,7 +24,6 @@ from src.pipeline.epic_verification_coordinator import (
 )
 from src.pipeline.gate_runner import (
     GateRunner,
-    GateRunnerConfig,
     PerSessionGateInput,
     PerSessionGateOutput,
 )
@@ -40,7 +39,6 @@ from src.pipeline.issue_finalizer import (
 )
 from src.pipeline.run_coordinator import (
     RunCoordinator,
-    RunCoordinatorConfig,
     SpecResultBuilder,
 )
 from src.pipeline.session_callback_factory import SessionCallbackFactory
@@ -54,7 +52,6 @@ __all__ = [
     "EpicVerificationConfig",
     "EpicVerificationCoordinator",
     "GateRunner",
-    "GateRunnerConfig",
     "IssueExecutionCoordinator",
     "IssueFinalizeConfig",
     "IssueFinalizeInput",
@@ -63,7 +60,6 @@ __all__ = [
     "PerSessionGateInput",
     "PerSessionGateOutput",
     "RunCoordinator",
-    "RunCoordinatorConfig",
     "SessionCallbackFactory",
     "SpecResultBuilder",
 ]

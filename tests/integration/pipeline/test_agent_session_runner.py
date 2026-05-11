@@ -10,6 +10,7 @@ isinstance checks work correctly in the runner.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path  # noqa: TC003 - used at runtime
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
@@ -23,6 +24,7 @@ from src.core.protocols.agent_event import (
     AgentToolUseEvent,
 )
 
+from src.pipeline.config_views import AgentSessionView
 from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,
@@ -52,6 +54,62 @@ if TYPE_CHECKING:
         SessionConfig,
         SessionExecutionState,
     )
+
+
+@dataclass
+class _SessionPair:
+    """Bundles a view and slim config for AgentSessionRunner construction.
+
+    The legacy ``AgentSessionConfig(repo_path=..., timeout_seconds=...)``
+    now lives on :class:`AgentSessionView`; tests build a ``_SessionPair``
+    via :func:`_session_pair` and pass ``view=pair.view, config=pair.config``
+    to :class:`AgentSessionRunner`.
+    """
+
+    view: AgentSessionView
+    config: AgentSessionConfig
+
+
+def _session_pair(
+    *,
+    repo_path: Path,
+    timeout_seconds: int = 60,
+    prompts: SessionPrompts | None = None,
+    max_gate_retries: int = 3,
+    max_review_retries: int = 2,
+    max_idle_retries: int = 3,
+    idle_timeout_seconds: float | None = None,
+    review_enabled: bool = True,
+    log_file_wait_timeout: float = 60.0,
+    idle_retry_backoff: tuple[float, ...] = (0.0, 5.0, 15.0),
+    lint_tools: frozenset[str] | None = None,
+    mcp_server_factory: McpServerFactory | None = None,
+    strict_resume: bool = False,
+) -> _SessionPair:
+    """Build a (view, slim AgentSessionConfig) pair from legacy kwargs."""
+    view = AgentSessionView(
+        repo_path=repo_path,
+        timeout_seconds=timeout_seconds,
+        prompts=cast("Any", MagicMock()),
+        max_gate_retries=max_gate_retries,
+        max_review_retries=max_review_retries,
+        prompt_validation_commands=PromptValidationCommands(
+            lint="", format="", typecheck="", test="", custom_commands=()
+        ),
+        max_idle_retries=max_idle_retries,
+        idle_timeout_seconds=idle_timeout_seconds,
+        deadlock_monitor=None,
+    )
+    config = AgentSessionConfig(
+        prompts=prompts if prompts is not None else make_test_prompts(),
+        review_enabled=review_enabled,
+        log_file_wait_timeout=log_file_wait_timeout,
+        idle_retry_backoff=idle_retry_backoff,
+        lint_tools=lint_tools,
+        mcp_server_factory=mcp_server_factory,
+        strict_resume=strict_resume,
+    )
+    return _SessionPair(view=view, config=config)
 
 
 def make_noop_mcp_factory() -> McpServerFactory:
@@ -266,9 +324,9 @@ class TestAgentSessionRunnerBasics:
         return log_path
 
     @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+    def session_config(self, tmp_path: Path) -> _SessionPair:
         """Create a session config for testing."""
-        return AgentSessionConfig(
+        return _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -291,7 +349,7 @@ class TestAgentSessionRunnerBasics:
     @pytest.mark.asyncio
     async def test_run_session_returns_output(
         self,
-        session_config: AgentSessionConfig,
+        session_config: _SessionPair,
         fake_factory: FakeSDKClientFactory,
         tmp_log_path: Path,
     ) -> None:
@@ -309,7 +367,8 @@ class TestAgentSessionRunnerBasics:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -332,7 +391,7 @@ class TestAgentSessionRunnerBasics:
     @pytest.mark.asyncio
     async def test_run_session_sends_initial_query(
         self,
-        session_config: AgentSessionConfig,
+        session_config: _SessionPair,
         fake_client: FakeSDKClient,
         fake_factory: FakeSDKClientFactory,
         tmp_log_path: Path,
@@ -351,7 +410,8 @@ class TestAgentSessionRunnerBasics:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -375,7 +435,7 @@ class TestAgentSessionRunnerBasics:
         tmp_path: Path,
     ) -> None:
         """Runner should fail fast when SDK stream is idle."""
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -387,7 +447,8 @@ class TestAgentSessionRunnerBasics:
         fake_factory = FakeSDKClientFactory(fake_client)
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
             session_lifecycle=StubSessionLifecycle(),
@@ -411,7 +472,7 @@ class TestAgentSessionRunnerBasics:
         tmp_log_path: Path,
     ) -> None:
         """Idle watchdog should not trip when messages arrive in time."""
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=5,
             prompts=make_test_prompts(),
@@ -434,7 +495,8 @@ class TestAgentSessionRunnerBasics:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -457,7 +519,7 @@ class TestAgentSessionRunnerBasics:
         tmp_log_path: Path,
     ) -> None:
         """Idle watchdog can be disabled with idle_timeout_seconds=0."""
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=5,
             prompts=make_test_prompts(),
@@ -480,7 +542,8 @@ class TestAgentSessionRunnerBasics:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -508,9 +571,9 @@ class TestAgentSessionRunnerGateHandling:
         return log_path
 
     @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+    def session_config(self, tmp_path: Path) -> _SessionPair:
         """Create a session config for testing."""
-        return AgentSessionConfig(
+        return _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -523,7 +586,7 @@ class TestAgentSessionRunnerGateHandling:
     @pytest.mark.asyncio
     async def test_gate_passed_completes_successfully(
         self,
-        session_config: AgentSessionConfig,
+        session_config: _SessionPair,
         tmp_log_path: Path,
     ) -> None:
         """Runner should complete successfully when gate passes."""
@@ -545,7 +608,8 @@ class TestAgentSessionRunnerGateHandling:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -571,7 +635,7 @@ class TestAgentSessionRunnerGateHandling:
     ) -> None:
         """Runner should fail when gate fails and max retries exhausted."""
         # Set max_gate_retries to 1 so we fail immediately
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -599,7 +663,8 @@ class TestAgentSessionRunnerGateHandling:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -628,9 +693,9 @@ class TestAgentSessionRunnerCallbacks:
         return log_path
 
     @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+    def session_config(self, tmp_path: Path) -> _SessionPair:
         """Create a session config for testing."""
-        return AgentSessionConfig(
+        return _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -643,7 +708,7 @@ class TestAgentSessionRunnerCallbacks:
     @pytest.mark.asyncio
     async def test_works_with_default_protocol_stubs(
         self,
-        session_config: AgentSessionConfig,
+        session_config: _SessionPair,
         tmp_path: Path,
     ) -> None:
         """Runner should work with default protocol stub implementations."""
@@ -656,7 +721,8 @@ class TestAgentSessionRunnerCallbacks:
 
         # Use stub configurations with tmp_path-based log path
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
@@ -685,9 +751,9 @@ class TestAgentSessionRunnerStreamingCallbacks:
         return log_path
 
     @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+    def session_config(self, tmp_path: Path) -> _SessionPair:
         """Create a session config for testing."""
-        return AgentSessionConfig(
+        return _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -700,7 +766,7 @@ class TestAgentSessionRunnerStreamingCallbacks:
     @pytest.mark.asyncio
     async def test_on_tool_use_callback_invoked(
         self,
-        session_config: AgentSessionConfig,
+        session_config: _SessionPair,
         tmp_log_path: Path,
     ) -> None:
         """Runner should invoke on_tool_use callback for tool_use events."""
@@ -732,7 +798,8 @@ class TestAgentSessionRunnerStreamingCallbacks:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -754,7 +821,7 @@ class TestAgentSessionRunnerStreamingCallbacks:
     @pytest.mark.asyncio
     async def test_on_agent_text_callback_invoked(
         self,
-        session_config: AgentSessionConfig,
+        session_config: _SessionPair,
         tmp_log_path: Path,
     ) -> None:
         """Runner should invoke on_agent_text callback for text events."""
@@ -782,7 +849,8 @@ class TestAgentSessionRunnerStreamingCallbacks:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -804,7 +872,7 @@ class TestAgentSessionRunnerStreamingCallbacks:
     @pytest.mark.asyncio
     async def test_streaming_callbacks_optional(
         self,
-        session_config: AgentSessionConfig,
+        session_config: _SessionPair,
         tmp_log_path: Path,
     ) -> None:
         """Runner should work without streaming callbacks (optional)."""
@@ -831,7 +899,8 @@ class TestAgentSessionRunnerStreamingCallbacks:
 
         # No on_tool_use or on_agent_text callbacks
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -1007,9 +1076,9 @@ class TestAgentSessionRunnerEventSink:
         return log_path
 
     @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+    def session_config(self, tmp_path: Path) -> _SessionPair:
         """Create a session config for testing."""
-        return AgentSessionConfig(
+        return _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -1022,7 +1091,7 @@ class TestAgentSessionRunnerEventSink:
     @pytest.mark.asyncio
     async def test_gate_passed_emits_sink_events(
         self,
-        session_config: AgentSessionConfig,
+        session_config: _SessionPair,
         tmp_log_path: Path,
     ) -> None:
         """Runner should emit on_gate_started and on_gate_passed when gate passes."""
@@ -1042,7 +1111,8 @@ class TestAgentSessionRunnerEventSink:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -1097,7 +1167,7 @@ class TestAgentSessionRunnerEventSink:
         tmp_log_path: Path,
     ) -> None:
         """Runner should emit on_gate_started, on_gate_failed, and on_gate_result when gate fails."""
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -1126,7 +1196,8 @@ class TestAgentSessionRunnerEventSink:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -1178,7 +1249,7 @@ class TestAgentSessionRunnerEventSink:
         tmp_log_path: Path,
     ) -> None:
         """Runner should emit on_gate_retry when gate fails and retries are available."""
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -1219,7 +1290,8 @@ class TestAgentSessionRunnerEventSink:
                 )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -1250,7 +1322,7 @@ class TestAgentSessionRunnerEventSink:
     @pytest.mark.asyncio
     async def test_no_sink_events_when_sink_is_none(
         self,
-        session_config: AgentSessionConfig,
+        session_config: _SessionPair,
         tmp_log_path: Path,
     ) -> None:
         """Runner should work without event sink (sink is None)."""
@@ -1269,7 +1341,8 @@ class TestAgentSessionRunnerEventSink:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -1295,7 +1368,7 @@ class TestAgentSessionRunnerEventSink:
         """Runner should emit on_review_started and on_review_passed when review passes."""
         from src.infra.clients.review_output_parser import ReviewResult
 
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -1340,7 +1413,8 @@ class TestAgentSessionRunnerEventSink:
             return ReviewResult(passed=True, issues=[], parse_error=None)
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(on_review=on_review_check),
@@ -1396,7 +1470,7 @@ class TestAgentSessionRunnerEventSink:
         """Runner should emit on_review_retry when review fails and retries are available."""
         from src.infra.clients.review_output_parser import ReviewIssue, ReviewResult
 
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -1471,7 +1545,8 @@ class TestAgentSessionRunnerEventSink:
                 return ReviewResult(passed=True, issues=[], parse_error=None)
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(on_review=on_review_check),
@@ -1528,7 +1603,7 @@ class TestIdleTimeoutRetry:
         # Second client: succeeds immediately
         success_client = FakeSDKClient(result_message=make_result_message())
 
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -1553,7 +1628,8 @@ class TestIdleTimeoutRetry:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -1591,7 +1667,7 @@ class TestIdleTimeoutRetry:
         # Create 3 hanging clients (initial + 2 retries)
         clients = [HangingSDKClient() for _ in range(3)]
 
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -1605,7 +1681,8 @@ class TestIdleTimeoutRetry:
         factory = SequencedSDKClientFactory(clients)
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
             session_lifecycle=StubSessionLifecycle(),
@@ -1637,7 +1714,7 @@ class TestIdleTimeoutRetry:
         # Only 1 client since max_idle_retries=0 means no retries
         client = HangingSDKClient()
 
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -1650,7 +1727,8 @@ class TestIdleTimeoutRetry:
         factory = FakeSDKClientFactory(client)
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
             session_lifecycle=StubSessionLifecycle(),
@@ -1684,7 +1762,7 @@ class TestIdleTimeoutRetry:
         # Second client: succeeds
         success_client = FakeSDKClient(result_message=make_result_message())
 
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -1709,7 +1787,8 @@ class TestIdleTimeoutRetry:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -1751,7 +1830,7 @@ class TestIdleTimeoutRetry:
 
         hanging_client = HangingAfterMessagesSDKClient(messages=[tool_event])
 
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=1,  # Short session timeout for test
             prompts=make_test_prompts(),
@@ -1765,7 +1844,8 @@ class TestIdleTimeoutRetry:
         factory = FakeSDKClientFactory(hanging_client)
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
             session_lifecycle=StubSessionLifecycle(),
@@ -1803,7 +1883,7 @@ class TestIdleTimeoutRetry:
         fake_client = FakeSDKClient(result_message=make_result_message())
         factory = FakeSDKClientFactory(fake_client)
 
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -1824,7 +1904,8 @@ class TestIdleTimeoutRetry:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -1863,7 +1944,7 @@ class TestIdleTimeoutRetry:
         hanging2 = HangingAfterMessagesSDKClient(messages=[result_msg])
         success_client = FakeSDKClient(result_message=make_result_message())
 
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -1888,7 +1969,8 @@ class TestIdleTimeoutRetry:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -1949,7 +2031,7 @@ class TestIdleTimeoutRetry:
         log_path_1.write_text("")
         log_path_2.write_text("")
 
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -2049,7 +2131,8 @@ class TestIdleTimeoutRetry:
                 )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -2085,9 +2168,9 @@ class TestInitializeSession:
     """
 
     @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+    def session_config(self, tmp_path: Path) -> _SessionPair:
         """Create a session config for testing."""
-        return AgentSessionConfig(
+        return _session_pair(
             repo_path=tmp_path,
             timeout_seconds=600,
             prompts=make_test_prompts(),
@@ -2098,11 +2181,12 @@ class TestInitializeSession:
         )
 
     @pytest.fixture
-    def runner(self, session_config: AgentSessionConfig) -> AgentSessionRunner:
+    def runner(self, session_config: _SessionPair) -> AgentSessionRunner:
         """Create a runner for testing initialization."""
         fake_client = FakeSDKClient(result_message=make_result_message())
         return AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
             session_lifecycle=StubSessionLifecycle(),
@@ -2186,7 +2270,7 @@ class TestInitializeSession:
         # Lint cache should be created
         assert session_cfg.lint_cache is not None
         # LintCache stores repo_path as _repo_path (private)
-        assert session_cfg.lint_cache._repo_path == runner.config.repo_path
+        assert session_cfg.lint_cache._repo_path == runner.view.repo_path
 
     @pytest.mark.unit
     def test_initialize_session_computes_idle_timeout(
@@ -2195,7 +2279,7 @@ class TestInitializeSession:
     ) -> None:
         """_initialize_session should compute idle timeout from session timeout."""
         # Test default idle timeout calculation: min(900, max(300, timeout * 0.2))
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=3000,  # 50 min -> derived = 600
             prompts=make_test_prompts(),
@@ -2204,7 +2288,8 @@ class TestInitializeSession:
         )
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
             session_lifecycle=StubSessionLifecycle(),
@@ -2223,7 +2308,7 @@ class TestInitializeSession:
         tmp_path: Path,
     ) -> None:
         """_initialize_session should clamp idle timeout to minimum 300s."""
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=600,  # 10 min -> derived = 120 < 300
             prompts=make_test_prompts(),
@@ -2232,7 +2317,8 @@ class TestInitializeSession:
         )
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
             session_lifecycle=StubSessionLifecycle(),
@@ -2251,7 +2337,7 @@ class TestInitializeSession:
         tmp_path: Path,
     ) -> None:
         """_initialize_session should clamp idle timeout to maximum 900s."""
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=6000,  # 100 min -> derived = 1200 > 900
             prompts=make_test_prompts(),
@@ -2260,7 +2346,8 @@ class TestInitializeSession:
         )
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
             session_lifecycle=StubSessionLifecycle(),
@@ -2279,7 +2366,7 @@ class TestInitializeSession:
         tmp_path: Path,
     ) -> None:
         """_initialize_session should disable idle timeout when set to 0."""
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=600,
             prompts=make_test_prompts(),
@@ -2288,7 +2375,8 @@ class TestInitializeSession:
         )
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
             session_lifecycle=StubSessionLifecycle(),
@@ -2307,7 +2395,7 @@ class TestInitializeSession:
         tmp_path: Path,
     ) -> None:
         """_initialize_session should use explicit idle timeout if provided."""
-        session_config = AgentSessionConfig(
+        session_config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=600,
             prompts=make_test_prompts(),
@@ -2316,7 +2404,8 @@ class TestInitializeSession:
         )
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
             session_lifecycle=StubSessionLifecycle(),
@@ -2337,9 +2426,9 @@ class TestBuildSessionOutput:
     """
 
     @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+    def session_config(self, tmp_path: Path) -> _SessionPair:
         """Create a session config for testing."""
-        return AgentSessionConfig(
+        return _session_pair(
             repo_path=tmp_path,
             timeout_seconds=600,
             prompts=make_test_prompts(),
@@ -2355,11 +2444,12 @@ class TestBuildSessionOutput:
 
     @pytest.fixture
     def runner(
-        self, session_config: AgentSessionConfig, mock_sdk_client_factory: MagicMock
+        self, session_config: _SessionPair, mock_sdk_client_factory: MagicMock
     ) -> AgentSessionRunner:
         """Create a runner for testing output building."""
         return AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
@@ -2938,9 +3028,9 @@ class TestCheckReviewNoProgress:
     """Unit tests for LifecycleEffectHandler.check_review_no_progress."""
 
     @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+    def session_config(self, tmp_path: Path) -> _SessionPair:
         """Create a session config for testing."""
-        return AgentSessionConfig(
+        return _session_pair(
             repo_path=tmp_path,
             timeout_seconds=600,
             prompts=make_test_prompts(),
@@ -2965,7 +3055,7 @@ class TestCheckReviewNoProgress:
     @pytest.mark.unit
     def test_returns_none_on_first_attempt(
         self,
-        session_config: AgentSessionConfig,
+        session_config: _SessionPair,
         tmp_log_path: Path,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
@@ -2982,7 +3072,8 @@ class TestCheckReviewNoProgress:
             raise AssertionError("Should not be called")
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(on_check_no_progress=on_review_no_progress),
@@ -3002,7 +3093,7 @@ class TestCheckReviewNoProgress:
     @pytest.mark.unit
     def test_returns_none_when_callback_not_set(
         self,
-        session_config: AgentSessionConfig,
+        session_config: _SessionPair,
         tmp_log_path: Path,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
@@ -3014,7 +3105,8 @@ class TestCheckReviewNoProgress:
         )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
@@ -3034,7 +3126,7 @@ class TestCheckReviewNoProgress:
     @pytest.mark.unit
     def test_returns_none_when_progress_detected(
         self,
-        session_config: AgentSessionConfig,
+        session_config: _SessionPair,
         tmp_log_path: Path,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
@@ -3052,7 +3144,8 @@ class TestCheckReviewNoProgress:
             return False
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(on_check_no_progress=on_review_no_progress),
@@ -3077,7 +3170,7 @@ class TestCheckReviewNoProgress:
     @pytest.mark.unit
     def test_returns_result_on_no_progress(
         self,
-        session_config: AgentSessionConfig,
+        session_config: _SessionPair,
         tmp_log_path: Path,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
@@ -3098,7 +3191,8 @@ class TestCheckReviewNoProgress:
             return True
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(mock_sdk_client_factory),
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(on_check_no_progress=on_review_no_progress),
@@ -3144,9 +3238,9 @@ class TestRunLifecycleLoop:
         return log_path
 
     @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+    def session_config(self, tmp_path: Path) -> _SessionPair:
         """Create a session config for testing."""
-        return AgentSessionConfig(
+        return _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -3160,7 +3254,7 @@ class TestRunLifecycleLoop:
     @pytest.mark.unit
     async def test_run_lifecycle_loop_completes_on_gate_pass(
         self,
-        session_config: AgentSessionConfig,
+        session_config: _SessionPair,
         tmp_log_path: Path,
     ) -> None:
         """_run_lifecycle_loop should complete when gate passes."""
@@ -3192,7 +3286,8 @@ class TestRunLifecycleLoop:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -3203,7 +3298,7 @@ class TestRunLifecycleLoop:
         session_cfg = SessionConfig(
             agent_id="test-loop-abc",
             runtime=MagicMock(),  # Mock SDK options
-            lint_cache=LintCache(repo_path=session_config.repo_path),
+            lint_cache=LintCache(repo_path=session_config.view.repo_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
             idle_timeout_seconds=None,
@@ -3230,7 +3325,7 @@ class TestRunLifecycleLoop:
     @pytest.mark.unit
     async def test_run_lifecycle_loop_fails_without_session_id(
         self,
-        session_config: AgentSessionConfig,
+        session_config: _SessionPair,
     ) -> None:
         """_run_lifecycle_loop should fail if no session_id received."""
         from src.pipeline.agent_session_runner import (
@@ -3256,7 +3351,8 @@ class TestRunLifecycleLoop:
         fake_factory = FakeSDKClientFactory(fake_client)
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
@@ -3266,7 +3362,7 @@ class TestRunLifecycleLoop:
         session_cfg = SessionConfig(
             agent_id="test-no-session",
             runtime=MagicMock(),  # Mock SDK options
-            lint_cache=LintCache(repo_path=session_config.repo_path),
+            lint_cache=LintCache(repo_path=session_config.view.repo_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
             idle_timeout_seconds=None,
@@ -3293,7 +3389,7 @@ class TestRunLifecycleLoop:
     @pytest.mark.unit
     async def test_run_lifecycle_loop_emits_lifecycle_state_events(
         self,
-        session_config: AgentSessionConfig,
+        session_config: _SessionPair,
         tmp_log_path: Path,
     ) -> None:
         """_run_lifecycle_loop should emit lifecycle state change events."""
@@ -3324,7 +3420,8 @@ class TestRunLifecycleLoop:
             )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            view=session_config.view,
+            config=session_config.config,
             agent_provider=FakeAgentProvider(fake_factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -3335,7 +3432,7 @@ class TestRunLifecycleLoop:
         session_cfg = SessionConfig(
             agent_id="test-events-abc",
             runtime=MagicMock(),  # Mock SDK options
-            lint_cache=LintCache(repo_path=session_config.repo_path),
+            lint_cache=LintCache(repo_path=session_config.view.repo_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
             idle_timeout_seconds=None,
@@ -3469,7 +3566,7 @@ class TestResumeSessionId:
                 1000,
             )
 
-        config = AgentSessionConfig(
+        config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=120,
             prompts=make_test_prompts(),
@@ -3478,7 +3575,8 @@ class TestResumeSessionId:
         )
 
         runner = AgentSessionRunner(
-            config=config,
+            view=config.view,
+            config=config.config,
             agent_provider=FakeAgentProvider(factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -3533,7 +3631,7 @@ class TestResumeSessionId:
                 1000,
             )
 
-        config = AgentSessionConfig(
+        config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=120,
             prompts=make_test_prompts(),
@@ -3542,7 +3640,8 @@ class TestResumeSessionId:
         )
 
         runner = AgentSessionRunner(
-            config=config,
+            view=config.view,
+            config=config.config,
             agent_provider=FakeAgentProvider(factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -3619,7 +3718,7 @@ class TestResumeSessionId:
                 1000,
             )
 
-        config = AgentSessionConfig(
+        config = _session_pair(
             repo_path=tmp_path,
             timeout_seconds=120,
             prompts=make_test_prompts(),
@@ -3629,7 +3728,8 @@ class TestResumeSessionId:
         )
 
         runner = AgentSessionRunner(
-            config=config,
+            view=config.view,
+            config=config.config,
             agent_provider=FakeAgentProvider(factory),
             gate_runner=StubGateRunner(on_gate_check=on_gate_check),
             review_runner=StubReviewRunner(),
@@ -3680,7 +3780,7 @@ class TestLocalSettingsIntegration:
     """
 
     @pytest.fixture
-    def session_config_with_local_settings(self, tmp_path: Path) -> AgentSessionConfig:
+    def session_config_with_local_settings(self, tmp_path: Path) -> _SessionPair:
         """Create session config with .claude/settings.local.json.
 
         Creates a settings file with a distinct timeout value (300) that can
@@ -3697,7 +3797,7 @@ class TestLocalSettingsIntegration:
         settings_file = claude_dir / "settings.local.json"
         settings_file.write_text(json.dumps({"timeout": 300}))
 
-        return AgentSessionConfig(
+        return _session_pair(
             repo_path=tmp_path,
             timeout_seconds=60,
             prompts=make_test_prompts(),
@@ -3710,7 +3810,7 @@ class TestLocalSettingsIntegration:
     @pytest.mark.integration
     def test_agent_session_runner_respects_local_settings(
         self,
-        session_config_with_local_settings: AgentSessionConfig,
+        session_config_with_local_settings: _SessionPair,
         caplog: pytest.LogCaptureFixture,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -3798,7 +3898,8 @@ class TestLocalSettingsIntegration:
         hybrid_factory = HybridSDKClientFactory()
 
         runner = AgentSessionRunner(
-            config=session_config_with_local_settings,
+            view=session_config_with_local_settings.view,
+            config=session_config_with_local_settings.config,
             gate_runner=StubGateRunner(),
             review_runner=StubReviewRunner(),
             session_lifecycle=StubSessionLifecycle(),
@@ -3848,7 +3949,7 @@ class TestLocalSettingsIntegration:
 
         assert options.cwd is not None, "SDK options must have cwd set"
         sdk_cwd = Path(options.cwd)
-        repo_path = session_config_with_local_settings.repo_path
+        repo_path = session_config_with_local_settings.view.repo_path
 
         assert sdk_cwd.resolve() == repo_path.resolve(), (
             f"SDK cwd must equal config repo_path. "

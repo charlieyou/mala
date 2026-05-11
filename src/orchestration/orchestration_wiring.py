@@ -22,24 +22,17 @@ from src.pipeline.agent_session_runner import AgentSessionConfig, SessionPrompts
 from src.pipeline.gate_runner import (
     AsyncGateRunner,
     GateRunner,
-    GateRunnerConfig,
 )
-from src.pipeline.review_runner import (
-    ReviewRunner,
-    ReviewRunnerConfig,
-)
+from src.pipeline.review_runner import ReviewRunner
 from src.pipeline.session_callback_factory import SessionCallbackFactory
 from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
 )
-from src.pipeline.run_coordinator import (
-    RunCoordinator,
-    RunCoordinatorConfig,
-)
+from src.pipeline.run_coordinator import RunCoordinator
 from src.pipeline.cumulative_review_runner import CumulativeReviewRunner
 from src.pipeline.trigger_engine import TriggerEngine
-from src.pipeline.fixer_service import FixerService, FixerServiceConfig
+from src.pipeline.fixer_service import FixerService
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -56,16 +49,9 @@ def build_gate_runner(
     runtime: RuntimeDeps, pipeline: PipelineConfig
 ) -> tuple[GateRunner, AsyncGateRunner]:
     """Build GateRunner and AsyncGateRunner."""
-    config = GateRunnerConfig(
-        max_gate_retries=pipeline.max_gate_retries,
-        disable_validations=pipeline.disabled_validations,
-        validation_config=pipeline.validation_config,
-        validation_config_missing=pipeline.validation_config_missing,
-    )
     gate_runner = GateRunner(
         gate_checker=runtime.evidence_check,
-        repo_path=pipeline.repo_path,
-        config=config,
+        view=pipeline.gate_runner_view,
     )
     async_gate_runner = AsyncGateRunner(gate_runner=gate_runner)
     return gate_runner, async_gate_runner
@@ -73,14 +59,9 @@ def build_gate_runner(
 
 def build_review_runner(runtime: RuntimeDeps, pipeline: PipelineConfig) -> ReviewRunner:
     """Build ReviewRunner."""
-    config = ReviewRunnerConfig(
-        max_review_retries=pipeline.max_review_retries,
-        capture_session_log=False,
-        review_timeout=pipeline.review_timeout_seconds,
-    )
     return ReviewRunner(
         code_reviewer=runtime.code_reviewer,
-        config=config,
+        view=pipeline.review_runner_view,
         gate_checker=runtime.evidence_check,
     )
 
@@ -97,7 +78,7 @@ def build_cumulative_review_runner(
     # Build ReviewRunner for code reviews
     review_runner = ReviewRunner(
         code_reviewer=runtime.code_reviewer,
-        config=ReviewRunnerConfig(review_timeout=pipeline.review_timeout_seconds),
+        view=pipeline.review_runner_view,
         gate_checker=runtime.evidence_check,
     )
 
@@ -125,31 +106,15 @@ def build_run_coordinator(
     ``coder=amp``, ``runtime.agent_provider`` is the ``AmpAgentProvider``, so
     fixer subprocesses are also spawned via Amp (per plan L165, AC#5).
     """
-    config = RunCoordinatorConfig(
-        repo_path=pipeline.repo_path,
-        timeout_seconds=pipeline.timeout_seconds,
-        max_gate_retries=pipeline.max_gate_retries,
-        disable_validations=pipeline.disabled_validations,
-        fixer_prompt=pipeline.prompts.fixer_prompt,
-        mcp_server_factory=mcp_server_factory,
-        validation_config=pipeline.validation_config,
-        validation_config_missing=pipeline.validation_config_missing,
-    )
-
     # Build TriggerEngine for trigger policy evaluation
     trigger_engine = TriggerEngine(pipeline.validation_config)
 
     # Build FixerService for spawning fixer agents - same provider as main run
     # so fixers spawn whichever coder the main run uses (plan L165, AC#5).
-    fixer_config = FixerServiceConfig(
-        repo_path=pipeline.repo_path,
-        timeout_seconds=pipeline.timeout_seconds,
-        fixer_prompt=pipeline.prompts.fixer_prompt,
-        mcp_server_factory=mcp_server_factory,
-    )
     fixer_service = FixerService(
-        config=fixer_config,
+        view=pipeline.fixer_service_view,
         agent_provider=runtime.agent_provider,
+        mcp_server_factory=mcp_server_factory,
         event_sink=runtime.event_sink,
     )
 
@@ -157,7 +122,7 @@ def build_run_coordinator(
     cumulative_review_runner = build_cumulative_review_runner(runtime, pipeline)
 
     return RunCoordinator(
-        config=config,
+        view=pipeline.run_coordinator_view,
         gate_checker=runtime.evidence_check,
         command_runner=runtime.command_runner,
         env_config=runtime.env_config,
@@ -232,7 +197,12 @@ def build_session_config(
     mcp_server_factory: Callable | None = None,
     strict_resume: bool = False,
 ) -> AgentSessionConfig:
-    """Build AgentSessionConfig for agent sessions."""
+    """Build AgentSessionConfig for agent sessions.
+
+    Returns only the runner-specific fields. Canonical PipelineConfig fields
+    (repo_path, timeout_seconds, retry limits, etc.) are read at runtime from
+    ``pipeline.agent_session_view``.
+    """
     prompts = SessionPrompts(
         gate_followup=pipeline.prompts.gate_followup_prompt,
         review_followup=pipeline.prompts.review_followup_prompt,
@@ -241,17 +211,9 @@ def build_session_config(
         continuation=pipeline.prompts.continuation_prompt,
     )
     return AgentSessionConfig(
-        repo_path=pipeline.repo_path,
-        timeout_seconds=pipeline.timeout_seconds,
         prompts=prompts,
-        max_gate_retries=pipeline.max_gate_retries,
-        max_review_retries=pipeline.max_review_retries,
         review_enabled=review_enabled,
         lint_tools=None,  # Set at run start
-        prompt_validation_commands=pipeline.prompt_validation_commands,
-        max_idle_retries=pipeline.max_idle_retries,
-        idle_timeout_seconds=pipeline.idle_timeout_seconds,
-        deadlock_monitor=pipeline.deadlock_monitor,
         mcp_server_factory=mcp_server_factory,
         strict_resume=strict_resume,
     )

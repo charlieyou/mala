@@ -11,12 +11,16 @@ fake SDK clients, similar to tests/integration/pipeline/test_agent_session_runne
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 from src.core.protocols.agent_event import AgentResultEvent
 
 from src.domain.evidence_check import GateResult
+from src.domain.validation.config_types import PromptValidationCommands
+from src.pipeline.config_views import AgentSessionView
 from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,
@@ -40,6 +44,56 @@ if TYPE_CHECKING:
     from src.core.protocols.sdk import McpServerFactory
     from src.core.session_end_result import SessionEndRetryState
     from src.domain.lifecycle import RetryState
+
+
+@dataclass
+class _SessionPair:
+    """Bundles a view and slim config for AgentSessionRunner construction."""
+
+    view: AgentSessionView
+    config: AgentSessionConfig
+
+
+def _session_pair(
+    *,
+    repo_path: Path,
+    timeout_seconds: int = 60,
+    prompts: SessionPrompts | None = None,
+    max_gate_retries: int = 3,
+    max_review_retries: int = 3,
+    max_idle_retries: int = 3,
+    idle_timeout_seconds: float | None = None,
+    review_enabled: bool = True,
+    log_file_wait_timeout: float = 60.0,
+    idle_retry_backoff: tuple[float, ...] = (0.0, 5.0, 15.0),
+    lint_tools: frozenset[str] | None = None,
+    mcp_server_factory: McpServerFactory | None = None,
+    strict_resume: bool = False,
+) -> _SessionPair:
+    """Build a (view, slim AgentSessionConfig) pair from legacy kwargs."""
+    view = AgentSessionView(
+        repo_path=repo_path,
+        timeout_seconds=timeout_seconds,
+        prompts=cast("Any", MagicMock()),
+        max_gate_retries=max_gate_retries,
+        max_review_retries=max_review_retries,
+        prompt_validation_commands=PromptValidationCommands(
+            lint="", format="", typecheck="", test="", custom_commands=()
+        ),
+        max_idle_retries=max_idle_retries,
+        idle_timeout_seconds=idle_timeout_seconds,
+        deadlock_monitor=None,
+    )
+    config = AgentSessionConfig(
+        prompts=prompts if prompts is not None else make_test_prompts(),
+        review_enabled=review_enabled,
+        log_file_wait_timeout=log_file_wait_timeout,
+        idle_retry_backoff=idle_retry_backoff,
+        lint_tools=lint_tools,
+        mcp_server_factory=mcp_server_factory,
+        strict_resume=strict_resume,
+    )
+    return _SessionPair(view=view, config=config)
 
 
 def make_noop_mcp_factory() -> McpServerFactory:
@@ -97,9 +151,9 @@ def tmp_log_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def session_config(tmp_path: Path) -> AgentSessionConfig:
+def session_config(tmp_path: Path) -> _SessionPair:
     """Create an AgentSessionConfig for testing."""
-    return AgentSessionConfig(
+    return _session_pair(
         repo_path=tmp_path,
         timeout_seconds=60,
         prompts=make_test_prompts(),
@@ -180,7 +234,7 @@ class FakeEventSink(MalaEventSink):
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_session_end_invoked_after_gate_passes(
-    session_config: AgentSessionConfig,
+    session_config: _SessionPair,
     fake_agent_provider: FakeAgentProvider,
     tmp_log_path: Path,
 ) -> None:
@@ -215,7 +269,8 @@ async def test_session_end_invoked_after_gate_passes(
         return SessionEndResult(status="skipped", reason="not_implemented")
 
     runner = AgentSessionRunner(
-        config=session_config,
+        view=session_config.view,
+        config=session_config.config,
         agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
@@ -261,7 +316,7 @@ async def test_session_end_invoked_after_gate_passes(
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_session_end_completed_event_on_pass(
-    session_config: AgentSessionConfig,
+    session_config: _SessionPair,
     fake_agent_provider: FakeAgentProvider,
     tmp_log_path: Path,
 ) -> None:
@@ -289,7 +344,8 @@ async def test_session_end_completed_event_on_pass(
         return SessionEndResult(status="pass")
 
     runner = AgentSessionRunner(
-        config=session_config,
+        view=session_config.view,
+        config=session_config.config,
         agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
@@ -313,7 +369,7 @@ async def test_session_end_completed_event_on_pass(
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_session_end_not_invoked_when_gate_fails(
-    session_config: AgentSessionConfig,
+    session_config: _SessionPair,
     fake_agent_provider: FakeAgentProvider,
     tmp_log_path: Path,
 ) -> None:
@@ -345,10 +401,10 @@ async def test_session_end_not_invoked_when_gate_fails(
         return SessionEndResult(status="skipped", reason="not_implemented")
 
     # Use 0 retries so the gate fails immediately
-    config_no_retries = AgentSessionConfig(
-        repo_path=session_config.repo_path,
-        timeout_seconds=session_config.timeout_seconds,
-        prompts=session_config.prompts,
+    config_no_retries = _session_pair(
+        repo_path=session_config.view.repo_path,
+        timeout_seconds=session_config.view.timeout_seconds,
+        prompts=session_config.config.prompts,
         max_gate_retries=0,
         max_review_retries=0,
         review_enabled=False,
@@ -356,7 +412,8 @@ async def test_session_end_not_invoked_when_gate_fails(
     )
 
     runner = AgentSessionRunner(
-        config=config_no_retries,
+        view=config_no_retries.view,
+        config=config_no_retries.config,
         agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
@@ -386,7 +443,7 @@ async def test_session_end_not_invoked_when_gate_fails(
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_session_end_timeout_scenario(
-    session_config: AgentSessionConfig,
+    session_config: _SessionPair,
     fake_agent_provider: FakeAgentProvider,
     tmp_log_path: Path,
 ) -> None:
@@ -426,7 +483,8 @@ async def test_session_end_timeout_scenario(
         )
 
     runner = AgentSessionRunner(
-        config=session_config,
+        view=session_config.view,
+        config=session_config.config,
         agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
@@ -468,7 +526,7 @@ async def test_session_end_timeout_scenario(
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_session_end_interrupt_scenario(
-    session_config: AgentSessionConfig,
+    session_config: _SessionPair,
     fake_agent_provider: FakeAgentProvider,
     tmp_log_path: Path,
 ) -> None:
@@ -507,7 +565,8 @@ async def test_session_end_interrupt_scenario(
         )
 
     runner = AgentSessionRunner(
-        config=session_config,
+        view=session_config.view,
+        config=session_config.config,
         agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
@@ -586,7 +645,7 @@ async def test_session_end_timeout_proceeds_to_review_with_correct_result(
     review_check_called = False
 
     # Enable review to verify integration
-    config_with_review = AgentSessionConfig(
+    config_with_review = _session_pair(
         repo_path=tmp_path,
         timeout_seconds=60,
         prompts=make_test_prompts(),
@@ -634,7 +693,8 @@ async def test_session_end_timeout_proceeds_to_review_with_correct_result(
         return FakeReviewOutcome(passed=True)
 
     runner = AgentSessionRunner(
-        config=config_with_review,
+        view=config_with_review.view,
+        config=config_with_review.config,
         agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check
@@ -729,7 +789,7 @@ async def test_mixed_outcomes_both_proceed_to_review(
     review_calls: list[tuple[str, SessionEndResult | None]] = []
 
     # Enable review
-    config_with_review = AgentSessionConfig(
+    config_with_review = _session_pair(
         repo_path=tmp_path,
         timeout_seconds=60,
         prompts=make_test_prompts(),
@@ -774,7 +834,8 @@ async def test_mixed_outcomes_both_proceed_to_review(
         return FakeReviewOutcome(passed=True)
 
     runner = AgentSessionRunner(
-        config=config_with_review,
+        view=config_with_review.view,
+        config=config_with_review.config,
         agent_provider=fake_agent_provider,
         gate_runner=StubGateRunner(
             on_gate_check=on_gate_check, on_session_end_check=on_session_end_check

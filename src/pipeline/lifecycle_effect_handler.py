@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     )
     from src.domain.validation.config_types import PromptValidationCommands
     from src.core.session_end_result import SessionEndResult
+    from src.pipeline.config_views import AgentSessionView
 
     from .agent_session_runner import (
         AgentSessionConfig,
@@ -275,6 +276,7 @@ class LifecycleEffectHandler:
 
     Usage:
         handler = LifecycleEffectHandler(
+            view=view,
             config=config,
             event_sink=event_sink,
             gate_runner=gate_runner_impl,
@@ -286,13 +288,15 @@ class LifecycleEffectHandler:
         review_effect = handler.process_review_effect(...)
 
     Attributes:
-        config: Session configuration with prompts and retry limits.
+        view: Narrow view of PipelineConfig (canonical session fields).
+        config: Runner-specific session configuration (prompts, etc.).
         event_sink: Optional event sink for structured logging.
         gate_runner: Protocol for gate checking operations (required).
         review_runner: Protocol for review operations (required).
         session_lifecycle: Protocol for session lifecycle operations (required).
     """
 
+    view: AgentSessionView
     config: AgentSessionConfig
     gate_runner: IGateRunner
     review_runner: IReviewRunner
@@ -322,7 +326,7 @@ class LifecycleEffectHandler:
             self.event_sink.on_gate_started(
                 input.issue_id,
                 lifecycle_ctx.retry_state.gate_attempt,
-                self.config.max_gate_retries,
+                self.view.max_gate_retries,
                 issue_id=input.issue_id,
             )
 
@@ -357,7 +361,7 @@ class LifecycleEffectHandler:
                 self.event_sink.on_gate_failed(
                     input.issue_id,
                     lifecycle_ctx.retry_state.gate_attempt,
-                    self.config.max_gate_retries,
+                    self.view.max_gate_retries,
                     issue_id=input.issue_id,
                 )
                 self.event_sink.on_gate_result(
@@ -378,7 +382,7 @@ class LifecycleEffectHandler:
                 self.event_sink.on_gate_retry(
                     input.issue_id,
                     lifecycle_ctx.retry_state.gate_attempt,
-                    self.config.max_gate_retries,
+                    self.view.max_gate_retries,
                     issue_id=input.issue_id,
                 )
                 self.event_sink.on_gate_result(
@@ -398,17 +402,17 @@ class LifecycleEffectHandler:
             failure_text = "\n".join(f"- {r}" for r in gate_result.failure_reasons)
             # Get validation commands or use defaults
             cmds = (
-                self.config.prompt_validation_commands
+                self.view.prompt_validation_commands
                 or _get_default_validation_commands()
             )
-            validation_log_dir = get_repo_validation_log_dir(self.config.repo_path)
+            validation_log_dir = get_repo_validation_log_dir(self.view.repo_path)
             # Until the parser surfaces a per-command evidence map (T003), the
             # follow-up rerun the full configured validation suite.
             missing_commands = commands_for_gate_followup(cmds)
             pending_query = format_gate_followup_prompt(
                 self.config.prompts.gate_followup,
                 attempt=lifecycle_ctx.retry_state.gate_attempt,
-                max_attempts=self.config.max_gate_retries,
+                max_attempts=self.view.max_gate_retries,
                 failure_reasons=failure_text,
                 issue_id=input.issue_id,
                 missing_commands=missing_commands,
@@ -585,7 +589,7 @@ class LifecycleEffectHandler:
             self.event_sink.on_review_started(
                 input.issue_id,
                 lifecycle_ctx.retry_state.review_attempt,
-                self.config.max_review_retries,
+                self.view.max_review_retries,
                 issue_id=input.issue_id,
             )
 
@@ -623,7 +627,7 @@ class LifecycleEffectHandler:
             result,
             review_result,
             lifecycle_ctx,
-            self.config.max_review_retries,
+            self.view.max_review_retries,
             blocking,
         )
 
@@ -631,15 +635,15 @@ class LifecycleEffectHandler:
         pending_query = None
         if result.effect == Effect.SEND_REVIEW_RETRY:
             cmds = (
-                self.config.prompt_validation_commands
+                self.view.prompt_validation_commands
                 or _get_default_validation_commands()
             )
             pending_query = _build_review_retry_prompt(
                 review_result,
                 lifecycle_ctx,
                 input.issue_id,
-                self.config.repo_path,
-                self.config.max_review_retries,
+                self.view.repo_path,
+                self.view.max_review_retries,
                 self.config.prompts.review_followup,
                 cmds,
             )

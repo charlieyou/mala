@@ -40,23 +40,8 @@ if TYPE_CHECKING:
         GateResultProtocol,
         ValidationSpecProtocol,
     )
-    from src.domain.validation.config_types import ValidationConfig
+    from src.pipeline.config_views import GateRunnerView
     from src.domain.validation.spec import ValidationSpec
-
-
-@dataclass
-class GateRunnerConfig:
-    """Configuration for GateRunner behavior.
-
-    Attributes:
-        max_gate_retries: Maximum number of gate retry attempts.
-        disable_validations: Set of validation names to disable.
-    """
-
-    max_gate_retries: int = 3
-    disable_validations: set[str] | None = None
-    validation_config: ValidationConfig | None = None
-    validation_config_missing: bool = False
 
 
 @dataclass
@@ -110,21 +95,19 @@ class GateRunner:
     Usage:
         runner = GateRunner(
             gate_checker=evidence_check,
-            repo_path=repo_path,
-            config=GateRunnerConfig(max_gate_retries=3),
+            view=pipeline.gate_runner_view,
         )
         output = runner.run_per_session_gate(input)
 
     Attributes:
         gate_checker: GateChecker implementation for running checks.
-        repo_path: Path to the repository.
-        config: Configuration for gate behavior.
+        view: Narrow view of PipelineConfig with repo_path, max_gate_retries,
+            disabled_validations, validation_config, validation_config_missing.
         per_session_spec: Cached per-session ValidationSpec (built lazily).
     """
 
     gate_checker: GateChecker
-    repo_path: Path
-    config: GateRunnerConfig = field(default_factory=GateRunnerConfig)
+    view: GateRunnerView
     per_session_spec: ValidationSpec | None = field(default=None, init=False)
 
     def _get_or_build_spec(
@@ -144,11 +127,11 @@ class GateRunner:
         # Build and cache per-session spec if not already cached
         if self.per_session_spec is None:
             self.per_session_spec = build_validation_spec(
-                self.repo_path,
+                self.view.repo_path,
                 scope=ValidationScope.PER_SESSION,
-                disable_validations=self.config.disable_validations,
-                validation_config=self.config.validation_config,
-                config_missing=self.config.validation_config_missing,
+                disable_validations=self.view.disabled_validations,
+                validation_config=self.view.validation_config,
+                config_missing=self.view.validation_config_missing,
             )
         return self.per_session_spec
 
@@ -273,7 +256,7 @@ class AsyncGateRunner:
     - last_gate_results: Most recent gate results per issue
 
     Usage:
-        gate_runner = GateRunner(gate_checker=..., repo_path=..., config=...)
+        gate_runner = GateRunner(gate_checker=..., view=...)
         async_runner = AsyncGateRunner(gate_runner=gate_runner)
         result, offset = await async_runner.run_gate_async(issue_id, log_path, retry_state)
     """

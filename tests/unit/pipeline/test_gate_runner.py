@@ -10,9 +10,9 @@ from typing import cast
 import pytest
 
 from src.domain.lifecycle import RetryState
+from src.pipeline.config_views import GateRunnerView
 from src.pipeline.gate_runner import (
     GateRunner,
-    GateRunnerConfig,
     PerSessionGateInput,
 )
 from src.core.protocols.validation import GateChecker  # noqa: TC001 - needed at runtime for cast()
@@ -24,6 +24,22 @@ from src.domain.validation.spec import (
     ValidationSpec,
 )
 from tests.fakes.gate_checker import FakeGateChecker
+
+
+def _make_view(
+    repo_path: Path,
+    *,
+    max_gate_retries: int = 3,
+    disabled_validations: set[str] | None = None,
+) -> GateRunnerView:
+    """Build a GateRunnerView for tests with the given repo_path."""
+    return GateRunnerView(
+        repo_path=repo_path,
+        max_gate_retries=max_gate_retries,
+        disabled_validations=disabled_validations,
+        validation_config=None,
+        validation_config_missing=False,
+    )
 
 
 class TestPerSessionGate:
@@ -54,8 +70,7 @@ class TestPerSessionGate:
         """Create a GateRunner with fake dependencies."""
         return GateRunner(
             gate_checker=cast("GateChecker", fake_checker),
-            repo_path=tmp_path,
-            config=GateRunnerConfig(max_gate_retries=3),
+            view=_make_view(tmp_path),
         )
 
     def test_run_per_session_gate_returns_gate_result(
@@ -233,8 +248,7 @@ class TestSpecCaching:
         """Create a GateRunner with fake dependencies."""
         return GateRunner(
             gate_checker=cast("GateChecker", fake_checker),
-            repo_path=tmp_path,
-            config=GateRunnerConfig(max_gate_retries=3),
+            view=_make_view(tmp_path),
         )
 
     def test_builds_spec_when_not_provided(

@@ -7,6 +7,7 @@ without subprocess dependencies.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,12 +17,10 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
-from src.pipeline.run_coordinator import (
-    RunCoordinator,
-    RunCoordinatorConfig,
-)
+from src.pipeline.config_views import FixerServiceView, RunCoordinatorView
+from src.pipeline.run_coordinator import RunCoordinator
 from src.pipeline.fixer_interface import FixerResult
-from src.pipeline.fixer_service import FixerService, FixerServiceConfig
+from src.pipeline.fixer_service import FixerService
 from src.pipeline.trigger_engine import TriggerEngine
 from tests.fakes import FakeEnvConfig
 from tests.fakes.agent_provider import FakeAgentProvider
@@ -29,8 +28,44 @@ from tests.fakes.command_runner import FakeCommandRunner
 from tests.fakes.lock_manager import FakeLockManager
 
 
+def _make_run_coordinator_view(
+    *,
+    repo_path: Path,
+    timeout_seconds: int = 60,
+    fixer_prompt: str = "Fix: {failure_output}",
+    max_gate_retries: int = 3,
+    disabled_validations: set[str] | None = None,
+    validation_config: Any = None,  # noqa: ANN401
+    validation_config_missing: bool = False,
+) -> RunCoordinatorView:
+    """Build a ``RunCoordinatorView`` with sensible defaults for tests."""
+    return RunCoordinatorView(
+        repo_path=repo_path,
+        timeout_seconds=timeout_seconds,
+        max_gate_retries=max_gate_retries,
+        disabled_validations=disabled_validations,
+        fixer_prompt=fixer_prompt,
+        validation_config=validation_config,
+        validation_config_missing=validation_config_missing,
+    )
+
+
+def _make_fixer_service_view(
+    *,
+    repo_path: Path,
+    timeout_seconds: int = 60,
+    fixer_prompt: str = "Fix attempt {attempt}/{max_attempts}: {failure_output}",
+) -> FixerServiceView:
+    """Build a ``FixerServiceView`` for tests."""
+    return FixerServiceView(
+        repo_path=repo_path,
+        timeout_seconds=timeout_seconds,
+        fixer_prompt=fixer_prompt,
+    )
+
+
 def _make_coordinator(
-    config: RunCoordinatorConfig,
+    config: RunCoordinatorView,
     gate_checker: Any,  # noqa: ANN401
     command_runner: Any,  # noqa: ANN401
     env_config: Any,  # noqa: ANN401
@@ -42,15 +77,19 @@ def _make_coordinator(
     trigger_engine: TriggerEngine | None = None,
     fixer_service: Any = None,  # noqa: ANN401
 ) -> RunCoordinator:
-    """Helper to construct RunCoordinator with required deps for tests."""
+    """Helper to construct RunCoordinator with required deps for tests.
+
+    The ``config`` parameter accepts a :class:`RunCoordinatorView` (the
+    historical name is preserved for compatibility with existing call sites).
+    """
     if trigger_engine is None:
-        # Use validation_config from RunCoordinatorConfig if available
+        # Use validation_config from the view if available
         trigger_engine = TriggerEngine(validation_config=config.validation_config)
     if fixer_service is None:
         fixer_service = MagicMock(spec=FixerService)
         fixer_service.cleanup_locks = MagicMock()
     return RunCoordinator(
-        config=config,
+        view=config,
         gate_checker=gate_checker,
         command_runner=command_runner,
         env_config=env_config,
@@ -125,13 +164,9 @@ class TestFixerInterruptHandling:
         fake_agent_provider: FakeAgentProvider,
     ) -> FixerService:
         """Create a FixerService with test dependencies."""
-        config = FixerServiceConfig(
-            repo_path=tmp_path,
-            timeout_seconds=60,
-            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
-        )
+        view = _make_fixer_service_view(repo_path=tmp_path)
         return FixerService(
-            config=config,
+            view=view,
             agent_provider=fake_agent_provider,
         )
 
@@ -147,14 +182,14 @@ class TestFixerInterruptHandling:
     ) -> RunCoordinator:
         """Create a RunCoordinator with test dependencies."""
         mock_gate_checker = MagicMock()
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
         )
         trigger_engine = TriggerEngine(validation_config=None)
         return RunCoordinator(
-            config=config,
+            view=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
             env_config=mock_env_config,
@@ -477,13 +512,13 @@ class TestGetTriggerConfig:
     ) -> RunCoordinator:
         """Create a RunCoordinator with test dependencies."""
         mock_gate_checker = MagicMock()
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
         )
         return RunCoordinator(
-            config=config,
+            view=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
             env_config=mock_env_config,
@@ -624,7 +659,7 @@ class TestRunTriggerCodeReview:
         mock_review_runner = MagicMock()
         mock_run_metadata = MagicMock()
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
@@ -753,7 +788,7 @@ class TestRunTriggerCodeReview:
         mock_gate_checker = MagicMock()
         mock_event_sink = MagicMock()
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
@@ -823,7 +858,7 @@ class TestRunTriggerCodeReview:
         mock_event_sink = MagicMock()
         mock_review_runner = MagicMock()
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
@@ -922,13 +957,13 @@ class TestFindingsExceedThreshold:
     ) -> RunCoordinator:
         """Create a minimal RunCoordinator for testing."""
         mock_gate_checker = MagicMock()
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix: {failure_output}",
         )
         return RunCoordinator(
-            config=config,
+            view=config,
             gate_checker=mock_gate_checker,
             command_runner=fake_command_runner,
             env_config=mock_env_config,
@@ -1111,7 +1146,7 @@ class TestCodeReviewRemediateFailureMode:
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
@@ -1201,7 +1236,7 @@ class TestRunEndRunMetadata:
         mock_gate_checker = MagicMock()
         mock_run_metadata = MagicMock()
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix: {failure_output}",
@@ -1272,7 +1307,7 @@ class TestRunEndRunMetadata:
             validation_triggers=ValidationTriggersConfig(run_end=trigger_config),
         )
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix: {failure_output}",
@@ -1353,7 +1388,7 @@ class TestRunEndRunMetadata:
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
@@ -1442,7 +1477,7 @@ class TestFindingThresholdEnforcement:
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
@@ -1530,7 +1565,7 @@ class TestFindingThresholdEnforcement:
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
@@ -1620,7 +1655,7 @@ class TestFindingThresholdEnforcement:
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
@@ -1706,7 +1741,7 @@ class TestFindingThresholdEnforcement:
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
@@ -1802,7 +1837,7 @@ class TestFindingThresholdEnforcement:
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
@@ -1906,7 +1941,7 @@ class TestFindingThresholdEnforcement:
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
@@ -2014,7 +2049,7 @@ class TestFindingThresholdEnforcement:
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
@@ -2136,7 +2171,7 @@ class TestR12CodeReviewGating:
             validation_triggers=triggers_config,
         )
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix: {failure_output}",
@@ -2212,7 +2247,7 @@ class TestR12CodeReviewGating:
             validation_triggers=triggers_config,
         )
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix: {failure_output}",
@@ -2314,7 +2349,7 @@ class TestR12CodeReviewGating:
             validation_triggers=triggers_config,
         )
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix: {failure_output}",
@@ -2421,7 +2456,7 @@ class TestR12CodeReviewGating:
             validation_triggers=triggers_config,
         )
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix: {failure_output}",
@@ -2520,7 +2555,7 @@ class TestR12CodeReviewGating:
             validation_triggers=triggers_config,
         )
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix: {failure_output}",
@@ -2615,7 +2650,7 @@ class TestTriggerCodeReviewEvents:
             validation_triggers=ValidationTriggersConfig()
         )
 
-        config = RunCoordinatorConfig(
+        config = _make_run_coordinator_view(
             repo_path=tmp_path,
             timeout_seconds=60,
             fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
@@ -2666,7 +2701,9 @@ class TestTriggerCodeReviewEvents:
         )
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
-        coordinator.config.validation_config = validation_config
+        coordinator.view = dataclasses.replace(
+            coordinator.view, validation_config=validation_config
+        )
 
         # Review returns no findings
         mock_review_runner.run_review = AsyncMock(
@@ -2726,7 +2763,9 @@ class TestTriggerCodeReviewEvents:
         )
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
-        coordinator.config.validation_config = validation_config
+        coordinator.view = dataclasses.replace(
+            coordinator.view, validation_config=validation_config
+        )
 
         # Review returns P0 finding (exceeds P1 threshold)
         mock_review_runner.run_review = AsyncMock(
@@ -2787,7 +2826,9 @@ class TestTriggerCodeReviewEvents:
         )
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
-        coordinator.config.validation_config = validation_config
+        coordinator.view = dataclasses.replace(
+            coordinator.view, validation_config=validation_config
+        )
 
         # Review returns skipped (e.g., empty diff)
         mock_review_runner.run_review = AsyncMock(
@@ -2842,7 +2883,9 @@ class TestTriggerCodeReviewEvents:
         )
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
-        coordinator.config.validation_config = validation_config
+        coordinator.view = dataclasses.replace(
+            coordinator.view, validation_config=validation_config
+        )
 
         # Review returns failed (execution error)
         mock_review_runner.run_review = AsyncMock(
@@ -2893,7 +2936,9 @@ class TestTriggerCodeReviewEvents:
         )
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
-        coordinator.config.validation_config = validation_config
+        coordinator.view = dataclasses.replace(
+            coordinator.view, validation_config=validation_config
+        )
 
         # Review raises exception
         mock_review_runner.run_review = AsyncMock(
@@ -2942,7 +2987,9 @@ class TestTriggerCodeReviewEvents:
         )
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
-        coordinator.config.validation_config = validation_config
+        coordinator.view = dataclasses.replace(
+            coordinator.view, validation_config=validation_config
+        )
 
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
         await coordinator.run_trigger_validation(dry_run=False)
@@ -2983,7 +3030,9 @@ class TestTriggerCodeReviewEvents:
         )
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
-        coordinator.config.validation_config = validation_config
+        coordinator.view = dataclasses.replace(
+            coordinator.view, validation_config=validation_config
+        )
 
         coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
         await coordinator.run_trigger_validation(dry_run=False)
@@ -3028,7 +3077,9 @@ class TestTriggerCodeReviewEvents:
         )
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
-        coordinator.config.validation_config = validation_config
+        coordinator.view = dataclasses.replace(
+            coordinator.view, validation_config=validation_config
+        )
 
         # First call: P0 finding
         # Second call (after fixer): no findings
@@ -3123,7 +3174,9 @@ class TestTriggerCodeReviewEvents:
         )
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
-        coordinator.config.validation_config = validation_config
+        coordinator.view = dataclasses.replace(
+            coordinator.view, validation_config=validation_config
+        )
 
         # All reviews return P0 finding - fixer cannot fix
         mock_review_runner.run_review = AsyncMock(
@@ -3194,7 +3247,9 @@ class TestTriggerCodeReviewEvents:
         )
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
-        coordinator.config.validation_config = validation_config
+        coordinator.view = dataclasses.replace(
+            coordinator.view, validation_config=validation_config
+        )
 
         # Review returns success with no findings
         mock_review_runner.run_review = AsyncMock(
@@ -3258,7 +3313,9 @@ class TestTriggerCodeReviewEvents:
         )
         triggers_config = ValidationTriggersConfig(run_end=trigger_config)
         validation_config = ValidationConfig(validation_triggers=triggers_config)
-        coordinator.config.validation_config = validation_config
+        coordinator.view = dataclasses.replace(
+            coordinator.view, validation_config=validation_config
+        )
 
         # Review raises exception
         mock_review_runner.run_review = AsyncMock(
@@ -3326,8 +3383,11 @@ class TestTriggerCodeReviewEvents:
             commands=(),
             code_review=code_review_config,
         )
-        coordinator.config.validation_config = ValidationConfig(
-            validation_triggers=ValidationTriggersConfig(run_end=trigger_config)
+        coordinator.view = dataclasses.replace(
+            coordinator.view,
+            validation_config=ValidationConfig(
+                validation_triggers=ValidationTriggersConfig(run_end=trigger_config)
+            ),
         )
         mock_review_runner.run_review = AsyncMock(
             return_value=CumulativeReviewResult(
@@ -3380,8 +3440,11 @@ class TestTriggerCodeReviewEvents:
             commands=(),
             code_review=code_review_config,
         )
-        coordinator.config.validation_config = ValidationConfig(
-            validation_triggers=ValidationTriggersConfig(run_end=trigger_config)
+        coordinator.view = dataclasses.replace(
+            coordinator.view,
+            validation_config=ValidationConfig(
+                validation_triggers=ValidationTriggersConfig(run_end=trigger_config)
+            ),
         )
         mock_review_runner.run_review = AsyncMock(
             return_value=CumulativeReviewResult(
@@ -3443,8 +3506,11 @@ class TestTriggerCodeReviewEvents:
             commands=(),
             code_review=code_review_config,
         )
-        coordinator.config.validation_config = ValidationConfig(
-            validation_triggers=ValidationTriggersConfig(run_end=trigger_config)
+        coordinator.view = dataclasses.replace(
+            coordinator.view,
+            validation_config=ValidationConfig(
+                validation_triggers=ValidationTriggersConfig(run_end=trigger_config)
+            ),
         )
         mock_review_runner.run_review = AsyncMock(
             return_value=CumulativeReviewResult(
@@ -3546,7 +3612,7 @@ class TestTriggerCodeReviewEvents:
             validation_triggers=ValidationTriggersConfig(run_end=trigger_config),
         )
         coordinator = _make_coordinator(
-            config=RunCoordinatorConfig(
+            config=_make_run_coordinator_view(
                 repo_path=tmp_path,
                 timeout_seconds=60,
                 fixer_prompt="Fix: {failure_output}",
@@ -3632,7 +3698,7 @@ class TestTriggerCodeReviewEvents:
             )
         )
         coordinator = _make_coordinator(
-            config=RunCoordinatorConfig(
+            config=_make_run_coordinator_view(
                 repo_path=tmp_path,
                 timeout_seconds=60,
                 fixer_prompt="Fix: {failure_output}",
