@@ -125,7 +125,9 @@ def transition(
 
     if event == RunValidationEvent.VALIDATION_INTERRUPTED:
         effects: tuple[RunValidationEffect, ...] = ()
-        if state == RunValidationState.REMEDIATING_REVIEW:
+        if state == RunValidationState.AWAITING_REMEDIATION:
+            effects = (RunValidationEffect.RECORD_RUN_VALIDATION,)
+        elif state == RunValidationState.REMEDIATING_REVIEW:
             effects = (
                 RunValidationEffect.RECORD_RUN_VALIDATION,
                 RunValidationEffect.EMIT_CODE_REVIEW_ERROR,
@@ -133,7 +135,7 @@ def transition(
         return TransitionResult(
             state=RunValidationState.EMITTING_TERMINAL_EVENT,
             context=RunValidationContext(
-                last_failure=ctx.last_failure,
+                last_failure=ctx.active_failure or ctx.last_failure,
                 terminal_status=TerminalStatus.ABORTED,
                 terminal_details=details or "Validation interrupted by SIGINT",
             ),

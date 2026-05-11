@@ -239,15 +239,22 @@ _EXPECTED: dict[
 }
 
 for _state in RunValidationState:
-    _EXPECTED[(_state, RunValidationEvent.VALIDATION_INTERRUPTED)] = (
-        RunValidationState.EMITTING_TERMINAL_EVENT,
-        (
+    _effects: tuple[RunValidationEffect, ...] = ()
+    _last_failure: FailureRecord | None = None
+    if _state == RunValidationState.AWAITING_REMEDIATION:
+        _effects = (RunValidationEffect.RECORD_RUN_VALIDATION,)
+        _last_failure = _COMMAND_FAILURE
+    elif _state == RunValidationState.REMEDIATING_REVIEW:
+        _effects = (
             RunValidationEffect.RECORD_RUN_VALIDATION,
             RunValidationEffect.EMIT_CODE_REVIEW_ERROR,
         )
-        if _state == RunValidationState.REMEDIATING_REVIEW
-        else (),
+        _last_failure = _CODE_REVIEW_FAILURE
+    _EXPECTED[(_state, RunValidationEvent.VALIDATION_INTERRUPTED)] = (
+        RunValidationState.EMITTING_TERMINAL_EVENT,
+        _effects,
         RunValidationContext(
+            last_failure=_last_failure,
             terminal_status=TerminalStatus.ABORTED,
             terminal_details="Validation interrupted by SIGINT",
         ),
@@ -279,8 +286,16 @@ _CONTEXT_OVERRIDES = {
         RunValidationEvent.REMEDIATION_FAILED,
     ): _COMMAND_REMEDIATION_CONTEXT,
     (
+        RunValidationState.AWAITING_REMEDIATION,
+        RunValidationEvent.VALIDATION_INTERRUPTED,
+    ): _COMMAND_REMEDIATION_CONTEXT,
+    (
         RunValidationState.REMEDIATING_REVIEW,
         RunValidationEvent.REVIEW_REMEDIATION_FAILED,
+    ): _REVIEW_REMEDIATION_CONTEXT,
+    (
+        RunValidationState.REMEDIATING_REVIEW,
+        RunValidationEvent.VALIDATION_INTERRUPTED,
     ): _REVIEW_REMEDIATION_CONTEXT,
     (
         RunValidationState.EMITTING_TERMINAL_EVENT,
@@ -521,6 +536,23 @@ def test_review_remediation_failure_waits_for_queue_empty() -> None:
 
 
 @pytest.mark.unit
+def test_interrupted_command_remediation_records_validation_before_abort() -> None:
+    result = transition(
+        RunValidationState.AWAITING_REMEDIATION,
+        RunValidationEvent.VALIDATION_INTERRUPTED,
+        _COMMAND_REMEDIATION_CONTEXT,
+    )
+
+    assert result.state == RunValidationState.EMITTING_TERMINAL_EVENT
+    assert result.context == RunValidationContext(
+        last_failure=_COMMAND_FAILURE,
+        terminal_status=TerminalStatus.ABORTED,
+        terminal_details="Validation interrupted by SIGINT",
+    )
+    assert result.effects == (RunValidationEffect.RECORD_RUN_VALIDATION,)
+
+
+@pytest.mark.unit
 def test_interrupted_review_remediation_records_validation_before_error() -> None:
     result = transition(
         RunValidationState.REMEDIATING_REVIEW,
@@ -529,6 +561,7 @@ def test_interrupted_review_remediation_records_validation_before_error() -> Non
     )
 
     assert result.state == RunValidationState.EMITTING_TERMINAL_EVENT
+    assert result.context.last_failure == _CODE_REVIEW_FAILURE
     assert result.effects == (
         RunValidationEffect.RECORD_RUN_VALIDATION,
         RunValidationEffect.EMIT_CODE_REVIEW_ERROR,
