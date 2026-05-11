@@ -8,6 +8,11 @@ architecture-fixes-plan.md "Golden Tests"): the corpus captures the
 extraction commits that follow can be verified against pinned byte
 output.
 
+The harness drives the live CLI entry point :func:`main` over stdin /
+stdout — not :func:`decide` directly — so the corpus covers ``main``'s
+event routing (selftest-target dispatch, SessionStart vs PreToolUse) and
+its stdout JSON serialization, not just the pure policy function.
+
 Case file format (JSON):
 
     {
@@ -15,9 +20,10 @@ Case file format (JSON):
       "tool_name": "bash",
       "tool_input": {"command": "..."},
       "cwd": "{repo}",                          // optional, defaults to {repo}
+      "hook_event_name": "PreToolUse",          // optional, defaults to PreToolUse
       "env": {"MALA_DISALLOWED_TOOLS": "..."},  // optional overrides
       "env_unset": ["MALA_AGENT_ID"],           // optional vars to drop
-      "locks": [                                // optional; held before decide()
+      "locks": [                                // optional; held before main()
         {"path": "{repo}/file.py", "agent_id": "agent-me"}
       ],
       "expected": {"hookSpecificOutput": {...}}
@@ -32,13 +38,15 @@ host-independent.
 
 from __future__ import annotations
 
+import io
 import json
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from src.infra.hooks.codex_pre_tool_use import decide
+from src.infra.hooks.codex_pre_tool_use import main
 from src.infra.tools.locking import try_lock
 
 if TYPE_CHECKING:
@@ -108,9 +116,14 @@ def test_golden_case(
     1. Substitutes ``{repo}`` / ``{lock_dir}`` placeholders.
     2. Applies env overrides / unsets after the baseline fixture.
     3. Acquires the case's locks (each ``try_lock`` must succeed).
-    4. Calls :func:`decide` and compares ``json.dumps`` of the result to
-       ``json.dumps`` of the case's ``expected`` field — the byte-identical
-       contract the B.3 extraction commits must preserve.
+    4. Pipes the payload JSON to ``sys.stdin`` and captures ``sys.stdout``
+       while calling :func:`main`, then compares ``json.dumps`` of the
+       parsed output to ``json.dumps`` of the case's ``expected`` field —
+       the byte-identical contract the B.3 extraction commits must
+       preserve. Going through ``main`` (not ``decide`` directly) also
+       exercises the event-routing branches (e.g. the selftest-target
+       PreToolUse dispatch) so future changes to the CLI wrapper cannot
+       silently alter the hook's wire output.
     """
     repo, lock_dir = golden_env
     raw = json.loads(case_path.read_text(encoding="utf-8"))
@@ -134,9 +147,18 @@ def test_golden_case(
         "cwd": case.get("cwd", repo),
         "session_id": "thr_golden",
         "turn_id": "trn_golden",
+        "hook_event_name": case.get("hook_event_name", "PreToolUse"),
     }
 
-    actual = decide(payload)
+    fake_stdin = io.StringIO(json.dumps(payload))
+    fake_stdout = io.StringIO()
+    monkeypatch.setattr(sys, "stdin", fake_stdin)
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    exit_code = main()
+    output = fake_stdout.getvalue()
+    assert exit_code == 0, f"main() exited {exit_code} (output={output!r})"
+
+    actual = json.loads(output)
     expected = case["expected"]
 
     actual_bytes = json.dumps(actual)

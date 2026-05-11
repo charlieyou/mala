@@ -1,0 +1,21 @@
+{
+  "description": "SELFTEST_TARGET_EVENT=PreToolUse + PreToolUse event → main() takes the selftest deny branch (decide() is skipped)",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "ls"
+  },
+  "env": {
+    "MALA_CODEX_HOOK_SELFTEST_MARKER": "{repo}/marker.json",
+    "MALA_CODEX_HOOK_SELFTEST_MARKER_DIR": "{repo}/markers",
+    "MALA_CODEX_HOOK_SELFTEST_TARGET_EVENT": "PreToolUse"
+  },
+  "expected": {
+    "decision": "block",
+    "reason": "mala-codex selftest probe denied the tool call to bound LLM cost",
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "mala-codex selftest probe"
+    }
+  }
+}
