@@ -29,7 +29,13 @@ from src.infra.clients.codex_plugin_installer import (
     InstallResult,
     _bundled_source_dir,
     _combined_hash,
+    _ensure_key_in_section,
+    _hook_state_key,
+    _plugin_id,
     _read_source_files,
+    _resolve_codex_home,
+    _rewrite_toml_block,
+    _write_codex_plugin_config,
     default_plugin_target_dir,
     plugin_root_dir,
 )
@@ -568,3 +574,260 @@ def test_install_hash_stable_against_dict_iteration_order(
     # truncated-sha256 of the deterministic length-prefixed payload.
     payload = _read_source_files(fake_source)
     assert _combined_hash(payload)[:16] == first
+
+
+# ---------------------------------------------------------------------------
+# TOML config rewriting helpers (relocated from codex_provider.py, T_B3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_resolve_codex_home_honors_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", "/tmp/fake-codex-home")
+    assert _resolve_codex_home() == Path("/tmp/fake-codex-home")
+
+
+@pytest.mark.unit
+def test_resolve_codex_home_falls_back_to_user_home(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    assert _resolve_codex_home() == Path("~/.codex").expanduser()
+
+
+@pytest.mark.unit
+def test_plugin_id_uses_plugin_marketplace_default() -> None:
+    assert _plugin_id() == f"{PLUGIN_NAME}@{PLUGIN_MARKETPLACE}"
+
+
+@pytest.mark.unit
+def test_plugin_id_accepts_custom_marketplace() -> None:
+    assert _plugin_id("other") == f"{PLUGIN_NAME}@other"
+
+
+@pytest.mark.unit
+def test_hook_state_key_default_event_pre_tool_use() -> None:
+    """Key shape mirrors ``codex-rs/hooks/src/declarations.rs::plugin_hook_key_source``."""
+    expected = (
+        f"{PLUGIN_NAME}@{PLUGIN_MARKETPLACE}:.codex-plugin/hooks.json:pre_tool_use:0:0"
+    )
+    assert _hook_state_key() == expected
+
+
+@pytest.mark.unit
+def test_hook_state_key_session_start_event() -> None:
+    expected = (
+        f"{PLUGIN_NAME}@{PLUGIN_MARKETPLACE}:.codex-plugin/hooks.json:session_start:0:0"
+    )
+    assert _hook_state_key("session_start") == expected
+
+
+@pytest.mark.unit
+def test_ensure_key_in_section_preserves_well_formed_toml_without_trailing_newline() -> (
+    None
+):
+    """Regression: ``_ensure_key_in_section`` must not concatenate the
+    new key onto the previous line when the input lacks a trailing
+    newline.
+
+    A user-edited ``config.toml`` ending mid-section without a final
+    ``\\n`` would previously round-trip to malformed TOML
+    (``plugins = trueplugin_hooks = true``) which crashes Codex on
+    startup.
+    """
+    existing_no_trailing_newline = "[features]\nplugins = true"  # no '\n' at EOF
+
+    rewritten = _ensure_key_in_section(
+        existing_no_trailing_newline,
+        section_header="[features]",
+        key="plugin_hooks",
+        value="true",
+    )
+
+    # The output must contain the existing key on its own line and the
+    # new key on its own line — no concatenation.
+    lines = rewritten.splitlines()
+    assert "plugins = true" in lines
+    assert "plugin_hooks = true" in lines
+    # And the merged token ``trueplugin_hooks`` must NOT appear.
+    assert "trueplugin_hooks" not in rewritten
+
+
+@pytest.mark.unit
+def test_ensure_key_in_section_handles_aligned_spaces_around_equals() -> None:
+    """Regression: TOML allows arbitrary whitespace between key and ``=``
+    (e.g. ``plugins    = false`` for value alignment). The matcher must
+    treat such lines as the same key — otherwise the rewriter appends a
+    second ``plugins = true`` line, producing a duplicate-key TOML file
+    that Codex rejects on startup.
+    """
+    aligned = "[features]\nplugins    = false\nplugin_hooks    = false\n"
+
+    rewritten = _ensure_key_in_section(
+        aligned, section_header="[features]", key="plugins", value="true"
+    )
+
+    # ``plugins = false`` must be flipped to ``plugins = true``; the
+    # original aligned-spaces line is rewritten in place.
+    assert "plugins = true" in rewritten
+    assert "plugins    = false" not in rewritten
+    # No duplicate ``plugins`` entries — the in-place rewrite did not
+    # also append a fresh ``plugins = true`` line.
+    plugin_lines = [
+        ln
+        for ln in rewritten.splitlines()
+        if ln.strip().startswith("plugins")
+        and not ln.strip().startswith("plugin_hooks")
+    ]
+    assert len(plugin_lines) == 1, plugin_lines
+
+
+@pytest.mark.unit
+def test_ensure_key_in_section_does_not_match_key_prefix() -> None:
+    """Regression: looking for ``plugin`` must not match
+    ``plugin_hooks`` — otherwise the rewriter overwrites the wrong
+    line. Pins the key-bound check ``stripped[len(key):].lstrip().startswith("=")``
+    behavior.
+    """
+    # Only ``plugin_hooks`` exists; we ask for ``plugin`` (a true prefix
+    # but a distinct key). The rewriter must NOT rewrite the
+    # ``plugin_hooks`` line — it should leave that line alone and
+    # append a fresh ``plugin = true`` instead.
+    existing = "[features]\nplugin_hooks = true\n"
+
+    rewritten = _ensure_key_in_section(
+        existing, section_header="[features]", key="plugin", value="true"
+    )
+
+    assert "plugin_hooks = true" in rewritten  # untouched
+    # And the new ``plugin = true`` line was added inside the section.
+    plugin_lines = [
+        ln for ln in rewritten.splitlines() if ln.strip() == "plugin = true"
+    ]
+    assert len(plugin_lines) == 1, rewritten
+
+
+@pytest.mark.unit
+def test_rewrite_toml_block_replaces_existing_section() -> None:
+    existing = (
+        '[plugins."mala-safety@local"]\nenabled = false\n\n[other]\nfoo = "bar"\n'
+    )
+    new_block = '[plugins."mala-safety@local"]\nenabled = true\n'
+
+    rewritten = _rewrite_toml_block(
+        existing,
+        section_header='[plugins."mala-safety@local"]',
+        new_block=new_block,
+    )
+
+    assert "enabled = true" in rewritten
+    assert "enabled = false" not in rewritten
+    # Sibling sections are preserved.
+    assert "[other]" in rewritten
+    assert 'foo = "bar"' in rewritten
+
+
+@pytest.mark.unit
+def test_rewrite_toml_block_appends_when_missing() -> None:
+    rewritten = _rewrite_toml_block(
+        '[other]\nfoo = "bar"\n',
+        section_header='[plugins."mala-safety@local"]',
+        new_block='[plugins."mala-safety@local"]\nenabled = true\n',
+    )
+    assert '[plugins."mala-safety@local"]' in rewritten
+    assert "enabled = true" in rewritten
+    assert "[other]" in rewritten
+
+
+@pytest.mark.unit
+def test_write_codex_plugin_config_writes_all_five_preconditions(
+    tmp_path: Path,
+) -> None:
+    """All five Codex-config preconditions land in the rewritten file."""
+    codex_home = tmp_path / "codex-home"
+    _write_codex_plugin_config(codex_home=codex_home)
+
+    rendered = (codex_home / "config.toml").read_text(encoding="utf-8")
+    assert "[features]" in rendered
+    assert "plugins = true" in rendered
+    assert "plugin_hooks = true" in rendered
+    assert "hooks = true" in rendered
+    assert '[plugins."mala-safety@local"]' in rendered
+    # Per-hook trust blocks for both events.
+    assert (
+        '[hooks.state."mala-safety@local:.codex-plugin/hooks.json:pre_tool_use:0:0"]'
+        in rendered
+    )
+    assert (
+        '[hooks.state."mala-safety@local:.codex-plugin/hooks.json:session_start:0:0"]'
+        in rendered
+    )
+    assert "trusted_hash" in rendered
+
+
+@pytest.mark.unit
+def test_write_codex_plugin_config_reaches_fixed_point(tmp_path: Path) -> None:
+    """Rewrites stabilize: once the file content matches the target shape,
+    the next call short-circuits without touching the file (no mtime change).
+
+    The first call may collapse interstitial blank lines as it splices in
+    each block; once collapsed, subsequent calls see ``rewritten ==
+    existing`` and return without writing.
+    """
+    codex_home = tmp_path / "codex-home"
+    _write_codex_plugin_config(codex_home=codex_home)
+    # Drive to fixed point.
+    _write_codex_plugin_config(codex_home=codex_home)
+    stable_text = (codex_home / "config.toml").read_text(encoding="utf-8")
+    # Force a clock tick before the no-op call so any accidental rewrite
+    # would be visible in mtime.
+    os.utime(codex_home / "config.toml", ns=(1_000_000_000, 1_000_000_000))
+
+    _write_codex_plugin_config(codex_home=codex_home)
+
+    assert (codex_home / "config.toml").read_text(encoding="utf-8") == stable_text
+    assert (codex_home / "config.toml").stat().st_mtime_ns == 1_000_000_000
+
+
+@pytest.mark.unit
+def test_write_codex_plugin_config_preserves_unrelated_features(
+    tmp_path: Path,
+) -> None:
+    """A pre-existing ``[features]`` key is preserved across the rewrite."""
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "[features]\nremote_plugin = true\n", encoding="utf-8"
+    )
+
+    _write_codex_plugin_config(codex_home=codex_home)
+
+    rendered = (codex_home / "config.toml").read_text(encoding="utf-8")
+    assert "remote_plugin = true" in rendered
+    assert "plugins = true" in rendered
+    assert "plugin_hooks = true" in rendered
+    assert "hooks = true" in rendered
+
+
+@pytest.mark.unit
+def test_write_codex_plugin_config_raises_on_unwritable_home(
+    tmp_path: Path,
+) -> None:
+    """An unwritable Codex home raises ``CodexHookNotActiveError`` so the
+    caller fails closed instead of proceeding under
+    ``danger-full-access`` without the safety gate."""
+    from src.infra.clients.codex_provider import (
+        CodexHookNotActiveError,
+        CodexHookNotActiveReason,
+    )
+
+    parent = tmp_path / "ro-parent"
+    parent.mkdir()
+    parent.chmod(0o555)
+    target = parent / "codex-home"
+    try:
+        with pytest.raises(CodexHookNotActiveError) as excinfo:
+            _write_codex_plugin_config(codex_home=target)
+    finally:
+        parent.chmod(0o755)
+    assert excinfo.value.reason == CodexHookNotActiveReason.TRUSTED_HASH_MISMATCH
