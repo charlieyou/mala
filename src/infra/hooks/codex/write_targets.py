@@ -40,8 +40,6 @@ import shlex
 from typing import Any
 
 from .shell_parser import (
-    _ANSI_C_PLACEHOLDER,
-    _CMDSUB_PLACEHOLDER,
     _drop_redirections,
     _extract_command_substitutions,
     _extract_redirection_targets,
@@ -57,7 +55,6 @@ from .shell_parser import (
 __all__ = [
     "GIT_WRITE_SUBCOMMANDS",
     "UTILITY_STRATEGIES",
-    "_ANSI_C_PLACEHOLDER",
     "_APPLY_PATCH_ENVELOPE_RE",
     "_APPLY_PATCH_MOVE_TO_RE",
     "_AWK_PROGRAM_LETTERS",
@@ -65,7 +62,6 @@ __all__ = [
     "_AWK_VALUE_LETTERS",
     "_CD_BUILTINS",
     "_CHMOD_SYMBOLIC_MODE_RE",
-    "_CMDSUB_PLACEHOLDER",
     "_DIFF_DEST_HEADER_RE",
     "_DIFF_SRC_HEADER_RE",
     "_EXECUTION_PREFIXES",
