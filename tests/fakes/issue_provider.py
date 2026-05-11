@@ -11,6 +11,7 @@ Observable state:
 - followup_calls: List of (issue_id, reason, log_path) tuples
 - reopened: Set of issue IDs that have been reopened
 - dependency_calls: List of (issue_id, depends_on_id) tuples
+- parent_child_dependency_calls: List of (issue_id, parent_id) tuples
 - updated_descriptions: List of (issue_id, description) tuples
 - updated_issues: List of (issue_id, title, priority) tuples
 """
@@ -61,6 +62,8 @@ class FakeIssueProvider:
         self.followup_calls: list[tuple[str, str, Path | None]] = []
         self.reopened: set[str] = set()
         self.dependency_calls: list[tuple[str, str]] = []
+        self.parent_child_dependency_calls: list[tuple[str, str]] = []
+        self.epic_blockers: dict[str, set[str]] = {}
         self.updated_descriptions: list[tuple[str, str]] = []
         self.updated_issues: list[tuple[str, str | None, str | None]] = []
         self.commit_calls: int = 0
@@ -217,11 +220,25 @@ class FakeIssueProvider:
             if issue.parent_epic == epic_id
         }
 
+    async def get_epic_blockers_async(self, epic_id: str) -> set[str]:
+        """Get issue IDs blocking an epic."""
+        return set(self.epic_blockers.get(epic_id, set()))
+
     async def get_parent_epic_async(self, issue_id: str) -> str | None:
         """Get the parent epic ID for an issue."""
         if issue_id not in self.issues:
             return None
         return self.issues[issue_id].parent_epic
+
+    async def add_parent_child_dependency_async(
+        self, issue_id: str, parent_id: str
+    ) -> bool:
+        """Attach an issue to a parent via a parent-child dependency."""
+        if issue_id not in self.issues:
+            return False
+        self.issues[issue_id].parent_epic = parent_id
+        self.parent_child_dependency_calls.append((issue_id, parent_id))
+        return True
 
     async def create_issue_async(
         self,

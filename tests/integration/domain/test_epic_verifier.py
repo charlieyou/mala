@@ -93,6 +93,11 @@ def verifier(
     )
 
 
+def test_epic_verifier_depends_on_issue_provider_port() -> None:
+    """EpicVerifier should depend on the issue provider port, not BeadsClient."""
+    assert EpicVerifier.__init__.__annotations__["beads"] == "IssueProvider"
+
+
 def _stub_commit_helpers(verifier: EpicVerifier, sha: str = "abc123") -> None:
     """Stub scope_analyzer to avoid hitting git in tests."""
     mock_scope_analyzer = MagicMock()

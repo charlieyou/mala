@@ -141,6 +141,20 @@ class IssueProvider(Protocol):
         """
         ...
 
+    async def add_parent_child_dependency_async(
+        self, issue_id: str, parent_id: str
+    ) -> bool:
+        """Attach an issue to a parent via a parent-child dependency.
+
+        Args:
+            issue_id: The child issue ID.
+            parent_id: The parent issue ID.
+
+        Returns:
+            True if dependency added successfully, False otherwise.
+        """
+        ...
+
     async def get_issue_description_async(self, issue_id: str) -> str | None:
         """Get the description of an issue.
 
@@ -194,6 +208,17 @@ class IssueProvider(Protocol):
 
         Returns:
             Set of child issue IDs, or empty set if not found or on error.
+        """
+        ...
+
+    async def get_epic_blockers_async(self, epic_id: str) -> set[str]:
+        """Get the set of issue IDs that are blocking an epic.
+
+        Args:
+            epic_id: The epic ID to get blockers for.
+
+        Returns:
+            Set of issue IDs that are blocking the epic.
         """
         ...
 

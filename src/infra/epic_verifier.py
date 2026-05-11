@@ -40,8 +40,8 @@ if TYPE_CHECKING:
 
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.infra import CommandRunnerPort, LockManagerPort
+    from src.core.protocols.issue import IssueProvider
     from src.core.protocols.validation import EpicVerificationModel
-    from src.infra.clients.beads_client import BeadsClient
 
 
 class VerificationRetryPolicyProtocol(Protocol):
@@ -390,7 +390,7 @@ class EpicVerifier:
 
     def __init__(
         self,
-        beads: BeadsClient,
+        beads: IssueProvider,
         model: EpicVerificationModel,
         repo_path: Path,
         command_runner: CommandRunnerPort,
@@ -406,7 +406,7 @@ class EpicVerifier:
         """Initialize EpicVerifier.
 
         Args:
-            beads: BeadsClient for issue operations.
+            beads: IssueProvider for issue operations.
             model: EpicVerificationModel for verification.
             repo_path: Path to the repository.
             command_runner: CommandRunnerPort for executing commands.
