@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from src.core.models import WatchConfig
 from src.orchestration import factory
 from src.orchestration.cli_overrides import build_resolved_mala_config
+from src.orchestration.dry_run import compute_dry_run_outcome
 from src.orchestration.types import OrchestratorConfig
 
 if TYPE_CHECKING:
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 
     from src.orchestration.cli_options import OrderResolution, ScopeConfig
     from src.orchestration.cli_overrides import CLIOverrideOptions
+    from src.orchestration.dry_run import DryRunOutcome
 
 
 @dataclass(frozen=True)
@@ -36,10 +38,14 @@ class RunCommandOutcome:
         exit_code: Exit code the CLI should propagate via ``typer.Exit``.
         error_message: Optional user-facing error message. When non-empty,
             the CLI renders it (e.g. via ``log("✗", ...)``) before exiting.
+        dry_run: Populated when the CLI requested ``--dry-run``. Carries
+            the resolved issue list and focus flag the CLI renders via
+            ``display_dry_run_tasks`` before exiting; ``exit_code`` is 0.
     """
 
     exit_code: int
     error_message: str | None = None
+    dry_run: DryRunOutcome | None = None
 
 
 def execute_run_command(
@@ -53,6 +59,7 @@ def execute_run_command(
     resume: bool,
     strict: bool,
     fresh: bool,
+    dry_run: bool,
     watch: bool,
     override_options: CLIOverrideOptions,
 ) -> RunCommandOutcome:
@@ -61,7 +68,10 @@ def execute_run_command(
     Performs the workflow assembly previously embedded in the Typer
     command: resolves the ``MalaConfig`` via the override chain, builds
     the ``OrchestratorConfig``, creates the orchestrator, runs it under
-    ``asyncio.run``, and computes the process exit code.
+    ``asyncio.run``, and computes the process exit code. When
+    ``dry_run`` is true the helper short-circuits, computes a
+    :class:`DryRunOutcome`, and returns it through
+    :attr:`RunCommandOutcome.dry_run` for the CLI to render.
 
     Args:
         repo_path: Resolved repository path the run targets.
@@ -73,17 +83,31 @@ def execute_run_command(
         resume: ``--resume`` flag (include_wip + session resume).
         strict: ``--strict`` flag.
         fresh: ``--fresh`` flag.
+        dry_run: ``--dry-run`` flag; when true, returns the dry-run
+            outcome without building/running the orchestrator.
         watch: ``--watch`` flag.
         override_options: Parsed CLI override options (coder, effort, etc.).
 
     Returns:
         ``RunCommandOutcome`` with the exit code the CLI should propagate.
         On config resolution failure, ``error_message`` carries the message
-        the CLI should render before exiting.
+        the CLI should render before exiting. On ``--dry-run``, ``dry_run``
+        is populated for the CLI's display helper.
     """
     epic_id = scope_config.epic_id if scope_config else None
     only_ids = scope_config.ids if scope_config else None
     orphans_only = scope_config.scope_type == "orphans" if scope_config else False
+
+    if dry_run:
+        outcome = compute_dry_run_outcome(
+            repo_path=repo_path,
+            epic_id=epic_id,
+            only_ids=only_ids,
+            orphans_only=orphans_only,
+            include_wip=resume,
+            order_preference=order_resolution.preference,
+        )
+        return RunCommandOutcome(exit_code=0, dry_run=outcome)
 
     try:
         config = build_resolved_mala_config(repo_path, override_options)

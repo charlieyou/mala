@@ -41,14 +41,13 @@ from ..orchestration.cli_support import (
     get_runs_dir,
     load_user_env,
 )
-from ..orchestration.dry_run import compute_dry_run_outcome
 from ..orchestration.init_config import (
-    build_evidence_check_dict,
-    build_per_issue_review_dict,
-    build_validation_triggers_dict,
+    RECOVERY_ABORT,
+    RECOVERY_REVISE,
+    RECOVERY_SKIP,
     compute_evidence_defaults,
     compute_trigger_defaults,
-    resolve_preset_selection,
+    execute_init_workflow,
     validate_init_invocation,
 )
 from ..orchestration.run_command import execute_run_command
@@ -555,11 +554,6 @@ def run(
         log("✗", str(exc), Colors.RED)
         raise typer.Exit(1)
 
-    # Derive scope values from scope_config
-    epic_id = scope_config.epic_id if scope_config else None
-    only_ids = scope_config.ids if scope_config else None
-    orphans_only = scope_config.scope_type == "orphans" if scope_config else False
-
     # Validate repo_path exists
     if not repo_path.exists():
         log("✗", f"Repository not found: {repo_path}", Colors.RED)
@@ -568,21 +562,8 @@ def run(
     # Ensure user config directory exists
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Handle dry-run mode: display task order and exit
-    if dry_run:
-        dry_run_outcome = compute_dry_run_outcome(
-            repo_path=repo_path,
-            epic_id=epic_id,
-            only_ids=only_ids,
-            orphans_only=orphans_only,
-            include_wip=resume,
-            order_preference=order_resolution.preference,
-        )
-        display_dry_run_tasks(dry_run_outcome.issues, focus=dry_run_outcome.focus)
-        raise typer.Exit(0)
-
-    # Hand workflow assembly to the orchestration helper; CLI stays as an
-    # argument adapter that renders the helper's outcome.
+    # Hand the full run workflow (including --dry-run) to the orchestration
+    # helper; CLI stays as an argument adapter that renders the outcome.
     outcome = execute_run_command(
         repo_path=repo_path,
         max_agents=max_agents,
@@ -593,6 +574,7 @@ def run(
         resume=resume,
         strict=strict,
         fresh=fresh,
+        dry_run=dry_run,
         watch=watch,
         override_options=CLIOverrideOptions(
             claude_settings_sources=claude_settings_sources,
@@ -605,7 +587,9 @@ def run(
             codex_sandbox=codex_sandbox,
         ),
     )
-    if outcome.error_message:
+    if outcome.dry_run is not None:
+        display_dry_run_tasks(outcome.dry_run.issues, focus=outcome.dry_run.focus)
+    elif outcome.error_message:
         log("✗", outcome.error_message, Colors.RED)
     raise typer.Exit(outcome.exit_code)
 
@@ -1233,144 +1217,28 @@ def init(
             typer.echo(f"Error: {invocation_check.error_message}", err=True)
             raise typer.Exit(1)
 
-        presets = get_init_presets()
-        is_preset = False
-        commands: list[str] = []
-        config_data: ConfigData
-
-        if preset:
-            selection = resolve_preset_selection(
-                preset, presets, get_preset_config_commands
-            )
-            if selection.error_message:
-                typer.echo(f"Error: {selection.error_message}", err=True)
-                raise typer.Exit(1)
-            is_preset = selection.is_preset
-            commands = selection.commands
-            config_data = dict(selection.config_data)
-        elif is_tty:
-            # Interactive preset selection
-            selected_preset = _prompt_preset_selection(presets)
-            if selected_preset:
-                is_preset = True
-                commands = get_preset_config_commands(selected_preset)
-                config_data = {"preset": selected_preset}
-            else:
-                # Custom flow via questionary
-                custom_commands = _prompt_custom_commands_questionary()
-                if custom_commands is None:
-                    raise typer.Exit(1)
-                if custom_commands:
-                    commands = list(custom_commands.keys())
-                config_data = {"commands": custom_commands}
-        else:
-            # Should not reach here due to validation above
-            typer.echo("Error: Cannot run interactively in non-TTY mode", err=True)
-            raise typer.Exit(1)
-
-        # If no commands, print message and skip evidence/trigger prompts
-        if not commands:
-            typer.echo("No commands defined; skipping evidence and trigger setup.")
-        else:
-            # Evidence check section
-            evidence_required: list[str] | None = None
-            if not skip_evidence:
-                if yes:
-                    # Use computed defaults
-                    evidence_required = compute_evidence_defaults(commands, is_preset)
-                elif is_tty:
-                    evidence_required = _prompt_evidence_check(commands, is_preset)
-
-            if evidence_required is not None:
-                config_data["evidence_check"] = build_evidence_check_dict(
-                    evidence_required
-                )
-
-            # Per-issue review section (within commands block to avoid prompting
-            # when init will fail for empty commands)
-            # Only prompt in interactive mode; --yes uses default (disabled)
-            if is_tty and not yes:
-                per_issue_review_config = _prompt_per_issue_review()
-                if per_issue_review_config is not None:
-                    config_data["per_issue_review"] = build_per_issue_review_dict(
-                        per_issue_review_config
-                    )
-            # Validation triggers section
-            trigger_commands: list[str] | None = None
-            if not skip_triggers:
-                if yes:
-                    # Use computed defaults
-                    trigger_commands = compute_trigger_defaults(commands, is_preset)
-                elif is_tty:
-                    trigger_commands = _prompt_run_end_trigger(commands, is_preset)
-
-            if trigger_commands is not None:
-                config_data["validation_triggers"] = build_validation_triggers_dict(
-                    trigger_commands
-                )
-
-        # Validate the generated config (max 3 retry attempts)
-        max_retries = 3
-        for attempt in range(max_retries + 1):
-            try:
-                validate_init_config(config_data)
-                break
-            except ConfigError as e:
-                if not is_tty:
-                    raise
-                if attempt >= max_retries:
-                    typer.echo(f"Error: {e} (max retries exceeded)", err=True)
-                    raise typer.Exit(1)
-                # Interactive recovery
-                choice = questionary.select(
-                    f"Validation error: {e}",
-                    choices=["Revise selections", "Skip section", "Abort init"],
-                ).ask()
-                if choice is None or choice == "Abort init":
-                    raise typer.Exit(1)
-                elif choice == "Skip section":
-                    # Remove problematic sections; if commands are empty, abort
-                    if not commands:
-                        typer.echo("Error: Cannot skip - no commands defined", err=True)
-                        raise typer.Exit(1)
-                    config_data.pop("evidence_check", None)
-                    config_data.pop("per_issue_review", None)
-                    config_data.pop("validation_triggers", None)
-                else:
-                    # Revise - if no commands, re-prompt custom commands
-                    if not commands:
-                        custom_commands = _prompt_custom_commands_questionary()
-                        if custom_commands is None:
-                            raise typer.Exit(1)
-                        if custom_commands:
-                            commands = list(custom_commands.keys())
-                            config_data["commands"] = custom_commands
-                    # Re-prompt for evidence, per-issue review, and triggers
-                    if not skip_evidence and commands:
-                        evidence_required = _prompt_evidence_check(commands, is_preset)
-                        if evidence_required is not None:
-                            config_data["evidence_check"] = build_evidence_check_dict(
-                                evidence_required
-                            )
-                        else:
-                            config_data.pop("evidence_check", None)
-                    # Re-prompt per-issue review (only when commands exist)
-                    if commands:
-                        per_issue_review_config = _prompt_per_issue_review()
-                        if per_issue_review_config is not None:
-                            config_data["per_issue_review"] = (
-                                build_per_issue_review_dict(per_issue_review_config)
-                            )
-                        else:
-                            config_data.pop("per_issue_review", None)
-                    if not skip_triggers and commands:
-                        trigger_commands = _prompt_run_end_trigger(commands, is_preset)
-                        if trigger_commands is not None:
-                            config_data["validation_triggers"] = (
-                                build_validation_triggers_dict(trigger_commands)
-                            )
-                        else:
-                            config_data.pop("validation_triggers", None)
+        # Drive the init state machine via the orchestration helper. The
+        # CLI provides a questionary-backed prompts adapter; the helper
+        # owns preset/custom branching, section construction, and the
+        # validation retry/recovery loop.
+        result = execute_init_workflow(
+            preset=preset,
+            skip_evidence=skip_evidence,
+            skip_triggers=skip_triggers,
+            yes=yes,
+            is_tty=is_tty,
+            presets=get_init_presets(),
+            commands_lookup=get_preset_config_commands,
+            validate_config=validate_init_config,
+            prompts=_QuestionaryInitPrompts(),
+        )
+        if result.exit_code != 0:
+            if result.error_message:
+                typer.echo(f"Error: {result.error_message}", err=True)
+            raise typer.Exit(result.exit_code)
+        # exit_code == 0 guarantees config_data is populated.
+        assert result.config_data is not None
+        config_data: ConfigData = result.config_data
 
         # Generate YAML content
         yaml_content = dump_config_yaml(config_data)
@@ -1401,6 +1269,48 @@ def init(
         raise typer.Exit(130)
     except click.exceptions.Abort:
         raise typer.Exit(1)
+
+
+class _QuestionaryInitPrompts:
+    """questionary-backed implementation of ``InitPrompts``.
+
+    Routes the helper's prompt calls to the existing ``_prompt_*`` CLI
+    helpers (and questionary directly for the recovery prompt). Keeps
+    user-facing questionary calls in the CLI layer per the import-linter
+    contract ``Only CLI imports typer`` and its sibling boundary that
+    questionary stays out of the orchestration layer.
+    """
+
+    def prompt_preset(self, presets: list[str]) -> str | None:
+        return _prompt_preset_selection(presets)
+
+    def prompt_custom_commands(self) -> dict[str, str] | None:
+        return _prompt_custom_commands_questionary()
+
+    def prompt_evidence_check(
+        self, commands: list[str], is_preset: bool
+    ) -> list[str] | None:
+        return _prompt_evidence_check(commands, is_preset)
+
+    def prompt_per_issue_review(self) -> dict[str, Any] | None:
+        return _prompt_per_issue_review()
+
+    def prompt_run_end_trigger(
+        self, commands: list[str], is_preset: bool
+    ) -> list[str] | None:
+        return _prompt_run_end_trigger(commands, is_preset)
+
+    def prompt_recovery_choice(self, error_message: str) -> str | None:
+        result = questionary.select(
+            f"Validation error: {error_message}",
+            choices=[RECOVERY_REVISE, RECOVERY_SKIP, RECOVERY_ABORT],
+        ).ask()
+        if result is None:
+            return None
+        return str(result)
+
+    def notify(self, message: str) -> None:
+        typer.echo(message)
 
 
 def _display_instance(instance: object, indent: bool = False) -> None:

@@ -86,11 +86,31 @@ def _build_resolution(focus: bool = True) -> OrderResolution:
     )
 
 
+def _run_kwargs(**overrides: object) -> dict[str, Any]:
+    """Default kwargs for execute_run_command; tests override what they exercise."""
+    defaults: dict[str, Any] = {
+        "max_agents": None,
+        "timeout": None,
+        "max_issues": None,
+        "scope_config": None,
+        "order_resolution": _build_resolution(focus=True),
+        "resume": False,
+        "strict": False,
+        "fresh": False,
+        "dry_run": False,
+        "watch": False,
+        "override_options": CLIOverrideOptions(),
+    }
+    defaults.update(overrides)
+    return defaults
+
+
 class TestRunCommandOutcomeShape:
-    def test_default_no_error_message(self) -> None:
+    def test_default_no_error_or_dry_run(self) -> None:
         outcome = RunCommandOutcome(exit_code=0)
         assert outcome.exit_code == 0
         assert outcome.error_message is None
+        assert outcome.dry_run is None
 
 
 class TestSuccessfulRun:
@@ -103,20 +123,17 @@ class TestSuccessfulRun:
 
         outcome = execute_run_command(
             repo_path=tmp_path,
-            max_agents=2,
-            timeout=7,
-            max_issues=3,
-            scope_config=scope,
-            order_resolution=_build_resolution(focus=True),
-            resume=False,
-            strict=False,
-            fresh=False,
-            watch=False,
-            override_options=CLIOverrideOptions(),
+            **_run_kwargs(
+                max_agents=2,
+                timeout=7,
+                max_issues=3,
+                scope_config=scope,
+            ),
         )
 
         assert outcome.exit_code == 0
         assert outcome.error_message is None
+        assert outcome.dry_run is None
         orch_config = orchestrator.last_orch_config
         assert orch_config is not None
         assert orch_config.repo_path == tmp_path
@@ -138,16 +155,7 @@ class TestSuccessfulRun:
 
         execute_run_command(
             repo_path=tmp_path,
-            max_agents=None,
-            timeout=None,
-            max_issues=None,
-            scope_config=scope,
-            order_resolution=_build_resolution(focus=True),
-            resume=False,
-            strict=False,
-            fresh=False,
-            watch=False,
-            override_options=CLIOverrideOptions(),
+            **_run_kwargs(scope_config=scope),
         )
 
         assert orchestrator.last_orch_config.epic_id == "epic-42"
@@ -163,23 +171,17 @@ class TestSuccessfulRun:
 
         execute_run_command(
             repo_path=tmp_path,
-            max_agents=None,
-            timeout=None,
-            max_issues=None,
-            scope_config=scope,
-            order_resolution=_build_resolution(focus=False),
-            resume=False,
-            strict=False,
-            fresh=False,
-            watch=False,
-            override_options=CLIOverrideOptions(),
+            **_run_kwargs(
+                scope_config=scope,
+                order_resolution=_build_resolution(focus=False),
+            ),
         )
 
         assert orchestrator.last_orch_config.orphans_only is True
         assert orchestrator.last_orch_config.epic_id is None
         assert orchestrator.last_orch_config.only_ids is None
 
-    def test_run_forwards_resume_strict_fresh(
+    def test_run_forwards_resume_strict_and_watch(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         orchestrator = FakeOrchestrator()
@@ -187,16 +189,7 @@ class TestSuccessfulRun:
 
         execute_run_command(
             repo_path=tmp_path,
-            max_agents=None,
-            timeout=None,
-            max_issues=None,
-            scope_config=None,
-            order_resolution=_build_resolution(focus=True),
-            resume=True,
-            strict=True,
-            fresh=False,
-            watch=True,
-            override_options=CLIOverrideOptions(),
+            **_run_kwargs(resume=True, strict=True, fresh=False, watch=True),
         )
 
         cfg = orchestrator.last_orch_config
@@ -217,19 +210,7 @@ class TestExitCodeComputation:
         orchestrator = FakeOrchestrator(success_count=0, total=1, exit_code=130)
         _install_fake_orchestrator(monkeypatch, orchestrator)
 
-        outcome = execute_run_command(
-            repo_path=tmp_path,
-            max_agents=None,
-            timeout=None,
-            max_issues=None,
-            scope_config=None,
-            order_resolution=_build_resolution(focus=True),
-            resume=False,
-            strict=False,
-            fresh=False,
-            watch=False,
-            override_options=CLIOverrideOptions(),
-        )
+        outcome = execute_run_command(repo_path=tmp_path, **_run_kwargs())
 
         assert outcome.exit_code == 130
         assert outcome.error_message is None
@@ -240,19 +221,7 @@ class TestExitCodeComputation:
         orchestrator = FakeOrchestrator(success_count=0, total=0, exit_code=0)
         _install_fake_orchestrator(monkeypatch, orchestrator)
 
-        outcome = execute_run_command(
-            repo_path=tmp_path,
-            max_agents=None,
-            timeout=None,
-            max_issues=None,
-            scope_config=None,
-            order_resolution=_build_resolution(focus=True),
-            resume=False,
-            strict=False,
-            fresh=False,
-            watch=False,
-            override_options=CLIOverrideOptions(),
-        )
+        outcome = execute_run_command(repo_path=tmp_path, **_run_kwargs())
 
         assert outcome.exit_code == 0
 
@@ -262,21 +231,56 @@ class TestExitCodeComputation:
         orchestrator = FakeOrchestrator(success_count=0, total=3, exit_code=0)
         _install_fake_orchestrator(monkeypatch, orchestrator)
 
-        outcome = execute_run_command(
-            repo_path=tmp_path,
-            max_agents=None,
-            timeout=None,
-            max_issues=None,
-            scope_config=None,
-            order_resolution=_build_resolution(focus=True),
-            resume=False,
-            strict=False,
-            fresh=False,
-            watch=False,
-            override_options=CLIOverrideOptions(),
-        )
+        outcome = execute_run_command(repo_path=tmp_path, **_run_kwargs())
 
         assert outcome.exit_code == 1
+
+
+class TestDryRunBranch:
+    """``dry_run=True`` short-circuits to a DryRunOutcome with exit 0."""
+
+    def test_dry_run_skips_orchestrator_and_returns_outcome(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """When dry_run is true the helper must not build the orchestrator."""
+        import src.orchestration.run_command as module
+        from src.orchestration.dry_run import DryRunOutcome
+
+        sentinel_issues: list[dict[str, object]] = [
+            {"id": "T-1", "title": "Drift", "priority": 2, "status": "open"}
+        ]
+        captured_kwargs: dict[str, object] = {}
+
+        def fake_compute(**kwargs: object) -> DryRunOutcome:
+            captured_kwargs.update(kwargs)
+            return DryRunOutcome(issues=sentinel_issues, focus=True)
+
+        monkeypatch.setattr(module, "compute_dry_run_outcome", fake_compute)
+
+        # If the helper falls through to the orchestrator path, this raises.
+        def must_not_call(*args: object, **kwargs: object) -> None:
+            raise AssertionError("orchestrator should not be built in dry-run")
+
+        monkeypatch.setattr(factory, "create_orchestrator", must_not_call)
+
+        outcome = execute_run_command(
+            repo_path=tmp_path,
+            **_run_kwargs(
+                dry_run=True,
+                scope_config=ScopeConfig(scope_type="ids", ids=["T-1"]),
+                resume=True,
+            ),
+        )
+
+        assert outcome.exit_code == 0
+        assert outcome.error_message is None
+        assert outcome.dry_run is not None
+        assert outcome.dry_run.issues == sentinel_issues
+        assert outcome.dry_run.focus is True
+        # Verify scope was forwarded to compute_dry_run_outcome.
+        assert captured_kwargs["repo_path"] == tmp_path
+        assert captured_kwargs["only_ids"] == ["T-1"]
+        assert captured_kwargs["include_wip"] is True
 
 
 class TestConfigResolutionErrors:
@@ -291,19 +295,7 @@ class TestConfigResolutionErrors:
 
         monkeypatch.setattr(module, "build_resolved_mala_config", boom)
 
-        outcome = execute_run_command(
-            repo_path=tmp_path,
-            max_agents=None,
-            timeout=None,
-            max_issues=None,
-            scope_config=None,
-            order_resolution=_build_resolution(focus=True),
-            resume=False,
-            strict=False,
-            fresh=False,
-            watch=False,
-            override_options=CLIOverrideOptions(),
-        )
+        outcome = execute_run_command(repo_path=tmp_path, **_run_kwargs())
 
         assert outcome.exit_code == 1
         assert outcome.error_message == "invalid override"
