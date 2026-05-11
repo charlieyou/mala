@@ -5144,11 +5144,11 @@ def test_main_emits_selftest_marker_when_env_var_set(
     """
     import json as _json
 
-    from src.infra.hooks.codex_pre_tool_use import (
+    from src.infra.hooks.codex.selftest_policy import (
         SELFTEST_MARKER_ENV,
         _compute_selftest_identity_hash,
-        main,
     )
+    from src.infra.hooks.codex_pre_tool_use import main
 
     marker_path = tmp_path / "marker.json"
     monkeypatch.setenv(SELFTEST_MARKER_ENV, str(marker_path))
@@ -5183,7 +5183,8 @@ def test_main_does_not_emit_marker_when_env_var_unset(
     any marker. Real Codex tool calls must not leave stray files."""
     import json as _json
 
-    from src.infra.hooks.codex_pre_tool_use import SELFTEST_MARKER_ENV, main
+    from src.infra.hooks.codex.selftest_policy import SELFTEST_MARKER_ENV
+    from src.infra.hooks.codex_pre_tool_use import main
 
     monkeypatch.delenv(SELFTEST_MARKER_ENV, raising=False)
     monkeypatch.setattr(
@@ -5215,7 +5216,8 @@ def test_marker_write_is_atomic(
     """
     import json as _json
 
-    from src.infra.hooks.codex_pre_tool_use import SELFTEST_MARKER_ENV, main
+    from src.infra.hooks.codex.selftest_policy import SELFTEST_MARKER_ENV
+    from src.infra.hooks.codex_pre_tool_use import main
 
     marker_path = tmp_path / "marker.json"
     monkeypatch.setenv(SELFTEST_MARKER_ENV, str(marker_path))
@@ -5269,7 +5271,8 @@ def test_main_swallows_marker_write_errors(
     marker as the fail-closed signal."""
     import json as _json
 
-    from src.infra.hooks.codex_pre_tool_use import SELFTEST_MARKER_ENV, main
+    from src.infra.hooks.codex.selftest_policy import SELFTEST_MARKER_ENV
+    from src.infra.hooks.codex_pre_tool_use import main
 
     # Point at a path under a non-existent directory so write fails.
     bad_path = tmp_path / "missing-dir" / "marker.json"
@@ -5312,7 +5315,8 @@ def test_main_aborts_session_start_in_selftest_mode(
     """
     import json as _json
 
-    from src.infra.hooks.codex_pre_tool_use import SELFTEST_MARKER_ENV, main
+    from src.infra.hooks.codex.selftest_policy import SELFTEST_MARKER_ENV
+    from src.infra.hooks.codex_pre_tool_use import main
 
     marker_path = tmp_path / "marker.json"
     monkeypatch.setenv(SELFTEST_MARKER_ENV, str(marker_path))
@@ -5364,7 +5368,8 @@ def test_main_continues_session_start_in_production(
     """
     import json as _json
 
-    from src.infra.hooks.codex_pre_tool_use import SELFTEST_MARKER_ENV, main
+    from src.infra.hooks.codex.selftest_policy import SELFTEST_MARKER_ENV
+    from src.infra.hooks.codex_pre_tool_use import main
 
     monkeypatch.delenv(SELFTEST_MARKER_ENV, raising=False)
     monkeypatch.setattr(
@@ -5407,11 +5412,11 @@ def test_main_pre_tool_use_selftest_omits_universal_continue_fields(
     """
     import json as _json
 
-    from src.infra.hooks.codex_pre_tool_use import (
+    from src.infra.hooks.codex.selftest_policy import (
         SELFTEST_MARKER_ENV,
         SELFTEST_TARGET_EVENT_ENV,
-        main,
     )
+    from src.infra.hooks.codex_pre_tool_use import main
 
     marker_path = tmp_path / "PreToolUse.json"
     monkeypatch.setenv(SELFTEST_MARKER_ENV, str(marker_path))

@@ -463,7 +463,7 @@ closed."""
 _HOOK_SELFTEST_MARKER_ENV = "MALA_CODEX_HOOK_SELFTEST_MARKER"
 """Env var the live-hook step sets so the hook writes a presence /
 version marker to a known temp path. Mirrored verbatim from
-:data:`src.infra.hooks.codex_pre_tool_use.SELFTEST_MARKER_ENV` —
+:data:`src.infra.hooks.codex.selftest_policy.SELFTEST_MARKER_ENV` —
 import-linter forbids ``src.infra.clients`` from importing
 ``src.infra.hooks`` directly, so the literal is duplicated and the
 equality is pinned by a unit test."""
@@ -472,7 +472,7 @@ equality is pinned by a unit test."""
 _HOOK_SELFTEST_MARKER_DIR_ENV = "MALA_CODEX_HOOK_SELFTEST_MARKER_DIR"
 """Env var pointing the hook at a directory for per-event markers.
 
-Mirrors :data:`src.infra.hooks.codex_pre_tool_use.SELFTEST_MARKER_DIR_ENV`.
+Mirrors :data:`src.infra.hooks.codex.selftest_policy.SELFTEST_MARKER_DIR_ENV`.
 Used by the live PreToolUse-driven dispatch probe so SessionStart
 and PreToolUse hook firing produce distinct per-event marker files
 (``SessionStart.json`` vs ``PreToolUse.json``) — Codex tracks the
@@ -486,7 +486,7 @@ real PreToolUse turns rely on (review-4 P1)."""
 _HOOK_SELFTEST_TARGET_EVENT_ENV = "MALA_CODEX_HOOK_SELFTEST_TARGET_EVENT"
 """Env var naming the event whose hook should ``decision=block`` /
 ``continue=false`` so the live probe's turn aborts. Mirrors
-:data:`src.infra.hooks.codex_pre_tool_use.SELFTEST_TARGET_EVENT_ENV`."""
+:data:`src.infra.hooks.codex.selftest_policy.SELFTEST_TARGET_EVENT_ENV`."""
 
 
 _HOOK_IDENTITY_MODULES: tuple[str, ...] = (
@@ -528,6 +528,21 @@ _HOOK_IDENTITY_MODULES: tuple[str, ...] = (
     # patterns + Claude-side hook) below — both modules are
     # safety-critical and tracked independently.
     "src.infra.hooks.codex.dangerous_commands",
+    # Hook imports the selftest marker / live-probe helpers
+    # (``_emit_selftest_marker_if_requested`` /
+    # ``_handle_session_start_event`` / ``_handle_pre_tool_use_selftest``
+    # / ``_selftest_mode_active`` / ``_selftest_target_event_matches``)
+    # from this module after the T_B12 split. A stale install with a
+    # byte-identical entry-point but a divergent
+    # ``codex/selftest_policy.py`` could emit a marker with the wrong
+    # version digest, skip the SessionStart abort, or fail to deny the
+    # PreToolUse selftest probe — every one of those breaks the
+    # provider's live-hook proof contract. The module also owns
+    # :data:`SELFTEST_IDENTITY_MODULES`, so a divergence here changes
+    # which modules' bytes the marker hashes over; folding the file's
+    # bytes into the identity hash binds the tuple's authoritative
+    # definition to the digest the provider verifies.
+    "src.infra.hooks.codex.selftest_policy",
     # Hook imports BASH_TOOL_NAMES / DANGEROUS_PATTERNS /
     # DESTRUCTIVE_GIT_PATTERNS from this module
     # (``codex_pre_tool_use.py:32-36``); a stale install whose
@@ -1071,7 +1086,7 @@ def _default_selftest_probe(
         :data:`SELFTEST_MARKER_ENV` set to a temp file path. The hook
         emits ``{"mala_codex_hook": "loaded", "version": "<sha256>"}``
         before processing the payload (see
-        :func:`src.infra.hooks.codex_pre_tool_use._emit_selftest_marker_if_requested`).
+        :func:`src.infra.hooks.codex.selftest_policy._emit_selftest_marker_if_requested`).
         The probe asserts the marker file is present, parses, and its
         ``version`` field equals our combined identity hash. Failure
         modes:
@@ -1259,7 +1274,7 @@ def _default_selftest_probe(
     # entry-point end-to-end with a Codex-shape PreToolUse payload and a
     # selftest marker env var. The hook emits a JSON marker before
     # processing the payload (see
-    # ``src.infra.hooks.codex_pre_tool_use._emit_selftest_marker_if_requested``);
+    # ``src.infra.hooks.codex.selftest_policy._emit_selftest_marker_if_requested``);
     # the marker proves ``main()`` actually executed and the hook's own
     # identity-hash computation produced the same digest the
     # module-identity probe above produced. Plan AC-5 / E5: the prior

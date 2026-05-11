@@ -1346,6 +1346,17 @@ def test_hook_identity_modules_cover_safety_critical_dependencies() -> None:
         destructive-git / fork-bomb / ``rm -rf /`` gates while every
         other listed module is byte-identical, so the bytes must be
         folded into the combined hash.
+      * ``src.infra.hooks.codex.selftest_policy`` — pure selftest
+        marker / live-probe helpers (marker emit, identity hash,
+        ``SessionStart`` continue=false, ``PreToolUse`` selftest deny)
+        the entry-point imports after the T_B12 split; a divergent
+        ``codex/selftest_policy.py`` would emit a different marker
+        version, skip the SessionStart abort, or fail to deny the
+        PreToolUse selftest probe while every other listed module is
+        byte-identical, so the bytes must be folded into the combined
+        hash. The module owns :data:`SELFTEST_IDENTITY_MODULES`, so
+        hashing its bytes also binds the tuple definition to the
+        digest the provider verifies.
       * ``src.infra.hooks.dangerous_commands`` — DANGEROUS_PATTERNS /
         DESTRUCTIVE_GIT_PATTERNS / BASH_TOOL_NAMES the hook imports
         (``codex_pre_tool_use.py:32-36``).
@@ -1365,6 +1376,7 @@ def test_hook_identity_modules_cover_safety_critical_dependencies() -> None:
         "src.infra.hooks.codex.write_targets",
         "src.infra.hooks.codex.lock_policy",
         "src.infra.hooks.codex.dangerous_commands",
+        "src.infra.hooks.codex.selftest_policy",
         "src.infra.hooks.dangerous_commands",
         "src.infra.tool_config",
         "src.infra.tools.locking",
@@ -2011,7 +2023,7 @@ def test_selftest_marker_env_constant_matches_hook_module() -> None:
     ``src.infra.hooks``. Pin equality so they cannot drift.
     """
     from src.infra.clients.codex_provider import _HOOK_SELFTEST_MARKER_ENV
-    from src.infra.hooks.codex_pre_tool_use import SELFTEST_MARKER_ENV
+    from src.infra.hooks.codex.selftest_policy import SELFTEST_MARKER_ENV
 
     assert _HOOK_SELFTEST_MARKER_ENV == SELFTEST_MARKER_ENV
 
@@ -2023,7 +2035,7 @@ def test_selftest_identity_modules_match_provider_list() -> None:
     ``VERSION_MISMATCH`` from the live-hook step, but pinning the
     equality here makes the regression visible directly."""
     from src.infra.clients.codex_provider import _HOOK_IDENTITY_MODULES
-    from src.infra.hooks.codex_pre_tool_use import SELFTEST_IDENTITY_MODULES
+    from src.infra.hooks.codex.selftest_policy import SELFTEST_IDENTITY_MODULES
 
     assert SELFTEST_IDENTITY_MODULES == _HOOK_IDENTITY_MODULES
 
