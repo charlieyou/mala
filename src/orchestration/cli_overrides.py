@@ -9,8 +9,12 @@ fields reflect the CLI > env > yaml > default precedence chain.
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
+from typing import TYPE_CHECKING
 
 from src.infra.io.config import CLIOverrides, MalaConfig, build_resolved_config
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -98,3 +102,49 @@ def apply_cli_overrides(
         coder_options=resolved.coder_options,
         effort=resolved.effort,
     )
+
+
+def build_resolved_mala_config(
+    repo_path: Path,
+    options: CLIOverrideOptions,
+) -> MalaConfig:
+    """Build a :class:`MalaConfig` with CLI > env > yaml > default precedence.
+
+    Encapsulates the yaml coder resolution, ``MalaConfig.from_env`` build,
+    and CLI override application so the Typer CLI is left with argument
+    parsing and output formatting only.
+
+    Args:
+        repo_path: Repository path; used to locate ``mala.yaml``.
+        options: Parsed CLI override options.
+
+    Returns:
+        A :class:`MalaConfig` reflecting the merged values.
+
+    Raises:
+        ConfigError: Propagated from the yaml loader when ``mala.yaml`` is
+            present but malformed.
+        ValueError: Propagated from ``apply_cli_overrides`` when an
+            override value cannot be parsed.
+    """
+    # Local imports keep the heavy factory/config_resolution modules out of
+    # the import graph until a CLI command actually needs them.
+    from src.orchestration.config_resolution import _resolve_yaml_codex_options
+    from src.orchestration.factory import load_yaml_coder_resolution
+
+    (
+        yaml_css,
+        yaml_coder,
+        yaml_amp_mode,
+        yaml_effort,
+        yaml_codex_options,
+    ) = load_yaml_coder_resolution(repo_path)
+    config = MalaConfig.from_env(
+        validate=False,
+        yaml_claude_settings_sources=yaml_css,
+        yaml_coder=yaml_coder,
+        yaml_amp_mode=yaml_amp_mode,
+        yaml_effort=yaml_effort,
+        yaml_codex_options=_resolve_yaml_codex_options(yaml_codex_options),
+    )
+    return apply_cli_overrides(config, options)

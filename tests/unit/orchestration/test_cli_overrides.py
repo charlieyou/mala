@@ -16,6 +16,7 @@ from src.infra.io.config import MalaConfig
 from src.orchestration.cli_overrides import (
     CLIOverrideOptions,
     apply_cli_overrides,
+    build_resolved_mala_config,
 )
 
 
@@ -147,3 +148,43 @@ class TestApplyCLIOverrides:
             CLIOverrideOptions(coder="claude"),
         )
         assert result is not config
+
+
+class TestBuildResolvedMalaConfig:
+    """``build_resolved_mala_config`` combines yaml + env + CLI overrides."""
+
+    def test_no_mala_yaml_no_overrides_uses_env_defaults(self, tmp_path: Path) -> None:
+        """Without mala.yaml or overrides, returns a MalaConfig.from_env-like value."""
+        config = build_resolved_mala_config(tmp_path, CLIOverrideOptions())
+        # No overrides set means apply_cli_overrides returns the input unchanged;
+        # a coder default is present regardless.
+        assert config.coder in ("claude", "amp", "codex")
+
+    def test_cli_overrides_beat_defaults(self, tmp_path: Path) -> None:
+        """CLI overrides flow through the combined helper."""
+        config = build_resolved_mala_config(
+            tmp_path,
+            CLIOverrideOptions(coder="amp", amp_mode="smart", effort="high"),
+        )
+        assert config.coder == "amp"
+        assert config.coder_options.amp.mode == "smart"
+        assert config.effort == "high"
+
+    def test_invalid_override_raises_value_error(self, tmp_path: Path) -> None:
+        """Invalid CLI override propagates as ValueError from apply_cli_overrides."""
+        with pytest.raises(ValueError):
+            build_resolved_mala_config(
+                tmp_path,
+                CLIOverrideOptions(coder="amp", amp_mode="not-a-mode"),
+            )
+
+    def test_yaml_coder_resolution_feeds_from_env(self, tmp_path: Path) -> None:
+        """A valid mala.yaml ``coder:`` value reaches MalaConfig through from_env."""
+        # Preset provides the required commands so the yaml validator does
+        # not abort before reaching the coder fields under test.
+        (tmp_path / "mala.yaml").write_text(
+            "preset: go\ncoder: amp\namp_mode: rush\n"
+        )
+        config = build_resolved_mala_config(tmp_path, CLIOverrideOptions())
+        assert config.coder == "amp"
+        assert config.coder_options.amp.mode == "rush"

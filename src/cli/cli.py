@@ -22,6 +22,7 @@ import questionary
 
 from ..orchestration.cli_options import (
     parse_scope,
+    resolve_order_option,
     validate_amp_mode_option,
     validate_codex_approval_policy_option,
     validate_codex_effort_option,
@@ -30,7 +31,10 @@ from ..orchestration.cli_options import (
     validate_coder_option,
     validate_effort_option,
 )
-from ..orchestration.cli_overrides import CLIOverrideOptions, apply_cli_overrides
+from ..orchestration.cli_overrides import (
+    CLIOverrideOptions,
+    build_resolved_mala_config,
+)
 from ..orchestration.cli_support import (
     USER_CONFIG_DIR,
     get_preset_config_commands,
@@ -56,12 +60,12 @@ _bootstrapped = False
 # These are populated on first access via __getattr__
 _lazy_modules: dict[str, Any] = {}
 
-# Names that are lazily loaded (for __getattr__ to handle)
+# Names that are lazily loaded (for __getattr__ to handle).
+# These modules transitively import claude_agent_sdk and so must stay
+# deferred behind bootstrap(); plain config helpers no longer need to
+# proxy through here.
 _LAZY_NAMES = frozenset(
     {
-        "MalaConfig",
-        "MalaOrchestrator",
-        "OrderPreference",
         "OrchestratorConfig",
         "WatchConfig",
         "create_issue_provider",
@@ -70,7 +74,6 @@ _LAZY_NAMES = frozenset(
         "get_lock_dir",
         "get_running_instances",
         "get_running_instances_for_dir",
-        "load_yaml_coder_resolution",
     }
 )
 
@@ -119,9 +122,9 @@ import typer
 from ..orchestration.cli_support import Colors, ConfigError, log, set_verbose
 from .logs import logs_app
 
-# SDK-dependent imports (MalaOrchestrator, get_lock_dir, run_metadata, etc.)
+# SDK-dependent imports (create_orchestrator, get_lock_dir, run_metadata, etc.)
 # are lazy-loaded via __getattr__ to ensure bootstrap() runs before claude_agent_sdk
-# is imported. Access them as module attributes: MalaOrchestrator, create_issue_provider, etc.
+# is imported. Access them as module attributes: create_orchestrator, OrchestratorConfig, etc.
 
 
 def display_dry_run_tasks(
@@ -240,29 +243,6 @@ def _parse_scope_cli(scope: str) -> ScopeConfig:
             Colors.YELLOW,
         )
     return scope_config
-
-
-def _build_cli_args_metadata(
-    *,
-    resume: bool,
-    max_issues: int | None,
-    watch: bool,
-) -> dict[str, object]:
-    """Build the cli_args metadata dictionary for logging and OrchestratorConfig.
-
-    Args:
-        resume: Whether WIP prioritization is enabled (--resume flag).
-        max_issues: Maximum issues to process.
-        watch: Whether watch mode is enabled.
-
-    Returns:
-        Dictionary of CLI arguments for logging/metadata.
-    """
-    return {
-        "wip": resume,
-        "max_issues": max_issues,
-        "watch": watch,
-    }
 
 
 def _validate_coder_option(value: str | None) -> str | None:
@@ -566,41 +546,16 @@ def run(
         scope_config = _parse_scope_cli(scope)
 
     # Parse and validate --order option
-    order_preference = _lazy("OrderPreference").EPIC_PRIORITY  # default
-    if order is not None:
-        order_lower = order.lower()
-        if order_lower == "epic-priority":
-            order_preference = _lazy("OrderPreference").EPIC_PRIORITY
-        elif order_lower == "issue-priority":
-            order_preference = _lazy("OrderPreference").ISSUE_PRIORITY
-        elif order_lower == "focus":
-            order_preference = _lazy("OrderPreference").FOCUS
-        elif order_lower == "input":
-            order_preference = _lazy("OrderPreference").INPUT
-            # --order input requires --scope ids:
-            if scope_config is None or scope_config.scope_type != "ids":
-                log(
-                    "✗",
-                    "--order input requires --scope ids:<id,...>",
-                    Colors.RED,
-                )
-                raise typer.Exit(1)
-        else:
-            log(
-                "✗",
-                f"Invalid --order value: '{order}'. Valid values: focus, epic-priority, issue-priority, input",
-                Colors.RED,
-            )
-            raise typer.Exit(1)
+    try:
+        order_resolution = resolve_order_option(order, scope_config)
+    except ValueError as exc:
+        log("✗", str(exc), Colors.RED)
+        raise typer.Exit(1)
 
     # Derive scope values from scope_config
     epic_id = scope_config.epic_id if scope_config else None
     only_ids = scope_config.ids if scope_config else None
     orphans_only = scope_config.scope_type == "orphans" if scope_config else False
-    focus = order_preference in (
-        _lazy("OrderPreference").FOCUS,
-        _lazy("OrderPreference").EPIC_PRIORITY,
-    )
 
     # Validate repo_path exists
     if not repo_path.exists():
@@ -618,39 +573,16 @@ def run(
             only_ids=only_ids,
             orphans_only=orphans_only,
             include_wip=resume,
-            order_preference=order_preference,
+            order_preference=order_resolution.preference,
         )
         display_dry_run_tasks(outcome.issues, focus=outcome.focus)
         raise typer.Exit(0)
 
-    # Load yaml coder selection so the base MalaConfig honors the
-    # CLI > env > yaml > default precedence (AC-3) before CLI overrides
-    # are layered on. ConfigError propagates so invalid mala.yaml fails fast.
-    (
-        yaml_css,
-        yaml_coder,
-        yaml_amp_mode,
-        yaml_effort,
-        yaml_codex_options,
-    ) = _lazy("load_yaml_coder_resolution")(repo_path)
-
-    from ..orchestration.config_resolution import _resolve_yaml_codex_options
-
-    # Build and configure MalaConfig from environment
-    config = _lazy("MalaConfig").from_env(
-        validate=False,
-        yaml_claude_settings_sources=yaml_css,
-        yaml_coder=yaml_coder,
-        yaml_amp_mode=yaml_amp_mode,
-        yaml_effort=yaml_effort,
-        yaml_codex_options=_resolve_yaml_codex_options(yaml_codex_options),
-    )
-
-    # Apply CLI overrides (claude_settings_sources, coder, amp_mode, effort,
-    # codex_model, codex_effort, codex_approval_policy, codex_sandbox)
+    # Resolve MalaConfig with CLI > env > yaml > default precedence (AC-3).
+    # ConfigError propagates so invalid mala.yaml fails fast.
     try:
-        config = apply_cli_overrides(
-            config,
+        config = build_resolved_mala_config(
+            repo_path,
             CLIOverrideOptions(
                 claude_settings_sources=claude_settings_sources,
                 coder=coder,
@@ -666,13 +598,6 @@ def run(
         log("✗", str(exc), Colors.RED)
         raise typer.Exit(1)
 
-    # Build cli_args metadata for logging
-    cli_args = _build_cli_args_metadata(
-        resume=resume,
-        max_issues=max_issues,
-        watch=watch,
-    )
-
     # Build OrchestratorConfig and run
     orch_config = _lazy("OrchestratorConfig")(
         repo_path=repo_path,
@@ -684,9 +609,9 @@ def run(
         include_wip=resume,
         strict_resume=strict,
         fresh_session=fresh,
-        focus=focus,
-        order_preference=order_preference,
-        cli_args=cli_args,
+        focus=order_resolution.focus,
+        order_preference=order_resolution.preference,
+        cli_args={"wip": resume, "max_issues": max_issues, "watch": watch},
         orphans_only=orphans_only,
     )
 
@@ -841,28 +766,9 @@ def epic_verify(
 
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-    (
-        yaml_css,
-        yaml_coder,
-        yaml_amp_mode,
-        yaml_effort,
-        yaml_codex_options,
-    ) = _lazy("load_yaml_coder_resolution")(repo_path)
-
-    from ..orchestration.config_resolution import _resolve_yaml_codex_options
-
-    config = _lazy("MalaConfig").from_env(
-        validate=False,
-        yaml_claude_settings_sources=yaml_css,
-        yaml_coder=yaml_coder,
-        yaml_amp_mode=yaml_amp_mode,
-        yaml_effort=yaml_effort,
-        yaml_codex_options=_resolve_yaml_codex_options(yaml_codex_options),
-    )
-
     try:
-        config = apply_cli_overrides(
-            config,
+        config = build_resolved_mala_config(
+            repo_path,
             CLIOverrideOptions(
                 claude_settings_sources=claude_settings_sources,
                 coder=coder,
@@ -1591,19 +1497,7 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
     if name in _lazy_modules:
         return _lazy_modules[name]
 
-    if name == "MalaConfig":
-        from src.infra.io.config import MalaConfig
-
-        _lazy_modules[name] = MalaConfig
-    elif name == "MalaOrchestrator":
-        from ..orchestration.orchestrator import MalaOrchestrator
-
-        _lazy_modules[name] = MalaOrchestrator
-    elif name == "OrderPreference":
-        from ..core.models import OrderPreference
-
-        _lazy_modules[name] = OrderPreference
-    elif name == "OrchestratorConfig":
+    if name == "OrchestratorConfig":
         from ..orchestration.types import OrchestratorConfig
 
         _lazy_modules[name] = OrchestratorConfig
@@ -1619,10 +1513,6 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         from ..orchestration.factory import create_orchestrator
 
         _lazy_modules[name] = create_orchestrator
-    elif name == "load_yaml_coder_resolution":
-        from ..orchestration.factory import load_yaml_coder_resolution
-
-        _lazy_modules[name] = load_yaml_coder_resolution
     elif name == "get_all_locks":
         from ..infra.tools.locking import get_all_locks
 

@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import pytest
 
+from src.core.models import OrderPreference
 from src.orchestration.cli_options import (
+    OrderResolution,
     ScopeConfig,
     parse_scope,
+    resolve_order_option,
     validate_amp_mode_option,
     validate_codex_approval_policy_option,
     validate_codex_effort_option,
@@ -221,3 +224,61 @@ class TestValidateCodexSandboxOption:
             ValueError, match="--codex-sandbox: Invalid Codex sandbox 'jailed'"
         ):
             validate_codex_sandbox_option("jailed")
+
+
+class TestResolveOrderOption:
+    """Behavior of the ``resolve_order_option`` helper."""
+
+    def test_none_defaults_to_epic_priority_with_focus(self) -> None:
+        result = resolve_order_option(None, None)
+        assert result == OrderResolution(
+            preference=OrderPreference.EPIC_PRIORITY, focus=True
+        )
+
+    @pytest.mark.parametrize(
+        ("value", "expected_preference", "expected_focus"),
+        [
+            ("epic-priority", OrderPreference.EPIC_PRIORITY, True),
+            ("EPIC-PRIORITY", OrderPreference.EPIC_PRIORITY, True),
+            ("issue-priority", OrderPreference.ISSUE_PRIORITY, False),
+            ("focus", OrderPreference.FOCUS, True),
+        ],
+    )
+    def test_case_insensitive_named_values(
+        self,
+        value: str,
+        expected_preference: OrderPreference,
+        expected_focus: bool,
+    ) -> None:
+        result = resolve_order_option(value, None)
+        assert result.preference is expected_preference
+        assert result.focus is expected_focus
+
+    def test_input_requires_scope_ids(self) -> None:
+        result = resolve_order_option(
+            "input", ScopeConfig(scope_type="ids", ids=["T-1"])
+        )
+        assert result.preference is OrderPreference.INPUT
+        assert result.focus is False
+
+    def test_input_without_scope_ids_raises(self) -> None:
+        with pytest.raises(
+            ValueError, match=r"--order input requires --scope ids:<id,\.\.\.>"
+        ):
+            resolve_order_option("input", None)
+
+    def test_input_with_scope_epic_raises(self) -> None:
+        with pytest.raises(
+            ValueError, match=r"--order input requires --scope ids:<id,\.\.\.>"
+        ):
+            resolve_order_option("input", ScopeConfig(scope_type="epic", epic_id="E-1"))
+
+    def test_invalid_value_raises_with_valid_values_listed(self) -> None:
+        with pytest.raises(ValueError) as exc_info:
+            resolve_order_option("bogus", None)
+        message = str(exc_info.value)
+        assert "Invalid --order value: 'bogus'" in message
+        assert "focus" in message
+        assert "epic-priority" in message
+        assert "issue-priority" in message
+        assert "input" in message

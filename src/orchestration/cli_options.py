@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from src.core.models import OrderPreference
 from src.infra.io.config import (
     parse_amp_mode,
     parse_codex_approval_policy,
@@ -185,3 +186,63 @@ def validate_codex_sandbox_option(
         ValueError: If ``value`` is not a recognized Codex sandbox mode.
     """
     return parse_codex_sandbox(value, source="--codex-sandbox")
+
+
+@dataclass(frozen=True)
+class OrderResolution:
+    """Resolved ``--order`` CLI option.
+
+    Attributes:
+        preference: The parsed :class:`OrderPreference` enum value.
+        focus: Whether per-epic focus rendering applies (true for FOCUS
+            and EPIC_PRIORITY). Carries the focus derivation so the CLI
+            does not have to know which preferences imply focus.
+    """
+
+    preference: OrderPreference
+    focus: bool
+
+
+def resolve_order_option(
+    order: str | None,
+    scope_config: ScopeConfig | None,
+) -> OrderResolution:
+    """Resolve the ``--order`` CLI option into a typed :class:`OrderResolution`.
+
+    Args:
+        order: Raw ``--order`` value (case-insensitive). ``None`` selects
+            the EPIC_PRIORITY default.
+        scope_config: Parsed ``--scope`` value, used to enforce that
+            ``--order input`` is paired with ``--scope ids:<id,...>``.
+
+    Returns:
+        :class:`OrderResolution` carrying the :class:`OrderPreference` and
+        the derived ``focus`` flag.
+
+    Raises:
+        ValueError: On invalid ``--order`` values or when ``--order input``
+            is used without ``--scope ids:<id,...>``. The CLI converts
+            this into the ``log`` + ``typer.Exit(1)`` pattern.
+    """
+    if order is None:
+        preference = OrderPreference.EPIC_PRIORITY
+    else:
+        order_lower = order.lower()
+        if order_lower == "epic-priority":
+            preference = OrderPreference.EPIC_PRIORITY
+        elif order_lower == "issue-priority":
+            preference = OrderPreference.ISSUE_PRIORITY
+        elif order_lower == "focus":
+            preference = OrderPreference.FOCUS
+        elif order_lower == "input":
+            if scope_config is None or scope_config.scope_type != "ids":
+                raise ValueError("--order input requires --scope ids:<id,...>")
+            preference = OrderPreference.INPUT
+        else:
+            raise ValueError(
+                f"Invalid --order value: '{order}'. "
+                "Valid values: focus, epic-priority, issue-priority, input"
+            )
+
+    focus = preference in (OrderPreference.FOCUS, OrderPreference.EPIC_PRIORITY)
+    return OrderResolution(preference=preference, focus=focus)
