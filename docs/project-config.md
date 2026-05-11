@@ -629,8 +629,10 @@ readable Codex auth source (`auth.json`, keyring config, or auth env vars).
 Mala installs the bundled `mala-safety` plugin into a per-run temporary
 `CODEX_HOME` and passes that home only to mala-launched `codex app-server`
 subprocesses; it does not mutate the user's normal `~/.codex` plugin cache or
-`config.toml`. Mala runs a fail-closed prerequisite check + plugin self-test
-before any issue agent is spawned: missing SDK/runtime/auth raises
+`config.toml`, and it only copies auth-scoped Codex settings into the temporary
+home. User plugins, hooks, MCP servers, feature flags, and shell-environment
+policies are not inherited by Mala workers. Mala runs a fail-closed prerequisite
+check + plugin self-test before any issue agent is spawned: missing SDK/runtime/auth raises
 `CodexNotInstalledError`, and a missing/untrusted/disabled bundled
 `SessionStart` or `PreToolUse` hook raises `CodexHookNotActiveError`. See the
 [Codex prerequisites in README](../README.md#codex-optional-for-coder-codex)

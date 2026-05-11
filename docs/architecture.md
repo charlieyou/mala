@@ -787,11 +787,14 @@ three files:
 
 `CodexPluginInstaller` performs an idempotent straight-copy of the bundled
 tree into a provider-private temporary `CODEX_HOME` plugin cache. The provider
-seeds that temporary home from the user's normal Codex auth/config, writes the
-expected `trusted_hash` into the temporary `config.toml`, and passes that
-`CODEX_HOME` only to mala-launched `codex app-server` subprocesses. Normal
-Codex CLI sessions keep using the user's real `~/.codex` and do not discover
-Mala's safety hook.
+seeds that temporary home only with the user's Codex auth material and a
+sanitized auth-scoped config seed, writes the expected `trusted_hash` into the
+temporary `config.toml`, and passes that `CODEX_HOME` only to mala-launched
+`codex app-server` subprocesses. User plugin, hook, MCP, feature, and
+shell-environment config is not copied into the temporary home, so local
+interactive Codex extensions cannot block unattended Mala workers. Normal Codex
+CLI sessions keep using the user's real `~/.codex` and do not discover Mala's
+safety hook.
 
 **The fail-closed safety invariant.**
 `CodexAgentProvider.install_prerequisites()` runs the same shape of

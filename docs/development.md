@@ -250,10 +250,12 @@ modes drove the design:
   `trusted_hash` matching for the hook to fire. The provider creates a
   temporary `CODEX_HOME` for mala-launched Codex sessions and
   `CodexPluginInstaller` writes the expected hash into that isolated home's
-  hook state automatically, so there is no manual trust step and no mutation
-  of the user's normal `~/.codex`. If a future Codex UX change requires
-  user-interactive trust acceptance, the self-test catches the resulting
-  silent-dormant state and surfaces a `TRUSTED_HASH_MISMATCH` reason.
+  hook state automatically. The isolated home is seeded only with auth-scoped
+  user config, not user plugins/hooks/MCP/feature settings, so there is no
+  manual trust step and no mutation of the user's normal `~/.codex`. If a
+  future Codex UX change requires user-interactive trust acceptance, the
+  self-test catches the resulting silent-dormant state and surfaces a
+  `TRUSTED_HASH_MISMATCH` reason.
 
 ### Lock-Path Reuse — In-Process
 

@@ -256,8 +256,9 @@ steps for each fail-closed
 
 When `mala run --coder codex` starts, `install_prerequisites()` creates a
 temporary, provider-private `CODEX_HOME`, seeds it from your normal Codex home
-for auth (`auth.json` symlink/copy when present, plus a contents-only copy of
-`config.toml` so keyring settings survive), installs
+only for auth (`auth.json` symlink/copy when present, plus a sanitized
+`config.toml` seed containing auth-scoped keys such as
+`cli_auth_credentials_store`), installs
 `plugins/codex/mala-safety/.codex-plugin/` into that temporary plugin cache,
 and writes the following entries to the temporary `config.toml` so Codex loads
 and trusts the bundled `mala-safety` plugin without an interactive prompt:
@@ -275,11 +276,11 @@ and trusts the bundled `mala-safety` plugin without an interactive prompt:
 
 Those writes are scoped to the temporary `CODEX_HOME` passed only to the
 `codex app-server` subprocesses mala launches. The user's normal
-`$CODEX_HOME/config.toml` and plugin cache are not mutated. Within the temporary
-home, writes are idempotent — reruns against an already-trusted hook
-short-circuit without rewriting the file. Other keys inside `[features]` and
-unrelated tables copied from the user's `config.toml` are preserved in the
-temporary copy.
+`$CODEX_HOME/config.toml` and plugin cache are not mutated. User plugin, hook,
+MCP, feature, and shell-environment config is intentionally not copied into the
+temporary home, so interactive local Codex extensions cannot block unattended
+Mala workers. Within the temporary home, writes are idempotent — reruns against
+an already-trusted hook short-circuit without rewriting the file.
 
 The runtime self-test verifies both trusted handlers: `SessionStart` must fire
 when the Codex turn starts, and `PreToolUse` must fire before a real tool call.
