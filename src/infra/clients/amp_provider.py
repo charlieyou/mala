@@ -52,6 +52,7 @@ from dataclasses import replace
 from enum import StrEnum
 from typing import IO, TYPE_CHECKING, Any, Literal, cast
 
+from src.infra.clients._plugin_provider_base import PluginInstallError
 from src.infra.clients.amp_runtime import AmpRuntimeBuilder
 
 if TYPE_CHECKING:
@@ -167,7 +168,7 @@ class AmpPluginNotActiveReason(StrEnum):
 _BINARY_INSTALL_DOCS_URL = "https://ampcode.com/manual"
 
 
-class AmpPluginNotActiveError(RuntimeError):
+class AmpPluginNotActiveError(PluginInstallError):
     """Fail-closed error raised when the Amp safety plugin is not active.
 
     Carries a structured :attr:`reason` so the orchestrator can branch on

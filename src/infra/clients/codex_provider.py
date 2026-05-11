@@ -38,6 +38,7 @@ from src.core.constants import (
     DEFAULT_CODEX_MODEL,
     DEFAULT_CODEX_SANDBOX,
 )
+from src.infra.clients._plugin_provider_base import PluginInstallError
 from src.infra.clients.codex_evidence_provider import CodexEvidenceProvider
 from src.infra.clients.codex_mcp_factory import (
     _build_merged_codex_plugin_mcp_json,
@@ -147,7 +148,7 @@ _HOOK_DOCS_URL = (
 )
 
 
-class CodexHookNotActiveError(RuntimeError):
+class CodexHookNotActiveError(PluginInstallError):
     """Fail-closed error raised when the Codex safety hook is not active.
 
     Carries a structured :attr:`reason` so the orchestrator can branch on
