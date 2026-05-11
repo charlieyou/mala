@@ -1324,6 +1324,13 @@ def test_hook_identity_modules_cover_safety_critical_dependencies() -> None:
         imports (``codex_pre_tool_use.py:32-43``); a divergent
         ``shell_parser.py`` would change which write paths the hook
         sees even when the entry-point is byte-identical.
+      * ``src.infra.hooks.codex.write_targets`` — pure write-target
+        extractors (utility / git / apply_patch / one-liner / wrapper
+        unwrapping / cd-shifted fail-closed) the entry-point imports
+        (``codex_pre_tool_use.py:39-45``); a divergent
+        ``write_targets.py`` would extract a different set of write
+        paths from the same shell command or apply_patch payload and
+        gate the lock-check on those different paths.
       * ``src.infra.hooks.dangerous_commands`` — DANGEROUS_PATTERNS /
         DESTRUCTIVE_GIT_PATTERNS / BASH_TOOL_NAMES the hook imports
         (``codex_pre_tool_use.py:32-36``).
@@ -1340,6 +1347,7 @@ def test_hook_identity_modules_cover_safety_critical_dependencies() -> None:
     expected = {
         "src.infra.hooks.codex_pre_tool_use",
         "src.infra.hooks.codex.shell_parser",
+        "src.infra.hooks.codex.write_targets",
         "src.infra.hooks.dangerous_commands",
         "src.infra.tool_config",
         "src.infra.tools.locking",

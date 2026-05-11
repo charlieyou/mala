@@ -494,6 +494,15 @@ _HOOK_IDENTITY_MODULES: tuple[str, ...] = (
     # would parse shell commands differently and gate writes via a
     # different heuristic.
     "src.infra.hooks.codex.shell_parser",
+    # Hook imports the write-target extractors (``_extract_shell_write_
+    # paths`` / ``_apply_patch_paths`` / ``_command_basename_str`` /
+    # ``_find_git_subcommand_info``) from this module
+    # (``codex_pre_tool_use.py:39-45``); a stale install with a
+    # byte-identical entry-point but a divergent ``write_targets.py``
+    # would extract a different set of write paths from the same shell
+    # command or apply_patch payload and gate the lock-check on those
+    # different paths.
+    "src.infra.hooks.codex.write_targets",
     # Hook imports BASH_TOOL_NAMES / DANGEROUS_PATTERNS /
     # DESTRUCTIVE_GIT_PATTERNS from this module
     # (``codex_pre_tool_use.py:32-36``); a stale install whose
