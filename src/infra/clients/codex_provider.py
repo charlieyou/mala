@@ -38,7 +38,11 @@ from src.core.constants import (
     DEFAULT_CODEX_MODEL,
     DEFAULT_CODEX_SANDBOX,
 )
-from src.infra.clients._plugin_provider_base import PluginInstallError
+from src.infra.clients._plugin_provider_base import (
+    PluginInstallError,
+    SelftestCache,
+    install_with_selftest,
+)
 from src.infra.clients.codex_evidence_provider import CodexEvidenceProvider
 from src.infra.clients.codex_mcp_factory import (
     _build_merged_codex_plugin_mcp_json,
@@ -592,7 +596,7 @@ and explicitly forbids file edits so the model is unlikely to attempt
 anything besides the requested shell call (which the bundled hook
 will deny in selftest mode anyway). Cost: one model round trip
 (~$0.001 on gpt-5.5) per ``install_prerequisites`` call, cached per
-selftest run via ``_selftest_cache_key``."""
+selftest run via ``_selftest_cache``."""
 
 
 def _live_codex_hook_dispatch_probe(
@@ -644,7 +648,7 @@ def _live_codex_hook_dispatch_probe(
     a single shared marker file would parse as malformed JSON.
 
     Cost: one bounded LLM turn per ``install_prerequisites`` call.
-    Cached via ``_selftest_cache_key`` so a long-running orchestrator
+    Cached via ``_selftest_cache`` so a long-running orchestrator
     pays at most once per startup.
     """
     import asyncio
@@ -1541,8 +1545,11 @@ class CodexAgentProvider:
         # In-memory selftest cache keyed on the installed plugin hash. Plan
         # E5 invokes selftest at most once per run; the key matches the
         # Amp provider's ``(coder_version, plugin_hash)`` pattern keyed
-        # with a placeholder coder version.
-        self._selftest_cache_key: tuple[str, str] | None = None
+        # with a placeholder coder version. The cache holder comes from
+        # the shared :mod:`_plugin_provider_base` driver so the cache
+        # mutation rules stay in lockstep with the Amp provider's
+        # post-T_B6 migration.
+        self._selftest_cache: SelftestCache = SelftestCache()
         # Per-provider isolated ``CODEX_HOME`` populated by
         # :meth:`install_prerequisites`. Codex's plugin tree and hook
         # trust state are global to a ``CODEX_HOME``; writing the
@@ -1893,7 +1900,14 @@ class CodexAgentProvider:
                 "full auth setup."
             )
 
-        # 4. Run the plugin installer (idempotent on its own).
+        # 4-6. Plugin install + structural script-on-PATH check + config
+        # writes are bundled into a single ``install`` closure handed to
+        # the shared :func:`install_with_selftest` driver. The closure
+        # returns the plugin hash that keys both the in-memory cache and
+        # the selftest's expected version marker; the driver
+        # short-circuits on a matching ``(coder_version, plugin_hash)``
+        # key before invoking the probe so a long-running orchestrator
+        # pays the install + selftest at most once per run.
         from src.infra.clients.codex_plugin_installer import (
             PLUGIN_DIRNAME,
             CodexPluginInstallError,
@@ -1913,77 +1927,80 @@ class CodexAgentProvider:
         codex_home = self._ensure_isolated_codex_home(user_codex_home)
         install_target = plugin_root_dir(codex_home) / PLUGIN_DIRNAME
 
-        # Build the merged ``.mcp.json`` payload (Phase G3 / AC-3) and
-        # hand it to the installer as ``mcp_json_override`` so the
-        # installer is the sole writer of the plugin tree. Routing the
-        # merge through the installer keeps idempotency intact (a rerun
-        # with the same merged bytes short-circuits at
-        # ``action="skipped"``) and — combined with the per-provider
-        # isolated ``CODEX_HOME`` above — closes the cross-process race
-        # the prior post-install rewrite (and the prior single-shared-
-        # CODEX_HOME design) opened: without isolation, Process B's
-        # installer would silently revert Process A's merged file to a
-        # bundled-only payload because B's own user config builds a
-        # different override; with isolation, B writes to its own
-        # ``CODEX_HOME`` and A's plugin tree is untouched. The same
-        # isolation now applies to the default bundled-only path, so a
-        # mala run never mutates the user's normal Codex plugin state
-        # (plan ``L954``: bundled is mandatory, never replaced;
-        # non-conflicting user keys pass through).
-        mcp_json_override = _build_merged_codex_plugin_mcp_json(self._mcp_servers)
-        try:
-            install_result = CodexPluginInstaller(
-                mcp_json_override=mcp_json_override
-            ).install(target_dir=install_target)
-        except CodexPluginInstallError as exc:
-            raise CodexHookNotActiveError(
-                f"Codex plugin install failed: {exc}",
-                reason=CodexHookNotActiveReason.PLUGIN_DISABLED,
-            ) from exc
+        def _install() -> str:
+            # Build the merged ``.mcp.json`` payload (Phase G3 / AC-3)
+            # and hand it to the installer as ``mcp_json_override`` so
+            # the installer is the sole writer of the plugin tree.
+            # Routing the merge through the installer keeps idempotency
+            # intact (a rerun with the same merged bytes short-circuits
+            # at ``action="skipped"``) and — combined with the
+            # per-provider isolated ``CODEX_HOME`` above — closes the
+            # cross-process race the prior post-install rewrite (and
+            # the prior single-shared-CODEX_HOME design) opened:
+            # without isolation, Process B's installer would silently
+            # revert Process A's merged file to a bundled-only payload
+            # because B's own user config builds a different override;
+            # with isolation, B writes to its own ``CODEX_HOME`` and
+            # A's plugin tree is untouched. The same isolation now
+            # applies to the default bundled-only path, so a mala run
+            # never mutates the user's normal Codex plugin state (plan
+            # ``L954``: bundled is mandatory, never replaced;
+            # non-conflicting user keys pass through).
+            mcp_json_override = _build_merged_codex_plugin_mcp_json(self._mcp_servers)
+            try:
+                install_result = CodexPluginInstaller(
+                    mcp_json_override=mcp_json_override
+                ).install(target_dir=install_target)
+            except CodexPluginInstallError as exc:
+                raise CodexHookNotActiveError(
+                    f"Codex plugin install failed: {exc}",
+                    reason=CodexHookNotActiveReason.PLUGIN_DISABLED,
+                ) from exc
 
-        plugin_hash = install_result.plugin_hash
+            # Hook script must be on PATH so Codex can launch it via
+            # ``"command": "mala-codex-pre-tool-use"`` from hooks.json.
+            if shutil.which("mala-codex-pre-tool-use") is None:
+                raise CodexHookNotActiveError(
+                    "mala-codex-pre-tool-use console script not on PATH. "
+                    "Ensure mala is installed via `uv tool install mala-agent` "
+                    "or `uv sync` so the project.scripts entry point is exposed.",
+                    reason=CodexHookNotActiveReason.SCRIPT_MISSING,
+                )
 
-        # 5. Hook script must be on PATH so Codex can launch it via
-        # ``"command": "mala-codex-pre-tool-use"`` from hooks.json.
-        if shutil.which("mala-codex-pre-tool-use") is None:
-            raise CodexHookNotActiveError(
-                "mala-codex-pre-tool-use console script not on PATH. "
-                "Ensure mala is installed via `uv tool install mala-agent` "
-                "or `uv sync` so the project.scripts entry point is exposed.",
-                reason=CodexHookNotActiveReason.SCRIPT_MISSING,
-            )
+            # Auto-write the five config-side preconditions to
+            # ``<isolated codex_home>/config.toml`` (decision #16). Codex
+            # requires ALL FIVE for the hook to fire:
+            # ``[features] plugins = true`` to override an opt-out user
+            # config that early-returns from
+            # ``plugins_for_config_with_force_reload``;
+            # ``[features] plugin_hooks = true`` to enable plugin-bundled
+            # hook loading (default-off in upstream Codex);
+            # ``[features] hooks = true`` to enable global hook
+            # execution; ``[plugins."<id>"] enabled = true`` to surface
+            # the plugin via ``configured_plugins_from_stack``; and
+            # ``[hooks.state."<id>:..."]`` with the matching
+            # ``trusted_hash`` to mark the hook Trusted. ``codex_home``
+            # here is the *active* home (isolated when user MCP is
+            # configured, user's real home otherwise) so the writes
+            # land in the same directory the spawned Codex will read.
+            _write_codex_plugin_config(codex_home=codex_home)
 
-        # 6. Auto-write the five config-side preconditions to
-        # ``<isolated codex_home>/config.toml`` (decision #16). Codex
-        # requires ALL FIVE for the hook to fire: ``[features] plugins = true``
-        # to override an opt-out user config that early-returns from
-        # ``plugins_for_config_with_force_reload``;
-        # ``[features] plugin_hooks = true`` to enable plugin-bundled
-        # hook loading (default-off in upstream Codex);
-        # ``[features] hooks = true`` to enable global hook execution;
-        # ``[plugins."<id>"] enabled = true`` to surface the plugin via
-        # ``configured_plugins_from_stack``; and
-        # ``[hooks.state."<id>:..."]`` with the matching ``trusted_hash``
-        # to mark the hook Trusted. ``codex_home`` here is the *active*
-        # home (isolated when user MCP is configured, user's real home
-        # otherwise) so the writes land in the same directory the
-        # spawned Codex will read.
-        _write_codex_plugin_config(codex_home=codex_home)
+            return install_result.plugin_hash
 
-        # 7. Cache key + selftest. The key matches the Amp provider's
-        # ``(coder_version, plugin_hash)`` shape; ``"unknown"`` carries
-        # the placeholder until a reliable ``codex --version`` parse is
-        # added (parity with the Amp path's posture).
-        cache_key = ("unknown", plugin_hash)
-        if self._selftest_cache_key == cache_key:
-            return
+        def _selftest(plugin_hash: str) -> None:
+            # The probe contract raises CodexHookNotActiveError on any
+            # fail-closed signature; default probe is a no-op. Tests
+            # inject custom probes that simulate each Reason.
+            env_overlay: dict[str, str] = {
+                "CODEX_HOME": str(codex_home),
+            }
+            self._selftest_probe(repo_path, env_overlay, plugin_hash)
 
-        env_overlay: dict[str, str] = {
-            "CODEX_HOME": str(codex_home),
-        }
-        # The probe contract raises CodexHookNotActiveError on any
-        # fail-closed signature; default probe is a no-op. Tests inject
-        # custom probes that simulate each Reason.
-        self._selftest_probe(repo_path, env_overlay, plugin_hash)
-
-        self._selftest_cache_key = cache_key
+        # ``coder_version`` placeholder "unknown" matches the Amp
+        # provider's posture until a reliable ``codex --version`` parse
+        # is added (plan ``L121`` / ``L823`` shared cache shape).
+        install_with_selftest(
+            install=_install,
+            selftest=_selftest,
+            cache=self._selftest_cache,
+        )
