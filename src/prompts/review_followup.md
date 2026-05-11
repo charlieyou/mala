@@ -16,13 +16,28 @@ The external reviewers found these issues:
 
 ## Validation
 
-Re-run configured validations after edits:
+Re-run configured validations after edits. Each snippet below is the exact canonical wrapper for one validation command; run each fenced snippet as its own single Bash tool call and do not manually echo `MALA_EVIDENCE`:
 
+Format:
 ```bash
 {format_command}
+```
+
+Lint:
+```bash
 {lint_command}
+```
+
+Typecheck:
+```bash
 {typecheck_command}
+```
+
+Custom commands, if configured:
 {custom_commands_section}
+
+Test:
+```bash
 {test_command}
 ```
 

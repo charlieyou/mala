@@ -37,11 +37,12 @@ def build_canonical_wrapper(
 ) -> str:
     """Build the canonical Bash wrapper text for `command`.
 
-    The wrapper runs `command.command` under `timeout`, redirects stdout and
-    stderr to an absolute log file `<validation_log_dir>/<issue_id>.<name>.log`,
-    and emits one `MALA_EVIDENCE` summary line that the checker recognizes.
-    The body sits inside a `(...)` subshell so the trailing `exit` terminates
-    only the subshell.
+    The wrapper creates the log directory, runs `command.command` under
+    `timeout`, redirects stdout and stderr to an absolute log file
+    `<validation_log_dir>/<issue_id>.<name>.log`, and emits one
+    `MALA_EVIDENCE` summary line that the checker recognizes. The body sits
+    inside a `(...)` subshell so the trailing `exit` terminates only the
+    subshell.
 
     Strict commands (`allow_fail=False`) propagate the command's status with
     `exit "$__mala_status"`. Advisory commands (`allow_fail=True`) end in
@@ -52,6 +53,7 @@ def build_canonical_wrapper(
     exit_expression = "0" if command.allow_fail else '"$__mala_status"'
     return (
         f'__mala_log="{log_path}"\n'
+        'mkdir -p "$(dirname "$__mala_log")"\n'
         "(\n"
         f"  if timeout {command.timeout} bash -lc '{escaped}'"
         ' >"$__mala_log" 2>&1; then\n'

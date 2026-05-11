@@ -116,18 +116,28 @@ Reading, searching, planning, and validation logs do not require locks.
 
 ## Validation
 
-Run configured validations before committing code/config/test changes. Each snippet below is the exact canonical wrapper for one validation command. Run each wrapper as-is in a single Bash tool call — only the wrapper's `MALA_EVIDENCE` line is recognized as evidence.
+Run configured validations before committing code/config/test changes. Each snippet below is the exact canonical wrapper for one validation command. Run each fenced snippet as its own single Bash tool call — only one wrapper and one `MALA_EVIDENCE` line per tool call is recognized as evidence.
 
+Format:
 ```bash
-mkdir -p {validation_log_dir}
 {format_command}
+```
 
+Lint:
+```bash
 {lint_command}
+```
 
+Typecheck:
+```bash
 {typecheck_command}
+```
 
+Custom commands, if configured:
 {custom_commands_section}
 
+Test:
+```bash
 {test_command}
 ```
 
@@ -145,7 +155,7 @@ Rules:
 
 Validation output handling:
 
-- Create `{validation_log_dir}` once before the validation run. Do not repeat `mkdir -p` for each validation command.
+- Each canonical wrapper creates its log directory before redirecting output.
 - Each canonical wrapper writes to `{validation_log_dir}/{issue_id}.<evidence_key>.log` and prints `MALA_EVIDENCE name=<evidence_key> exit=<code> log=<path>` so the gate can attribute evidence. `<evidence_key>` is the validation key: `format`, `lint`, `typecheck`, `test`, or the exact custom command name from `mala.yaml` such as `python_test` or `python_lint`. Do not hand-write `MALA_EVIDENCE` lines — only wrapper output is recognized.
 - Do not combine multiple custom validation commands into one `custom.log`. Run each custom command separately and give it its own log named after the custom command key.
 - Validation logs are scratch artifacts; do not lock or commit files under `{validation_log_dir}`.

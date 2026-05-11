@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import os
 import re
-import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal
@@ -42,6 +41,24 @@ def _resolve_validation_log_dir() -> Path:
     just like the infra-side helper does.
     """
     return Path(os.environ.get("MALA_VALIDATION_LOG_DIR", "/tmp/mala-validation-logs"))
+
+
+def _encode_repo_path(repo_path: Path) -> str:
+    """Encode repo path using the infra storage-directory convention.
+
+    Duplicated in domain to keep evidence parsing independent from infra while
+    still recognizing wrappers rendered with repo-scoped validation log dirs.
+    """
+    resolved = repo_path.resolve()
+    encoded = "-" + "-".join(resolved.parts[1:])
+    return encoded.replace("_", "-")
+
+
+def _candidate_validation_log_dirs(repo_path: Path) -> tuple[Path, ...]:
+    """Return validation log dirs the checker should accept for this repo."""
+    base_dir = _resolve_validation_log_dir()
+    repo_dir = base_dir / _encode_repo_path(repo_path)
+    return tuple(dict.fromkeys((base_dir, repo_dir)))
 
 
 if TYPE_CHECKING:
@@ -84,6 +101,14 @@ class _ParsedEvidenceSummary:
     name: str
     exit_code: int
     log_path: str
+
+
+@dataclass(frozen=True)
+class _RecognizedWrapper:
+    """Canonical wrapper match and its expected log path."""
+
+    command: ValidationCommand
+    log_path: Path
 
 
 def _parse_evidence_summary_line(content: str) -> _ParsedEvidenceSummary | None:
@@ -142,8 +167,8 @@ def _recognize_canonical_wrapper(
     configured_by_name: dict[str, ValidationCommand],
     *,
     issue_id: str | None = None,
-    validation_log_dir: Path,
-) -> ValidationCommand | None:
+    validation_log_dirs: tuple[Path, ...],
+) -> _RecognizedWrapper | None:
     """Match a Bash tool input against canonical wrappers for configured commands.
 
     Reuses :func:`build_canonical_wrapper` (T001) so the recognizer cannot drift
@@ -169,16 +194,24 @@ def _recognize_canonical_wrapper(
     log_path = Path(log_path_str)
     if not log_path.is_absolute():
         return None
-    try:
-        relative = log_path.relative_to(validation_log_dir)
-    except ValueError:
+    matched_log_dir: Path | None = None
+    relative: Path | None = None
+    for validation_log_dir in validation_log_dirs:
+        try:
+            candidate_relative = log_path.relative_to(validation_log_dir)
+        except ValueError:
+            continue
+        if candidate_relative.parent != Path("."):
+            continue
+        matched_log_dir = validation_log_dir
+        relative = candidate_relative
+        break
+    if matched_log_dir is None or relative is None:
         return None
     # The wrapper places the log file directly under validation_log_dir as
     # "<issue_id>.<name>.log" — reject paths nested in subdirectories so a
     # crafted absolute path under validation_log_dir cannot pass through with
     # an issue_id that contains a path separator.
-    if relative.parent != Path("."):
-        return None
     relative_str = str(relative)
     log_suffix = ".log"
     if not relative_str.endswith(log_suffix):
@@ -198,167 +231,21 @@ def _recognize_canonical_wrapper(
         expected = build_canonical_wrapper(
             cmd,
             issue_id=candidate_issue_id,
-            validation_log_dir=validation_log_dir,
+            validation_log_dir=matched_log_dir,
         )
         if input_lines == _normalize_wrapper_lines(expected):
             matches.append(cmd)
 
     if len(matches) != 1:
         return None
-    return matches[0]
-
-
-def _recognize_bare_command(
-    bash_input: str,
-    configured_by_name: dict[str, ValidationCommand],
-) -> ValidationCommand | None:
-    """Match a Bash tool input against bare configured commands.
-
-    A bare match is the entire input equal to the configured command after
-    whitespace normalization, optionally followed by trailing redirections.
-
-    Returns the matched :class:`ValidationCommand` only when exactly one
-    configured command bare-matches the input, otherwise ``None``.
-    """
-
-    def normalize(command: str) -> str:
-        return " ".join(command.split())
-
-    def matches_direct_command(command: str, configured: str) -> bool:
-        if not command.startswith(configured):
-            return False
-
-        remainder = command[len(configured) :].strip()
-        if not remainder:
-            return True
-
-        redirection_pattern = re.compile(
-            r"^(?:(?:\d?>&\d)|(?:(?:\d?>|\d?>>|&>|<)\s*(?:'[^']*'|\"[^\"]*\"|\S+)))(?:\s+|$)"
-        )
-        while remainder:
-            match = redirection_pattern.match(remainder)
-            if match is None:
-                return False
-            remainder = remainder[match.end() :].strip()
-        return True
-
-    normalized_input = normalize(bash_input)
-    if not normalized_input:
-        return None
-    matches: list[ValidationCommand] = []
-    for cmd in configured_by_name.values():
-        configured = normalize(cmd.command)
-        if not configured:
-            continue
-        if matches_direct_command(normalized_input, configured):
-            matches.append(cmd)
-    if len(matches) != 1:
-        return None
-    return matches[0]
-
-
-def _recognize_spec_pattern_command(
-    bash_input: str,
-    configured_by_name: dict[str, ValidationCommand],
-) -> ValidationCommand | None:
-    """Match a Bash tool input against configured detection patterns."""
-
-    def shell_words(command: str) -> list[str]:
-        try:
-            return shlex.split(command)
-        except ValueError:
-            return []
-
-    def is_trailing_argument_token(token: str) -> bool:
-        return token in {".", ".."} or ("/" in token and not token.startswith("-"))
-
-    def strip_leading_env_assignments(tokens: list[str]) -> list[str]:
-        assignment = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-        while tokens and assignment.match(tokens[0]):
-            tokens = tokens[1:]
-        return tokens
-
-    def strip_cache_dir_override(tokens: list[str]) -> list[str]:
-        stripped: list[str] = []
-        index = 0
-        while index < len(tokens):
-            if (
-                index + 1 < len(tokens)
-                and tokens[index] == "-o"
-                and tokens[index + 1].startswith("cache_dir=")
-            ):
-                index += 2
-                continue
-            stripped.append(tokens[index])
-            index += 1
-        return stripped
-
-    def command_identity_tokens(
-        command: str, *, preserve_trailing_args: bool = False
-    ) -> list[str]:
-        tokens = strip_cache_dir_override(
-            strip_leading_env_assignments(shell_words(command))
-        )
-        while (
-            not preserve_trailing_args
-            and len(tokens) > 1
-            and is_trailing_argument_token(tokens[-1])
-        ):
-            tokens = tokens[:-1]
-        return tokens
-
-    def command_identity_variants(cmd: ValidationCommand) -> list[list[str]]:
-        identity = command_identity_tokens(
-            cmd.command,
-            preserve_trailing_args=cmd.kind == CommandKind.CUSTOM,
-        )
-        variants = [identity] if identity else []
-        if identity[:1] == ["uvx"] and len(identity) > 1:
-            variants.append(identity[1:])
-        if identity[:2] == ["uv", "run"] and len(identity) > 2:
-            variants.append(identity[2:])
-        return variants
-
-    stripped_input = bash_input.strip()
-    if re.search(r"&&|\|\||[;&|\n]", stripped_input):
-        return None
-    input_tokens = strip_cache_dir_override(
-        strip_leading_env_assignments(shell_words(stripped_input))
-    )
-    if not input_tokens:
-        return None
-
-    matches = []
-    for cmd in configured_by_name.values():
-        identities = command_identity_variants(cmd)
-        if (
-            cmd.detection_pattern is not None
-            and identities
-            and cmd.detection_pattern.search(stripped_input)
-            and any(
-                input_tokens[: len(identity)] == identity for identity in identities
-            )
-        ):
-            matches.append(cmd)
-    non_setup_matches = [
-        cmd for cmd in matches if cmd.kind not in EVIDENCE_CHECK_IGNORED_KINDS
-    ]
-    if non_setup_matches:
-        matches = non_setup_matches
-    if len(matches) != 1:
-        return None
-    return matches[0]
+    return _RecognizedWrapper(command=matches[0], log_path=log_path)
 
 
 def _build_command_evidence_for_match(
     matched_cmd: ValidationCommand,
+    expected_log_path: Path,
     content: str,
-    is_error: bool,
     tool_use_id: str,
-    *,
-    matched_via: Literal["canonical_wrapper", "bare_command"],
-    observed_command: str,
-    validation_log_dir: Path,
 ) -> CommandEvidence | None:
     """Build a :class:`CommandEvidence` record for a matched tool use + result.
 
@@ -381,19 +268,10 @@ def _build_command_evidence_for_match(
         return None
 
     if summary is not None:
-        command_text = (
-            matched_cmd.command
-            if matched_via == "canonical_wrapper"
-            else observed_command.strip()
-        )
         if summary.name != matched_cmd.name:
             return None
         log_path = Path(summary.log_path)
-        if not log_path.is_absolute():
-            return None
-        try:
-            log_path.relative_to(validation_log_dir)
-        except ValueError:
+        if log_path != expected_log_path:
             return None
         exit_code = summary.exit_code
         timed_out = exit_code == 124
@@ -407,30 +285,11 @@ def _build_command_evidence_for_match(
             status=status,
             timed_out=timed_out,
             exit_code=exit_code,
-            observed_command=command_text,
+            observed_command=matched_cmd.command,
             log_path=summary.log_path,
             tool_use_id=tool_use_id,
             source="command+summary",
         )
-
-    if matched_via != "bare_command":
-        return None
-
-    bare_status: Literal["passed", "failed", "unknown"] = (
-        "failed" if is_error else "passed"
-    )
-    return CommandEvidence(
-        name=matched_cmd.name,
-        kind=matched_cmd.kind,
-        seen=True,
-        status=bare_status,
-        timed_out=False,
-        exit_code=None,
-        observed_command=observed_command.strip(),
-        log_path=None,
-        tool_use_id=tool_use_id,
-        source="command+shell_status",
-    )
 
 
 @dataclass(frozen=True)
@@ -709,8 +568,9 @@ class EvidenceCheck:
     ) -> ValidationEvidence:
         """Parse JSONL log for validation evidence.
 
-        The parser drives ``evidence.commands`` via canonical-wrapper
-        recognition (preferred) followed by a bare-command fallback.
+        The parser drives ``evidence.commands`` through canonical-wrapper
+        recognition only. Bare commands and hand-written summary lines are not
+        authoritative validation evidence.
         """
         evidence = ValidationEvidence()
         if not log_path.exists():
@@ -729,7 +589,7 @@ class EvidenceCheck:
         spec: ValidationSpec,
         offset: int,
     ) -> None:
-        """Populate ``evidence.commands`` via canonical-wrapper / bare-command recognition.
+        """Populate ``evidence.commands`` via canonical-wrapper recognition.
 
         Iterates Bash tool uses in order; the latest correlated invocation per
         configured command name overwrites any prior record so reruns supersede
@@ -741,11 +601,8 @@ class EvidenceCheck:
         if not configured_by_name:
             return
 
-        validation_log_dir = _resolve_validation_log_dir()
-        tool_id_to_match: dict[
-            str,
-            tuple[ValidationCommand, Literal["canonical_wrapper", "bare_command"], str],
-        ] = {}
+        validation_log_dirs = _candidate_validation_log_dirs(self.repo_path)
+        tool_id_to_match: dict[str, _RecognizedWrapper] = {}
 
         for entry in self._evidence_provider.iter_thread_evidence(log_path, offset):
             for tool_id, command in self._evidence_provider.extract_bash_commands(
@@ -754,47 +611,28 @@ class EvidenceCheck:
                 matched = _recognize_canonical_wrapper(
                     command,
                     configured_by_name,
-                    validation_log_dir=validation_log_dir,
+                    validation_log_dirs=validation_log_dirs,
                 )
                 if matched is not None:
-                    tool_id_to_match[tool_id] = (
-                        matched,
-                        "canonical_wrapper",
-                        command,
-                    )
-                    continue
-                matched = _recognize_bare_command(command, configured_by_name)
-                if matched is None:
-                    matched = _recognize_spec_pattern_command(
-                        command, configured_by_name
-                    )
-                if matched is not None:
-                    tool_id_to_match[tool_id] = (matched, "bare_command", command)
+                    tool_id_to_match[tool_id] = matched
 
-            is_error_by_id = dict(self._evidence_provider.extract_tool_results(entry))
             for (
                 tool_use_id,
                 content,
             ) in self._evidence_provider.extract_tool_result_content(entry):
                 if tool_use_id not in tool_id_to_match:
                     continue
-                matched_cmd, matched_via, observed_command = tool_id_to_match[
-                    tool_use_id
-                ]
-                is_error = is_error_by_id.get(tool_use_id, False)
+                matched_wrapper = tool_id_to_match[tool_use_id]
                 record = _build_command_evidence_for_match(
-                    matched_cmd,
+                    matched_wrapper.command,
+                    matched_wrapper.log_path,
                     content,
-                    is_error,
                     tool_use_id,
-                    matched_via=matched_via,
-                    observed_command=observed_command,
-                    validation_log_dir=validation_log_dir,
                 )
                 if record is not None:
-                    evidence.commands[matched_cmd.name] = record
+                    evidence.commands[matched_wrapper.command.name] = record
                 else:
-                    evidence.commands.pop(matched_cmd.name, None)
+                    evidence.commands.pop(matched_wrapper.command.name, None)
 
     def get_log_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
         """Get the byte offset at the end of a log file.

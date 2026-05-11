@@ -16,12 +16,12 @@ from src.domain.validation.spec import (
     extract_lint_tools_from_spec,
 )
 from src.domain.prompts import (
-    build_prompt_validation_commands,
+    build_validation_wrapper_placeholders,
     format_implementer_prompt,
     load_prompts,
 )
 
-from src.domain.prompts import build_custom_commands_section
+from src.domain.prompts import build_prompt_validation_commands
 from src.pipeline.review_formatter import format_review_issues
 from src.infra.git_utils import get_git_branch_async, get_git_commit_async
 from src.infra.io.log_output.run_metadata import (
@@ -197,20 +197,18 @@ def _build_resume_prompt(
 
     review_issues_text = format_review_issues(issues, base_path=repo_path)
 
+    wrapper_placeholders = build_validation_wrapper_placeholders(
+        validation_commands,
+        issue_id=issue_id,
+        validation_log_dir=get_repo_validation_log_dir(repo_path),
+    )
+
     return prompts.review_followup_prompt.format(
         attempt=1,
         max_attempts=max_review_retries,
         review_issues=review_issues_text,
         issue_id=issue_id,
-        lint_command=validation_commands.lint,
-        format_command=validation_commands.format,
-        typecheck_command=validation_commands.typecheck,
-        test_command=validation_commands.test,
-        custom_commands_section=build_custom_commands_section(
-            validation_commands.custom_commands,
-            issue_id=issue_id,
-            validation_log_dir=get_repo_validation_log_dir(repo_path),
-        ),
+        **wrapper_placeholders,
     )
 
 

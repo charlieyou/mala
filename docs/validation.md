@@ -30,6 +30,7 @@ Canonical wrapper format:
 
 ```bash
 __mala_log="/tmp/mala-validation-logs/bd-mala-abc.lint.log"
+mkdir -p "$(dirname "$__mala_log")"
 (
   if timeout 120 bash -lc 'uvx ruff check .' >"$__mala_log" 2>&1; then
     __mala_status=0
@@ -43,9 +44,32 @@ __mala_log="/tmp/mala-validation-logs/bd-mala-abc.lint.log"
 
 Built-in commands and custom commands use the same wrapper shape. The `name=` value must be the evidence key: for example `lint`, `format`, `typecheck`, `test`, or a custom command key from `mala.yaml`.
 
-For debug work, a bare command can still appear in the session log and may be matched as a tool invocation. This is a fallback path for human-readable diagnostics, not the preferred evidence protocol. The canonical wrapper is authoritative because it attributes a specific evidence key, exit status, and log path in one line.
+Bare command invocations and hand-written `MALA_EVIDENCE` lines are not authoritative gate evidence. The parser only credits a summary line when it is correlated with the exact canonical wrapper for the configured command.
 
-`ValidationCommand.detection_pattern` remains informational. It can help identify likely command invocations in logs, but it is not authoritative gate evidence when `MALA_EVIDENCE` wrapper output is expected.
+`ValidationCommand.detection_pattern` remains informational for diagnostics and related validation features. It is not authoritative gate evidence when `MALA_EVIDENCE` wrapper output is expected.
+
+### ValidationEvidence Shape
+
+Validation evidence is stored in one command map keyed by the configured command name:
+
+```python
+ValidationEvidence.commands: dict[str, CommandEvidence]
+```
+
+Each `CommandEvidence` record includes:
+
+- `name`: configured evidence key such as `lint`, `test`, or a custom command name
+- `kind`: command kind (`format`, `lint`, `typecheck`, `test`, `custom`, etc.)
+- `seen`: whether authoritative evidence was observed
+- `status`: `passed`, `failed`, or `unknown`
+- `timed_out`: true when the wrapper reported timeout exit code `124`
+- `exit_code`: command exit code reported by `MALA_EVIDENCE`
+- `observed_command`: configured command text associated with the wrapper
+- `log_path`: exact log path reported by the canonical wrapper
+- `tool_use_id`: correlated Bash tool-use ID from the session log
+- `source`: `command+summary` for canonical wrapper evidence
+
+Consumers should read `evidence.commands` directly. Legacy split fields such as `commands_ran`, `failed_commands`, `custom_commands_ran`, and `custom_commands_failed` are not available.
 
 ### Resolution Markers
 

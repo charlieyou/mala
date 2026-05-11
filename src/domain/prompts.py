@@ -45,14 +45,15 @@ def build_custom_commands_section(
         validation_log_dir: Directory for validation command output logs.
 
     Returns:
-        One canonical wrapper per command, joined by blank lines, or the
-        empty string when there are no custom commands.
+        One fenced canonical wrapper snippet per command, joined by blank
+        lines, or the empty string when there are no custom commands.
     """
     if not custom_commands:
         return ""
 
     wrappers = [
-        build_canonical_wrapper(
+        "```bash\n"
+        + build_canonical_wrapper(
             ValidationCommand(
                 name=name,
                 command=command,
@@ -63,6 +64,7 @@ def build_custom_commands_section(
             issue_id=issue_id,
             validation_log_dir=validation_log_dir,
         )
+        + "\n```"
         for name, command, timeout, allow_fail in custom_commands
     ]
     return "\n\n".join(wrappers)
@@ -83,18 +85,20 @@ def build_gate_followup_wrappers(
         validation_log_dir: Directory for validation command output logs.
 
     Returns:
-        Canonical wrappers joined by blank lines, or the empty string when
-        no commands are missing.
+        Fenced canonical wrapper snippets joined by blank lines, or the empty
+        string when no commands are missing.
     """
     if not missing_commands:
         return ""
 
     wrappers = [
-        build_canonical_wrapper(
+        "```bash\n"
+        + build_canonical_wrapper(
             cmd,
             issue_id=issue_id,
             validation_log_dir=validation_log_dir,
         )
+        + "\n```"
         for cmd in missing_commands
     ]
     return "\n\n".join(wrappers)
@@ -183,6 +187,35 @@ def _builtin_command_records(
     }
 
 
+def build_validation_wrapper_placeholders(
+    validation_commands: PromptValidationCommands,
+    *,
+    issue_id: str,
+    validation_log_dir: Path,
+) -> dict[str, str]:
+    """Build prompt placeholders for all validation command wrappers.
+
+    Built-in command placeholders (`format_command`, `lint_command`,
+    `typecheck_command`, `test_command`) and `custom_commands_section` all use
+    the same canonical wrapper builder.
+    """
+    builtins = _builtin_command_records(validation_commands)
+    wrappers = {
+        f"{name}_command": build_canonical_wrapper(
+            cmd,
+            issue_id=issue_id,
+            validation_log_dir=validation_log_dir,
+        )
+        for name, cmd in builtins.items()
+    }
+    wrappers["custom_commands_section"] = build_custom_commands_section(
+        validation_commands.custom_commands,
+        issue_id=issue_id,
+        validation_log_dir=validation_log_dir,
+    )
+    return wrappers
+
+
 def format_implementer_prompt(
     implementer_prompt: str,
     issue_id: str,
@@ -208,17 +241,8 @@ def format_implementer_prompt(
     Returns:
         Formatted prompt string.
     """
-    builtins = _builtin_command_records(validation_commands)
-    wrappers = {
-        f"{name}_command": build_canonical_wrapper(
-            cmd,
-            issue_id=issue_id,
-            validation_log_dir=validation_log_dir,
-        )
-        for name, cmd in builtins.items()
-    }
-    custom_commands_section = build_custom_commands_section(
-        validation_commands.custom_commands,
+    wrappers = build_validation_wrapper_placeholders(
+        validation_commands,
         issue_id=issue_id,
         validation_log_dir=validation_log_dir,
     )
@@ -229,7 +253,6 @@ def format_implementer_prompt(
         lock_dir=lock_dir,
         validation_log_dir=validation_log_dir,
         agent_id=agent_id,
-        custom_commands_section=custom_commands_section,
         issue_description=(issue_description or "No description available")
         .replace("{", "{{")
         .replace("}", "}}"),

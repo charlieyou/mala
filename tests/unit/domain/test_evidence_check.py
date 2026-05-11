@@ -28,10 +28,9 @@ from src.domain.evidence_check import (
     CommandEvidence,
     EvidenceCheck,
     ValidationEvidence,
+    _encode_repo_path,
     _parse_evidence_summary_line,
-    _recognize_bare_command,
     _recognize_canonical_wrapper,
-    _recognize_spec_pattern_command,
     check_evidence_against_spec,
 )
 from src.domain.validation.config_types import (
@@ -176,6 +175,33 @@ def _tool_result_json(
     )
 
 
+def _canonical_validation_entries(
+    tool_id: str,
+    command: ValidationCommand,
+    *,
+    exit_code: int = 0,
+    issue_id: str = "test-issue",
+) -> str:
+    """Build JSONL entries for one canonical validation wrapper invocation."""
+    validation_log_dir = Path("/tmp/mala-validation-logs")
+    wrapper = build_canonical_wrapper(
+        command,
+        issue_id=issue_id,
+        validation_log_dir=validation_log_dir,
+    )
+    log_path = validation_log_dir / f"{issue_id}.{command.name}.log"
+    return (
+        _bash_tool_use_json(tool_id, wrapper)
+        + "\n"
+        + _tool_result_json(
+            tool_id,
+            f"MALA_EVIDENCE name={command.name} exit={exit_code} log={log_path}",
+            is_error=exit_code != 0 and not command.allow_fail,
+        )
+        + "\n"
+    )
+
+
 class TestSpecDrivenParsing:
     """Test parse_validation_evidence_with_spec for spec-driven evidence detection."""
 
@@ -186,18 +212,14 @@ class TestSpecDrivenParsing:
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should return ValidationEvidence from log."""
-        log_path = tmp_path / "session.jsonl"
-        log_path.write_text(
-            _bash_tool_use_json("toolu_test", "uv run pytest")
-            + "\n"
-            + _tool_result_json("toolu_test")
-            + "\n"
-        )
-
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        log_path = tmp_path / "session.jsonl"
+        test_command = next(cmd for cmd in spec.commands if cmd.name == "test")
+        log_path.write_text(_canonical_validation_entries("toolu_test", test_command))
+
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert isinstance(evidence, ValidationEvidence)
@@ -211,27 +233,18 @@ class TestSpecDrivenParsing:
     ) -> None:
         """Should only parse log entries after the given byte offset."""
         log_path = tmp_path / "session.jsonl"
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        test_command = next(cmd for cmd in spec.commands if cmd.name == "test")
+        lint_command = next(cmd for cmd in spec.commands if cmd.name == "lint")
 
         # First command: pytest (before offset)
-        first_entries = (
-            _bash_tool_use_json("toolu_test", "uv run pytest")
-            + "\n"
-            + _tool_result_json("toolu_test")
-            + "\n"
-        )
+        first_entries = _canonical_validation_entries("toolu_test", test_command)
         # Second command: ruff check (after offset)
-        second_entries = (
-            _bash_tool_use_json("toolu_lint", "uvx ruff check .")
-            + "\n"
-            + _tool_result_json("toolu_lint")
-            + "\n"
-        )
+        second_entries = _canonical_validation_entries("toolu_lint", lint_command)
         log_path.write_text(first_entries + second_entries)
 
         gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
 
         # Offset set to after the first line
         offset = len(first_entries)
@@ -251,18 +264,14 @@ class TestSpecDrivenParsing:
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Offset=0 should parse the entire file (default behavior)."""
-        log_path = tmp_path / "session.jsonl"
-        log_path.write_text(
-            _bash_tool_use_json("toolu_test", "uv run pytest")
-            + "\n"
-            + _tool_result_json("toolu_test")
-            + "\n"
-        )
-
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        log_path = tmp_path / "session.jsonl"
+        test_command = next(cmd for cmd in spec.commands if cmd.name == "test")
+        log_path.write_text(_canonical_validation_entries("toolu_test", test_command))
+
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         assert _command_seen(evidence, "test") is True
@@ -359,26 +368,18 @@ class TestSpecDrivenParsing:
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should detect all validation commands."""
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         log_path = tmp_path / "session.jsonl"
 
         # Write entries for all validation commands
         entries = []
-        commands = [
-            "uv run pytest tests/",
-            "uvx ruff check .",
-            "uvx ruff format --check .",
-            "uvx ty check",
-        ]
-        for index, cmd in enumerate(commands):
-            tool_id = f"toolu_{index}"
-            entries.append(_bash_tool_use_json(tool_id, cmd))
-            entries.append(_tool_result_json(tool_id))
+        for cmd in spec.commands:
+            if cmd.name in {"test", "lint", "format", "typecheck"}:
+                entries.append(_canonical_validation_entries(f"toolu_{cmd.name}", cmd))
         log_path.write_text("\n".join(entries) + "\n")
 
         gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         assert _command_seen(evidence, "test") is True
@@ -439,14 +440,11 @@ class TestNoProgressDetection:
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Progress detected: new validation evidence (even with same commit)."""
-        log_path = tmp_path / "session.jsonl"
-        log_path.write_text(
-            _bash_tool_use_json("toolu_test", "uv run pytest")
-            + "\n"
-            + _tool_result_json("toolu_test")
-            + "\n"
-        )
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        test_command = next(cmd for cmd in spec.commands if cmd.name == "test")
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(_canonical_validation_entries("toolu_test", test_command))
 
         gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         is_no_progress = gate.check_no_progress(
@@ -2069,10 +2067,11 @@ class TestEvidenceSummaryParserAndRecognizer:
             wrapper,
             {"lint": command},
             issue_id="mala-3gbpn.3",
-            validation_log_dir=tmp_path,
+            validation_log_dirs=(tmp_path,),
         )
 
-        assert matched == command
+        assert matched is not None
+        assert matched.command == command
 
     def test_canonical_wrapper_matches_single_quote_and_shell_operators(
         self, tmp_path: Path
@@ -2092,10 +2091,11 @@ class TestEvidenceSummaryParserAndRecognizer:
             wrapper,
             {"python_test": command},
             issue_id="mala-3gbpn.3",
-            validation_log_dir=tmp_path,
+            validation_log_dirs=(tmp_path,),
         )
 
-        assert matched == command
+        assert matched is not None
+        assert matched.command == command
 
     def test_canonical_wrapper_rejects_subshell_wrapped_wrapper(
         self, tmp_path: Path
@@ -2115,7 +2115,7 @@ class TestEvidenceSummaryParserAndRecognizer:
             f"({wrapper})",
             {"lint": command},
             issue_id="mala-3gbpn.3",
-            validation_log_dir=tmp_path,
+            validation_log_dirs=(tmp_path,),
         )
 
         assert matched is None
@@ -2146,56 +2146,10 @@ class TestEvidenceSummaryParserAndRecognizer:
             mutation(wrapper),
             {"lint": command},
             issue_id="mala-3gbpn.3",
-            validation_log_dir=tmp_path,
+            validation_log_dirs=(tmp_path,),
         )
 
         assert matched is None
-
-    def test_bare_command_matches_exact_and_trailing_redirection(self) -> None:
-        command = ValidationCommand(
-            name="lint",
-            command="uvx ruff check .",
-            kind=CommandKind.LINT,
-        )
-
-        assert _recognize_bare_command("uvx ruff check .", {"lint": command}) == command
-        assert (
-            _recognize_bare_command(
-                "uvx ruff check . > /tmp/lint.log 2>&1", {"lint": command}
-            )
-            == command
-        )
-
-    @pytest.mark.parametrize(
-        "bash_input",
-        [
-            'echo "uvx ruff check ."',
-            "uvx ruff check . && uv run pytest",
-            "uvx ruff check .; uv run pytest",
-        ],
-    )
-    def test_bare_command_rejects_mentions_and_compound_shell(
-        self, bash_input: str
-    ) -> None:
-        command = ValidationCommand(
-            name="lint",
-            command="uvx ruff check .",
-            kind=CommandKind.LINT,
-        )
-
-        assert _recognize_bare_command(bash_input, {"lint": command}) is None
-
-    def test_bare_command_handles_prefix_collision(self) -> None:
-        test = ValidationCommand(name="test", command="test", kind=CommandKind.TEST)
-        test_extra = ValidationCommand(
-            name="test-extra", command="test-extra", kind=CommandKind.CUSTOM
-        )
-
-        matched = _recognize_bare_command(
-            "test-extra", {"test": test, "test-extra": test_extra}
-        )
-
-        assert matched == test_extra
 
     def test_parse_validation_evidence_rejects_name_mismatch(
         self,
@@ -2327,6 +2281,89 @@ class TestEvidenceSummaryParserAndRecognizer:
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert "lint" not in evidence.commands
+
+    def test_parse_validation_evidence_rejects_wrong_log_inside_validation_dir(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(tmp_path))
+        command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=tmp_path,
+        )
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            _bash_tool_use_json("toolu_lint", wrapper)
+            + "\n"
+            + _tool_result_json(
+                "toolu_lint",
+                f"MALA_EVIDENCE name=lint exit=0 log={tmp_path / 'mala-3gbpn.3.test.log'}",
+            )
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("lint",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert "lint" not in evidence.commands
+
+    def test_parse_validation_evidence_accepts_repo_scoped_log_dir(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        base_log_dir = tmp_path / "validation-logs"
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(base_log_dir))
+        repo_path = tmp_path / "repo_with_underscores"
+        repo_path.mkdir()
+        repo_log_dir = base_log_dir / _encode_repo_path(repo_path)
+        command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=repo_log_dir,
+        )
+        expected_log = repo_log_dir / "mala-3gbpn.3.lint.log"
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            _bash_tool_use_json("toolu_lint", wrapper)
+            + "\n"
+            + _tool_result_json(
+                "toolu_lint",
+                f"MALA_EVIDENCE name=lint exit=0 log={expected_log}",
+            )
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("lint",),
+        )
+        gate = EvidenceCheck(repo_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.commands["lint"].log_path == str(expected_log)
 
     def test_parse_validation_evidence_rejects_multiple_summary_lines(
         self,
@@ -2715,7 +2752,7 @@ class TestEvidenceSummaryParserAndRecognizer:
 
         assert evidence.commands == {}
 
-    def test_pattern_fallback_accepts_custom_command_identity(
+    def test_bare_custom_command_does_not_satisfy_evidence(
         self,
         tmp_path: Path,
         evidence_provider: EvidenceProvider,
@@ -2744,8 +2781,7 @@ class TestEvidenceSummaryParserAndRecognizer:
 
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
-        assert evidence.commands["python_test"].kind == CommandKind.CUSTOM
-        assert evidence.commands["python_test"].source == "command+shell_status"
+        assert evidence.commands == {}
 
     def test_pattern_fallback_rejects_built_in_tool_name_mention(
         self,
@@ -2855,7 +2891,7 @@ class TestEvidenceSummaryParserAndRecognizer:
 
         assert evidence.commands == {}
 
-    def test_pattern_fallback_allows_trailing_newline(
+    def test_bare_command_with_trailing_newline_gets_no_credit(
         self,
         tmp_path: Path,
         evidence_provider: EvidenceProvider,
@@ -2886,9 +2922,9 @@ class TestEvidenceSummaryParserAndRecognizer:
 
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
-        assert evidence.commands["lint"].status == "passed"
+        assert evidence.commands == {}
 
-    def test_pattern_fallback_preserves_observed_command_text(
+    def test_bare_failed_command_gets_no_credit(
         self,
         tmp_path: Path,
         evidence_provider: EvidenceProvider,
@@ -2919,8 +2955,7 @@ class TestEvidenceSummaryParserAndRecognizer:
 
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
-        assert evidence.commands["test"].status == "failed"
-        assert evidence.commands["test"].observed_command == "uv run pytest -q"
+        assert evidence.commands == {}
 
     def test_ambiguous_detection_pattern_match_credits_nothing(
         self,
@@ -2996,7 +3031,7 @@ class TestEvidenceSummaryParserAndRecognizer:
             "uvx ruff check . --fix",
         ],
     )
-    def test_pattern_fallback_credits_valid_superstring_for_colliding_patterns(
+    def test_bare_superstring_for_colliding_patterns_gets_no_credit(
         self,
         tmp_path: Path,
         evidence_provider: EvidenceProvider,
@@ -3034,8 +3069,7 @@ class TestEvidenceSummaryParserAndRecognizer:
 
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
-        assert evidence.commands["lint"].status == "passed"
-        assert "format" not in evidence.commands
+        assert evidence.commands == {}
 
     def test_bare_command_without_tool_result_gets_no_credit(
         self,
@@ -3079,7 +3113,7 @@ class TestEvidenceSummaryParserAndRecognizer:
 
         assert evidence.commands == {}
 
-    def test_incomplete_bare_retry_does_not_overwrite_prior_failure(
+    def test_bare_retry_gets_no_credit(
         self,
         tmp_path: Path,
         evidence_provider: EvidenceProvider,
@@ -3153,7 +3187,7 @@ class TestEvidenceSummaryParserAndRecognizer:
 
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
-        assert evidence.commands["lint"].status == "failed"
+        assert evidence.commands == {}
 
     def test_invalid_canonical_rerun_clears_prior_pass(
         self,
@@ -3303,34 +3337,33 @@ class TestCheckWithResolutionSpec:
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         log_path = tmp_path / "session.jsonl"
+        test_command = ValidationCommand(
+            name="test",
+            command="uv run pytest",
+            kind=CommandKind.TEST,
+            allow_fail=False,
+        )
+        docs_command = ValidationCommand(
+            name="python_docs",
+            command="python scripts/check_docs.py",
+            kind=CommandKind.CUSTOM,
+            detection_pattern=re.compile(r"\bpython\b"),
+            allow_fail=False,
+        )
+        spec = ValidationSpec(
+            commands=[
+                test_command,
+                docs_command,
+            ],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("test",),
+        )
         log_path.write_text(
-            _bash_tool_use_json("toolu_test", "uv run pytest")
-            + "\n"
-            + _tool_result_json("toolu_test")
-            + "\n"
+            _canonical_validation_entries("toolu_test", test_command)
             + _bash_tool_use_json("toolu_docs", "python scripts/check_docs.py")
             + "\n"
             + _tool_result_json("toolu_docs", "docs failed", is_error=True)
             + "\n"
-        )
-        spec = ValidationSpec(
-            commands=[
-                ValidationCommand(
-                    name="test",
-                    command="uv run pytest",
-                    kind=CommandKind.TEST,
-                    allow_fail=False,
-                ),
-                ValidationCommand(
-                    name="python_docs",
-                    command="python scripts/check_docs.py",
-                    kind=CommandKind.CUSTOM,
-                    detection_pattern=re.compile(r"\bpython\b"),
-                    allow_fail=False,
-                ),
-            ],
-            scope=ValidationScope.PER_SESSION,
-            evidence_required=("test",),
         )
         fake_runner = make_git_log_response_runner(
             "test-123",
@@ -3659,6 +3692,9 @@ class TestByteOffsetConsistency:
         The emoji in this test is 4 bytes in UTF-8, demonstrating the difference.
         """
         log_path = tmp_path / "session.jsonl"
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        test_command = next(cmd for cmd in spec.commands if cmd.name == "test")
 
         # Entry with multi-byte unicode
         entry_with_emoji = json.dumps(
@@ -3675,19 +3711,12 @@ class TestByteOffsetConsistency:
             }
         )
 
-        validation_entry = (
-            _bash_tool_use_json("toolu_test", "uv run pytest")
-            + "\n"
-            + _tool_result_json("toolu_test")
-        )
+        validation_entry = _canonical_validation_entries("toolu_test", test_command)
 
         content = entry_with_emoji + "\n" + validation_entry + "\n"
         log_path.write_text(content)
 
         gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
 
         # Calculate byte offset after first entry (including newline)
         byte_offset = len((entry_with_emoji + "\n").encode("utf-8"))
@@ -3759,12 +3788,11 @@ class TestByteOffsetConsistency:
     ) -> None:
         """Binary data (invalid UTF-8) should be skipped without crashing."""
         log_path = tmp_path / "session.jsonl"
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        test_command = next(cmd for cmd in spec.commands if cmd.name == "test")
 
-        valid_entry = (
-            _bash_tool_use_json("toolu_test", "uv run pytest")
-            + "\n"
-            + _tool_result_json("toolu_test")
-        )
+        valid_entry = _canonical_validation_entries("toolu_test", test_command)
 
         # Write valid entry, then binary garbage, then valid entry
         with open(log_path, "wb") as f:
@@ -3773,9 +3801,6 @@ class TestByteOffsetConsistency:
             f.write((valid_entry + "\n").encode("utf-8"))
 
         gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         # Should still parse valid entries
@@ -3903,119 +3928,30 @@ class TestSpecDrivenEvidencePatterns:
                 f"Command '{cmd.name}' pattern does not match its own command: {command_str}"
             )
 
-    def test_evidence_check_uses_spec_patterns_for_evidence(
+    def test_bare_spec_commands_do_not_satisfy_evidence(
         self,
         tmp_path: Path,
         evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
-        """EvidenceCheck should use patterns from the spec, not hardcoded patterns.
+        """Only canonical wrappers satisfy validation evidence requirements."""
 
-        This ensures evidence parsing is driven from spec command definitions.
-        """
-
-        # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
 
-        # Create log with all commands from the spec
         log_path = tmp_path / "session.jsonl"
         lines = []
         for index, cmd in enumerate(spec.commands):
-            command_str = cmd.command
             tool_id = f"toolu_{index}"
-            lines.append(_bash_tool_use_json(tool_id, command_str))
+            lines.append(_bash_tool_use_json(tool_id, cmd.command))
             lines.append(_tool_result_json(tool_id))
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
-        # Create gate with mock command runner - no commit found
-        # Parse evidence directly to test spec-driven patterns
+
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        # Should detect pytest command via spec patterns
-        assert _command_seen(evidence, "test") is True
-
-    def test_spec_pattern_fallback_requires_configured_flags(self) -> None:
-        """Configured flags must be part of the matched command prefix."""
-
-        test_command = ValidationCommand(
-            name="test",
-            command="uv run pytest --cov=src --cov-fail-under=72",
-            kind=CommandKind.TEST,
-            detection_pattern=re.compile(r"\bpytest\b"),
-        )
-        format_command = ValidationCommand(
-            name="format",
-            command="uvx ruff format --check .",
-            kind=CommandKind.FORMAT,
-            detection_pattern=re.compile(r"\bruff\s+format\b"),
-        )
-        lint_command = ValidationCommand(
-            name="lint",
-            command="uvx ruff check --config=config/ruff.toml .",
-            kind=CommandKind.LINT,
-            detection_pattern=re.compile(r"\bruff\s+check\b"),
-        )
-        parallel_test_command = ValidationCommand(
-            name="parallel-test",
-            command=(
-                "uv run pytest --cov-report=html:cov/ "
-                "-o cache_dir=/tmp/pytest-${AGENT_ID:-default} -n auto"
-            ),
-            kind=CommandKind.TEST,
-            detection_pattern=re.compile(r"\bpytest\b"),
-        )
-        configured = {
-            test_command.name: test_command,
-            format_command.name: format_command,
-            lint_command.name: lint_command,
-            parallel_test_command.name: parallel_test_command,
-        }
-
-        assert _recognize_spec_pattern_command("uv run pytest", configured) is None
-        assert _recognize_spec_pattern_command("uvx ruff format .", configured) is None
-        assert _recognize_spec_pattern_command("uvx ruff check .", configured) is None
-        assert (
-            _recognize_spec_pattern_command(
-                "uv run pytest --cov=src --cov-fail-under=72 -q",
-                configured,
-            )
-            == test_command
-        )
-        assert (
-            _recognize_spec_pattern_command(
-                "uvx ruff format --check . src/package",
-                configured,
-            )
-            == format_command
-        )
-        assert (
-            _recognize_spec_pattern_command(
-                "uvx ruff check --config=config/ruff.toml .",
-                configured,
-            )
-            == lint_command
-        )
-        assert (
-            _recognize_spec_pattern_command(
-                "uv run pytest --cov-report=html:cov/ -n auto",
-                configured,
-            )
-            == parallel_test_command
-        )
-        assert (
-            _recognize_spec_pattern_command(
-                "uv run pytest --cov-report=html:cov/ "
-                "-o cache_dir=/tmp/pytest-agent -n auto "
-                "tests/unit/domain/test_evidence_check.py",
-                configured,
-            )
-            == parallel_test_command
-        )
+        assert evidence.commands == {}
 
     def test_command_without_pattern_skipped(
         self,
@@ -4068,17 +4004,13 @@ class TestSpecDrivenEvidencePatterns:
         # Without detection_pattern, pytest should NOT be detected
         assert _command_seen(evidence, "test") is False
 
-    def test_check_with_resolution_uses_spec_patterns(
+    def test_bare_commands_do_not_use_spec_patterns_as_evidence(
         self,
         tmp_path: Path,
         evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
-        """check_with_resolution should use spec-defined patterns, not hardcoded.
-
-        This test uses a custom detection pattern that differs from the hardcoded
-        pattern to verify that the gate actually uses spec patterns.
-        """
+        """Spec detection patterns are not authoritative gate evidence."""
         import re
 
         from src.domain.validation.spec import (
@@ -4142,19 +4074,15 @@ class TestSpecDrivenEvidencePatterns:
         # Use the custom spec (not build_validation_spec which would overwrite it)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        assert _kind_seen(evidence, CommandKind.TEST) is True
+        assert evidence.commands == {}
 
-    def test_check_with_resolution_uses_spec_patterns_with_offset(
+    def test_bare_commands_after_offset_do_not_use_spec_patterns_as_evidence(
         self,
         tmp_path: Path,
         evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
-        """check_with_resolution should use spec-defined patterns, not hardcoded.
-
-        This test uses a custom detection pattern that differs from the hardcoded
-        pattern to verify that the gate actually uses spec patterns.
-        """
+        """Spec detection patterns are not authoritative after offsets either."""
         import re
 
         from src.domain.validation.spec import (
@@ -4218,15 +4146,11 @@ class TestSpecDrivenEvidencePatterns:
         # Use the custom spec (not build_validation_spec which would overwrite it)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        assert _kind_seen(evidence, CommandKind.TEST) is True
+        assert evidence.commands == {}
 
 
 class TestValidationExitCodeParsing:
-    """Test that quality gate fails when validation commands exit non-zero.
-
-    The gate should not only check that commands ran, but also that they succeeded
-    (exit code 0). This prevents marking issues as successful when pytest/ruff/ty failed.
-    """
+    """Test that quality gate uses MALA_EVIDENCE exit codes."""
 
     def test_gate_fails_when_pytest_exits_nonzero(
         self,
@@ -4234,50 +4158,19 @@ class TestValidationExitCodeParsing:
         evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
-        """Gate should fail when pytest ran but exited with non-zero exit code."""
-        log_path = tmp_path / "session.jsonl"
-
-        # Tool use for pytest
-        tool_use_entry = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "id": "toolu_pytest_123",
-                            "name": "Bash",
-                            "input": {"command": "uv run pytest"},
-                        }
-                    ]
-                },
-            }
-        )
-        # Tool result showing pytest FAILED
-        tool_result_entry = json.dumps(
-            {
-                "type": "user",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": "toolu_pytest_123",
-                            "content": "Exit code 1\n1 failed",
-                            "is_error": True,
-                        }
-                    ]
-                },
-            }
-        )
-        log_path.write_text(tool_use_entry + "\n" + tool_result_entry + "\n")
-
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        test_command = next(cmd for cmd in spec.commands if cmd.name == "test")
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            _canonical_validation_entries("toolu_pytest_123", test_command, exit_code=1)
+        )
+
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         assert evidence.commands["test"].status == "failed"
+        assert evidence.commands["test"].exit_code == 1
 
     def test_gate_fails_when_ruff_check_exits_nonzero(
         self,
@@ -4285,65 +4178,18 @@ class TestValidationExitCodeParsing:
         evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
-        """Gate should fail when ruff check ran but exited with non-zero exit code."""
-        log_path = tmp_path / "session.jsonl"
-
-        # All commands run, but ruff check fails
-        # Ruff check must come AFTER ruff format because both match \bruff\b pattern
-        # and the later tool_result overwrites earlier failure tracking
-        commands = [
-            ("toolu_pytest_1", "uv run pytest", False, "5 passed"),
-            ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
-            (
-                "toolu_ruff_check_1",
-                "uvx ruff check .",
-                True,
-                "Exit code 1\nFound 3 errors",
-            ),
-            ("toolu_ty_check_1", "uvx ty check", False, "No errors"),
-        ]
-        lines = []
-        for tool_id, cmd, is_error, output in commands:
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "id": tool_id,
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "user",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": tool_id,
-                                    "content": output,
-                                    "is_error": is_error,
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
-        log_path.write_text("\n".join(lines) + "\n")
-
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        by_name = {cmd.name: cmd for cmd in spec.commands}
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            _canonical_validation_entries("toolu_pytest_1", by_name["test"])
+            + _canonical_validation_entries("toolu_ruff_format_1", by_name["format"])
+            + _canonical_validation_entries("toolu_ruff_check_1", by_name["lint"], exit_code=1)
+            + _canonical_validation_entries("toolu_ty_check_1", by_name["typecheck"])
+        )
+
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         assert evidence.commands["lint"].status == "failed"
@@ -4355,59 +4201,18 @@ class TestValidationExitCodeParsing:
         evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
-        """Gate should pass when all validation commands exit with code 0."""
-        log_path = tmp_path / "session.jsonl"
-
-        # All commands succeed (including uv sync for SETUP)
-        commands = [
-            ("toolu_uv_sync_1", "uv sync --all-extras", False, "Resolved"),
-            ("toolu_pytest_1", "uv run pytest", False, "5 passed"),
-            ("toolu_ruff_check_1", "uvx ruff check .", False, "All good"),
-            ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
-            ("toolu_ty_check_1", "uvx ty check", False, "No errors"),
-        ]
-        lines = []
-        for tool_id, cmd, is_error, output in commands:
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "id": tool_id,
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "user",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": tool_id,
-                                    "content": output,
-                                    "is_error": is_error,
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
-        log_path.write_text("\n".join(lines) + "\n")
-
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            "".join(
+                _canonical_validation_entries(f"toolu_{cmd.name}", cmd)
+                for cmd in spec.commands
+                if cmd.name in {"test", "lint", "format", "typecheck"}
+            )
+        )
+
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         assert all(record.status == "passed" for record in evidence.commands.values())
@@ -4419,66 +4224,19 @@ class TestValidationExitCodeParsing:
         evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
-        """Failure reason should include which command failed and its exit code."""
-        log_path = tmp_path / "session.jsonl"
-
-        # ty check fails with exit code 2
-        commands = [
-            ("toolu_pytest_1", "uv run pytest", False, "5 passed"),
-            ("toolu_ruff_check_1", "uvx ruff check .", False, "All good"),
-            ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
-            (
-                "toolu_ty_check_1",
-                "uvx ty check",
-                True,
-                "Exit code 2\nerror: invalid-type-form at foo.py:10",
-            ),
-        ]
-        lines = []
-        for tool_id, cmd, is_error, output in commands:
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "id": tool_id,
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "user",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": tool_id,
-                                    "content": output,
-                                    "is_error": is_error,
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
-        log_path.write_text("\n".join(lines) + "\n")
-
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        typecheck = next(cmd for cmd in spec.commands if cmd.name == "typecheck")
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            _canonical_validation_entries("toolu_ty_check_1", typecheck, exit_code=2)
+        )
+
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         assert evidence.commands["typecheck"].status == "failed"
+        assert evidence.commands["typecheck"].exit_code == 2
 
     def test_gate_passes_when_command_fails_then_succeeds(
         self,
@@ -4486,133 +4244,19 @@ class TestValidationExitCodeParsing:
         evidence_provider: EvidenceProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
-        """Gate should pass when a command fails initially but succeeds on retry.
-
-        This tests that the gate tracks the *latest* status per command, not
-        accumulating failures. If pytest fails once but then passes, the gate
-        should pass.
-        """
-        log_path = tmp_path / "session.jsonl"
-
-        lines = []
-        # First pytest run - FAILS
-        lines.append(
-            json.dumps(
-                {
-                    "type": "assistant",
-                    "message": {
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "id": "toolu_pytest_1",
-                                "name": "Bash",
-                                "input": {"command": "uv run pytest"},
-                            }
-                        ]
-                    },
-                }
-            )
-        )
-        lines.append(
-            json.dumps(
-                {
-                    "type": "user",
-                    "message": {
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": "toolu_pytest_1",
-                                "content": "Exit code 1\n1 failed",
-                                "is_error": True,
-                            }
-                        ]
-                    },
-                }
-            )
-        )
-        # Second pytest run - SUCCEEDS (after fixing the code)
-        lines.append(
-            json.dumps(
-                {
-                    "type": "assistant",
-                    "message": {
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "id": "toolu_pytest_2",
-                                "name": "Bash",
-                                "input": {"command": "uv run pytest"},
-                            }
-                        ]
-                    },
-                }
-            )
-        )
-        lines.append(
-            json.dumps(
-                {
-                    "type": "user",
-                    "message": {
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": "toolu_pytest_2",
-                                "content": "5 passed",
-                                "is_error": False,
-                            }
-                        ]
-                    },
-                }
-            )
-        )
-        # Other commands all succeed (including uv sync for SETUP)
-        other_commands = [
-            ("toolu_uv_sync_1", "uv sync --all-extras", False, "Resolved"),
-            ("toolu_ruff_check_1", "uvx ruff check .", False, "All good"),
-            ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
-            ("toolu_ty_check_1", "uvx ty check", False, "No errors"),
-        ]
-        for tool_id, cmd, is_error, output in other_commands:
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "id": tool_id,
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "user",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": tool_id,
-                                    "content": output,
-                                    "is_error": is_error,
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
-        log_path.write_text("\n".join(lines) + "\n")
-
-        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
-        # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        by_name = {cmd.name: cmd for cmd in spec.commands}
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            _canonical_validation_entries("toolu_pytest_1", by_name["test"], exit_code=1)
+            + _canonical_validation_entries("toolu_pytest_2", by_name["test"])
+            + _canonical_validation_entries("toolu_ruff_check_1", by_name["lint"])
+            + _canonical_validation_entries("toolu_ruff_format_1", by_name["format"])
+            + _canonical_validation_entries("toolu_ty_check_1", by_name["typecheck"])
+        )
+
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         assert all(record.status == "passed" for record in evidence.commands.values())
@@ -5495,10 +5139,7 @@ class TestSpecCommandChangesPropagation:
             "Spec pattern change should propagate: bare 'pytest' should NOT match "
             "'uv run pytest' pattern"
         )
-        # Other commands should still match
-        assert _kind_seen(evidence, CommandKind.LINT) is True
-        assert _kind_seen(evidence, CommandKind.FORMAT) is True
-        assert _kind_seen(evidence, CommandKind.TYPECHECK) is True
+        assert evidence.commands == {}
 
         # Now test with "uv run pytest" which SHOULD match
         log_path2 = tmp_path / "session2.jsonl"
@@ -5516,13 +5157,7 @@ class TestSpecCommandChangesPropagation:
         log_path2.write_text("\n".join(lines2) + "\n")
 
         evidence2 = gate.parse_validation_evidence_with_spec(log_path2, spec)
-        assert _kind_seen(evidence2, CommandKind.TEST) is True, (
-            "'uv run pytest' should match the strict pattern"
-        )
-        # Other commands should still match
-        assert _kind_seen(evidence2, CommandKind.LINT) is True
-        assert _kind_seen(evidence2, CommandKind.FORMAT) is True
-        assert _kind_seen(evidence2, CommandKind.TYPECHECK) is True
+        assert evidence2.commands == {}
 
 
 class TestEvidenceProviderInjection:
@@ -5598,11 +5233,26 @@ class TestEvidenceProviderInjection:
                 self, entry: JsonlEntry
             ) -> list[tuple[str, str]]:
                 """Extract tool result content from entry."""
-                return [("test-1", "ok")]
+                return [("test-1", summary_content)]
 
-        # Create mock entries with pytest command - include typed entry
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
+        test_command = next(cmd for cmd in spec.commands if cmd.name == "test")
+        validation_log_dir = Path("/tmp/mala-validation-logs")
+        wrapper = build_canonical_wrapper(
+            test_command,
+            issue_id="test-issue",
+            validation_log_dir=validation_log_dir,
+        )
+        summary_content = (
+            "MALA_EVIDENCE name=test exit=0 "
+            f"log={validation_log_dir / 'test-issue.test.log'}"
+        )
+
+        # Create mock entries with canonical wrapper - include typed entry
         tool_use_block = ToolUseBlock(
-            id="test-1", name="Bash", input={"command": "uv run pytest"}
+            id="test-1", name="Bash", input={"command": wrapper}
         )
         typed_entry = AssistantLogEntry(
             message=AssistantMessage(content=[tool_use_block])
@@ -5637,9 +5287,6 @@ class TestEvidenceProviderInjection:
         )
 
         # Verify EvidenceProvider is used
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_SESSION)
         # Create a fake log file so parse_validation_evidence_with_spec doesn't exit early
         fake_log = tmp_path / "fake.jsonl"
         fake_log.touch()

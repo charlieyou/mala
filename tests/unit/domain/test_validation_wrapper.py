@@ -64,6 +64,7 @@ def _make_command(
 
 PLAN_WORKED_EXAMPLE = (
     '__mala_log="/tmp/mala-validation-logs/bd-mala-abc.lint.log"\n'
+    'mkdir -p "$(dirname "$__mala_log")"\n'
     "(\n"
     "  if timeout 120 bash -lc 'uvx ruff check .'"
     ' >"$__mala_log" 2>&1; then\n'
@@ -79,8 +80,8 @@ PLAN_WORKED_EXAMPLE = (
 )
 
 
-def test_build_canonical_wrapper_matches_plan_worked_example() -> None:
-    """AC1: text equals plan §Canonical Wrapper L276-L287 byte-for-byte."""
+def test_build_canonical_wrapper_matches_canonical_shape() -> None:
+    """Wrapper creates log directory and emits the canonical evidence line."""
     cmd = _make_command()
     actual = build_canonical_wrapper(
         cmd,

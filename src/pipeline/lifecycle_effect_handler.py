@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, TypeVar, cast
 
 from src.domain.lifecycle import Effect
 from src.domain.prompts import (
-    build_custom_commands_section,
+    build_validation_wrapper_placeholders,
     commands_for_gate_followup,
     format_gate_followup_prompt,
     get_default_validation_commands as _get_default_validation_commands,
@@ -43,6 +43,7 @@ if TYPE_CHECKING:
         TransitionResult,
     )
     from src.domain.validation.config_types import PromptValidationCommands
+    from src.domain.validation.spec import ValidationCommand
     from src.core.session_end_result import SessionEndResult
     from src.pipeline.config_views import AgentSessionView
 
@@ -93,6 +94,36 @@ class ReviewEffectResult:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _commands_for_gate_retry(
+    validation_commands: PromptValidationCommands,
+    gate_result: GateOutcome,
+) -> list[ValidationCommand]:
+    """Return only commands with missing or invalid evidence when known.
+
+    Falls back to the full suite when a legacy/foreign gate result does not
+    expose enough structured evidence to identify specific command keys.
+    """
+    commands = commands_for_gate_followup(validation_commands)
+    by_name = {cmd.name: cmd for cmd in commands}
+    names: list[str] = []
+
+    for reason in gate_result.failure_reasons:
+        prefix = "Missing validation evidence for: "
+        if reason.startswith(prefix):
+            names.extend(name.strip() for name in reason[len(prefix) :].split(","))
+
+    evidence = getattr(gate_result, "validation_evidence", None)
+    if evidence is not None:
+        names.extend(
+            name
+            for name, record in evidence.commands.items()
+            if record.status == "failed"
+        )
+
+    selected = [by_name[name] for name in dict.fromkeys(names) if name in by_name]
+    return selected or commands
 
 
 def _emit_review_result_events(
@@ -245,8 +276,8 @@ def _build_review_retry_prompt(
         base_path=repo_path,
     )
     validation_log_dir = get_repo_validation_log_dir(repo_path)
-    custom_commands_section = build_custom_commands_section(
-        validation_commands.custom_commands,
+    wrapper_placeholders = build_validation_wrapper_placeholders(
+        validation_commands,
         issue_id=issue_id,
         validation_log_dir=validation_log_dir,
     )
@@ -255,11 +286,7 @@ def _build_review_retry_prompt(
         max_attempts=max_review_retries,
         review_issues=review_issues_text,
         issue_id=issue_id,
-        lint_command=validation_commands.lint,
-        format_command=validation_commands.format,
-        typecheck_command=validation_commands.typecheck,
-        custom_commands_section=custom_commands_section,
-        test_command=validation_commands.test,
+        **wrapper_placeholders,
     )
 
 
@@ -406,9 +433,7 @@ class LifecycleEffectHandler:
                 or _get_default_validation_commands()
             )
             validation_log_dir = get_repo_validation_log_dir(self.view.repo_path)
-            # Until the parser surfaces a per-command evidence map (T003), the
-            # follow-up rerun the full configured validation suite.
-            missing_commands = commands_for_gate_followup(cmds)
+            missing_commands = _commands_for_gate_retry(cmds, gate_result)
             pending_query = format_gate_followup_prompt(
                 self.config.prompts.gate_followup,
                 attempt=lifecycle_ctx.retry_state.gate_attempt,
