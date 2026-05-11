@@ -21,10 +21,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from src.domain.validation.config_parser import parse_validation_config
 from src.domain.validation.config_types import (
     CodexOptionsConfig,
     ConfigError,
-    ValidationConfig,
 )
 from src.domain.validation.config_loader import load_config
 
@@ -46,15 +46,15 @@ def _yaml(tmp_path: Path, body: str) -> Path:
 
 class TestUnset:
     def test_omitting_codex_options_is_valid(self) -> None:
-        cfg = ValidationConfig.from_dict({"coder": "codex"})
+        cfg = parse_validation_config({"coder": "codex"})
         assert cfg.codex_options is None
 
     def test_empty_codex_options_block_yields_default_optional_config(self) -> None:
-        cfg = ValidationConfig.from_dict({"coder_options": {"codex": {}}})
+        cfg = parse_validation_config({"coder_options": {"codex": {}}})
         assert cfg.codex_options == CodexOptionsConfig()
 
     def test_null_codex_block_yields_default_optional_config(self) -> None:
-        cfg = ValidationConfig.from_dict({"coder_options": {"codex": None}})
+        cfg = parse_validation_config({"coder_options": {"codex": None}})
         assert cfg.codex_options == CodexOptionsConfig()
 
 
@@ -67,11 +67,11 @@ class TestCoderOptionsShape:
     def test_unknown_top_level_subkey_rejected(self) -> None:
         """Only ``codex`` is allowed under ``coder_options``."""
         with pytest.raises(ConfigError, match=r"Unknown field 'amp' in coder_options"):
-            ValidationConfig.from_dict({"coder_options": {"amp": {"mode": "deep"}}})
+            parse_validation_config({"coder_options": {"amp": {"mode": "deep"}}})
 
     def test_non_object_coder_options_rejected(self) -> None:
         with pytest.raises(ConfigError, match=r"coder_options must be an object"):
-            ValidationConfig.from_dict({"coder_options": "codex"})
+            parse_validation_config({"coder_options": "codex"})
 
 
 # ---------------------------------------------------------------------------
@@ -84,13 +84,13 @@ class TestCodexBlock:
         with pytest.raises(
             ConfigError, match=r"Unknown field 'foo' in coder_options.codex"
         ):
-            ValidationConfig.from_dict({"coder_options": {"codex": {"foo": "bar"}}})
+            parse_validation_config({"coder_options": {"codex": {"foo": "bar"}}})
 
     @pytest.mark.parametrize(
         "policy", ["never", "on-request", "on-failure", "untrusted"]
     )
     def test_valid_approval_policies(self, policy: str) -> None:
-        cfg = ValidationConfig.from_dict(
+        cfg = parse_validation_config(
             {"coder_options": {"codex": {"approval_policy": policy}}}
         )
         assert cfg.codex_options is not None
@@ -101,7 +101,7 @@ class TestCodexBlock:
             ConfigError,
             match=r"coder_options.codex.approval_policy must be one of .*never.*",
         ):
-            ValidationConfig.from_dict(
+            parse_validation_config(
                 {"coder_options": {"codex": {"approval_policy": "always"}}}
             )
 
@@ -109,7 +109,7 @@ class TestCodexBlock:
         "sandbox", ["read-only", "workspace-write", "danger-full-access"]
     )
     def test_valid_sandboxes(self, sandbox: str) -> None:
-        cfg = ValidationConfig.from_dict(
+        cfg = parse_validation_config(
             {"coder_options": {"codex": {"sandbox": sandbox}}}
         )
         assert cfg.codex_options is not None
@@ -119,22 +119,20 @@ class TestCodexBlock:
         with pytest.raises(
             ConfigError, match=r"coder_options.codex.sandbox must be one of"
         ):
-            ValidationConfig.from_dict(
-                {"coder_options": {"codex": {"sandbox": "yolo"}}}
-            )
+            parse_validation_config({"coder_options": {"codex": {"sandbox": "yolo"}}})
 
     def test_invalid_effort_rejected(self) -> None:
         with pytest.raises(ConfigError, match=r"Invalid Codex effort 'super-high'"):
-            ValidationConfig.from_dict(
+            parse_validation_config(
                 {"coder_options": {"codex": {"effort": "super-high"}}}
             )
 
     def test_empty_model_rejected(self) -> None:
         with pytest.raises(ConfigError, match=r"non-empty string"):
-            ValidationConfig.from_dict({"coder_options": {"codex": {"model": ""}}})
+            parse_validation_config({"coder_options": {"codex": {"model": ""}}})
 
     def test_full_block_round_trips(self) -> None:
-        cfg = ValidationConfig.from_dict(
+        cfg = parse_validation_config(
             {
                 "coder": "codex",
                 "coder_options": {

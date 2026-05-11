@@ -120,16 +120,19 @@ def merge_configs(
         Merged ValidationConfig with user values taking precedence.
 
     Examples:
-        >>> # Use from_dict to create configs - this populates _fields_set
-        >>> # which is required for overrides to work correctly
-        >>> preset_cfg = ValidationConfig.from_dict({
+        >>> # Use parse_validation_config to build configs - this populates
+        >>> # _fields_set which is required for overrides to work correctly.
+        >>> from src.domain.validation.config_parser import (
+        ...     parse_validation_config,
+        ... )
+        >>> preset_cfg = parse_validation_config({
         ...     "commands": {
         ...         "test": "pytest",
         ...         "lint": "ruff check",
         ...     },
         ...     "code_patterns": ["**/*.py"],
         ... })
-        >>> user_cfg = ValidationConfig.from_dict({
+        >>> user_cfg = parse_validation_config({
         ...     "commands": {
         ...         "test": "pytest -v",  # override
         ...     },

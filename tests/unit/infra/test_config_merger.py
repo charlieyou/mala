@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 
+from src.domain.validation.config_merger import merge_configs
+from src.domain.validation.config_parser import parse_validation_config
 from src.domain.validation.config_types import (
     CommandConfig,
     CommandsConfig,
     ValidationConfig,
     YamlCoverageConfig,
 )
-from src.domain.validation.config_merger import merge_configs
 
 
 class TestMergeConfigsNoPreset:
@@ -114,9 +115,7 @@ class TestMergeConfigsUserOverridesPreset:
             ),
         )
         # User explicitly sets test command (tracked via _fields_set)
-        user = ValidationConfig.from_dict(
-            {"commands": {"test": "pytest -v --tb=short"}}
-        )
+        user = parse_validation_config({"commands": {"test": "pytest -v --tb=short"}})
         result = merge_configs(preset, user)
 
         assert result.commands.test is not None
@@ -129,7 +128,7 @@ class TestMergeConfigsUserOverridesPreset:
                 test=CommandConfig(command="pytest"),
             ),
         )
-        user = ValidationConfig.from_dict(
+        user = parse_validation_config(
             {"commands": {"test": {"command": "pytest", "timeout": 600}}}
         )
         result = merge_configs(preset, user)
@@ -148,7 +147,7 @@ class TestMergeConfigsUserOverridesPreset:
                 command="pytest --cov",
             ),
         )
-        user = ValidationConfig.from_dict(
+        user = parse_validation_config(
             {
                 "coverage": {
                     "format": "xml",
@@ -172,7 +171,7 @@ class TestMergeConfigsUserOverridesPreset:
             config_files=("pyproject.toml", "ruff.toml"),
             setup_files=("uv.lock", "requirements.txt"),
         )
-        user = ValidationConfig.from_dict(
+        user = parse_validation_config(
             {
                 "code_patterns": ["src/**/*.py"],
                 "config_files": ["mypy.ini"],
@@ -198,7 +197,7 @@ class TestMergeConfigsExplicitDisable:
             ),
         )
         # User explicitly sets lint to null (tracked in _fields_set)
-        user = ValidationConfig.from_dict({"commands": {"lint": None}})
+        user = parse_validation_config({"commands": {"lint": None}})
         result = merge_configs(preset, user)
 
         assert result.commands.lint is None
@@ -212,9 +211,7 @@ class TestMergeConfigsExplicitDisable:
                 typecheck=CommandConfig(command="mypy ."),
             ),
         )
-        user = ValidationConfig.from_dict(
-            {"commands": {"lint": None, "typecheck": None}}
-        )
+        user = parse_validation_config({"commands": {"lint": None, "typecheck": None}})
         result = merge_configs(preset, user)
 
         # test is inherited
@@ -231,7 +228,7 @@ class TestMergeConfigsExplicitDisable:
                 test=CommandConfig(command="pytest"),
             ),
         )
-        user = ValidationConfig.from_dict(
+        user = parse_validation_config(
             {"commands": {"lint": None}}  # preset doesn't define lint
         )
         result = merge_configs(preset, user)
@@ -248,7 +245,7 @@ class TestMergeConfigsExplicitDisable:
             ),
         )
         # User explicitly sets coverage to null (tracked in _fields_set)
-        user = ValidationConfig.from_dict({"coverage": None})
+        user = parse_validation_config({"coverage": None})
         result = merge_configs(preset, user)
 
         assert result.coverage is None
@@ -261,7 +258,7 @@ class TestMergeConfigsExplicitDisable:
             setup_files=("uv.lock",),
         )
         # User explicitly sets to empty lists
-        user = ValidationConfig.from_dict(
+        user = parse_validation_config(
             {
                 "code_patterns": [],
                 "config_files": [],
@@ -289,7 +286,7 @@ class TestMergeConfigsExplicitDisableCoverage:
             ),
         )
         # User explicitly sets coverage to null
-        user = ValidationConfig.from_dict({"coverage": None})
+        user = parse_validation_config({"coverage": None})
         result = merge_configs(preset, user)
 
         assert result.coverage is None
@@ -302,7 +299,7 @@ class TestMergeConfigsExplicitDisableCoverage:
             ),
             # No coverage defined in preset
         )
-        user = ValidationConfig.from_dict({"coverage": None})
+        user = parse_validation_config({"coverage": None})
         result = merge_configs(preset, user)
 
         assert result.coverage is None
@@ -321,7 +318,7 @@ class TestMergeConfigsExplicitDisableCoverage:
             ),
             code_patterns=("**/*.py",),
         )
-        user = ValidationConfig.from_dict(
+        user = parse_validation_config(
             {
                 "commands": {"test": "pytest -v"},  # Override test
                 "coverage": None,  # Disable coverage
@@ -354,7 +351,7 @@ class TestMergeConfigsOmittedInheritsPreset:
                 lint=CommandConfig(command="ruff check ."),
             ),
         )
-        user = ValidationConfig.from_dict(
+        user = parse_validation_config(
             {"commands": {"test": "pytest -v"}}  # Only override test
         )
         result = merge_configs(preset, user)
@@ -389,9 +386,7 @@ class TestMergeConfigsOmittedInheritsPreset:
             setup_files=("package-lock.json",),
         )
         # User only overrides test command
-        user = ValidationConfig.from_dict(
-            {"commands": {"test": "npm test -- --coverage"}}
-        )
+        user = parse_validation_config({"commands": {"test": "npm test -- --coverage"}})
         result = merge_configs(preset, user)
 
         # All preset values preserved except test
@@ -420,7 +415,7 @@ class TestMergeConfigsComplexScenarios:
                 typecheck=CommandConfig(command="make typecheck"),
             ),
         )
-        user = ValidationConfig.from_dict(
+        user = parse_validation_config(
             {
                 "commands": {
                     "test": "pytest",  # Override
@@ -453,7 +448,7 @@ class TestMergeConfigsComplexScenarios:
                 test=CommandConfig(command="pytest"),
             ),
         )
-        user = ValidationConfig.from_dict({"commands": {"e2e": "pytest -m e2e"}})
+        user = parse_validation_config({"commands": {"e2e": "pytest -m e2e"}})
         result = merge_configs(preset, user)
 
         # test from preset
@@ -470,7 +465,7 @@ class TestMergeConfigsComplexScenarios:
                 test=CommandConfig(command="pytest"),
             ),
         )
-        user = ValidationConfig.from_dict({"preset": "python-uv"})
+        user = parse_validation_config({"preset": "python-uv"})
         result = merge_configs(preset, user)
 
         assert result.preset == "python-uv"
@@ -503,7 +498,7 @@ class TestMergeConfigsEdgeCases:
                 test=CommandConfig(command="pytest", timeout=300),
             ),
         )
-        user = ValidationConfig.from_dict(
+        user = parse_validation_config(
             {"commands": {"test": "pytest -v"}}  # No timeout
         )
         result = merge_configs(preset, user)
@@ -539,7 +534,7 @@ class TestFieldsSetTracking:
 
     def test_from_dict_tracks_present_fields(self) -> None:
         """from_dict tracks which fields were explicitly present."""
-        config = ValidationConfig.from_dict(
+        config = parse_validation_config(
             {
                 "preset": "python-uv",
                 "commands": {"test": "pytest"},
@@ -556,7 +551,7 @@ class TestFieldsSetTracking:
 
     def test_from_dict_tracks_null_fields(self) -> None:
         """from_dict tracks fields explicitly set to null."""
-        config = ValidationConfig.from_dict(
+        config = parse_validation_config(
             {
                 "coverage": None,  # Explicit null
             }
@@ -567,7 +562,7 @@ class TestFieldsSetTracking:
 
     def test_from_dict_tracks_empty_list_fields(self) -> None:
         """from_dict tracks fields explicitly set to empty list."""
-        config = ValidationConfig.from_dict(
+        config = parse_validation_config(
             {
                 "code_patterns": [],  # Explicit empty list
             }
@@ -592,7 +587,7 @@ class TestFieldsSetTracking:
 
     def test_empty_dict_has_empty_fields_set(self) -> None:
         """from_dict with empty dict has empty _fields_set."""
-        config = ValidationConfig.from_dict({})
+        config = parse_validation_config({})
 
         assert config._fields_set == frozenset()
 
@@ -607,7 +602,7 @@ class TestMergeConfigsFieldsSetPreservation:
                 test=CommandConfig(command="pytest"),
             ),
         )
-        user = ValidationConfig.from_dict(
+        user = parse_validation_config(
             {
                 "commands": {"lint": "ruff check ."},
                 "code_patterns": ["src/**/*.py"],
@@ -629,7 +624,7 @@ class TestMergeConfigsFieldsSetPreservation:
                 lint=CommandConfig(command="pylint"),
             ),
         )
-        user = ValidationConfig.from_dict({"commands": {"lint": "ruff check ."}})
+        user = parse_validation_config({"commands": {"lint": "ruff check ."}})
 
         result = merge_configs(preset, user)
 
@@ -654,7 +649,7 @@ class TestExplicitCommandsNullOrEmptyInheritsPreset:
             ),
         )
         # User explicitly sets commands to null (simulates `commands: null` in YAML)
-        user = ValidationConfig.from_dict({"commands": None})
+        user = parse_validation_config({"commands": None})
         result = merge_configs(preset, user)
 
         # All commands should be inherited
@@ -681,7 +676,7 @@ class TestExplicitCommandsNullOrEmptyInheritsPreset:
             ),
         )
         # User explicitly sets commands to empty object (simulates `commands: {}`)
-        user = ValidationConfig.from_dict({"commands": {}})
+        user = parse_validation_config({"commands": {}})
         result = merge_configs(preset, user)
 
         # All commands should be inherited
@@ -710,7 +705,7 @@ class TestExplicitCommandsNullOrEmptyInheritsPreset:
             ),
         )
         # User explicitly sets commands to empty but provides other overrides
-        user = ValidationConfig.from_dict(
+        user = parse_validation_config(
             {
                 "commands": {},  # Clear all commands
                 "code_patterns": ["src/**/*.py"],  # Override patterns
@@ -743,7 +738,7 @@ class TestExplicitCommandsNullOrEmptyInheritsPreset:
             ),
         )
         # User sets only test - other commands should still inherit
-        user = ValidationConfig.from_dict({"commands": {"test": "pytest -v"}})
+        user = parse_validation_config({"commands": {"test": "pytest -v"}})
         result = merge_configs(preset, user)
 
         # Only test is overridden; others inherit
@@ -766,7 +761,7 @@ class TestExplicitCommandsNullOrEmptyInheritsPreset:
                 threshold=85.0,
             ),
         )
-        user = ValidationConfig.from_dict({"commands": None})
+        user = parse_validation_config({"commands": None})
         result = merge_configs(preset, user)
 
         # Commands inherited
@@ -946,7 +941,7 @@ class TestProgrammaticConfigOverrides:
             code_patterns=("**/*.py",),
         )
         # User config from YAML
-        user = ValidationConfig.from_dict(
+        user = parse_validation_config(
             {
                 "commands": {"test": "pytest -v"},
                 "coverage": {

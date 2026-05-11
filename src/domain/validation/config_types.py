@@ -948,30 +948,6 @@ class ValidationConfig:
                 self, "claude_settings_sources", tuple(self.claude_settings_sources)
             )
 
-    @classmethod
-    def from_dict(cls, data: dict[str, object]) -> ValidationConfig:
-        """Create ValidationConfig from a parsed YAML dict.
-
-        Thin compatibility wrapper that defers to
-        :func:`config_parser.parse_validation_config`. The function-scope import
-        is required because ``config_parser`` imports ``ValidationConfig`` at
-        module level; a top-level import here would form a cycle. New callers
-        should use :func:`config_parser.parse_validation_config` directly so
-        ``ValidationConfig`` stays a pure dataclass boundary.
-
-        Args:
-            data: Dict representing the parsed mala.yaml content.
-
-        Returns:
-            ValidationConfig instance.
-
-        Raises:
-            ConfigError: If any field is invalid.
-        """
-        from src.domain.validation.config_parser import parse_validation_config
-
-        return parse_validation_config(data)
-
     def has_any_command(self) -> bool:
         """Check if at least one command is defined.
 

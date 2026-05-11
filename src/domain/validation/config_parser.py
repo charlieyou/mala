@@ -207,7 +207,7 @@ def parse_preset(data: dict[str, Any]) -> tuple[str | None, bool]:
     """Parse the ``preset`` key from a top-level mala.yaml dict.
 
     Returns ``(value, was_present)``. Raises :class:`ConfigError` for non-string
-    values (matching the existing ``ValidationConfig.from_dict`` message).
+    values.
     """
     if "preset" not in data:
         return None, False
@@ -535,8 +535,7 @@ def _validate_effort_compatibility(
 ) -> None:
     """Reject the ``coder=amp + amp_mode=deep + effort in {high, max}`` combo.
 
-    Mirrors the cross-section check previously inlined in
-    ``ValidationConfig.from_dict``. Default ``amp_mode`` is ``deep`` when unset.
+    Default ``amp_mode`` is ``deep`` when unset.
     """
     effective_amp_mode = amp_mode if amp_mode is not None else "deep"
     if coder == "amp" and effective_amp_mode == "deep" and effort in {"high", "max"}:

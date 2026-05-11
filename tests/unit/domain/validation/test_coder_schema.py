@@ -17,7 +17,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from src.domain.validation.config_types import ConfigError, ValidationConfig
+from src.domain.validation.config_parser import parse_validation_config
+from src.domain.validation.config_types import ConfigError
 from src.domain.validation.config_loader import load_config
 
 if TYPE_CHECKING:
@@ -28,33 +29,33 @@ class TestCoderEnum:
     """Strict-enum validation for the top-level `coder` field."""
 
     def test_claude_is_valid(self) -> None:
-        ValidationConfig.from_dict({"coder": "claude"})
+        parse_validation_config({"coder": "claude"})
 
     def test_amp_is_valid(self) -> None:
-        ValidationConfig.from_dict({"coder": "amp"})
+        parse_validation_config({"coder": "amp"})
 
     def test_codex_is_valid(self) -> None:
         # Phase A8: ``codex`` widens the strict-enum but the provider stub
         # lands in Phase B. Schema-layer validation is purely about the value;
         # the factory-level NotImplementedError lives in test_factory_provider_selection.
-        ValidationConfig.from_dict({"coder": "codex"})
+        parse_validation_config({"coder": "codex"})
 
     def test_unknown_value_rejected(self) -> None:
         with pytest.raises(
             ConfigError,
             match=r"coder must be 'claude', 'amp', or 'codex', got 'foo'",
         ):
-            ValidationConfig.from_dict({"coder": "foo"})
+            parse_validation_config({"coder": "foo"})
 
     def test_non_string_rejected(self) -> None:
         with pytest.raises(
             ConfigError, match=r"coder must be 'claude', 'amp', or 'codex'"
         ):
-            ValidationConfig.from_dict({"coder": 42})
+            parse_validation_config({"coder": 42})
 
     def test_null_is_treated_as_unset(self) -> None:
         # Explicit null should not raise — equivalent to omitting the field.
-        ValidationConfig.from_dict({"coder": None})
+        parse_validation_config({"coder": None})
 
 
 class TestAmpMode:
@@ -62,18 +63,18 @@ class TestAmpMode:
 
     @pytest.mark.parametrize("mode", ["smart", "rush", "deep"])
     def test_valid_modes(self, mode: str) -> None:
-        ValidationConfig.from_dict({"amp_mode": mode})
+        parse_validation_config({"amp_mode": mode})
 
     def test_unknown_mode_rejected(self) -> None:
         with pytest.raises(
             ConfigError,
             match=r"amp_mode must be 'smart', 'rush', or 'deep', got 'bar'",
         ):
-            ValidationConfig.from_dict({"amp_mode": "bar"})
+            parse_validation_config({"amp_mode": "bar"})
 
     def test_non_string_mode_rejected(self) -> None:
         with pytest.raises(ConfigError, match=r"amp_mode must be"):
-            ValidationConfig.from_dict({"amp_mode": 7})
+            parse_validation_config({"amp_mode": 7})
 
 
 class TestOptionalDefaults:
@@ -81,11 +82,11 @@ class TestOptionalDefaults:
 
     def test_omitting_both_fields_is_valid(self) -> None:
         # Sanity: existing yaml shape (no coder, no amp_mode) parses cleanly.
-        cfg = ValidationConfig.from_dict({"preset": "python-uv"})
+        cfg = parse_validation_config({"preset": "python-uv"})
         assert cfg.preset == "python-uv"
 
     def test_amp_mode_null_is_valid(self) -> None:
-        ValidationConfig.from_dict({"amp_mode": None})
+        parse_validation_config({"amp_mode": None})
 
 
 class TestEndToEndViaLoadConfig:

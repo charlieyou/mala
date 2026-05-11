@@ -15,6 +15,7 @@ import pytest
 if TYPE_CHECKING:
     import pathlib
 
+from src.domain.validation.config_parser import parse_validation_config
 from src.domain.validation.config_types import (
     CommandConfig,
     CommandsConfig,
@@ -314,7 +315,7 @@ class TestValidationConfig:
 
     def test_from_dict_minimal(self) -> None:
         """Empty dict creates config with defaults."""
-        config = ValidationConfig.from_dict({})
+        config = parse_validation_config({})
         assert config.preset is None
         assert config.commands.setup is None
         assert config.coverage is None
@@ -324,13 +325,13 @@ class TestValidationConfig:
 
     def test_from_dict_preset_only(self) -> None:
         """Dict with only preset creates config with preset set."""
-        config = ValidationConfig.from_dict({"preset": "python-uv"})
+        config = parse_validation_config({"preset": "python-uv"})
         assert config.preset == "python-uv"
         assert config.commands.setup is None
 
     def test_from_dict_full_config(self) -> None:
         """Dict with all fields creates complete config."""
-        config = ValidationConfig.from_dict(
+        config = parse_validation_config(
             {
                 "preset": "go",
                 "commands": {
@@ -360,46 +361,46 @@ class TestValidationConfig:
     def test_from_dict_invalid_preset_type(self) -> None:
         """Non-string preset raises ConfigError."""
         with pytest.raises(ConfigError, match="preset must be a string"):
-            ValidationConfig.from_dict({"preset": 123})
+            parse_validation_config({"preset": 123})
 
     def test_from_dict_invalid_commands_type(self) -> None:
         """Non-object commands raises ConfigError."""
         with pytest.raises(ConfigError, match="commands must be an object"):
-            ValidationConfig.from_dict({"commands": "invalid"})
+            parse_validation_config({"commands": "invalid"})
 
     def test_from_dict_invalid_coverage_type(self) -> None:
         """Non-object coverage raises ConfigError."""
         with pytest.raises(ConfigError, match="coverage must be an object"):
-            ValidationConfig.from_dict({"coverage": "invalid"})
+            parse_validation_config({"coverage": "invalid"})
 
     def test_from_dict_invalid_patterns_type(self) -> None:
         """Non-list code_patterns raises ConfigError."""
         with pytest.raises(ConfigError, match="code_patterns must be a list"):
-            ValidationConfig.from_dict({"code_patterns": "*.py"})
+            parse_validation_config({"code_patterns": "*.py"})
 
     def test_from_dict_invalid_pattern_item_type(self) -> None:
         """Non-string pattern item raises ConfigError."""
         with pytest.raises(ConfigError, match=r"code_patterns\[0\] must be a string"):
-            ValidationConfig.from_dict({"code_patterns": [123]})
+            parse_validation_config({"code_patterns": [123]})
 
     def test_has_any_command_true(self) -> None:
         """has_any_command returns True when at least one command defined."""
-        config = ValidationConfig.from_dict({"commands": {"test": "pytest"}})
+        config = parse_validation_config({"commands": {"test": "pytest"}})
         assert config.has_any_command() is True
 
     def test_has_any_command_false(self) -> None:
         """has_any_command returns False when no commands defined."""
-        config = ValidationConfig.from_dict({})
+        config = parse_validation_config({})
         assert config.has_any_command() is False
 
     def test_has_any_command_with_preset_only(self) -> None:
         """has_any_command returns False with only preset (no inline commands)."""
-        config = ValidationConfig.from_dict({"preset": "python-uv"})
+        config = parse_validation_config({"preset": "python-uv"})
         assert config.has_any_command() is False
 
     def test_patterns_converted_to_tuples(self) -> None:
         """List patterns are converted to tuples for immutability."""
-        config = ValidationConfig.from_dict(
+        config = parse_validation_config(
             {"code_patterns": ["*.py"], "config_files": ["ruff.toml"]}
         )
         assert isinstance(config.code_patterns, tuple)
@@ -432,7 +433,7 @@ class TestValidationConfig:
 
     def test_custom_commands_default_empty(self) -> None:
         """Default custom_commands is empty dict in CommandsConfig."""
-        config = ValidationConfig.from_dict({})
+        config = parse_validation_config({})
         assert config.commands.custom_commands == {}
 
     def test_from_dict_parses_validation_triggers(self) -> None:
@@ -447,7 +448,7 @@ class TestValidationConfig:
                 }
             },
         }
-        config = ValidationConfig.from_dict(data)
+        config = parse_validation_config(data)
         assert config.validation_triggers is not None
         assert config.validation_triggers.periodic is not None
         assert config.validation_triggers.periodic.interval == 3600
@@ -455,21 +456,21 @@ class TestValidationConfig:
 
     def test_from_dict_validation_triggers_none_when_omitted(self) -> None:
         """validation_triggers is None when not specified in dict."""
-        config = ValidationConfig.from_dict({"preset": "python-uv"})
+        config = parse_validation_config({"preset": "python-uv"})
         assert config.validation_triggers is None
         assert "validation_triggers" not in config._fields_set
 
     def test_from_dict_validation_triggers_explicit_null(self) -> None:
         """validation_triggers: null is tracked in _fields_set but value is None."""
         data: dict[str, object] = {"preset": "python-uv", "validation_triggers": None}
-        config = ValidationConfig.from_dict(data)
+        config = parse_validation_config(data)
         assert config.validation_triggers is None
         assert "validation_triggers" in config._fields_set
 
     def test_from_dict_validation_triggers_empty_dict(self) -> None:
         """validation_triggers: {} creates empty config with all triggers None."""
         data: dict[str, object] = {"preset": "python-uv", "validation_triggers": {}}
-        config = ValidationConfig.from_dict(data)
+        config = parse_validation_config(data)
         assert config.validation_triggers is not None
         assert config.validation_triggers.epic_completion is None
         assert config.validation_triggers.session_end is None
@@ -479,7 +480,7 @@ class TestValidationConfig:
     def test_from_dict_validation_triggers_invalid_type(self) -> None:
         """validation_triggers with non-object type raises ConfigError."""
         with pytest.raises(ConfigError, match="validation_triggers must be an object"):
-            ValidationConfig.from_dict({"validation_triggers": "invalid"})
+            parse_validation_config({"validation_triggers": "invalid"})
 
 
 class TestClaudeSettingsSources:
@@ -487,41 +488,41 @@ class TestClaudeSettingsSources:
 
     def test_claude_settings_sources_defaults_to_none(self) -> None:
         """Default claude_settings_sources is None (use default behavior)."""
-        config = ValidationConfig.from_dict({})
+        config = parse_validation_config({})
         assert config.claude_settings_sources is None
 
     def test_claude_settings_sources_local_only(self) -> None:
         """Single 'local' source is accepted."""
-        config = ValidationConfig.from_dict({"claude_settings_sources": ["local"]})
+        config = parse_validation_config({"claude_settings_sources": ["local"]})
         assert config.claude_settings_sources == ("local",)
 
     def test_claude_settings_sources_project_only(self) -> None:
         """Single 'project' source is accepted."""
-        config = ValidationConfig.from_dict({"claude_settings_sources": ["project"]})
+        config = parse_validation_config({"claude_settings_sources": ["project"]})
         assert config.claude_settings_sources == ("project",)
 
     def test_claude_settings_sources_user_only(self) -> None:
         """Single 'user' source is accepted."""
-        config = ValidationConfig.from_dict({"claude_settings_sources": ["user"]})
+        config = parse_validation_config({"claude_settings_sources": ["user"]})
         assert config.claude_settings_sources == ("user",)
 
     def test_claude_settings_sources_multiple(self) -> None:
         """Multiple valid sources are accepted."""
-        config = ValidationConfig.from_dict(
+        config = parse_validation_config(
             {"claude_settings_sources": ["local", "project"]}
         )
         assert config.claude_settings_sources == ("local", "project")
 
     def test_claude_settings_sources_all_three(self) -> None:
         """All three valid sources are accepted."""
-        config = ValidationConfig.from_dict(
+        config = parse_validation_config(
             {"claude_settings_sources": ["local", "project", "user"]}
         )
         assert config.claude_settings_sources == ("local", "project", "user")
 
     def test_claude_settings_sources_empty_list(self) -> None:
         """Empty list is valid (means no sources)."""
-        config = ValidationConfig.from_dict({"claude_settings_sources": []})
+        config = parse_validation_config({"claude_settings_sources": []})
         assert config.claude_settings_sources == ()
 
     def test_claude_settings_sources_invalid_source(self) -> None:
@@ -530,7 +531,7 @@ class TestClaudeSettingsSources:
             ConfigError,
             match=r"Invalid Claude settings source 'foo'\. Valid sources: local, project, user",
         ):
-            ValidationConfig.from_dict({"claude_settings_sources": ["foo"]})
+            parse_validation_config({"claude_settings_sources": ["foo"]})
 
     def test_claude_settings_sources_invalid_mixed(self) -> None:
         """Invalid source in list with valid sources raises ConfigError."""
@@ -538,43 +539,43 @@ class TestClaudeSettingsSources:
             ConfigError,
             match=r"Invalid Claude settings source 'invalid'\. Valid sources: local, project, user",
         ):
-            ValidationConfig.from_dict(
+            parse_validation_config(
                 {"claude_settings_sources": ["local", "invalid", "project"]}
             )
 
     def test_claude_settings_sources_not_list(self) -> None:
         """Non-list value raises ConfigError."""
         with pytest.raises(ConfigError, match="claude_settings_sources must be a list"):
-            ValidationConfig.from_dict({"claude_settings_sources": "local"})
+            parse_validation_config({"claude_settings_sources": "local"})
 
     def test_claude_settings_sources_non_string_item(self) -> None:
         """Non-string item in list raises ConfigError."""
         with pytest.raises(
             ConfigError, match=r"claude_settings_sources\[0\] must be a string"
         ):
-            ValidationConfig.from_dict({"claude_settings_sources": [123]})
+            parse_validation_config({"claude_settings_sources": [123]})
 
     def test_claude_settings_sources_strips_whitespace(self) -> None:
         """Whitespace is stripped from source names (forgiving parsing)."""
-        config = ValidationConfig.from_dict(
+        config = parse_validation_config(
             {"claude_settings_sources": ["  local  ", " project"]}
         )
         assert config.claude_settings_sources == ("local", "project")
 
     def test_claude_settings_sources_tracked_in_fields_set(self) -> None:
         """claude_settings_sources is tracked in _fields_set when explicitly set."""
-        config = ValidationConfig.from_dict({"claude_settings_sources": ["local"]})
+        config = parse_validation_config({"claude_settings_sources": ["local"]})
         assert "claude_settings_sources" in config._fields_set
 
     def test_claude_settings_sources_empty_list_tracked_in_fields_set(self) -> None:
         """Empty list is tracked in _fields_set (explicit empty differs from None)."""
-        config = ValidationConfig.from_dict({"claude_settings_sources": []})
+        config = parse_validation_config({"claude_settings_sources": []})
         assert "claude_settings_sources" in config._fields_set
         assert config.claude_settings_sources == ()
 
     def test_claude_settings_sources_not_in_fields_set_when_omitted(self) -> None:
         """claude_settings_sources is not in _fields_set when omitted."""
-        config = ValidationConfig.from_dict({})
+        config = parse_validation_config({})
         assert "claude_settings_sources" not in config._fields_set
 
 
@@ -583,51 +584,51 @@ class TestTimeoutMinutes:
 
     def test_timeout_minutes_defaults_to_none(self) -> None:
         """Default timeout_minutes is None (use default 30)."""
-        config = ValidationConfig.from_dict({})
+        config = parse_validation_config({})
         assert config.timeout_minutes is None
         assert "timeout_minutes" not in config._fields_set
 
     def test_timeout_minutes_valid_integer(self) -> None:
         """Valid integer is accepted."""
-        config = ValidationConfig.from_dict({"timeout_minutes": 30})
+        config = parse_validation_config({"timeout_minutes": 30})
         assert config.timeout_minutes == 30
         assert "timeout_minutes" in config._fields_set
 
     def test_timeout_minutes_explicit_null(self) -> None:
         """timeout_minutes: null is tracked in _fields_set but value is None."""
-        config = ValidationConfig.from_dict({"timeout_minutes": None})
+        config = parse_validation_config({"timeout_minutes": None})
         assert config.timeout_minutes is None
         assert "timeout_minutes" in config._fields_set
 
     def test_timeout_minutes_invalid_type_string(self) -> None:
         """String timeout_minutes raises ConfigError."""
         with pytest.raises(ConfigError, match="timeout_minutes must be an integer"):
-            ValidationConfig.from_dict({"timeout_minutes": "60"})
+            parse_validation_config({"timeout_minutes": "60"})
 
     def test_timeout_minutes_invalid_type_float(self) -> None:
         """Float timeout_minutes raises ConfigError."""
         with pytest.raises(ConfigError, match="timeout_minutes must be an integer"):
-            ValidationConfig.from_dict({"timeout_minutes": 60.5})
+            parse_validation_config({"timeout_minutes": 60.5})
 
     def test_timeout_minutes_invalid_type_bool_true(self) -> None:
         """Boolean True is rejected (bool is subclass of int)."""
         with pytest.raises(ConfigError, match="timeout_minutes must be an integer"):
-            ValidationConfig.from_dict({"timeout_minutes": True})
+            parse_validation_config({"timeout_minutes": True})
 
     def test_timeout_minutes_invalid_type_bool_false(self) -> None:
         """Boolean False is rejected (bool is subclass of int)."""
         with pytest.raises(ConfigError, match="timeout_minutes must be an integer"):
-            ValidationConfig.from_dict({"timeout_minutes": False})
+            parse_validation_config({"timeout_minutes": False})
 
     def test_timeout_minutes_zero_rejected(self) -> None:
         """Zero timeout_minutes raises ConfigError."""
         with pytest.raises(ConfigError, match="timeout_minutes must be positive"):
-            ValidationConfig.from_dict({"timeout_minutes": 0})
+            parse_validation_config({"timeout_minutes": 0})
 
     def test_timeout_minutes_negative_rejected(self) -> None:
         """Negative timeout_minutes raises ConfigError."""
         with pytest.raises(ConfigError, match="timeout_minutes must be positive"):
-            ValidationConfig.from_dict({"timeout_minutes": -10})
+            parse_validation_config({"timeout_minutes": -10})
 
 
 class TestMaxIdleRetries:
@@ -635,52 +636,52 @@ class TestMaxIdleRetries:
 
     def test_max_idle_retries_default(self) -> None:
         """Default max_idle_retries is None."""
-        config = ValidationConfig.from_dict({})
+        config = parse_validation_config({})
         assert config.max_idle_retries is None
         assert "max_idle_retries" not in config._fields_set
 
     def test_max_idle_retries_valid_integer(self) -> None:
         """Valid integer is accepted."""
-        config = ValidationConfig.from_dict({"max_idle_retries": 3})
+        config = parse_validation_config({"max_idle_retries": 3})
         assert config.max_idle_retries == 3
         assert "max_idle_retries" in config._fields_set
 
     def test_max_idle_retries_zero_valid(self) -> None:
         """Zero is valid (disables retries)."""
-        config = ValidationConfig.from_dict({"max_idle_retries": 0})
+        config = parse_validation_config({"max_idle_retries": 0})
         assert config.max_idle_retries == 0
         assert "max_idle_retries" in config._fields_set
 
     def test_max_idle_retries_explicit_null(self) -> None:
         """max_idle_retries: null is tracked in _fields_set but value is None."""
-        config = ValidationConfig.from_dict({"max_idle_retries": None})
+        config = parse_validation_config({"max_idle_retries": None})
         assert config.max_idle_retries is None
         assert "max_idle_retries" in config._fields_set
 
     def test_max_idle_retries_invalid_type_string(self) -> None:
         """String max_idle_retries raises ConfigError."""
         with pytest.raises(ConfigError, match="max_idle_retries must be an integer"):
-            ValidationConfig.from_dict({"max_idle_retries": "2"})
+            parse_validation_config({"max_idle_retries": "2"})
 
     def test_max_idle_retries_invalid_type_float(self) -> None:
         """Float max_idle_retries raises ConfigError."""
         with pytest.raises(ConfigError, match="max_idle_retries must be an integer"):
-            ValidationConfig.from_dict({"max_idle_retries": 2.5})
+            parse_validation_config({"max_idle_retries": 2.5})
 
     def test_max_idle_retries_invalid_type_bool_true(self) -> None:
         """Boolean True is rejected (bool is subclass of int)."""
         with pytest.raises(ConfigError, match="max_idle_retries must be an integer"):
-            ValidationConfig.from_dict({"max_idle_retries": True})
+            parse_validation_config({"max_idle_retries": True})
 
     def test_max_idle_retries_invalid_type_bool_false(self) -> None:
         """Boolean False is rejected (bool is subclass of int)."""
         with pytest.raises(ConfigError, match="max_idle_retries must be an integer"):
-            ValidationConfig.from_dict({"max_idle_retries": False})
+            parse_validation_config({"max_idle_retries": False})
 
     def test_max_idle_retries_negative_rejected(self) -> None:
         """Negative max_idle_retries raises ConfigError."""
         with pytest.raises(ConfigError, match="max_idle_retries must be non-negative"):
-            ValidationConfig.from_dict({"max_idle_retries": -1})
+            parse_validation_config({"max_idle_retries": -1})
 
 
 class TestIdleTimeoutSeconds:
@@ -688,55 +689,55 @@ class TestIdleTimeoutSeconds:
 
     def test_idle_timeout_seconds_default(self) -> None:
         """Default idle_timeout_seconds is None."""
-        config = ValidationConfig.from_dict({})
+        config = parse_validation_config({})
         assert config.idle_timeout_seconds is None
         assert "idle_timeout_seconds" not in config._fields_set
 
     def test_idle_timeout_seconds_valid_float(self) -> None:
         """Valid float is accepted."""
-        config = ValidationConfig.from_dict({"idle_timeout_seconds": 300.5})
+        config = parse_validation_config({"idle_timeout_seconds": 300.5})
         assert config.idle_timeout_seconds == 300.5
         assert "idle_timeout_seconds" in config._fields_set
 
     def test_idle_timeout_seconds_valid_int(self) -> None:
         """Valid int is accepted and converted to float."""
-        config = ValidationConfig.from_dict({"idle_timeout_seconds": 300})
+        config = parse_validation_config({"idle_timeout_seconds": 300})
         assert config.idle_timeout_seconds == 300.0
         assert "idle_timeout_seconds" in config._fields_set
 
     def test_idle_timeout_seconds_zero_valid(self) -> None:
         """Zero is valid (disables idle timeout)."""
-        config = ValidationConfig.from_dict({"idle_timeout_seconds": 0})
+        config = parse_validation_config({"idle_timeout_seconds": 0})
         assert config.idle_timeout_seconds == 0.0
         assert "idle_timeout_seconds" in config._fields_set
 
     def test_idle_timeout_seconds_explicit_null(self) -> None:
         """idle_timeout_seconds: null is tracked in _fields_set but value is None."""
-        config = ValidationConfig.from_dict({"idle_timeout_seconds": None})
+        config = parse_validation_config({"idle_timeout_seconds": None})
         assert config.idle_timeout_seconds is None
         assert "idle_timeout_seconds" in config._fields_set
 
     def test_idle_timeout_seconds_invalid_type_string(self) -> None:
         """String idle_timeout_seconds raises ConfigError."""
         with pytest.raises(ConfigError, match="idle_timeout_seconds must be a number"):
-            ValidationConfig.from_dict({"idle_timeout_seconds": "300"})
+            parse_validation_config({"idle_timeout_seconds": "300"})
 
     def test_idle_timeout_seconds_invalid_type_bool_true(self) -> None:
         """Boolean True is rejected (bool is subclass of int)."""
         with pytest.raises(ConfigError, match="idle_timeout_seconds must be a number"):
-            ValidationConfig.from_dict({"idle_timeout_seconds": True})
+            parse_validation_config({"idle_timeout_seconds": True})
 
     def test_idle_timeout_seconds_invalid_type_bool_false(self) -> None:
         """Boolean False is rejected (bool is subclass of int)."""
         with pytest.raises(ConfigError, match="idle_timeout_seconds must be a number"):
-            ValidationConfig.from_dict({"idle_timeout_seconds": False})
+            parse_validation_config({"idle_timeout_seconds": False})
 
     def test_idle_timeout_seconds_negative_rejected(self) -> None:
         """Negative idle_timeout_seconds raises ConfigError."""
         with pytest.raises(
             ConfigError, match="idle_timeout_seconds must be non-negative"
         ):
-            ValidationConfig.from_dict({"idle_timeout_seconds": -10.0})
+            parse_validation_config({"idle_timeout_seconds": -10.0})
 
 
 class TestMaxDiffSizeKb:
@@ -744,52 +745,52 @@ class TestMaxDiffSizeKb:
 
     def test_max_diff_size_kb_default(self) -> None:
         """Default max_diff_size_kb is None."""
-        config = ValidationConfig.from_dict({})
+        config = parse_validation_config({})
         assert config.max_diff_size_kb is None
         assert "max_diff_size_kb" not in config._fields_set
 
     def test_max_diff_size_kb_valid_integer(self) -> None:
         """Valid integer is accepted."""
-        config = ValidationConfig.from_dict({"max_diff_size_kb": 500})
+        config = parse_validation_config({"max_diff_size_kb": 500})
         assert config.max_diff_size_kb == 500
         assert "max_diff_size_kb" in config._fields_set
 
     def test_max_diff_size_kb_zero_valid(self) -> None:
         """Zero is valid (effectively disables)."""
-        config = ValidationConfig.from_dict({"max_diff_size_kb": 0})
+        config = parse_validation_config({"max_diff_size_kb": 0})
         assert config.max_diff_size_kb == 0
         assert "max_diff_size_kb" in config._fields_set
 
     def test_max_diff_size_kb_explicit_null(self) -> None:
         """max_diff_size_kb: null is tracked in _fields_set but value is None."""
-        config = ValidationConfig.from_dict({"max_diff_size_kb": None})
+        config = parse_validation_config({"max_diff_size_kb": None})
         assert config.max_diff_size_kb is None
         assert "max_diff_size_kb" in config._fields_set
 
     def test_max_diff_size_kb_invalid_type_string(self) -> None:
         """String max_diff_size_kb raises ConfigError."""
         with pytest.raises(ConfigError, match="max_diff_size_kb must be an integer"):
-            ValidationConfig.from_dict({"max_diff_size_kb": "500"})
+            parse_validation_config({"max_diff_size_kb": "500"})
 
     def test_max_diff_size_kb_invalid_type_float(self) -> None:
         """Float max_diff_size_kb raises ConfigError."""
         with pytest.raises(ConfigError, match="max_diff_size_kb must be an integer"):
-            ValidationConfig.from_dict({"max_diff_size_kb": 500.5})
+            parse_validation_config({"max_diff_size_kb": 500.5})
 
     def test_max_diff_size_kb_invalid_type_bool_true(self) -> None:
         """Boolean True is rejected (bool is subclass of int)."""
         with pytest.raises(ConfigError, match="max_diff_size_kb must be an integer"):
-            ValidationConfig.from_dict({"max_diff_size_kb": True})
+            parse_validation_config({"max_diff_size_kb": True})
 
     def test_max_diff_size_kb_invalid_type_bool_false(self) -> None:
         """Boolean False is rejected (bool is subclass of int)."""
         with pytest.raises(ConfigError, match="max_diff_size_kb must be an integer"):
-            ValidationConfig.from_dict({"max_diff_size_kb": False})
+            parse_validation_config({"max_diff_size_kb": False})
 
     def test_max_diff_size_kb_negative_rejected(self) -> None:
         """Negative max_diff_size_kb raises ConfigError."""
         with pytest.raises(ConfigError, match="max_diff_size_kb must be non-negative"):
-            ValidationConfig.from_dict({"max_diff_size_kb": -100})
+            parse_validation_config({"max_diff_size_kb": -100})
 
 
 class TestClaudeSettingsSourcesIntegration:
@@ -893,7 +894,7 @@ class TestPromptValidationCommands:
 
     def test_from_validation_config_full_commands(self) -> None:
         """Full config creates PromptValidationCommands with all commands."""
-        config = ValidationConfig.from_dict(
+        config = parse_validation_config(
             {
                 "commands": {
                     "lint": "golangci-lint run",
@@ -911,7 +912,7 @@ class TestPromptValidationCommands:
 
     def test_from_validation_config_missing_commands_use_fallbacks(self) -> None:
         """Missing commands use fallback messages."""
-        config = ValidationConfig.from_dict(
+        config = parse_validation_config(
             {
                 "commands": {
                     "test": "pytest",
@@ -926,7 +927,7 @@ class TestPromptValidationCommands:
 
     def test_from_validation_config_no_commands(self) -> None:
         """Empty commands config uses all fallbacks."""
-        config = ValidationConfig.from_dict({})
+        config = parse_validation_config({})
         prompt_cmds = PromptValidationCommands.from_validation_config(config)
         assert "No lint command configured" in prompt_cmds.lint
         assert "No format command configured" in prompt_cmds.format

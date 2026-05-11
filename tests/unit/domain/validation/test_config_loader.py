@@ -20,6 +20,7 @@ from src.domain.validation.config_parser import (
     _parse_code_review_config,
     _parse_evidence_check_config,
     _parse_periodic_trigger,
+    parse_validation_config,
 )
 
 
@@ -671,11 +672,10 @@ class TestParsePeriodicTrigger:
 
 
 class TestPerIssueReviewParsing:
-    """Tests for per_issue_review parsing in ValidationConfig.from_dict."""
+    """Tests for per_issue_review parsing in parse_validation_config."""
 
     def test_per_issue_review_all_fields(self) -> None:
         """All per_issue_review fields are parsed correctly."""
-        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {
             "preset": "python-uv",
@@ -689,7 +689,7 @@ class TestPerIssueReviewParsing:
                 "cerberus": {"timeout": 600},
             },
         }
-        config = ValidationConfig.from_dict(data)
+        config = parse_validation_config(data)
 
         assert config.per_issue_review.enabled is True
         assert config.per_issue_review.reviewer_type == "cerberus"
@@ -703,13 +703,12 @@ class TestPerIssueReviewParsing:
 
     def test_per_issue_review_minimal(self) -> None:
         """Minimal per_issue_review (just enabled) works with defaults."""
-        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {
             "preset": "python-uv",
             "per_issue_review": {"enabled": True},
         }
-        config = ValidationConfig.from_dict(data)
+        config = parse_validation_config(data)
 
         assert config.per_issue_review.enabled is True
         assert config.per_issue_review.reviewer_type == "cerberus"
@@ -718,35 +717,31 @@ class TestPerIssueReviewParsing:
 
     def test_per_issue_review_missing_defaults_to_disabled(self) -> None:
         """Missing per_issue_review defaults to CodeReviewConfig(enabled=False)."""
-        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {"preset": "python-uv"}
-        config = ValidationConfig.from_dict(data)
+        config = parse_validation_config(data)
 
         assert config.per_issue_review.enabled is False
         assert "per_issue_review" not in config._fields_set
 
     def test_per_issue_review_null_defaults_to_disabled(self) -> None:
         """Explicit null per_issue_review defaults to CodeReviewConfig(enabled=False)."""
-        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {"preset": "python-uv", "per_issue_review": None}
-        config = ValidationConfig.from_dict(data)
+        config = parse_validation_config(data)
 
         assert config.per_issue_review.enabled is False
         assert "per_issue_review" in config._fields_set
 
     def test_per_issue_review_not_dict_raises(self) -> None:
         """Non-dict per_issue_review raises ConfigError."""
-        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {"preset": "python-uv", "per_issue_review": "invalid"}
         with pytest.raises(ConfigError, match=r"per_issue_review must be an object"):
-            ValidationConfig.from_dict(data)
+            parse_validation_config(data)
 
     def test_per_issue_review_invalid_enabled_raises(self) -> None:
         """Non-boolean enabled in per_issue_review raises ConfigError."""
-        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {
             "preset": "python-uv",
@@ -755,22 +750,20 @@ class TestPerIssueReviewParsing:
         with pytest.raises(
             ConfigError, match=r"code_review\.enabled must be a boolean"
         ):
-            ValidationConfig.from_dict(data)
+            parse_validation_config(data)
 
     def test_per_issue_review_unknown_field_raises(self) -> None:
         """Unknown field in per_issue_review raises ConfigError."""
-        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {
             "preset": "python-uv",
             "per_issue_review": {"enabled": True, "unknown_field": "value"},
         }
         with pytest.raises(ConfigError, match=r"Unknown field 'unknown_field'"):
-            ValidationConfig.from_dict(data)
+            parse_validation_config(data)
 
     def test_per_issue_review_agent_sdk_type(self) -> None:
         """Agent SDK reviewer type is parsed correctly."""
-        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {
             "preset": "python-uv",
@@ -781,7 +774,7 @@ class TestPerIssueReviewParsing:
                 "agent_sdk_model": "sonnet",
             },
         }
-        config = ValidationConfig.from_dict(data)
+        config = parse_validation_config(data)
 
         assert config.per_issue_review.reviewer_type == "agent_sdk"
         assert config.per_issue_review.agent_sdk_timeout == 300
@@ -791,7 +784,6 @@ class TestPerIssueReviewParsing:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """baseline in per_issue_review emits warning and is ignored."""
-        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {
             "preset": "python-uv",
@@ -801,7 +793,7 @@ class TestPerIssueReviewParsing:
             },
         }
         with caplog.at_level("WARNING"):
-            config = ValidationConfig.from_dict(data)
+            config = parse_validation_config(data)
 
         # baseline should be ignored (set to None)
         assert config.per_issue_review.baseline is None
@@ -811,7 +803,6 @@ class TestPerIssueReviewParsing:
 
     def test_per_issue_review_no_default_baseline(self) -> None:
         """per_issue_review does NOT get default baseline like epic_completion/run_end."""
-        from src.domain.validation.config_types import ValidationConfig
 
         # If we were treating per_issue_review as a trigger, it might get
         # an unexpected default baseline. This test ensures it doesn't.
@@ -821,7 +812,7 @@ class TestPerIssueReviewParsing:
                 "enabled": True,
             },
         }
-        config = ValidationConfig.from_dict(data)
+        config = parse_validation_config(data)
 
         # baseline should remain None, not defaulted to "since_run_start"
         assert config.per_issue_review.baseline is None

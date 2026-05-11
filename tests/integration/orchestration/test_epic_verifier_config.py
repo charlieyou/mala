@@ -5,7 +5,7 @@ This test verifies:
 2. _parse_epic_verification_config parses config correctly
 3. _create_epic_verification_model returns ClaudeEpicVerificationModel for agent_sdk
 4. _check_epic_verifier_availability returns correct availability status
-5. ValidationConfig.from_dict correctly parses epic_verification block
+5. parse_validation_config correctly parses epic_verification block
 6. epic_verification field is in _ALLOWED_TOP_LEVEL_FIELDS
 
 The test exercises: mala.yaml (epic_verification) → _parse_epic_verification_config →
@@ -304,35 +304,35 @@ class TestValidationConfigEpicVerification:
         assert config.epic_verification.reviewer_type == "agent_sdk"
 
     def test_validation_config_from_dict_parses_epic_verification(self) -> None:
-        """ValidationConfig.from_dict correctly parses epic_verification block."""
-        from src.domain.validation.config_types import ValidationConfig
+        """parse_validation_config correctly parses epic_verification block."""
+        from src.domain.validation.config_parser import parse_validation_config
 
         data = {
             "epic_verification": {"reviewer_type": "agent_sdk"},
             "commands": {"test": {"command": "echo test"}},
         }
-        config = ValidationConfig.from_dict(data)  # ty:ignore[invalid-argument-type]
+        config = parse_validation_config(data)  # ty:ignore[invalid-argument-type]
         assert config.epic_verification.reviewer_type == "agent_sdk"
 
     def test_validation_config_from_dict_parses_cerberus_reviewer(self) -> None:
-        """ValidationConfig.from_dict parses cerberus reviewer_type."""
-        from src.domain.validation.config_types import ValidationConfig
+        """parse_validation_config parses cerberus reviewer_type."""
+        from src.domain.validation.config_parser import parse_validation_config
 
         data = {
             "epic_verification": {"reviewer_type": "cerberus"},
             "commands": {"test": {"command": "echo test"}},
         }
-        config = ValidationConfig.from_dict(data)  # ty:ignore[invalid-argument-type]
+        config = parse_validation_config(data)  # ty:ignore[invalid-argument-type]
         assert config.epic_verification.reviewer_type == "cerberus"
 
     def test_validation_config_from_dict_defaults_without_epic_verification(
         self,
     ) -> None:
-        """ValidationConfig.from_dict defaults epic_verification when absent."""
-        from src.domain.validation.config_types import ValidationConfig
+        """parse_validation_config defaults epic_verification when absent."""
+        from src.domain.validation.config_parser import parse_validation_config
 
         data = {"commands": {"test": {"command": "echo test"}}}
-        config = ValidationConfig.from_dict(data)  # ty:ignore[invalid-argument-type]
+        config = parse_validation_config(data)  # ty:ignore[invalid-argument-type]
         assert config.epic_verification.reviewer_type == "agent_sdk"
 
 
@@ -432,8 +432,8 @@ class TestEpicVerifierConfigIntegration:
         assert isinstance(model, CerberusEpicVerifier)
 
     def test_validation_config_to_factory_path(self, tmp_path: Path) -> None:
-        """Integration: ValidationConfig.from_dict → factory functions."""
-        from src.domain.validation.config_types import ValidationConfig
+        """Integration: parse_validation_config → factory functions."""
+        from src.domain.validation.config_parser import parse_validation_config
         from src.infra.epic_verifier import ClaudeEpicVerificationModel
         from src.orchestration.factory import (
             _check_epic_verifier_availability,
@@ -445,7 +445,7 @@ class TestEpicVerifierConfigIntegration:
             "epic_verification": {"reviewer_type": "agent_sdk"},
             "commands": {"test": {"command": "echo test"}},
         }
-        validation_config = ValidationConfig.from_dict(data)  # ty:ignore[invalid-argument-type]
+        validation_config = parse_validation_config(data)  # ty:ignore[invalid-argument-type]
 
         # Step 2: Extract reviewer_type (mimics create_orchestrator behavior)
         reviewer_type = validation_config.epic_verification.reviewer_type

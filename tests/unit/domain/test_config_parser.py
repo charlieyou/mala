@@ -1,12 +1,12 @@
 """Section-level tests for :mod:`src.domain.validation.config_parser`.
 
 These tests cover each top-level YAML/dict section that
-``ValidationConfig.from_dict`` parses today, asserting:
+``parse_validation_config`` parses, asserting:
 
-- Parser returns the same typed config the existing ``from_dict`` does.
+- Parser returns the expected typed config for each shape.
 - ``was_present`` is True when the key appears in the dict (even with null),
   False otherwise — the ``_fields_set`` distinction the merger relies on.
-- User-visible error messages match those raised by ``ValidationConfig.from_dict``.
+- User-visible error messages are stable.
 
 The aggregate ``parse_validation_config`` is also tested end-to-end including
 the ``coder=amp + amp_mode=deep + effort in {high, max}`` cross-section rule.
@@ -561,11 +561,13 @@ class TestParseValidationConfigAggregate:
         assert cfg.per_issue_review == CodeReviewConfig(enabled=False)
         assert cfg._fields_set == frozenset()
 
-    def test_matches_validationconfig_from_dict_minimal(self) -> None:
-        data: dict[str, Any] = {}
-        assert parse_validation_config(data) == ValidationConfig.from_dict(data)
+    def test_parse_validation_config_minimal(self) -> None:
+        cfg = parse_validation_config({})
+        assert isinstance(cfg, ValidationConfig)
+        assert cfg.preset is None
+        assert cfg._fields_set == frozenset()
 
-    def test_matches_validationconfig_from_dict_full(self) -> None:
+    def test_parse_validation_config_full(self) -> None:
         data: dict[str, Any] = {
             "preset": "python-uv",
             "commands": {"test": "pytest", "lint": "ruff check"},
@@ -596,9 +598,21 @@ class TestParseValidationConfigAggregate:
             "effort": "medium",
             "coder_options": {"codex": {"model": "gpt-5.5"}},
         }
-        from_dict_cfg = ValidationConfig.from_dict(data)
-        parser_cfg = parse_validation_config(data)
-        assert parser_cfg == from_dict_cfg
+        cfg = parse_validation_config(data)
+        assert cfg.preset == "python-uv"
+        assert cfg.coder == "claude"
+        assert cfg.effort == "medium"
+        assert cfg.epic_verification.enabled is False
+        assert cfg.epic_verification.max_retries == 4
+        assert cfg.per_issue_review.enabled is True
+        assert cfg.per_issue_review.max_retries == 1
+        assert cfg.evidence_check is not None
+        assert cfg.evidence_check.required == ("lint",)
+        assert cfg.validation_triggers is not None
+        assert cfg.validation_triggers.periodic is not None
+        assert cfg.validation_triggers.periodic.interval == 3600
+        assert cfg.codex_options is not None
+        assert cfg.codex_options.model == "gpt-5.5"
 
     def test_fields_set_tracks_explicit_keys(self) -> None:
         cfg = parse_validation_config(
@@ -670,7 +684,8 @@ class TestParseValidationConfigAggregate:
 
 
 # ---------------------------------------------------------------------------
-# Module hygiene: the parser must not depend on ValidationConfig.from_dict.
+# Module hygiene: ValidationConfig is a pure dataclass boundary; the parser
+# owns all parsing logic.
 # ---------------------------------------------------------------------------
 
 
@@ -678,10 +693,11 @@ class TestModuleSurface:
     def test_parser_does_not_call_validationconfig_from_dict(self) -> None:
         """The parser must not call ``ValidationConfig.from_dict`` itself.
 
-        ``from_dict`` is T_C2's slimmed delegate target; if the parser calls
-        it, we re-introduce the recursion the refactor is meant to remove.
-        Docstring/comment mentions are allowed; we grep for the call pattern
-        with an open paren so prose references don't trip the check.
+        ``from_dict`` has been removed from ``ValidationConfig`` as part of
+        T_C2; this check guards against accidental reintroduction (e.g. via a
+        new convenience method on the dataclass). Docstring/comment mentions
+        are allowed; we grep for the call pattern with an open paren so prose
+        references don't trip the check.
         """
         import inspect
 
@@ -689,3 +705,16 @@ class TestModuleSurface:
 
         source = inspect.getsource(config_parser)
         assert "ValidationConfig.from_dict(" not in source
+
+    def test_validationconfig_has_no_from_dict(self) -> None:
+        """``ValidationConfig`` must not expose ``from_dict``.
+
+        AC-1 of the Workstream C remediation: ``ValidationConfig`` is a pure
+        dataclass boundary, so all parsing entry points live on
+        :func:`config_parser.parse_validation_config`. Reintroducing
+        ``ValidationConfig.from_dict`` would put a parsing seam back on the
+        type module via a lazy import.
+        """
+        from src.domain.validation.config_types import ValidationConfig
+
+        assert not hasattr(ValidationConfig, "from_dict")
