@@ -9,6 +9,8 @@ Design principles:
 - _DerivedConfig: Internal computed configuration values
 - PipelineConfig: Configuration for pipeline stages
 - IssueFilterConfig: Filtering criteria for issue selection
+- *View: Narrow cached views derived from PipelineConfig (one per runner) so
+  runner wiring reads canonical fields without duplicating state.
 - DEFAULT_AGENT_TIMEOUT_MINUTES: Default timeout constant
 
 RuntimeDeps lives in `src/orchestration/runtime_deps.py`.
@@ -17,6 +19,7 @@ RuntimeDeps lives in `src/orchestration/runtime_deps.py`.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path  # noqa: TC003 - needed at runtime for dataclass field
 from typing import TYPE_CHECKING
 
@@ -167,6 +170,75 @@ class _DerivedConfig:
 
 
 @dataclass(frozen=True)
+class GateRunnerView:
+    """Narrow view of PipelineConfig for gate runner wiring.
+
+    Holds exactly the PipelineConfig fields the GateRunner needs. Produced by
+    ``PipelineConfig.gate_runner_view``; do not construct directly outside the
+    cached_property getter so the source remains canonical.
+    """
+
+    repo_path: Path
+    max_gate_retries: int
+    disabled_validations: set[str] | None
+    validation_config: ValidationConfig | None
+    validation_config_missing: bool
+
+
+@dataclass(frozen=True)
+class ReviewRunnerView:
+    """Narrow view of PipelineConfig for review runner wiring."""
+
+    max_review_retries: int
+    review_timeout_seconds: int | None
+
+
+@dataclass(frozen=True)
+class CumulativeReviewView:
+    """Narrow view of PipelineConfig for cumulative review runner wiring."""
+
+    repo_path: Path
+    review_timeout_seconds: int | None
+
+
+@dataclass(frozen=True)
+class FixerServiceView:
+    """Narrow view of PipelineConfig for fixer service wiring."""
+
+    repo_path: Path
+    timeout_seconds: int
+    fixer_prompt: str
+
+
+@dataclass(frozen=True)
+class RunCoordinatorView:
+    """Narrow view of PipelineConfig for run coordinator wiring."""
+
+    repo_path: Path
+    timeout_seconds: int
+    max_gate_retries: int
+    disabled_validations: set[str] | None
+    fixer_prompt: str
+    validation_config: ValidationConfig | None
+    validation_config_missing: bool
+
+
+@dataclass(frozen=True)
+class AgentSessionView:
+    """Narrow view of PipelineConfig for agent session runner wiring."""
+
+    repo_path: Path
+    timeout_seconds: int
+    prompts: PromptProvider
+    max_gate_retries: int
+    max_review_retries: int
+    prompt_validation_commands: PromptValidationCommands
+    max_idle_retries: int
+    idle_timeout_seconds: float | None
+    deadlock_monitor: DeadlockMonitor | None
+
+
+@dataclass(frozen=True)
 class PipelineConfig:
     """Configuration values for pipeline behavior.
 
@@ -201,6 +273,70 @@ class PipelineConfig:
     validation_config_missing: bool = False
     deadlock_monitor: DeadlockMonitor | None = None
     review_timeout_seconds: int | None = None
+
+    @cached_property
+    def gate_runner_view(self) -> GateRunnerView:
+        """Fields needed to wire a GateRunner (see build_gate_runner)."""
+        return GateRunnerView(
+            repo_path=self.repo_path,
+            max_gate_retries=self.max_gate_retries,
+            disabled_validations=self.disabled_validations,
+            validation_config=self.validation_config,
+            validation_config_missing=self.validation_config_missing,
+        )
+
+    @cached_property
+    def review_runner_view(self) -> ReviewRunnerView:
+        """Fields needed to wire a ReviewRunner (see build_review_runner)."""
+        return ReviewRunnerView(
+            max_review_retries=self.max_review_retries,
+            review_timeout_seconds=self.review_timeout_seconds,
+        )
+
+    @cached_property
+    def cumulative_review_view(self) -> CumulativeReviewView:
+        """Fields needed to wire a CumulativeReviewRunner."""
+        return CumulativeReviewView(
+            repo_path=self.repo_path,
+            review_timeout_seconds=self.review_timeout_seconds,
+        )
+
+    @cached_property
+    def fixer_service_view(self) -> FixerServiceView:
+        """Fields needed to wire a FixerService (see build_run_coordinator)."""
+        return FixerServiceView(
+            repo_path=self.repo_path,
+            timeout_seconds=self.timeout_seconds,
+            fixer_prompt=self.prompts.fixer_prompt,
+        )
+
+    @cached_property
+    def run_coordinator_view(self) -> RunCoordinatorView:
+        """Fields needed to wire a RunCoordinator (see build_run_coordinator)."""
+        return RunCoordinatorView(
+            repo_path=self.repo_path,
+            timeout_seconds=self.timeout_seconds,
+            max_gate_retries=self.max_gate_retries,
+            disabled_validations=self.disabled_validations,
+            fixer_prompt=self.prompts.fixer_prompt,
+            validation_config=self.validation_config,
+            validation_config_missing=self.validation_config_missing,
+        )
+
+    @cached_property
+    def agent_session_view(self) -> AgentSessionView:
+        """Fields needed to wire an AgentSessionConfig (see build_session_config)."""
+        return AgentSessionView(
+            repo_path=self.repo_path,
+            timeout_seconds=self.timeout_seconds,
+            prompts=self.prompts,
+            max_gate_retries=self.max_gate_retries,
+            max_review_retries=self.max_review_retries,
+            prompt_validation_commands=self.prompt_validation_commands,
+            max_idle_retries=self.max_idle_retries,
+            idle_timeout_seconds=self.idle_timeout_seconds,
+            deadlock_monitor=self.deadlock_monitor,
+        )
 
 
 @dataclass(frozen=True)
