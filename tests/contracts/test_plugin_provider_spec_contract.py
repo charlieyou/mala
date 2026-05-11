@@ -4,12 +4,6 @@ Parametrized over the real ``AmpAgentProvider`` and ``CodexAgentProvider``
 classes: both must satisfy the Protocol structurally, expose the
 stdio-shaped MCP factory, and re-root their plugin-install error
 classes onto the shared :class:`PluginInstallError` base.
-
-The exception-base assertions are **expected to fail** until T_B5
-(Amp provider migration) and T_B6 (Codex provider migration) re-root
-``AmpPluginNotActiveError`` and ``CodexHookNotActiveError`` onto
-:class:`PluginInstallError`. The contract test exists ahead of those
-migrations so the migration PRs can flip from red to green.
 """
 
 from __future__ import annotations
@@ -78,30 +72,16 @@ def test_provider_name_is_amp_or_codex(
 
 
 # ---------------------------------------------------------------------------
-# Exception unification (expected to fail until T_B5 / T_B6)
+# Exception unification
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    reason=(
-        "Re-rooting AmpPluginNotActiveError (T_B5) and CodexHookNotActiveError "
-        "(T_B6) onto PluginInstallError is the documented migration target; "
-        "the migration PRs will remove this marker."
-    ),
-    strict=False,
-)
 @pytest.mark.parametrize(("_provider_cls", "error_cls"), _PROVIDER_CASES)
 def test_provider_install_error_inherits_from_plugin_install_error(
     _provider_cls: type, error_cls: type[Exception]
 ) -> None:
-    """Provider-specific install errors must be PluginInstallError subclasses.
-
-    Will fail until T_B5 re-roots ``AmpPluginNotActiveError`` and T_B6
-    re-roots ``CodexHookNotActiveError`` onto :class:`PluginInstallError`
-    (the documented migration target for Workstream B).
-    """
+    """Provider-specific install errors must be PluginInstallError subclasses."""
     assert issubclass(error_cls, PluginInstallError), (
-        f"{error_cls.__name__} must inherit from PluginInstallError "
-        "(target after T_B5 / T_B6 migration)"
+        f"{error_cls.__name__} must inherit from PluginInstallError"
     )
