@@ -23,12 +23,12 @@ from typing import Any, cast
 from pydantic import BaseModel, ConfigDict
 
 
-def import_codex_app_server() -> Any:
+def import_codex_app_server() -> Any:  # noqa: ANN401 - codex_app_server module, avoid lazy-import
     """Import the optional Codex app-server SDK at runtime."""
     return importlib.import_module("codex_app_server")
 
 
-def import_codex_generated_v2_all() -> Any:
+def import_codex_generated_v2_all() -> Any:  # noqa: ANN401 - codex_app_server.generated.v2_all module, avoid lazy-import
     """Import optional generated Codex app-server models at runtime."""
     return importlib.import_module("codex_app_server.generated.v2_all")
 

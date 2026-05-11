@@ -49,7 +49,7 @@ class TestNormalizedHookIdentityValue:
         value = _normalized_hook_identity_value(event)
 
         assert isinstance(value, dict)
-        assert cast(dict[str, object], value)["event_name"] == event
+        assert cast("dict[str, object]", value)["event_name"] == event
 
 
 class TestCanonicalJson:
