@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import json
 import os
 import tempfile
 from dataclasses import dataclass
@@ -130,6 +131,21 @@ Honors ``CODEX_HOME`` env var when set; otherwise defaults to ``~/.codex``.
 on every call so a test or user-override takes effect.
 """
 
+_MARKETPLACE_MANIFEST_RELATIVE_PATH = ".agents/plugins/marketplace.json"
+"""Home-scoped marketplace manifest path Codex scans via ``plugin/list``.
+
+Codex 0.130 no longer surfaces arbitrary cache entries in ``plugin/list``.
+The cache only answers "is this configured plugin installed?"; the visible
+plugin catalog comes from marketplace manifests discovered from configured
+marketplace roots. Mala writes a minimal marketplace into the isolated
+``CODEX_HOME`` and points ``[marketplaces."local"].source`` at that home.
+"""
+
+
+def marketplace_manifest_path(codex_home: Path) -> Path:
+    """Return the bundled local marketplace manifest path for ``codex_home``."""
+    return codex_home / _MARKETPLACE_MANIFEST_RELATIVE_PATH
+
 
 def _resolve_codex_home() -> Path:
     """Return the active Codex home directory.
@@ -157,6 +173,11 @@ def plugin_root_dir(codex_home: Path | None = None) -> Path:
     return (
         home / "plugins" / "cache" / PLUGIN_MARKETPLACE / PLUGIN_NAME / PLUGIN_VERSION
     )
+
+
+def _marketplace_source_path(marketplace: str = PLUGIN_MARKETPLACE) -> str:
+    """Return the marketplace-local source path for the installed plugin root."""
+    return f"./plugins/cache/{marketplace}/{PLUGIN_NAME}/{PLUGIN_VERSION}"
 
 
 def default_plugin_target_dir() -> Path:
@@ -455,7 +476,7 @@ def _write_codex_plugin_config(
 ) -> None:
     """Fail-closed write of the config-side preconditions to ``config.toml``.
 
-    Codex requires FIVE config-side preconditions for the bundled
+    Codex requires six config-side preconditions for the bundled
     PreToolUse hook to fire:
 
       * The global ``plugins`` feature flag is enabled:
@@ -483,11 +504,18 @@ def _write_codex_plugin_config(
         (per ``codex-rs/core-plugins/src/manager.rs::configured_plugins_from_stack``
         — only ``[plugins."<key>"]`` entries are surfaced as "configured
         plugins" and only those whose ``enabled`` is True are loaded).
+      * The plugin's marketplace is registered:
+        ``[marketplaces."<marketplace>"] source_type = "local"`` and
+        ``source = "<isolated CODEX_HOME>"``. Codex's ``plugin/list``
+        enumerates configured marketplace roots, then overlays cache
+        and enabled state; an isolated Mala ``CODEX_HOME`` that has the
+        cached plugin tree but no marketplace manifest reports zero
+        plugin summaries.
       * The hook is marked trusted: ``[hooks.state."<id>:<rel>:pre_tool_use:0:0"]``
         with ``enabled = true`` and the matching ``trusted_hash`` (per
         ``codex-rs/hooks/src/engine/discovery.rs::hook_trust_status``).
 
-    Without all five entries, Codex would discover the cached plugin
+    Without all six entries, Codex would discover the cached plugin
     tree (``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/``)
     yet still skip the hook on PreToolUse — the orchestrator would
     proceed under ``danger-full-access`` / ``approval_policy=never``
@@ -520,6 +548,8 @@ def _write_codex_plugin_config(
     plugin_id = _plugin_id(marketplace)
     plugin_section = f'[plugins."{plugin_id}"]'
     plugin_block = f"{plugin_section}\nenabled = true\n"
+    marketplace_section = f'[marketplaces."{marketplace}"]'
+    marketplace_source_value = json.dumps(str(codex_home), ensure_ascii=False)
 
     # Each hook handler in the bundled ``hooks.json`` (PreToolUse +
     # SessionStart) gets its own ``[hooks.state."<key>"]`` block with
@@ -582,7 +612,21 @@ def _write_codex_plugin_config(
     rewritten = _ensure_key_in_section(
         rewritten, section_header="[features]", key="hooks", value="true"
     )
-    # 2 + 3. Replace the per-plugin and per-hook state blocks.
+    # 2. Ensure the local marketplace exists so Codex's plugin/list
+    # enumerates the marketplace manifest inside this isolated CODEX_HOME.
+    rewritten = _ensure_key_in_section(
+        rewritten,
+        section_header=marketplace_section,
+        key="source_type",
+        value='"local"',
+    )
+    rewritten = _ensure_key_in_section(
+        rewritten,
+        section_header=marketplace_section,
+        key="source",
+        value=marketplace_source_value,
+    )
+    # 3 + 4. Replace the per-plugin and per-hook state blocks.
     rewritten = _rewrite_toml_block(
         rewritten, section_header=plugin_section, new_block=plugin_block
     )
@@ -601,6 +645,55 @@ def _write_codex_plugin_config(
             "The bundled safety hook would remain disabled or untrusted; "
             "refusing to run under danger-full-access without the safety gate.",
             reason=CodexHookNotActiveReason.TRUSTED_HASH_MISMATCH,
+        ) from exc
+
+
+def _write_codex_plugin_marketplace_manifest(
+    *,
+    codex_home: Path,
+    marketplace: str = PLUGIN_MARKETPLACE,
+) -> None:
+    """Write the isolated marketplace manifest that makes ``plugin/list`` see Mala.
+
+    The installed plugin cache at ``plugins/cache/<marketplace>/<plugin>/<version>``
+    is necessary for Codex to mark ``mala-safety@local`` as installed, but it is
+    not itself the catalog that ``plugin/list`` displays. Codex discovers
+    catalog entries from marketplace manifests. This helper writes a minimal
+    local marketplace under the isolated ``CODEX_HOME`` and
+    :func:`_write_codex_plugin_config` points ``[marketplaces."<marketplace>"]``
+    at that same home.
+    """
+    from src.infra.clients.codex_provider import (
+        CodexHookNotActiveError,
+        CodexHookNotActiveReason,
+    )
+
+    manifest_path = marketplace_manifest_path(codex_home)
+    payload = {
+        "name": marketplace,
+        "plugins": [
+            {
+                "name": PLUGIN_NAME,
+                "source": {
+                    "source": "local",
+                    "path": _marketplace_source_path(marketplace),
+                },
+            }
+        ],
+    }
+
+    try:
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        raise CodexHookNotActiveError(
+            f"Cannot write Codex local marketplace manifest to {manifest_path} "
+            f"({exc}). Codex's plugin/list would not discover the bundled "
+            "mala-safety plugin in the isolated CODEX_HOME.",
+            reason=CodexHookNotActiveReason.PLUGIN_DISABLED,
         ) from exc
 
 

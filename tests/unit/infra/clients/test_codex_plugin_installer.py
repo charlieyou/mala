@@ -12,6 +12,7 @@ bundled bytes.
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 from pathlib import Path
@@ -35,8 +36,10 @@ from src.infra.clients.codex_plugin_installer import (
     _read_source_files,
     _resolve_codex_home,
     _rewrite_toml_block,
+    _write_codex_plugin_marketplace_manifest,
     _write_codex_plugin_config,
     default_plugin_target_dir,
+    marketplace_manifest_path,
     plugin_root_dir,
 )
 
@@ -740,10 +743,10 @@ def test_rewrite_toml_block_appends_when_missing() -> None:
 
 
 @pytest.mark.unit
-def test_write_codex_plugin_config_writes_all_five_preconditions(
+def test_write_codex_plugin_config_writes_all_preconditions(
     tmp_path: Path,
 ) -> None:
-    """All five Codex-config preconditions land in the rewritten file."""
+    """All Codex-config preconditions land in the rewritten file."""
     codex_home = tmp_path / "codex-home"
     _write_codex_plugin_config(codex_home=codex_home)
 
@@ -752,6 +755,9 @@ def test_write_codex_plugin_config_writes_all_five_preconditions(
     assert "plugins = true" in rendered
     assert "plugin_hooks = true" in rendered
     assert "hooks = true" in rendered
+    assert '[marketplaces."local"]' in rendered
+    assert 'source_type = "local"' in rendered
+    assert f'source = "{codex_home}"' in rendered
     assert '[plugins."mala-safety@local"]' in rendered
     # Per-hook trust blocks for both events.
     assert (
@@ -763,6 +769,36 @@ def test_write_codex_plugin_config_writes_all_five_preconditions(
         in rendered
     )
     assert "trusted_hash" in rendered
+
+
+@pytest.mark.unit
+def test_write_codex_plugin_marketplace_manifest_points_at_cache_path(
+    tmp_path: Path,
+) -> None:
+    """The isolated marketplace catalog names the installed cache root.
+
+    Codex's plugin/list enumerates marketplace manifests, then overlays cache
+    installed/enabled state. The manifest must therefore point at the same
+    plugin root ``CodexPluginInstaller.install`` writes.
+    """
+    codex_home = tmp_path / "codex-home"
+
+    _write_codex_plugin_marketplace_manifest(codex_home=codex_home)
+
+    manifest_path = marketplace_manifest_path(codex_home)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert payload == {
+        "name": "local",
+        "plugins": [
+            {
+                "name": "mala-safety",
+                "source": {
+                    "source": "local",
+                    "path": "./plugins/cache/local/mala-safety/local",
+                },
+            }
+        ],
+    }
 
 
 @pytest.mark.unit

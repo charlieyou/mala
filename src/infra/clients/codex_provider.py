@@ -617,15 +617,18 @@ class CodexAgentProvider:
 
         The :class:`tempfile.TemporaryDirectory` handle is held on the
         provider so the directory survives for the orchestrator's
-        lifetime; cleanup happens when the provider is garbage-collected
-        or the process exits, mirroring the lifecycle of a single mala
-        invocation.
+        lifetime; best-effort cleanup happens when the provider is
+        garbage-collected or the process exits, mirroring the lifecycle
+        of a single mala invocation. Cleanup ignores late file churn so
+        a Codex subprocess finishing at interpreter shutdown cannot
+        print a ``TemporaryDirectory`` traceback after a successful run.
         """
         from src.infra.clients.codex_plugin_installer import _HOOK_CONFIG_FILENAME
 
         if self._isolated_codex_home is None:
             self._isolated_codex_home = tempfile.TemporaryDirectory(
-                prefix="mala-codex-home-"
+                prefix="mala-codex-home-",
+                ignore_cleanup_errors=True,
             )
             isolated = Path(self._isolated_codex_home.name)
             user_auth = user_codex_home / "auth.json"
@@ -711,7 +714,7 @@ class CodexAgentProvider:
           5. Verify the ``mala-codex-pre-tool-use`` console script is on
              ``PATH`` (raise
              :class:`CodexHookNotActiveError(SCRIPT_MISSING)`).
-          6. Auto-write the five Codex-config preconditions to the
+          6. Auto-write the six Codex-config preconditions to the
              isolated ``CODEX_HOME/config.toml`` (decision #16):
              ``[features] plugins = true`` to override an opt-out
              setting that would short-circuit plugin loading entirely
@@ -723,6 +726,10 @@ class CodexAgentProvider:
              ``[features] hooks = true`` so Codex's global hook
              execution gate cannot leave the loaded/trusted safety hook
              dormant;
+             ``[marketplaces."<marketplace>"] source_type = "local"``
+             plus ``source = "<isolated CODEX_HOME>"`` so Codex
+             enumerates Mala's local marketplace manifest in the
+             isolated home;
              ``[plugins."<plugin_id>"] enabled = true`` so Codex's
              ``configured_plugins_from_stack`` enumerates the plugin;
              and
@@ -824,6 +831,7 @@ class CodexAgentProvider:
             CodexPluginInstallError,
             CodexPluginInstaller,
             _resolve_codex_home,
+            _write_codex_plugin_marketplace_manifest,
             _write_codex_plugin_config,
             plugin_root_dir,
         )
@@ -878,16 +886,26 @@ class CodexAgentProvider:
                     reason=CodexHookNotActiveReason.SCRIPT_MISSING,
                 )
 
-            # Auto-write the five config-side preconditions to
+            # Codex 0.130's ``plugin/list`` enumerates marketplace
+            # manifests first, then overlays cache/config state. The
+            # cache install above proves ``mala-safety@local`` is
+            # installed, but without this isolated local marketplace
+            # manifest Codex reports zero local plugin summaries.
+            _write_codex_plugin_marketplace_manifest(codex_home=codex_home)
+
+            # Auto-write the six config-side preconditions to
             # ``<isolated codex_home>/config.toml`` (decision #16). Codex
-            # requires ALL FIVE for the hook to fire:
+            # requires all of these for the hook to fire:
             # ``[features] plugins = true`` to override an opt-out user
             # config that early-returns from
             # ``plugins_for_config_with_force_reload``;
             # ``[features] plugin_hooks = true`` to enable plugin-bundled
             # hook loading (default-off in upstream Codex);
             # ``[features] hooks = true`` to enable global hook
-            # execution; ``[plugins."<id>"] enabled = true`` to surface
+            # execution; ``[marketplaces."<marketplace>"] source_type =
+            # "local"`` plus ``source = "<isolated CODEX_HOME>"`` to
+            # enumerate Mala's local marketplace manifest;
+            # ``[plugins."<id>"] enabled = true`` to surface
             # the plugin via ``configured_plugins_from_stack``; and
             # ``[hooks.state."<id>:..."]`` with the matching
             # ``trusted_hash`` to mark the hook Trusted. ``codex_home``

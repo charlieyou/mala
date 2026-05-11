@@ -260,12 +260,17 @@ only for auth (`auth.json` symlink/copy when present, plus a sanitized
 `config.toml` seed containing auth-scoped keys such as
 `cli_auth_credentials_store`), installs
 `plugins/codex/mala-safety/.codex-plugin/` into that temporary plugin cache,
-and writes the following entries to the temporary `config.toml` so Codex loads
-and trusts the bundled `mala-safety` plugin without an interactive prompt:
+writes a minimal local marketplace manifest under
+`<temporary CODEX_HOME>/.agents/plugins/marketplace.json`, and writes the
+following entries to the temporary `config.toml` so Codex loads and trusts the
+bundled `mala-safety` plugin without an interactive prompt:
 
 - `[features]` with `plugins = true`, `plugin_hooks = true`, and `hooks = true`
   (the three feature gates that must all be on for plugin-bundled hooks to be
   discovered, registered, and executed).
+- `[marketplaces."local"]` with `source_type = "local"` and `source` pointing
+  at the temporary `CODEX_HOME` (so Codex enumerates the isolated local
+  marketplace manifest).
 - `[plugins."mala-safety@local"]` with `enabled = true` (so Codex's
   `configured_plugins_from_stack` enumerates the plugin).
 - `[hooks.state."mala-safety@local:.codex-plugin/hooks.json:pre_tool_use:0:0"]`

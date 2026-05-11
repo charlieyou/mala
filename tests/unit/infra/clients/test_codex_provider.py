@@ -718,8 +718,18 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     assert (plugin_dir / "plugin.json").is_file()
     assert (plugin_dir / "hooks.json").is_file()
     assert (plugin_dir / ".mcp.json").is_file()
+    marketplace_path = isolated_home / ".agents" / "plugins" / "marketplace.json"
+    assert marketplace_path.is_file()
     assert not (_codex_plugin_dir(codex_home) / "plugin.json").exists()
     import json as _json
+
+    marketplace_payload = _json.loads(marketplace_path.read_text(encoding="utf-8"))
+    assert marketplace_payload["name"] == "local"
+    assert marketplace_payload["plugins"][0]["name"] == "mala-safety"
+    assert marketplace_payload["plugins"][0]["source"] == {
+        "source": "local",
+        "path": "./plugins/cache/local/mala-safety/local",
+    }
 
     mcp_payload = _json.loads((plugin_dir / ".mcp.json").read_text(encoding="utf-8"))
     bundled_mcp = mcp_payload["mcpServers"]["mala-locking"]
@@ -730,7 +740,7 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     ]
 
     config_toml = (isolated_home / "config.toml").read_text(encoding="utf-8")
-    # Codex requires ALL FIVE preconditions for the bundled hook to fire:
+    # Codex requires all of these preconditions for the bundled hook to fire:
     # (a) ``[features] plugins = true`` per ``codex-rs/features/src/lib.rs:951``
     #     (Feature::Plugins defaults to True but a user can opt out with
     #     ``plugins = false``; ``plugins_for_config_with_force_reload``
@@ -740,14 +750,20 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     #     ``catalog_processor`` skips loading plugin-bundled hooks);
     # (c) ``[features] hooks = true`` so Codex's global hook execution
     #     gate cannot leave the loaded/trusted safety hook dormant;
-    # (d) ``[plugins."<key>"] enabled = true`` per
+    # (d) ``[marketplaces."<marketplace>"] source_type = "local"`` plus
+    #     ``source = "<isolated CODEX_HOME>"`` so plugin/list enumerates
+    #     Mala's marketplace manifest in the isolated home;
+    # (e) ``[plugins."<key>"] enabled = true`` per
     #     ``codex-rs/core-plugins/src/manager.rs::configured_plugins_from_stack``;
-    # (e) ``[hooks.state."<key>"]`` with matching trusted_hash per
+    # (f) ``[hooks.state."<key>"]`` with matching trusted_hash per
     #     ``codex-rs/hooks/src/engine/discovery.rs::hook_trust_status``.
     assert "[features]" in config_toml
     assert "plugins = true" in config_toml
     assert "plugin_hooks = true" in config_toml
     assert "hooks = true" in config_toml
+    assert '[marketplaces."local"]' in config_toml
+    assert 'source_type = "local"' in config_toml
+    assert f'source = "{isolated_home}"' in config_toml
     assert '[plugins."mala-safety@local"]' in config_toml
     assert "enabled = true" in config_toml
     expected_key = (

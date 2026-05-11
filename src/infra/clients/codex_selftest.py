@@ -34,7 +34,7 @@ from src.infra.clients.codex_sdk_compat import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
+    from collections.abc import Callable, Coroutine, Mapping
 
 
 _T = TypeVar("_T")
@@ -299,6 +299,23 @@ hash over all modules below is the smallest set of bytes that
 fingerprints the hook's safety-critical behavior."""
 
 
+_SELFTEST_TOOL_CALL_ID = "mala-codex-selftest-shell-call"
+"""Stable Responses API call id used by the deterministic local model stub."""
+
+
+_SELFTEST_MODEL_PROVIDER_ID = "mala-selftest"
+"""Temporary Codex model-provider id used only by the live dispatch probe."""
+
+
+_SELFTEST_SHELL_COMMAND = "echo mala-selftest"
+"""Harmless shell command emitted by the deterministic local model stub.
+
+The bundled PreToolUse hook denies this command in selftest mode before
+execution, so the command is a sentinel for hook dispatch rather than work the
+probe expects Codex to run.
+"""
+
+
 _MODULE_HASH_PROBE_CODE = _build_module_hash_probe_code(_HOOK_IDENTITY_MODULES)
 """Probe code emitted to the on-PATH hook's interpreter.
 
@@ -371,20 +388,233 @@ def _compute_combined_module_hash(modules: tuple[str, ...]) -> str:
     return h.hexdigest()
 
 
+def _responses_sse(events: tuple[dict[str, object], ...]) -> bytes:
+    """Return a minimal Responses API SSE stream for ``events``."""
+    lines: list[str] = []
+    for event in events:
+        kind = event.get("type")
+        lines.append(f"event: {kind}")
+        lines.append(f"data: {json.dumps(event, separators=(',', ':'))}")
+        lines.append("")
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def _response_created(response_id: str) -> dict[str, object]:
+    return {"type": "response.created", "response": {"id": response_id}}
+
+
+def _response_completed(response_id: str) -> dict[str, object]:
+    return {
+        "type": "response.completed",
+        "response": {
+            "id": response_id,
+            "usage": {
+                "input_tokens": 0,
+                "input_tokens_details": None,
+                "output_tokens": 0,
+                "output_tokens_details": None,
+                "total_tokens": 0,
+            },
+        },
+    }
+
+
+def _selftest_tool_call_response() -> bytes:
+    """Return the local model stub's first response: a shell tool call."""
+    return _responses_sse(
+        (
+            _response_created("mala-selftest-response-1"),
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "function_call",
+                    "call_id": _SELFTEST_TOOL_CALL_ID,
+                    "name": "shell_command",
+                    "arguments": json.dumps({"command": _SELFTEST_SHELL_COMMAND}),
+                },
+            },
+            _response_completed("mala-selftest-response-1"),
+        )
+    )
+
+
+def _selftest_final_response(response_id: str = "mala-selftest-response-2") -> bytes:
+    """Return a short final model response after Codex reports tool output."""
+    return _responses_sse(
+        (
+            _response_created(response_id),
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "id": f"{response_id}-message",
+                    "content": [
+                        {"type": "output_text", "text": "mala selftest complete"}
+                    ],
+                },
+            },
+            _response_completed(response_id),
+        )
+    )
+
+
+def _selftest_model_provider_overrides(base_url: str) -> tuple[str, ...]:
+    """Return Codex config overrides that route inference to ``base_url``."""
+    provider = {
+        "name": "Mala Codex Selftest",
+        "base_url": base_url,
+        "env_key": "PATH",
+        "wire_api": "responses",
+        "requires_openai_auth": False,
+        "supports_websockets": False,
+    }
+    return (
+        f"model_providers.{_SELFTEST_MODEL_PROVIDER_ID}={_toml_inline_table(provider)}",
+        f'model_provider="{_SELFTEST_MODEL_PROVIDER_ID}"',
+        "features.responses_websockets=false",
+        "features.responses_websockets_v2=false",
+    )
+
+
+def _toml_inline_table(values: Mapping[str, object]) -> str:
+    """Render the simple string/bool inline TOML table Codex overrides accept."""
+    parts: list[str] = []
+    for key, value in values.items():
+        if isinstance(value, str):
+            parts.append(f"{key} = {json.dumps(value, ensure_ascii=False)}")
+        elif isinstance(value, bool):
+            parts.append(f"{key} = {'true' if value else 'false'}")
+        else:
+            raise TypeError(f"unsupported TOML inline value for {key}: {value!r}")
+    return "{ " + ", ".join(parts) + " }"
+
+
+class _CodexSelftestModelServer:
+    """Tiny local Responses API stub used by the live hook-dispatch probe.
+
+    The server emits a deterministic ``shell_command`` response so the probe
+    exercises Codex's real tool-dispatch path without relying on an external
+    model, network availability, or the model choosing to call a tool within
+    the timeout.
+    """
+
+    def __init__(self) -> None:
+        self._server: object | None = None
+        self._thread: threading.Thread | None = None
+        self.base_url: str | None = None
+        self._response_count = 0
+        self._paths: list[str] = []
+
+    @property
+    def response_count(self) -> int:
+        return self._response_count
+
+    @property
+    def paths(self) -> tuple[str, ...]:
+        return tuple(self._paths)
+
+    def __enter__(self) -> str:
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        owner = self
+
+        class _Handler(BaseHTTPRequestHandler):
+            server_version = "MalaCodexSelftest/1.0"
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, format: str, *args: object) -> None:
+                del format, args
+                return
+
+            def do_GET(self) -> None:
+                owner._paths.append(self.path)
+                if self.path.split("?", 1)[0].endswith("/models"):
+                    self._write_json(b'{"object":"list","data":[]}\n')
+                    return
+                self.send_error(404)
+
+            def do_POST(self) -> None:
+                owner._paths.append(self.path)
+                length = int(self.headers.get("content-length", "0") or "0")
+                if length:
+                    self.rfile.read(length)
+
+                path = self.path.split("?", 1)[0]
+                if path.endswith("/models"):
+                    self._write_json(b'{"object":"list","data":[]}\n')
+                    return
+                if not path.endswith("/responses"):
+                    self.send_error(404)
+                    return
+
+                owner._response_count += 1
+                if owner._response_count == 1:
+                    body = _selftest_tool_call_response()
+                else:
+                    body = _selftest_final_response(
+                        f"mala-selftest-response-{owner._response_count}"
+                    )
+                self._write_sse(body)
+
+            def _write_json(self, body: bytes) -> None:
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _write_sse(self, body: bytes) -> None:
+                self.send_response(200)
+                self.send_header("content-type", "text/event-stream")
+                self.send_header("cache-control", "no-cache")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self._server = server
+        host = server.server_address[0]
+        port = server.server_address[1]
+        self.base_url = f"http://{host}:{port}/v1"
+        self._thread = threading.Thread(
+            target=server.serve_forever,
+            name="mala-codex-selftest-model",
+            daemon=True,
+        )
+        self._thread.start()
+        return self.base_url
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc: BaseException | None,
+        _tb: object,
+    ) -> None:
+        server = self._server
+        if server is not None:
+            server_handle = cast("Any", server)
+            server_handle.shutdown()
+            server_handle.server_close()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        self._server = None
+        self._thread = None
+        self.base_url = None
+
+
 _LIVE_DISPATCH_PROBE_PROMPT = (
-    "Use the shell tool to run exactly: echo mala-selftest\n"
+    f"Use the shell tool to run exactly: {_SELFTEST_SHELL_COMMAND}\n"
     "Do not use any other tool, do not read or edit files, and do not "
     "ask any questions. Issue the shell call immediately."
 )
 """Prompt the live PreToolUse-driven probe sends to nudge a tool call.
 
-Codex's PreToolUse hook only fires on real tool calls, which require
-an LLM round trip. The prompt is short, targets a harmless ``echo``,
-and explicitly forbids file edits so the model is unlikely to attempt
-anything besides the requested shell call (which the bundled hook
-will deny in selftest mode anyway). Cost: one model round trip
-(~$0.001 on gpt-5.5) per ``install_prerequisites`` call, cached per
-selftest run via ``_selftest_cache``."""
+Codex's PreToolUse hook only fires on real tool dispatch. The probe points
+Codex at a local Responses API stub that deterministically emits a
+``shell_command`` call matching this prompt, so no external LLM call or model
+tool-selection variance is involved. The bundled hook denies the call in
+selftest mode before execution."""
 
 
 def _live_codex_hook_dispatch_probe(
@@ -401,17 +631,15 @@ def _live_codex_hook_dispatch_probe(
     probe lets the selftest pass while real ``apply_patch`` /
     ``bash`` PreToolUse turns silently skip the safety hook under
     ``danger-full-access``. This probe closes that gap by driving
-    a real LLM-backed turn and asserting the bundled
+    a real Codex turn backed by a local Responses stub and asserting the bundled
     ``mala-codex-pre-tool-use`` script ran for *both* events:
 
-      1. ``SessionStart`` fires before the LLM call (returns
+      1. ``SessionStart`` fires before the model request (returns
          ``continue=true`` in selftest mode so the turn proceeds —
          hook still emits a per-event marker file).
-      2. The LLM emits a ``shell`` tool call for ``echo
-         mala-selftest`` (one round trip, ~$0.001 on gpt-5.5;
-         bounded to one shot at the first tool call by the prompt
-         and by interrupting the turn from the client side as soon
-         as the marker appears).
+      2. A local Responses API stub emits a ``shell_command`` call for
+         ``echo mala-selftest``. No external model or network call is
+         involved, and the probe is deterministic.
       3. ``PreToolUse`` fires for the tool call, writes its own
          per-event marker, returns ``decision=block`` +
          ``continue=false`` so the call is denied (no shell command
@@ -435,8 +663,8 @@ def _live_codex_hook_dispatch_probe(
     against the review-4 P2 TOCTOU race where a partial read of
     a single shared marker file would parse as malformed JSON.
 
-    Cost: one bounded LLM turn per ``install_prerequisites`` call.
-    Cached via ``_selftest_cache`` so a long-running orchestrator
+    Cost: one bounded local model-stub turn per ``install_prerequisites``
+    call. Cached via ``_selftest_cache`` so a long-running orchestrator
     pays at most once per startup.
     """
     import asyncio
@@ -467,99 +695,108 @@ def _live_codex_hook_dispatch_probe(
         # ``AppServerConfig.env``.
         merged_env[_HOOK_SELFTEST_MARKER_DIR_ENV] = str(marker_dir)
         merged_env[_HOOK_SELFTEST_TARGET_EVENT_ENV] = "PreToolUse"
-        config = AppServerConfig(
-            codex_bin=codex_bin,
-            cwd=str(repo_path),
-            env=merged_env,
-        )
         sandbox_value = cast("Any", "read-only")
         approval_policy_value = cast("Any", "never")
 
-        async with AsyncCodex(config=config) as codex:
-            thread = await start_thread_compat(
-                codex,
-                {
-                    "model": DEFAULT_CODEX_MODEL,
-                    "sandbox": "read-only",
-                    "approvalPolicy": "never",
-                    "cwd": str(repo_path),
-                },
-                typed_kwargs={
-                    "model": DEFAULT_CODEX_MODEL,
-                    "sandbox": sandbox_value,
-                    "approval_policy": approval_policy_value,
-                    "cwd": str(repo_path),
-                },
+        model_server = _CodexSelftestModelServer()
+        with model_server as model_base_url:
+            config = AppServerConfig(
+                codex_bin=codex_bin,
+                cwd=str(repo_path),
+                env=merged_env,
+                config_overrides=_selftest_model_provider_overrides(model_base_url),
             )
-            turn = await thread.turn(TextInput(_LIVE_DISPATCH_PROBE_PROMPT))
-            turn_id = getattr(turn, "id", None)
 
-            async def _interrupt_turn() -> None:
-                await turn.interrupt()
-
-            deadline = _time.monotonic() + _HOOK_PROBE_TIMEOUT_SECONDS
-            collected: dict[str, str] = {}
-            interrupted = False
-            while _time.monotonic() < deadline:
-                for filename in expected_event_files:
-                    marker_path = marker_dir / filename
-                    if filename in collected or not marker_path.is_file():
-                        continue
-                    try:
-                        text = marker_path.read_text(encoding="utf-8")
-                    except OSError:
-                        continue
-                    if not text.strip():
-                        continue
-                    try:
-                        _json.loads(text)
-                    except _json.JSONDecodeError:
-                        # Mid-write — retry next tick. Atomic writes
-                        # in the hook should make this rare; the
-                        # retry is a belt-and-suspenders bound on
-                        # the review-4 P2 TOCTOU race.
-                        continue
-                    collected[filename] = text
-                if len(collected) == len(expected_event_files):
-                    break
-                # As soon as PreToolUse has fired we no longer need
-                # the LLM-backed turn to keep running; interrupt it
-                # client-side to bound LLM cost.
-                if (
-                    not interrupted
-                    and "PreToolUse.json" in collected
-                    and turn_id is not None
-                ):
-                    try:
-                        await _interrupt_turn()
-                    except Exception:
-                        # Best-effort interrupt: any failure here just
-                        # leaves the turn running until the bound
-                        # timeout in ``_drive_with_timeout``. Selftest
-                        # success doesn't depend on the interrupt
-                        # succeeding — it depends on the per-event
-                        # markers being present, which they already are.
-                        pass
-                    interrupted = True
-                await asyncio.sleep(0.1)
-            if len(collected) < len(expected_event_files):
-                missing = [
-                    filename
-                    for filename in expected_event_files
-                    if filename not in collected
-                ]
-                raise CodexHookNotActiveError(
-                    "Codex did not fire all bundled hook events within "
-                    f"{_HOOK_PROBE_TIMEOUT_SECONDS:.0f}s during the live "
-                    f"selftest probe; missing event markers: "
-                    f"{', '.join(missing)}. The plugin tree is on disk "
-                    "and plugin/list reports it loaded, but the "
-                    "per-handler [hooks.state.<key>] trust evaluation "
-                    "skipped at least one event. Real PreToolUse turns "
-                    "would skip the safety hook for the same reason.",
-                    reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+            async with AsyncCodex(config=config) as codex:
+                thread = await start_thread_compat(
+                    codex,
+                    {
+                        "model": DEFAULT_CODEX_MODEL,
+                        "modelProvider": _SELFTEST_MODEL_PROVIDER_ID,
+                        "sandbox": "read-only",
+                        "approvalPolicy": "never",
+                        "cwd": str(repo_path),
+                    },
+                    typed_kwargs={
+                        "model": DEFAULT_CODEX_MODEL,
+                        "model_provider": _SELFTEST_MODEL_PROVIDER_ID,
+                        "sandbox": sandbox_value,
+                        "approval_policy": approval_policy_value,
+                        "cwd": str(repo_path),
+                    },
                 )
-            return collected
+                turn = await thread.turn(TextInput(_LIVE_DISPATCH_PROBE_PROMPT))
+                turn_id = getattr(turn, "id", None)
+
+                async def _interrupt_turn() -> None:
+                    await turn.interrupt()
+
+                deadline = _time.monotonic() + _HOOK_PROBE_TIMEOUT_SECONDS
+                collected: dict[str, str] = {}
+                interrupted = False
+                while _time.monotonic() < deadline:
+                    for filename in expected_event_files:
+                        marker_path = marker_dir / filename
+                        if filename in collected or not marker_path.is_file():
+                            continue
+                        try:
+                            text = marker_path.read_text(encoding="utf-8")
+                        except OSError:
+                            continue
+                        if not text.strip():
+                            continue
+                        try:
+                            _json.loads(text)
+                        except _json.JSONDecodeError:
+                            # Mid-write — retry next tick. Atomic writes
+                            # in the hook should make this rare; the
+                            # retry is a belt-and-suspenders bound on
+                            # the review-4 P2 TOCTOU race.
+                            continue
+                        collected[filename] = text
+                    if len(collected) == len(expected_event_files):
+                        break
+                    # As soon as PreToolUse has fired we no longer need
+                    # the local model-backed turn to keep running; interrupt it
+                    # client-side to bound the app-server lifetime.
+                    if (
+                        not interrupted
+                        and "PreToolUse.json" in collected
+                        and turn_id is not None
+                    ):
+                        try:
+                            await _interrupt_turn()
+                        except Exception:
+                            # Best-effort interrupt: any failure here just
+                            # leaves the turn running until the bound
+                            # timeout in ``_drive_with_timeout``. Selftest
+                            # success doesn't depend on the interrupt
+                            # succeeding — it depends on the per-event
+                            # markers being present, which they already are.
+                            pass
+                        interrupted = True
+                    await asyncio.sleep(0.1)
+                if len(collected) < len(expected_event_files):
+                    missing = [
+                        filename
+                        for filename in expected_event_files
+                        if filename not in collected
+                    ]
+                    raise CodexHookNotActiveError(
+                        "Codex did not fire all bundled hook events within "
+                        f"{_HOOK_PROBE_TIMEOUT_SECONDS:.0f}s during the live "
+                        f"selftest probe; missing event markers: "
+                        f"{', '.join(missing)}. The plugin tree is on disk "
+                        "and plugin/list reports it loaded, but the "
+                        "per-handler [hooks.state.<key>] trust evaluation "
+                        "skipped at least one event. Real PreToolUse turns "
+                        "would skip the safety hook for the same reason. "
+                        "The local Responses selftest server saw "
+                        f"{model_server.response_count} response request(s) "
+                        f"at paths {model_server.paths!r}.",
+                        reason=CodexHookNotActiveReason.HOOK_MARKER_MISSING,
+                    )
+                return collected
 
     async def _drive_with_timeout(marker_dir: Path) -> dict[str, str]:
         return await asyncio.wait_for(
@@ -575,7 +812,7 @@ def _live_codex_hook_dispatch_probe(
             raise CodexHookNotActiveError(
                 f"Codex hook-dispatch selftest did not complete within "
                 f"{_HOOK_PROBE_TIMEOUT_SECONDS * 3.0:.0f}s. A hung Codex "
-                "thread or LLM stall would block real turns the same "
+                "thread or local model-stub stall would block real turns the same "
                 "way; failing closed.",
                 reason=CodexHookNotActiveReason.CODEX_BINARY_MISSING,
             ) from exc
@@ -1139,17 +1376,15 @@ def _default_selftest_probe(
     _live_codex_plugin_list_probe(env_overlay, repo_path)
 
     # 6. Live Codex hook-dispatch probe — drive a one-shot Codex turn
-    # that fires the bundled ``SessionStart`` hook through Codex's full
-    # dispatch pipeline (``Feature::PluginHooks`` /
+    # against a local Responses stub so Codex fires both bundled hooks
+    # through its full dispatch pipeline (``Feature::PluginHooks`` /
     # ``Feature::CodexHooks`` gates, per-handler
     # ``[hooks.state."<key>"]`` trust evaluation,
-    # ``hook_runtime::run_pending_session_start_hooks``). The hook
-    # writes the same selftest marker the direct-spawn step writes,
-    # then returns ``continue=false`` so the turn aborts BEFORE any
-    # LLM call. Plan AC-5 / E5 (review-2 follow-up): without this step
-    # a wrong ``hook_state_key`` or stale ``trusted_hash`` could pass
-    # plugin/list while Codex skips the safety hook on real PreToolUse
-    # turns under ``danger-full-access``.
+    # ``hook_runtime::run_pending_session_start_hooks`` plus the
+    # PreToolUse path). Plan AC-5 / E5 (review-2 + review-4 follow-up):
+    # without this step a wrong ``hook_state_key`` or stale
+    # ``trusted_hash`` could pass plugin/list while Codex skips the
+    # safety hook on real PreToolUse turns under ``danger-full-access``.
     _live_codex_hook_dispatch_probe(env_overlay, repo_path, our_hash)
 
 
