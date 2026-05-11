@@ -30,12 +30,12 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from src.core.protocols.agent_provider import AgentProvider
+from src.infra.clients.codex_mcp_factory import _build_merged_codex_plugin_mcp_json
 from src.infra.clients.codex_provider import (
     CodexAgentProvider,
     CodexHookNotActiveError,
     CodexHookNotActiveReason,
     CodexNotInstalledError,
-    _build_merged_codex_plugin_mcp_json,
 )
 from src.infra.clients.codex_runtime import CodexRuntime, CodexRuntimeBuilder
 
@@ -859,8 +859,8 @@ def test_isolated_codex_home_preserves_keyring_credentials_store_opt_in(
     isolated home is then seeded with no ``config.toml``, the spawned
     Codex falls back to the default ``auth_json`` credential store and
     crashes at ``thread_start``. ``_ensure_isolated_codex_home`` must
-    copy the user's ``config.toml`` so the keyring opt-in survives the
-    isolation.
+    carry the keyring opt-in into its sanitized config seed so auth
+    survives the isolation without copying unrelated user config.
     """
     codex_home, bin_dir = fake_codex_env
     # Keyring-backed user: no auth.json on disk, only the opt-in flag.
@@ -886,20 +886,92 @@ def test_isolated_codex_home_preserves_keyring_credentials_store_opt_in(
 
 
 @pytest.mark.unit
+def test_isolated_codex_home_strips_user_plugins_hooks_and_shell_env(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """Regression: Mala Codex workers must not inherit user hook/plugin config.
+
+    A user's normal Codex config can enable interactive plugins with
+    long-running Stop hooks (for example review gates). Copying that whole
+    config into Mala's isolated ``CODEX_HOME`` lets those hooks block an
+    unattended worker after the model has already emitted a terminal marker.
+    The isolated seed keeps auth-related scalars but strips third-party
+    plugin, hook, MCP, feature, and shell-environment config; Mala then
+    writes only its own ``mala-safety`` plugin/trust entries.
+    """
+    codex_home, bin_dir = fake_codex_env
+    (codex_home / "auth.json").unlink()
+    user_config = codex_home / "config.toml"
+    user_config.write_text(
+        '\n'.join(
+            [
+                'cli_auth_credentials_store = "keyring"',
+                'chatgpt_base_url = "https://chatgpt.example/backend-api"',
+                'notify = ["cerberus", "notify"]',
+                "",
+                "[features]",
+                "hooks = true",
+                "plugins = true",
+                "plugin_hooks = true",
+                "remote_plugin = true",
+                "",
+                "[shell_environment_policy]",
+                'set = { CERBERUS_ROOT = "/Users/cyou/code/cerberus" }',
+                "",
+                '[plugins."cerberus@cerberus"]',
+                "enabled = true",
+                "",
+                '[hooks.state."cerberus@cerberus:.codex-plugin/hooks.json:stop:0:0"]',
+                "enabled = true",
+                'trusted_hash = "sha256:deadbeef"',
+                "",
+                "[mcp_servers.cerberus]",
+                'command = "cerberus"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    isolated_config = (
+        _provider_isolated_codex_home(provider) / "config.toml"
+    ).read_text(encoding="utf-8")
+    assert 'cli_auth_credentials_store = "keyring"' in isolated_config
+    assert 'chatgpt_base_url = "https://chatgpt.example/backend-api"' in isolated_config
+    assert '[plugins."mala-safety@local"]' in isolated_config
+    assert "trusted_hash" in isolated_config
+
+    assert "cerberus" not in isolated_config
+    assert "CERBERUS_ROOT" not in isolated_config
+    assert "notify" not in isolated_config
+    assert "remote_plugin" not in isolated_config
+    assert "[mcp_servers" not in isolated_config
+    assert ":stop:0:0" not in isolated_config
+    assert "CERBERUS_ROOT" in user_config.read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
 def test_isolated_codex_home_seed_does_not_inherit_read_only_config_mode(
     monkeypatch: pytest.MonkeyPatch,
     fake_codex_env: tuple[Path, Path],
     fake_mcp_factory: Callable[..., dict[str, object]],
     tmp_path: Path,
 ) -> None:
-    """Regression: a user whose real ``config.toml`` is read-only (common
-    with NixOS / GNU Stow dotfile managers) must not have that mode bit
-    propagated to the isolated ``CODEX_HOME``'s copy. ``shutil.copy2``
-    preserved permissions; the subsequent
-    ``_write_codex_plugin_config`` ``write_text`` would then crash with
-    ``PermissionError``, surfacing as ``CodexHookNotActiveError`` at
-    ``thread_start``. ``shutil.copyfile`` (contents only) keeps the
-    isolated copy writable.
+    """Regression: a read-only user config must not make the isolated copy read-only.
+
+    Dotfile managers commonly make the real ``config.toml`` read-only.
+    The isolated seed is written as fresh text instead of copied with
+    mode bits, so ``_write_codex_plugin_config`` can still append Mala's
+    plugin/hook trust entries.
     """
     codex_home, bin_dir = fake_codex_env
     user_config = codex_home / "config.toml"
@@ -1070,19 +1142,18 @@ def test_install_prerequisites_idempotent_with_same_user_mcp_servers(
 
 
 @pytest.mark.unit
-def test_install_prerequisites_preserves_existing_features_block(
+def test_install_prerequisites_does_not_inherit_existing_user_features_block(
     monkeypatch: pytest.MonkeyPatch,
     fake_codex_env: tuple[Path, Path],
     fake_mcp_factory: Callable[..., dict[str, object]],
     tmp_path: Path,
 ) -> None:
-    """Regression: writing ``plugin_hooks = true`` must not clobber other
-    feature flags the user already set.
+    """The isolated worker config writes only Mala's required feature gates.
 
-    Codex's ``[features]`` block is a flat key=value table; replacing
-    the whole section would drop unrelated flags
-    (``codex-rs/features/src/lib.rs`` registers ~40 features). The
-    install step must update only ``plugin_hooks`` in-place.
+    User feature flags can enable local experiments, plugin systems, or
+    hook behavior unrelated to Mala. The sanitized seed drops the user's
+    ``[features]`` table, and the install step recreates only the three
+    gates needed for the bundled ``mala-safety`` hook.
     """
     codex_home, bin_dir = fake_codex_env
     _install_fake_sdk(monkeypatch, present=True)
@@ -1099,11 +1170,11 @@ def test_install_prerequisites_preserves_existing_features_block(
 
     isolated_home = _provider_isolated_codex_home(provider)
     config_toml = (isolated_home / "config.toml").read_text(encoding="utf-8")
-    # All four keys must coexist inside [features] after the write.
+    # Only Mala's required gates are present inside [features].
     assert "plugins = true" in config_toml
-    assert "remote_plugin = false" in config_toml
     assert "plugin_hooks = true" in config_toml
     assert "hooks = true" in config_toml
+    assert "remote_plugin" not in config_toml
     assert (codex_home / "config.toml").read_text(encoding="utf-8") == (
         "[features]\nplugins = true\nremote_plugin = false\n"
     )

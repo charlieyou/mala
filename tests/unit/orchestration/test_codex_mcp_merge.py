@@ -20,11 +20,11 @@ from typing import cast
 
 import pytest
 
-from src.infra.clients.codex_provider import (
+from src.infra.clients.codex_mcp_factory import (
     CODEX_BUNDLED_MCP_LAUNCHER_COMMAND,
     CODEX_BUNDLED_MCP_SERVER_NAME,
-    CodexAgentProvider,
 )
+from src.infra.clients.codex_provider import CodexAgentProvider
 
 
 pytestmark = pytest.mark.unit

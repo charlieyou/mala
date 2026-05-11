@@ -39,6 +39,10 @@ from src.core.constants import (
     DEFAULT_CODEX_SANDBOX,
 )
 from src.infra.clients.codex_evidence_provider import CodexEvidenceProvider
+from src.infra.clients.codex_mcp_factory import (
+    _build_merged_codex_plugin_mcp_json,
+    _create_codex_mcp_server_factory,
+)
 from src.infra.clients.codex_sdk_compat import (
     codex_runtime_resolvable,
     import_codex_app_server,
@@ -177,151 +181,6 @@ class CodexHookNotActiveError(RuntimeError):
 
 
 # ---------------------------------------------------------------------------
-# MCP server factory (provider-owned, Phase B placeholder; Phase G3 wires it)
-# ---------------------------------------------------------------------------
-
-
-CODEX_BUNDLED_MCP_SERVER_NAME = "mala-locking"
-"""Server key the bundled Codex plugin's ``.mcp.json`` references.
-
-Mirrors the Amp factory's ``mala-locking`` key (``amp_provider.py:131``)
-so the cross-coder lock-key derivation in
-:mod:`src.infra.tools.locking_mcp_stdio` produces identical
-``<hash>.lock`` fixtures regardless of which coder spawned the launcher.
-The bundled plugin's ``.mcp.json`` declares this exact key (plan G1) and
-the merge logic below pins it to the bundled stdio launch spec — user
-``coder_options.codex.mcp_servers`` cannot override it (plan G3).
-"""
-
-CODEX_BUNDLED_MCP_LAUNCHER_COMMAND = "mala-codex-mcp-locking"
-"""Console-script registered in ``[project.scripts]``.
-
-Sibling of ``mala-amp-mcp-locking``; both back :func:`src.infra.tools.locking_mcp_stdio.main`.
-The two entry-point names exist so the bundled Amp plugin (which already
-references the Amp name in its ``.mcp.json``) keeps working unchanged
-while the new Codex plugin gets its own stable name. A unified
-``mala-mcp-locking`` rename is out of scope (plan ``L1335``).
-"""
-
-
-def _build_bundled_codex_mcp_spec(agent_id: str, repo_path: Path) -> dict[str, object]:
-    """Codex-shaped stdio launch spec for the bundled ``mala-locking`` server.
-
-    Mirrors :func:`src.infra.clients.amp_provider._create_amp_mcp_server_factory`'s
-    payload shape — ``command`` + ``args`` + ``env`` — so the same
-    :mod:`src.infra.tools.locking_mcp_stdio` launcher serves both coders
-    and the produced ``<hash>.lock`` fixtures interoperate. ``MALA_LOCK_DIR``
-    is forwarded from the orchestrator's environment when set; when unset
-    the launcher falls through to :func:`src.infra.tools.env.get_lock_dir`.
-    """
-    env: dict[str, str] = {
-        "MALA_AGENT_ID": agent_id,
-        "MALA_REPO_NAMESPACE": str(repo_path),
-    }
-    lock_dir = os.environ.get("MALA_LOCK_DIR")
-    if lock_dir:
-        env["MALA_LOCK_DIR"] = lock_dir
-
-    return {
-        "command": CODEX_BUNDLED_MCP_LAUNCHER_COMMAND,
-        "args": [
-            "--agent-id",
-            agent_id,
-            "--repo-namespace",
-            str(repo_path),
-        ],
-        "env": env,
-    }
-
-
-def _build_merged_codex_plugin_mcp_json(
-    user_mcp_servers: tuple[tuple[str, object], ...] = (),
-) -> bytes:
-    """Build the ``.mcp.json`` payload that merges user MCP servers with
-    the bundled ``mala-locking`` entry (Phase G3 / AC-3).
-
-    User-supplied entries from ``coder_options.codex.mcp_servers`` are
-    placed first; the bundled ``mala-locking`` key is written **last**
-    so any clashing user override is silently replaced by the bundled
-    launcher (G3: bundled is mandatory, never replaced). Without this
-    merge, the static plugin file would only carry ``mala-locking`` and
-    non-conflicting user MCP servers configured via ``mala.yaml`` would
-    never reach Codex at runtime.
-
-    Returned bytes are routed through :class:`CodexPluginInstaller` via
-    its ``mcp_json_override`` constructor argument so the installer
-    remains the sole writer of the plugin tree. Routing through a
-    single writer is what closes the cross-process race a separate
-    post-install rewrite would expose: without it, Process B's
-    installer would silently revert Process A's render to the
-    bundled-only file, dropping ``coder_options.codex.mcp_servers``
-    entries from Codex's effective config.
-
-    The bundled spec on disk uses the **static** shape (empty ``args``
-    and no literal per-session ``env`` values). Codex launches stdio MCP
-    servers with a sanitized environment, so the static spec must list
-    the required ``MALA_*`` names in ``env_vars`` to forward them from
-    the Codex app-server process env (passed via
-    :class:`AppServerConfig.env`). Embedding literal per-session values
-    in the plugin file would race concurrent agents under
-    ``--max-agents > 1``.
-    """
-    import json as _json
-
-    merged: dict[str, object] = dict(user_mcp_servers)
-    merged[CODEX_BUNDLED_MCP_SERVER_NAME] = {
-        "command": CODEX_BUNDLED_MCP_LAUNCHER_COMMAND,
-        "args": [],
-        "env": {},
-        "env_vars": [
-            "MALA_AGENT_ID",
-            "MALA_LOCK_DIR",
-            "MALA_REPO_NAMESPACE",
-        ],
-    }
-    return (_json.dumps({"mcpServers": merged}, indent=2) + "\n").encode("utf-8")
-
-
-def _create_codex_mcp_server_factory(
-    user_mcp_servers: tuple[tuple[str, object], ...] = (),
-) -> McpServerFactory:
-    """Codex-shaped MCP server factory returning the bundled-plus-user merge.
-
-    The bundled ``mala-locking`` launch spec is **mandatory** and **never
-    overridden** by user config (plan G3): user-supplied entries are
-    overlaid first, then the bundled key is written last so any clashing
-    user key is replaced. Non-clashing user keys pass through unchanged.
-
-    Codex itself does not consume this map inline — :meth:`CodexClient.query`
-    intentionally does NOT pass ``mcp_servers`` to ``AsyncCodex.thread_start``
-    (per the SDK shape comment at ``codex_client.py:266-276``); MCP wiring
-    flows through the bundled plugin's ``.mcp.json``, whose effective
-    bytes are produced by :func:`_build_merged_codex_plugin_mcp_json`
-    and handed to :class:`CodexPluginInstaller` via its
-    ``mcp_json_override`` argument so the installer is the sole writer
-    of the merged file. The runtime's :attr:`CodexRuntime.mcp_servers`
-    field carries the merged map for forward-compat / inspection so
-    callers (telemetry, tests, future SDK versions that accept inline
-    specs) see the resolved configuration the bundled plugin ultimately
-    presents to Codex.
-    """
-
-    def factory(
-        agent_id: str,
-        repo_path: Path,
-        emit_lock_event: object,
-    ) -> dict[str, object]:
-        del emit_lock_event
-        merged: dict[str, object] = dict(user_mcp_servers)
-        merged[CODEX_BUNDLED_MCP_SERVER_NAME] = _build_bundled_codex_mcp_spec(
-            agent_id, repo_path
-        )
-        return merged
-
-    return cast("McpServerFactory", factory)
-
-
-# ---------------------------------------------------------------------------
 # Real client factory (Phase C)
 # ---------------------------------------------------------------------------
 
@@ -395,6 +254,26 @@ any of these short-circuits the on-disk ``auth.json`` lookup, so an
 auth probe that ignores them would falsely fail when a CI environment
 injects ``OPENAI_API_KEY`` directly."""
 
+_CODEX_CONFIG_AUTH_SEED_KEYS: tuple[str, ...] = (
+    "chatgpt_base_url",
+    "cli_auth_credentials_store",
+    "forced_chatgpt_workspace_id",
+    "forced_login_method",
+)
+"""User ``config.toml`` top-level keys allowed into Mala's isolated home.
+
+Mala-launched Codex workers need enough user config for authentication
+to keep working (notably keyring-backed ChatGPT credentials), but they
+must not inherit user plugin/hook/MCP/tooling config. Inheriting those
+tables lets interactive local Codex extensions (for example stop hooks
+that wait for a review gate) run inside unattended Mala workers and can
+block completion after the model has already emitted its final marker.
+
+Keep this allowlist intentionally small and auth-scoped. Mala supplies
+its own per-worker model/sandbox/approval/cwd values through the SDK and
+writes its own plugin/hook trust state into the isolated config later.
+"""
+
 
 def _codex_auth_present() -> bool:
     """Return True iff Codex has a usable credential at session-start.
@@ -459,6 +338,65 @@ def _codex_uses_keyring_credentials_store(codex_home: Path) -> bool:
         return False
     value = parsed.get("cli_auth_credentials_store")
     return isinstance(value, str) and value.strip().lower() == "keyring"
+
+
+def _render_toml_seed_scalar(value: object) -> str | None:
+    """Render a small TOML scalar for the isolated Codex config seed.
+
+    The auth seed allowlist currently contains string-valued Codex
+    settings, but accepting primitive scalars keeps the helper tolerant
+    if Codex adds a boolean/int auth knob later. Complex tables and
+    arrays are deliberately skipped: copying tables is exactly how user
+    ``[plugins]`` / ``[hooks]`` / ``[mcp_servers]`` config leaked into
+    unattended workers.
+    """
+    if isinstance(value, str):
+        import json as _json
+
+        return _json.dumps(value, ensure_ascii=False)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    return None
+
+
+def _build_isolated_codex_config_seed(user_config: Path) -> str:
+    """Return the sanitized ``config.toml`` seed for Mala's ``CODEX_HOME``.
+
+    The prior implementation copied the user's whole ``config.toml`` into
+    the temporary home and then appended Mala's plugin/trust entries. That
+    preserved unrelated user plugins and hook trust state; when a local
+    plugin registered a long-running ``Stop`` hook, Mala's noninteractive
+    Codex worker could hang after emitting a final result because Codex
+    waited for that user hook to finish. This seed copies only the
+    top-level auth-scoped scalars in
+    :data:`_CODEX_CONFIG_AUTH_SEED_KEYS`; everything else is recreated by
+    Mala or left to Codex defaults.
+
+    Read/parse failures are best-effort and return an empty seed, matching
+    the existing isolation behavior where auth was probed against the
+    user's real home before the isolated home was allocated.
+    """
+    import tomllib
+
+    try:
+        parsed = tomllib.loads(user_config.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return ""
+
+    lines: list[str] = []
+    for key in _CODEX_CONFIG_AUTH_SEED_KEYS:
+        rendered = _render_toml_seed_scalar(parsed.get(key))
+        if rendered is not None:
+            lines.append(f"{key} = {rendered}\n")
+    if not lines:
+        return ""
+    return (
+        "# Generated by mala for isolated Codex workers. Only auth-related "
+        "user config is copied.\n"
+        + "".join(lines)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2052,20 +1990,21 @@ class CodexAgentProvider:
         (which writes back to ``auth.json``) lands in the user's real
         file rather than the temp dir.
 
-        ``config.toml`` is **copied** (not symlinked) from the user's
-        real ``$CODEX_HOME`` so the keyring opt-in
-        (``cli_auth_credentials_store = "keyring"``) and any other
-        user-set scalars carry into the isolated home. Without this
-        seed, a user who logged in via Codex's keyring backend has
+        ``config.toml`` is **sanitized** (not symlinked or copied
+        wholesale) from the user's real ``$CODEX_HOME``. Only
+        auth-scoped top-level scalars such as
+        ``cli_auth_credentials_store = "keyring"`` carry into the
+        isolated home. Without this seed, a user who logged in via
+        Codex's keyring backend has
         neither ``auth.json`` (the keyring backend deletes it after a
         successful save) nor the keyring opt-in inside the isolated
         home — the spawned Codex falls back to the default
         ``auth_json`` credential store, finds no file, and crashes at
         ``thread_start`` instead of using the stored keyring
-        credential. Copy (rather than symlink) is required because
-        :func:`_write_codex_plugin_config` writes to this file later
-        to register the plugin/hook trust entries; a symlink would
-        route those writes back into the user's real config.
+        credential. Sanitizing (rather than symlinking or copying) is
+        required because :func:`_write_codex_plugin_config` writes to
+        this file later and because third-party user plugin/hook tables
+        must not enter Mala's unattended worker config.
 
         The :class:`tempfile.TemporaryDirectory` handle is held on the
         provider so the directory survives for the orchestrator's
@@ -2102,17 +2041,22 @@ class CodexAgentProvider:
             user_config = user_codex_home / _HOOK_CONFIG_FILENAME
             if user_config.is_file():
                 try:
-                    # ``shutil.copyfile`` copies only contents (no mode
-                    # bits): a user whose real ``config.toml`` is
-                    # read-only (common with NixOS / GNU Stow dotfile
-                    # managers) would otherwise see ``shutil.copy2``
-                    # propagate the read-only mode here, then crash
-                    # ``_write_codex_plugin_config`` with
-                    # ``PermissionError`` when it appends the plugin /
-                    # hook trust entries via ``write_text``.
-                    shutil.copyfile(user_config, isolated / _HOOK_CONFIG_FILENAME)
+                    # Write a sanitized config seed rather than copying
+                    # the user's full config.toml. That preserves the
+                    # auth knobs Codex needs (notably keyring-backed
+                    # credentials) while stripping user plugins, hooks,
+                    # MCP servers, shell env policies, and other
+                    # interactive local extensions that can hang Mala's
+                    # noninteractive workers. ``write_text`` also keeps
+                    # the isolated copy writable even when the user's
+                    # real config is managed read-only by dotfile tools.
+                    config_seed = _build_isolated_codex_config_seed(user_config)
+                    if config_seed:
+                        (isolated / _HOOK_CONFIG_FILENAME).write_text(
+                            config_seed, encoding="utf-8"
+                        )
                 except OSError:
-                    # Best-effort: a missing copy here means
+                    # Best-effort: a missing seed here means
                     # ``_write_codex_plugin_config`` writes a
                     # plugin-only file and a keyring user loses the
                     # opt-in. The auth probe ran against the user's
