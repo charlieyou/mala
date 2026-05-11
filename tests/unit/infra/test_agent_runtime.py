@@ -9,8 +9,14 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from src.infra.agent_runtime import AgentRuntime, ClaudeAgentRuntimeBuilder
+from src.infra.agent_runtime import (
+    AgentRuntime,
+    ClaudeAgentRuntimeBuilder,
+    RuntimeComponents,
+    build_default_runtime_components,
+)
 from src.infra.hooks import (
+    FileReadCache,
     LintCache,
     block_dangerous_commands,
     block_mala_disallowed_tools,
@@ -547,3 +553,167 @@ class TestClaudeAgentRuntimeBuilder:
         )
         assert len(factory.created_options) == 1
         assert factory.created_options[0]["setting_sources"] == []
+
+
+class TestBuildDefaultRuntimeComponents:
+    """Tests for :func:`build_default_runtime_components` (Finding #13)."""
+
+    @pytest.fixture
+    def repo_path(self, tmp_path: Path) -> Path:
+        return tmp_path
+
+    @pytest.mark.unit
+    def test_returns_runtime_components_with_all_fields(self, repo_path: Path) -> None:
+        """Helper returns a populated :class:`RuntimeComponents`."""
+        components = build_default_runtime_components(repo_path, "agent-x")
+
+        assert isinstance(components, RuntimeComponents)
+        assert isinstance(components.file_read_cache, FileReadCache)
+        assert isinstance(components.lint_cache, LintCache)
+        assert components.precompact_hook is not None
+        # Default composition includes pre-tool hooks and a stop hook
+        assert len(components.pre_tool_hooks) >= 5
+        assert len(components.stop_hooks) == 1
+        # No deadlock monitor: no post-tool hooks
+        assert components.post_tool_hooks == []
+
+    @pytest.mark.unit
+    def test_default_pre_tool_hook_ordering_matches_builder(
+        self, repo_path: Path
+    ) -> None:
+        """Default pre-tool hook order preserves the security-critical prefix."""
+        components = build_default_runtime_components(repo_path, "agent-order")
+
+        assert components.pre_tool_hooks[0] is block_dangerous_commands
+        assert components.pre_tool_hooks[1] is block_mala_disallowed_tools
+
+    @pytest.mark.unit
+    def test_excluded_stop_hook(self, repo_path: Path) -> None:
+        """``include_stop_hook=False`` omits the stop hook."""
+        components = build_default_runtime_components(
+            repo_path, "agent-no-stop", include_stop_hook=False
+        )
+        assert components.stop_hooks == []
+
+    @pytest.mark.unit
+    def test_deadlock_monitor_adds_post_tool_hook(self, repo_path: Path) -> None:
+        """A deadlock monitor wires a PostToolUse hook."""
+        monitor = FakeDeadlockMonitor()
+        components = build_default_runtime_components(
+            repo_path, "agent-monitor", deadlock_monitor=monitor
+        )
+        assert len(components.post_tool_hooks) == 1
+
+    @pytest.mark.unit
+    def test_lint_tools_threaded_into_cache(self, repo_path: Path) -> None:
+        """Lint tools are forwarded to the :class:`LintCache`."""
+        components = build_default_runtime_components(
+            repo_path, "agent-lint", lint_tools={"ruff", "mypy"}
+        )
+        assert components.lint_cache.lint_tools == {"ruff", "mypy"}
+
+
+class TestRuntimeComponentsInjection:
+    """Tests for injecting pre-built :class:`RuntimeComponents` (Finding #13)."""
+
+    @pytest.fixture
+    def repo_path(self, tmp_path: Path) -> Path:
+        return tmp_path
+
+    @pytest.fixture
+    def factory(self) -> FakeSDKClientFactory:
+        return FakeSDKClientFactory()
+
+    @pytest.mark.unit
+    def test_injected_components_used_by_build(
+        self, repo_path: Path, factory: FakeSDKClientFactory
+    ) -> None:
+        """When ``runtime_components`` is injected, ``build()`` uses them directly."""
+        components = build_default_runtime_components(
+            repo_path, "agent-inject", include_stop_hook=False
+        )
+
+        runtime = (
+            ClaudeAgentRuntimeBuilder(
+                repo_path,
+                "agent-inject",
+                factory,
+                runtime_components=components,
+            )
+            .with_mcp(servers={})
+            .build()
+        )
+
+        # Stop hook excluded because injected components had none.
+        assert runtime.stop_hooks == []
+        # The runtime exposes the SAME hook list object that was injected,
+        # confirming no re-instantiation happened inside ``build()``.
+        assert runtime.pre_tool_hooks is components.pre_tool_hooks
+        assert runtime.lint_cache is components.lint_cache
+        assert runtime.file_read_cache is components.file_read_cache
+
+    @pytest.mark.unit
+    def test_default_composition_preserved_without_injection(
+        self, repo_path: Path, factory: FakeSDKClientFactory
+    ) -> None:
+        """No injection -> ``build()`` falls back to the default composition.
+
+        Acceptance criterion: default runtime contains the same hooks as before.
+        """
+        runtime = (
+            ClaudeAgentRuntimeBuilder(repo_path, "agent-default", factory)
+            .with_mcp(servers={})
+            .build()
+        )
+
+        # Same security-critical prefix as the helper produces.
+        assert runtime.pre_tool_hooks[0] is block_dangerous_commands
+        assert runtime.pre_tool_hooks[1] is block_mala_disallowed_tools
+        # Same stop-hook count as the default helper composition.
+        assert len(runtime.stop_hooks) == 1
+
+    @pytest.mark.unit
+    def test_with_hooks_invalidates_injected_components(
+        self, repo_path: Path, factory: FakeSDKClientFactory
+    ) -> None:
+        """``with_hooks(...)`` after injection rebuilds with the new flags."""
+        components = build_default_runtime_components(repo_path, "agent-rebuild")
+
+        runtime = (
+            ClaudeAgentRuntimeBuilder(
+                repo_path,
+                "agent-rebuild",
+                factory,
+                runtime_components=components,
+            )
+            .with_hooks(include_stop_hook=False)
+            .with_mcp(servers={})
+            .build()
+        )
+
+        # ``with_hooks`` invalidated the injection; rebuild applied the flag.
+        assert runtime.stop_hooks == []
+        # The runtime no longer references the injected list (it was rebuilt).
+        assert runtime.pre_tool_hooks is not components.pre_tool_hooks
+
+    @pytest.mark.unit
+    def test_with_lint_tools_invalidates_injected_components(
+        self, repo_path: Path, factory: FakeSDKClientFactory
+    ) -> None:
+        """``with_lint_tools(...)`` after injection rebuilds the lint cache."""
+        components = build_default_runtime_components(repo_path, "agent-lint-inject")
+
+        runtime = (
+            ClaudeAgentRuntimeBuilder(
+                repo_path,
+                "agent-lint-inject",
+                factory,
+                runtime_components=components,
+            )
+            .with_lint_tools({"ruff"})
+            .with_mcp(servers={})
+            .build()
+        )
+
+        assert runtime.lint_cache.lint_tools == {"ruff"}
+        assert runtime.lint_cache is not components.lint_cache

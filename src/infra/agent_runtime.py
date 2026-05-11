@@ -118,6 +118,142 @@ class AgentRuntime:
     stop_hooks: list[object] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class RuntimeComponents:
+    """Pre-constructed hooks and caches injected into ClaudeAgentRuntimeBuilder.
+
+    Decouples hook/cache instantiation from SDK struct formatting so the
+    builder body (:meth:`ClaudeAgentRuntimeBuilder.build`) only formats
+    these into the SDK ``hooks`` dict + ``AgentRuntime``. Construct via
+    :func:`build_default_runtime_components` for the standard mala
+    composition, or assemble manually for advanced injection.
+
+    Attributes:
+        file_read_cache: Cache for blocking redundant file reads.
+        lint_cache: Cache for blocking redundant lint commands.
+        pre_tool_hooks: Ordered list of PreToolUse hook callables.
+        post_tool_hooks: List of PostToolUse hook callables.
+        stop_hooks: List of Stop hook callables.
+        precompact_hook: PreCompact hook callable wrapped into the SDK
+            ``PreCompact`` matcher by the builder.
+    """
+
+    file_read_cache: FileReadCache
+    lint_cache: LintCache
+    pre_tool_hooks: list[object]
+    post_tool_hooks: list[object]
+    stop_hooks: list[object]
+    precompact_hook: object
+
+
+def build_default_runtime_components(
+    repo_path: Path,
+    agent_id: str,
+    *,
+    lint_tools: AbstractSet[str] | None = None,
+    include_stop_hook: bool = True,
+    include_mala_disallowed_tools_hook: bool = True,
+    include_lock_enforcement_hook: bool = True,
+    deadlock_monitor: DeadlockMonitorProtocol | None = None,
+) -> RuntimeComponents:
+    """Build the standard mala hook/cache composition.
+
+    Performs all hook/cache instantiation that :class:`ClaudeAgentRuntimeBuilder`
+    previously did inline; the result is injected into the builder so
+    ``build()`` only formats data into the SDK struct (Finding #13). Callers
+    that need custom composition (fixer hook flags, custom lint tools)
+    invoke this helper directly and pass the result to the builder via
+    the ``runtime_components`` kwarg.
+
+    Args:
+        repo_path: Repository root.
+        agent_id: Per-session agent identifier (used for lock ownership and
+            stop/commit-guard hook plumbing).
+        lint_tools: Optional set of lint tool names for the
+            :class:`LintCache`. ``None`` uses cache defaults.
+        include_stop_hook: When True, registers a Stop hook that cleans up
+            the agent's locks on session end.
+        include_mala_disallowed_tools_hook: When True, prepends the
+            ``block_mala_disallowed_tools`` PreToolUse hook. Set False for
+            fixer agents.
+        include_lock_enforcement_hook: When True, prepends the lock
+            enforcement PreToolUse hook. Set False when the runtime does
+            not bundle the mala locking MCP tools.
+        deadlock_monitor: Optional monitor whose ``handle_event`` is wired
+            into a PostToolUse hook for ACQUIRED/RELEASED events.
+
+    Returns:
+        :class:`RuntimeComponents` with all hooks and caches pre-built.
+    """
+    from src.infra.hooks import (
+        FileReadCache,
+        LintCache,
+        block_dangerous_commands,
+        block_mala_disallowed_tools,
+        make_commit_guard_hook,
+        make_file_read_cache_hook,
+        make_lint_cache_hook,
+        make_lock_enforcement_hook,
+        make_lock_event_hook,
+        make_precompact_hook,
+        make_stop_hook,
+    )
+
+    file_read_cache = FileReadCache()
+    lint_cache = LintCache(
+        repo_path=repo_path,
+        lint_tools=lint_tools,
+    )
+
+    pre_tool_hooks: list[object] = [
+        block_dangerous_commands,
+        make_commit_guard_hook(agent_id, str(repo_path)),
+        make_file_read_cache_hook(file_read_cache),
+        make_lint_cache_hook(lint_cache),
+    ]
+
+    if include_lock_enforcement_hook:
+        pre_tool_hooks.insert(1, make_lock_enforcement_hook(agent_id, str(repo_path)))
+
+    if include_mala_disallowed_tools_hook:
+        pre_tool_hooks.insert(1, block_mala_disallowed_tools)
+
+    post_tool_hooks: list[object] = []
+    stop_hooks: list[object] = []
+
+    if include_stop_hook:
+        stop_hooks.append(make_stop_hook(agent_id))
+
+    if deadlock_monitor is not None:
+        logger.info("Wiring deadlock monitor hooks: agent_id=%s", agent_id)
+        from src.core.models import LockEvent, LockEventType
+
+        post_tool_hooks.append(
+            make_lock_event_hook(
+                agent_id=agent_id,
+                emit_event=deadlock_monitor.handle_event,
+                repo_namespace=str(repo_path),
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
+        )
+    else:
+        logger.info(
+            "No deadlock monitor configured; locking MCP tools available but events not tracked"
+        )
+
+    precompact_hook = make_precompact_hook(repo_path)
+
+    return RuntimeComponents(
+        file_read_cache=file_read_cache,
+        lint_cache=lint_cache,
+        pre_tool_hooks=pre_tool_hooks,
+        post_tool_hooks=post_tool_hooks,
+        stop_hooks=stop_hooks,
+        precompact_hook=precompact_hook,
+    )
+
+
 class ClaudeAgentRuntimeBuilder:
     """Claude-private builder for agent runtime configuration.
 
@@ -148,6 +284,8 @@ class ClaudeAgentRuntimeBuilder:
         setting_sources: list[str] | None = None,
         effort: str | None = None,
         deadlock_monitor: DeadlockMonitorProtocol | None = None,
+        *,
+        runtime_components: RuntimeComponents | None = None,
     ) -> None:
         """Initialize the builder.
 
@@ -168,6 +306,16 @@ class ClaudeAgentRuntimeBuilder:
                 is wired into a Claude SDK PostToolUse hook. Threaded through
                 :meth:`AgentProvider.runtime_builder` (plan A6) so the
                 cross-coder pipeline does not need to call ``with_hooks``.
+            runtime_components: Optional pre-constructed hooks and caches
+                (Finding #13). When provided, :meth:`build` uses these
+                directly without calling :func:`build_default_runtime_components`,
+                so the builder body only formats them into the SDK struct.
+                When ``None``, the builder calls the helper at :meth:`build`
+                time using the recorded config (``with_hooks``,
+                ``with_lint_tools``, constructor ``deadlock_monitor``).
+                Calls to :meth:`with_hooks` or :meth:`with_lint_tools` after
+                injection clear the components so the next :meth:`build`
+                rebuilds with the updated config.
         """
         self._repo_path = repo_path
         self._agent_id = agent_id
@@ -179,14 +327,19 @@ class ClaudeAgentRuntimeBuilder:
         )
         self._effort: str | None = effort
 
-        # Lint tools configuration
+        # Lint tools configuration (used by the default helper fallback path)
         self._lint_tools: AbstractSet[str] | None = None
 
-        # Hook configuration
+        # Hook configuration (used by the default helper fallback path)
         self._deadlock_monitor: DeadlockMonitorProtocol | None = deadlock_monitor
         self._include_stop_hook: bool = True
         self._include_mala_disallowed_tools_hook: bool = True
         self._include_lock_enforcement_hook: bool = True
+
+        # Pre-constructed components (Finding #13). ``None`` means
+        # ``build()`` calls :func:`build_default_runtime_components` to
+        # construct the standard composition.
+        self._runtime_components: RuntimeComponents | None = runtime_components
 
         # Environment and options. ``_disallowed_tools`` defaults to the
         # standard MALA_DISALLOWED_TOOLS list so coder-agnostic pipeline
@@ -238,6 +391,9 @@ class ClaudeAgentRuntimeBuilder:
             )
         if include_lock_enforcement_hook is not _UNSET:
             self._include_lock_enforcement_hook = include_lock_enforcement_hook
+        # Invalidate pre-built components so the next build() rebuilds with
+        # the updated flags via :func:`build_default_runtime_components`.
+        self._runtime_components = None
         return self
 
     def with_resume(self, resume_id: str | None) -> ClaudeAgentRuntimeBuilder:
@@ -355,6 +511,9 @@ class ClaudeAgentRuntimeBuilder:
             Self for chaining.
         """
         self._lint_tools = lint_tools
+        # Invalidate pre-built components so the next build() rebuilds with
+        # the updated lint_tools via :func:`build_default_runtime_components`.
+        self._runtime_components = None
         return self
 
     def _build_mcp_servers(
@@ -389,8 +548,14 @@ class ClaudeAgentRuntimeBuilder:
     def build(self) -> AgentRuntime:
         """Build the agent runtime configuration.
 
-        Creates all caches, hooks, environment, and SDK options. All SDK
-        imports happen here to preserve lazy-import guarantees.
+        Formats injected (or default) :class:`RuntimeComponents` into the
+        SDK ``hooks`` dict and :class:`ClaudeAgentOptions` — no hook or
+        cache instantiation happens in this body (Finding #13). When
+        ``runtime_components`` was not supplied at construction (and
+        :meth:`with_hooks` / :meth:`with_lint_tools` did not invalidate
+        the components), :func:`build_default_runtime_components` is
+        called once with the recorded config to preserve default
+        composition.
 
         Returns:
             AgentRuntime with all configured components.
@@ -398,74 +563,19 @@ class ClaudeAgentRuntimeBuilder:
         Raises:
             RuntimeError: If required configuration is missing.
         """
-        # Import hooks locally for lazy-import guarantees
-        from src.infra.hooks import (
-            FileReadCache,
-            LintCache,
-            block_dangerous_commands,
-            block_mala_disallowed_tools,
-            make_commit_guard_hook,
-            make_file_read_cache_hook,
-            make_lint_cache_hook,
-            make_lock_enforcement_hook,
-            make_lock_event_hook,
-            make_precompact_hook,
-            make_stop_hook,
-        )
-
-        # Create caches
-        file_read_cache = FileReadCache()
-        lint_cache = LintCache(
-            repo_path=self._repo_path,
-            lint_tools=self._lint_tools,
-        )
-
-        # Build pre-tool hooks (order matters)
-        pre_tool_hooks: list[object] = [
-            block_dangerous_commands,
-            make_commit_guard_hook(self._agent_id, str(self._repo_path)),
-            make_file_read_cache_hook(file_read_cache),
-            make_lint_cache_hook(lint_cache),
-        ]
-
-        # Conditionally add lock enforcement hook (requires locking MCP tools)
-        if self._include_lock_enforcement_hook:
-            pre_tool_hooks.insert(
-                1, make_lock_enforcement_hook(self._agent_id, str(self._repo_path))
+        # Resolve runtime components: use injected or build defaults via the
+        # external helper (which owns ALL hook/cache instantiation).
+        if self._runtime_components is None:
+            self._runtime_components = build_default_runtime_components(
+                self._repo_path,
+                self._agent_id,
+                lint_tools=self._lint_tools,
+                include_stop_hook=self._include_stop_hook,
+                include_mala_disallowed_tools_hook=self._include_mala_disallowed_tools_hook,
+                include_lock_enforcement_hook=self._include_lock_enforcement_hook,
+                deadlock_monitor=self._deadlock_monitor,
             )
-
-        # Conditionally add mala disallowed tools hook (not needed for fixer agents)
-        if self._include_mala_disallowed_tools_hook:
-            pre_tool_hooks.insert(1, block_mala_disallowed_tools)
-
-        post_tool_hooks: list[object] = []
-        stop_hooks: list[object] = []
-
-        if self._include_stop_hook:
-            stop_hooks.append(make_stop_hook(self._agent_id))
-
-        # Add deadlock monitor hooks if configured
-        monitor = self._deadlock_monitor
-        if monitor is not None:
-            logger.info("Wiring deadlock monitor hooks: agent_id=%s", self._agent_id)
-            # Import LockEvent types here to inject into hooks
-            from src.core.models import LockEvent, LockEventType
-
-            # PostToolUse hook for ACQUIRED/RELEASED events from MCP locking tools
-            # (WAITING events are emitted by the MCP tool handlers directly)
-            post_tool_hooks.append(
-                make_lock_event_hook(
-                    agent_id=self._agent_id,
-                    emit_event=monitor.handle_event,
-                    repo_namespace=str(self._repo_path),
-                    lock_event_class=LockEvent,
-                    lock_event_type_enum=LockEventType,
-                )
-            )
-        else:
-            logger.info(
-                "No deadlock monitor configured; locking MCP tools available but events not tracked"
-            )
+        components = self._runtime_components
 
         # Build environment if not explicitly set
         if self._env is None:
@@ -474,6 +584,7 @@ class ClaudeAgentRuntimeBuilder:
 
         # Build MCP servers if not explicitly set
         if self._mcp_servers is None:
+            monitor = self._deadlock_monitor
             emit_lock_event = monitor.handle_event if monitor is not None else None
             self.with_mcp(emit_lock_event=emit_lock_event)
 
@@ -496,23 +607,22 @@ class ClaudeAgentRuntimeBuilder:
                     "(will be skipped)"
                 )
 
-        # Build hooks dict using factory
+        # Format pre-built hooks into the SDK hooks dict
         make_matcher = self._sdk_client_factory.create_hook_matcher
-        precompact_hook = make_precompact_hook(self._repo_path)
         hooks_dict: dict[str, list[object]] = {
-            "PreToolUse": [make_matcher(None, pre_tool_hooks)],
-            "PreCompact": [make_matcher(None, [precompact_hook])],
+            "PreToolUse": [make_matcher(None, components.pre_tool_hooks)],
+            "PreCompact": [make_matcher(None, [components.precompact_hook])],
         }
-        if stop_hooks:
-            hooks_dict["Stop"] = [make_matcher(None, stop_hooks)]
-        if post_tool_hooks:
-            hooks_dict["PostToolUse"] = [make_matcher(None, post_tool_hooks)]
+        if components.stop_hooks:
+            hooks_dict["Stop"] = [make_matcher(None, components.stop_hooks)]
+        if components.post_tool_hooks:
+            hooks_dict["PostToolUse"] = [make_matcher(None, components.post_tool_hooks)]
 
         logger.debug(
             "Built hooks: PreToolUse=%d PostToolUse=%d Stop=%d PreCompact=1",
-            len(pre_tool_hooks),
-            len(post_tool_hooks),
-            len(stop_hooks),
+            len(components.pre_tool_hooks),
+            len(components.post_tool_hooks),
+            len(components.stop_hooks),
         )
 
         # Build SDK options
@@ -531,10 +641,10 @@ class ClaudeAgentRuntimeBuilder:
 
         return AgentRuntime(
             options=options,
-            file_read_cache=file_read_cache,
-            lint_cache=lint_cache,
+            file_read_cache=components.file_read_cache,
+            lint_cache=components.lint_cache,
             env=env,
-            pre_tool_hooks=pre_tool_hooks,
-            post_tool_hooks=post_tool_hooks,
-            stop_hooks=stop_hooks,
+            pre_tool_hooks=components.pre_tool_hooks,
+            post_tool_hooks=components.post_tool_hooks,
+            stop_hooks=components.stop_hooks,
         )

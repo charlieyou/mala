@@ -26,7 +26,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
-from src.infra.agent_runtime import ClaudeAgentRuntimeBuilder
+from src.infra.agent_runtime import (
+    ClaudeAgentRuntimeBuilder,
+    build_default_runtime_components,
+)
 from src.infra.io.session_log_parser import FileSystemLogProvider
 
 if TYPE_CHECKING:
@@ -130,6 +133,13 @@ class FakeAgentProvider:
         mcp_server_factory: McpServerFactory,
         deadlock_monitor: DeadlockMonitorProtocol | None = None,
     ) -> CoderRuntimeBuilder:
+        # Pre-build runtime components (Finding #13) so the builder body
+        # only formats them into the SDK struct.
+        components = build_default_runtime_components(
+            repo_path,
+            agent_id,
+            deadlock_monitor=deadlock_monitor,
+        )
         return ClaudeAgentRuntimeBuilder(
             repo_path,
             agent_id,
@@ -137,6 +147,7 @@ class FakeAgentProvider:
             mcp_server_factory=mcp_server_factory,
             setting_sources=self._setting_sources,
             deadlock_monitor=deadlock_monitor,
+            runtime_components=components,
         )
 
     def mcp_server_factory(self) -> McpServerFactory:

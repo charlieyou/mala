@@ -19,7 +19,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
-from src.infra.agent_runtime import ClaudeAgentRuntimeBuilder
+from src.infra.agent_runtime import (
+    ClaudeAgentRuntimeBuilder,
+    build_default_runtime_components,
+)
 from src.infra.io.session_log_parser import FileSystemLogProvider
 from src.infra.sdk_adapter import SDKClientFactory
 
@@ -117,6 +120,18 @@ class ClaudeAgentProvider:
         Claude-private callers that need ``with_hooks`` / ``with_disallowed_tools``
         downcast via ``isinstance(builder, ClaudeAgentRuntimeBuilder)``.
         """
+        # Pre-build the standard mala hook/cache composition (Finding #13)
+        # so the builder body only formats data into the SDK struct. The
+        # ``deadlock_monitor`` constructor kwarg is still passed so that
+        # :meth:`ClaudeAgentRuntimeBuilder.with_hooks` /
+        # :meth:`ClaudeAgentRuntimeBuilder.with_lint_tools` callers (e.g.
+        # :class:`FixerService`) rebuild components with the correct
+        # monitor when they invalidate the injected components.
+        components = build_default_runtime_components(
+            repo_path,
+            agent_id,
+            deadlock_monitor=deadlock_monitor,
+        )
         return ClaudeAgentRuntimeBuilder(
             repo_path,
             agent_id,
@@ -125,6 +140,7 @@ class ClaudeAgentProvider:
             setting_sources=self._setting_sources,
             effort=self._effort,
             deadlock_monitor=deadlock_monitor,
+            runtime_components=components,
         )
 
     def mcp_server_factory(self) -> McpServerFactory:
