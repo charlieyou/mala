@@ -718,3 +718,37 @@ class TestModuleSurface:
         from src.domain.validation.config_types import ValidationConfig
 
         assert not hasattr(ValidationConfig, "from_dict")
+
+    def test_parser_does_not_import_config_loader(self) -> None:
+        """``config_parser`` must not import ``config_loader`` at any scope.
+
+        The load path is strictly one-way:
+        ``config_loader -> config_parser -> config_types``. Any import in
+        the reverse direction (top-level or lazy / function-local) brings
+        back the circular-import dodge that Workstream C.1 set out to
+        remove. ``ast.walk`` covers nested ``Import`` / ``ImportFrom``
+        nodes inside functions, so lazy imports are caught too.
+        """
+        import ast
+        import inspect
+
+        from src.domain.validation import config_parser
+
+        source = inspect.getsource(config_parser)
+        tree = ast.parse(source)
+
+        offenders: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if "config_loader" in alias.name:
+                        offenders.append(alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                if "config_loader" in module:
+                    offenders.append(module)
+
+        assert offenders == [], (
+            "config_parser must not import config_loader (closes the load-path "
+            f"cycle); found: {offenders}"
+        )

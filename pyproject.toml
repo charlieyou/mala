@@ -575,6 +575,22 @@ ignore_imports = [
     "src.domain.validation.** -> yaml",
 ]
 
+# -----------------------------------------------------------------------------
+# Contract: Config parser does not import config loader
+# -----------------------------------------------------------------------------
+# Enforces the one-way load path config_loader -> config_parser -> config_types.
+# Reintroducing an import from config_parser back to config_loader brings
+# back the circular-import dodge that Workstream C.1 (mala-ltav6) removed.
+# The companion ValidationConfig.from_dict hygiene test in
+# tests/unit/domain/test_config_parser.py guards the type-module half of the
+# same cycle.
+
+[[tool.importlinter.contracts]]
+name = "Config parser independent of config loader"
+type = "forbidden"
+source_modules = ["src.domain.validation.config_parser"]
+forbidden_modules = ["src.domain.validation.config_loader"]
+
 [[tool.importlinter.contracts]]
 name = "Only infra.clients import anthropic"
 type = "forbidden"
