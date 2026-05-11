@@ -15,15 +15,27 @@ from __future__ import annotations
 
 import shutil
 import sys
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import questionary
 
+from ..orchestration.cli_options import (
+    parse_scope,
+    validate_amp_mode_option,
+    validate_codex_approval_policy_option,
+    validate_codex_effort_option,
+    validate_codex_model_option,
+    validate_codex_sandbox_option,
+    validate_coder_option,
+    validate_effort_option,
+)
 from ..orchestration.cli_overrides import CLIOverrideOptions, apply_cli_overrides
 from ..orchestration.cli_support import USER_CONFIG_DIR, get_runs_dir, load_user_env
 from ..orchestration.dry_run import compute_dry_run_outcome
+
+if TYPE_CHECKING:
+    from ..orchestration.cli_options import ScopeConfig
 
 # Bootstrap state: tracks whether bootstrap() has been called
 _bootstrapped = False
@@ -197,115 +209,25 @@ def _print_task_line(
     )
 
 
-@dataclass(frozen=True)
-class ScopeConfig:
-    """Parsed scope configuration from --scope option.
+def _parse_scope_cli(scope: str) -> ScopeConfig:
+    """Parse ``--scope`` for the CLI: delegates and prints user-facing errors.
 
-    Attributes:
-        scope_type: The type of scope ('all', 'epic', 'orphans', 'ids').
-        ids: List of issue IDs to process (from 'ids:' prefix). Order-preserving.
-        epic_id: Epic ID to filter by (from 'epic:' prefix).
+    Converts ``ValueError`` from ``parse_scope`` into the ``log`` + ``typer.Exit(1)``
+    pattern the CLI uses for invalid options, and emits a warning when the
+    underlying helper had to dedupe ``ids:`` entries.
     """
-
-    scope_type: str = "all"
-    ids: list[str] | None = None
-    epic_id: str | None = None
-
-
-def parse_scope(scope: str) -> ScopeConfig:
-    """Parse the --scope option value into a ScopeConfig.
-
-    Supported formats:
-        - 'all' (default): Process all issues
-        - 'epic:<id>': Filter to issues under the specified epic
-        - 'orphans': Process only orphan issues (no parent epic)
-        - 'ids:<id1>,<id2>,...': Process specific IDs in order (deduplicates with warning)
-
-    Args:
-        scope: The scope string (e.g., 'ids:T-1,T-2').
-
-    Returns:
-        ScopeConfig with parsed values.
-
-    Raises:
-        typer.Exit: If scope format is invalid.
-    """
-    import typer
-
-    scope = scope.strip()
-
-    # Handle 'all' scope
-    if scope == "all":
-        return ScopeConfig(scope_type="all")
-
-    # Handle 'orphans' scope
-    if scope == "orphans":
-        return ScopeConfig(scope_type="orphans")
-
-    # Handle 'epic:<id>' scope
-    if scope.startswith("epic:"):
-        epic_id = scope[5:].strip()
-        if not epic_id:
-            log(
-                "✗",
-                "Invalid --scope: 'epic:' requires an epic ID. "
-                "Valid formats: all, epic:<id>, orphans, ids:<id,...>",
-                Colors.RED,
-            )
-            raise typer.Exit(1)
-        return ScopeConfig(scope_type="epic", epic_id=epic_id)
-
-    # Handle 'ids:<id,...>' scope
-    if scope.startswith("ids:"):
-        ids_str = scope[4:].strip()
-        if not ids_str:
-            log(
-                "✗",
-                "Invalid --scope: 'ids:' requires at least one ID. "
-                "Valid formats: all, epic:<id>, orphans, ids:<id,...>",
-                Colors.RED,
-            )
-            raise typer.Exit(1)
-
-        # Parse comma-separated IDs, preserving order
-        raw_ids = [id_.strip() for id_ in ids_str.split(",") if id_.strip()]
-        if not raw_ids:
-            log(
-                "✗",
-                "Invalid --scope: 'ids:' requires at least one ID. "
-                "Valid formats: all, epic:<id>, orphans, ids:<id,...>",
-                Colors.RED,
-            )
-            raise typer.Exit(1)
-
-        # Deduplicate while preserving order, warn if duplicates found
-        seen: set[str] = set()
-        unique_ids: list[str] = []
-        duplicates: list[str] = []
-        for id_ in raw_ids:
-            if id_ in seen:
-                duplicates.append(id_)
-            else:
-                seen.add(id_)
-                unique_ids.append(id_)
-
-        if duplicates:
-            log(
-                "⚠",
-                f"Duplicate IDs removed from --scope: {', '.join(duplicates)}",
-                Colors.YELLOW,
-            )
-
-        return ScopeConfig(scope_type="ids", ids=unique_ids)
-
-    # Unknown scope format
-    log(
-        "✗",
-        f"Invalid --scope value: '{scope}'. "
-        "Valid formats: all, epic:<id>, orphans, ids:<id,...>",
-        Colors.RED,
-    )
-    raise typer.Exit(1)
+    try:
+        scope_config = parse_scope(scope)
+    except ValueError as exc:
+        log("✗", str(exc), Colors.RED)
+        raise typer.Exit(1)
+    if scope_config.duplicate_ids:
+        log(
+            "⚠",
+            f"Duplicate IDs removed from --scope: {', '.join(scope_config.duplicate_ids)}",
+            Colors.YELLOW,
+        )
+    return scope_config
 
 
 def _build_cli_args_metadata(
@@ -332,94 +254,59 @@ def _build_cli_args_metadata(
 
 
 def _validate_coder_option(value: str | None) -> str | None:
-    """Typer callback validating --coder at parse time."""
-    from src.infra.io.config import parse_coder
-
-    if value is None:
-        return None
+    """Typer callback for ``--coder``; delegates to orchestration helper."""
     try:
-        parsed = parse_coder(value, source="--coder")
+        return validate_coder_option(value)
     except ValueError as exc:
         raise typer.BadParameter(str(exc))
-    return parsed
 
 
 def _validate_amp_mode_option(value: str | None) -> str | None:
-    """Typer callback validating --amp-mode at parse time."""
-    from src.infra.io.config import parse_amp_mode
-
-    if value is None:
-        return None
+    """Typer callback for ``--amp-mode``; delegates to orchestration helper."""
     try:
-        parsed = parse_amp_mode(value, source="--amp-mode")
+        return validate_amp_mode_option(value)
     except ValueError as exc:
         raise typer.BadParameter(str(exc))
-    return parsed
 
 
 def _validate_effort_option(value: str | None) -> str | None:
-    """Typer callback validating --effort at parse time."""
-    from src.infra.io.config import parse_effort
-
-    if value is None:
-        return None
+    """Typer callback for ``--effort``; delegates to orchestration helper."""
     try:
-        parsed = parse_effort(value, source="--effort")
+        return validate_effort_option(value)
     except ValueError as exc:
         raise typer.BadParameter(str(exc))
-    return parsed
 
 
 def _validate_codex_model_option(value: str | None) -> str | None:
-    """Typer callback for --codex-model (shape-only validation)."""
-    from src.infra.io.config import parse_codex_model
-
-    if value is None:
-        return None
+    """Typer callback for ``--codex-model``; delegates to orchestration helper."""
     try:
-        parsed = parse_codex_model(value, source="--codex-model")
+        return validate_codex_model_option(value)
     except ValueError as exc:
         raise typer.BadParameter(str(exc))
-    return parsed
 
 
 def _validate_codex_effort_option(value: str | None) -> str | None:
-    """Typer callback validating --codex-effort against the SDK enum."""
-    from src.infra.io.config import parse_codex_effort
-
-    if value is None:
-        return None
+    """Typer callback for ``--codex-effort``; delegates to orchestration helper."""
     try:
-        parsed = parse_codex_effort(value, source="--codex-effort")
+        return validate_codex_effort_option(value)
     except ValueError as exc:
         raise typer.BadParameter(str(exc))
-    return parsed
 
 
 def _validate_codex_approval_policy_option(value: str | None) -> str | None:
-    """Typer callback validating --codex-approval-policy against the SDK enum."""
-    from src.infra.io.config import parse_codex_approval_policy
-
-    if value is None:
-        return None
+    """Typer callback for ``--codex-approval-policy``; delegates to orchestration helper."""
     try:
-        parsed = parse_codex_approval_policy(value, source="--codex-approval-policy")
+        return validate_codex_approval_policy_option(value)
     except ValueError as exc:
         raise typer.BadParameter(str(exc))
-    return parsed
 
 
 def _validate_codex_sandbox_option(value: str | None) -> str | None:
-    """Typer callback validating --codex-sandbox against the SDK enum."""
-    from src.infra.io.config import parse_codex_sandbox
-
-    if value is None:
-        return None
+    """Typer callback for ``--codex-sandbox``; delegates to orchestration helper."""
     try:
-        parsed = parse_codex_sandbox(value, source="--codex-sandbox")
+        return validate_codex_sandbox_option(value)
     except ValueError as exc:
         raise typer.BadParameter(str(exc))
-    return parsed
 
 
 app = typer.Typer(
@@ -664,7 +551,7 @@ def run(
     # Parse --scope option
     scope_config: ScopeConfig | None = None
     if scope is not None:
-        scope_config = parse_scope(scope)
+        scope_config = _parse_scope_cli(scope)
 
     # Parse and validate --order option
     order_preference = _lazy("OrderPreference").EPIC_PRIORITY  # default
