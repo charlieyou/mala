@@ -516,6 +516,18 @@ _HOOK_IDENTITY_MODULES: tuple[str, ...] = (
     # shell-expansion metachar handling, different cwd-resolution
     # behavior), silently changing every shell/file-edit gate outcome.
     "src.infra.hooks.codex.lock_policy",
+    # Hook imports the destructive-command classification helpers
+    # (``_msg_dangerous`` / ``_detect_dangerous_pattern_recursive``)
+    # from this module after the T_B11 split; a stale install with a
+    # byte-identical entry-point but a divergent
+    # ``codex/dangerous_commands.py`` would silently no-op the
+    # destructive-git / atomic-add-commit / fork-bomb / ``rm -rf /``
+    # gates while emitting an identical selftest digest, so the
+    # module bytes must be folded into the hook identity hash.
+    # Distinct from ``src.infra.hooks.dangerous_commands`` (the shared
+    # patterns + Claude-side hook) below — both modules are
+    # safety-critical and tracked independently.
+    "src.infra.hooks.codex.dangerous_commands",
     # Hook imports BASH_TOOL_NAMES / DANGEROUS_PATTERNS /
     # DESTRUCTIVE_GIT_PATTERNS from this module
     # (``codex_pre_tool_use.py:32-36``); a stale install whose

@@ -1337,6 +1337,15 @@ def test_hook_identity_modules_cover_safety_critical_dependencies() -> None:
         imports; a divergent ``lock_policy.py`` would make a different
         lock-ownership decision on the same write target even when the
         entry-point and write-target extractors are byte-identical.
+      * ``src.infra.hooks.codex.dangerous_commands`` — pure
+        destructive-command classification (``_msg_dangerous`` plus
+        the dangerous-substring / token-walk / atomic-add-commit /
+        substitution-recursion detectors) the entry-point imports
+        after the T_B11 split; a divergent
+        ``codex/dangerous_commands.py`` would silently no-op the
+        destructive-git / fork-bomb / ``rm -rf /`` gates while every
+        other listed module is byte-identical, so the bytes must be
+        folded into the combined hash.
       * ``src.infra.hooks.dangerous_commands`` — DANGEROUS_PATTERNS /
         DESTRUCTIVE_GIT_PATTERNS / BASH_TOOL_NAMES the hook imports
         (``codex_pre_tool_use.py:32-36``).
@@ -1355,6 +1364,7 @@ def test_hook_identity_modules_cover_safety_critical_dependencies() -> None:
         "src.infra.hooks.codex.shell_parser",
         "src.infra.hooks.codex.write_targets",
         "src.infra.hooks.codex.lock_policy",
+        "src.infra.hooks.codex.dangerous_commands",
         "src.infra.hooks.dangerous_commands",
         "src.infra.tool_config",
         "src.infra.tools.locking",
@@ -1511,6 +1521,60 @@ def test_combined_module_hash_changes_when_lock_policy_diverges() -> None:
     assert baseline != perturbed, (
         "Combined hash did not change when lock_policy bytes were "
         "perturbed — stale-install regression."
+    )
+
+
+@pytest.mark.unit
+def test_combined_module_hash_changes_when_codex_dangerous_commands_diverges() -> None:
+    """Regression: a divergence in ``codex/dangerous_commands.py`` must
+    change the combined hash even when ``codex_pre_tool_use.py`` is
+    byte-identical.
+
+    The destructive-command classification (``_msg_dangerous``,
+    dangerous-substring / token-walk / atomic-add-commit /
+    substitution-recursion detectors) lives in a separate module after
+    the T_B11 split. A stale install with the same entry-point but a
+    divergent ``codex/dangerous_commands.py`` would silently no-op the
+    destructive-git / fork-bomb / ``rm -rf /`` gates while every other
+    safety-critical module is byte-identical, so the module bytes must
+    be folded into the hook identity hash. Distinct from the
+    ``src.infra.hooks.dangerous_commands`` regression covered by
+    :func:`test_combined_module_hash_changes_when_dangerous_commands_diverges`
+    — both modules are independently safety-critical.
+    """
+    import hashlib
+    import importlib.util
+
+    from src.infra.clients.codex_provider import (
+        _HOOK_IDENTITY_MODULES,
+        _compute_combined_module_hash,
+    )
+
+    baseline = _compute_combined_module_hash(_HOOK_IDENTITY_MODULES)
+
+    spec_codex_danger = importlib.util.find_spec(
+        "src.infra.hooks.codex.dangerous_commands"
+    )
+    assert spec_codex_danger is not None and spec_codex_danger.origin is not None
+    real_bytes = Path(spec_codex_danger.origin).read_bytes()
+
+    h = hashlib.sha256()
+    for name in _HOOK_IDENTITY_MODULES:
+        spec = importlib.util.find_spec(name)
+        assert spec is not None and spec.origin is not None
+        if name == "src.infra.hooks.codex.dangerous_commands":
+            data = real_bytes + b"\x00"  # perturbed
+        else:
+            data = Path(spec.origin).read_bytes()
+        h.update(name.encode("utf-8"))
+        h.update(b"\0")
+        h.update(len(data).to_bytes(8, "big"))
+        h.update(data)
+    perturbed = h.hexdigest()
+
+    assert baseline != perturbed, (
+        "Combined hash did not change when codex/dangerous_commands "
+        "bytes were perturbed — stale-install regression."
     )
 
 

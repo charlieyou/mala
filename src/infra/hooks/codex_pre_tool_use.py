@@ -275,6 +275,7 @@ SELFTEST_IDENTITY_MODULES: tuple[str, ...] = (
     "src.infra.hooks.codex.shell_parser",
     "src.infra.hooks.codex.write_targets",
     "src.infra.hooks.codex.lock_policy",
+    "src.infra.hooks.codex.dangerous_commands",
     "src.infra.hooks.dangerous_commands",
     "src.infra.tool_config",
     "src.infra.tools.locking",
