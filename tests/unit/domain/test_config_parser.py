@@ -14,6 +14,7 @@ the ``coder=amp + amp_mode=deep + effort in {high, max}`` cross-section rule.
 
 from __future__ import annotations
 
+import ast
 from typing import Any, cast
 
 import pytest
@@ -50,6 +51,34 @@ from src.domain.validation.config_parser import (
     parse_validation_config,
     parse_validation_triggers,
 )
+
+
+def _find_config_loader_imports(tree: ast.AST) -> list[str]:
+    """Return every reference to ``config_loader`` in an AST.
+
+    Walks ``Import`` and ``ImportFrom`` nodes (top-level and nested),
+    inspecting both ``node.module`` and ``node.names`` so the alias-style
+    form ``from src.domain.validation import config_loader`` (where the
+    offender is on ``node.names`` rather than ``node.module``) is caught
+    too. Extracted as a module-level helper so the hygiene test and the
+    regression test below share one scanner.
+    """
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if "config_loader" in alias.name:
+                    offenders.append(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if "config_loader" in module:
+                offenders.append(module)
+            for alias in node.names:
+                if "config_loader" in alias.name:
+                    offenders.append(
+                        f"{module}::{alias.name}" if module else alias.name
+                    )
+    return offenders
 
 
 # ---------------------------------------------------------------------------
@@ -729,26 +758,49 @@ class TestModuleSurface:
         remove. ``ast.walk`` covers nested ``Import`` / ``ImportFrom``
         nodes inside functions, so lazy imports are caught too.
         """
-        import ast
         import inspect
 
         from src.domain.validation import config_parser
 
         source = inspect.getsource(config_parser)
-        tree = ast.parse(source)
-
-        offenders: list[str] = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    if "config_loader" in alias.name:
-                        offenders.append(alias.name)
-            elif isinstance(node, ast.ImportFrom):
-                module = node.module or ""
-                if "config_loader" in module:
-                    offenders.append(module)
+        offenders = _find_config_loader_imports(ast.parse(source))
 
         assert offenders == [], (
             "config_parser must not import config_loader (closes the load-path "
             f"cycle); found: {offenders}"
         )
+
+    def test_import_scanner_catches_all_lazy_import_forms(self) -> None:
+        """Regression: the scanner must flag every import form, including
+        ``from src.domain.validation import config_loader`` and
+        ``from . import config_loader``.
+
+        Earlier the ``ImportFrom`` branch only inspected ``node.module``,
+        so an alias-style lazy import slipped through because the module
+        path is the parent package (``src.domain.validation``) and the
+        offender lives on ``node.names[0].alias``. Each snippet below
+        would have been emitted by ``config_parser`` to recreate the
+        load-path cycle; the scanner must reject all of them.
+        """
+        cases = [
+            "import src.domain.validation.config_loader",
+            "import src.domain.validation.config_loader as cl",
+            "from src.domain.validation.config_loader import _x",
+            "from src.domain.validation import config_loader",
+            "from . import config_loader",
+            "def f():\n    from src.domain.validation import config_loader\n",
+        ]
+        for snippet in cases:
+            offenders = _find_config_loader_imports(ast.parse(snippet))
+            assert offenders, f"scanner missed lazy import form: {snippet!r}"
+
+    def test_import_scanner_ignores_unrelated_imports(self) -> None:
+        """The scanner must not false-positive on neighbouring modules
+        (e.g. ``config_parser`` itself or ``config_types``)."""
+        clean = (
+            "from src.domain.validation.config_types import ValidationConfig\n"
+            "from src.domain.validation import config_parser\n"
+            "import src.domain.validation.config_types as ct\n"
+        )
+        offenders = _find_config_loader_imports(ast.parse(clean))
+        assert offenders == [], f"scanner false-positive on clean source: {offenders}"
