@@ -23,6 +23,7 @@ from src.pipeline.issue_result import IssueResult
 from tests.fakes.issue_lifecycle_port import FakeIssueLifecyclePort
 
 if TYPE_CHECKING:
+    from src.domain.validation.config import EpicCompletionTriggerConfig, TriggerType
     from src.core.protocols.validation import EpicVerifierProtocol
 
 
@@ -63,12 +64,12 @@ class EpicVerificationHarness:
         self.event_sink = MagicMock()
         self.issue_lifecycle = FakeIssueLifecyclePort()
         self.verify_epic = AsyncMock(return_value=make_verification_result())
-        self.spawn_remediation = AsyncMock(return_value=None)
-        self.finalize_remediation = AsyncMock()
-        self.get_agent_id = MagicMock(return_value="agent-1")
+        self.spawn_epic_remediation_mock = AsyncMock(return_value=None)
+        self.finalize_epic_remediation_mock = AsyncMock()
+        self.get_epic_remediation_agent_id_mock = MagicMock(return_value="agent-1")
         self.has_epic_verifier = MagicMock(return_value=True)
-        self.queue_trigger_validation = MagicMock()
-        self.get_epic_completion_trigger = MagicMock(return_value=None)
+        self.queue_trigger_validation_mock = MagicMock()
+        self.get_epic_completion_trigger_mock = MagicMock(return_value=None)
 
     async def verify_and_close_epic(
         self,
@@ -85,15 +86,35 @@ class EpicVerificationHarness:
             issue_provider=self.issue_provider,
             event_sink=self.event_sink,
             issue_lifecycle=self.issue_lifecycle,
-            epic_verifier_getter=lambda: (
-                cast("EpicVerifierProtocol", self) if self.has_epic_verifier() else None
-            ),
-            spawn_remediation=self.spawn_remediation,
-            finalize_remediation=self.finalize_remediation,
-            get_agent_id=self.get_agent_id,
-            queue_trigger_validation=self.queue_trigger_validation,
-            get_epic_completion_trigger=self.get_epic_completion_trigger,
+            epic_verifier_provider=self,
+            remediation_port=self,
+            trigger_queue=self,
+            epic_completion_trigger_provider=self,
         )
+
+    def get_epic_verifier(self) -> "EpicVerifierProtocol | None":
+        return cast("EpicVerifierProtocol", self) if self.has_epic_verifier() else None
+
+    async def spawn_epic_remediation(
+        self, issue_id: str, flow: str = "implementer"
+    ) -> asyncio.Task[IssueResult] | None:
+        return await self.spawn_epic_remediation_mock(issue_id, flow)
+
+    async def finalize_epic_remediation(
+        self, issue_id: str, result: IssueResult, run_metadata: object
+    ) -> None:
+        await self.finalize_epic_remediation_mock(issue_id, result, run_metadata)
+
+    def get_epic_remediation_agent_id(self, issue_id: str) -> str:
+        return self.get_epic_remediation_agent_id_mock(issue_id)
+
+    def queue_trigger_validation(
+        self, trigger_type: "TriggerType", context: dict[str, object]
+    ) -> None:
+        self.queue_trigger_validation_mock(trigger_type, context)
+
+    def get_epic_completion_trigger(self) -> "EpicCompletionTriggerConfig | None":
+        return self.get_epic_completion_trigger_mock()
 
 
 class TestEpicVerificationInterruptHandling:
@@ -141,7 +162,7 @@ class TestEpicVerificationInterruptHandling:
 
             return asyncio.create_task(work())
 
-        callbacks.spawn_remediation = AsyncMock(side_effect=spawn_remediation)
+        callbacks.spawn_epic_remediation_mock = AsyncMock(side_effect=spawn_remediation)
 
         # Create coordinator with retries allowed
         coordinator = callbacks.to_coordinator(max_retries=2)
@@ -199,7 +220,7 @@ class TestEpicVerificationInterruptHandling:
 
             return asyncio.create_task(work())
 
-        callbacks.spawn_remediation = AsyncMock(side_effect=spawn_remediation)
+        callbacks.spawn_epic_remediation_mock = AsyncMock(side_effect=spawn_remediation)
         callbacks.verify_epic = AsyncMock(
             return_value=make_verification_result(
                 failed_count=1,
@@ -250,7 +271,7 @@ class TestEpicVerificationInterruptHandling:
 
             return asyncio.create_task(work())
 
-        callbacks.spawn_remediation = AsyncMock(side_effect=spawn_remediation)
+        callbacks.spawn_epic_remediation_mock = AsyncMock(side_effect=spawn_remediation)
         callbacks.verify_epic = AsyncMock(
             return_value=make_verification_result(
                 failed_count=1,
@@ -314,7 +335,7 @@ class TestEpicVerificationInterruptHandling:
 
             return asyncio.create_task(work())
 
-        callbacks.spawn_remediation = AsyncMock(side_effect=spawn_remediation)
+        callbacks.spawn_epic_remediation_mock = AsyncMock(side_effect=spawn_remediation)
         callbacks.verify_epic = AsyncMock(
             return_value=make_verification_result(
                 failed_count=1,

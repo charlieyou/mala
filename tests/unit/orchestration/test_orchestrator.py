@@ -168,31 +168,43 @@ def test_pipeline_components_construct_without_orchestrator(tmp_path: Path) -> N
     )
     run_coordinator = build_run_coordinator(runtime, pipeline)
 
-    async def spawn_remediation(
-        issue_id: str,
-        flow: str,
-    ) -> asyncio.Task[IssueResult] | None:
-        del issue_id, flow
-        return None
+    class FakeEpicPorts:
+        def get_epic_verifier(self) -> None:
+            return None
 
-    async def finalize_remediation(
-        issue_id: str,
-        result: IssueResult,
-        run_metadata: object,
-    ) -> None:
-        del issue_id, result, run_metadata
+        async def spawn_epic_remediation(
+            self,
+            issue_id: str,
+            flow: str = "implementer",
+        ) -> asyncio.Task[IssueResult] | None:
+            del issue_id, flow
+            return None
+
+        async def finalize_epic_remediation(
+            self,
+            issue_id: str,
+            result: IssueResult,
+            run_metadata: object,
+        ) -> None:
+            del issue_id, result, run_metadata
+
+        def get_epic_remediation_agent_id(self, issue_id: str) -> str:
+            return issue_id
+
+        def get_epic_completion_trigger(self) -> None:
+            return None
+
+    epic_ports = FakeEpicPorts()
 
     epic_verification_coordinator = EpicVerificationCoordinator(
         config=EpicVerificationConfig(),
         issue_provider=runtime.beads,
         event_sink=runtime.event_sink,
         issue_lifecycle=issue_coordinator,
-        epic_verifier_getter=lambda: None,
-        spawn_remediation=spawn_remediation,
-        finalize_remediation=finalize_remediation,
-        get_agent_id=lambda issue_id: issue_id,
-        queue_trigger_validation=run_coordinator.queue_trigger_validation,
-        get_epic_completion_trigger=lambda: None,
+        epic_verifier_provider=epic_ports,
+        remediation_port=epic_ports,
+        trigger_queue=run_coordinator,
+        epic_completion_trigger_provider=epic_ports,
     )
     issue_finalizer = IssueFinalizer(
         config=IssueFinalizeConfig(),

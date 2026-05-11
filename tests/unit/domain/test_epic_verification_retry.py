@@ -41,13 +41,13 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Test helpers: Fake callbacks
+# Test helpers: Fake ports
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class FakeCallbacks:
-    """Collection of fake callbacks for EpicVerificationCoordinator.
+    """Collection of fake ports for EpicVerificationCoordinator.
 
     Uses FakeVerificationResults to provide coordinator-level verification
     results (EpicVerificationResult). For test assertions, use
@@ -55,7 +55,7 @@ class FakeCallbacks:
     each verification call.
 
     Observable state:
-        spawned_issues: issues passed to spawn_remediation
+        spawned_issues: issues passed to spawn_epic_remediation
         finalized_results: (issue_id, result) pairs passed to finalize
         completed_issues: issues passed to mark_completed
         warnings: warning messages emitted
@@ -89,7 +89,7 @@ class FakeCallbacks:
     async def verify_epic(self, epic_id: str, force: bool) -> EpicVerificationResult:
         return await self.fake_verifier.verify(epic_id, force)
 
-    async def spawn_remediation(
+    async def spawn_epic_remediation(
         self, issue_id: str, flow: str = "implementer"
     ) -> asyncio.Task[IssueResult] | None:
         self.spawned_issues.append(issue_id)
@@ -110,7 +110,7 @@ class FakeCallbacks:
 
         return asyncio.create_task(run_task())
 
-    async def finalize_remediation(
+    async def finalize_epic_remediation(
         self, issue_id: str, result: IssueResult, run_metadata: object
     ) -> None:
         self.finalized_results.append((issue_id, result))
@@ -136,7 +136,7 @@ class FakeCallbacks:
     def on_warning(self, message: str) -> None:
         self.warnings.append(message)
 
-    def get_agent_id(self, issue_id: str) -> str:
+    def get_epic_remediation_agent_id(self, issue_id: str) -> str:
         return "test-agent"
 
     def queue_trigger_validation(
@@ -146,6 +146,9 @@ class FakeCallbacks:
 
     def get_epic_completion_trigger(self) -> EpicCompletionTriggerConfig | None:
         return None
+
+    def get_epic_verifier(self) -> EpicVerifierProtocol | None:
+        return cast("EpicVerifierProtocol", self) if self.has_epic_verifier else None
 
     async def verify_and_close_epic(
         self,
@@ -166,21 +169,17 @@ class FakeCallbacks:
             issue_provider=cast("IssueProvider", self),
             event_sink=cast("MalaEventSink", self),
             issue_lifecycle=cast("IssueLifecyclePort", self),
-            epic_verifier_getter=lambda: (
-                cast("EpicVerifierProtocol", self) if self.has_epic_verifier else None
-            ),
-            spawn_remediation=self.spawn_remediation,
-            finalize_remediation=self.finalize_remediation,
-            get_agent_id=self.get_agent_id,
-            queue_trigger_validation=self.queue_trigger_validation,
-            get_epic_completion_trigger=self.get_epic_completion_trigger,
+            epic_verifier_provider=self,
+            remediation_port=self,
+            trigger_queue=self,
+            epic_completion_trigger_provider=self,
         )
 
 
 def stub_run_metadata() -> RunMetadata:
     """Create a stub RunMetadata for tests.
 
-    The coordinator only passes run_metadata through to callbacks,
+    The coordinator only passes run_metadata through to ports,
     so we can use an object() cast to the expected type.
     """
     return cast("RunMetadata", object())

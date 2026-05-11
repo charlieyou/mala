@@ -915,6 +915,32 @@ class TestEpicCompletionTriggerIntegration:
             ) -> EpicVerificationResult:
                 return await self.verify_epic(epic_id, human_override)
 
+            def get_epic_verifier(self) -> EpicVerifierProtocol:
+                return cast("EpicVerifierProtocol", self)
+
+            async def spawn_epic_remediation(
+                self, issue_id: str, flow: str = "implementer"
+            ) -> asyncio.Task[IssueResult] | None:
+                del issue_id, flow
+                return None
+
+            async def finalize_epic_remediation(
+                self, issue_id: str, result: IssueResult, run_metadata: object
+            ) -> None:
+                del issue_id, result, run_metadata
+
+            def get_epic_remediation_agent_id(self, issue_id: str) -> str:
+                del issue_id
+                return "test-agent"
+
+            def queue_trigger_validation(
+                self, trigger_type: TriggerType, context: dict[str, Any]
+            ) -> None:
+                queued_triggers.append((trigger_type, context))
+
+            def get_epic_completion_trigger(self) -> EpicCompletionTriggerConfig | None:
+                return trigger_config
+
         # Default verification result: passed
         verification_result = EpicVerificationResult(
             verified_count=1,
@@ -942,12 +968,10 @@ class TestEpicCompletionTriggerIntegration:
             issue_provider=cast("IssueProvider", ports),
             event_sink=cast("MalaEventSink", ports),
             issue_lifecycle=ports.issue_lifecycle,
-            epic_verifier_getter=lambda: cast("EpicVerifierProtocol", ports),
-            spawn_remediation=lambda issue_id, flow: None,  # type: ignore[return-value, arg-type]  # ty:ignore[invalid-argument-type]
-            finalize_remediation=lambda issue_id, result, metadata: None,  # type: ignore[return-value, arg-type]  # ty:ignore[invalid-argument-type]
-            get_agent_id=lambda issue_id: "test-agent",
-            queue_trigger_validation=lambda t, c: queued_triggers.append((t, c)),
-            get_epic_completion_trigger=lambda: trigger_config,
+            epic_verifier_provider=ports,
+            remediation_port=ports,
+            trigger_queue=ports,
+            epic_completion_trigger_provider=ports,
         )
 
         return coordinator, queued_triggers, ports

@@ -19,13 +19,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from src.core.protocols.issue_lifecycle_port import IssueLifecycleEffect
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     from src.core.models import EpicVerificationResult
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.issue import IssueProvider
@@ -36,6 +34,52 @@ if TYPE_CHECKING:
     from src.pipeline.issue_result import IssueResult
 
 logger = logging.getLogger(__name__)
+
+
+class EpicVerifierProvider(Protocol):
+    """Port for retrieving the currently configured epic verifier."""
+
+    def get_epic_verifier(self) -> EpicVerifierProtocol | None:
+        """Return the active epic verifier, if one is configured."""
+        ...
+
+
+class EpicRemediationPort(Protocol):
+    """Port for running and finalizing epic remediation issues."""
+
+    async def spawn_epic_remediation(
+        self, issue_id: str, flow: str = "implementer"
+    ) -> asyncio.Task[IssueResult] | None:
+        """Spawn an agent for an epic remediation issue."""
+        ...
+
+    async def finalize_epic_remediation(
+        self, issue_id: str, result: IssueResult, run_metadata: RunMetadata
+    ) -> None:
+        """Finalize an epic remediation issue result."""
+        ...
+
+    def get_epic_remediation_agent_id(self, issue_id: str) -> str:
+        """Return the agent ID to use for remediation error attribution."""
+        ...
+
+
+class TriggerValidationQueuePort(Protocol):
+    """Port for queueing trigger validation requests."""
+
+    def queue_trigger_validation(
+        self, trigger_type: TriggerType, context: dict[str, Any]
+    ) -> None:
+        """Queue a trigger validation request."""
+        ...
+
+
+class EpicCompletionTriggerProvider(Protocol):
+    """Port for retrieving epic completion trigger configuration."""
+
+    def get_epic_completion_trigger(self) -> EpicCompletionTriggerConfig | None:
+        """Return the epic completion trigger config, if any."""
+        ...
 
 
 @dataclass
@@ -64,12 +108,10 @@ class EpicVerificationCoordinator:
         issue_provider: Issue tracking port.
         event_sink: Event emission port.
         issue_lifecycle: Issue lifecycle state/effect port.
-        epic_verifier_getter: Returns the current epic verifier, if configured.
-        spawn_remediation: Spawn an agent for a remediation issue.
-        finalize_remediation: Finalize a remediation issue result.
-        get_agent_id: Get an agent ID for fallback error attribution.
-        queue_trigger_validation: Queue a trigger validation request.
-        get_epic_completion_trigger: Return epic_completion trigger config, if any.
+        epic_verifier_provider: Port for retrieving the current epic verifier.
+        remediation_port: Port for spawning/finalizing remediation issues.
+        trigger_queue: Port for queueing trigger validation requests.
+        epic_completion_trigger_provider: Port for retrieving epic_completion config.
         epic_override_ids: Set of epic IDs to force human override.
     """
 
@@ -77,12 +119,10 @@ class EpicVerificationCoordinator:
     issue_provider: IssueProvider
     event_sink: MalaEventSink
     issue_lifecycle: IssueLifecyclePort
-    epic_verifier_getter: Callable[[], EpicVerifierProtocol | None]
-    spawn_remediation: Callable[[str, str], Awaitable[asyncio.Task[IssueResult] | None]]
-    finalize_remediation: Callable[[str, IssueResult, RunMetadata], Awaitable[None]]
-    get_agent_id: Callable[[str], str]
-    queue_trigger_validation: Callable[[TriggerType, dict[str, Any]], None]
-    get_epic_completion_trigger: Callable[[], EpicCompletionTriggerConfig | None]
+    epic_verifier_provider: EpicVerifierProvider
+    remediation_port: EpicRemediationPort
+    trigger_queue: TriggerValidationQueuePort
+    epic_completion_trigger_provider: EpicCompletionTriggerProvider
     epic_override_ids: set[str] = field(default_factory=set)
 
     # State: Tracked across multiple check_epic_closure calls
@@ -223,7 +263,9 @@ class EpicVerificationCoordinator:
         """
         from src.domain.validation.config import EpicDepth, FireOn, TriggerType
 
-        trigger_config = self.get_epic_completion_trigger()
+        trigger_config = (
+            self.epic_completion_trigger_provider.get_epic_completion_trigger()
+        )
         if trigger_config is None:
             return
 
@@ -248,7 +290,9 @@ class EpicVerificationCoordinator:
             "depth": "top_level" if epic_parent is None else "nested",
             "verification_result": "passed" if verification_passed else "failed",
         }
-        self.queue_trigger_validation(TriggerType.EPIC_COMPLETION, context)
+        self.trigger_queue.queue_trigger_validation(
+            TriggerType.EPIC_COMPLETION, context
+        )
 
     async def _execute_remediation_issues(
         self,
@@ -292,7 +336,9 @@ class EpicVerificationCoordinator:
                 return
 
             try:
-                task = await self.spawn_remediation(issue_id, "epic_remediation")
+                task = await self.remediation_port.spawn_epic_remediation(
+                    issue_id, "epic_remediation"
+                )
             except Exception as e:
                 if remaining:
                     self.event_sink.on_warning(
@@ -312,7 +358,9 @@ class EpicVerificationCoordinator:
             result = await self._wait_for_task(task, issue_id, interrupt_event)
 
             try:
-                await self.finalize_remediation(issue_id, result, run_metadata)
+                await self.remediation_port.finalize_epic_remediation(
+                    issue_id, result, run_metadata
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -391,27 +439,27 @@ class EpicVerificationCoordinator:
         except asyncio.CancelledError:
             return IssueResult(
                 issue_id=issue_id,
-                agent_id=self.get_agent_id(issue_id),
+                agent_id=self.remediation_port.get_epic_remediation_agent_id(issue_id),
                 success=False,
                 summary="Remediation task was cancelled",
             )
         except Exception as e:
             return IssueResult(
                 issue_id=issue_id,
-                agent_id=self.get_agent_id(issue_id),
+                agent_id=self.remediation_port.get_epic_remediation_agent_id(issue_id),
                 success=False,
                 summary=str(e),
             )
 
     def _has_epic_verifier(self) -> bool:
         """Return whether an epic verifier is configured."""
-        return self.epic_verifier_getter() is not None
+        return self.epic_verifier_provider.get_epic_verifier() is not None
 
     async def _verify_epic(
         self, epic_id: str, human_override: bool
     ) -> EpicVerificationResult:
         """Run epic verification through the configured verifier."""
-        epic_verifier = self.epic_verifier_getter()
+        epic_verifier = self.epic_verifier_provider.get_epic_verifier()
         if epic_verifier is None:
             raise RuntimeError("Epic verifier is not available")
         return await epic_verifier.verify_and_close_epic(

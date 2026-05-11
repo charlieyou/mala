@@ -547,32 +547,38 @@ class MalaOrchestrator:
             issue_provider=runtime.beads,
             event_sink=runtime.event_sink,
             issue_lifecycle=self.issue_coordinator,
-            epic_verifier_getter=self._get_epic_verifier,
-            spawn_remediation=self._spawn_epic_remediation,
-            finalize_remediation=self._finalize_issue_result,
-            get_agent_id=self._get_agent_id,
-            queue_trigger_validation=self.run_coordinator.queue_trigger_validation,
-            get_epic_completion_trigger=self._get_epic_completion_trigger,
+            epic_verifier_provider=self,
+            remediation_port=self,
+            trigger_queue=self.run_coordinator,
+            epic_completion_trigger_provider=self,
             epic_override_ids=self.epic_override_ids,
         )
 
-    def _get_epic_verifier(self) -> EpicVerifierProtocol | None:
+    def get_epic_verifier(self) -> EpicVerifierProtocol | None:
         return self.epic_verifier
 
-    async def _spawn_epic_remediation(
+    async def spawn_epic_remediation(
         self,
         issue_id: str,
         flow: str = "implementer",
     ) -> asyncio.Task[IssueResult] | None:
         return await self.spawn_agent(issue_id, flow=flow)
 
+    async def finalize_epic_remediation(
+        self,
+        issue_id: str,
+        result: IssueResult,
+        run_metadata: RunMetadata,
+    ) -> None:
+        await self._finalize_issue_result(issue_id, result, run_metadata)
+
     def _is_issue_failed(self, issue_id: str) -> bool:
         return issue_id in self.failed_issues
 
-    def _get_agent_id(self, issue_id: str) -> str:
+    def get_epic_remediation_agent_id(self, issue_id: str) -> str:
         return self._state.agent_ids.get(issue_id, "unknown")
 
-    def _get_epic_completion_trigger(self) -> EpicCompletionTriggerConfig | None:
+    def get_epic_completion_trigger(self) -> EpicCompletionTriggerConfig | None:
         if self._validation_config and self._validation_config.validation_triggers:
             return self._validation_config.validation_triggers.epic_completion
         return None
@@ -789,7 +795,7 @@ class MalaOrchestrator:
 
             # Remove per-attempt tracking now that finalization is complete
             # (agent_id is deferred from run_implementer.finally to keep it
-            # available for get_agent_id callback)
+            # available for remediation error attribution)
             self._cleanup_issue_runtime_state(issue_id)
 
     async def _abort_active_tasks(
@@ -984,8 +990,8 @@ class MalaOrchestrator:
                 else:
                     tracer.set_error(output.summary)
         finally:
-            # Get agent_id for lock cleanup but don't pop - entry needed for get_agent_id callback
-            # until finalization completes (see _finalize_issue_result)
+            # Get agent_id for lock cleanup but don't pop - entry needed for
+            # remediation error attribution until finalization completes.
             agent_id = self._state.agent_ids.get(issue_id, temp_agent_id)
             # Skip cleanup if already done during deadlock handling (avoid double unregister)
             if agent_id not in self._state.deadlock_cleaned_agents:
