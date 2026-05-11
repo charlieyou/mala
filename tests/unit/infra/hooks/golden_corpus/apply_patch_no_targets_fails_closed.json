@@ -1,0 +1,14 @@
+{
+  "description": "apply_patch with no extractable target paths fails closed",
+  "tool_name": "apply_patch",
+  "tool_input": {
+    "unrelated": "value"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "apply_patch payload has no extractable target paths; refusing fail-open"
+    }
+  }
+}

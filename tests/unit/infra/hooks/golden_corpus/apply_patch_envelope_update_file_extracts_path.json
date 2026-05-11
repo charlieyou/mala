@@ -1,0 +1,14 @@
+{
+  "description": "apply_patch body with `*** Update File:` envelope header",
+  "tool_name": "apply_patch",
+  "tool_input": {
+    "command": "*** Update File: {repo}/util.py\n+def foo(): pass\n"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/util.py' has no active lock for agent 'agent-me'"
+    }
+  }
+}

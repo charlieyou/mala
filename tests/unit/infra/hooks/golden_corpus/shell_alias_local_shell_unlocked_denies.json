@@ -1,0 +1,14 @@
+{
+  "description": "`local-shell` tool name aliases bash for the heuristic gate",
+  "tool_name": "local-shell",
+  "tool_input": {
+    "command": "echo hi > {repo}/out.log"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/out.log' has no active lock for agent 'agent-me'"
+    }
+  }
+}

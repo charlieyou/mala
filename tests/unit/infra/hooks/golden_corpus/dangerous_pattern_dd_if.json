@@ -1,0 +1,14 @@
+{
+  "description": "DANGEROUS_PATTERNS hit: dd if=",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "dd if=/dev/zero of=/tmp/x"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "command matches dangerous pattern: dd if="
+    }
+  }
+}

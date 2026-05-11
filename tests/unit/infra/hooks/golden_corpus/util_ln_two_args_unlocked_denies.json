@@ -1,0 +1,14 @@
+{
+  "description": "ln src dst (two positionals) lock-checks `dst`",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "ln -s /tmp/x {repo}/dst.txt"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/dst.txt' has no active lock for agent 'agent-me'"
+    }
+  }
+}

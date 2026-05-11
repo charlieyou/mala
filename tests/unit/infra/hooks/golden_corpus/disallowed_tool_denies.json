@@ -1,0 +1,15 @@
+{
+  "description": "tool listed in MALA_DISALLOWED_TOOLS",
+  "tool_name": "TodoWrite",
+  "tool_input": {},
+  "env": {
+    "MALA_DISALLOWED_TOOLS": "TodoWrite,Other"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "tool 'TodoWrite' is in MALA_DISALLOWED_TOOLS"
+    }
+  }
+}

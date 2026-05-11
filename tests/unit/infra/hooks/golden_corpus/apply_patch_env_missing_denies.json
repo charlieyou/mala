@@ -1,0 +1,18 @@
+{
+  "description": "apply_patch with MALA_* env unset",
+  "tool_name": "apply_patch",
+  "tool_input": {
+    "path": "{repo}/src.py"
+  },
+  "env_unset": [
+    "MALA_AGENT_ID",
+    "MALA_REPO_NAMESPACE"
+  ],
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "MALA_AGENT_ID/MALA_LOCK_DIR/MALA_REPO_NAMESPACE missing; refusing to evaluate lock"
+    }
+  }
+}

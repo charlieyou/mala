@@ -1,0 +1,14 @@
+{
+  "description": "env touch f \u2192 unwrap, lock-check on f",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "env touch {repo}/f.txt"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/f.txt' has no active lock for agent 'agent-me'"
+    }
+  }
+}

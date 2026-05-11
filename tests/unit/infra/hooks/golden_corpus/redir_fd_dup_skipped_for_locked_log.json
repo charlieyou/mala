@@ -1,0 +1,18 @@
+{
+  "description": "`2>&1` is fd-dup, only `out.log` is checked",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "ls > {repo}/out.log 2>&1"
+  },
+  "locks": [
+    {
+      "path": "{repo}/out.log",
+      "agent_id": "agent-me"
+    }
+  ],
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse"
+    }
+  }
+}

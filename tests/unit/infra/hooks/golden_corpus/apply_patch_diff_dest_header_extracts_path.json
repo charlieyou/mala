@@ -1,0 +1,14 @@
+{
+  "description": "apply_patch body with unified-diff `+++ b/path`",
+  "tool_name": "apply_patch",
+  "tool_input": {
+    "patch": "--- a/{repo}/old.py\n+++ b/{repo}/new.py\n@@ -1 +1 @@\n-a\n+b\n"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/new.py' has no active lock for agent 'agent-me'"
+    }
+  }
+}

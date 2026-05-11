@@ -1,0 +1,14 @@
+{
+  "description": "git push -f caught via token walk",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "git push -f origin main"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "command matches dangerous pattern: git push --force"
+    }
+  }
+}

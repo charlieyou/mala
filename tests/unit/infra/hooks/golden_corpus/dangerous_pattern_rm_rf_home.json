@@ -1,0 +1,14 @@
+{
+  "description": "DANGEROUS_PATTERNS hit: rm -rf $HOME",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "rm -rf $HOME"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "command matches dangerous pattern: rm -rf $HOME"
+    }
+  }
+}

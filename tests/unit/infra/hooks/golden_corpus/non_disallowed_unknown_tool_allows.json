@@ -1,0 +1,10 @@
+{
+  "description": "unknown / MCP tool not in disallowed list",
+  "tool_name": "mala-locking.lock_acquire",
+  "tool_input": {},
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "description": "Read-only shell with MALA_* env unset \u2192 no writes",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "ls -la"
+  },
+  "env_unset": [
+    "MALA_AGENT_ID",
+    "MALA_REPO_NAMESPACE"
+  ],
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse"
+    }
+  }
+}

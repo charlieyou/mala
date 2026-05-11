@@ -1,0 +1,14 @@
+{
+  "description": "destructive git nested in $() substitution caught by recursive scan",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "echo $(git stash)"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "command matches dangerous pattern: git stash"
+    }
+  }
+}

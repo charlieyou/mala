@@ -1,0 +1,14 @@
+{
+  "description": "perl -e open(my $fh, '>', lit)",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "perl -e \"open(my \\$fh, '>', '{repo}/f.pl')\""
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/f.pl' has no active lock for agent 'agent-me'"
+    }
+  }
+}

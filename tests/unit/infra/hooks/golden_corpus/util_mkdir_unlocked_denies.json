@@ -1,0 +1,14 @@
+{
+  "description": "mkdir target unlocked",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "mkdir {repo}/dst.txt"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/dst.txt' has no active lock for agent 'agent-me'"
+    }
+  }
+}

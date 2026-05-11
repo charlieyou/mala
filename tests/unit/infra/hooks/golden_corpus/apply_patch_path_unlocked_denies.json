@@ -1,0 +1,14 @@
+{
+  "description": "apply_patch with no lock on target",
+  "tool_name": "apply_patch",
+  "tool_input": {
+    "path": "{repo}/src.py"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/src.py' has no active lock for agent 'agent-me'"
+    }
+  }
+}

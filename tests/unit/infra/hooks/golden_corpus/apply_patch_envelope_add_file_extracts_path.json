@@ -1,0 +1,14 @@
+{
+  "description": "apply_patch body with `*** Add File:` envelope",
+  "tool_name": "apply_patch",
+  "tool_input": {
+    "command": "*** Add File: {repo}/new.py\n+x=1\n"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/new.py' has no active lock for agent 'agent-me'"
+    }
+  }
+}

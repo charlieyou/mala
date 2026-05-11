@@ -1,0 +1,14 @@
+{
+  "description": "apply_patch body with `--- a/path` and `+++ /dev/null` extracts source",
+  "tool_name": "apply_patch",
+  "tool_input": {
+    "patch": "--- a/{repo}/dead.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/dead.py' has no active lock for agent 'agent-me'"
+    }
+  }
+}

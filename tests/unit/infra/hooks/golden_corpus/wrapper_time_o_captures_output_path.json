@@ -1,0 +1,14 @@
+{
+  "description": "time -o /tmp/log cmd \u2192 wrapper-side output path is lock-checked",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "time -o {repo}/timing.log ls"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/timing.log' has no active lock for agent 'agent-me'"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "description": "git -C dir stash caught via token walk past global option",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "git -C subdir stash"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "command matches dangerous pattern: git stash"
+    }
+  }
+}

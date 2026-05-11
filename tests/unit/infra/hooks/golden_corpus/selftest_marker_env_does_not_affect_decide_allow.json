@@ -1,0 +1,17 @@
+{
+  "description": "SELFTEST_MARKER_ENV set + bash with no writes \u2192 decide() ignores marker env",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "ls"
+  },
+  "env": {
+    "MALA_CODEX_HOOK_SELFTEST_MARKER": "{repo}/marker.json",
+    "MALA_CODEX_HOOK_SELFTEST_MARKER_DIR": "{repo}/markers",
+    "MALA_CODEX_HOOK_SELFTEST_TARGET_EVENT": "PreToolUse"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "description": "apply_patch with target locked by other agent",
+  "tool_name": "apply_patch",
+  "tool_input": {
+    "path": "{repo}/src.py"
+  },
+  "locks": [
+    {
+      "path": "{repo}/src.py",
+      "agent_id": "agent-other"
+    }
+  ],
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/src.py' is locked by agent 'agent-other'; current agent is 'agent-me'"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "description": "git checkout file (no `--`) \u2014 heuristic gate",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "git checkout {repo}/f.py"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/f.py' has no active lock for agent 'agent-me'"
+    }
+  }
+}

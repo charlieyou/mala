@@ -1,0 +1,14 @@
+{
+  "description": "python -c open(lit, 'w') target unlocked",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "python -c \"open('{repo}/f.py','w').write('x')\""
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/f.py' has no active lock for agent 'agent-me'"
+    }
+  }
+}

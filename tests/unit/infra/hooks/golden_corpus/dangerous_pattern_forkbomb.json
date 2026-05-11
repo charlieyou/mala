@@ -1,0 +1,14 @@
+{
+  "description": "DANGEROUS_PATTERNS hit: :(){:|:&};:",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": ":(){:|:&};:"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "command matches dangerous pattern: :(){:|:&};:"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "description": "patch < file \u2192 always unresolved sentinel deny",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "patch -p1 < some.patch"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '<unresolved-write-target>' has no active lock for agent 'agent-me'"
+    }
+  }
+}

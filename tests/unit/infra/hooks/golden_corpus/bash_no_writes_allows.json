@@ -1,0 +1,12 @@
+{
+  "description": "Read-only bash command \u2192 no write targets",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "ls -la"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse"
+    }
+  }
+}

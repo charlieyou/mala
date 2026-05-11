@@ -1,0 +1,14 @@
+{
+  "description": "DESTRUCTIVE_GIT_PATTERNS hit: git clean -fd",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "git clean -fd"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "command matches dangerous pattern: git clean -fd"
+    }
+  }
+}

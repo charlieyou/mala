@@ -1,0 +1,14 @@
+{
+  "description": "{touch,unowned} bash brace expansion \u2192 unresolved sentinel deny",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "{touch,{repo}/f.txt}"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '<unresolved-write-target>' has no active lock for agent 'agent-me'"
+    }
+  }
+}

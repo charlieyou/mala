@@ -1,0 +1,14 @@
+{
+  "description": "perl -pi -e target unlocked",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "perl -pi -e 's/x/y/' {repo}/file.py"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/file.py' has no active lock for agent 'agent-me'"
+    }
+  }
+}

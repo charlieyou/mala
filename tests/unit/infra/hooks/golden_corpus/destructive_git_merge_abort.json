@@ -1,0 +1,14 @@
+{
+  "description": "DESTRUCTIVE_GIT_PATTERNS hit: git merge --abort",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "git merge --abort"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "command matches dangerous pattern: git merge --abort"
+    }
+  }
+}

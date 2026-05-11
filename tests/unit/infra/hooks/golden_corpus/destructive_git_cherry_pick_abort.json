@@ -1,0 +1,14 @@
+{
+  "description": "DESTRUCTIVE_GIT_PATTERNS hit: git cherry-pick --abort",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "git cherry-pick --abort"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "command matches dangerous pattern: git cherry-pick --abort"
+    }
+  }
+}

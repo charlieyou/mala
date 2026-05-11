@@ -1,0 +1,14 @@
+{
+  "description": "DESTRUCTIVE_GIT_PATTERNS hit: git branch -d -f",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "git branch -d -f feature"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "command matches dangerous pattern: git branch -d -f"
+    }
+  }
+}

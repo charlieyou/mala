@@ -1,0 +1,14 @@
+{
+  "description": "apply_patch body with `*** Delete File:` envelope extracts deletion target",
+  "tool_name": "apply_patch",
+  "tool_input": {
+    "command": "*** Delete File: {repo}/dead.py\n"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/dead.py' has no active lock for agent 'agent-me'"
+    }
+  }
+}

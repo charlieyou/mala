@@ -1,0 +1,14 @@
+{
+  "description": "node -e openSync(lit, 'w')",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "node -e \"fs.openSync('{repo}/f.js','w')\""
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/f.js' has no active lock for agent 'agent-me'"
+    }
+  }
+}

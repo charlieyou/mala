@@ -1,0 +1,14 @@
+{
+  "description": "git commit without prior `git add` triggers atomic-add-commit deny",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "git commit -m msg"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "command matches dangerous pattern: git commit without prior git add"
+    }
+  }
+}

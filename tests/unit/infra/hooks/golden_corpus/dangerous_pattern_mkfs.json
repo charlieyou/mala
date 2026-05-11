@@ -1,0 +1,14 @@
+{
+  "description": "DANGEROUS_PATTERNS hit: mkfs.",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "mkfs.ext4 /dev/sda1"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "command matches dangerous pattern: mkfs."
+    }
+  }
+}

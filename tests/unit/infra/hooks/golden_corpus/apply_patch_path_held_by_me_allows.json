@@ -1,0 +1,18 @@
+{
+  "description": "apply_patch with explicit `path` and lock held by current agent",
+  "tool_name": "apply_patch",
+  "tool_input": {
+    "path": "{repo}/src.py"
+  },
+  "locks": [
+    {
+      "path": "{repo}/src.py",
+      "agent_id": "agent-me"
+    }
+  ],
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse"
+    }
+  }
+}

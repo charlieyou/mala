@@ -1,0 +1,14 @@
+{
+  "description": "git commit -a caught via token walk",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "git add f.py && git commit -a -m msg"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "command matches dangerous pattern: git commit -a/--all"
+    }
+  }
+}

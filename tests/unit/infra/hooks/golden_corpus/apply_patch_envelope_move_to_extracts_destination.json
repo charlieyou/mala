@@ -1,0 +1,20 @@
+{
+  "description": "apply_patch body with `*** Move to:` extracts move destination",
+  "tool_name": "apply_patch",
+  "tool_input": {
+    "command": "*** Update File: {repo}/old.py\n*** Move to: {repo}/new.py\n+pass\n"
+  },
+  "locks": [
+    {
+      "path": "{repo}/old.py",
+      "agent_id": "agent-me"
+    }
+  ],
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/new.py' has no active lock for agent 'agent-me'"
+    }
+  }
+}

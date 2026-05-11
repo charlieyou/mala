@@ -1,0 +1,18 @@
+{
+  "description": "shell with writes + MALA_* env unset \u2192 deny env-missing",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "echo hi > /tmp/f.log"
+  },
+  "env_unset": [
+    "MALA_AGENT_ID",
+    "MALA_REPO_NAMESPACE"
+  ],
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "MALA_AGENT_ID/MALA_LOCK_DIR/MALA_REPO_NAMESPACE missing; refusing to evaluate lock"
+    }
+  }
+}

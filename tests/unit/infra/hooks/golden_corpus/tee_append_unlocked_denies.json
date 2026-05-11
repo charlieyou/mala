@@ -1,0 +1,14 @@
+{
+  "description": "tee -a target unlocked",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "echo x | tee -a {repo}/out.log"
+  },
+  "expected": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "path '{repo}/out.log' has no active lock for agent 'agent-me'"
+    }
+  }
+}
