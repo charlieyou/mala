@@ -177,6 +177,10 @@ class TestValidateCodexModelOption:
 
 
 class TestValidateCodexEffortOption:
+    @pytest.mark.parametrize("value", ["minimal", "low", "medium", "high"])
+    def test_accepts_valid(self, value: str) -> None:
+        assert validate_codex_effort_option(value) == value
+
     def test_none_passthrough(self) -> None:
         assert validate_codex_effort_option(None) is None
 

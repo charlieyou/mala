@@ -1348,9 +1348,41 @@ def test_dry_run_focus_mode_groups_by_epic(
 # ============================================================================
 
 
-# Tests for --scope option parsing have moved to
+# Branch coverage for the underlying ``parse_scope`` helper lives in
 # tests/unit/orchestration/test_cli_options.py alongside the helper that owns
-# the parsing logic. CLI-side conversion to typer.Exit(1) is covered there too.
+# the parsing logic. The class below covers the thin CLI wrapper that converts
+# ``ValueError`` into ``typer.Exit(1)`` and emits the dedupe warning.
+
+
+class TestParseScopeCli:
+    """Cover the CLI-side ``_parse_scope_cli`` wrapper."""
+
+    def test_passes_through_valid_scope(self) -> None:
+        from src.cli.cli import _parse_scope_cli
+
+        result = _parse_scope_cli("all")
+        assert result.scope_type == "all"
+
+    def test_converts_value_error_to_exit_1(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from src.cli.cli import _parse_scope_cli
+
+        with pytest.raises(typer.Exit) as excinfo:
+            _parse_scope_cli("epic:")
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "epic:" in captured.out or "epic:" in captured.err
+
+    def test_emits_warning_for_duplicate_ids(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from src.cli.cli import _parse_scope_cli
+
+        result = _parse_scope_cli("ids:T-1,T-1,T-2")
+        assert result.ids == ["T-1", "T-2"]
+        captured = capsys.readouterr()
+        assert "Duplicate IDs removed" in captured.out
 
 
 class TestClaudeSettingsSourcesHelp:
