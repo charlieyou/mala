@@ -23,21 +23,21 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shlex
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from .codex.lock_policy import (
+    _MSG_ENV_MISSING,
+    _gate_write_targets,
+)
 from .codex.shell_parser import (
-    _ANSI_C_PLACEHOLDER,
-    _CMDSUB_PLACEHOLDER,
     _extract_command_substitutions,
     _normalize_separators,
     _strip_shell_comments,
 )
 from .codex.write_targets import (
-    _UNRESOLVED_SENTINEL,
     _apply_patch_paths,
     _command_basename_str,
     _extract_shell_write_paths,
@@ -48,9 +48,6 @@ from .dangerous_commands import (
     DANGEROUS_PATTERNS,
     DESTRUCTIVE_GIT_PATTERNS,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
 
 
 __all__ = [
@@ -73,28 +70,17 @@ SHELL_TOOL_NAMES = frozenset({"bash", "local-shell", "shell"} | set(BASH_TOOL_NA
 FILE_EDIT_TOOL_NAMES = frozenset({"apply_patch"})
 
 
-# Deny-message templates (plan L854-L860). These strings are byte-identical
-# across the apply_patch branch and the bash write-path branch so reviewers
-# can grep for the exact wording.
-def _msg_no_lock(rel: str, me: str) -> str:
-    return f"path '{rel}' has no active lock for agent '{me}'"
-
-
-def _msg_wrong_owner(rel: str, other: str, me: str) -> str:
-    return f"path '{rel}' is locked by agent '{other}'; current agent is '{me}'"
-
-
+# Deny-message templates (plan L854-L860). The lock-related templates
+# (``_msg_no_lock``, ``_msg_wrong_owner``, ``_MSG_ENV_MISSING``) live in
+# :mod:`src.infra.hooks.codex.lock_policy`; the dangerous-pattern and
+# disallowed-tool templates stay here because they belong to the
+# corresponding branch in :func:`decide`.
 def _msg_dangerous(pattern: str) -> str:
     return f"command matches dangerous pattern: {pattern}"
 
 
 def _msg_disallowed(name: str) -> str:
     return f"tool '{name}' is in MALA_DISALLOWED_TOOLS"
-
-
-_MSG_ENV_MISSING = (
-    "MALA_AGENT_ID/MALA_LOCK_DIR/MALA_REPO_NAMESPACE missing; refusing to evaluate lock"
-)
 
 
 def _allow() -> dict[str, Any]:
@@ -146,90 +132,6 @@ def _resolve_env() -> dict[str, str]:
 def _disallowed_tools(env: dict[str, str]) -> set[str]:
     raw = env.get("MALA_DISALLOWED_TOOLS", "")
     return {t.strip() for t in raw.split(",") if t.strip()}
-
-
-def _resolve_against_cwd(target: str, cwd: str | None) -> str:
-    """Resolve a relative ``target`` against the payload ``cwd``.
-
-    Shell commands (and patch headers) write paths relative to the
-    process cwd, not to the repo namespace root. Without this resolution,
-    a hook input with ``cwd=/repo/pkg`` and ``command='touch generated.py'``
-    would lock-check ``/repo/generated.py`` (namespace-root) and let an
-    unowned write to ``/repo/pkg/generated.py`` slip past whenever the
-    agent happens to hold the root-level lock.
-    """
-    if not target or target == _UNRESOLVED_SENTINEL:
-        return target
-    p = Path(target)
-    if p.is_absolute():
-        return target
-    if not cwd:
-        return target
-    return str(Path(cwd) / target)
-
-
-# Shell glob, brace-expansion, and parameter-expansion metacharacters.
-# When any of these appear in an extracted write-target, the actual
-# files bash will operate on cannot be statically resolved — and the
-# agent could acquire a lock on the literal pattern (``$cwd/*.py`` or
-# ``~/foo`` or ``$VAR``) while bash expands to a different file at
-# runtime. Treat such targets as unresolved (always-deny).
-#
-# Includes: glob (``*``, ``?``, ``[``, ``]``), brace expansion (``{``,
-# ``}``), parameter/command substitution (``$``), and tilde expansion
-# (``~``). Backticks (`` ` ``) are already extracted as
-# command-substitution bodies before the lock-check; any backtick
-# reaching this gate has been preserved inside single quotes (literal)
-# and is not a write surface.
-_SHELL_EXPANSION_RE = re.compile(r"[*?\[\]{}$~]")
-
-
-def _check_lock(
-    target: str,
-    agent_id: str,
-    lock_dir: str,
-    repo_namespace: str,
-    cwd: str | None,
-) -> dict[str, Any] | None:
-    """Look up the lock holder for ``target`` and return a deny dict if blocked.
-
-    Relative ``target`` paths are resolved against the payload ``cwd``
-    before lock-key derivation so the lock-check path matches the path
-    the shell would actually write to. The unresolved-target sentinel
-    always denies (plan L846: deny on parseable-but-unresolved write
-    expressions). Targets containing shell glob, brace, parameter, or
-    tilde expansion metacharacters also always deny — bash expands
-    them at runtime, and locking the literal pattern would be a
-    trivial bypass. Tokens that contain a command-substitution
-    placeholder (the ``__MALA_CMDSUB_LITERAL__`` / ``__MALA_ANSI_C_
-    LITERAL__`` markers from preprocessing) also deny because the
-    real path is whatever bash produces from the substitution.
-    """
-    if target == _UNRESOLVED_SENTINEL:
-        return _deny(_msg_no_lock(target, agent_id))
-    if _CMDSUB_PLACEHOLDER in target or _ANSI_C_PLACEHOLDER in target:
-        return _deny(_msg_no_lock(target, agent_id))
-    if _SHELL_EXPANSION_RE.search(target):
-        return _deny(_msg_no_lock(target, agent_id))
-    # The locking module reads ``MALA_LOCK_DIR`` from ``os.environ`` at
-    # call time. Reaffirm it here so the lock-key derivation always
-    # matches the value the hook resolved from the env, even if a
-    # caller later mutates the env or imports a stale resolver.
-    os.environ["MALA_LOCK_DIR"] = lock_dir
-    # Imported lazily so the module-level import does not pin the lock dir
-    # before the env is resolved.
-    from ..tools.locking import get_lock_holder
-
-    resolved = _resolve_against_cwd(target, cwd)
-    holder = get_lock_holder(resolved, repo_namespace=repo_namespace)
-    # Deny messages keep the original (caller-visible) target string for
-    # readability, even when the lock-key was computed from the cwd-
-    # resolved absolute path.
-    if holder is None:
-        return _deny(_msg_no_lock(target, agent_id))
-    if holder != agent_id:
-        return _deny(_msg_wrong_owner(target, holder, agent_id))
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -451,22 +353,6 @@ def _command_string(tool_input: dict[str, Any]) -> str:
     return ""
 
 
-def _gate_write_targets(
-    targets: Iterable[str],
-    *,
-    agent_id: str,
-    lock_dir: str,
-    repo_namespace: str,
-    cwd: str | None,
-) -> dict[str, Any] | None:
-    """Run the lock check on each target; return the first deny."""
-    for target in targets:
-        deny = _check_lock(target, agent_id, lock_dir, repo_namespace, cwd)
-        if deny is not None:
-            return deny
-    return None
-
-
 def decide(input_payload: dict[str, Any]) -> dict[str, Any]:
     """Compute the hook decision for a single PreToolUse payload.
 
@@ -508,14 +394,14 @@ def decide(input_payload: dict[str, Any]) -> dict[str, Any]:
             return _allow()
         if not (agent_id and lock_dir and repo_namespace):
             return _deny(_MSG_ENV_MISSING)
-        deny = _gate_write_targets(
+        reason = _gate_write_targets(
             write_targets,
             agent_id=agent_id,
             lock_dir=lock_dir,
             repo_namespace=repo_namespace,
             cwd=cwd_str,
         )
-        return deny if deny is not None else _allow()
+        return _deny(reason) if reason is not None else _allow()
 
     if tool_name in FILE_EDIT_TOOL_NAMES:
         if not (agent_id and lock_dir and repo_namespace):
@@ -530,14 +416,14 @@ def decide(input_payload: dict[str, Any]) -> dict[str, Any]:
                 "apply_patch payload has no extractable target paths; "
                 "refusing fail-open"
             )
-        deny = _gate_write_targets(
+        reason = _gate_write_targets(
             targets,
             agent_id=agent_id,
             lock_dir=lock_dir,
             repo_namespace=repo_namespace,
             cwd=cwd_str,
         )
-        return deny if deny is not None else _allow()
+        return _deny(reason) if reason is not None else _allow()
 
     # MCP tools and any other tool name: only the disallowed-tools check
     # applied (handled above). Allow otherwise.
