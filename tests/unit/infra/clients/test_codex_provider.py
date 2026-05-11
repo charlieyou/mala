@@ -1331,6 +1331,12 @@ def test_hook_identity_modules_cover_safety_critical_dependencies() -> None:
         ``write_targets.py`` would extract a different set of write
         paths from the same shell command or apply_patch payload and
         gate the lock-check on those different paths.
+      * ``src.infra.hooks.codex.lock_policy`` — pure lock-ownership
+        decision (deny-reason templates, shell-expansion metachar
+        regex, cwd resolution, lock-holder lookup) the entry-point
+        imports; a divergent ``lock_policy.py`` would make a different
+        lock-ownership decision on the same write target even when the
+        entry-point and write-target extractors are byte-identical.
       * ``src.infra.hooks.dangerous_commands`` — DANGEROUS_PATTERNS /
         DESTRUCTIVE_GIT_PATTERNS / BASH_TOOL_NAMES the hook imports
         (``codex_pre_tool_use.py:32-36``).
@@ -1348,6 +1354,7 @@ def test_hook_identity_modules_cover_safety_critical_dependencies() -> None:
         "src.infra.hooks.codex_pre_tool_use",
         "src.infra.hooks.codex.shell_parser",
         "src.infra.hooks.codex.write_targets",
+        "src.infra.hooks.codex.lock_policy",
         "src.infra.hooks.dangerous_commands",
         "src.infra.tool_config",
         "src.infra.tools.locking",
@@ -1456,6 +1463,53 @@ def test_combined_module_hash_changes_when_shell_parser_diverges() -> None:
 
     assert baseline != perturbed, (
         "Combined hash did not change when shell_parser bytes were "
+        "perturbed — stale-install regression."
+    )
+
+
+@pytest.mark.unit
+def test_combined_module_hash_changes_when_lock_policy_diverges() -> None:
+    """Regression: a divergence in ``codex/lock_policy.py`` must change
+    the combined hash even when ``codex_pre_tool_use.py`` is byte-identical.
+
+    The lock-ownership decision (deny-reason templates, shell-expansion
+    metachar regex, cwd resolution, lock-holder lookup) lives in a
+    separate module after the T_B10 split. A stale install with the same
+    entry-point and write-target parser but a divergent ``lock_policy.py``
+    would make a different lock-ownership decision on the same write
+    target, silently changing every shell/file-edit gate outcome, so the
+    module bytes must be folded into the hook identity hash.
+    """
+    import hashlib
+    import importlib.util
+
+    from src.infra.clients.codex_provider import (
+        _HOOK_IDENTITY_MODULES,
+        _compute_combined_module_hash,
+    )
+
+    baseline = _compute_combined_module_hash(_HOOK_IDENTITY_MODULES)
+
+    spec_policy = importlib.util.find_spec("src.infra.hooks.codex.lock_policy")
+    assert spec_policy is not None and spec_policy.origin is not None
+    real_bytes = Path(spec_policy.origin).read_bytes()
+
+    h = hashlib.sha256()
+    for name in _HOOK_IDENTITY_MODULES:
+        spec = importlib.util.find_spec(name)
+        assert spec is not None and spec.origin is not None
+        if name == "src.infra.hooks.codex.lock_policy":
+            data = real_bytes + b"\x00"  # perturbed
+        else:
+            data = Path(spec.origin).read_bytes()
+        h.update(name.encode("utf-8"))
+        h.update(b"\0")
+        h.update(len(data).to_bytes(8, "big"))
+        h.update(data)
+    perturbed = h.hexdigest()
+
+    assert baseline != perturbed, (
+        "Combined hash did not change when lock_policy bytes were "
         "perturbed — stale-install regression."
     )
 

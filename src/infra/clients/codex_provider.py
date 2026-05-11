@@ -508,6 +508,14 @@ _HOOK_IDENTITY_MODULES: tuple[str, ...] = (
     # command or apply_patch payload and gate the lock-check on those
     # different paths.
     "src.infra.hooks.codex.write_targets",
+    # Hook imports the lock-policy decision functions
+    # (``_MSG_ENV_MISSING`` / ``_gate_write_targets``) from this module;
+    # a stale install with a byte-identical entry-point but a divergent
+    # ``lock_policy.py`` would make a different lock-ownership decision
+    # on the same write target (different deny-reason wording, different
+    # shell-expansion metachar handling, different cwd-resolution
+    # behavior), silently changing every shell/file-edit gate outcome.
+    "src.infra.hooks.codex.lock_policy",
     # Hook imports BASH_TOOL_NAMES / DANGEROUS_PATTERNS /
     # DESTRUCTIVE_GIT_PATTERNS from this module
     # (``codex_pre_tool_use.py:32-36``); a stale install whose
