@@ -54,6 +54,7 @@ __all__ = [
     "_extract_reviewer_config",
     "_get_first_enabled_code_review",
     "_has_new_code_review_config",
+    "_resolve_epic_verifier_timeout_seconds",
     "_resolve_review_timeout_seconds",
     "_resolve_yaml_codex_options",
 ]
@@ -209,6 +210,29 @@ def _extract_reviewer_config(
         agent_sdk_reviewer_model=getattr(code_review, "agent_sdk_model", "opus"),
         cerberus_config=getattr(code_review, "cerberus", None),
     )
+
+
+def _resolve_epic_verifier_timeout_seconds(
+    validation_config: ValidationConfig | None,
+) -> int:
+    """Resolve the timeout passed to the epic verifier.
+
+    Precedence:
+    - cerberus reviewer with cerberus block: ``cerberus.timeout``.
+    - cerberus reviewer without cerberus block: ``epic_verification.timeout``.
+    - agent_sdk reviewer (validation_config present): ``agent_sdk_timeout``.
+    - No validation_config: ``DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS``.
+    """
+    if validation_config is None:
+        return DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS
+
+    epic_verification = validation_config.epic_verification
+    if epic_verification.reviewer_type == "cerberus":
+        if epic_verification.cerberus is not None:
+            return epic_verification.cerberus.timeout
+        return epic_verification.timeout
+
+    return epic_verification.agent_sdk_timeout
 
 
 def _resolve_review_timeout_seconds(

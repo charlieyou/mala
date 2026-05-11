@@ -15,6 +15,7 @@ from src.orchestration.config_resolution import (
     _ReviewerConfig,
     _derive_config,
     _extract_reviewer_config,
+    _resolve_epic_verifier_timeout_seconds,
     _resolve_review_timeout_seconds,
 )
 from src.orchestration.types import OrchestratorConfig
@@ -630,6 +631,67 @@ class TestResolveReviewTimeoutSeconds:
         )
 
         assert _resolve_review_timeout_seconds(config, _ReviewerConfig()) == 900
+
+
+class TestResolveEpicVerifierTimeoutSeconds:
+    """Tests for epic-verifier timeout precedence."""
+
+    def test_no_validation_config_uses_agent_sdk_default(self) -> None:
+        from src.core.constants import DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS
+
+        assert (
+            _resolve_epic_verifier_timeout_seconds(None)
+            == DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS
+        )
+
+    def test_agent_sdk_uses_agent_sdk_timeout(self) -> None:
+        from src.domain.validation.config_types import (
+            EpicVerifierConfig,
+            ValidationConfig,
+        )
+
+        validation_config = ValidationConfig(
+            epic_verification=EpicVerifierConfig(
+                reviewer_type="agent_sdk",
+                agent_sdk_timeout=777,
+                timeout=999,
+            ),
+        )
+
+        assert _resolve_epic_verifier_timeout_seconds(validation_config) == 777
+
+    def test_cerberus_with_block_uses_cerberus_timeout(self) -> None:
+        from src.domain.validation.config_types import (
+            CerberusConfig,
+            EpicVerifierConfig,
+            ValidationConfig,
+        )
+
+        validation_config = ValidationConfig(
+            epic_verification=EpicVerifierConfig(
+                reviewer_type="cerberus",
+                timeout=999,
+                cerberus=CerberusConfig(timeout=555),
+            ),
+        )
+
+        assert _resolve_epic_verifier_timeout_seconds(validation_config) == 555
+
+    def test_cerberus_without_block_falls_back_to_generic_timeout(self) -> None:
+        from src.domain.validation.config_types import (
+            EpicVerifierConfig,
+            ValidationConfig,
+        )
+
+        validation_config = ValidationConfig(
+            epic_verification=EpicVerifierConfig(
+                reviewer_type="cerberus",
+                timeout=888,
+                cerberus=None,
+            ),
+        )
+
+        assert _resolve_epic_verifier_timeout_seconds(validation_config) == 888
 
 
 class TestExtractReviewerConfig:
