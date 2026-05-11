@@ -496,7 +496,7 @@ class TestEffortPrecedence:
         assert config.coder == "claude"
 
     def test_yaml_effort_invalid_value_raises(self, tmp_path: Path) -> None:
-        from src.domain.validation.config import ConfigError
+        from src.domain.validation.config_types import ConfigError
         from src.domain.validation.config_loader import load_config
 
         yaml_path = tmp_path / "mala.yaml"
@@ -508,7 +508,7 @@ class TestEffortPrecedence:
     def test_yaml_amp_deep_effort_rejects_unsupported_values(
         self, tmp_path: Path, effort: str
     ) -> None:
-        from src.domain.validation.config import ConfigError
+        from src.domain.validation.config_types import ConfigError
         from src.domain.validation.config_loader import load_config
 
         yaml_path = tmp_path / "mala.yaml"

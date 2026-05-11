@@ -995,7 +995,7 @@ class TestBuildEventRunConfig:
 
     def test_with_validation_triggers(self, tmp_path: Path) -> None:
         """Should build EventRunConfig with validation triggers summary."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             SessionEndTriggerConfig,
             TriggerCommandRef,

@@ -498,7 +498,7 @@ class TestGetTriggerConfig:
         coordinator: RunCoordinator,
     ) -> None:
         """_get_trigger_config returns run_end config for TriggerType.RUN_END."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             FireOn,
             RunEndTriggerConfig,
@@ -524,7 +524,7 @@ class TestGetTriggerConfig:
         coordinator: RunCoordinator,
     ) -> None:
         """_get_trigger_config returns epic_completion config."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             EpicCompletionTriggerConfig,
             EpicDepth,
             FailureMode,
@@ -554,7 +554,7 @@ class TestGetTriggerConfig:
         coordinator: RunCoordinator,
     ) -> None:
         """_get_trigger_config returns session_end config."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             SessionEndTriggerConfig,
             TriggerCommandRef,
@@ -580,7 +580,7 @@ class TestGetTriggerConfig:
         coordinator: RunCoordinator,
     ) -> None:
         """_get_trigger_config returns None when trigger type not configured."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             EpicCompletionTriggerConfig,
             EpicDepth,
             FailureMode,
@@ -649,7 +649,7 @@ class TestRunTriggerCodeReview:
         coordinator_with_review_runner: tuple[RunCoordinator, MagicMock],
     ) -> None:
         """_run_trigger_code_review returns None when code_review is disabled."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             FireOn,
             RunEndTriggerConfig,
@@ -683,7 +683,7 @@ class TestRunTriggerCodeReview:
         coordinator_with_review_runner: tuple[RunCoordinator, MagicMock],
     ) -> None:
         """_run_trigger_code_review returns result from CumulativeReviewRunner."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -741,7 +741,7 @@ class TestRunTriggerCodeReview:
         intentional skips. This ensures the caller emits an error event rather
         than a skipped event.
         """
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -810,7 +810,7 @@ class TestRunTriggerCodeReview:
         intentional skips. This ensures the caller emits an error event rather
         than a skipped event.
         """
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -871,7 +871,7 @@ class TestRunTriggerCodeReview:
         coordinator_with_review_runner: tuple[RunCoordinator, MagicMock],
     ) -> None:
         """_run_trigger_code_review skips review when is_fixer_session is True."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -1080,7 +1080,7 @@ class TestCodeReviewRemediateFailureMode:
         failures that abort validation immediately. The failure_mode setting
         only applies to finding threshold failures, not execution errors.
         """
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -1167,7 +1167,7 @@ class TestRunEndRunMetadata:
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """run_end should record run_validation with coverage percent."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CommandConfig,
             CommandsConfig,
             FailureMode,
@@ -1237,7 +1237,7 @@ class TestRunEndRunMetadata:
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Interrupted command remediation should still record run validation."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CommandConfig,
             CommandsConfig,
             FailureMode,
@@ -1323,7 +1323,7 @@ class TestRunEndRunMetadata:
         that abort validation immediately, without following the failure_mode
         remediation path. The error event is the terminal event.
         """
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -1409,7 +1409,7 @@ class TestFindingThresholdEnforcement:
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Findings below threshold allow validation to pass."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -1496,7 +1496,7 @@ class TestFindingThresholdEnforcement:
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Findings exceeding threshold abort when max_retries=0."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -1588,7 +1588,7 @@ class TestFindingThresholdEnforcement:
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """finding_threshold='none' never fails on findings."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -1673,7 +1673,7 @@ class TestFindingThresholdEnforcement:
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """failure_mode=CONTINUE with findings exceeding threshold records failure."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -1767,7 +1767,7 @@ class TestFindingThresholdEnforcement:
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """failure_mode=REMEDIATE with fixer fixing findings passes validation."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -1871,7 +1871,7 @@ class TestFindingThresholdEnforcement:
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """failure_mode=REMEDIATE with fixer failing records failure and continues."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -1979,7 +1979,7 @@ class TestFindingThresholdEnforcement:
         (execution error), we should emit on_trigger_code_review_error and abort,
         NOT on_trigger_code_review_failed (which implies findings exceeded threshold).
         """
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -2097,7 +2097,7 @@ class TestR12CodeReviewGating:
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """failure_mode=abort skips code_review when command fails."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             CommandConfig,
             CommandsConfig,
@@ -2172,7 +2172,7 @@ class TestR12CodeReviewGating:
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """failure_mode=continue runs code_review even when command fails."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             CommandConfig,
             CommandsConfig,
@@ -2255,7 +2255,7 @@ class TestR12CodeReviewGating:
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """failure_mode=remediate runs code_review after successful remediation."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             CommandConfig,
             CommandsConfig,
@@ -2361,7 +2361,7 @@ class TestR12CodeReviewGating:
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Remediation success resumes remaining validation commands."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CommandConfig,
             CommandsConfig,
             FailureMode,
@@ -2471,7 +2471,7 @@ class TestR12CodeReviewGating:
         exceeding threshold with failure_mode=REMEDIATE, and fixer succeeds. The
         command failure must still cause the run to return "failed".
         """
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             CommandConfig,
             CommandsConfig,
@@ -2600,7 +2600,7 @@ class TestTriggerCodeReviewEvents:
         mock_sdk_client_factory: MagicMock,
     ) -> tuple[RunCoordinator, MagicMock, Any]:
         """Create a RunCoordinator with mock review runner and event sink."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             ValidationConfig,
             ValidationTriggersConfig,
         )
@@ -2640,7 +2640,7 @@ class TestTriggerCodeReviewEvents:
         coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
     ) -> None:
         """started → passed when review has no blocking findings."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             RunEndTriggerConfig,
@@ -2696,7 +2696,7 @@ class TestTriggerCodeReviewEvents:
         coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
     ) -> None:
         """started → failed when blocking findings remain."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             RunEndTriggerConfig,
@@ -2765,7 +2765,7 @@ class TestTriggerCodeReviewEvents:
         coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
     ) -> None:
         """started → skipped when result.status == 'skipped'."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             RunEndTriggerConfig,
@@ -2817,7 +2817,7 @@ class TestTriggerCodeReviewEvents:
         coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
     ) -> None:
         """started → error when result.status == 'failed' (execution error)."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             RunEndTriggerConfig,
@@ -2872,7 +2872,7 @@ class TestTriggerCodeReviewEvents:
         coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
     ) -> None:
         """started → error when exception bubbles up."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             RunEndTriggerConfig,
@@ -2920,7 +2920,7 @@ class TestTriggerCodeReviewEvents:
         coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
     ) -> None:
         """No events when code review is disabled."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             RunEndTriggerConfig,
@@ -2963,7 +2963,7 @@ class TestTriggerCodeReviewEvents:
         coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
     ) -> None:
         """No events when code_review is not configured."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             RunEndTriggerConfig,
             TriggerType,
@@ -2997,7 +2997,7 @@ class TestTriggerCodeReviewEvents:
         coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
     ) -> None:
         """started → fixer_started → fixer_completed → passed."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             RunEndTriggerConfig,
@@ -3092,7 +3092,7 @@ class TestTriggerCodeReviewEvents:
         coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
     ) -> None:
         """started → fixer_started → fixer_completed → ... → failed."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             RunEndTriggerConfig,
@@ -3172,7 +3172,7 @@ class TestTriggerCodeReviewEvents:
         coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
     ) -> None:
         """Verify exactly one end event is emitted per execution."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             RunEndTriggerConfig,
@@ -3237,7 +3237,7 @@ class TestTriggerCodeReviewEvents:
         another end event from the finally block if code_review_end_status was
         set before the exception occurred.
         """
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             RunEndTriggerConfig,
@@ -3303,7 +3303,7 @@ class TestTriggerCodeReviewEvents:
         review_status: Literal["success", "skipped", "failed"],
         expected_event: str,
     ) -> None:
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             RunEndTriggerConfig,
@@ -3353,7 +3353,7 @@ class TestTriggerCodeReviewEvents:
         self,
         coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
     ) -> None:
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             RunEndTriggerConfig,
@@ -3414,7 +3414,7 @@ class TestTriggerCodeReviewEvents:
         self,
         coordinator_with_review_runner: tuple[RunCoordinator, MagicMock, Any],
     ) -> None:
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             RunEndTriggerConfig,
@@ -3490,7 +3490,7 @@ class TestTriggerCodeReviewEvents:
         fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             CommandConfig,
             CommandsConfig,
@@ -3578,7 +3578,7 @@ class TestTriggerCodeReviewEvents:
         fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             RunEndTriggerConfig,

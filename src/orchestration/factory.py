@@ -76,7 +76,7 @@ if TYPE_CHECKING:
         EpicVerifierProtocol,
         GateChecker,
     )
-    from src.domain.validation.config import (
+    from src.domain.validation.config_types import (
         CerberusConfig,
         ValidationConfig,
         VerificationRetryPolicy,
@@ -118,7 +118,7 @@ def _resolve_yaml_codex_options(
     """
     if yaml_codex_options is None:
         return None
-    from src.domain.validation.config import CodexOptionsConfig
+    from src.domain.validation.config_types import CodexOptionsConfig
     from src.infra.io.config import CodexOptions
 
     if not isinstance(yaml_codex_options, CodexOptionsConfig):
@@ -556,7 +556,7 @@ def _get_reviewer_config(repo_path: Path) -> _ReviewerConfig:
     Returns:
         _ReviewerConfig with reviewer settings.
     """
-    from src.domain.validation.config import ConfigError
+    from src.domain.validation.config_types import ConfigError
     from src.domain.validation.config_loader import ConfigMissingError, load_config
 
     try:
@@ -1135,7 +1135,7 @@ def create_orchestrator(
         )
         orchestrator = create_orchestrator(config, deps=deps)
     """
-    from src.domain.validation.config import ConfigError
+    from src.domain.validation.config_types import ConfigError
     from src.domain.validation.config_loader import ConfigMissingError, load_config
     from src.domain.validation.config_merger import merge_configs
     from src.domain.validation.preset_registry import PresetRegistry

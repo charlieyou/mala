@@ -29,7 +29,10 @@ if TYPE_CHECKING:
     from src.core.protocols.issue import IssueProvider
     from src.core.protocols.issue_lifecycle_port import IssueLifecyclePort
     from src.core.protocols.validation import EpicVerifierProtocol
-    from src.domain.validation.config import EpicCompletionTriggerConfig, TriggerType
+    from src.domain.validation.config_types import (
+        EpicCompletionTriggerConfig,
+        TriggerType,
+    )
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.pipeline.issue_result import IssueResult
 
@@ -261,7 +264,7 @@ class EpicVerificationCoordinator:
             epic_id: The epic that completed verification.
             verification_passed: Whether the epic passed verification.
         """
-        from src.domain.validation.config import EpicDepth, FireOn, TriggerType
+        from src.domain.validation.config_types import EpicDepth, FireOn, TriggerType
 
         trigger_config = (
             self.epic_completion_trigger_provider.get_epic_completion_trigger()

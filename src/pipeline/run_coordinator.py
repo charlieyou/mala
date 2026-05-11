@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from src.core.protocols.sdk import McpServerFactory
     from src.core.protocols.validation import GateChecker
     from src.domain.validation.result import ValidationResult
-    from src.domain.validation.config import (
+    from src.domain.validation.config_types import (
         BaseTriggerConfig,
         TriggerType,
         ValidationConfig,
@@ -482,7 +482,7 @@ class RunCoordinator:
         context: RunValidationContext,
         runtime: _RunValidationRuntime,
     ) -> _RunValidationAction:
-        from src.domain.validation.config import FailureMode
+        from src.domain.validation.config_types import FailureMode
 
         while runtime.trigger_config is None:
             if not self._trigger_queue:
@@ -603,7 +603,7 @@ class RunCoordinator:
     async def _next_code_review_action(
         self, runtime: _RunValidationRuntime
     ) -> _RunValidationAction:
-        from src.domain.validation.config import FailureMode
+        from src.domain.validation.config_types import FailureMode
 
         assert runtime.trigger_type is not None
         assert runtime.trigger_config is not None
@@ -785,7 +785,7 @@ class RunCoordinator:
         runtime: _RunValidationRuntime,
         failure: FailureRecord,
     ) -> str:
-        from src.domain.validation.config import FailureMode
+        from src.domain.validation.config_types import FailureMode
 
         if runtime.trigger_config is None:
             return "abort"
@@ -894,7 +894,7 @@ class RunCoordinator:
 
         if self.run_metadata is None:
             return
-        from src.domain.validation.config import TriggerType as TriggerTypeEnum
+        from src.domain.validation.config_types import TriggerType as TriggerTypeEnum
 
         if trigger_type != TriggerTypeEnum.RUN_END:
             return
@@ -1111,7 +1111,7 @@ class RunCoordinator:
         Returns:
             The trigger config if defined, None otherwise.
         """
-        from src.domain.validation.config import TriggerType
+        from src.domain.validation.config_types import TriggerType
 
         if trigger_type == TriggerType.EPIC_COMPLETION:
             return triggers_config.epic_completion

@@ -36,7 +36,7 @@ from tests.helpers.protocol_stubs import (
 )
 from src.core.protocols.events import MalaEventSink
 from src.domain.evidence_check import GateResult
-from src.domain.validation.config import PromptValidationCommands
+from src.domain.validation.config_types import PromptValidationCommands
 from tests.fakes.agent_provider import FakeAgentProvider
 from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 

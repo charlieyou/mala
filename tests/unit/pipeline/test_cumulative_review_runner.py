@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from src.domain.validation.config import FailureMode, TriggerType
+from src.domain.validation.config_types import FailureMode, TriggerType
 from src.pipeline.cumulative_review_runner import CumulativeReviewRunner
 
 if TYPE_CHECKING:

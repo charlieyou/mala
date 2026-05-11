@@ -17,7 +17,7 @@ from src.domain.prompts import (
     load_prompt,
     load_prompts,
 )
-from src.domain.validation.config import PromptValidationCommands
+from src.domain.validation.config_types import PromptValidationCommands
 from src.infra.tools.env import PROMPTS_DIR
 
 if TYPE_CHECKING:

@@ -148,7 +148,7 @@ def parse_coder(
     Args:
         raw: Raw value, "claude", "amp", or "codex" (after strip; case-sensitive
             to match the strict-enum YAML schema in
-            src/domain/validation/config.py).
+            src/domain/validation/config_parser.py).
         source: Source name for error messages (e.g., "MALA_CODER", "CLI").
 
     Returns:

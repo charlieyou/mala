@@ -40,7 +40,7 @@ if TYPE_CHECKING:
         GateResultProtocol,
         ValidationSpecProtocol,
     )
-    from src.domain.validation.config import ValidationConfig
+    from src.domain.validation.config_types import ValidationConfig
     from src.domain.validation.spec import ValidationSpec
 
 

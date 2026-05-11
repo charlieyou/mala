@@ -29,7 +29,7 @@ from src.core.session_end_result import (
     CommandOutcome,
     SessionEndResult,
 )
-from src.domain.validation.config import ConfigError, TriggerType
+from src.domain.validation.config_types import ConfigError, TriggerType
 from src.pipeline.trigger_plan import resolve_trigger
 
 if TYPE_CHECKING:
@@ -56,7 +56,7 @@ if TYPE_CHECKING:
         RetryState,
         ReviewIssue,
     )
-    from src.domain.validation.config import (
+    from src.domain.validation.config_types import (
         SessionEndTriggerConfig,
         ValidationConfig,
     )
@@ -264,7 +264,7 @@ class SessionCallbackFactory:
         - code_review uses base_sha..HEAD range
         - failure_mode=abort sets abort_event; continue proceeds regardless
         """
-        from src.domain.validation.config import FailureMode
+        from src.domain.validation.config_types import FailureMode
 
         # Get session_end config
         validation_config = self._get_validation_config()
@@ -844,7 +844,7 @@ class SessionCallbackFactory:
         Returns:
             CodeReviewResult or None if code_review not configured/enabled.
         """
-        from src.domain.validation.config import FailureMode, TriggerType
+        from src.domain.validation.config_types import FailureMode, TriggerType
 
         code_review_config = session_end_config.code_review
         if code_review_config is None or not code_review_config.enabled:

@@ -13,7 +13,7 @@ import pytest
 if TYPE_CHECKING:
     from pytest import LogCaptureFixture
 
-from src.domain.validation.config import ConfigError, FailureMode
+from src.domain.validation.config_types import ConfigError, FailureMode
 from src.domain.validation.config_loader import (
     _parse_cerberus_config,
     _parse_code_review_config,
@@ -675,7 +675,7 @@ class TestPerIssueReviewParsing:
 
     def test_per_issue_review_all_fields(self) -> None:
         """All per_issue_review fields are parsed correctly."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {
             "preset": "python-uv",
@@ -703,7 +703,7 @@ class TestPerIssueReviewParsing:
 
     def test_per_issue_review_minimal(self) -> None:
         """Minimal per_issue_review (just enabled) works with defaults."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {
             "preset": "python-uv",
@@ -718,7 +718,7 @@ class TestPerIssueReviewParsing:
 
     def test_per_issue_review_missing_defaults_to_disabled(self) -> None:
         """Missing per_issue_review defaults to CodeReviewConfig(enabled=False)."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {"preset": "python-uv"}
         config = ValidationConfig.from_dict(data)
@@ -728,7 +728,7 @@ class TestPerIssueReviewParsing:
 
     def test_per_issue_review_null_defaults_to_disabled(self) -> None:
         """Explicit null per_issue_review defaults to CodeReviewConfig(enabled=False)."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {"preset": "python-uv", "per_issue_review": None}
         config = ValidationConfig.from_dict(data)
@@ -738,7 +738,7 @@ class TestPerIssueReviewParsing:
 
     def test_per_issue_review_not_dict_raises(self) -> None:
         """Non-dict per_issue_review raises ConfigError."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {"preset": "python-uv", "per_issue_review": "invalid"}
         with pytest.raises(ConfigError, match=r"per_issue_review must be an object"):
@@ -746,7 +746,7 @@ class TestPerIssueReviewParsing:
 
     def test_per_issue_review_invalid_enabled_raises(self) -> None:
         """Non-boolean enabled in per_issue_review raises ConfigError."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {
             "preset": "python-uv",
@@ -759,7 +759,7 @@ class TestPerIssueReviewParsing:
 
     def test_per_issue_review_unknown_field_raises(self) -> None:
         """Unknown field in per_issue_review raises ConfigError."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {
             "preset": "python-uv",
@@ -770,7 +770,7 @@ class TestPerIssueReviewParsing:
 
     def test_per_issue_review_agent_sdk_type(self) -> None:
         """Agent SDK reviewer type is parsed correctly."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {
             "preset": "python-uv",
@@ -791,7 +791,7 @@ class TestPerIssueReviewParsing:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """baseline in per_issue_review emits warning and is ignored."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         data: dict[str, object] = {
             "preset": "python-uv",
@@ -811,7 +811,7 @@ class TestPerIssueReviewParsing:
 
     def test_per_issue_review_no_default_baseline(self) -> None:
         """per_issue_review does NOT get default baseline like epic_completion/run_end."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         # If we were treating per_issue_review as a trigger, it might get
         # an unexpected default baseline. This test ensures it doesn't.

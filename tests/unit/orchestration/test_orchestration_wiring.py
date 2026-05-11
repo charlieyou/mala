@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.domain.prompts import PromptProvider
-from src.domain.validation.config import PromptValidationCommands
+from src.domain.validation.config_types import PromptValidationCommands
 from src.infra.io.config import MalaConfig
 from src.infra.clients.amp_provider import _create_amp_mcp_server_factory
 from src.orchestration.orchestration_wiring import (

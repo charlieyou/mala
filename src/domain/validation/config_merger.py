@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.domain.validation.config import (
+from src.domain.validation.config_types import (
     BUILTIN_COMMAND_NAMES,
     CommandsConfig,
     ConfigError,
@@ -31,10 +31,10 @@ from src.domain.validation.config import (
 )
 
 if TYPE_CHECKING:
-    from src.domain.validation.config import (
+    from src.domain.validation.config_types import (
         CommandConfig,
     )
-    from src.domain.validation.config import (
+    from src.domain.validation.config_types import (
         YamlCoverageConfig,
     )
 

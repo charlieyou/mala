@@ -19,7 +19,7 @@ from src.core.session_end_result import (
     SessionEndResult,
     SessionEndRetryState,
 )
-from src.domain.validation.config import (
+from src.domain.validation.config_types import (
     CodeReviewConfig,
     CommandConfig,
     CommandsConfig,

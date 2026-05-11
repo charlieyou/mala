@@ -42,7 +42,7 @@ if TYPE_CHECKING:
         ReviewOutcome,
         TransitionResult,
     )
-    from src.domain.validation.config import PromptValidationCommands
+    from src.domain.validation.config_types import PromptValidationCommands
     from src.core.session_end_result import SessionEndResult
 
     from .agent_session_runner import (

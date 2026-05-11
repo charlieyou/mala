@@ -34,7 +34,7 @@ from src.domain.evidence_check import (
     _recognize_spec_pattern_command,
     check_evidence_against_spec,
 )
-from src.domain.validation.config import (
+from src.domain.validation.config_types import (
     CommandConfig,
     CommandsConfig,
     ConfigError,

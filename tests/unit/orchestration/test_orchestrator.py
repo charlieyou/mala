@@ -3249,7 +3249,7 @@ class TestOrchestratorFactory:
 
     def test_create_orchestrator_invalid_config_fails(self, tmp_path: Path) -> None:
         """create_orchestrator fails fast on invalid mala.yaml."""
-        from src.domain.validation.config import ConfigError
+        from src.domain.validation.config_types import ConfigError
         from src.orchestration.factory import create_orchestrator
         from src.orchestration.types import OrchestratorConfig
 
@@ -4236,7 +4236,7 @@ class TestBuildResumePrompt:
     def test_returns_none_when_no_issues(self, tmp_path: Path) -> None:
         """Returns None when review_issues is empty."""
         from src.domain.prompts import PromptProvider
-        from src.domain.validation.config import PromptValidationCommands
+        from src.domain.validation.config_types import PromptValidationCommands
         from src.orchestration.orchestrator import _build_resume_prompt
 
         prompts = PromptProvider(
@@ -4271,7 +4271,7 @@ class TestBuildResumePrompt:
     def test_formats_prompt_with_review_issues(self, tmp_path: Path) -> None:
         """Formats review_followup_prompt with issues and validation commands."""
         from src.domain.prompts import PromptProvider
-        from src.domain.validation.config import PromptValidationCommands
+        from src.domain.validation.config_types import PromptValidationCommands
         from src.orchestration.orchestrator import _build_resume_prompt
 
         prompts = PromptProvider(
@@ -4331,7 +4331,7 @@ class TestBuildResumePrompt:
     def test_uses_attempt_1_for_resume(self, tmp_path: Path) -> None:
         """Resume always uses attempt=1 since retry counters reset."""
         from src.domain.prompts import PromptProvider
-        from src.domain.validation.config import PromptValidationCommands
+        from src.domain.validation.config_types import PromptValidationCommands
         from src.orchestration.orchestrator import _build_resume_prompt
 
         prompts = PromptProvider(
@@ -4367,7 +4367,7 @@ class TestBuildResumePrompt:
     def test_includes_custom_commands_section(self, tmp_path: Path) -> None:
         """Custom commands are included in the prompt."""
         from src.domain.prompts import PromptProvider
-        from src.domain.validation.config import PromptValidationCommands
+        from src.domain.validation.config_types import PromptValidationCommands
         from src.orchestration.orchestrator import _build_resume_prompt
 
         prompts = PromptProvider(
@@ -4410,7 +4410,7 @@ class TestCaptureRunStartCommit:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Captures HEAD commit when run_end trigger is configured."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             FireOn,
             RunEndTriggerConfig,
@@ -4473,7 +4473,7 @@ class TestCaptureRunStartCommit:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Skips capture when run_start_commit already has a value."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             FireOn,
             RunEndTriggerConfig,
@@ -4516,7 +4516,7 @@ class TestCaptureRunStartCommit:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Captures HEAD commit when epic_completion has code_review enabled."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             EpicCompletionTriggerConfig,
             EpicDepth,
@@ -4560,7 +4560,7 @@ class TestCaptureRunStartCommit:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Skips capture when epic_completion exists but code_review is disabled."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             EpicCompletionTriggerConfig,
             EpicDepth,
@@ -4612,14 +4612,14 @@ class TestFireRunEndTrigger:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Queues trigger when fire_on=SUCCESS and all issues succeeded."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             FireOn,
             RunEndTriggerConfig,
             ValidationConfig,
             ValidationTriggersConfig,
         )
-        from src.domain.validation.config import TriggerType
+        from src.domain.validation.config_types import TriggerType
 
         triggers = ValidationTriggersConfig(
             run_end=RunEndTriggerConfig(
@@ -4665,7 +4665,7 @@ class TestFireRunEndTrigger:
 
         Per spec R7: fire_on=success fires if success_count > 0.
         """
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             FireOn,
             RunEndTriggerConfig,
@@ -4720,14 +4720,14 @@ class TestFireRunEndTrigger:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Queues trigger when fire_on=FAILURE and some issues failed."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             FireOn,
             RunEndTriggerConfig,
             ValidationConfig,
             ValidationTriggersConfig,
         )
-        from src.domain.validation.config import TriggerType
+        from src.domain.validation.config_types import TriggerType
 
         triggers = ValidationTriggersConfig(
             run_end=RunEndTriggerConfig(
@@ -4769,7 +4769,7 @@ class TestFireRunEndTrigger:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Skips trigger when fire_on=FAILURE but all issues succeeded."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             FireOn,
             RunEndTriggerConfig,
@@ -4814,7 +4814,7 @@ class TestFireRunEndTrigger:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Queues trigger on both success and failure when fire_on=BOTH."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             FireOn,
             RunEndTriggerConfig,
@@ -4863,7 +4863,7 @@ class TestFireRunEndTrigger:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Skips trigger when abort_run is True."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             FireOn,
             RunEndTriggerConfig,
@@ -4910,7 +4910,7 @@ class TestFireRunEndTrigger:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Skips trigger when total_count is 0 (no issues processed)."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             FireOn,
             RunEndTriggerConfig,
@@ -4954,14 +4954,14 @@ class TestFireRunEndTrigger:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Fires trigger when fire_on=FAILURE and all issues failed (0 success)."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             FireOn,
             RunEndTriggerConfig,
             ValidationConfig,
             ValidationTriggersConfig,
         )
-        from src.domain.validation.config import TriggerType
+        from src.domain.validation.config_types import TriggerType
 
         triggers = ValidationTriggersConfig(
             run_end=RunEndTriggerConfig(
@@ -5296,7 +5296,7 @@ class TestGetTrackReviewIssues:
         This tests the fix for mala-6xp5: users should be able to disable
         track_review_issues without enabling code_review.
         """
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             SessionEndTriggerConfig,
@@ -5328,7 +5328,7 @@ class TestGetTrackReviewIssues:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """track_review_issues=true should be respected when code_review is disabled."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             SessionEndTriggerConfig,
@@ -5358,7 +5358,7 @@ class TestGetTrackReviewIssues:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """track_review_issues should work normally when code_review is enabled."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             SessionEndTriggerConfig,
@@ -5388,7 +5388,7 @@ class TestGetTrackReviewIssues:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Falls back to env var when session_end has no code_review config."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             SessionEndTriggerConfig,
             ValidationConfig,

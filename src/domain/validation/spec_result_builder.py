@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from src.core.protocols.events import MalaEventSink
     from src.core.protocols.infra import CommandRunnerPort, EnvConfigPort
 
-    from .config import YamlCoverageConfig
+    from .config_types import YamlCoverageConfig
     from .e2e import E2EResult
     from .result import ValidationStepResult
     from .spec import (

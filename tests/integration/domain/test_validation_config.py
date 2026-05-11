@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from src.domain.validation.code_pattern_matcher import filter_matching_files
-from src.domain.validation.config import ConfigError
+from src.domain.validation.config_types import ConfigError
 from src.domain.validation.config_loader import load_config
 from src.domain.validation.config_merger import merge_configs
 from src.domain.validation.preset_registry import PresetRegistry
@@ -32,7 +32,7 @@ from src.domain.validation.validation_gating import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.domain.validation.config import ValidationConfig
+    from src.domain.validation.config_types import ValidationConfig
 
 
 def _create_mala_yaml(project_dir: Path, content: str) -> None:
@@ -929,7 +929,7 @@ class TestCustomCommandsIntegration:
         be tested once inline custom command parsing is implemented (see
         mala-81qt epic).
         """
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CommandConfig,
             CommandsConfig,
             CustomCommandConfig,

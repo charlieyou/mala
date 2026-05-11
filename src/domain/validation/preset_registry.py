@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import yaml
 
-from src.domain.validation.config import (
+from src.domain.validation.config_types import (
     BUILTIN_COMMAND_NAMES,
     ConfigError,
     PresetNotFoundError,
@@ -23,7 +23,7 @@ from src.domain.validation.config import (
 from src.domain.validation.config_loader import _build_config
 
 if TYPE_CHECKING:
-    from src.domain.validation.config import ValidationConfig
+    from src.domain.validation.config_types import ValidationConfig
 
 
 class PresetRegistry:

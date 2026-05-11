@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from src.domain.validation.config import TriggerType
+from src.domain.validation.config_types import TriggerType
 from src.pipeline.issue_result import IssueResult
 
 if TYPE_CHECKING:

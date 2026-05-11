@@ -9,10 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.domain.validation.config import ConfigError
+from src.domain.validation.config_types import ConfigError
 
 if TYPE_CHECKING:
-    from src.domain.validation.config import (
+    from src.domain.validation.config_types import (
         BaseTriggerConfig,
         TriggerCommandRef,
         TriggerType,

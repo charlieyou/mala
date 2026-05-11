@@ -16,7 +16,7 @@ from typing import Any, cast
 import pytest
 import yaml
 
-from src.domain.validation.config import (
+from src.domain.validation.config_types import (
     ConfigError,
     FailureMode,
 )

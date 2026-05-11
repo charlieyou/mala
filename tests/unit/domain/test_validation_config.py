@@ -15,7 +15,7 @@ import pytest
 if TYPE_CHECKING:
     import pathlib
 
-from src.domain.validation.config import (
+from src.domain.validation.config_types import (
     CommandConfig,
     CommandsConfig,
     ConfigError,

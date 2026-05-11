@@ -11,7 +11,7 @@ import shutil
 from pathlib import Path
 
 
-from src.domain.validation.config import (
+from src.domain.validation.config_types import (
     CommandConfig,
     CommandsConfig,
     CustomCommandConfig,
@@ -316,7 +316,7 @@ coverage:
         """
         import pytest
 
-        from src.domain.validation.config import ConfigError
+        from src.domain.validation.config_types import ConfigError
 
         config_content = """
 commands:
@@ -659,7 +659,7 @@ class TestTriggerCommandRefValidation:
         """build_validation_spec raises ConfigError for invalid trigger command ref."""
         import pytest
 
-        from src.domain.validation.config import ConfigError
+        from src.domain.validation.config_types import ConfigError
 
         # Create mala.yaml with trigger referencing non-existent command
         yaml_content = """\
@@ -744,7 +744,7 @@ validation_triggers:
         """Error message includes list of available commands including customs."""
         import pytest
 
-        from src.domain.validation.config import ConfigError
+        from src.domain.validation.config_types import ConfigError
 
         yaml_content = """\
 preset: python-uv
@@ -809,7 +809,7 @@ evidence_check:
         """Invalid evidence_check key produces error listing available commands."""
         import pytest
 
-        from src.domain.validation.config import ConfigError
+        from src.domain.validation.config_types import ConfigError
 
         yaml_content = """\
 preset: python-uv

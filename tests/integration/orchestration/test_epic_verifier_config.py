@@ -27,21 +27,21 @@ class TestEpicVerifierConfigDataclass:
 
     def test_default_reviewer_type_is_agent_sdk(self) -> None:
         """EpicVerifierConfig defaults to agent_sdk reviewer."""
-        from src.domain.validation.config import EpicVerifierConfig
+        from src.domain.validation.config_types import EpicVerifierConfig
 
         config = EpicVerifierConfig()
         assert config.reviewer_type == "agent_sdk"
 
     def test_can_create_with_cerberus_reviewer_type(self) -> None:
         """EpicVerifierConfig accepts cerberus reviewer_type."""
-        from src.domain.validation.config import EpicVerifierConfig
+        from src.domain.validation.config_types import EpicVerifierConfig
 
         config = EpicVerifierConfig(reviewer_type="cerberus")
         assert config.reviewer_type == "cerberus"
 
     def test_is_frozen(self) -> None:
         """EpicVerifierConfig is immutable (frozen)."""
-        from src.domain.validation.config import EpicVerifierConfig
+        from src.domain.validation.config_types import EpicVerifierConfig
 
         config = EpicVerifierConfig()
         with pytest.raises(AttributeError):
@@ -74,7 +74,7 @@ class TestParseEpicVerificationConfig:
 
     def test_rejects_invalid_reviewer_type(self) -> None:
         """Parser raises ConfigError for invalid reviewer_type."""
-        from src.domain.validation.config import ConfigError
+        from src.domain.validation.config_types import ConfigError
         from src.domain.validation.config_loader import _parse_epic_verification_config
 
         with pytest.raises(ConfigError, match="must be 'cerberus' or 'agent_sdk'"):
@@ -82,7 +82,7 @@ class TestParseEpicVerificationConfig:
 
     def test_rejects_unknown_fields(self) -> None:
         """Parser raises ConfigError for unknown fields."""
-        from src.domain.validation.config import ConfigError
+        from src.domain.validation.config_types import ConfigError
         from src.domain.validation.config_loader import _parse_epic_verification_config
 
         with pytest.raises(ConfigError, match="Unknown field 'unknown'"):
@@ -90,7 +90,7 @@ class TestParseEpicVerificationConfig:
 
     def test_rejects_non_dict_data(self) -> None:
         """Parser raises ConfigError when data is not a dict."""
-        from src.domain.validation.config import ConfigError
+        from src.domain.validation.config_types import ConfigError
         from src.domain.validation.config_loader import _parse_epic_verification_config
 
         with pytest.raises(ConfigError, match="must be an object"):
@@ -223,7 +223,7 @@ class TestCreateEpicVerificationModel:
 
     def test_cerberus_prefers_cerberus_config(self, tmp_path: Path) -> None:
         """cerberus prefers cerberus_config over mala_config for timeout/env/args."""
-        from src.domain.validation.config import CerberusConfig
+        from src.domain.validation.config_types import CerberusConfig
         from src.infra.clients.cerberus_epic_verifier import CerberusEpicVerifier
         from src.infra.io.config import MalaConfig
         from src.orchestration.factory import _create_epic_verification_model
@@ -293,7 +293,10 @@ class TestValidationConfigEpicVerification:
 
     def test_validation_config_has_epic_verification_field(self) -> None:
         """ValidationConfig has epic_verification field with default."""
-        from src.domain.validation.config import EpicVerifierConfig, ValidationConfig
+        from src.domain.validation.config_types import (
+            EpicVerifierConfig,
+            ValidationConfig,
+        )
 
         config = ValidationConfig()
         assert hasattr(config, "epic_verification")
@@ -302,7 +305,7 @@ class TestValidationConfigEpicVerification:
 
     def test_validation_config_from_dict_parses_epic_verification(self) -> None:
         """ValidationConfig.from_dict correctly parses epic_verification block."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         data = {
             "epic_verification": {"reviewer_type": "agent_sdk"},
@@ -313,7 +316,7 @@ class TestValidationConfigEpicVerification:
 
     def test_validation_config_from_dict_parses_cerberus_reviewer(self) -> None:
         """ValidationConfig.from_dict parses cerberus reviewer_type."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         data = {
             "epic_verification": {"reviewer_type": "cerberus"},
@@ -326,7 +329,7 @@ class TestValidationConfigEpicVerification:
         self,
     ) -> None:
         """ValidationConfig.from_dict defaults epic_verification when absent."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         data = {"commands": {"test": {"command": "echo test"}}}
         config = ValidationConfig.from_dict(data)  # ty:ignore[invalid-argument-type]
@@ -430,7 +433,7 @@ class TestEpicVerifierConfigIntegration:
 
     def test_validation_config_to_factory_path(self, tmp_path: Path) -> None:
         """Integration: ValidationConfig.from_dict → factory functions."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
         from src.infra.epic_verifier import ClaudeEpicVerificationModel
         from src.orchestration.factory import (
             _check_epic_verifier_availability,

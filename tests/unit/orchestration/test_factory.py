@@ -140,7 +140,7 @@ class TestDeriveConfig:
 
     def test_max_gate_retries_from_session_end_config(self) -> None:
         """max_gate_retries is extracted from session_end.max_retries."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             SessionEndTriggerConfig,
             ValidationConfig,
@@ -169,7 +169,7 @@ class TestDeriveConfig:
 
     def test_max_gate_retries_none_when_no_session_end(self) -> None:
         """max_gate_retries is None when no session_end trigger is configured."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         validation_config = ValidationConfig()
         orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
@@ -198,7 +198,7 @@ class TestDeriveConfig:
 
     def test_max_gate_retries_none_when_session_end_max_retries_unset(self) -> None:
         """max_gate_retries is None when session_end.max_retries is not set."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             SessionEndTriggerConfig,
             ValidationConfig,
@@ -228,7 +228,7 @@ class TestDeriveConfig:
 
     def test_max_epic_verification_retries_from_epic_completion_config(self) -> None:
         """max_epic_verification_retries is extracted from epic_completion config."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             EpicCompletionTriggerConfig,
             EpicDepth,
             FailureMode,
@@ -261,7 +261,7 @@ class TestDeriveConfig:
 
     def test_max_epic_verification_retries_none_when_no_epic_completion(self) -> None:
         """max_epic_verification_retries is None when no epic_completion trigger."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         validation_config = ValidationConfig()
         orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
@@ -290,7 +290,7 @@ class TestDeriveConfig:
 
     def test_max_epic_verification_retries_none_when_field_unset(self) -> None:
         """max_epic_verification_retries is None when field not set in config."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             EpicCompletionTriggerConfig,
             EpicDepth,
             FailureMode,
@@ -324,7 +324,7 @@ class TestDeriveConfig:
 
     def test_epic_verify_lock_timeout_seconds_from_epic_completion_config(self) -> None:
         """epic_verify_lock_timeout_seconds is extracted from epic_completion config."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             EpicCompletionTriggerConfig,
             EpicDepth,
             FailureMode,
@@ -359,7 +359,7 @@ class TestDeriveConfig:
         self,
     ) -> None:
         """epic_verify_lock_timeout_seconds is None when no epic_completion trigger."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         validation_config = ValidationConfig()
         orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
@@ -375,7 +375,7 @@ class TestDeriveConfig:
 
     def test_epic_verify_lock_timeout_seconds_none_when_field_unset(self) -> None:
         """epic_verify_lock_timeout_seconds is None when field not set in config."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             EpicCompletionTriggerConfig,
             EpicDepth,
             FailureMode,
@@ -408,7 +408,7 @@ class TestDeriveConfig:
 
     def test_timeout_from_validation_config(self) -> None:
         """timeout_minutes is read from validation_config when CLI is not set."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         validation_config = ValidationConfig(timeout_minutes=45)
         orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
@@ -425,7 +425,7 @@ class TestDeriveConfig:
 
     def test_cli_timeout_overrides_validation_config(self) -> None:
         """CLI timeout_minutes overrides mala.yaml timeout_minutes."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         validation_config = ValidationConfig(timeout_minutes=45)
         orch_config = OrchestratorConfig(repo_path=Path("/tmp"), timeout_minutes=90)
@@ -457,7 +457,7 @@ class TestDeriveConfig:
 
     def test_timeout_defaults_when_validation_config_has_none(self) -> None:
         """timeout_seconds uses default when validation_config.timeout_minutes is None."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
         from src.orchestration.types import DEFAULT_AGENT_TIMEOUT_MINUTES
 
         validation_config = ValidationConfig()  # timeout_minutes=None
@@ -474,7 +474,7 @@ class TestDeriveConfig:
 
     def test_cli_timeout_zero_bypasses_yaml_timeout(self) -> None:
         """CLI timeout=0 explicitly uses default, bypassing mala.yaml timeout."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
         from src.orchestration.types import DEFAULT_AGENT_TIMEOUT_MINUTES
 
         # mala.yaml has timeout_minutes=45
@@ -494,7 +494,7 @@ class TestDeriveConfig:
 
     def test_max_idle_retries_from_validation_config(self) -> None:
         """max_idle_retries is read from validation_config."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         validation_config = ValidationConfig(max_idle_retries=5)
         orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
@@ -525,7 +525,7 @@ class TestDeriveConfig:
 
     def test_max_idle_retries_default_when_null_in_config(self) -> None:
         """max_idle_retries uses default when validation_config has it as None."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
         from src.orchestration.types import DEFAULT_MAX_IDLE_RETRIES
 
         validation_config = ValidationConfig(max_idle_retries=None)
@@ -542,7 +542,7 @@ class TestDeriveConfig:
 
     def test_idle_timeout_seconds_from_validation_config(self) -> None:
         """idle_timeout_seconds is read from validation_config."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         validation_config = ValidationConfig(idle_timeout_seconds=600.0)
         orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
@@ -571,7 +571,7 @@ class TestDeriveConfig:
 
     def test_idle_timeout_seconds_zero_disables(self) -> None:
         """idle_timeout_seconds=0 is passed through (disables idle timeout)."""
-        from src.domain.validation.config import ValidationConfig
+        from src.domain.validation.config_types import ValidationConfig
 
         validation_config = ValidationConfig(idle_timeout_seconds=0.0)
         orch_config = OrchestratorConfig(repo_path=Path("/tmp"))
@@ -587,7 +587,10 @@ class TestDeriveConfig:
 
     def test_derive_config_passes_per_issue_review(self) -> None:
         """per_issue_review is passed through from ValidationConfig."""
-        from src.domain.validation.config import CodeReviewConfig, ValidationConfig
+        from src.domain.validation.config_types import (
+            CodeReviewConfig,
+            ValidationConfig,
+        )
 
         per_issue_review = CodeReviewConfig(enabled=True, max_retries=5)
         validation_config = ValidationConfig(per_issue_review=per_issue_review)
@@ -619,7 +622,7 @@ class TestDeriveConfig:
 
     def test_derive_config_max_review_retries_from_per_issue_review(self) -> None:
         """max_review_retries uses per_issue_review.max_retries when enabled."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -656,7 +659,7 @@ class TestDeriveConfig:
 
     def test_derive_config_max_review_retries_falls_back_to_triggers(self) -> None:
         """max_review_retries falls back to trigger config when per_issue_review disabled."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -695,7 +698,7 @@ class TestDeriveConfig:
         self,
     ) -> None:
         """per_issue_review uses its default max_retries (3) when enabled."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -767,7 +770,7 @@ class TestExtractReviewerConfig:
 
     def test_per_issue_review_takes_priority_when_enabled(self) -> None:
         """per_issue_review settings win over triggers when enabled=True."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CerberusConfig,
             CodeReviewConfig,
             FailureMode,
@@ -814,7 +817,7 @@ class TestExtractReviewerConfig:
 
     def test_disabled_per_issue_review_ignored(self) -> None:
         """per_issue_review with enabled=False is completely ignored."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CerberusConfig,
             CodeReviewConfig,
             FailureMode,
@@ -861,7 +864,7 @@ class TestExtractReviewerConfig:
 
     def test_triggers_used_when_no_per_issue_review(self) -> None:
         """Trigger config used when per_issue_review not set."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,
@@ -895,7 +898,7 @@ class TestExtractReviewerConfig:
 
     def test_defaults_when_both_disabled(self) -> None:
         """Returns defaults when both per_issue_review and triggers disabled."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             CodeReviewConfig,
             FailureMode,
             FireOn,

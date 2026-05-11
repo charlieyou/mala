@@ -22,7 +22,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
-from src.domain.validation.config import FailureMode
+from src.domain.validation.config_types import FailureMode
 
 if TYPE_CHECKING:
     import asyncio
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols.review import ReviewRunnerProtocol
-    from src.domain.validation.config import TriggerType
+    from src.domain.validation.config_types import TriggerType
 
 
 logger = logging.getLogger(__name__)
@@ -274,7 +274,7 @@ class CumulativeReviewRunner:
             CumulativeReviewResult with status, findings, and new baseline.
         """
         from src.core.models import ReviewInput
-        from src.domain.validation.config import TriggerType as TT
+        from src.domain.validation.config_types import TriggerType as TT
 
         # 1. Determine baseline (use override if provided)
         if baseline_override is not None:
@@ -515,7 +515,7 @@ class CumulativeReviewRunner:
         Returns:
             BaselineResult with commit SHA and optional skip_reason.
         """
-        from src.domain.validation.config import TriggerType as TT
+        from src.domain.validation.config_types import TriggerType as TT
 
         baseline: str | None = None
 

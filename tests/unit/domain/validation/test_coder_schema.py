@@ -3,7 +3,7 @@
 These tests own AC#13 from the AMP provider plan
 (plans/2026-04-29-amp-provider-plan.md L194-L215):
 
-> Invalid values fail validation (`src/domain/validation/config.py`) **before**
+> Invalid values fail validation (`src/domain/validation/config_parser.py`) **before**
 > any agent process starts.
 
 The data model and resolver precedence (CLI > env > yaml > default) live in
@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from src.domain.validation.config import ConfigError, ValidationConfig
+from src.domain.validation.config_types import ConfigError, ValidationConfig
 from src.domain.validation.config_loader import load_config
 
 if TYPE_CHECKING:

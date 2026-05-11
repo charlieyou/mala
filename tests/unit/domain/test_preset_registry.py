@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.domain.validation.config import ConfigError, PresetNotFoundError
+from src.domain.validation.config_types import ConfigError, PresetNotFoundError
 from src.domain.validation.preset_registry import PresetRegistry
 
 

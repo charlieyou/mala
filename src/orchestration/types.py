@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from src.core.protocols.validation import GateChecker
     from src.domain.deadlock import DeadlockMonitor
     from src.domain.prompts import PromptProvider
-    from src.domain.validation.config import (
+    from src.domain.validation.config_types import (
         CodeReviewConfig,
         PromptValidationCommands,
         ValidationConfig,

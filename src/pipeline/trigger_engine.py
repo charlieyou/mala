@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.domain.validation.config import (
+from src.domain.validation.config_types import (
     EpicDepth,
     FireOn,
     TriggerType,
@@ -19,7 +19,7 @@ from src.pipeline.trigger_plan import resolve_trigger
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from src.domain.validation.config import (
+    from src.domain.validation.config_types import (
         BaseTriggerConfig,
         FailureMode,
         ValidationConfig,

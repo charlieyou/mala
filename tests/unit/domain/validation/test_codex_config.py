@@ -11,7 +11,7 @@ The yaml shape is:
         sandbox: danger-full-access
 
 Strict-enum validation lives in
-:mod:`src.domain.validation.config`. Resolver precedence is exercised in
+:mod:`src.domain.validation.config_types`. Resolver precedence is exercised in
 :mod:`tests.unit.cli.test_codex_flags` and the orchestration factory tests.
 """
 
@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from src.domain.validation.config import (
+from src.domain.validation.config_types import (
     CodexOptionsConfig,
     ConfigError,
     ValidationConfig,

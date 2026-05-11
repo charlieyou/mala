@@ -853,7 +853,7 @@ class TestFireOnTruthTable:
     @pytest.fixture
     def make_validation_config(self) -> Callable:
         """Factory for creating validation config with fire_on setting."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             RunEndTriggerConfig,
             ValidationConfig,
@@ -888,7 +888,7 @@ class TestFireOnTruthTable:
         """
         from unittest.mock import AsyncMock, MagicMock
 
-        from src.domain.validation.config import FireOn
+        from src.domain.validation.config_types import FireOn
 
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
@@ -921,7 +921,7 @@ class TestFireOnTruthTable:
         """
         from unittest.mock import AsyncMock, MagicMock
 
-        from src.domain.validation.config import FireOn, TriggerType
+        from src.domain.validation.config_types import FireOn, TriggerType
 
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
@@ -958,7 +958,7 @@ class TestFireOnTruthTable:
         """
         from unittest.mock import AsyncMock, MagicMock
 
-        from src.domain.validation.config import FireOn, TriggerType
+        from src.domain.validation.config_types import FireOn, TriggerType
 
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
@@ -996,7 +996,7 @@ class TestFireOnTruthTable:
         """
         from unittest.mock import AsyncMock, MagicMock
 
-        from src.domain.validation.config import FireOn, TriggerType
+        from src.domain.validation.config_types import FireOn, TriggerType
 
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
@@ -1032,7 +1032,7 @@ class TestFireOnTruthTable:
         """
         from unittest.mock import AsyncMock, MagicMock
 
-        from src.domain.validation.config import FireOn
+        from src.domain.validation.config_types import FireOn
 
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
@@ -1064,7 +1064,7 @@ class TestFireOnTruthTable:
         """
         from unittest.mock import AsyncMock, MagicMock
 
-        from src.domain.validation.config import FireOn, TriggerType
+        from src.domain.validation.config_types import FireOn, TriggerType
 
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
@@ -1103,7 +1103,7 @@ class TestFireOnTruthTable:
         """
         from unittest.mock import AsyncMock, MagicMock
 
-        from src.domain.validation.config import FireOn, TriggerType
+        from src.domain.validation.config_types import FireOn, TriggerType
 
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
@@ -1141,7 +1141,7 @@ class TestFireOnTruthTable:
         """
         from unittest.mock import AsyncMock, MagicMock
 
-        from src.domain.validation.config import FireOn, TriggerType
+        from src.domain.validation.config_types import FireOn, TriggerType
 
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
@@ -1177,7 +1177,7 @@ class TestFireOnTruthTable:
         """
         from unittest.mock import AsyncMock, MagicMock
 
-        from src.domain.validation.config import FireOn, TriggerType
+        from src.domain.validation.config_types import FireOn, TriggerType
 
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
@@ -1226,7 +1226,7 @@ class TestRunAbortScenarios:
         """
         from unittest.mock import AsyncMock, MagicMock
 
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             FireOn,
             RunEndTriggerConfig,

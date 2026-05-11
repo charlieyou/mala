@@ -36,7 +36,10 @@ if TYPE_CHECKING:
     from src.core.protocols.issue_lifecycle_port import IssueLifecyclePort
     from src.core.protocols.validation import EpicVerifierProtocol
     from src.core.models import EpicVerificationResult
-    from src.domain.validation.config import EpicCompletionTriggerConfig, TriggerType
+    from src.domain.validation.config_types import (
+        EpicCompletionTriggerConfig,
+        TriggerType,
+    )
     from src.infra.io.log_output.run_metadata import RunMetadata
 
 

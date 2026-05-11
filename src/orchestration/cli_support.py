@@ -35,7 +35,7 @@ from src.infra.io.log_output.console import (
 )
 
 # Config error for init command
-from src.domain.validation.config import ConfigError
+from src.domain.validation.config_types import ConfigError
 
 
 def get_init_presets() -> list[str]:
@@ -85,7 +85,7 @@ def get_builtin_command_names() -> frozenset[str]:
     Returns:
         Frozenset of built-in command names (e.g., 'setup', 'test', 'lint', etc.).
     """
-    from src.domain.validation.config import BUILTIN_COMMAND_NAMES
+    from src.domain.validation.config_types import BUILTIN_COMMAND_NAMES
 
     return BUILTIN_COMMAND_NAMES
 
@@ -102,7 +102,7 @@ def get_preset_config_commands(preset_name: str) -> list[str]:
     Raises:
         PresetNotFoundError: If the preset name is not recognized.
     """
-    from src.domain.validation.config import BUILTIN_COMMAND_NAMES
+    from src.domain.validation.config_types import BUILTIN_COMMAND_NAMES
     from src.domain.validation.preset_registry import PresetRegistry
 
     registry = PresetRegistry()

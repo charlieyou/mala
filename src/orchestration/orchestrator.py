@@ -53,7 +53,7 @@ from src.pipeline.agent_session_runner import (
 from src.pipeline.issue_finalizer import (
     IssueFinalizeInput,
 )
-from src.domain.validation.config import FireOn, TriggerType
+from src.domain.validation.config_types import FireOn, TriggerType
 from src.orchestration.orchestration_wiring import (
     build_gate_runner,
     build_review_runner,
@@ -90,7 +90,7 @@ if TYPE_CHECKING:
     from src.core.protocols.validation import EpicVerifierProtocol, GateChecker
     from src.core.protocols.issue_lifecycle_port import IssueLifecyclePort
     from src.domain.prompts import PromptProvider
-    from src.domain.validation.config import (
+    from src.domain.validation.config_types import (
         EpicCompletionTriggerConfig,
         PromptValidationCommands,
     )

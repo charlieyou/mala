@@ -10,7 +10,7 @@ from collections.abc import Callable
 from unittest.mock import Mock
 
 from src.infra.tools.command_runner import CommandResult
-from src.domain.validation.config import YamlCoverageConfig
+from src.domain.validation.config_types import YamlCoverageConfig
 from tests.fakes.lock_manager import FakeLockManager
 from src.domain.validation.coverage import (
     BaselineCoverageService,

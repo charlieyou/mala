@@ -73,7 +73,7 @@ if TYPE_CHECKING:
         ReviewOutcome,
         TransitionResult,
     )
-    from src.domain.validation.config import PromptValidationCommands
+    from src.domain.validation.config_types import PromptValidationCommands
     from src.infra.hooks import LintCache
     from src.infra.telemetry import TelemetrySpan
     from src.core.session_end_result import SessionEndResult

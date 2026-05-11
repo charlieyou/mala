@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 class VerificationRetryPolicyProtocol(Protocol):
     """Protocol for retry policy to avoid importing from domain layer.
 
-    Duck typing interface matching VerificationRetryPolicy from domain.validation.config.
+    Duck typing interface matching VerificationRetryPolicy from domain.validation.config_types.
     """
 
     timeout_retries: int

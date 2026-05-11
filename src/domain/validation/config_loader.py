@@ -17,13 +17,15 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 import yaml
 
-from src.domain.validation.config import (
+from src.core.constants import (
+    DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS,
+    DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS,
+)
+from src.domain.validation.config_types import (
     BUILTIN_COMMAND_NAMES,
     CerberusConfig,
     CodeReviewConfig,
     ConfigError,
-    DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS,
-    DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS,
     EpicCompletionTriggerConfig,
     EpicDepth,
     EpicVerifierConfig,
@@ -44,7 +46,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from src.domain.validation.config import BaseTriggerConfig
+    from src.domain.validation.config_types import BaseTriggerConfig
 
 
 class ConfigMissingError(ConfigError):

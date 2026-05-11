@@ -22,7 +22,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .config import YamlCoverageConfig  # noqa: TC001 - used at runtime
+from .config_types import YamlCoverageConfig  # noqa: TC001 - used at runtime
 from .coverage_args import rewrite_coverage_command
 
 if TYPE_CHECKING:

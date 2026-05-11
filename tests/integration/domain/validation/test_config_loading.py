@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-from src.domain.validation.config import FailureMode
+from src.domain.validation.config_types import FailureMode
 from src.domain.validation.config_loader import load_config
 
 

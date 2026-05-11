@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.domain.validation.config import (
+from src.domain.validation.config_types import (
     CommandConfig,
     CommandsConfig,
     ConfigError,

@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.domain.prompts import PromptProvider
-    from src.domain.validation.config import PromptValidationCommands
+    from src.domain.validation.config_types import PromptValidationCommands
     from src.orchestration.orchestrator import MalaOrchestrator
 
 
@@ -264,7 +264,7 @@ def test_stored_review_issue_line_end_defaults_to_line_start() -> None:
 def test_build_resume_prompt_returns_formatted_prompt(tmp_path: Path) -> None:
     """_build_resume_prompt returns formatted prompt when issues present."""
     from src.domain.prompts import PromptProvider
-    from src.domain.validation.config import PromptValidationCommands
+    from src.domain.validation.config_types import PromptValidationCommands
 
     prompts = PromptProvider(
         implementer_prompt="impl",
@@ -306,7 +306,7 @@ def test_build_resume_prompt_returns_formatted_prompt(tmp_path: Path) -> None:
 def test_build_resume_prompt_returns_none_when_no_issues(tmp_path: Path) -> None:
     """_build_resume_prompt returns None when no issues."""
     from src.domain.prompts import PromptProvider
-    from src.domain.validation.config import PromptValidationCommands
+    from src.domain.validation.config_types import PromptValidationCommands
 
     prompts = PromptProvider(
         implementer_prompt="impl",

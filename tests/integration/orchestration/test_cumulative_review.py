@@ -35,7 +35,7 @@ async def test_epic_completion_trigger_invokes_cumulative_review(
     4. Assert CumulativeReviewRunner.run_review was called (returns skipped due to
        unreachable baseline in test git repo)
     """
-    from src.domain.validation.config import (
+    from src.domain.validation.config_types import (
         CodeReviewConfig,
         CommandConfig,
         CommandsConfig,

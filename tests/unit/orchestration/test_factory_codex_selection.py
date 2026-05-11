@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 
 import src.orchestration.factory
-from src.domain.validation.config import ConfigError
+from src.domain.validation.config_types import ConfigError
 from src.infra.clients.codex_provider import (
     CodexAgentProvider,
     CodexNotInstalledError,

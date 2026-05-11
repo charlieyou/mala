@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from src.domain.validation.config import ConfigError
+from src.domain.validation.config_types import ConfigError
 from src.domain.validation.config_loader import (
     ConfigMissingError,
     _build_config,

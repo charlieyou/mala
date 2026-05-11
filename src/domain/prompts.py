@@ -19,7 +19,10 @@ from src.domain.validation_wrapper import build_canonical_wrapper
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from src.domain.validation.config import PromptValidationCommands, ValidationConfig
+    from src.domain.validation.config_types import (
+        PromptValidationCommands,
+        ValidationConfig,
+    )
 
 
 def build_custom_commands_section(
@@ -314,7 +317,7 @@ def get_default_validation_commands() -> PromptValidationCommands:
     Returns:
         PromptValidationCommands with default Python/uv toolchain commands.
     """
-    from src.domain.validation.config import PromptValidationCommands
+    from src.domain.validation.config_types import PromptValidationCommands
 
     return PromptValidationCommands(
         lint="RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff check .",
@@ -430,7 +433,7 @@ def build_prompt_validation_commands(
         PromptValidationCommands with command strings for prompt templates.
         Returns default Python/uv commands if no config is found.
     """
-    from src.domain.validation.config import PromptValidationCommands
+    from src.domain.validation.config_types import PromptValidationCommands
     from src.domain.validation.config_loader import ConfigMissingError, load_config
     from src.domain.validation.config_merger import merge_configs
     from src.domain.validation.preset_registry import PresetRegistry

@@ -18,7 +18,7 @@ import pytest
 
 from tests.fakes import FakeEnvConfig
 
-from src.domain.validation.config import YamlCoverageConfig
+from src.domain.validation.config_types import YamlCoverageConfig
 from src.domain.validation.spec import (
     CommandKind,
     CoverageConfig,

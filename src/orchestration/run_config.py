@@ -18,7 +18,7 @@ from src.infra.io.log_output.run_metadata import RunConfig, RunMetadata
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.domain.validation.config import ValidationTriggersConfig
+    from src.domain.validation.config_types import ValidationTriggersConfig
 
 
 def _build_trigger_summary(

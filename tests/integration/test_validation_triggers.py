@@ -71,7 +71,7 @@ def test_config_loads_validation_triggers_via_normal_path(tmp_path: Path) -> Non
     This test exercises the full config loading path:
     load_config() → _build_config() → _parse_validation_triggers()
     """
-    from src.domain.validation.config import (
+    from src.domain.validation.config_types import (
         EpicDepth,
         FailureMode,
         FireOn,
@@ -140,7 +140,7 @@ def test_trigger_queues_and_executes_via_run_coordinator(tmp_path: Path) -> None
     import asyncio
     from unittest.mock import MagicMock
 
-    from src.domain.validation.config import (
+    from src.domain.validation.config_types import (
         CommandConfig,
         CommandsConfig,
         EpicCompletionTriggerConfig,
@@ -340,7 +340,7 @@ def test_trigger_code_review_emits_lifecycle_events(tmp_path: Path) -> None:
     import asyncio
     from unittest.mock import MagicMock
 
-    from src.domain.validation.config import (
+    from src.domain.validation.config_types import (
         CodeReviewConfig,
         CommandsConfig,
         FailureMode,
@@ -401,7 +401,7 @@ def test_trigger_code_review_emits_lifecycle_events(tmp_path: Path) -> None:
     )
 
     # Queue the run_end trigger (simulating end of run)
-    from src.domain.validation.config import TriggerType
+    from src.domain.validation.config_types import TriggerType
 
     coordinator.queue_trigger_validation(TriggerType.RUN_END, {})
 

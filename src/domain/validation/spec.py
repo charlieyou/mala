@@ -28,10 +28,10 @@ from src.core.models import (
 )
 
 if TYPE_CHECKING:
-    from src.domain.validation.config import CommandsConfig
+    from src.domain.validation.config_types import CommandsConfig
     from re import Pattern
 
-    from src.domain.validation.config import (
+    from src.domain.validation.config_types import (
         CustomCommandConfig,
         ValidationConfig,
         YamlCoverageConfig,
@@ -387,7 +387,7 @@ def build_validation_spec(
     Returns:
         A ValidationSpec configured according to the config files.
     """
-    from src.domain.validation.config import ConfigError
+    from src.domain.validation.config_types import ConfigError
     from src.domain.validation.config_loader import (
         ConfigMissingError,
         _validate_trigger_command_refs,
@@ -533,7 +533,7 @@ def _validate_evidence_check_refs(config: ValidationConfig) -> None:
     Raises:
         ConfigError: If any required key references a command that doesn't exist.
     """
-    from src.domain.validation.config import BUILTIN_COMMAND_NAMES, ConfigError
+    from src.domain.validation.config_types import BUILTIN_COMMAND_NAMES, ConfigError
 
     if config.evidence_check is None:
         return  # No evidence_check configured

@@ -91,7 +91,7 @@ class TestRunCoverageCommandIfConfigured:
 
     def test_returns_none_when_no_command(self, tmp_path: Path) -> None:
         """Returns None when no coverage command is configured."""
-        from src.domain.validation.config import YamlCoverageConfig
+        from src.domain.validation.config_types import YamlCoverageConfig
 
         builder = SpecResultBuilder()
         config = YamlCoverageConfig(
@@ -114,7 +114,7 @@ class TestRunCoverageCommandIfConfigured:
 
     def test_returns_none_on_command_success(self, tmp_path: Path) -> None:
         """Returns None when coverage command succeeds."""
-        from src.domain.validation.config import YamlCoverageConfig
+        from src.domain.validation.config_types import YamlCoverageConfig
 
         builder = SpecResultBuilder()
         config = YamlCoverageConfig(
@@ -142,7 +142,7 @@ class TestRunCoverageCommandIfConfigured:
 
     def test_returns_failure_on_command_timeout(self, tmp_path: Path) -> None:
         """Returns failure result when coverage command times out."""
-        from src.domain.validation.config import YamlCoverageConfig
+        from src.domain.validation.config_types import YamlCoverageConfig
 
         builder = SpecResultBuilder()
         config = YamlCoverageConfig(
@@ -174,7 +174,7 @@ class TestRunCoverageCommandIfConfigured:
 
     def test_returns_failure_on_command_error(self, tmp_path: Path) -> None:
         """Returns failure result when coverage command fails."""
-        from src.domain.validation.config import YamlCoverageConfig
+        from src.domain.validation.config_types import YamlCoverageConfig
 
         builder = SpecResultBuilder()
         config = YamlCoverageConfig(

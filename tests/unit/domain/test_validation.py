@@ -1030,7 +1030,7 @@ class TestSpecRunnerNoDecreaseMode:
         tmp_path: Path,
     ) -> None:
         """When baseline is fresh, use it as threshold."""
-        from src.domain.validation.config import YamlCoverageConfig
+        from src.domain.validation.config_types import YamlCoverageConfig
 
         # Create fresh baseline at 80%
         baseline_xml = tmp_path / "coverage.xml"
@@ -1371,7 +1371,7 @@ class TestSpecRunnerBaselineRefresh:
         self, tmp_path: Path, fake_runner: FakeCommandRunner
     ) -> BaselineCoverageService:
         """Create a baseline coverage service for tests."""
-        from src.domain.validation.config import YamlCoverageConfig
+        from src.domain.validation.config_types import YamlCoverageConfig
 
         coverage_config = YamlCoverageConfig(
             format="xml",
@@ -1453,7 +1453,7 @@ class TestSpecRunnerBaselineRefresh:
         self, tmp_path: Path
     ) -> None:
         """Fallback should generate coverage.xml when only coverage data exists."""
-        from src.domain.validation.config import YamlCoverageConfig
+        from src.domain.validation.config_types import YamlCoverageConfig
 
         spec = ValidationSpec(
             commands=[
@@ -1612,7 +1612,7 @@ class TestSpecRunnerBaselineRefresh:
 
     def test_baseline_refresh_with_lock_contention(self, tmp_path: Path) -> None:
         """When another agent holds the lock, wait and use their refreshed baseline."""
-        from src.domain.validation.config import YamlCoverageConfig
+        from src.domain.validation.config_types import YamlCoverageConfig
 
         spec = ValidationSpec(
             commands=[
@@ -1904,7 +1904,7 @@ class TestSpecRunnerBaselineRefresh:
         existing --cov-report arguments and add --cov-report=xml:<coverage_config.file>
         to ensure coverage output goes to the configured location.
         """
-        from src.domain.validation.config import YamlCoverageConfig
+        from src.domain.validation.config_types import YamlCoverageConfig
 
         # Use FakeCommandRunner to capture commands
         fake_runner = FakeCommandRunner(allow_unregistered=True)
@@ -1999,7 +1999,7 @@ class TestSpecRunnerBaselineRefresh:
         Even when the command specifies an explicit path like --cov-report=xml:old.xml,
         it should be replaced with the path from coverage_config.file.
         """
-        from src.domain.validation.config import YamlCoverageConfig
+        from src.domain.validation.config_types import YamlCoverageConfig
 
         # Use FakeCommandRunner to capture commands
         fake_runner = FakeCommandRunner(allow_unregistered=True)
@@ -2128,7 +2128,7 @@ class TestBaselineCaptureOrder:
         """
         import os
 
-        from src.domain.validation.config import YamlCoverageConfig
+        from src.domain.validation.config_types import YamlCoverageConfig
 
         # Create fresh baseline at 85% in main repo
         baseline_xml = tmp_path / "coverage.xml"
@@ -3036,7 +3036,7 @@ class TestSpecResultBuilder:
         tmp_path: Path,
     ) -> None:
         """Coverage command failure should fail validation with clear reason."""
-        from src.domain.validation.config import YamlCoverageConfig
+        from src.domain.validation.config_types import YamlCoverageConfig
         from src.domain.validation.spec_result_builder import ResultBuilderInput
 
         yaml_coverage_config = YamlCoverageConfig(

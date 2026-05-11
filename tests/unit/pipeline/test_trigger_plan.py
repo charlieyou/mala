@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.domain.validation.config import (
+from src.domain.validation.config_types import (
     CommandConfig,
     CommandsConfig,
     ConfigError,

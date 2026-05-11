@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from src.domain.validation.config import (
+from src.domain.validation.config_types import (
     CommandConfig,
     CommandsConfig,
     ValidationConfig,
@@ -982,7 +982,7 @@ class TestValidationTriggersNotInheritedFromPreset:
 
     def test_preset_triggers_not_inherited_when_user_has_none(self) -> None:
         """User without validation_triggers does NOT inherit preset triggers."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             SessionEndTriggerConfig,
             ValidationTriggersConfig,
@@ -1011,7 +1011,7 @@ class TestValidationTriggersNotInheritedFromPreset:
 
     def test_user_triggers_preserved_when_preset_has_none(self) -> None:
         """User's validation_triggers preserved when preset has none."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             SessionEndTriggerConfig,
             ValidationTriggersConfig,
@@ -1040,7 +1040,7 @@ class TestValidationTriggersNotInheritedFromPreset:
 
     def test_user_triggers_override_preset_triggers(self) -> None:
         """User's validation_triggers always take precedence over preset."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             SessionEndTriggerConfig,
             ValidationTriggersConfig,
@@ -1076,7 +1076,7 @@ class TestValidationTriggersNotInheritedFromPreset:
 
     def test_user_explicit_none_triggers_not_overridden_by_preset(self) -> None:
         """User's explicit null for validation_triggers is not overridden by preset."""
-        from src.domain.validation.config import (
+        from src.domain.validation.config_types import (
             FailureMode,
             SessionEndTriggerConfig,
             ValidationTriggersConfig,

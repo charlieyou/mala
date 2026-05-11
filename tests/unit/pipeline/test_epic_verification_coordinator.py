@@ -23,7 +23,10 @@ from src.pipeline.issue_result import IssueResult
 from tests.fakes.issue_lifecycle_port import FakeIssueLifecyclePort
 
 if TYPE_CHECKING:
-    from src.domain.validation.config import EpicCompletionTriggerConfig, TriggerType
+    from src.domain.validation.config_types import (
+        EpicCompletionTriggerConfig,
+        TriggerType,
+    )
     from src.core.protocols.validation import EpicVerifierProtocol
 
 

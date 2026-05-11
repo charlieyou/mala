@@ -18,7 +18,7 @@ from typing import Any, cast
 
 import pytest
 
-from src.domain.validation.config import (
+from src.domain.validation.config_types import (
     CodeReviewConfig,
     CodexOptionsConfig,
     CommandsConfig,
