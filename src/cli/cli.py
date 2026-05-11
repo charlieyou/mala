@@ -33,6 +33,14 @@ from ..orchestration.cli_options import (
 from ..orchestration.cli_overrides import CLIOverrideOptions, apply_cli_overrides
 from ..orchestration.cli_support import USER_CONFIG_DIR, get_runs_dir, load_user_env
 from ..orchestration.dry_run import compute_dry_run_outcome
+from ..orchestration.init_config import (
+    build_evidence_check_dict,
+    build_per_issue_review_dict,
+    build_validation_triggers_dict,
+    compute_evidence_defaults,
+    compute_trigger_defaults,
+    get_preset_command_names,
+)
 
 if TYPE_CHECKING:
     from ..orchestration.cli_options import ScopeConfig
@@ -1078,20 +1086,6 @@ def _write_with_backup(path: Path, content: str) -> None:
     path.write_text(content)
 
 
-def _get_preset_command_names(preset_name: str) -> list[str]:
-    """Get command names defined in a preset.
-
-    Args:
-        preset_name: Name of the preset (e.g., 'python-uv', 'go')
-
-    Returns:
-        List of command names defined in the preset.
-    """
-    from ..orchestration.cli_support import get_preset_config_commands
-
-    return get_preset_config_commands(preset_name)
-
-
 def _prompt_preset_selection(presets: list[str]) -> str | None:
     """Prompt user to select a preset using questionary.
 
@@ -1137,40 +1131,6 @@ def _prompt_custom_commands_questionary() -> dict[str, str] | None:
     return commands
 
 
-def _compute_evidence_defaults(commands: list[str], is_preset: bool) -> list[str]:
-    """Compute default evidence check commands.
-
-    Args:
-        commands: List of command names available.
-        is_preset: True if using a preset, False for custom.
-
-    Returns:
-        List of command names that should be evidence checks by default.
-    """
-    if not is_preset:
-        return []
-    # For preset path, return intersection of {test, lint} with available commands
-    evidence_candidates = {"test", "lint"}
-    return [cmd for cmd in commands if cmd in evidence_candidates]
-
-
-def _compute_trigger_defaults(commands: list[str], is_preset: bool) -> list[str]:
-    """Compute default validation trigger commands.
-
-    Args:
-        commands: List of command names available.
-        is_preset: True if using a preset, False for custom.
-
-    Returns:
-        List of command names that should be triggers by default.
-    """
-    if not is_preset:
-        return []
-    # For preset path, exclude setup and e2e from defaults
-    excluded = {"setup", "e2e"}
-    return [cmd for cmd in commands if cmd not in excluded]
-
-
 def _prompt_evidence_check(commands: list[str], is_preset: bool) -> list[str] | None:
     """Prompt user to select evidence check commands.
 
@@ -1181,7 +1141,7 @@ def _prompt_evidence_check(commands: list[str], is_preset: bool) -> list[str] | 
     Returns:
         List of selected command names, or None to skip.
     """
-    defaults = _compute_evidence_defaults(commands, is_preset)
+    defaults = compute_evidence_defaults(commands, is_preset)
 
     # First confirm if user wants evidence checks
     if not questionary.confirm("Configure evidence checks?", default=True).ask():
@@ -1217,7 +1177,7 @@ def _prompt_run_end_trigger(commands: list[str], is_preset: bool) -> list[str] |
     Returns:
         List of selected command names, or None to skip.
     """
-    defaults = _compute_trigger_defaults(commands, is_preset)
+    defaults = compute_trigger_defaults(commands, is_preset)
 
     # First confirm if user wants run-end triggers
     if not questionary.confirm(
@@ -1320,47 +1280,6 @@ def _prompt_per_issue_review() -> dict[str, Any] | None:
     }
 
 
-def _build_per_issue_review_dict(config: dict[str, Any]) -> dict[str, Any]:
-    """Build per_issue_review config dict from prompt selections.
-
-    Args:
-        config: Dict with enabled, reviewer_type, max_retries, finding_threshold.
-
-    Returns:
-        Dict suitable for YAML output.
-    """
-    return config
-
-
-def _build_evidence_check_dict(required: list[str]) -> dict[str, list[str]]:
-    """Build evidence_check config dict from selected commands.
-
-    Args:
-        required: List of command names that are required evidence.
-
-    Returns:
-        Dict with 'required' key mapping to the command list.
-    """
-    return {"required": required}
-
-
-def _build_validation_triggers_dict(commands: list[str]) -> dict[str, Any]:
-    """Build validation_triggers config dict from selected commands.
-
-    Args:
-        commands: List of command names for run-end triggers.
-
-    Returns:
-        Dict with trigger configuration.
-    """
-    return {
-        "run_end": {
-            "failure_mode": "continue",
-            "commands": [{"ref": cmd} for cmd in commands],
-        }
-    }
-
-
 def _print_trigger_reference_table() -> None:
     """Print a reference table showing available trigger types."""
     import sys
@@ -1441,14 +1360,14 @@ def init(
                 typer.echo(f"Error: Unknown preset '{preset}'", err=True)
                 raise typer.Exit(1)
             is_preset = True
-            commands = _get_preset_command_names(preset)
+            commands = get_preset_command_names(preset)
             config_data = {"preset": preset}
         elif is_tty:
             # Interactive preset selection
             selected_preset = _prompt_preset_selection(presets)
             if selected_preset:
                 is_preset = True
-                commands = _get_preset_command_names(selected_preset)
+                commands = get_preset_command_names(selected_preset)
                 config_data = {"preset": selected_preset}
             else:
                 # Custom flow via questionary
@@ -1472,12 +1391,12 @@ def init(
             if not skip_evidence:
                 if yes:
                     # Use computed defaults
-                    evidence_required = _compute_evidence_defaults(commands, is_preset)
+                    evidence_required = compute_evidence_defaults(commands, is_preset)
                 elif is_tty:
                     evidence_required = _prompt_evidence_check(commands, is_preset)
 
             if evidence_required is not None:
-                config_data["evidence_check"] = _build_evidence_check_dict(
+                config_data["evidence_check"] = build_evidence_check_dict(
                     evidence_required
                 )
 
@@ -1487,7 +1406,7 @@ def init(
             if is_tty and not yes:
                 per_issue_review_config = _prompt_per_issue_review()
                 if per_issue_review_config is not None:
-                    config_data["per_issue_review"] = _build_per_issue_review_dict(
+                    config_data["per_issue_review"] = build_per_issue_review_dict(
                         per_issue_review_config
                     )
             # Validation triggers section
@@ -1495,12 +1414,12 @@ def init(
             if not skip_triggers:
                 if yes:
                     # Use computed defaults
-                    trigger_commands = _compute_trigger_defaults(commands, is_preset)
+                    trigger_commands = compute_trigger_defaults(commands, is_preset)
                 elif is_tty:
                     trigger_commands = _prompt_run_end_trigger(commands, is_preset)
 
             if trigger_commands is not None:
-                config_data["validation_triggers"] = _build_validation_triggers_dict(
+                config_data["validation_triggers"] = build_validation_triggers_dict(
                     trigger_commands
                 )
 
@@ -1544,7 +1463,7 @@ def init(
                     if not skip_evidence and commands:
                         evidence_required = _prompt_evidence_check(commands, is_preset)
                         if evidence_required is not None:
-                            config_data["evidence_check"] = _build_evidence_check_dict(
+                            config_data["evidence_check"] = build_evidence_check_dict(
                                 evidence_required
                             )
                         else:
@@ -1554,7 +1473,7 @@ def init(
                         per_issue_review_config = _prompt_per_issue_review()
                         if per_issue_review_config is not None:
                             config_data["per_issue_review"] = (
-                                _build_per_issue_review_dict(per_issue_review_config)
+                                build_per_issue_review_dict(per_issue_review_config)
                             )
                         else:
                             config_data.pop("per_issue_review", None)
@@ -1562,7 +1481,7 @@ def init(
                         trigger_commands = _prompt_run_end_trigger(commands, is_preset)
                         if trigger_commands is not None:
                             config_data["validation_triggers"] = (
-                                _build_validation_triggers_dict(trigger_commands)
+                                build_validation_triggers_dict(trigger_commands)
                             )
                         else:
                             config_data.pop("validation_triggers", None)

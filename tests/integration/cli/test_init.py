@@ -341,20 +341,6 @@ class TestInitEvidencePrompts:
         result = _prompt_evidence_check(["build", "test"], is_preset=False)
         assert result is None
 
-    def test_compute_evidence_defaults_preset_path(self) -> None:
-        """Preset path returns intersection with {test, lint}."""
-        from src.cli.cli import _compute_evidence_defaults
-
-        result = _compute_evidence_defaults(["test", "lint", "format"], is_preset=True)
-        assert result == ["test", "lint"]
-
-    def test_compute_evidence_defaults_custom_path(self) -> None:
-        """Custom path returns empty list."""
-        from src.cli.cli import _compute_evidence_defaults
-
-        result = _compute_evidence_defaults(["build", "test", "lint"], is_preset=False)
-        assert result == []
-
 
 class TestInitTriggerPrompts:
     """Tests for validation trigger prompting behavior."""
@@ -370,24 +356,6 @@ class TestInitTriggerPrompts:
         mock_questionary.checkbox_return = ["test", "lint"]
         result = _prompt_run_end_trigger(["test", "lint"], is_preset=True)
         assert result == ["test", "lint"]
-
-    def test_compute_trigger_defaults_excludes_setup_e2e(self) -> None:
-        """Preset path excludes setup and e2e from defaults."""
-        from src.cli.cli import _compute_trigger_defaults
-
-        result = _compute_trigger_defaults(
-            ["setup", "test", "lint", "e2e"], is_preset=True
-        )
-        assert result == ["test", "lint"]
-
-    def test_compute_trigger_defaults_custom_path(self) -> None:
-        """Custom path returns empty list."""
-        from src.cli.cli import _compute_trigger_defaults
-
-        result = _compute_trigger_defaults(
-            ["setup", "build", "test", "lint"], is_preset=False
-        )
-        assert result == []
 
     def test_print_trigger_reference_table_outputs(
         self, capsys: pytest.CaptureFixture[str]
@@ -469,66 +437,9 @@ class TestInitPerIssueReviewPrompts:
         assert result is not None
         assert result["max_retries"] == 3  # Default
 
-    def test_build_per_issue_review_dict_passthrough(self) -> None:
-        """Build function returns config as-is."""
-        from src.cli.cli import _build_per_issue_review_dict
-
-        config = {
-            "enabled": True,
-            "reviewer_type": "cerberus",
-            "max_retries": 3,
-            "finding_threshold": "none",
-        }
-        result = _build_per_issue_review_dict(config)
-        assert result == config
-
 
 class TestInitNonInteractive:
     """Tests for non-interactive/defaults behavior."""
-
-    def test_get_preset_command_names_returns_commands(self) -> None:
-        """Returns list of command names from preset."""
-        from src.cli.cli import _get_preset_command_names
-
-        result = _get_preset_command_names("python-uv")
-        # python-uv preset has these commands defined
-        assert "test" in result
-        assert "lint" in result
-        assert "setup" in result
-
-    def test_get_preset_command_names_invalid_raises(self) -> None:
-        """Invalid preset raises PresetNotFoundError."""
-        from src.cli.cli import _get_preset_command_names
-        from src.domain.validation.preset_registry import PresetNotFoundError
-
-        with pytest.raises(PresetNotFoundError):
-            _get_preset_command_names("nonexistent-preset")
-
-    def test_build_evidence_check_dict(self) -> None:
-        """Returns dict with 'required' key."""
-        from src.cli.cli import _build_evidence_check_dict
-
-        result = _build_evidence_check_dict(["test", "lint"])
-        assert result == {"required": ["test", "lint"]}
-
-    def test_build_evidence_check_dict_empty(self) -> None:
-        """Empty list returns dict with empty 'required'."""
-        from src.cli.cli import _build_evidence_check_dict
-
-        result = _build_evidence_check_dict([])
-        assert result == {"required": []}
-
-    def test_build_validation_triggers_dict_ref_syntax(self) -> None:
-        """Returns dict with run_end.commands using ref syntax and failure_mode."""
-        from src.cli.cli import _build_validation_triggers_dict
-
-        result = _build_validation_triggers_dict(["test", "lint"])
-        assert result == {
-            "run_end": {
-                "failure_mode": "continue",
-                "commands": [{"ref": "test"}, {"ref": "lint"}],
-            }
-        }
 
     def test_prompt_preset_selection_returns_preset(
         self, mock_questionary: MagicMock
