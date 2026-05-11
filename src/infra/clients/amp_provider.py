@@ -52,7 +52,12 @@ from dataclasses import replace
 from enum import StrEnum
 from typing import IO, TYPE_CHECKING, Any, Literal, cast
 
-from src.infra.clients._plugin_provider_base import PluginInstallError
+from src.infra.clients._plugin_provider_base import (
+    PluginInstallError,
+    SelftestCache,
+    StdioMcpLaunchSpec,
+    install_with_selftest,
+)
 from src.infra.clients.amp_runtime import AmpRuntimeBuilder
 
 if TYPE_CHECKING:
@@ -129,18 +134,17 @@ def _create_amp_mcp_server_factory() -> McpServerFactory:
         if lock_dir:
             env["MALA_LOCK_DIR"] = lock_dir
 
-        return {
-            "mala-locking": {
-                "command": "mala-amp-mcp-locking",
-                "args": [
-                    "--agent-id",
-                    agent_id,
-                    "--repo-namespace",
-                    str(repo_path),
-                ],
-                "env": env,
-            }
-        }
+        spec = StdioMcpLaunchSpec(
+            command="mala-amp-mcp-locking",
+            args=(
+                "--agent-id",
+                agent_id,
+                "--repo-namespace",
+                str(repo_path),
+            ),
+            env=env,
+        )
+        return {"mala-locking": spec.to_dict()}
 
     return factory
 
@@ -678,8 +682,8 @@ class AmpAgentProvider:
 
         # In-memory self-test cache keyed on (amp_version, plugin_hash).
         # Per plan L121: not persisted across runs. Per plan L823: invoked
-        # exactly once per run.
-        self._selftest_cache_key: tuple[str, str] | None = None
+        # exactly once per run. Shared driver mutates the cache in place.
+        self._selftest_cache: SelftestCache = SelftestCache()
         self._disallowed_warned: bool = False
 
     # ------------------------------------------------------------------
@@ -759,39 +763,38 @@ class AmpAgentProvider:
             logger.warning(_MALA_DISALLOWED_WARNING)
             self._disallowed_warned = True
 
-        # 2. Install the plugin file (idempotent on its own).
-        from src.infra.clients.amp_plugin_installer import AmpPluginInstaller
+        # 2. Run the shared install → cache-check → selftest driver. The
+        # closures bind Amp's plugin installer (returns the 16-hex
+        # plugin_hash) and the runtime self-test (spawns ``amp`` against
+        # the same runtime_builder real sessions use so PLUGINS=all +
+        # MALA_* env + the --mcp-config payload all hit the same code
+        # path, plan L302-L312). The shared driver short-circuits on
+        # cache hit and leaves the cache untouched when selftest raises
+        # so a retry re-runs the probe (plan L121).
+        #
+        # ``coder_version`` stays at the driver's default placeholder
+        # ``"unknown"``: plan L109 only adopts automatic version
+        # detection when ``amp --version`` is trivially reliable, which
+        # it is not today (some amp builds keep the process alive past
+        # version output and stall ``subprocess.run`` past its timeout
+        # when children inherit stderr). A future real version probe
+        # drops in additively.
+        def _install() -> str:
+            from src.infra.clients.amp_plugin_installer import AmpPluginInstaller
 
-        installer = AmpPluginInstaller()
-        install_result = installer.install()
-        plugin_hash = install_result.plugin_hash
+            return AmpPluginInstaller().install().plugin_hash
 
-        # 3. Cache key: (amp_version, plugin_hash). Plan L121 keys on both,
-        # but plan L109 also calls out that automatic version detection is
-        # only adopted when "a one-line `amp --version` parse is trivially
-        # reliable" — `amp --version` against arbitrary installs is not
-        # reliable enough today (some amp builds keep the process alive
-        # past version output and stall ``subprocess.run`` past its
-        # timeout when children inherit stderr). We therefore key on a
-        # placeholder version and the plugin_hash; any future move to a
-        # real version probe is additive.
-        cache_key = ("unknown", plugin_hash)
-        if self._selftest_cache_key == cache_key:
-            return
+        def _selftest(plugin_hash: str) -> None:
+            builder = self.runtime_builder(
+                repo_path,
+                _SELFTEST_AGENT_ID,
+                mcp_server_factory=mcp_server_factory,
+            )
+            runtime = cast("AmpRuntime", builder.build())
+            _run_selftest_subprocess(runtime, plugin_hash)
 
-        # 4. Build the self-test runtime via the same runtime_builder real
-        # sessions use, so PLUGINS=all + MALA_* env + the --mcp-config
-        # payload all hit the same code path (plan L302-L312).
-        builder = self.runtime_builder(
-            repo_path,
-            _SELFTEST_AGENT_ID,
-            mcp_server_factory=mcp_server_factory,
+        install_with_selftest(
+            install=_install,
+            selftest=_selftest,
+            cache=self._selftest_cache,
         )
-        runtime = cast("AmpRuntime", builder.build())
-
-        # 5. Spawn amp + read sentinel marker; raises AmpPluginNotActiveError
-        # on any fail-closed signature.
-        _run_selftest_subprocess(runtime, plugin_hash)
-
-        # 6. Cache success for the rest of the run.
-        self._selftest_cache_key = cache_key
