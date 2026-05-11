@@ -57,6 +57,7 @@ from typing import TYPE_CHECKING, Any
 from src.infra.clients.codex_event_adapter import CodexEventAdapter
 from src.infra.clients.codex_evidence_provider import CODEX_SESSIONS_DIR
 from src.infra.clients.codex_sdk_compat import (
+    import_codex_app_server,
     resolve_codex_bin_for_app_server,
     resume_thread_compat,
     start_thread_compat,
@@ -232,10 +233,9 @@ class CodexClient:
         to its bundled ``codex_cli_bin`` package when ``codex_bin`` is
         ``None``; it does not search ``PATH`` itself.
         """
-        from codex_app_server import (  # type: ignore[import-not-found]
-            AppServerConfig,
-            AsyncCodex,
-        )
+        codex_app_server = import_codex_app_server()
+        AppServerConfig = codex_app_server.AppServerConfig
+        AsyncCodex = codex_app_server.AsyncCodex
 
         codex_bin = resolve_codex_bin_for_app_server()
         config = AppServerConfig(
@@ -320,9 +320,7 @@ class CodexClient:
                     },
                 )
 
-        from codex_app_server import (  # type: ignore[import-not-found]
-            TextInput,
-        )
+        TextInput = import_codex_app_server().TextInput
 
         self._turn = await self._thread.turn(
             TextInput(prompt), effort=self._runtime.effort

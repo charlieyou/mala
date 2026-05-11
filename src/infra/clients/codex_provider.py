@@ -41,6 +41,8 @@ from src.core.constants import (
 from src.infra.clients.codex_evidence_provider import CodexEvidenceProvider
 from src.infra.clients.codex_sdk_compat import (
     codex_runtime_resolvable,
+    import_codex_app_server,
+    import_codex_generated_v2_all,
     resolve_codex_bin_for_app_server,
     start_thread_compat,
 )
@@ -1113,11 +1115,10 @@ def _live_codex_hook_dispatch_probe(
     expected_event_files = ("SessionStart.json", "PreToolUse.json")
 
     async def _drive_turn(marker_dir: Path) -> dict[str, str]:
-        from codex_app_server import (  # type: ignore[import-not-found]
-            AppServerConfig,
-            AsyncCodex,
-            TextInput,
-        )
+        codex_app_server = import_codex_app_server()
+        AppServerConfig = codex_app_server.AppServerConfig
+        AsyncCodex = codex_app_server.AsyncCodex
+        TextInput = codex_app_server.TextInput
 
         codex_bin = resolve_codex_bin_for_app_server()
         merged_env = dict(os.environ)
@@ -1339,13 +1340,11 @@ def _live_codex_plugin_list_probe(
         # `install_prerequisites`: the SDK is only imported when the live
         # probe actually runs (which only happens after the upstream
         # SDK importability + binary + auth checks already passed).
-        from codex_app_server import (  # type: ignore[import-not-found]
-            AppServerConfig,
-            AsyncCodex,
-        )
-        from codex_app_server.generated.v2_all import (  # type: ignore[import-not-found]
-            PluginListResponse,
-        )
+        codex_app_server = import_codex_app_server()
+        codex_v2_all = import_codex_generated_v2_all()
+        AppServerConfig = codex_app_server.AppServerConfig
+        AsyncCodex = codex_app_server.AsyncCodex
+        PluginListResponse = codex_v2_all.PluginListResponse
 
         codex_bin = resolve_codex_bin_for_app_server()
         merged_env = dict(os.environ)

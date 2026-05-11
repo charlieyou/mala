@@ -14,12 +14,23 @@ thread response is received and an ``AsyncThread`` wrapper is needed.
 from __future__ import annotations
 
 import inspect
+import importlib
 import importlib.util
 import os
 import shutil
 from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict
+
+
+def import_codex_app_server() -> Any:
+    """Import the optional Codex app-server SDK at runtime."""
+    return importlib.import_module("codex_app_server")
+
+
+def import_codex_generated_v2_all() -> Any:
+    """Import optional generated Codex app-server models at runtime."""
+    return importlib.import_module("codex_app_server.generated.v2_all")
 
 
 def resolve_codex_bin_for_app_server() -> str | None:
@@ -110,10 +121,7 @@ async def start_thread_compat(
         typed_thread_start = getattr(codex, "thread_start")
         return await typed_thread_start(**typed_kwargs)
 
-    from codex_app_server import (  # type: ignore[import-not-found]
-        AsyncThread,
-    )
-
+    AsyncThread = import_codex_app_server().AsyncThread
     return AsyncThread(cast("Any", codex), thread_id)
 
 
@@ -128,8 +136,5 @@ async def resume_thread_compat(codex: object, thread_id: str) -> Any:  # noqa: A
         typed_thread_resume = getattr(codex, "thread_resume")
         return await typed_thread_resume(thread_id)
 
-    from codex_app_server import (  # type: ignore[import-not-found]
-        AsyncThread,
-    )
-
+    AsyncThread = import_codex_app_server().AsyncThread
     return AsyncThread(cast("Any", codex), resumed_thread_id)
