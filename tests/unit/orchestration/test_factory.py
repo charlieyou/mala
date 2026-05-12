@@ -161,6 +161,26 @@ class TestCheckReviewAvailability:
 
         assert result is None
 
+    def test_cerberus_path_preflight_matches_configured_runtime_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Configured PATH must not pass by finding cerberus on ambient PATH."""
+        from src.domain.validation.config_types import CerberusConfig
+
+        ambient_root = tmp_path / "ambient"
+        ambient_root.mkdir()
+        ambient_bin_dir = _write_fake_cerberus(ambient_root)
+        monkeypatch.setenv("PATH", str(ambient_bin_dir))
+
+        result = _check_review_availability(
+            mala_config=MalaConfig(),
+            disabled_validations=set(),
+            reviewer_type="cerberus",
+            cerberus_config=CerberusConfig(env=(("PATH", "/missing"),)),
+        )
+
+        assert result == "cerberus binary not found in PATH"
+
 
 class TestCerberusFactoryWiring:
     """Tests for Cerberus adapter construction."""

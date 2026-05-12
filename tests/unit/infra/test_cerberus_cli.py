@@ -63,6 +63,20 @@ class TestValidateBinary:
         )
         assert cli.validate_binary() == "cerberus binary not found in PATH"
 
+    def test_configured_path_does_not_fall_back_to_process_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Validation checks the PATH that the spawned cerberus command uses."""
+        _, ambient_bin_dir = self._make_cerberus_root(tmp_path)
+        monkeypatch.setenv("PATH", str(ambient_bin_dir))
+
+        cli = CerberusCLI(
+            repo_path=tmp_path,
+            env={"PATH": "/nonexistent/path"},
+        )
+
+        assert cli.validate_binary() == "cerberus binary not found in PATH"
+
     def test_returns_error_when_root_missing_prompts(self, tmp_path: Path) -> None:
         """Returns distinct error when binary exists but root lacks prompts."""
         root = tmp_path / "cerberus-root"

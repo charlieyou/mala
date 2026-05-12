@@ -161,9 +161,9 @@ class CerberusCLI:
         return merged
 
     def _effective_path(self) -> str:
-        """Build PATH from cerberus.env and the process environment."""
+        """Return the PATH Cerberus subprocesses will use."""
         if "PATH" in self.env:
-            return self.env["PATH"] + os.pathsep + os.environ.get("PATH", "")
+            return self.env["PATH"]
         return os.environ.get("PATH", "")
 
     def _resolve_cerberus_root(self, effective_path: str) -> Path | None:

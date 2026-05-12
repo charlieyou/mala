@@ -268,9 +268,9 @@ def _effective_cerberus_env(
 
 
 def _effective_path(env: dict[str, str]) -> str:
-    """Build PATH from Cerberus env overrides and the process environment."""
+    """Return the PATH Cerberus subprocesses will use."""
     if "PATH" in env:
-        return env["PATH"] + os.pathsep + os.environ.get("PATH", "")
+        return env["PATH"]
     return os.environ.get("PATH", "")
 
 
