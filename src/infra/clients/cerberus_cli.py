@@ -59,7 +59,7 @@ class WaitResult:
     timed_out: bool = False
 
     def __getattr__(self, name: str) -> Path | None:
-        """Support dynamic legacy attributes without adding dataclass fields."""
+        """Support legacy dynamic attributes without expanding the dataclass."""
         raise AttributeError(name)
 
 
