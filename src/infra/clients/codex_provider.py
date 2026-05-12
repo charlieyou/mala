@@ -214,19 +214,21 @@ _CODEX_CONFIG_AUTH_SEED_KEYS: tuple[str, ...] = (
     "cli_auth_credentials_store",
     "forced_chatgpt_workspace_id",
     "forced_login_method",
+    "model_provider",
 )
 """User ``config.toml`` top-level keys allowed into Mala's isolated home.
 
 Mala-launched Codex workers need enough user config for authentication
-to keep working (notably keyring-backed ChatGPT credentials), but they
+and model routing to keep working (notably keyring-backed ChatGPT
+credentials and a selected non-default ``model_provider``), but they
 must not inherit user plugin/hook/MCP/tooling config. Inheriting those
 tables lets interactive local Codex extensions (for example stop hooks
 that wait for a review gate) run inside unattended Mala workers and can
 block completion after the model has already emitted its final marker.
 
-Keep this allowlist intentionally small and auth-scoped. Mala supplies
-its own per-worker model/sandbox/approval/cwd values through the SDK and
-writes its own plugin/hook trust state into the isolated config later.
+Keep this allowlist intentionally small. Mala supplies its own
+per-worker model/sandbox/approval/cwd values through the SDK and writes
+its own plugin/hook trust state into the isolated config later.
 """
 
 
@@ -299,15 +301,17 @@ def _codex_uses_keyring_credentials_store(codex_home: Path) -> bool:
     return isinstance(value, str) and value.strip().lower() == "keyring"
 
 
-def _render_toml_seed_scalar(value: object) -> str | None:
-    """Render a small TOML scalar for the isolated Codex config seed.
+def _render_toml_seed_value(value: object) -> str | None:
+    """Render a small TOML value for the isolated Codex config seed.
 
-    The auth seed allowlist currently contains string-valued Codex
+    The top-level allowlist currently contains string-valued Codex
     settings, but accepting primitive scalars keeps the helper tolerant
-    if Codex adds a boolean/int auth knob later. Complex tables and
-    arrays are deliberately skipped: copying tables is exactly how user
-    ``[plugins]`` / ``[hooks]`` / ``[mcp_servers]`` config leaked into
-    unattended workers.
+    if Codex adds a boolean/int knob later. Lists and inline tables are
+    supported for selected ``[model_providers.<name>]`` entries because
+    provider config may include headers or query params. Other complex
+    tables are still deliberately skipped: copying tables is exactly how
+    user ``[plugins]`` / ``[hooks]`` / ``[mcp_servers]`` config leaked
+    into unattended workers.
     """
     if isinstance(value, str):
         import json as _json
@@ -317,7 +321,32 @@ def _render_toml_seed_scalar(value: object) -> str | None:
         return "true" if value else "false"
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, list):
+        rendered_items = [_render_toml_seed_value(item) for item in value]
+        if any(item is None for item in rendered_items):
+            return None
+        return "[" + ", ".join(item for item in rendered_items if item) + "]"
+    if isinstance(value, dict):
+        rendered_pairs: list[str] = []
+        for key, item in value.items():
+            if not isinstance(key, str):
+                return None
+            rendered_item = _render_toml_seed_value(item)
+            if rendered_item is None:
+                return None
+            rendered_key = _render_toml_dotted_key_part(key)
+            rendered_pairs.append(f"{rendered_key} = {rendered_item}")
+        return "{ " + ", ".join(rendered_pairs) + " }"
     return None
+
+
+def _render_toml_dotted_key_part(value: str) -> str:
+    """Render one TOML dotted-key component safely."""
+    import json as _json
+
+    return _json.dumps(value, ensure_ascii=False)
 
 
 def _build_isolated_codex_config_seed(user_config: Path) -> str:
@@ -329,9 +358,10 @@ def _build_isolated_codex_config_seed(user_config: Path) -> str:
     plugin registered a long-running ``Stop`` hook, Mala's noninteractive
     Codex worker could hang after emitting a final result because Codex
     waited for that user hook to finish. This seed copies only the
-    top-level auth-scoped scalars in
-    :data:`_CODEX_CONFIG_AUTH_SEED_KEYS`; everything else is recreated by
-    Mala or left to Codex defaults.
+    top-level scalars in :data:`_CODEX_CONFIG_AUTH_SEED_KEYS` plus, when
+    ``model_provider`` is set, the matching
+    ``[model_providers.<model_provider>]`` table. Everything else is
+    recreated by Mala or left to Codex defaults.
 
     Read/parse failures are best-effort and return an empty seed, matching
     the existing isolation behavior where auth was probed against the
@@ -346,14 +376,30 @@ def _build_isolated_codex_config_seed(user_config: Path) -> str:
 
     lines: list[str] = []
     for key in _CODEX_CONFIG_AUTH_SEED_KEYS:
-        rendered = _render_toml_seed_scalar(parsed.get(key))
+        rendered = _render_toml_seed_value(parsed.get(key))
         if rendered is not None:
             lines.append(f"{key} = {rendered}\n")
+    provider_name = parsed.get("model_provider")
+    providers = parsed.get("model_providers")
+    if isinstance(provider_name, str) and isinstance(providers, dict):
+        provider_config = providers.get(provider_name)
+        if isinstance(provider_config, dict):
+            provider_lines: list[str] = []
+            for key, value in provider_config.items():
+                if not isinstance(key, str):
+                    continue
+                rendered = _render_toml_seed_value(value)
+                if rendered is not None:
+                    provider_lines.append(f"{key} = {rendered}\n")
+            if provider_lines:
+                provider_key = _render_toml_dotted_key_part(provider_name)
+                lines.append(f"\n[model_providers.{provider_key}]\n")
+                lines.extend(provider_lines)
     if not lines:
         return ""
     return (
         "# Generated by mala for isolated Codex workers. Only auth-related "
-        "user config is copied.\n" + "".join(lines)
+        "and selected model-provider user config is copied.\n" + "".join(lines)
     )
 
 

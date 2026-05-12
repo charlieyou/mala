@@ -976,6 +976,63 @@ def test_isolated_codex_home_strips_user_plugins_hooks_and_shell_env(
 
 
 @pytest.mark.unit
+def test_isolated_codex_home_preserves_selected_model_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """Mala workers inherit the user's selected Codex model-provider routing."""
+    codex_home, bin_dir = fake_codex_env
+    user_config = codex_home / "config.toml"
+    user_config.write_text(
+        "\n".join(
+            [
+                'model_provider = "proxy-api"',
+                "",
+                '[model_providers."proxy-api"]',
+                'name = "Proxy API"',
+                'base_url = "http://localhost:8317/v1"',
+                'env_key = "CODEX_API_KEY"',
+                'wire_api = "responses"',
+                "request_max_retries = 2",
+                'http_headers = { "OpenAI.Beta" = "assistants=v2" }',
+                'query_params = { "$select" = "id,name" }',
+                "",
+                "[model_providers.unselected]",
+                'base_url = "https://should-not-copy.example/v1"',
+                "",
+                "[mcp_servers.unrelated]",
+                'command = "unrelated"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    isolated_config = (
+        _provider_isolated_codex_home(provider) / "config.toml"
+    ).read_text(encoding="utf-8")
+    assert 'model_provider = "proxy-api"' in isolated_config
+    assert '[model_providers."proxy-api"]' in isolated_config
+    assert 'base_url = "http://localhost:8317/v1"' in isolated_config
+    assert 'env_key = "CODEX_API_KEY"' in isolated_config
+    assert 'wire_api = "responses"' in isolated_config
+    assert "request_max_retries = 2" in isolated_config
+    assert 'http_headers = { "OpenAI.Beta" = "assistants=v2" }' in isolated_config
+    assert 'query_params = { "$select" = "id,name" }' in isolated_config
+    assert "unselected" not in isolated_config
+    assert "should-not-copy" not in isolated_config
+    assert "[mcp_servers" not in isolated_config
+
+
+@pytest.mark.unit
 def test_isolated_codex_home_seed_does_not_inherit_read_only_config_mode(
     monkeypatch: pytest.MonkeyPatch,
     fake_codex_env: tuple[Path, Path],

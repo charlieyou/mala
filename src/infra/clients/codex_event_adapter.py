@@ -248,6 +248,19 @@ def _classify_codex_error(error_payload: object) -> str:
     return "error"
 
 
+def _codex_error_message(error_payload: object) -> str:
+    """Extract a concise human-readable Codex error message."""
+    error_payload = _unwrap_item(error_payload)
+    message = getattr(error_payload, "message", None)
+    if isinstance(message, str):
+        return message
+    if isinstance(error_payload, dict):
+        message = error_payload.get("message")
+        if isinstance(message, str):
+            return message
+    return ""
+
+
 class CodexEventAdapter:
     """Stateful translator from Codex notifications to AgentEvents.
 
@@ -483,18 +496,24 @@ class CodexEventAdapter:
         turn_obj = getattr(payload, "turn", None)
         status_value = _enum_value(getattr(turn_obj, "status", None))
         is_error = bool(status_value) and status_value != "completed"
+        result = status_value or ""
+        if is_error:
+            error_message = _codex_error_message(getattr(turn_obj, "error", None))
+            if error_message:
+                result = f"{result}: {error_message}" if result else error_message
         # ``MessageStreamProcessor._handle_result_event`` copies
         # ``result`` into ``lifecycle_ctx.final_result`` and exposes it
         # as ``AgentSessionOutput.summary`` for retry author context.
-        # Surfacing the ``TurnStatus`` string keeps that summary human
-        # readable; passing the whole ``Turn`` object would render as
-        # an opaque pydantic ``repr``.
+        # Surfacing the ``TurnStatus`` string (plus the provider error
+        # message on failures) keeps that summary human readable;
+        # passing the whole ``Turn`` object would render as an opaque
+        # pydantic ``repr``.
         return [
             AgentResultEvent(
                 session_id=thread_id,
                 is_error=is_error,
                 subtype="completed",
-                result=status_value or "",
+                result=result,
             )
         ]
 

@@ -615,6 +615,31 @@ def test_turn_completed_status_drives_is_error(status: str, is_error: bool) -> N
     assert event.result == status
 
 
+@pytest.mark.unit
+def test_failed_turn_completed_includes_error_message() -> None:
+    """Failed ``turn/completed`` events keep provider error details visible."""
+    adapter = CodexEventAdapter()
+    turn = SimpleNamespace(
+        id="turn_1",
+        status=SimpleNamespace(value="failed"),
+        error=SimpleNamespace(message="boom"),
+    )
+    events = adapter.to_events(
+        _Notification(
+            method="turn/completed",
+            payload=SimpleNamespace(thread_id="thr_session", turn=turn),
+        )
+    )
+
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, AgentResultEvent)
+    assert event.session_id == "thr_session"
+    assert event.subtype == "completed"
+    assert event.is_error is True
+    assert event.result == "failed: boom"
+
+
 # ---------------------------------------------------------------------------
 # D7 — error notification (mid-turn provider error)
 # ---------------------------------------------------------------------------

@@ -775,7 +775,7 @@ async def test_receive_response_maps_failed_turn_to_error_result(
     assert isinstance(result_event, AgentResultEvent)
     assert result_event.is_error is True
     assert result_event.subtype == "completed"
-    assert result_event.result == "failed"
+    assert result_event.result == "failed: boom"
 
 
 @pytest.mark.unit
