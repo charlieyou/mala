@@ -221,6 +221,7 @@ def decide(input_payload: dict[str, Any]) -> dict[str, Any]:
             lock_dir=lock_dir,
             repo_namespace=repo_namespace,
             cwd=cwd_str,
+            allow_literal_dollar=True,
         )
         return _deny(reason) if reason is not None else _allow()
 

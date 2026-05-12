@@ -100,6 +100,59 @@ class TestApplyPatchBranch:
 
         assert is_allow(result), result
 
+    def test_allows_literal_dollar_route_filename_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "ui" / "src" / "routes" / "solves" / "$solveId.tsx"
+        target.parent.mkdir(parents=True)
+        target.touch()
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+
+        result = decide(make_payload("apply_patch", {"path": str(target)}))
+
+        assert is_allow(result), result
+
+    def test_allows_literal_dollar_route_directory_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = (
+            repo
+            / "ui"
+            / "src"
+            / "routes"
+            / "solves"
+            / "$solveId"
+            / "spots"
+            / "$nodeId.tsx"
+        )
+        target.parent.mkdir(parents=True)
+        target.touch()
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+
+        result = decide(make_payload("apply_patch", {"path": str(target)}))
+
+        assert is_allow(result), result
+
+    def test_allows_literal_dollar_route_from_patch_header_when_locked(
+        self, env: dict[str, str], repo: Path
+    ) -> None:
+        target = repo / "ui" / "src" / "routes" / "solves" / "$solveId.tsx"
+        target.parent.mkdir(parents=True)
+        target.write_text("old\n")
+        assert try_lock(str(target), "agent-me", repo_namespace=str(repo))
+        body = (
+            "*** Begin Patch\n"
+            "*** Update File: ui/src/routes/solves/$solveId.tsx\n"
+            "@@\n"
+            "-old\n"
+            "+new\n"
+            "*** End Patch\n"
+        )
+
+        result = decide(make_payload("apply_patch", {"patch": body}, cwd=repo))
+
+        assert is_allow(result), result
+
     def test_denies_when_unlocked(self, env: dict[str, str], repo: Path) -> None:
         target = repo / "src.py"
 

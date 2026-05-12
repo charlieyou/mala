@@ -82,6 +82,7 @@ _MSG_ENV_MISSING = (
 # reaching this gate has been preserved inside single quotes (literal)
 # and is not a write surface.
 _SHELL_EXPANSION_RE = re.compile(r"[*?\[\]{}$~]")
+_SHELL_EXPANSION_EXCEPT_DOLLAR_RE = re.compile(r"[*?\[\]{}~]")
 
 
 def _resolve_against_cwd(target: str, cwd: str | None) -> str:
@@ -110,6 +111,8 @@ def _check_lock(
     lock_dir: str,
     repo_namespace: str,
     cwd: str | None,
+    *,
+    allow_literal_dollar: bool = False,
 ) -> str | None:
     """Look up the lock holder for ``target`` and return the deny reason if blocked.
 
@@ -133,7 +136,12 @@ def _check_lock(
         return _msg_no_lock(target, agent_id)
     if _CMDSUB_PLACEHOLDER in target or _ANSI_C_PLACEHOLDER in target:
         return _msg_no_lock(target, agent_id)
-    if _SHELL_EXPANSION_RE.search(target):
+    expansion_re = (
+        _SHELL_EXPANSION_EXCEPT_DOLLAR_RE
+        if allow_literal_dollar
+        else _SHELL_EXPANSION_RE
+    )
+    if expansion_re.search(target):
         return _msg_no_lock(target, agent_id)
     # The locking module reads ``MALA_LOCK_DIR`` from ``os.environ`` at
     # call time. Reaffirm it here so the lock-key derivation always
@@ -163,10 +171,18 @@ def _gate_write_targets(
     lock_dir: str,
     repo_namespace: str,
     cwd: str | None,
+    allow_literal_dollar: bool = False,
 ) -> str | None:
     """Run the lock check on each target; return the first deny reason."""
     for target in targets:
-        reason = _check_lock(target, agent_id, lock_dir, repo_namespace, cwd)
+        reason = _check_lock(
+            target,
+            agent_id,
+            lock_dir,
+            repo_namespace,
+            cwd,
+            allow_literal_dollar=allow_literal_dollar,
+        )
         if reason is not None:
             return reason
     return None
