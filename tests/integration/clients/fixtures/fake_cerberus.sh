@@ -43,7 +43,7 @@ write_gate_state() {
 
   cat > "${run_dir}/gate-state.json" <<JSON
 {
-  "schema_version": 2,
+  "schema_version": "2",
   "run_key": "${run_key}",
   "host": "generic",
   "project_key": "${project_key}",
@@ -127,10 +127,10 @@ case "$subcommand" in
         write_gate_state "pass" 0
         ;;
       fail_two_reviewers|debate_round_two)
-        write_gate_state "fail" 1
+        write_gate_state "fail" 0
         ;;
       requires_decision)
-        write_gate_state "requires_decision" 1
+        write_gate_state "requires_decision" 0
         ;;
       *)
         echo "unknown CERBERUS_FAKE_CASE=${case_name}" >&2

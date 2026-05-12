@@ -44,9 +44,10 @@ def fake_cerberus_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return bin_dir / "cerberus"
 
 
-def _install_partial_v2_import_compat() -> None:
+def _install_partial_v2_import_compat(monkeypatch: pytest.MonkeyPatch) -> None:
     """Let this smoke test collect while adjacent v2 commits are half-applied."""
     from src.infra.clients import cerberus_cli
+    from src.infra.clients import cerberus_review
 
     class CerberusGateCLI:
         def __init__(
@@ -135,7 +136,11 @@ def _install_partial_v2_import_compat() -> None:
                 stderr=result.stderr,
                 timed_out=result.timed_out,
             )
-            cast("Any", wait_result).session_dir = Path(env["CERBERUS_STATE_ROOT"])
+            cast("Any", wait_result).session_dir = (
+                Path(env["CERBERUS_STATE_ROOT"])
+                / env["CERBERUS_PROJECT_KEY"]
+                / env["CERBERUS_RUN_KEY"]
+            )
             return wait_result
 
         async def resolve_gate(
@@ -152,7 +157,8 @@ def _install_partial_v2_import_compat() -> None:
                 error_detail=result.stderr_tail() or result.stdout_tail(),
             )
 
-    cast("Any", cerberus_cli).CerberusGateCLI = CerberusGateCLI
+    monkeypatch.setattr(cerberus_cli, "CerberusGateCLI", CerberusGateCLI)
+    monkeypatch.setattr(cerberus_review, "CerberusGateCLI", CerberusGateCLI)
 
 
 async def _run_review(
@@ -160,7 +166,7 @@ async def _run_review(
     monkeypatch: pytest.MonkeyPatch,
     case_name: str,
 ) -> tuple[ReviewResult, list[str]]:
-    _install_partial_v2_import_compat()
+    _install_partial_v2_import_compat(monkeypatch)
     from src.orchestration.factory import _create_code_reviewer
 
     monkeypatch.setenv("CERBERUS_FAKE_CASE", case_name)
@@ -210,7 +216,7 @@ async def test_v2_fail_formats_two_reviewer_attributions(
     monkeypatch: pytest.MonkeyPatch,
     fake_cerberus_path: Path,
 ) -> None:
-    _install_partial_v2_import_compat()
+    _install_partial_v2_import_compat(monkeypatch)
     from src.infra.clients.cerberus_review import format_review_issues
 
     assert fake_cerberus_path.exists()
