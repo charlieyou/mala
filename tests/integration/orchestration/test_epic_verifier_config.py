@@ -311,7 +311,7 @@ class TestValidationConfigEpicVerification:
             "epic_verification": {"reviewer_type": "agent_sdk"},
             "commands": {"test": {"command": "echo test"}},
         }
-        config = parse_validation_config(data)  # ty:ignore[invalid-argument-type]
+        config = parse_validation_config(data)
         assert config.epic_verification.reviewer_type == "agent_sdk"
 
     def test_validation_config_from_dict_parses_cerberus_reviewer(self) -> None:
@@ -322,7 +322,7 @@ class TestValidationConfigEpicVerification:
             "epic_verification": {"reviewer_type": "cerberus"},
             "commands": {"test": {"command": "echo test"}},
         }
-        config = parse_validation_config(data)  # ty:ignore[invalid-argument-type]
+        config = parse_validation_config(data)
         assert config.epic_verification.reviewer_type == "cerberus"
 
     def test_validation_config_from_dict_defaults_without_epic_verification(
@@ -332,7 +332,7 @@ class TestValidationConfigEpicVerification:
         from src.domain.validation.config_parser import parse_validation_config
 
         data = {"commands": {"test": {"command": "echo test"}}}
-        config = parse_validation_config(data)  # ty:ignore[invalid-argument-type]
+        config = parse_validation_config(data)
         assert config.epic_verification.reviewer_type == "agent_sdk"
 
 
@@ -445,7 +445,7 @@ class TestEpicVerifierConfigIntegration:
             "epic_verification": {"reviewer_type": "agent_sdk"},
             "commands": {"test": {"command": "echo test"}},
         }
-        validation_config = parse_validation_config(data)  # ty:ignore[invalid-argument-type]
+        validation_config = parse_validation_config(data)
 
         # Step 2: Extract reviewer_type (mimics create_orchestrator behavior)
         reviewer_type = validation_config.epic_verification.reviewer_type

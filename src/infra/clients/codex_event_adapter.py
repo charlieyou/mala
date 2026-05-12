@@ -50,7 +50,8 @@ churning and a future addition must not crash a running turn.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, cast
 
 from src.core.protocols.agent_event import (
     AgentResultEvent,
@@ -254,8 +255,9 @@ def _codex_error_message(error_payload: object) -> str:
     message = getattr(error_payload, "message", None)
     if isinstance(message, str):
         return message
-    if isinstance(error_payload, dict):
-        message = error_payload.get("message")
+    if isinstance(error_payload, Mapping):
+        payload_mapping = cast("Mapping[str, object]", error_payload)
+        message = payload_mapping.get("message")
         if isinstance(message, str):
             return message
     return ""

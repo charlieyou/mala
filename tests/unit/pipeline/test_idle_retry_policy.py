@@ -6,6 +6,7 @@ stream processor, and lifecycle context.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
     from src.pipeline.message_stream_processor import (
         IdleTimeoutStream,
         LintCacheProtocol,
+        MessageStreamProcessor,
     )
 
 
@@ -584,7 +586,9 @@ class TestSubprocessExitRetry:
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: processor,
+            stream_processor_factory=cast(
+                "Callable[[], MessageStreamProcessor]", lambda: processor
+            ),
             config=config,
         )
 
