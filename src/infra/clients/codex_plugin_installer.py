@@ -661,7 +661,7 @@ def _write_codex_plugin_config(
         return  # all config entries already correct
 
     try:
-        target.write_text(rewritten, encoding="utf-8")
+        _atomic_write_text(target, rewritten)
     except OSError as exc:
         raise CodexHookNotActiveError(
             f"Cannot write Codex plugin/hook config to {target} ({exc}). "
@@ -706,10 +706,9 @@ def _write_codex_plugin_marketplace_manifest(
     }
 
     try:
-        manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        manifest_path.write_text(
+        _atomic_write_text(
+            manifest_path,
             json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
         )
     except OSError as exc:
         raise CodexHookNotActiveError(
@@ -718,6 +717,34 @@ def _write_codex_plugin_marketplace_manifest(
             "mala-safety plugin in the isolated CODEX_HOME.",
             reason=CodexHookNotActiveReason.PLUGIN_DISABLED,
         ) from exc
+
+
+def _atomic_write_text(target_path: Path, payload: str) -> None:
+    """Atomically replace a UTF-8 text file, raising ``OSError`` on failure."""
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=target_path.parent,
+            prefix=_TEMP_PREFIX,
+            suffix=_TEMP_SUFFIX,
+            delete=False,
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+            tmp.write(payload)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_path, target_path)
+        tmp_path = None
+    finally:
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink()
+            except OSError as cleanup_exc:
+                if cleanup_exc.errno != errno.ENOENT:
+                    pass
 
 
 def _read_existing_payload(target_dir: Path) -> dict[str, bytes] | None:

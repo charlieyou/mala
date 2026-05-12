@@ -111,6 +111,7 @@ def fake_codex_env(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("MALA_CODEX_HOME_DIR", str(tmp_path / "mala-codex-homes"))
     # Clear auth env vars so the on-disk auth.json is the active source
     # for the auth probe; tests opting into the env-var path set them
     # back explicitly.
@@ -887,11 +888,11 @@ def _provider_isolated_codex_home(provider: CodexAgentProvider) -> Path:
     guessing the user's real ``$CODEX_HOME``; mala-scoped Codex runs
     must never install the safety plugin into the user's normal home.
     """
-    handle = provider._isolated_codex_home
-    assert handle is not None, (
+    isolated_home = provider._isolated_codex_home
+    assert isolated_home is not None, (
         "Provider did not allocate an isolated CODEX_HOME for a mala Codex run."
     )
-    return Path(handle.name)
+    return isolated_home
 
 
 @pytest.mark.unit
@@ -1196,6 +1197,181 @@ def test_install_prerequisites_threads_isolated_codex_home_into_runtime_env(
     runtime = builder.build()
     assert isinstance(runtime, CodexRuntime)
     assert runtime.env["CODEX_HOME"] == str(isolated_home)
+
+
+@pytest.mark.unit
+def test_isolated_codex_home_is_stable_for_resume_rollouts(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """A later provider for the same repo/config reuses the same Codex home.
+
+    Codex stores resumable rollout data below ``$CODEX_HOME/sessions``.
+    If Mala's isolated home is process-temporary, run metadata can still
+    contain a thread id while the next ``--resume`` app-server cannot see
+    that thread's rollout. The isolated home must therefore be stable for
+    the same repo and Codex MCP configuration.
+    """
+    _codex_home, bin_dir = fake_codex_env
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    first = CodexAgentProvider(selftest_probe=_noop_probe)
+    first.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+    first_home = _provider_isolated_codex_home(first)
+    rollout_marker = first_home / "sessions" / "rollout-marker.jsonl"
+    rollout_marker.parent.mkdir(parents=True)
+    rollout_marker.write_text("{}\n", encoding="utf-8")
+
+    second = CodexAgentProvider(selftest_probe=_noop_probe)
+    second.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+    second_home = _provider_isolated_codex_home(second)
+
+    assert second_home == first_home
+    assert (second_home / "sessions" / "rollout-marker.jsonl").is_file()
+
+
+@pytest.mark.unit
+def test_isolated_codex_home_fingerprint_ignores_mcp_declaration_order(
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """Semantically identical MCP config should not fork resume storage."""
+    del fake_codex_env
+    server_a: dict[str, object] = {"command": "/bin/a", "args": [], "env": {}}
+    server_b: dict[str, object] = {"command": "/bin/b", "args": [], "env": {}}
+    first = CodexAgentProvider(
+        mcp_servers=(("a", server_a), ("b", server_b)),
+        selftest_probe=_noop_probe,
+    )
+    second = CodexAgentProvider(
+        mcp_servers=(("b", server_b), ("a", server_a)),
+        selftest_probe=_noop_probe,
+    )
+
+    first.runtime_builder(tmp_path, "agent-a", mcp_server_factory=fake_mcp_factory)
+    second.runtime_builder(tmp_path, "agent-b", mcp_server_factory=fake_mcp_factory)
+    first_home = _provider_isolated_codex_home(first)
+    second_home = _provider_isolated_codex_home(second)
+
+    assert second_home == first_home
+
+
+@pytest.mark.unit
+def test_reused_isolated_codex_home_refreshes_user_config_seed(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """Stable homes still pick up later user model-provider changes."""
+    codex_home, bin_dir = fake_codex_env
+    user_config = codex_home / "config.toml"
+    user_config.write_text(
+        'model_provider = "first"\n\n[model_providers.first]\nbase_url = "https://first.example/v1"\n',
+        encoding="utf-8",
+    )
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    first = CodexAgentProvider(selftest_probe=_noop_probe)
+    first.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+    home = _provider_isolated_codex_home(first)
+    assert "https://first.example" in (home / "config.toml").read_text(
+        encoding="utf-8"
+    )
+
+    user_config.write_text(
+        'model_provider = "second"\n\n[model_providers.second]\nbase_url = "https://second.example/v1"\n',
+        encoding="utf-8",
+    )
+    second = CodexAgentProvider(selftest_probe=_noop_probe)
+    second.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    assert _provider_isolated_codex_home(second) == home
+    refreshed = (home / "config.toml").read_text(encoding="utf-8")
+    assert 'model_provider = "second"' in refreshed
+    assert "https://second.example" in refreshed
+    assert "https://first.example" not in refreshed
+    assert "trusted_hash" in refreshed
+
+
+@pytest.mark.unit
+def test_reused_isolated_codex_home_clears_removed_user_config_seed(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """If the user's config disappears, stale isolated seed entries are removed."""
+    codex_home, bin_dir = fake_codex_env
+    user_config = codex_home / "config.toml"
+    user_config.write_text(
+        'cli_auth_credentials_store = "keyring"\n'
+        'model_provider = "first"\n\n'
+        '[model_providers.first]\nbase_url = "https://first.example/v1"\n',
+        encoding="utf-8",
+    )
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    first = CodexAgentProvider(selftest_probe=_noop_probe)
+    first.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+    home = _provider_isolated_codex_home(first)
+    seeded = (home / "config.toml").read_text(encoding="utf-8")
+    assert 'cli_auth_credentials_store = "keyring"' in seeded
+    assert "https://first.example" in seeded
+
+    user_config.unlink()
+    second = CodexAgentProvider(selftest_probe=_noop_probe)
+    second.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    assert _provider_isolated_codex_home(second) == home
+    refreshed = (home / "config.toml").read_text(encoding="utf-8")
+    assert "cli_auth_credentials_store" not in refreshed
+    assert "model_provider" not in refreshed
+    assert "https://first.example" not in refreshed
+    assert "Generated by mala for isolated Codex workers" not in refreshed
+    assert "trusted_hash" in refreshed
+    assert '[plugins."mala-safety@local"]' in refreshed
+
+
+@pytest.mark.unit
+def test_isolated_codex_home_auth_symlink_eexist_race_is_tolerated(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """If another process creates auth.json during symlink, install continues."""
+    _codex_home, bin_dir = fake_codex_env
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    original_symlink_to = Path.symlink_to
+
+    def racing_symlink(
+        self: Path, target: Path | str, target_is_directory: bool = False
+    ) -> None:
+        if self.name == "auth.json" and "mala-codex-homes" in str(self):
+            self.write_text("race-winner\n", encoding="utf-8")
+            raise FileExistsError(self)
+        return original_symlink_to(self, target, target_is_directory)
+
+    monkeypatch.setattr(Path, "symlink_to", racing_symlink)
+
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    auth_path = _provider_isolated_codex_home(provider) / "auth.json"
+    assert auth_path.read_text(encoding="utf-8") == "race-winner\n"
 
 
 @pytest.mark.unit
