@@ -379,7 +379,9 @@ validation_triggers:
 
 ### Cerberus-Specific Settings
 
-When using `reviewer_type: cerberus`, additional settings are available:
+When using `reviewer_type: cerberus`, mala invokes the Cerberus v2 `cerberus`
+binary on `$PATH`. Plugin cache auto-discovery is not supported. Additional
+settings are available:
 
 ```yaml
 code_review:
@@ -395,9 +397,9 @@ code_review:
 | Field | Description |
 |-------|-------------|
 | `timeout` | Review timeout in seconds (default: 600) |
-| `spawn_args` | Additional arguments when spawning reviewer |
-| `wait_args` | Additional arguments when waiting for results |
-| `env` | Environment variables as key-value pairs |
+| `spawn_args` | Additional arguments for `cerberus spawn-code-review` |
+| `wait_args` | Additional arguments for `cerberus wait` |
+| `env` | Environment variables passed to `cerberus` |
 
 ## Migration Guide
 

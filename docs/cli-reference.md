@@ -2,6 +2,9 @@
 
 > For project-level validation configuration (`mala.yaml`), see [Project Configuration](project-config.md).
 
+Mala's Cerberus integration requires the Cerberus v2 `cerberus` binary on
+`$PATH`; Claude plugin cache auto-discovery is no longer supported.
+
 ## Commands
 
 ### `mala run`

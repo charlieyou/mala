@@ -119,7 +119,7 @@ After session_end (or immediately after the gate if session_end is not configure
 
 - Reviewer implementation is selected from the **first enabled** `validation_triggers.<trigger>.code_review` block:
   - `reviewer_type: agent_sdk` (default if none configured)
-  - `reviewer_type: cerberus` (requires Cerberus review-gate)
+  - `reviewer_type: cerberus` (requires Cerberus v2 binary on `$PATH`)
 - If the configured reviewer is unavailable (e.g., Cerberus not installed), review is disabled for that run
 - P0/P1 findings fail the review; P2/P3 findings are tracked (see below)
 - Reviews are retried on parse errors or no-progress conditions, up to the configured retry limit

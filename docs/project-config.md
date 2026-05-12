@@ -182,8 +182,6 @@ validation_triggers:             # Optional. See validation-triggers.md
 
 *Required when `coverage` section is present.
 
-**Cerberus epic verification note:** When `epic_verification.reviewer_type: cerberus`, mala invokes `review-gate spawn-epic-verify` and `review-gate wait`. It automatically generates a `CLAUDE_SESSION_ID` scoped to the epic (epic ID prefix + random suffix), so you do not need to set it manually.
-
 ## Context Management
 
 The Claude Agent SDK handles context management automatically via prompt caching and auto-compaction. No manual configuration is required.
@@ -715,7 +713,7 @@ validation_triggers:
 
 | Type | Description |
 |------|-------------|
-| `cerberus` (default) | Uses the Cerberus CLI plugin for review. Requires plugin installation. |
+| `cerberus` (default) | Invokes the Cerberus v2 `cerberus` binary on `$PATH`. |
 | `agent_sdk` | Uses Claude agents for interactive code review. |
 
 ## Per-Issue Review
@@ -762,6 +760,37 @@ per_issue_review:
   agent_sdk_timeout: 300
   agent_sdk_model: opus          # sonnet | opus | haiku
 ```
+
+### Cerberus v2 Runtime
+
+When `reviewer_type: cerberus`, mala invokes the v2 `cerberus` binary from
+`$PATH`. It does not auto-discover Claude plugin cache installs.
+
+Cerberus settings are available under both
+`epic_verification.cerberus`,
+`validation_triggers.<trigger>.code_review.cerberus`, and
+`per_issue_review.cerberus`:
+
+| Field | Description |
+|-------|-------------|
+| `timeout` | Review timeout in seconds (default: 600) |
+| `spawn_args` | Additional arguments for `cerberus spawn-code-review` |
+| `wait_args` | Additional arguments for `cerberus wait` |
+| `env` | Extra environment variables passed to `cerberus` |
+
+Use `cerberus.env.CERBERUS_ROOT` when the install does not follow mala's
+derived layout. The automatic derivation expects:
+
+```text
+<CERBERUS_ROOT>/bin/cerberus
+<CERBERUS_ROOT>/prompts/reviewers/
+```
+
+Bare `go install`, distro packages that split `bin` and `share`, and custom
+copies such as `~/bin/cerberus` must set `CERBERUS_ROOT` explicitly.
+
+Use `cerberus.env.CERBERUS_PROJECT_KEY` only when you need a stable project key
+that differs from mala's repo-path-derived default.
 
 ### Reviewer Selection Priority
 
