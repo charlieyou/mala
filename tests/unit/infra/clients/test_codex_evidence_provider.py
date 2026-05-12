@@ -55,6 +55,7 @@ def _command_completed(
     status: str = "completed",
     *,
     exit_code: int | None = 0,
+    command_actions: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     """``item/completed`` notification for a ``CommandExecutionThreadItem``.
 
@@ -72,6 +73,8 @@ def _command_completed(
     }
     if exit_code is not None:
         item["exit_code"] = exit_code
+    if command_actions is not None:
+        item["command_actions"] = command_actions
     return {
         "method": "item/completed",
         "payload": {
@@ -228,6 +231,34 @@ def test_iter_session_events_extracts_bash_command_from_completed_item(
         bash_commands.extend(provider.extract_bash_commands(entry))
 
     assert bash_commands == [("item-1", "uv run pytest -q")]
+
+
+@pytest.mark.unit
+def test_extract_bash_commands_prefers_command_actions_inner_script(
+    tmp_path: Path,
+) -> None:
+    """Codex wraps shells but stores the evidence-compatible script separately."""
+    log_path = tmp_path / "thr_test.jsonl"
+    inner = "__mala_log=/tmp/mala-validation-logs/x.lint.log\nuvx ruff check ."
+    _write_jsonl(
+        log_path,
+        [
+            _command_completed(
+                "item-1",
+                "/bin/zsh -lc '__mala_log=/tmp/mala-validation-logs/x.lint.log'",
+                "MALA_EVIDENCE name=lint exit=0 log=/tmp/mala-validation-logs/x.lint.log",
+                "completed",
+                command_actions=[{"command": inner}],
+            ),
+        ],
+    )
+
+    provider = CodexEvidenceProvider(sessions_dir=tmp_path)
+    bash_commands: list[tuple[str, str]] = []
+    for entry in provider.iter_session_events(log_path):
+        bash_commands.extend(provider.extract_bash_commands(entry))
+
+    assert bash_commands == [("item-1", inner)]
 
 
 @pytest.mark.unit

@@ -80,6 +80,7 @@ class TestBuildMergedCodexPluginMcpJson:
         assert bundled["command"] == CODEX_BUNDLED_MCP_LAUNCHER_COMMAND
         assert bundled["args"] == []
         assert bundled["env"] == {}
+        assert "default_tools_approval_mode" not in bundled
         assert bundled["env_vars"] == [
             "MALA_AGENT_ID",
             "MALA_LOCK_DIR",

@@ -733,6 +733,7 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
 
     mcp_payload = _json.loads((plugin_dir / ".mcp.json").read_text(encoding="utf-8"))
     bundled_mcp = mcp_payload["mcpServers"]["mala-locking"]
+    assert "default_tools_approval_mode" not in bundled_mcp
     assert bundled_mcp["env_vars"] == [
         "MALA_AGENT_ID",
         "MALA_LOCK_DIR",
@@ -765,6 +766,8 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     assert 'source_type = "local"' in config_toml
     assert f'source = "{isolated_home}"' in config_toml
     assert '[plugins."mala-safety@local"]' in config_toml
+    assert '[plugins."mala-safety@local".mcp_servers."mala-locking"]' in config_toml
+    assert 'default_tools_approval_mode = "approve"' in config_toml
     assert "enabled = true" in config_toml
     expected_key = (
         '[hooks.state."mala-safety@local:.codex-plugin/hooks.json:pre_tool_use:0:0"]'
@@ -854,6 +857,7 @@ def test_install_prerequisites_renders_user_mcp_servers_into_installed_mcp_json(
     # NOT the user's attempted override.
     bundled = servers["mala-locking"]
     assert bundled["command"] == "mala-codex-mcp-locking"
+    assert "default_tools_approval_mode" not in bundled
     assert bundled["command"] != hostile_locking_spec["command"]
 
 

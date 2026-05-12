@@ -48,6 +48,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from src.infra.clients.codex_mcp_factory import (
+    CODEX_BUNDLED_MCP_APPROVAL_MODE,
+    CODEX_BUNDLED_MCP_SERVER_NAME,
+)
+
 PLUGIN_NAME = "mala-safety"
 """Codex plugin manifest name. Must match ``plugin.json``'s ``name``."""
 
@@ -514,8 +519,15 @@ def _write_codex_plugin_config(
       * The hook is marked trusted: ``[hooks.state."<id>:<rel>:pre_tool_use:0:0"]``
         with ``enabled = true`` and the matching ``trusted_hash`` (per
         ``codex-rs/hooks/src/engine/discovery.rs::hook_trust_status``).
+      * The bundled ``mala-locking`` MCP server's tools are approved by
+        policy: ``[plugins."<id>".mcp_servers."mala-locking"]`` with
+        ``default_tools_approval_mode = "approve"``. Codex's MCP
+        approval prompt is independent of thread ``approval_policy``;
+        without this policy an unattended lock_acquire call waits for
+        approval and is then rejected before the write hook can observe
+        an active lock.
 
-    Without all six entries, Codex would discover the cached plugin
+    Without all of these entries, Codex would discover the cached plugin
     tree (``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/``)
     yet still skip the hook on PreToolUse — the orchestrator would
     proceed under ``danger-full-access`` / ``approval_policy=never``
@@ -548,6 +560,13 @@ def _write_codex_plugin_config(
     plugin_id = _plugin_id(marketplace)
     plugin_section = f'[plugins."{plugin_id}"]'
     plugin_block = f"{plugin_section}\nenabled = true\n"
+    plugin_mcp_section = (
+        f'[plugins."{plugin_id}".mcp_servers."{CODEX_BUNDLED_MCP_SERVER_NAME}"]'
+    )
+    plugin_mcp_block = (
+        f"{plugin_mcp_section}\n"
+        f'default_tools_approval_mode = "{CODEX_BUNDLED_MCP_APPROVAL_MODE}"\n'
+    )
     marketplace_section = f'[marketplaces."{marketplace}"]'
     marketplace_source_value = json.dumps(str(codex_home), ensure_ascii=False)
 
@@ -626,9 +645,13 @@ def _write_codex_plugin_config(
         key="source",
         value=marketplace_source_value,
     )
-    # 3 + 4. Replace the per-plugin and per-hook state blocks.
+    # 3 + 4 + 5. Replace the per-plugin, per-plugin MCP approval, and
+    # per-hook state blocks.
     rewritten = _rewrite_toml_block(
         rewritten, section_header=plugin_section, new_block=plugin_block
+    )
+    rewritten = _rewrite_toml_block(
+        rewritten, section_header=plugin_mcp_section, new_block=plugin_mcp_block
     )
     for state_section, state_block in state_blocks:
         rewritten = _rewrite_toml_block(

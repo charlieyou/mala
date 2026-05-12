@@ -30,7 +30,9 @@ Each line in ``{thread_id}.jsonl`` is a JSON-serialized Codex
 The methods that carry validation-relevant evidence are:
 
   * ``item/completed`` with ``payload.item.type == "commandExecution"`` —
-    a finished bash turn; ``item.command`` is the executed shell line and
+    a finished bash turn; ``item.command`` is the executed shell line,
+    ``item.command_actions[].command`` is Codex's parsed inner shell script
+    when the SDK wraps it in ``/bin/zsh -lc ...``, and
     ``item.aggregated_output`` is the captured stdout/stderr.
   * ``item/completed`` with ``payload.item.type == "fileChange"`` — an
     apply_patch turn; ``item.changes`` enumerates the touched files.
@@ -304,10 +306,13 @@ class CodexEvidenceProvider:
         """Extract Bash ``CommandExecutionThreadItem`` invocations from an entry.
 
         Reads ``item/completed`` notifications whose ``payload.item.type``
-        is ``commandExecution`` and yields ``(item_id, command)``. The
-        command is the shell line Codex executed; gate consumers match it
-        against lint/test/typecheck regexes the same way they match
-        Claude/Amp ``Bash`` ``tool_use`` blocks.
+        is ``commandExecution`` and yields ``(item_id, command)``. Prefer
+        Codex's parsed ``command_actions[].command`` scripts when present;
+        those carry the canonical validation wrapper body even when the raw
+        ``item.command`` is an outer ``/bin/zsh -lc '...'`` launcher. Gate
+        consumers match the extracted command against lint/test/typecheck
+        wrappers the same way they match Claude/Amp ``Bash`` ``tool_use``
+        blocks.
 
         Only ``item/completed`` is considered — ``item/started`` carries
         the same ``command`` but no ``aggregated_output`` yet, and the gate
@@ -322,10 +327,12 @@ class CodexEvidenceProvider:
         if item is None:
             return []
         item_id = self._str_field(item, "id")
-        command = self._str_field(item, "command")
         if not item_id:
             return []
-        return [(item_id, command)]
+        commands = self._command_action_commands(item)
+        if not commands:
+            commands = [self._str_field(item, "command")]
+        return [(item_id, command) for command in commands]
 
     def extract_tool_results(self, entry: JsonlEntryProtocol) -> list[tuple[str, bool]]:
         """Extract ``(item_id, is_error)`` tuples for completed tool items.
@@ -469,3 +476,26 @@ class CodexEvidenceProvider:
         if isinstance(value, str):
             return value
         return str(value)
+
+    @classmethod
+    def _command_action_commands(cls, item: dict[str, Any]) -> list[str]:
+        """Return unique parsed command scripts from Codex ``command_actions``.
+
+        Codex stores both the shell line it executed (often an outer
+        ``/bin/zsh -lc ...``) and a parsed ``command_actions`` list. The
+        parsed action is the evidence-compatible script body for validation
+        wrappers, so it must win over the outer launcher when present.
+        """
+        actions = item.get("command_actions")
+        if not isinstance(actions, list):
+            return []
+        commands: list[str] = []
+        seen: set[str] = set()
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+            command = cls._str_field(cast("dict[str, Any]", action), "command")
+            if command and command not in seen:
+                commands.append(command)
+                seen.add(command)
+        return commands

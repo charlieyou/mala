@@ -150,6 +150,7 @@ def test_bundled_mcp_forwards_lock_context_env_vars() -> None:
 
     payload = _json.loads((_REAL_BUNDLED_DIR / ".mcp.json").read_text("utf-8"))
     bundled = payload["mcpServers"]["mala-locking"]
+    assert "default_tools_approval_mode" not in bundled
     assert bundled["env_vars"] == [
         "MALA_AGENT_ID",
         "MALA_LOCK_DIR",
@@ -759,6 +760,8 @@ def test_write_codex_plugin_config_writes_all_preconditions(
     assert 'source_type = "local"' in rendered
     assert f'source = "{codex_home}"' in rendered
     assert '[plugins."mala-safety@local"]' in rendered
+    assert '[plugins."mala-safety@local".mcp_servers."mala-locking"]' in rendered
+    assert 'default_tools_approval_mode = "approve"' in rendered
     # Per-hook trust blocks for both events.
     assert (
         '[hooks.state."mala-safety@local:.codex-plugin/hooks.json:pre_tool_use:0:0"]'

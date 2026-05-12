@@ -44,6 +44,17 @@ while the new Codex plugin gets its own stable name. A unified
 ``mala-mcp-locking`` rename is out of scope (plan ``L1335``).
 """
 
+CODEX_BUNDLED_MCP_APPROVAL_MODE = "approve"
+"""Codex tool-approval mode for the bundled lock server.
+
+Codex evaluates MCP tool approvals separately from the thread-level
+``approval_policy``. The bundled lock server is noninteractive infrastructure:
+if ``lock_acquire`` waits for approval, unattended Mala workers receive a
+synthetic rejection before the safety hook can observe any active lock.
+Pinning the server to ``approve`` lets lock/unlock calls run while the
+PreToolUse hook still gates filesystem writes against the lock backend.
+"""
+
 
 def _build_bundled_codex_mcp_spec(agent_id: str, repo_path: Path) -> dict[str, object]:
     """Codex-shaped stdio launch spec for the bundled ``mala-locking`` server.
