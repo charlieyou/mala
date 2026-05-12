@@ -253,7 +253,7 @@ class TestMapExitCodeToResult:
         assert "Malformed reviewer output JSON" in result.parse_error
         assert len(result.issues) == 1
 
-    def test_requires_decision_synthesizes_blocking_issue(
+    def test_requires_decision_preserves_findings_with_decision_context(
         self, parser: ReviewOutputParser, tmp_path: Path
     ) -> None:
         _write_reviewer_output(tmp_path, findings=[_finding()])
@@ -270,7 +270,7 @@ class TestMapExitCodeToResult:
         assert result.passed is False
         assert result.fatal_error is False
         assert result.parse_error is None
-        assert len(result.issues) == 1
+        assert len(result.issues) == 2
         assert result.issues[0].priority == 1
         assert "no consensus" in result.issues[0].title
         assert "<iteration_dir>" not in result.issues[0].body
@@ -278,6 +278,53 @@ class TestMapExitCodeToResult:
             str(tmp_path / "project-1" / "run-1" / "iterations")
             in result.issues[0].body
         )
+        assert result.issues[1].title == "Test finding"
+        assert result.issues[1].body == "Test body"
+        assert result.issues[1].reviewer == "codex#1"
+
+    def test_requires_decision_without_findings_still_synthesizes_blocking_issue(
+        self, parser: ReviewOutputParser, tmp_path: Path
+    ) -> None:
+        _write_reviewer_output(tmp_path, findings=[])
+
+        result = parser.map_exit_code_to_result(
+            0,
+            _gate_state(verdict="requires_decision"),
+            "",
+            state_root=tmp_path,
+            project_key="project-1",
+            run_key="run-1",
+        )
+
+        assert result.passed is False
+        assert result.fatal_error is False
+        assert result.parse_error is None
+        assert len(result.issues) == 1
+        assert "no consensus" in result.issues[0].title
+
+    def test_requires_decision_with_malformed_peer_surfaces_parse_error_and_findings(
+        self, parser: ReviewOutputParser, tmp_path: Path
+    ) -> None:
+        _write_reviewer_output(tmp_path, reviewer="codex#1", findings=[_finding()])
+        _write_reviewer_output(tmp_path, reviewer="gemini#1", raw="{broken")
+
+        result = parser.map_exit_code_to_result(
+            0,
+            _gate_state(verdict="requires_decision"),
+            "",
+            state_root=tmp_path,
+            project_key="project-1",
+            run_key="run-1",
+        )
+
+        assert result.passed is False
+        assert result.fatal_error is False
+        assert result.parse_error is not None
+        assert "Malformed reviewer output JSON" in result.parse_error
+        assert len(result.issues) == 2
+        assert "no consensus" in result.issues[0].title
+        assert result.issues[1].title == "Test finding"
+        assert result.issues[1].reviewer == "codex#1"
 
     def test_non_zero_exit_uses_stderr_tail(self, parser: ReviewOutputParser) -> None:
         result = parser.map_exit_code_to_result(

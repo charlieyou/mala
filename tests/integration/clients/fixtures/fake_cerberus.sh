@@ -87,7 +87,7 @@ case "$subcommand" in
         ;;
       requires_decision)
         write_output 1 "claude#1" "[]"
-        write_output 1 "gemini#1" "[]"
+        write_output 1 "gemini#1" '[{"title":"Requires decision finding","body":"Surface disputed findings alongside the no-consensus context.","priority":2,"file_path":"src/example.py","line_start":40,"line_end":41,"confidence":0.82,"severity":"medium"}]'
         ;;
       *)
         echo "unknown CERBERUS_FAKE_CASE=${case_name}" >&2

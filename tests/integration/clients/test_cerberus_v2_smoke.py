@@ -36,6 +36,7 @@ def fake_cerberus_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("CERBERUS_STATE_ROOT", str(tmp_path / "cerberus-state"))
     monkeypatch.setenv("CERBERUS_PROJECT_KEY", PROJECT_KEY)
+    monkeypatch.setenv("CERBERUS_RUN_KEY", RUN_KEY)
     monkeypatch.setenv("CERBERUS_FAKE_LOG", str(tmp_path / "fake-cerberus.log"))
     return bin_dir / "cerberus"
 
@@ -159,7 +160,7 @@ async def test_v2_debate_surfaces_only_final_round_findings(
     assert titles == ["Round two final finding"]
 
 
-async def test_v2_requires_decision_returns_synthetic_issue(
+async def test_v2_requires_decision_returns_synthetic_issue_and_findings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     fake_cerberus_path: Path,
@@ -172,6 +173,9 @@ async def test_v2_requires_decision_returns_synthetic_issue(
     assert result.passed is False
     assert result.fatal_error is False
     assert result.parse_error is None
-    assert len(result.issues) == 1
+    assert len(result.issues) == 2
     assert result.issues[0].title == NO_CONSENSUS_TITLE
     assert result.issues[0].priority == 1
+    assert result.issues[1].title == "Requires decision finding"
+    assert result.issues[1].priority == 2
+    assert result.issues[1].reviewer == "gemini#1"

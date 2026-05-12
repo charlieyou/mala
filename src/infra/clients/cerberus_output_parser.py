@@ -227,9 +227,10 @@ class ReviewOutputParser:
 
         if gate_state.verdict == "requires_decision":
             iteration_dir = state_root / project_key / run_key / "iterations"
+            decision_issue = _requires_decision_issue(iteration_dir)
             return ReviewResult(
                 passed=False,
-                issues=[_requires_decision_issue(iteration_dir)],
+                issues=[decision_issue, *issues],
                 parse_error=parse_error,
                 fatal_error=False,
                 review_log_path=review_log_path,
