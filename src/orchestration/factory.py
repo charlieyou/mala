@@ -62,7 +62,7 @@ __all__ = [
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from src.core.protocols.agent_provider import AgentProvider
     from src.core.protocols.evidence import EvidenceProvider
@@ -409,6 +409,59 @@ def _check_epic_verifier_availability(
     return None
 
 
+def _iter_enabled_trigger_code_reviews(
+    validation_config: object | None,
+) -> Iterator[tuple[str, object]]:
+    """Yield enabled trigger code-review configs with their trigger names."""
+    if validation_config is None:
+        return
+
+    triggers = getattr(validation_config, "validation_triggers", None)
+    if triggers is None:
+        return
+
+    for trigger_name in ("session_end", "epic_completion", "run_end", "periodic"):
+        trigger = getattr(triggers, trigger_name, None)
+        if trigger is None:
+            continue
+        code_review = getattr(trigger, "code_review", None)
+        if code_review is not None and getattr(code_review, "enabled", False):
+            yield trigger_name, code_review
+
+
+def _check_trigger_cerberus_availability(
+    validation_config: object | None,
+    mala_config: MalaConfig,
+) -> str | None:
+    """Return an error if any trigger Cerberus review is unavailable."""
+    for trigger_name, code_review in _iter_enabled_trigger_code_reviews(
+        validation_config
+    ):
+        if getattr(code_review, "reviewer_type", None) != "cerberus":
+            continue
+
+        reason = _check_review_availability(
+            mala_config,
+            set(),
+            "cerberus",
+            cerberus_config=getattr(code_review, "cerberus", None),
+        )
+        if reason is not None:
+            return f"validation_triggers.{trigger_name}.code_review: {reason}"
+
+    return None
+
+
+def _cerberus_required_error(feature: str, reason: str) -> RuntimeError:
+    """Build an actionable error for unavailable required Cerberus reviewers."""
+    return RuntimeError(
+        f"{feature} is configured with reviewer_type: cerberus, but Cerberus "
+        f"is unavailable: {reason}. Set CERBERUS_ROOT to the Cerberus checkout "
+        "containing prompts/reviewers/, configure cerberus.env.CERBERUS_ROOT "
+        "in mala.yaml, or use reviewer_type: agent_sdk."
+    )
+
+
 def _create_epic_verification_model(
     reviewer_type: str,
     repo_path: Path,
@@ -573,6 +626,7 @@ def _build_dependencies(
     derived: _DerivedConfig,
     deps: OrchestratorDependencies | None,
     reviewer_config: _ReviewerConfig,
+    epic_verifier_enabled: bool = True,
     epic_verifier_reviewer_type: str = "agent_sdk",
     epic_verifier_cerberus_config: CerberusConfig | None = None,
     epic_verifier_timeout_seconds: int = 600,
@@ -586,6 +640,7 @@ def _build_dependencies(
         derived: Derived configuration values.
         deps: Optional pre-built dependencies.
         reviewer_config: Pre-loaded reviewer configuration from mala.yaml.
+        epic_verifier_enabled: Whether epic verification is enabled.
         epic_verifier_reviewer_type: Type of epic verifier ('agent_sdk' or 'cerberus').
         epic_verifier_cerberus_config: Optional CerberusConfig for epic_verification.cerberus.
         epic_verifier_timeout_seconds: Timeout for epic verification (from config).
@@ -680,7 +735,7 @@ def _build_dependencies(
 
     # Epic verifier (only when using real BeadsClient - either created or injected)
     epic_verifier: EpicVerifierProtocol | None = None
-    if isinstance(issue_provider, BeadsClient):
+    if epic_verifier_enabled and isinstance(issue_provider, BeadsClient):
         # Check epic verifier availability based on reviewer_type
         epic_unavailable_reason = _check_epic_verifier_availability(
             epic_verifier_reviewer_type,
@@ -711,6 +766,10 @@ def _build_dependencies(
                 ),
             )
         else:
+            if epic_verifier_reviewer_type == "cerberus":
+                raise _cerberus_required_error(
+                    "Epic verification", epic_unavailable_reason
+                )
             logger.info(
                 "Epic verifier disabled: reason=%s",
                 epic_unavailable_reason,
@@ -855,6 +914,16 @@ def create_orchestrator(
         reviewer_config,
     )
 
+    if "review" not in derived.disabled_validations:
+        trigger_review_disabled_reason = _check_trigger_cerberus_availability(
+            validation_config,
+            mala_config,
+        )
+        if trigger_review_disabled_reason is not None:
+            raise _cerberus_required_error(
+                "Code review", trigger_review_disabled_reason
+            )
+
     # Check review availability and update disabled_validations
     review_disabled_reason = _check_review_availability(
         mala_config,
@@ -863,18 +932,25 @@ def create_orchestrator(
         cerberus_config=reviewer_config.cerberus_config,
     )
     if review_disabled_reason:
+        if reviewer_config.reviewer_type == "cerberus":
+            raise _cerberus_required_error("Code review", review_disabled_reason)
         derived.disabled_validations.add("review")
         derived.review_disabled_reason = review_disabled_reason
 
     # Extract epic_verifier settings from validation_config
+    epic_verifier_enabled = (
+        validation_config.epic_verification.enabled
+        if validation_config is not None
+        else True
+    )
     epic_verifier_reviewer_type = (
         validation_config.epic_verification.reviewer_type
-        if validation_config is not None
+        if validation_config is not None and epic_verifier_enabled
         else "agent_sdk"
     )
     epic_verifier_cerberus_config = (
         validation_config.epic_verification.cerberus
-        if validation_config is not None
+        if validation_config is not None and epic_verifier_enabled
         else None
     )
     epic_verifier_timeout_seconds = _resolve_epic_verifier_timeout_seconds(
@@ -895,6 +971,7 @@ def create_orchestrator(
         derived,
         deps,
         reviewer_config,
+        epic_verifier_enabled=epic_verifier_enabled,
         epic_verifier_reviewer_type=epic_verifier_reviewer_type,
         epic_verifier_cerberus_config=epic_verifier_cerberus_config,
         epic_verifier_timeout_seconds=epic_verifier_timeout_seconds,

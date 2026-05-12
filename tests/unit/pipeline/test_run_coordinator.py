@@ -762,6 +762,63 @@ class TestRunTriggerCodeReview:
         mock_review_runner.run_review.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_returns_none_when_review_validation_disabled(
+        self,
+        tmp_path: Path,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
+        mock_sdk_client_factory: MagicMock,
+        mock_fixer_service: MagicMock,
+        mock_trigger_engine: TriggerEngine,
+    ) -> None:
+        """_run_trigger_code_review honors globally disabled review validation."""
+        from src.domain.validation.config_types import (
+            CodeReviewConfig,
+            FailureMode,
+            FireOn,
+            RunEndTriggerConfig,
+            TriggerCommandRef,
+            TriggerType,
+        )
+
+        mock_review_runner = MagicMock()
+        config = _make_run_coordinator_view(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            fixer_prompt="Fix attempt {attempt}/{max_attempts}: {failure_output}",
+            disabled_validations={"review"},
+        )
+        coordinator = _make_coordinator(
+            config=config,
+            gate_checker=MagicMock(),
+            command_runner=fake_command_runner,
+            env_config=mock_env_config,
+            lock_manager=fake_lock_manager,
+            agent_provider=FakeAgentProvider(mock_sdk_client_factory),
+            trigger_engine=mock_trigger_engine,
+            fixer_service=mock_fixer_service,
+            cumulative_review_runner=mock_review_runner,
+            run_metadata=MagicMock(),
+        )
+        trigger_config = RunEndTriggerConfig(
+            failure_mode=FailureMode.ABORT,
+            commands=(TriggerCommandRef(ref="test"),),
+            fire_on=FireOn.SUCCESS,
+            code_review=CodeReviewConfig(enabled=True),
+        )
+
+        result = await coordinator._run_trigger_code_review(
+            TriggerType.RUN_END,
+            trigger_config,
+            {},
+            asyncio.Event(),
+        )
+
+        assert result is None
+        mock_review_runner.run_review.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_returns_failed_when_runner_not_wired(
         self,
         tmp_path: Path,

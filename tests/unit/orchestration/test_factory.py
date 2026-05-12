@@ -9,6 +9,8 @@ Precedence/timeout/reviewer-type tests live in test_config_resolution.py.
 
 import hashlib
 import os
+import re
+from textwrap import dedent
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
@@ -18,6 +20,7 @@ import pytest
 from src.orchestration.factory import (
     _check_epic_verifier_availability,
     _check_review_availability,
+    create_orchestrator,
 )
 from src.orchestration.types import OrchestratorConfig
 from src.infra.io.config import MalaConfig
@@ -180,6 +183,250 @@ class TestCheckReviewAvailability:
         )
 
         assert result == "cerberus binary not found in PATH"
+
+    def test_configured_cerberus_review_unavailable_fails_startup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Explicit Cerberus per-issue review must fail fast when unavailable."""
+        (tmp_path / "mala.yaml").write_text(
+            dedent("""\
+            preset: python-uv
+            per_issue_review:
+              enabled: true
+              reviewer_type: cerberus
+            epic_verification:
+              enabled: false
+        """)
+        )
+        monkeypatch.setenv("PATH", "")
+        monkeypatch.delenv("CERBERUS_ROOT", raising=False)
+
+        with pytest.raises(
+            RuntimeError,
+            match=re.escape(
+                "Code review is configured with reviewer_type: cerberus, "
+                "but Cerberus is unavailable: cerberus binary not found in PATH"
+            ),
+        ):
+            create_orchestrator(
+                OrchestratorConfig(repo_path=tmp_path),
+                mala_config=MalaConfig(runs_dir=tmp_path / "runs"),
+            )
+
+    def test_implicit_cerberus_review_unavailable_fails_startup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Default Cerberus reviewer fails fast when unavailable."""
+        (tmp_path / "mala.yaml").write_text(
+            dedent("""\
+            preset: python-uv
+            per_issue_review:
+              enabled: true
+            epic_verification:
+              enabled: false
+        """)
+        )
+        monkeypatch.setenv("PATH", "")
+        monkeypatch.delenv("CERBERUS_ROOT", raising=False)
+
+        with pytest.raises(
+            RuntimeError,
+            match=re.escape(
+                "Code review is configured with reviewer_type: cerberus, "
+                "but Cerberus is unavailable: cerberus binary not found in PATH"
+            ),
+        ):
+            create_orchestrator(
+                OrchestratorConfig(repo_path=tmp_path),
+                mala_config=MalaConfig(runs_dir=tmp_path / "runs"),
+            )
+
+    def test_disabled_explicit_cerberus_review_does_not_require_cerberus(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Disabled per-issue review should not require Cerberus preflight."""
+        (tmp_path / "mala.yaml").write_text(
+            dedent("""\
+            preset: python-uv
+            per_issue_review:
+              enabled: false
+              reviewer_type: cerberus
+            epic_verification:
+              enabled: false
+        """)
+        )
+        monkeypatch.setenv("PATH", "")
+        monkeypatch.delenv("CERBERUS_ROOT", raising=False)
+
+        orchestrator = create_orchestrator(
+            OrchestratorConfig(repo_path=tmp_path),
+            mala_config=MalaConfig(runs_dir=tmp_path / "runs"),
+        )
+
+        assert orchestrator._session_config.review_enabled is False
+
+    def test_implicit_trigger_cerberus_review_unavailable_fails_startup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Default Cerberus trigger review fails fast when unavailable."""
+        (tmp_path / "mala.yaml").write_text(
+            dedent("""\
+            preset: python-uv
+            validation_triggers:
+              run_end:
+                failure_mode: continue
+                commands: []
+                code_review:
+                  enabled: true
+            epic_verification:
+              enabled: false
+        """)
+        )
+        monkeypatch.setenv("PATH", "")
+        monkeypatch.delenv("CERBERUS_ROOT", raising=False)
+
+        with pytest.raises(
+            RuntimeError,
+            match=re.escape(
+                "Code review is configured with reviewer_type: cerberus, "
+                "but Cerberus is unavailable: "
+                "validation_triggers.run_end.code_review: "
+                "cerberus binary not found in PATH"
+            ),
+        ):
+            create_orchestrator(
+                OrchestratorConfig(repo_path=tmp_path),
+                mala_config=MalaConfig(runs_dir=tmp_path / "runs"),
+            )
+
+    def test_explicit_trigger_cerberus_review_unavailable_fails_startup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Explicit Cerberus trigger review must fail fast when unavailable."""
+        (tmp_path / "mala.yaml").write_text(
+            dedent("""\
+            preset: python-uv
+            validation_triggers:
+              run_end:
+                failure_mode: continue
+                commands: []
+                code_review:
+                  enabled: true
+                  reviewer_type: cerberus
+            epic_verification:
+              enabled: false
+        """)
+        )
+        monkeypatch.setenv("PATH", "")
+        monkeypatch.delenv("CERBERUS_ROOT", raising=False)
+
+        with pytest.raises(
+            RuntimeError,
+            match=re.escape(
+                "Code review is configured with reviewer_type: cerberus, "
+                "but Cerberus is unavailable: "
+                "validation_triggers.run_end.code_review: "
+                "cerberus binary not found in PATH"
+            ),
+        ):
+            create_orchestrator(
+                OrchestratorConfig(repo_path=tmp_path),
+                mala_config=MalaConfig(runs_dir=tmp_path / "runs"),
+            )
+
+    def test_later_explicit_trigger_cerberus_review_unavailable_fails_startup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """All enabled trigger reviews are checked, not just the first one."""
+        (tmp_path / "mala.yaml").write_text(
+            dedent("""\
+            preset: python-uv
+            validation_triggers:
+              session_end:
+                failure_mode: continue
+                commands: []
+                code_review:
+                  enabled: true
+                  reviewer_type: agent_sdk
+              run_end:
+                failure_mode: continue
+                commands: []
+                code_review:
+                  enabled: true
+                  reviewer_type: cerberus
+            epic_verification:
+              enabled: false
+        """)
+        )
+        monkeypatch.setenv("PATH", "")
+        monkeypatch.delenv("CERBERUS_ROOT", raising=False)
+
+        with pytest.raises(
+            RuntimeError,
+            match=re.escape(
+                "Code review is configured with reviewer_type: cerberus, "
+                "but Cerberus is unavailable: "
+                "validation_triggers.run_end.code_review: "
+                "cerberus binary not found in PATH"
+            ),
+        ):
+            create_orchestrator(
+                OrchestratorConfig(repo_path=tmp_path),
+                mala_config=MalaConfig(runs_dir=tmp_path / "runs"),
+            )
+
+    def test_configured_cerberus_epic_verification_unavailable_fails_startup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Explicit Cerberus epic verification must fail fast when unavailable."""
+        (tmp_path / "mala.yaml").write_text(
+            dedent("""\
+            preset: python-uv
+            per_issue_review:
+              enabled: false
+            epic_verification:
+              enabled: true
+              reviewer_type: cerberus
+        """)
+        )
+        monkeypatch.setenv("PATH", "")
+        monkeypatch.delenv("CERBERUS_ROOT", raising=False)
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "Epic verification is configured with reviewer_type: cerberus, "
+                "but Cerberus is unavailable: cerberus binary not found in PATH"
+            ),
+        ):
+            create_orchestrator(
+                OrchestratorConfig(repo_path=tmp_path),
+                mala_config=MalaConfig(runs_dir=tmp_path / "runs"),
+            )
+
+    def test_disabled_cerberus_epic_verification_does_not_require_cerberus(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Disabled epic verification should not require Cerberus preflight."""
+        (tmp_path / "mala.yaml").write_text(
+            dedent("""\
+            preset: python-uv
+            per_issue_review:
+              enabled: false
+            epic_verification:
+              enabled: false
+              reviewer_type: cerberus
+        """)
+        )
+        monkeypatch.setenv("PATH", "")
+        monkeypatch.delenv("CERBERUS_ROOT", raising=False)
+
+        orchestrator = create_orchestrator(
+            OrchestratorConfig(repo_path=tmp_path),
+            mala_config=MalaConfig(runs_dir=tmp_path / "runs"),
+        )
+
+        assert orchestrator.epic_verifier is None
 
 
 class TestCerberusFactoryWiring:

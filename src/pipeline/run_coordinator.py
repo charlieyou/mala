@@ -1321,6 +1321,9 @@ class RunCoordinator:
         if trigger_config.code_review is None or not trigger_config.code_review.enabled:
             return None
 
+        if self.view.disabled_validations and "review" in self.view.disabled_validations:
+            return None
+
         # Skip code_review in fixer/remediation context to prevent loops.
         # Note: Fixer agents are separate processes (MALA_SDK_FLOW=fixer) that don't
         # call run_trigger_validation, so this guard is defensive.
