@@ -123,7 +123,10 @@ class TestCheckEpicVerifierAvailability:
         """cerberus verifier returns unavailable when the binary is missing."""
         from src.orchestration.factory import _check_epic_verifier_availability
 
-        result = _check_epic_verifier_availability("cerberus")
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setenv("PATH", "")
+            monkeypatch.delenv("CERBERUS_ROOT", raising=False)
+            result = _check_epic_verifier_availability("cerberus")
         assert result is not None
         assert result == "cerberus binary not found in PATH"
 
@@ -374,7 +377,10 @@ class TestEpicVerifierConfigIntegration:
         assert config.reviewer_type == "cerberus"
 
         # Step 2: Check availability - returns reason (binary not found)
-        unavailable_reason = _check_epic_verifier_availability(config.reviewer_type)
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setenv("PATH", "")
+            monkeypatch.delenv("CERBERUS_ROOT", raising=False)
+            unavailable_reason = _check_epic_verifier_availability(config.reviewer_type)
         assert unavailable_reason is not None
         assert unavailable_reason == "cerberus binary not found in PATH"
 

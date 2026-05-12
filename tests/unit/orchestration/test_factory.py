@@ -145,6 +145,22 @@ class TestCheckReviewAvailability:
             )
         run.assert_not_called()
 
+    def test_cerberus_uses_code_review_cerberus_env_for_preflight(
+        self, tmp_path: Path
+    ) -> None:
+        """code_review.cerberus.env is honored before disabling review."""
+        from src.domain.validation.config_types import CerberusConfig
+
+        bin_dir = _write_fake_cerberus(tmp_path)
+        result = _check_review_availability(
+            mala_config=MalaConfig(cerberus_env=(("PATH", "/missing"),)),
+            disabled_validations=set(),
+            reviewer_type="cerberus",
+            cerberus_config=CerberusConfig(env=(("PATH", str(bin_dir)),)),
+        )
+
+        assert result is None
+
 
 class TestCerberusFactoryWiring:
     """Tests for Cerberus adapter construction."""

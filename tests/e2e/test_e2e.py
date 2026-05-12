@@ -3,6 +3,7 @@
 import json
 import shutil
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -56,6 +57,28 @@ def make_mock_command_runner() -> Mock:
         stderr="",
     )
     return mock
+
+
+def make_mock_which_with_cerberus(
+    tmp_path: Path,
+) -> Callable[[str, str | None], str | None]:
+    """Return a shutil.which mock that points cerberus at a complete fake root."""
+    root = tmp_path / "cerberus-root"
+    bin_dir = root / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    (root / "prompts" / "reviewers").mkdir(parents=True, exist_ok=True)
+    cerberus = bin_dir / "cerberus"
+    cerberus.touch()
+
+    def mock_which(cmd: str, path: str | None = None) -> str | None:
+        _ = path
+        if cmd == "cerberus":
+            return str(cerberus)
+        if cmd in {"mala", "br"}:
+            return f"/usr/bin/{cmd}"
+        return "/usr/bin/fake"
+
+    return mock_which
 
 
 class TestE2EPrereqResult:
@@ -131,7 +154,7 @@ class TestE2ERunnerPrereqs:
 
     def test_all_prereqs_met(self, tmp_path: Path) -> None:
         runner = E2ERunner(make_mock_env_config(tmp_path), make_mock_command_runner())
-        with patch("shutil.which", return_value="/usr/bin/fake"):
+        with patch("shutil.which", side_effect=make_mock_which_with_cerberus(tmp_path)):
             result = runner.check_prereqs({})
             assert result.ok is True
             assert result.missing == []
@@ -159,7 +182,7 @@ class TestE2ERunnerPrereqs:
     def test_uses_os_environ_when_none(self, tmp_path: Path) -> None:
         runner = E2ERunner(make_mock_env_config(tmp_path), make_mock_command_runner())
         with (
-            patch("shutil.which", return_value="/usr/bin/fake"),
+            patch("shutil.which", side_effect=make_mock_which_with_cerberus(tmp_path)),
             patch.dict("os.environ", {}, clear=True),
         ):
             result = runner.check_prereqs(None)
@@ -185,7 +208,7 @@ class TestE2ERunnerRun:
             )
 
         with (
-            patch("shutil.which", return_value="/usr/bin/fake"),
+            patch("shutil.which", side_effect=make_mock_which_with_cerberus(tmp_path)),
             patch(
                 "src.infra.tools.command_runner.CommandRunner.run",
                 side_effect=mock_runner_run,
@@ -220,7 +243,7 @@ class TestE2ERunnerRun:
         runner = E2ERunner(make_mock_env_config(tmp_path), mock_cmd_runner)
 
         with (
-            patch("shutil.which", return_value="/usr/bin/fake"),
+            patch("shutil.which", side_effect=make_mock_which_with_cerberus(tmp_path)),
             patch("tempfile.mkdtemp", return_value="/tmp/test-fixture"),
             patch("pathlib.Path.exists", return_value=True),
             patch("pathlib.Path.mkdir"),
@@ -249,7 +272,7 @@ class TestE2ERunnerRun:
             )
 
         with (
-            patch("shutil.which", return_value="/usr/bin/fake"),
+            patch("shutil.which", side_effect=make_mock_which_with_cerberus(tmp_path)),
             patch(
                 "src.infra.tools.command_runner.CommandRunner.run",
                 side_effect=mock_runner_run,
@@ -282,7 +305,7 @@ class TestE2ERunnerRun:
             return CommandResult(command=cmd, returncode=0, stdout="", stderr="")
 
         with (
-            patch("shutil.which", return_value="/usr/bin/fake"),
+            patch("shutil.which", side_effect=make_mock_which_with_cerberus(tmp_path)),
             patch(
                 "src.infra.tools.command_runner.CommandRunner.run",
                 side_effect=mock_runner_run,
@@ -308,7 +331,7 @@ class TestE2ERunnerRun:
             return CommandResult(command=cmd, returncode=0, stdout="", stderr="")
 
         with (
-            patch("shutil.which", return_value="/usr/bin/fake"),
+            patch("shutil.which", side_effect=make_mock_which_with_cerberus(tmp_path)),
             patch(
                 "src.infra.tools.command_runner.CommandRunner.run",
                 side_effect=mock_runner_run,
@@ -349,7 +372,7 @@ class TestE2ERunnerRun:
         runner = E2ERunner(make_mock_env_config(tmp_path), mock_cmd_runner, config)
 
         with (
-            patch("shutil.which", return_value="/usr/bin/fake"),
+            patch("shutil.which", side_effect=make_mock_which_with_cerberus(tmp_path)),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree"),
         ):
@@ -696,7 +719,7 @@ class TestCheckE2EPrereqsLegacy:
     def test_returns_none_when_ok(self, tmp_path: Path) -> None:
         mock_env_config = make_mock_env_config(tmp_path)
         mock_cmd_runner = make_mock_command_runner()
-        with patch("shutil.which", return_value="/usr/bin/fake"):
+        with patch("shutil.which", side_effect=make_mock_which_with_cerberus(tmp_path)):
             result = check_e2e_prereqs(mock_env_config, mock_cmd_runner, {})
             assert result is None
 

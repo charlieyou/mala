@@ -329,6 +329,7 @@ def _check_review_availability(
     mala_config: MalaConfig,
     disabled_validations: set[str],
     reviewer_type: str = "agent_sdk",
+    cerberus_config: CerberusConfig | None = None,
 ) -> str | None:
     """Check if code review is available.
 
@@ -342,6 +343,7 @@ def _check_review_availability(
         mala_config: MalaConfig with Cerberus settings.
         disabled_validations: Set of validations explicitly disabled.
         reviewer_type: Type of reviewer ('agent_sdk' or 'cerberus').
+        cerberus_config: Cerberus config from code_review.cerberus.
 
     Returns:
         Reason review is disabled, or None if available.
@@ -359,7 +361,10 @@ def _check_review_availability(
         logger.warning("Review disabled: reason=%s", reason)
         return reason
 
-    reason = _check_cerberus_availability(mala_config=mala_config)
+    reason = _check_cerberus_availability(
+        mala_config=mala_config,
+        cerberus_config=cerberus_config,
+    )
     if reason is not None:
         logger.info("Review disabled: reason=%s", reason)
         return reason
@@ -852,7 +857,10 @@ def create_orchestrator(
 
     # Check review availability and update disabled_validations
     review_disabled_reason = _check_review_availability(
-        mala_config, derived.disabled_validations, reviewer_config.reviewer_type
+        mala_config,
+        derived.disabled_validations,
+        reviewer_config.reviewer_type,
+        cerberus_config=reviewer_config.cerberus_config,
     )
     if review_disabled_reason:
         derived.disabled_validations.add("review")
