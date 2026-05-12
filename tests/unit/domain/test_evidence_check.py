@@ -4185,7 +4185,9 @@ class TestValidationExitCodeParsing:
         log_path.write_text(
             _canonical_validation_entries("toolu_pytest_1", by_name["test"])
             + _canonical_validation_entries("toolu_ruff_format_1", by_name["format"])
-            + _canonical_validation_entries("toolu_ruff_check_1", by_name["lint"], exit_code=1)
+            + _canonical_validation_entries(
+                "toolu_ruff_check_1", by_name["lint"], exit_code=1
+            )
             + _canonical_validation_entries("toolu_ty_check_1", by_name["typecheck"])
         )
 
@@ -4249,7 +4251,9 @@ class TestValidationExitCodeParsing:
         by_name = {cmd.name: cmd for cmd in spec.commands}
         log_path = tmp_path / "session.jsonl"
         log_path.write_text(
-            _canonical_validation_entries("toolu_pytest_1", by_name["test"], exit_code=1)
+            _canonical_validation_entries(
+                "toolu_pytest_1", by_name["test"], exit_code=1
+            )
             + _canonical_validation_entries("toolu_pytest_2", by_name["test"])
             + _canonical_validation_entries("toolu_ruff_check_1", by_name["lint"])
             + _canonical_validation_entries("toolu_ruff_format_1", by_name["format"])

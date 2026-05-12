@@ -186,9 +186,7 @@ class TestMalaConfigFromEnv:
 
         assert find_cerberus_bin_path(tmp_path) == v1_bin
 
-    def test_cerberus_cache_fallback_skips_v2_directories(
-        self, tmp_path: Path
-    ) -> None:
+    def test_cerberus_cache_fallback_skips_v2_directories(self, tmp_path: Path) -> None:
         """Cache fallback only considers Cerberus 1.x version directories."""
         cache_root = tmp_path / "plugins" / "cache" / "cerberus" / "cerberus"
         v2_bin = cache_root / "2.0.0" / "bin"
