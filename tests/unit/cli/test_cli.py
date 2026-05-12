@@ -15,6 +15,7 @@ import src.orchestration.cli_support
 import src.orchestration.factory
 import src.infra.io.log_output.run_metadata
 from src.core.models import EpicVerificationResult
+from src.infra.epic_verifier import DEFAULT_EPIC_VERIFY_LOCK_TIMEOUT_SECONDS
 
 
 def _reload_cli(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
@@ -87,6 +88,14 @@ class DummyOrchestrator:
 
 class DummyEpicVerifier:
     last_call: ClassVar[dict[str, object] | None] = None
+    reviewer_type = "cerberus"
+    lock_timeout_seconds: int | None = 120
+
+    @property
+    def lock_timeout_display(self) -> str:
+        if self.lock_timeout_seconds is None:
+            return f"default({DEFAULT_EPIC_VERIFY_LOCK_TIMEOUT_SECONDS}s)"
+        return f"{self.lock_timeout_seconds}s"
 
     async def verify_epic_with_options(
         self,
@@ -319,6 +328,8 @@ def test_epic_verify_invokes_verifier(
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+    logs: list[tuple[object, ...]] = []
+    monkeypatch.setattr(cli, "log", lambda *args, **_kwargs: logs.append(args))
 
     import src.orchestration.factory
 
@@ -343,6 +354,47 @@ def test_epic_verify_invokes_verifier(
         "require_eligible": False,
         "close_epic": False,
     }
+    log_messages = [str(args[1]) for args in logs if len(args) > 1]
+    assert any("[START] Epic verification" in msg for msg in log_messages)
+    assert any(f"Repository: {tmp_path}" in msg for msg in log_messages)
+    assert any("Epic: epic-1" in msg for msg in log_messages)
+    assert any(
+        "reviewer=cerberus close=false force=true" in msg
+        and "lock_timeout=120s" in msg
+        for msg in log_messages
+    )
+
+
+def test_epic_verify_logs_default_lock_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cli = _reload_cli(monkeypatch)
+    verifier = DummyEpicVerifier()
+    verifier.lock_timeout_seconds = None
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+    logs: list[tuple[object, ...]] = []
+    monkeypatch.setattr(cli, "log", lambda *args, **_kwargs: logs.append(args))
+
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator_with_verifier(verifier),
+    )
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.epic_verify(epic_id="epic-1", repo_path=tmp_path, force=True)
+
+    assert excinfo.value.exit_code == 0
+    log_messages = [str(args[1]) for args in logs if len(args) > 1]
+    assert any(
+        f"lock_timeout=default({DEFAULT_EPIC_VERIFY_LOCK_TIMEOUT_SECONDS}s)" in msg
+        for msg in log_messages
+    )
 
 
 def test_epic_verify_shows_ineligibility_reason(

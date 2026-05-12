@@ -752,6 +752,20 @@ def epic_verify(
         log("✗", "Epic verifier unavailable for this configuration", Colors.RED)
         raise typer.Exit(1)
 
+    reviewer_type = getattr(verifier, "reviewer_type", "unknown")
+    lock_timeout_display = getattr(verifier, "lock_timeout_display", "unknown")
+    config_items = [
+        f"reviewer={reviewer_type}",
+        f"close={str(close).lower()}",
+        f"force={str(force).lower()}",
+        f"human_override={str(human_override).lower()}",
+        f"lock_timeout={lock_timeout_display}",
+    ]
+    log("→", "[START] Epic verification", agent_id="epic")
+    log("◦", f"Repository: {repo_path}", agent_id="epic")
+    log("◦", f"Epic: {epic_id}", agent_id="epic")
+    log("◐", f"Config: {' '.join(config_items)}", agent_id="epic")
+
     result = asyncio.run(
         verifier.verify_epic_with_options(
             epic_id,

@@ -439,6 +439,13 @@ class EpicVerifier:
         self.reviewer_type = reviewer_type
         self.retry_policy = retry_policy
 
+    @property
+    def lock_timeout_display(self) -> str:
+        """Return the user-facing epic verification lock timeout."""
+        if self.lock_timeout_seconds is None:
+            return f"default({DEFAULT_EPIC_VERIFY_LOCK_TIMEOUT_SECONDS}s)"
+        return f"{self.lock_timeout_seconds}s"
+
     async def _get_diff_size_kb(self, commit_range: str) -> int | None:
         """Get approximate diff size in KB for a commit range.
 
