@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from .config_resolution import (
@@ -61,7 +62,6 @@ __all__ = [
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from src.core.protocols.agent_provider import AgentProvider
     from src.core.protocols.evidence import EvidenceProvider
@@ -431,6 +431,26 @@ def _check_epic_verifier_availability(
     return None
 
 
+def _with_cerberus_bin_path(
+    env: dict[str, str],
+    mala_config: MalaConfig | None,
+) -> dict[str, str]:
+    """Prepend configured Cerberus bin directory to PATH for runtime subprocesses."""
+    if mala_config is None:
+        return env
+
+    bin_path = getattr(mala_config, "cerberus_bin_path", None)
+    if not isinstance(bin_path, Path):
+        return env
+
+    merged = dict(env)
+    if existing_path := merged.get("PATH"):
+        merged["PATH"] = str(bin_path) + os.pathsep + existing_path
+    else:
+        merged["PATH"] = str(bin_path)
+    return merged
+
+
 def _create_epic_verification_model(
     reviewer_type: str,
     repo_path: Path,
@@ -483,7 +503,7 @@ def _create_epic_verification_model(
                 timeout=timeout_seconds,
                 spawn_args=spawn_args,
                 wait_args=wait_args,
-                env=env if env else None,
+                env=_with_cerberus_bin_path(env, mala_config) or None,
             ),
         )
 
@@ -549,6 +569,7 @@ def _create_code_reviewer(
             spawn_args = mala_config.cerberus_spawn_args
             wait_args = mala_config.cerberus_wait_args
             env = dict(mala_config.cerberus_env)
+        env = _with_cerberus_bin_path(env, mala_config)
         return cast(
             "CodeReviewer",
             DefaultReviewer(

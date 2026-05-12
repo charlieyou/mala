@@ -14,6 +14,7 @@ EpicVerifierConfig → _create_epic_verification_model → EpicVerificationModel
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 import pytest
@@ -206,6 +207,7 @@ class TestCreateEpicVerificationModel:
         from src.orchestration.factory import _create_epic_verification_model
 
         mala_config = MalaConfig(
+            cerberus_bin_path=tmp_path / "cerberus-bin",
             cerberus_env=(("TEST_VAR", "test_value"),),
         )
 
@@ -216,7 +218,10 @@ class TestCreateEpicVerificationModel:
             mala_config=mala_config,
         )
         assert isinstance(model, CerberusEpicVerifier)
-        assert model.env == {"TEST_VAR": "test_value"}
+        assert model.env == {
+            "TEST_VAR": "test_value",
+            "PATH": str(tmp_path / "cerberus-bin"),
+        }
 
     def test_cerberus_prefers_cerberus_config(self, tmp_path: Path) -> None:
         """cerberus prefers cerberus_config over mala_config for timeout/env/args."""
@@ -226,13 +231,14 @@ class TestCreateEpicVerificationModel:
         from src.orchestration.factory import _create_epic_verification_model
 
         mala_config = MalaConfig(
+            cerberus_bin_path=tmp_path / "cerberus-bin",
             cerberus_env=(("OLD_VAR", "old_value"),),
         )
         cerberus_config = CerberusConfig(
             timeout=120,
             spawn_args=("--mode", "fast"),
             wait_args=("--timeout", "99"),
-            env=(("NEW_VAR", "new_value"),),
+            env=(("NEW_VAR", "new_value"), ("PATH", "/custom/bin")),
         )
 
         model = _create_epic_verification_model(
@@ -245,7 +251,10 @@ class TestCreateEpicVerificationModel:
         assert isinstance(model, CerberusEpicVerifier)
         # timeout and env come from cerberus_config
         assert model.timeout == 120
-        assert model.env == {"NEW_VAR": "new_value"}
+        assert model.env == {
+            "NEW_VAR": "new_value",
+            "PATH": f"{tmp_path / 'cerberus-bin'}{os.pathsep}/custom/bin",
+        }
         assert model.spawn_args == ("--mode", "fast")
         assert model.wait_args == ("--timeout", "99")
 

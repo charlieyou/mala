@@ -118,7 +118,7 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
 
         # Create MalaConfig mock with DIFFERENT values (should be ignored)
         mala_config = MagicMock()
-        mala_config.cerberus_bin_path = Path("/usr/bin")
+        mala_config.cerberus_bin_path = tmp_path / "cerberus-bin"
         mala_config.cerberus_spawn_args = ("--env-spawn",)
         mala_config.cerberus_wait_args = ("--env-wait",)
         mala_config.cerberus_env = {"ENV_VAR": "env_value"}
@@ -139,7 +139,10 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
         assert reviewer.repo_path == tmp_path
         assert reviewer.spawn_args == ("--yaml-spawn",)
         assert reviewer.wait_args == ("--yaml-wait", "--timeout", "600")
-        assert reviewer.env == {"YAML_VAR": "yaml_value"}
+        assert reviewer.env == {
+            "YAML_VAR": "yaml_value",
+            "PATH": str(tmp_path / "cerberus-bin"),
+        }
 
     def test_factory_creates_cerberus_reviewer_fallback_to_env_vars(
         self, tmp_path: Path
@@ -163,6 +166,7 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
 
         # Create minimal MalaConfig mock with cerberus settings
         mala_config = MagicMock()
+        mala_config.cerberus_bin_path = tmp_path / "cerberus-bin"
         mala_config.cerberus_spawn_args = ("--spawn",)
         mala_config.cerberus_wait_args = ("--wait",)
         mala_config.cerberus_env = {"CERBERUS_MODE": "test"}
@@ -183,7 +187,10 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
         assert reviewer.repo_path == tmp_path
         assert reviewer.spawn_args == ("--spawn",)
         assert reviewer.wait_args == ("--wait",)
-        assert reviewer.env == {"CERBERUS_MODE": "test"}
+        assert reviewer.env == {
+            "CERBERUS_MODE": "test",
+            "PATH": str(tmp_path / "cerberus-bin"),
+        }
 
     def test_factory_injects_cerberus_timeout_into_wait_args(
         self, tmp_path: Path
