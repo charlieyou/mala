@@ -18,11 +18,10 @@ from src.orchestration.cli_options import (
     resolve_order_option,
     validate_amp_mode_option,
     validate_codex_approval_policy_option,
-    validate_codex_effort_option,
-    validate_codex_model_option,
     validate_codex_sandbox_option,
     validate_coder_option,
     validate_effort_option,
+    validate_model_option,
 )
 
 
@@ -164,32 +163,19 @@ class TestValidateEffortOption:
             validate_effort_option("turbo")
 
 
-class TestValidateCodexModelOption:
-    """Codex model parsing is shape-only: any non-empty value passes through."""
+class TestValidateModelOption:
+    """Coder model parsing is shape-only: any non-empty value passes through."""
 
     def test_passes_through_non_empty(self) -> None:
-        assert validate_codex_model_option("gpt-5.5") == "gpt-5.5"
+        assert validate_model_option("gpt-5.5") == "gpt-5.5"
 
     def test_strips_whitespace(self) -> None:
-        assert validate_codex_model_option("  gpt-5.5  ") == "gpt-5.5"
+        assert validate_model_option("  gpt-5.5  ") == "gpt-5.5"
 
     def test_empty_and_whitespace_treated_as_none(self) -> None:
-        assert validate_codex_model_option(None) is None
-        assert validate_codex_model_option("") is None
-        assert validate_codex_model_option("   ") is None
-
-
-class TestValidateCodexEffortOption:
-    @pytest.mark.parametrize("value", ["minimal", "low", "medium", "high"])
-    def test_accepts_valid(self, value: str) -> None:
-        assert validate_codex_effort_option(value) == value
-
-    def test_none_passthrough(self) -> None:
-        assert validate_codex_effort_option(None) is None
-
-    def test_rejects_unknown(self) -> None:
-        with pytest.raises(ValueError):
-            validate_codex_effort_option("nope-not-a-real-effort")
+        assert validate_model_option(None) is None
+        assert validate_model_option("") is None
+        assert validate_model_option("   ") is None
 
 
 class TestValidateCodexApprovalPolicyOption:

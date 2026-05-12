@@ -847,24 +847,18 @@ class EvidenceCheckConfig:
 
 @dataclass(frozen=True)
 class CodexOptionsConfig:
-    """Yaml-side container for ``coder_options.codex.*`` (Phase B).
+    """Yaml-side container for ``coder_options.codex.*``.
 
     Mirrors :class:`src.infra.io.config.CodexOptions` but holds optional
     fields so the orchestrator can detect "user supplied X" vs. "use the
     default" when threading values into :meth:`MalaConfig.from_env`.
 
     Attributes:
-        model: Codex model identifier (e.g. ``gpt-5.5``). ``None`` means
-            "user did not specify"; the resolver falls back to default.
-        effort: Codex ``ReasoningEffort`` value. ``None`` means "use SDK
-            default"; non-None values are validated at parse time.
         approval_policy: Codex turn approval policy.
         sandbox: Codex sandbox mode.
         mcp_servers: Optional pre-merged MCP server map (Phase G3 merges).
     """
 
-    model: str | None = None
-    effort: str | None = None
     approval_policy: (
         Literal["never", "on-request", "on-failure", "untrusted"] | None
     ) = None
@@ -924,6 +918,10 @@ class ValidationConfig:
     # yaml_coder / yaml_amp_mode parameters (CLI > env > yaml > default).
     coder: Literal["claude", "amp", "codex"] | None = None
     amp_mode: Literal["smart", "rush", "deep"] | None = None
+    # Mala-level model. Forwarded by the orchestrator to
+    # ``MalaConfig.from_env(yaml_model=...)``; the resolver layer in
+    # src/infra/io/config.py applies CLI > env > yaml > default precedence.
+    model: str | None = None
     # Mala-level reasoning effort. Strict-enum validated below as
     # ``low | medium | high | xhigh | max``. Forwarded by the orchestrator
     # to ``MalaConfig.from_env(yaml_effort=...)``; the resolver layer in

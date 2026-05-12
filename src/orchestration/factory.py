@@ -135,8 +135,8 @@ def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
         return cast(
             "AgentProvider",
             CodexAgentProvider(
-                model=codex.model,
-                effort=codex.effort,
+                model=mala_config.model or "gpt-5.5",
+                effort=mala_config.effort,
                 approval_policy=codex.approval_policy,
                 sandbox=codex.sandbox,
                 mcp_servers=codex.mcp_servers,
@@ -149,6 +149,7 @@ def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
         "AgentProvider",
         ClaudeAgentProvider(
             setting_sources=list(mala_config.claude_settings_sources),
+            model=mala_config.model,
             effort=mala_config.effort,
         ),
     )
@@ -161,15 +162,16 @@ def load_yaml_coder_resolution(
     Literal["claude", "amp", "codex"] | None,
     Literal["smart", "rush", "deep"] | None,
     str | None,
+    str | None,
     object | None,
 ]:
     """Load yaml-derived inputs for the coder-selection precedence chain.
 
     Returns
     ``(yaml_claude_settings_sources, yaml_coder, yaml_amp_mode,
-    yaml_effort, yaml_codex_options)`` so callers can feed them into
+    yaml_model, yaml_effort, yaml_codex_options)`` so callers can feed them into
     :meth:`MalaConfig.from_env`. This is the bridge that lets the CLI
-    honor ``mala.yaml`` ``coder:`` / ``amp_mode:`` / ``effort:`` /
+    honor ``mala.yaml`` ``coder:`` / ``amp_mode:`` / ``model:`` / ``effort:`` /
     ``coder_options.codex.*`` under the documented
     CLI > env > yaml > default precedence (AC-3 of the Amp provider epic
     and AC #3/#4 of the Codex provider epic).
@@ -189,7 +191,7 @@ def load_yaml_coder_resolution(
     try:
         user_config = load_config(repo_path)
     except ConfigMissingError:
-        return (None, None, None, None, None)
+        return (None, None, None, None, None, None)
 
     if user_config.preset is not None:
         preset_config = PresetRegistry().get(user_config.preset)
@@ -201,6 +203,7 @@ def load_yaml_coder_resolution(
         validation_config.claude_settings_sources,
         validation_config.coder,
         validation_config.amp_mode,
+        validation_config.model,
         validation_config.effort,
         validation_config.codex_options,
     )
@@ -864,6 +867,7 @@ def create_orchestrator(
     yaml_claude_settings_sources: tuple[str, ...] | None = None
     yaml_coder: Literal["claude", "amp", "codex"] | None = None
     yaml_amp_mode: Literal["smart", "rush", "deep"] | None = None
+    yaml_model: str | None = None
     yaml_effort: str | None = None
     yaml_codex_options: object | None = None
     reviewer_config = _ReviewerConfig()  # Default
@@ -881,6 +885,7 @@ def create_orchestrator(
         yaml_claude_settings_sources = validation_config.claude_settings_sources
         yaml_coder = validation_config.coder
         yaml_amp_mode = validation_config.amp_mode
+        yaml_model = validation_config.model
         yaml_effort = validation_config.effort
         yaml_codex_options = validation_config.codex_options
         reviewer_config = _extract_reviewer_config(validation_config)
@@ -898,6 +903,7 @@ def create_orchestrator(
             yaml_claude_settings_sources=yaml_claude_settings_sources,
             yaml_coder=yaml_coder,
             yaml_amp_mode=yaml_amp_mode,
+            yaml_model=yaml_model,
             yaml_effort=yaml_effort,
             yaml_codex_options=_resolve_yaml_codex_options(yaml_codex_options),
         )

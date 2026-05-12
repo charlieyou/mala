@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from src.core.constants import (
     DEFAULT_CODEX_APPROVAL_POLICY,
-    DEFAULT_CODEX_EFFORT,
     DEFAULT_CODEX_MODEL,
     DEFAULT_CODEX_SANDBOX,
 )
@@ -455,7 +454,7 @@ class CodexAgentProvider:
         self,
         *,
         model: str = DEFAULT_CODEX_MODEL,
-        effort: str | None = DEFAULT_CODEX_EFFORT,
+        effort: str | None = "medium",
         approval_policy: Literal[
             "never", "on-request", "on-failure", "untrusted"
         ] = DEFAULT_CODEX_APPROVAL_POLICY,

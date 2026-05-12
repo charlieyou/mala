@@ -16,11 +16,10 @@ from src.core.models import OrderPreference
 from src.infra.io.config import (
     parse_amp_mode,
     parse_codex_approval_policy,
-    parse_codex_effort,
-    parse_codex_model,
     parse_codex_sandbox,
     parse_coder,
     parse_effort,
+    parse_model,
 )
 
 _SCOPE_FORMATS = "Valid formats: all, epic:<id>, orphans, ids:<id,...>"
@@ -146,24 +145,14 @@ def validate_effort_option(value: str | None) -> str | None:
     return parse_effort(value, source="--effort")
 
 
-def validate_codex_model_option(value: str | None) -> str | None:
-    """Validate the ``--codex-model`` option value (shape-only).
+def validate_model_option(value: str | None) -> str | None:
+    """Validate the ``--model`` option value (shape-only).
 
     Raises:
         ValueError: Reserved for future stricter validation; the underlying
             parser currently performs shape-only validation.
     """
-    return parse_codex_model(value, source="--codex-model")
-
-
-def validate_codex_effort_option(value: str | None) -> str | None:
-    """Validate the ``--codex-effort`` option value against the Codex SDK enum.
-
-    Raises:
-        ValueError: If ``value`` is not accepted by the Codex ``ReasoningEffort``
-            enum (or its documented fallback).
-    """
-    return parse_codex_effort(value, source="--codex-effort")
+    return parse_model(value, source="--model")
 
 
 def validate_codex_approval_policy_option(

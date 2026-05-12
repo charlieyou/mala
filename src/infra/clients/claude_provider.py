@@ -81,6 +81,7 @@ class ClaudeAgentProvider:
         self,
         *,
         setting_sources: Sequence[str] | None = None,
+        model: str | None = None,
         effort: str | None = None,
     ) -> None:
         """Initialize the provider.
@@ -90,6 +91,10 @@ class ClaudeAgentProvider:
                 ``["local", "project"]``) threaded into every per-session
                 :class:`ClaudeAgentRuntimeBuilder`. Mirrors the existing
                 ``claude_settings_sources`` resolver wiring.
+            model: Optional Mala-level model, forwarded to
+                ``ClaudeAgentOptions.model`` for every per-session coder
+                runtime built from this provider. ``None`` leaves the builder's
+                Claude default in place.
             effort: Optional Mala-level reasoning effort, forwarded to
                 ``ClaudeAgentOptions.effort`` for every per-session coder
                 runtime built from this provider. ``None`` leaves the Claude
@@ -103,6 +108,7 @@ class ClaudeAgentProvider:
         self._setting_sources: list[str] | None = (
             None if setting_sources is None else list(setting_sources)
         )
+        self._model: str | None = model
         self._effort: str | None = effort
 
     def runtime_builder(
@@ -138,6 +144,7 @@ class ClaudeAgentProvider:
             self.client_factory,
             mcp_server_factory=mcp_server_factory,
             setting_sources=self._setting_sources,
+            model=self._model,
             effort=self._effort,
             deadlock_monitor=deadlock_monitor,
             runtime_components=components,

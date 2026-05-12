@@ -1,8 +1,7 @@
-"""Tests for ``--codex-model`` and ``--codex-effort`` CLI flags.
+"""Tests for shared coder ``--model`` / ``--effort`` with Codex.
 
 Covers:
-  * Successful parsing into ``MalaConfig.coder_options.codex``.
-  * Parser-level rejection of invalid effort values.
+  * Successful parsing into top-level ``MalaConfig.model`` / ``effort``.
   * CLI > env > yaml > default precedence (AC #3).
   * Integration-path: ``--coder codex`` reaches ``CodexAgentProvider``
     via the full selection path with model/effort propagated.
@@ -75,9 +74,8 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "MALA_CODER",
         "MALA_AMP_MODE",
         "MALA_CLAUDE_SETTINGS_SOURCES",
+        "MALA_MODEL",
         "MALA_EFFORT",
-        "MALA_CODEX_MODEL",
-        "MALA_CODEX_EFFORT",
         "MALA_CODEX_APPROVAL_POLICY",
         "MALA_CODEX_SANDBOX",
     ):
@@ -89,11 +87,10 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_codex_flags_parse_into_config(
+def test_shared_model_and_effort_flags_parse_into_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """``--codex-model`` and ``--codex-effort`` reach
-    ``MalaConfig.coder_options.codex``."""
+    """``--model`` and ``--effort`` reach top-level coder config."""
     from typer.testing import CliRunner
 
     _isolate_env(monkeypatch)
@@ -108,9 +105,9 @@ def test_codex_flags_parse_into_config(
             str(tmp_path),
             "--coder",
             "codex",
-            "--codex-model",
+            "--model",
             "gpt-5.5-foo",
-            "--codex-effort",
+            "--effort",
             "low",
         ],
     )
@@ -119,8 +116,8 @@ def test_codex_flags_parse_into_config(
     config = _DummyOrchestrator.last_mala_config
     assert config is not None
     assert config.coder == "codex"
-    assert config.coder_options.codex.model == "gpt-5.5-foo"
-    assert config.coder_options.codex.effort == "low"
+    assert config.model == "gpt-5.5-foo"
+    assert config.effort == "low"
 
 
 def test_default_codex_options_when_flags_absent(
@@ -138,13 +135,13 @@ def test_default_codex_options_when_flags_absent(
     assert result.exit_code == 0, result.output
     config = _DummyOrchestrator.last_mala_config
     assert config is not None
-    assert config.coder_options.codex.model == "gpt-5.5"
-    assert config.coder_options.codex.effort == "medium"
+    assert config.model == "gpt-5.5"
+    assert config.effort == "medium"
     assert config.coder_options.codex.approval_policy == "never"
     assert config.coder_options.codex.sandbox == "danger-full-access"
 
 
-def test_invalid_codex_effort_rejected(
+def test_invalid_effort_rejected(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from typer.testing import CliRunner
@@ -161,7 +158,7 @@ def test_invalid_codex_effort_rejected(
             str(tmp_path),
             "--coder",
             "codex",
-            "--codex-effort",
+            "--effort",
             "super-high",
         ],
     )
@@ -185,9 +182,9 @@ def test_yaml_codex_options_applied_when_no_env_or_cli(
     (tmp_path / "mala.yaml").write_text(
         "preset: python-uv\n"
         "coder: codex\n"
+        "model: gpt-5.5-foo\n"
         "coder_options:\n"
         "  codex:\n"
-        "    model: gpt-5.5-foo\n"
         "    approval_policy: never\n"
         "    sandbox: danger-full-access\n",
     )
@@ -202,24 +199,22 @@ def test_yaml_codex_options_applied_when_no_env_or_cli(
     config = _DummyOrchestrator.last_mala_config
     assert config is not None
     assert config.coder == "codex"
-    assert config.coder_options.codex.model == "gpt-5.5-foo"
+    assert config.model == "gpt-5.5-foo"
     assert config.coder_options.codex.approval_policy == "never"
     assert config.coder_options.codex.sandbox == "danger-full-access"
 
 
-def test_env_codex_model_overrides_yaml(
+def test_env_model_overrides_yaml(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from typer.testing import CliRunner
 
     _isolate_env(monkeypatch)
-    monkeypatch.setenv("MALA_CODEX_MODEL", "gpt-5.5-env")
+    monkeypatch.setenv("MALA_MODEL", "gpt-5.5-env")
     (tmp_path / "mala.yaml").write_text(
         "preset: python-uv\n"
         "coder: codex\n"
-        "coder_options:\n"
-        "  codex:\n"
-        "    model: gpt-5.5-yaml\n",
+        "model: gpt-5.5-yaml\n",
     )
 
     cli = _reload_cli(monkeypatch)
@@ -231,22 +226,20 @@ def test_env_codex_model_overrides_yaml(
     assert result.exit_code == 0, result.output
     config = _DummyOrchestrator.last_mala_config
     assert config is not None
-    assert config.coder_options.codex.model == "gpt-5.5-env"
+    assert config.model == "gpt-5.5-env"
 
 
-def test_cli_codex_model_overrides_env_and_yaml(
+def test_cli_model_overrides_env_and_yaml(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from typer.testing import CliRunner
 
     _isolate_env(monkeypatch)
-    monkeypatch.setenv("MALA_CODEX_MODEL", "gpt-5.5-env")
+    monkeypatch.setenv("MALA_MODEL", "gpt-5.5-env")
     (tmp_path / "mala.yaml").write_text(
         "preset: python-uv\n"
         "coder: codex\n"
-        "coder_options:\n"
-        "  codex:\n"
-        "    model: gpt-5.5-yaml\n",
+        "model: gpt-5.5-yaml\n",
     )
 
     cli = _reload_cli(monkeypatch)
@@ -255,13 +248,13 @@ def test_cli_codex_model_overrides_env_and_yaml(
     runner = CliRunner()
     result = runner.invoke(
         cli.app,
-        ["run", str(tmp_path), "--codex-model", "gpt-5.5-cli"],
+        ["run", str(tmp_path), "--model", "gpt-5.5-cli"],
     )
 
     assert result.exit_code == 0, result.output
     config = _DummyOrchestrator.last_mala_config
     assert config is not None
-    assert config.coder_options.codex.model == "gpt-5.5-cli"
+    assert config.model == "gpt-5.5-cli"
 
 
 def test_env_coder_codex_selects_codex_via_env(

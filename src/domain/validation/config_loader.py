@@ -70,6 +70,7 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "per_issue_review",
         "coder",
         "amp_mode",
+        "model",
         "effort",
         "coder_options",
     }

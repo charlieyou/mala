@@ -551,8 +551,6 @@ class TestParseCoderOptions:
             {
                 "coder_options": {
                     "codex": {
-                        "model": "gpt-5.5",
-                        "effort": "high",
                         "approval_policy": "never",
                         "sandbox": "danger-full-access",
                     }
@@ -560,8 +558,6 @@ class TestParseCoderOptions:
             }
         )
         assert opts is not None
-        assert opts.model == "gpt-5.5"
-        assert opts.effort == "high"
         assert opts.approval_policy == "never"
         assert opts.sandbox == "danger-full-access"
 
@@ -624,12 +620,14 @@ class TestParseValidationConfigAggregate:
             "epic_verification": {"enabled": False, "max_retries": 4},
             "per_issue_review": {"enabled": True, "max_retries": 1},
             "coder": "claude",
+            "model": "opus[1m]",
             "effort": "medium",
-            "coder_options": {"codex": {"model": "gpt-5.5"}},
+            "coder_options": {"codex": {"approval_policy": "never"}},
         }
         cfg = parse_validation_config(data)
         assert cfg.preset == "python-uv"
         assert cfg.coder == "claude"
+        assert cfg.model == "opus[1m]"
         assert cfg.effort == "medium"
         assert cfg.epic_verification.enabled is False
         assert cfg.epic_verification.max_retries == 4
@@ -641,7 +639,7 @@ class TestParseValidationConfigAggregate:
         assert cfg.validation_triggers.periodic is not None
         assert cfg.validation_triggers.periodic.interval == 3600
         assert cfg.codex_options is not None
-        assert cfg.codex_options.model == "gpt-5.5"
+        assert cfg.codex_options.approval_policy == "never"
 
     def test_fields_set_tracks_explicit_keys(self) -> None:
         cfg = parse_validation_config(

@@ -107,7 +107,7 @@ return early if no setup is needed.
   `MalaConfig.coder` literal) and add yaml validation in
   `src/domain/validation/config.py`.
 - Add a CLI flag if a coder-specific option is needed (e.g.,
-  `--<coder>-mode`); follow the `--amp-mode` / `--codex-model` shape: a
+  `--<coder>-mode`); follow the `--amp-mode` shape: a
   Typer callback that parses-and-validates at parse time, then plumbs
   through `MalaConfig`. For richer per-coder option blocks, add a nested
   dataclass under `CoderOptions` (`AmpOptions`, `CodexOptions` are the

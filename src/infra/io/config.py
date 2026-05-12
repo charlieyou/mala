@@ -36,16 +36,14 @@ from typing import Literal
 from src.core.constants import (
     DEFAULT_CLAUDE_SETTINGS_SOURCES,
     DEFAULT_CODEX_APPROVAL_POLICY,
-    DEFAULT_CODEX_EFFORT,
-    DEFAULT_CODEX_MODEL,
     DEFAULT_CODEX_SANDBOX,
     VALID_CLAUDE_SETTINGS_SOURCES,
     VALID_CODEX_APPROVAL_POLICIES,
     VALID_CODEX_SANDBOXES,
     VALID_EFFORTS,
     default_effort_for,
+    default_model_for,
     validate_amp_effort_for_mode,
-    validate_codex_effort,
 )
 
 _logger = logging.getLogger(__name__)
@@ -205,11 +203,11 @@ def parse_amp_mode(
     return "smart"
 
 
-def parse_codex_model(raw: str | None, *, source: str) -> str | None:
-    """Parse a Codex model string.
+def parse_model(raw: str | None, *, source: str) -> str | None:
+    """Parse a coder model string.
 
-    Codex accepts arbitrary model identifiers (the SDK does not enforce a
-    fixed set), so validation is shape-only: empty/whitespace -> None,
+    Coder backends accept arbitrary model identifiers, so validation is
+    shape-only: empty/whitespace -> None,
     otherwise pass through the trimmed value.
     """
     if raw is None:
@@ -218,22 +216,6 @@ def parse_codex_model(raw: str | None, *, source: str) -> str | None:
     if not stripped:
         return None
     del source
-    return stripped
-
-
-def parse_codex_effort(raw: str | None, *, source: str) -> str | None:
-    """Parse a Codex effort string with strict-enum validation.
-
-    Validates against the Codex SDK's ``ReasoningEffort`` enum (or the
-    documented fallback when the SDK is not installed). Empty/whitespace ->
-    None.
-    """
-    if raw is None:
-        return None
-    stripped = raw.strip()
-    if not stripped:
-        return None
-    validate_codex_effort(stripped, source=source)
     return stripped
 
 
@@ -358,13 +340,9 @@ class AmpOptions:
 
 @dataclass(frozen=True)
 class CodexOptions:
-    """Codex-coder specific options (Phase B).
+    """Codex-coder specific options.
 
     Attributes:
-        model: Codex model identifier. Default ``gpt-5.5`` (decision #9).
-        effort: Optional ``ReasoningEffort`` value passed through to Codex.
-            Defaults to ``medium``; values are validated against the Codex
-            SDK's ``ReasoningEffort`` enum at parse time (decision #13).
         approval_policy: Codex turn approval policy. Default ``never``
             (decision #3) — combined with ``sandbox=danger-full-access``,
             the bundled hook is the only safety gate for unattended runs.
@@ -376,8 +354,6 @@ class CodexOptions:
             Phase B passes the raw map through unchanged.
     """
 
-    model: str = DEFAULT_CODEX_MODEL
-    effort: str | None = DEFAULT_CODEX_EFFORT
     approval_policy: Literal["never", "on-request", "on-failure", "untrusted"] = (
         DEFAULT_CODEX_APPROVAL_POLICY
     )
@@ -486,10 +462,17 @@ class MalaConfig:
     coder: Literal["claude", "amp", "codex"] = DEFAULT_CODER
     coder_options: CoderOptions = field(default_factory=CoderOptions)
 
+    # Mala-level model. Forwarded to Claude and Codex coders; ignored by Amp.
+    # ``None`` means "use mala's backend default" during config resolution.
+    model: str | None = None
+    _model_is_default: bool = field(default=False, repr=False, compare=False)
+
     # Mala-level reasoning effort. Forwarded to ``ClaudeAgentOptions.effort``
-    # for the Claude coder and to ``--effort <value>`` for supported Amp modes.
+    # for the Claude coder, Codex per-turn effort, and to ``--effort <value>``
+    # for supported Amp modes.
     # ``None`` means "use mala's backend/mode default" during config resolution.
     effort: str | None = None
+    _effort_is_default: bool = field(default=False, repr=False, compare=False)
 
     def __post_init__(
         self, claude_settings_sources_init: tuple[str, ...] | None
@@ -527,6 +510,9 @@ class MalaConfig:
             object.__setattr__(
                 self, "_claude_settings_sources", claude_settings_sources_init
             )
+        if self.model is None:
+            object.__setattr__(self, "model", default_model_for(coder=self.coder))
+            object.__setattr__(self, "_model_is_default", True)
         if self.effort is None:
             object.__setattr__(
                 self,
@@ -536,6 +522,7 @@ class MalaConfig:
                     mode=self.coder_options.amp.mode,
                 ),
             )
+            object.__setattr__(self, "_effort_is_default", True)
 
     @property
     def claude_settings_sources(self) -> tuple[str, ...]:
@@ -550,6 +537,7 @@ class MalaConfig:
         yaml_claude_settings_sources: tuple[str, ...] | None = None,
         yaml_coder: Literal["claude", "amp", "codex"] | None = None,
         yaml_amp_mode: Literal["smart", "rush", "deep"] | None = None,
+        yaml_model: str | None = None,
         yaml_effort: str | None = None,
         yaml_codex_options: CodexOptions | None = None,
     ) -> MalaConfig:
@@ -665,6 +653,15 @@ class MalaConfig:
             else (yaml_amp_mode if yaml_amp_mode is not None else DEFAULT_AMP_MODE)
         )
 
+        # Parse MALA_MODEL (env > yaml > backend default)
+        try:
+            env_model = parse_model(os.environ.get("MALA_MODEL"), source="MALA_MODEL")
+        except ValueError as exc:
+            parse_errors.append(str(exc))
+            env_model = None
+        resolved_model: str | None = env_model if env_model is not None else yaml_model
+        model_is_default = resolved_model is None
+
         # Parse MALA_EFFORT (env > yaml > backend/mode default)
         try:
             env_effort = parse_effort(
@@ -676,23 +673,8 @@ class MalaConfig:
         resolved_effort: str | None = (
             env_effort if env_effort is not None else yaml_effort
         )
+        effort_is_default = resolved_effort is None
 
-        # Parse MALA_CODEX_MODEL (env > yaml > default).
-        try:
-            env_codex_model = parse_codex_model(
-                os.environ.get("MALA_CODEX_MODEL"), source="MALA_CODEX_MODEL"
-            )
-        except ValueError as exc:
-            parse_errors.append(str(exc))
-            env_codex_model = None
-        # Parse MALA_CODEX_EFFORT (env > yaml > default).
-        try:
-            env_codex_effort = parse_codex_effort(
-                os.environ.get("MALA_CODEX_EFFORT"), source="MALA_CODEX_EFFORT"
-            )
-        except ValueError as exc:
-            parse_errors.append(str(exc))
-            env_codex_effort = None
         # Parse MALA_CODEX_APPROVAL_POLICY (env > yaml > default).
         try:
             env_codex_approval_policy = parse_codex_approval_policy(
@@ -714,12 +696,6 @@ class MalaConfig:
             yaml_codex_options if yaml_codex_options is not None else CodexOptions()
         )
         resolved_codex_options = CodexOptions(
-            model=(
-                env_codex_model if env_codex_model is not None else yaml_codex.model
-            ),
-            effort=(
-                env_codex_effort if env_codex_effort is not None else yaml_codex.effort
-            ),
             approval_policy=(
                 env_codex_approval_policy
                 if env_codex_approval_policy is not None
@@ -732,6 +708,8 @@ class MalaConfig:
             ),
             mcp_servers=yaml_codex.mcp_servers,
         )
+        if resolved_model is None:
+            resolved_model = default_model_for(coder=resolved_coder)
         if resolved_effort is None:
             resolved_effort = default_effort_for(
                 coder=resolved_coder,
@@ -776,7 +754,10 @@ class MalaConfig:
                 amp=AmpOptions(mode=resolved_amp_mode),
                 codex=resolved_codex_options,
             ),
+            model=resolved_model,
+            _model_is_default=model_is_default,
             effort=resolved_effort,
+            _effort_is_default=effort_is_default,
         )
 
         if validate:
@@ -859,9 +840,8 @@ class CLIOverrides:
     claude_settings_sources: str | None = None
     coder: str | None = None
     amp_mode: str | None = None
+    model: str | None = None
     effort: str | None = None
-    codex_model: str | None = None
-    codex_effort: str | None = None
     codex_approval_policy: str | None = None
     codex_sandbox: str | None = None
 
@@ -922,7 +902,10 @@ class ResolvedConfig:
     # Coder selection
     coder: Literal["claude", "amp", "codex"]
     coder_options: CoderOptions
+    model: str | None
+    model_is_default: bool
     effort: str | None
+    effort_is_default: bool
 
 
 def build_resolved_config(
@@ -1018,10 +1001,6 @@ def build_resolved_config(
     )
 
     # Apply codex options overrides (CLI > env > yaml > default).
-    cli_codex_model = parse_codex_model(overrides.codex_model, source="--codex-model")
-    cli_codex_effort = parse_codex_effort(
-        overrides.codex_effort, source="--codex-effort"
-    )
     cli_codex_approval_policy = parse_codex_approval_policy(
         overrides.codex_approval_policy, source="--codex-approval-policy"
     )
@@ -1030,8 +1009,6 @@ def build_resolved_config(
     )
     base_codex = base_config.coder_options.codex
     codex_options = CodexOptions(
-        model=cli_codex_model if cli_codex_model is not None else base_codex.model,
-        effort=cli_codex_effort if cli_codex_effort is not None else base_codex.effort,
         approval_policy=(
             cli_codex_approval_policy
             if cli_codex_approval_policy is not None
@@ -1044,22 +1021,34 @@ def build_resolved_config(
     )
     coder_options = CoderOptions(amp=AmpOptions(mode=amp_mode), codex=codex_options)
 
+    # Apply model override (CLI > env > yaml > backend default). If a CLI coder
+    # change happens without an explicit model and the base model was its
+    # backend default, recompute the default for the final coder.
+    cli_model = parse_model(overrides.model, source="CLI")
+    model: str | None = cli_model if cli_model is not None else base_config.model
+    model_is_default = cli_model is None and base_config._model_is_default
+    if cli_model is None and overrides.coder is not None and base_config._model_is_default:
+        model = default_model_for(coder=coder)
+        model_is_default = True
+    elif cli_model is not None:
+        model_is_default = False
+
     # Apply effort override (CLI > env > yaml > backend/mode default).
     # base_config already has env > yaml > default applied; if a CLI override
     # changes the selected coder or Amp mode without setting effort, recompute
     # the default for the final selection.
     cli_effort = parse_effort(overrides.effort, source="CLI")
     effort: str | None = cli_effort if cli_effort is not None else base_config.effort
-    base_default_effort = default_effort_for(
-        coder=base_config.coder,
-        mode=base_config.coder_options.amp.mode,
-    )
+    effort_is_default = cli_effort is None and base_config._effort_is_default
     if (
         cli_effort is None
         and (overrides.coder is not None or overrides.amp_mode is not None)
-        and effort == base_default_effort
+        and base_config._effort_is_default
     ):
         effort = default_effort_for(coder=coder, mode=amp_mode)
+        effort_is_default = True
+    elif cli_effort is not None:
+        effort_is_default = False
     validate_amp_effort_for_mode(
         coder=coder,
         mode=amp_mode,
@@ -1103,5 +1092,8 @@ def build_resolved_config(
         claude_settings_sources=claude_settings,
         coder=coder,
         coder_options=coder_options,
+        model=model,
+        model_is_default=model_is_default,
         effort=effort,
+        effort_is_default=effort_is_default,
     )

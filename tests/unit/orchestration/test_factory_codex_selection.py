@@ -45,24 +45,24 @@ def test_factory_returns_codex_provider_when_coder_codex() -> None:
     provider = _create_agent_provider(config)
     assert isinstance(provider, CodexAgentProvider)
     assert provider.name == "codex"
+    assert provider.model == "gpt-5.5"
     assert provider.effort == "medium"
 
 
-def test_factory_threads_resolved_codex_options_to_provider() -> None:
-    """``MalaConfig.coder_options.codex`` flows into the provider instance.
+def test_factory_threads_resolved_coder_options_to_provider() -> None:
+    """``MalaConfig`` coder settings flow into the provider instance.
 
-    Integration-path evidence: the provider's ``options`` attribute is the
-    same dataclass the resolver produced, so a model/effort that survived
-    CLI > env > yaml > default reaches the runtime builder unchanged.
+    Integration-path evidence: model/effort that survived CLI > env > yaml >
+    default reaches the runtime builder unchanged alongside Codex-only options.
     """
     config = MalaConfig(
         runs_dir=Path("/tmp/runs"),
         lock_dir=Path("/tmp/locks"),
         coder="codex",
+        model="gpt-5.5-foo",
+        effort="medium",
         coder_options=CoderOptions(
             codex=CodexOptions(
-                model="gpt-5.5-foo",
-                effort="medium",
                 approval_policy="on-request",
                 sandbox="workspace-write",
             ),
@@ -175,9 +175,8 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "MALA_CODER",
         "MALA_AMP_MODE",
         "MALA_CLAUDE_SETTINGS_SOURCES",
+        "MALA_MODEL",
         "MALA_EFFORT",
-        "MALA_CODEX_MODEL",
-        "MALA_CODEX_EFFORT",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -215,9 +214,10 @@ def test_yaml_codex_options_reach_provider(
     (tmp_path / "mala.yaml").write_text(
         "preset: python-uv\n"
         "coder: codex\n"
+        "model: gpt-5.5-foo\n"
+        "effort: high\n"
         "coder_options:\n"
         "  codex:\n"
-        "    model: gpt-5.5-foo\n"
         "    approval_policy: on-request\n"
         "    sandbox: workspace-write\n",
     )
@@ -233,7 +233,7 @@ def test_yaml_codex_options_reach_provider(
     provider = _DummyOrchestrator.last_provider
     assert isinstance(provider, CodexAgentProvider)
     assert provider.model == "gpt-5.5-foo"
-    assert provider.effort == "medium"
+    assert provider.effort == "high"
     assert provider.approval_policy == "on-request"
     assert provider.sandbox == "workspace-write"
 
@@ -245,7 +245,7 @@ def test_env_coder_codex_reaches_provider(
 
     _isolate_env(monkeypatch)
     monkeypatch.setenv("MALA_CODER", "codex")
-    monkeypatch.setenv("MALA_CODEX_MODEL", "gpt-5.5-env")
+    monkeypatch.setenv("MALA_MODEL", "gpt-5.5-env")
 
     cli = _reload_cli(monkeypatch)
     _patch_orchestrator(monkeypatch, cli, tmp_path)
@@ -287,19 +287,17 @@ def test_invalid_codex_yaml_rejected_at_load_time(
     assert "sandbox" in str(result.exception)
 
 
-def test_cli_overrides_yaml_codex_model(
+def test_cli_overrides_yaml_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """CLI > yaml: ``--codex-model`` beats yaml ``coder_options.codex.model``."""
+    """CLI > yaml: ``--model`` beats yaml ``model``."""
     from typer.testing import CliRunner
 
     _isolate_env(monkeypatch)
     (tmp_path / "mala.yaml").write_text(
         "preset: python-uv\n"
         "coder: codex\n"
-        "coder_options:\n"
-        "  codex:\n"
-        "    model: gpt-5.5-yaml\n",
+        "model: gpt-5.5-yaml\n",
     )
 
     cli = _reload_cli(monkeypatch)
@@ -309,7 +307,7 @@ def test_cli_overrides_yaml_codex_model(
     runner = CliRunner()
     result = runner.invoke(
         cli.app,
-        ["run", str(tmp_path), "--codex-model", "gpt-5.5-cli"],
+        ["run", str(tmp_path), "--model", "gpt-5.5-cli"],
     )
 
     assert result.exit_code == 0, result.output

@@ -24,9 +24,8 @@ class CLIOverrideOptions:
     claude_settings_sources: str | None = None
     coder: str | None = None
     amp_mode: str | None = None
+    model: str | None = None
     effort: str | None = None
-    codex_model: str | None = None
-    codex_effort: str | None = None
     codex_approval_policy: str | None = None
     codex_sandbox: str | None = None
 
@@ -38,9 +37,8 @@ class CLIOverrideOptions:
                 self.claude_settings_sources,
                 self.coder,
                 self.amp_mode,
+                self.model,
                 self.effort,
-                self.codex_model,
-                self.codex_effort,
                 self.codex_approval_policy,
                 self.codex_sandbox,
             )
@@ -75,9 +73,8 @@ def apply_cli_overrides(
         claude_settings_sources=options.claude_settings_sources,
         coder=options.coder,
         amp_mode=options.amp_mode,
+        model=options.model,
         effort=options.effort,
-        codex_model=options.codex_model,
-        codex_effort=options.codex_effort,
         codex_approval_policy=options.codex_approval_policy,
         codex_sandbox=options.codex_sandbox,
     )
@@ -92,7 +89,10 @@ def apply_cli_overrides(
             "claude_settings_sources_init",
             "coder",
             "coder_options",
+            "model",
+            "_model_is_default",
             "effort",
+            "_effort_is_default",
         }
     }
     return MalaConfig(
@@ -100,7 +100,10 @@ def apply_cli_overrides(
         claude_settings_sources_init=resolved.claude_settings_sources,
         coder=resolved.coder,
         coder_options=resolved.coder_options,
+        model=resolved.model,
+        _model_is_default=resolved.model_is_default,
         effort=resolved.effort,
+        _effort_is_default=resolved.effort_is_default,
     )
 
 
@@ -136,6 +139,7 @@ def build_resolved_mala_config(
         yaml_css,
         yaml_coder,
         yaml_amp_mode,
+        yaml_model,
         yaml_effort,
         yaml_codex_options,
     ) = load_yaml_coder_resolution(repo_path)
@@ -144,6 +148,7 @@ def build_resolved_mala_config(
         yaml_claude_settings_sources=yaml_css,
         yaml_coder=yaml_coder,
         yaml_amp_mode=yaml_amp_mode,
+        yaml_model=yaml_model,
         yaml_effort=yaml_effort,
         yaml_codex_options=_resolve_yaml_codex_options(yaml_codex_options),
     )

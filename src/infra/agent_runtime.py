@@ -282,6 +282,7 @@ class ClaudeAgentRuntimeBuilder:
         sdk_client_factory: ClaudeSDKClientFactoryProtocol,
         mcp_server_factory: McpServerFactory | None = None,
         setting_sources: list[str] | None = None,
+        model: str | None = None,
         effort: str | None = None,
         deadlock_monitor: DeadlockMonitorProtocol | None = None,
         *,
@@ -297,6 +298,9 @@ class ClaudeAgentRuntimeBuilder:
                 Required unless MCP servers are explicitly provided via with_mcp().
             setting_sources: Optional list of Claude settings sources to use.
                 E.g., ["local", "project"]. If None, SDK defaults are used.
+            model: Optional Mala-level model forwarded to
+                ``ClaudeAgentOptions.model`` for the coder session. ``None``
+                uses the historical Claude default ``opus[1m]``.
             effort: Optional Mala-level reasoning effort forwarded to
                 ``ClaudeAgentOptions.effort`` for the coder session. ``None``
                 leaves the SDK default in place; reviewer / epic-verifier
@@ -325,6 +329,7 @@ class ClaudeAgentRuntimeBuilder:
         self._setting_sources = (
             None if setting_sources is None else list(setting_sources)
         )
+        self._model: str = model or "opus[1m]"
         self._effort: str | None = effort
 
         # Lint tools configuration (used by the default helper fallback path)
@@ -666,7 +671,7 @@ class ClaudeAgentRuntimeBuilder:
         # Build SDK options
         options = self._sdk_client_factory.create_options(
             cwd=str(self._repo_path),
-            model="opus[1m]",
+            model=self._model,
             mcp_servers=self._mcp_servers,
             disallowed_tools=self._disallowed_tools,
             env=env,

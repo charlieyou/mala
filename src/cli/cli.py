@@ -25,11 +25,10 @@ from ..orchestration.cli_options import (
     resolve_order_option,
     validate_amp_mode_option,
     validate_codex_approval_policy_option,
-    validate_codex_effort_option,
-    validate_codex_model_option,
     validate_codex_sandbox_option,
     validate_coder_option,
     validate_effort_option,
+    validate_model_option,
 )
 from ..orchestration.cli_overrides import (
     CLIOverrideOptions,
@@ -271,18 +270,10 @@ def _validate_effort_option(value: str | None) -> str | None:
         raise typer.BadParameter(str(exc))
 
 
-def _validate_codex_model_option(value: str | None) -> str | None:
-    """Typer callback for ``--codex-model``; delegates to orchestration helper."""
+def _validate_model_option(value: str | None) -> str | None:
+    """Typer callback for ``--model``; delegates to orchestration helper."""
     try:
-        return validate_codex_model_option(value)
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc))
-
-
-def _validate_codex_effort_option(value: str | None) -> str | None:
-    """Typer callback for ``--codex-effort``; delegates to orchestration helper."""
-    try:
-        return validate_codex_effort_option(value)
+        return validate_model_option(value)
     except ValueError as exc:
         raise typer.BadParameter(str(exc))
 
@@ -318,19 +309,17 @@ _AMP_MODE_HELP = (
 )
 _EFFORT_HELP = (
     "Reasoning effort forwarded to the active coder. Valid: low, medium, high, "
-    "xhigh, max. Defaults: claude=xhigh, amp smart=xhigh, amp deep=medium."
+    "xhigh, max. Defaults: claude=xhigh, amp smart=xhigh, amp deep=medium. "
+    "Codex receives the same effort when configured."
 )
 _RUN_EFFORT_HELP = (
     f"{_EFFORT_HELP} Forwarded to ClaudeAgentOptions.effort for coder=claude "
     "and to `amp --effort <value>` for coder=amp (smart/deep modes only; "
     "Amp smart accepts medium, high, or xhigh; Amp deep accepts low, medium, or xhigh)."
 )
-_CODEX_MODEL_HELP = (
-    "Codex model identifier. Only consulted when coder=codex. Default: gpt-5.5."
-)
-_CODEX_EFFORT_HELP = (
-    "Codex reasoning effort. Validated against the Codex SDK ReasoningEffort "
-    "enum at parse time. Only consulted when coder=codex. Default: medium."
+_MODEL_HELP = (
+    "Coder model identifier for Claude and Codex coders. Defaults: "
+    "claude=opus[1m], codex=gpt-5.5. Ignored by Amp."
 )
 _CODEX_APPROVAL_POLICY_HELP = (
     "Codex approval policy. Valid: never, on-request, on-failure, untrusted. "
@@ -482,21 +471,12 @@ def run(
             rich_help_panel="Coder",
         ),
     ] = None,
-    codex_model: Annotated[
+    model: Annotated[
         str | None,
         typer.Option(
-            "--codex-model",
-            help=_CODEX_MODEL_HELP,
-            callback=_validate_codex_model_option,
-            rich_help_panel="Coder",
-        ),
-    ] = None,
-    codex_effort: Annotated[
-        str | None,
-        typer.Option(
-            "--codex-effort",
-            help=_CODEX_EFFORT_HELP,
-            callback=_validate_codex_effort_option,
+            "--model",
+            help=_MODEL_HELP,
+            callback=_validate_model_option,
             rich_help_panel="Coder",
         ),
     ] = None,
@@ -580,9 +560,8 @@ def run(
             claude_settings_sources=claude_settings_sources,
             coder=coder,
             amp_mode=amp_mode,
+            model=model,
             effort=effort,
-            codex_model=codex_model,
-            codex_effort=codex_effort,
             codex_approval_policy=codex_approval_policy,
             codex_sandbox=codex_sandbox,
         ),
@@ -675,21 +654,12 @@ def epic_verify(
             rich_help_panel="Coder",
         ),
     ] = None,
-    codex_model: Annotated[
+    model: Annotated[
         str | None,
         typer.Option(
-            "--codex-model",
-            help=_CODEX_MODEL_HELP,
-            callback=_validate_codex_model_option,
-            rich_help_panel="Coder",
-        ),
-    ] = None,
-    codex_effort: Annotated[
-        str | None,
-        typer.Option(
-            "--codex-effort",
-            help=_CODEX_EFFORT_HELP,
-            callback=_validate_codex_effort_option,
+            "--model",
+            help=_MODEL_HELP,
+            callback=_validate_model_option,
             rich_help_panel="Coder",
         ),
     ] = None,
@@ -733,9 +703,8 @@ def epic_verify(
                 claude_settings_sources=claude_settings_sources,
                 coder=coder,
                 amp_mode=amp_mode,
+                model=model,
                 effort=effort,
-                codex_model=codex_model,
-                codex_effort=codex_effort,
                 codex_approval_policy=codex_approval_policy,
                 codex_sandbox=codex_sandbox,
             ),

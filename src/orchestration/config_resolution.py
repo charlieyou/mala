@@ -96,9 +96,7 @@ def _resolve_yaml_codex_options(
         return None
 
     has_value = (
-        yaml_codex_options.model is not None
-        or yaml_codex_options.effort is not None
-        or yaml_codex_options.approval_policy is not None
+        yaml_codex_options.approval_policy is not None
         or yaml_codex_options.sandbox is not None
         or bool(yaml_codex_options.mcp_servers)
     )
@@ -107,12 +105,6 @@ def _resolve_yaml_codex_options(
 
     base = CodexOptions()
     return CodexOptions(
-        model=yaml_codex_options.model
-        if yaml_codex_options.model is not None
-        else base.model,
-        effort=yaml_codex_options.effort
-        if yaml_codex_options.effort is not None
-        else base.effort,
         approval_policy=yaml_codex_options.approval_policy
         if yaml_codex_options.approval_policy is not None
         else base.approval_policy,

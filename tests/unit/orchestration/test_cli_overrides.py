@@ -35,9 +35,8 @@ class TestCLIOverrideOptions:
             "claude_settings_sources",
             "coder",
             "amp_mode",
+            "model",
             "effort",
-            "codex_model",
-            "codex_effort",
             "codex_approval_policy",
             "codex_sandbox",
         ],
@@ -95,23 +94,23 @@ class TestApplyCLIOverrides:
         )
         assert result.claude_settings_sources == ("local", "user")
 
-    def test_codex_overrides_thread_through_to_codex_options(self) -> None:
-        """Codex CLI options reach coder_options.codex with parsed values."""
+    def test_coder_overrides_thread_through_to_model_and_codex_options(self) -> None:
+        """Coder CLI options reach model/effort and Codex-only options."""
         config = MalaConfig.from_env(validate=False, yaml_coder="codex")
         result = apply_cli_overrides(
             config,
             CLIOverrideOptions(
                 coder="codex",
-                codex_model="gpt-5.5",
-                codex_effort="high",
+                model="gpt-5.5",
+                effort="high",
                 codex_approval_policy="never",
                 codex_sandbox="workspace-write",
             ),
         )
         assert result.coder == "codex"
+        assert result.model == "gpt-5.5"
+        assert result.effort == "high"
         codex = result.coder_options.codex
-        assert codex.model == "gpt-5.5"
-        assert codex.effort == "high"
         assert codex.approval_policy == "never"
         assert codex.sandbox == "workspace-write"
 

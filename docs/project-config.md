@@ -70,11 +70,11 @@ claude_settings_sources: list     # Optional. SDK settings sources (default: [lo
 
 coder: string                    # Optional. Coder backend: "claude", "amp", or "codex" (default: claude)
 amp_mode: string                 # Optional. Amp mode: "smart", "rush", "deep" (default: deep). Only consulted when coder: amp.
+model: string                    # Optional. Model for Claude/Codex (defaults: claude=opus[1m], codex=gpt-5.5). Ignored by Amp.
+effort: string | null            # Optional. Reasoning effort for Claude/Codex/supported Amp modes.
 
 coder_options:                   # Optional. Per-coder option blocks.
   codex:                         # Only consulted when coder: codex.
-    model: string                # Codex model id (default: "gpt-5.5")
-    effort: string | null        # Reasoning effort, validated against SDK's ReasoningEffort enum (default: "medium")
     approval_policy: string      # never | on-request | on-failure | untrusted (default: "never")
     sandbox: string              # read-only | workspace-write | danger-full-access (default: "danger-full-access")
     mcp_servers: object          # Extra MCP servers; merged with bundled mala-locking (default: {})
@@ -135,9 +135,9 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `claude_settings_sources` | list | No | SDK settings sources: `local`, `project`, `user` (default: `[local, project]`) |
 | `coder` | string | No | Coder backend: `claude`, `amp`, or `codex` (default: `claude`). Overridden by `--coder` / `MALA_CODER`. See [Coder Selection](#coder-selection). |
 | `amp_mode` | string | No | Amp execution mode: `smart`, `rush`, or `deep` (default: `deep`). Only consulted when `coder: amp`. |
+| `model` | string | No | Model for Claude and Codex coders. Defaults: `claude=opus[1m]`, `codex=gpt-5.5`. Overridden by `--model` / `MALA_MODEL`. Ignored by Amp. |
+| `effort` | string | No | Reasoning effort for Claude, Codex, and supported Amp modes. Overridden by `--effort` / `MALA_EFFORT`. |
 | `coder_options` | object | No | Per-coder option block. See [Codex Coder Options](#codex-coder-options). Only consulted when the matching coder is selected. |
-| `coder_options.codex.model` | string | No | Codex model id (default: `gpt-5.5`). Overridden by `--codex-model` / `MALA_CODEX_MODEL`. |
-| `coder_options.codex.effort` | string | No | Codex reasoning effort, validated against the SDK's `ReasoningEffort` enum at parse time (default: `medium`). Overridden by `--codex-effort` / `MALA_CODEX_EFFORT`. |
 | `coder_options.codex.approval_policy` | string | No | Codex approval policy: `never`, `on-request`, `on-failure`, `untrusted` (default: `never`). Overridden by `--codex-approval-policy` / `MALA_CODEX_APPROVAL_POLICY`. |
 | `coder_options.codex.sandbox` | string | No | Codex sandbox mode: `read-only`, `workspace-write`, `danger-full-access` (default: `danger-full-access`). Overridden by `--codex-sandbox` / `MALA_CODEX_SANDBOX`. |
 | `coder_options.codex.mcp_servers` | object | No | Extra MCP servers (merged with the bundled `mala-locking` server; the bundled server cannot be replaced). YAML-only. Default: `{}`. |
@@ -563,10 +563,10 @@ amp_mode: deep    # deep (GPT-5 reasoning, default), smart (Opus), rush (Haiku)
 ```yaml
 # Select the Codex coder
 coder: codex
+model: gpt-5.5
+effort: high
 coder_options:
   codex:
-    model: gpt-5.5
-    effort: high
     approval_policy: never        # default
     sandbox: danger-full-access   # default
 ```
@@ -576,13 +576,13 @@ Existing `mala.yaml` files **without `coder:` remain valid** and default to
 
 ### Precedence
 
-`coder`, `amp_mode`, and `coder_options.codex.*` all follow the same
+`coder`, `amp_mode`, `model`, `effort`, and `coder_options.codex.*` all follow the same
 **CLI > env > yaml > default** precedence used by `claude_settings_sources`:
 
-1. CLI flag (`--coder`, `--amp-mode`, `--codex-model`, `--codex-effort`, `--codex-approval-policy`, `--codex-sandbox`)
-2. Environment variable (`MALA_CODER`, `MALA_AMP_MODE`, `MALA_CODEX_MODEL`, `MALA_CODEX_EFFORT`, `MALA_CODEX_APPROVAL_POLICY`, `MALA_CODEX_SANDBOX`)
-3. `mala.yaml` (`coder:`, `amp_mode:`, `coder_options.codex.*`)
-4. Defaults: `coder=claude`, `amp_mode=deep`, `codex.model=gpt-5.5`, `codex.effort=medium`, `codex.approval_policy=never`, `codex.sandbox=danger-full-access`
+1. CLI flag (`--coder`, `--amp-mode`, `--model`, `--effort`, `--codex-approval-policy`, `--codex-sandbox`)
+2. Environment variable (`MALA_CODER`, `MALA_AMP_MODE`, `MALA_MODEL`, `MALA_EFFORT`, `MALA_CODEX_APPROVAL_POLICY`, `MALA_CODEX_SANDBOX`)
+3. `mala.yaml` (`coder:`, `amp_mode:`, `model:`, `effort:`, `coder_options.codex.*`)
+4. Defaults: `coder=claude`, `amp_mode=deep`, `claude.model=opus[1m]`, `codex.model=gpt-5.5`, `codex.approval_policy=never`, `codex.sandbox=danger-full-access`
 
 ### Validation
 
@@ -593,19 +593,18 @@ starts:
 |-------|----------------|
 | `coder` | `claude`, `amp`, `codex` |
 | `amp_mode` | `smart`, `rush`, `deep` |
-| `coder_options.codex.model` | non-empty string (e.g., `gpt-5.5`); confirmed against the live API at run time |
-| `coder_options.codex.effort` | validated against the SDK's `ReasoningEffort` enum at parse time |
+| `model` | non-empty string (e.g., `opus[1m]` or `gpt-5.5`); confirmed against the live backend at run time |
+| `effort` | `low`, `medium`, `high`, `xhigh`, `max` (Amp modes further restrict supported values) |
 | `coder_options.codex.approval_policy` | `never`, `on-request`, `on-failure`, `untrusted` |
 | `coder_options.codex.sandbox` | `read-only`, `workspace-write`, `danger-full-access` |
 
 ### Cross-Coder Behavior
 
 - `amp_mode` is **only consulted when `coder: amp`**. Set with another
-  coder, it is logged as ignored (info-level) and does not error.
+  coder, it is ignored and does not error.
 - `coder_options.codex.*` is **only consulted when `coder: codex`**.
-  Set with another coder, it is logged as ignored (info-level).
-- `claude_settings_sources` is logged as ignored (info-level) when
-  `coder: amp` or `coder: codex`.
+  Set with another coder, it is ignored.
+- `claude_settings_sources` is ignored when `coder: amp` or `coder: codex`.
 - `MALA_DISALLOWED_TOOLS` is a **no-op under `coder: amp`** in MVP and warns
   once on run start; tracked as a follow-up. Under `coder: codex` it is
   enforced inside the bundled `PreToolUse` command hook.
@@ -638,15 +637,16 @@ for the full list.
 
 ### Codex Coder Options
 
-`coder_options.codex` configures the Codex backend. All fields are optional;
-omitted fields fall through to the documented defaults.
+`coder_options.codex` configures Codex-only safety/runtime options. Use the
+top-level `model` and `effort` settings for Codex model and reasoning effort.
+All fields are optional; omitted fields fall through to the documented defaults.
 
 ```yaml
 coder: codex
+model: gpt-5.5                    # default; latest gpt-5.5 family release
+effort: high                      # passed through to Codex per turn
 coder_options:
   codex:
-    model: gpt-5.5                 # default; latest gpt-5.5 family release
-    effort: high                   # passed through to Codex's ReasoningEffort enum
     approval_policy: never         # default; see warnings below
     sandbox: danger-full-access    # default; see warnings below
     mcp_servers:                   # merged with bundled mala-locking server (cannot replace)
@@ -683,10 +683,8 @@ evidence_check:
 ```yaml
 preset: python-uv
 coder: codex
-coder_options:
-  codex:
-    model: gpt-5.5
-    effort: high
+model: gpt-5.5
+effort: high
 evidence_check:
   required: [test, lint]
 ```

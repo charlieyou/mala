@@ -3,10 +3,10 @@
 The yaml shape is:
 
     coder: codex
+    model: gpt-5.5
+    effort: high
     coder_options:
       codex:
-        model: gpt-5.5
-        effort: high
         approval_policy: never
         sandbox: danger-full-access
 
@@ -121,23 +121,21 @@ class TestCodexBlock:
         ):
             parse_validation_config({"coder_options": {"codex": {"sandbox": "yolo"}}})
 
-    def test_invalid_effort_rejected(self) -> None:
-        with pytest.raises(ConfigError, match=r"Invalid Codex effort 'super-high'"):
-            parse_validation_config(
-                {"coder_options": {"codex": {"effort": "super-high"}}}
-            )
-
-    def test_empty_model_rejected(self) -> None:
-        with pytest.raises(ConfigError, match=r"non-empty string"):
-            parse_validation_config({"coder_options": {"codex": {"model": ""}}})
+    @pytest.mark.parametrize("field", ["model", "effort"])
+    def test_model_and_effort_fields_rejected_under_codex_options(
+        self, field: str
+    ) -> None:
+        with pytest.raises(ConfigError, match=rf"Unknown field '{field}'"):
+            parse_validation_config({"coder_options": {"codex": {field: "value"}}})
 
     def test_full_block_round_trips(self) -> None:
         cfg = parse_validation_config(
             {
                 "coder": "codex",
+                "model": "gpt-5.5-foo",
+                "effort": "high",
                 "coder_options": {
                     "codex": {
-                        "model": "gpt-5.5-foo",
                         "approval_policy": "never",
                         "sandbox": "danger-full-access",
                     }
@@ -145,8 +143,9 @@ class TestCodexBlock:
             }
         )
         assert cfg.coder == "codex"
+        assert cfg.model == "gpt-5.5-foo"
+        assert cfg.effort == "high"
         assert cfg.codex_options is not None
-        assert cfg.codex_options.model == "gpt-5.5-foo"
         assert cfg.codex_options.approval_policy == "never"
         assert cfg.codex_options.sandbox == "danger-full-access"
 
@@ -161,16 +160,15 @@ class TestLoadConfig:
         repo = _yaml(
             tmp_path,
             "preset: python-uv\ncoder: codex\n"
+            "model: gpt-5.5-foo\n"
             "coder_options:\n"
             "  codex:\n"
-            "    model: gpt-5.5-foo\n"
             "    approval_policy: never\n"
             "    sandbox: danger-full-access\n",
         )
         cfg = load_config(repo)
         assert cfg.coder == "codex"
-        assert cfg.codex_options is not None
-        assert cfg.codex_options.model == "gpt-5.5-foo"
+        assert cfg.model == "gpt-5.5-foo"
 
     def test_invalid_sandbox_rejected_via_load_config(self, tmp_path: Path) -> None:
         repo = _yaml(
@@ -196,13 +194,15 @@ class TestLoadConfig:
         with pytest.raises(ConfigError, match=r"approval_policy must be one of"):
             load_config(repo)
 
-    def test_invalid_effort_rejected_via_load_config(self, tmp_path: Path) -> None:
+    def test_effort_rejected_under_codex_options_via_load_config(
+        self, tmp_path: Path
+    ) -> None:
         repo = _yaml(
             tmp_path,
             "preset: python-uv\ncoder: codex\n"
             "coder_options:\n"
             "  codex:\n"
-            "    effort: super-high\n",
+            "    effort: high\n",
         )
-        with pytest.raises(ConfigError, match=r"Invalid Codex effort"):
+        with pytest.raises(ConfigError, match=r"Unknown field 'effort'"):
             load_config(repo)

@@ -33,6 +33,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "MALA_CODER",
         "MALA_AMP_MODE",
         "MALA_CLAUDE_SETTINGS_SOURCES",
+        "MALA_MODEL",
         "MALA_EFFORT",
     ):
         monkeypatch.delenv(var, raising=False)
@@ -473,6 +474,77 @@ class TestEffortPrecedence:
         assert resolved.coder == "amp"
         assert resolved.coder_options.amp.mode == "deep"
         assert resolved.effort == "medium"
+
+    def test_cli_coder_override_preserves_explicit_yaml_effort(self) -> None:
+        config = MalaConfig.from_env(
+            validate=False,
+            yaml_coder="claude",
+            yaml_effort="medium",
+        )
+        resolved = build_resolved_config(config, CLIOverrides(coder="codex"))
+        assert resolved.coder == "codex"
+        assert resolved.effort == "medium"
+        assert resolved.effort_is_default is False
+
+    def test_cli_amp_mode_override_preserves_explicit_yaml_effort(self) -> None:
+        config = MalaConfig.from_env(
+            validate=False,
+            yaml_coder="amp",
+            yaml_amp_mode="deep",
+            yaml_effort="medium",
+        )
+        resolved = build_resolved_config(config, CLIOverrides(amp_mode="smart"))
+        assert resolved.coder_options.amp.mode == "smart"
+        assert resolved.effort == "medium"
+        assert resolved.effort_is_default is False
+
+
+class TestModelPrecedence:
+    """CLI > env > yaml > backend default for the shared ``model`` option."""
+
+    def test_default_model_uses_claude_default(self) -> None:
+        config = MalaConfig.from_env(validate=False)
+        assert config.model == "opus[1m]"
+        resolved = build_resolved_config(config, CLIOverrides())
+        assert resolved.model == "opus[1m]"
+        assert resolved.model_is_default is True
+
+    def test_codex_default_model(self) -> None:
+        config = MalaConfig.from_env(validate=False, yaml_coder="codex")
+        assert config.model == "gpt-5.5"
+
+    def test_yaml_model_used_when_env_absent(self) -> None:
+        config = MalaConfig.from_env(validate=False, yaml_model="custom-model")
+        assert config.model == "custom-model"
+
+    def test_env_model_beats_yaml(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MALA_MODEL", "env-model")
+        config = MalaConfig.from_env(validate=False, yaml_model="yaml-model")
+        assert config.model == "env-model"
+
+    def test_cli_model_beats_env_and_yaml(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MALA_MODEL", "env-model")
+        config = MalaConfig.from_env(validate=False, yaml_model="yaml-model")
+        resolved = build_resolved_config(config, CLIOverrides(model="cli-model"))
+        assert resolved.model == "cli-model"
+        assert resolved.model_is_default is False
+
+    def test_cli_coder_override_recomputes_default_model(self) -> None:
+        config = MalaConfig.from_env(validate=False)
+        resolved = build_resolved_config(config, CLIOverrides(coder="codex"))
+        assert resolved.model == "gpt-5.5"
+        assert resolved.model_is_default is True
+
+    def test_cli_coder_override_preserves_explicit_yaml_model(self) -> None:
+        config = MalaConfig.from_env(
+            validate=False,
+            yaml_coder="claude",
+            yaml_model="opus[1m]",
+        )
+        resolved = build_resolved_config(config, CLIOverrides(coder="codex"))
+        assert resolved.coder == "codex"
+        assert resolved.model == "opus[1m]"
+        assert resolved.model_is_default is False
 
     def test_yaml_effort_flows_through_validation_config(self, tmp_path: Path) -> None:
         """End-to-end: ``effort:`` in mala.yaml reaches MalaConfig.

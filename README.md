@@ -137,7 +137,7 @@ error.
 | Option | Default | Why |
 |--------|---------|-----|
 | `model` | `gpt-5.5` | Latest gpt-5.5 family release |
-| `effort` | `medium` | Explicit Codex `ReasoningEffort` default |
+| `effort` | `medium` | Shared coder reasoning-effort default for Codex |
 | `approval_policy` | `never` | Unattended-run posture; bundled hook is the gate |
 | `sandbox` | `danger-full-access` | Same posture as Amp's `--dangerously-allow-all` |
 
@@ -145,9 +145,8 @@ error.
 
 - **No cross-coder session resume.** Codex `thr_*` thread IDs are not
   interchangeable with Claude session IDs or Amp `T-*` thread IDs.
-- `--claude-settings-sources` and `--amp-mode` are logged as ignored
-  under `coder: codex` (parity with the existing cross-coder ignore
-  contract).
+- Claude settings and Amp mode settings are only used by their matching
+  coders; other combinations may be ignored.
 - The bundled `mala-locking` MCP server is **mandatory and cannot be
   replaced** via `coder_options.codex.mcp_servers`; user-supplied servers
   are merged with the bundled one (the bundled key wins on conflict).
@@ -186,7 +185,7 @@ mala run --watch /path/to/repo             # Keep polling for new issues
 mala run --coder amp /path/to/repo         # Use Amp instead of Claude as the per-issue coder
 mala run --coder amp --amp-mode rush /path/to/repo  # Amp in rush mode (Haiku)
 mala run --coder codex /path/to/repo       # Use Codex (gpt-5.5) as the per-issue coder
-mala run --coder codex --codex-model gpt-5.5 --codex-effort high /path/to/repo
+mala run --coder codex --model gpt-5.5 --effort high /path/to/repo
 mala status                               # Check locks, config, logs
 mala status --all                          # Show running instances across directories
 mala logs list                            # List recent runs

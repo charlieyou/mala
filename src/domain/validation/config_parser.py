@@ -28,7 +28,6 @@ from src.core.constants import (
     VALID_CLAUDE_SETTINGS_SOURCES,
     VALID_CODEX_APPROVAL_POLICIES,
     VALID_CODEX_SANDBOXES,
-    validate_codex_effort,
 )
 from src.domain.validation.config_types import (
     CerberusConfig,
@@ -58,15 +57,15 @@ if TYPE_CHECKING:
 
 _CODER_OPTIONS_KEYS: frozenset[str] = frozenset({"codex"})
 _CODEX_OPTIONS_KEYS: frozenset[str] = frozenset(
-    {"model", "effort", "approval_policy", "sandbox", "mcp_servers"}
+    {"approval_policy", "sandbox", "mcp_servers"}
 )
 
 
 def _parse_codex_options_block(raw: object) -> CodexOptionsConfig:
     """Parse the inner ``coder_options.codex`` block.
 
-    Strict-validates ``model``, ``effort``, ``approval_policy``, ``sandbox``
-    and (shape-only) ``mcp_servers``. Raises :class:`ConfigError` on any
+    Strict-validates ``approval_policy``, ``sandbox`` and shape-validates
+    ``mcp_servers``. Raises :class:`ConfigError` on any
     unknown key, wrong type, or invalid enum value (AC #13).
     """
     if raw is None:
@@ -80,31 +79,6 @@ def _parse_codex_options_block(raw: object) -> CodexOptionsConfig:
     if unknown:
         first = sorted(str(k) for k in unknown)[0]
         raise ConfigError(f"Unknown field '{first}' in coder_options.codex")
-
-    model: str | None = None
-    if "model" in value:
-        model_val = value["model"]
-        if model_val is not None:
-            if not isinstance(model_val, str) or not model_val.strip():
-                raise ConfigError(
-                    "coder_options.codex.model must be a non-empty string"
-                )
-            model = model_val
-
-    effort: str | None = None
-    if "effort" in value:
-        effort_val = value["effort"]
-        if effort_val is not None:
-            if not isinstance(effort_val, str):
-                raise ConfigError(
-                    "coder_options.codex.effort must be a string, got "
-                    f"{type(effort_val).__name__}"
-                )
-            try:
-                validate_codex_effort(effort_val, source="coder_options.codex.effort")
-            except ValueError as exc:
-                raise ConfigError(str(exc)) from exc
-            effort = effort_val
 
     approval_policy: (
         Literal["never", "on-request", "on-failure", "untrusted"] | None
@@ -169,8 +143,6 @@ def _parse_codex_options_block(raw: object) -> CodexOptionsConfig:
             mcp_servers = tuple(entries)
 
     return CodexOptionsConfig(
-        model=model,
-        effort=effort,
         approval_policy=approval_policy,
         sandbox=sandbox,
         mcp_servers=mcp_servers,
@@ -519,6 +491,18 @@ def parse_effort(data: dict[str, Any]) -> tuple[str | None, bool]:
     return effort_val, True
 
 
+def parse_model(data: dict[str, Any]) -> tuple[str | None, bool]:
+    """Parse the top-level ``model`` option."""
+    if "model" not in data:
+        return None, False
+    model_val = data["model"]
+    if model_val is None:
+        return None, True
+    if not isinstance(model_val, str) or not model_val.strip():
+        raise ConfigError(f"model must be a non-empty string, got {model_val!r}")
+    return model_val.strip(), True
+
+
 def parse_coder_options(
     data: dict[str, Any],
 ) -> tuple[CodexOptionsConfig | None, bool]:
@@ -622,6 +606,10 @@ def parse_validation_config(data: dict[str, Any]) -> ValidationConfig:
     if present:
         fields_set.add("amp_mode")
 
+    model, present = parse_model(data)
+    if present:
+        fields_set.add("model")
+
     effort, present = parse_effort(data)
     if present:
         fields_set.add("effort")
@@ -654,6 +642,7 @@ def parse_validation_config(data: dict[str, Any]) -> ValidationConfig:
         else CodeReviewConfig(enabled=False),
         coder=coder,
         amp_mode=amp_mode,
+        model=model,
         effort=effort,
         codex_options=codex_options,
         _fields_set=frozenset(fields_set),

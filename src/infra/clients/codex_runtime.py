@@ -91,10 +91,9 @@ class CodexRuntimeBuilder:
     Conforms structurally to
     :class:`src.core.protocols.agent_provider.CoderRuntimeBuilder`.
     Exposes only the cross-coder narrowed fluent surface (plan A6 /
-    plan ``L501-L508``); Codex-specific knobs (model, effort, approval
-    policy, sandbox) are injected via the constructor by
-    :class:`CodexAgentProvider.runtime_builder`, which threads them down
-    from ``MalaConfig.coder_options.codex``.
+    plan ``L501-L508``); coder-level knobs (model, effort) and Codex-specific
+    knobs (approval policy, sandbox) are injected via the constructor by
+    :class:`CodexAgentProvider.runtime_builder`.
     """
 
     def __init__(
@@ -118,10 +117,8 @@ class CodexRuntimeBuilder:
             mcp_server_factory: Produces the MCP server map the Codex
                 ``thread_start`` consumes (Phase G3 wires the bundled
                 ``mala-locking`` launcher here).
-            model: Codex model id; threaded from
-                ``MalaConfig.coder_options.codex.model``.
-            effort: Optional reasoning effort; threaded from
-                ``MalaConfig.coder_options.codex.effort``.
+            model: Codex model id; threaded from ``MalaConfig.model``.
+            effort: Optional reasoning effort; threaded from ``MalaConfig.effort``.
             approval_policy: Codex approval policy. Defaults are resolved
                 upstream by :class:`CodexAgentProvider`.
             sandbox: Codex sandbox mode. Defaults are resolved upstream

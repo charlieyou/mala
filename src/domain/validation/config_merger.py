@@ -230,10 +230,11 @@ def merge_configs(
     # epic_verification: User value always takes precedence (presets don't define this)
     merged_epic_verification = user.epic_verification
 
-    # coder / amp_mode / effort / codex_options: User value always takes
+    # coder / amp_mode / model / effort / codex_options: User value always takes
     # precedence (presets don't define these)
     merged_coder = user.coder
     merged_amp_mode = user.amp_mode
+    merged_model = user.model
     merged_effort = user.effort
     merged_codex_options = user.codex_options
 
@@ -255,6 +256,7 @@ def merge_configs(
         epic_verification=merged_epic_verification,
         coder=merged_coder,
         amp_mode=merged_amp_mode,
+        model=merged_model,
         effort=merged_effort,
         codex_options=merged_codex_options,
         _fields_set=user._fields_set,  # Preserve user's fields_set

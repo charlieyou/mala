@@ -175,8 +175,8 @@ the main coder.
 |------|---------|-------------|
 | `--coder` | `claude` | Coder backend: `claude`, `amp`, or `codex`. Validated at parse time. |
 | `--amp-mode` | `deep` | Amp execution mode: `smart`, `rush`, or `deep`. Only consulted when `coder=amp`. |
-| `--codex-model` | `gpt-5.5` | Codex model identifier (e.g., `gpt-5.5`). Only consulted when `coder=codex`. |
-| `--codex-effort` | `medium` | Codex reasoning effort. Validated against the SDK's `ReasoningEffort` enum at parse time. Only consulted when `coder=codex`. |
+| `--model` | backend default | Coder model identifier for Claude and Codex coders. Defaults: `claude=opus[1m]`, `codex=gpt-5.5`. Ignored by Amp. |
+| `--effort` | backend default | Reasoning effort forwarded to Claude and Codex coders, and to Amp smart/deep modes. Defaults: `claude=xhigh`, `codex=medium`, `amp smart=xhigh`, `amp deep=medium`. |
 | `--codex-approval-policy` | `never` | Codex approval policy: `never`, `on-request`, `on-failure`, `untrusted`. Only consulted when `coder=codex`. |
 | `--codex-sandbox` | `danger-full-access` | Codex sandbox mode: `read-only`, `workspace-write`, `danger-full-access`. Only consulted when `coder=codex`. |
 
@@ -189,8 +189,8 @@ All coder flags follow the same **CLI > env > yaml > default** precedence as
 |---------|-----|-----|------|---------|
 | Coder | `--coder claude` | `MALA_CODER=claude` | `coder: claude` | `claude` |
 | Amp mode | `--amp-mode rush` | `MALA_AMP_MODE=rush` | `amp_mode: rush` | `deep` |
-| Codex model | `--codex-model gpt-5.5` | `MALA_CODEX_MODEL=gpt-5.5` | `coder_options.codex.model: gpt-5.5` | `gpt-5.5` |
-| Codex effort | `--codex-effort high` | `MALA_CODEX_EFFORT=high` | `coder_options.codex.effort: high` | `medium` |
+| Coder model | `--model gpt-5.5` | `MALA_MODEL=gpt-5.5` | `model: gpt-5.5` | backend default |
+| Coder effort | `--effort high` | `MALA_EFFORT=high` | `effort: high` | backend default |
 | Codex approval policy | `--codex-approval-policy never` | `MALA_CODEX_APPROVAL_POLICY=never` | `coder_options.codex.approval_policy: never` | `never` |
 | Codex sandbox | `--codex-sandbox danger-full-access` | `MALA_CODEX_SANDBOX=danger-full-access` | `coder_options.codex.sandbox: danger-full-access` | `danger-full-access` |
 
@@ -199,14 +199,13 @@ Invalid values fail validation **before** any agent process starts.
 #### Cross-Coder Flag Behavior
 
 The CLI never errors when a coder-specific flag is passed against a different
-coder — flags are logged as ignored at info-level so switching `--coder` does
-not require pruning unrelated flags from your invocation:
+coder. Coder-specific settings only apply to their matching coder:
 
 | Flag/setting | `coder=claude` | `coder=amp` | `coder=codex` |
 |--------------|----------------|-------------|---------------|
-| `--claude-settings-sources` / `MALA_CLAUDE_SETTINGS_SOURCES` | applied | logged as ignored (info) | logged as ignored (info) |
-| `--amp-mode` / `MALA_AMP_MODE` / `amp_mode` | logged as ignored (info) | applied | logged as ignored (info) |
-| `--codex-*` / `MALA_CODEX_*` / `coder_options.codex.*` | logged as ignored (info) | logged as ignored (info) | applied |
+| `--claude-settings-sources` / `MALA_CLAUDE_SETTINGS_SOURCES` | applied | ignored | ignored |
+| `--amp-mode` / `MALA_AMP_MODE` / `amp_mode` | ignored | applied | ignored |
+| `--codex-*` / `MALA_CODEX_*` / `coder_options.codex.*` | ignored | ignored | applied |
 | `MALA_DISALLOWED_TOOLS` | applied (Claude hooks) | **no-op**, warned once at run start (MVP limitation) | applied (Codex `PreToolUse` hook) |
 
 **Examples:**
@@ -222,11 +221,11 @@ mala run --coder amp --amp-mode rush /path/to/repo
 mala run --coder codex /path/to/repo
 
 # Run with Codex at high reasoning effort
-mala run --coder codex --codex-model gpt-5.5 --codex-effort high /path/to/repo
+mala run --coder codex --model gpt-5.5 --effort high /path/to/repo
 
 # Same via env (CI-friendly)
 MALA_CODER=amp MALA_AMP_MODE=deep mala run /path/to/repo
-MALA_CODER=codex MALA_CODEX_MODEL=gpt-5.5 mala run /path/to/repo
+MALA_CODER=codex MALA_MODEL=gpt-5.5 mala run /path/to/repo
 ```
 
 **Amp prerequisites:** binary install (npm install is unsupported), Bun runtime
@@ -373,8 +372,8 @@ Precedence: CLI flags override global config, which overrides program defaults.
 | `MALA_CLAUDE_SETTINGS_SOURCES` | `local,project` | Comma-separated Claude settings sources |
 | `MALA_CODER` | `claude` | Coder backend: `claude`, `amp`, or `codex`. Overridden by `--coder`; falls back to `coder:` in `mala.yaml`. |
 | `MALA_AMP_MODE` | `deep` | Amp execution mode: `smart`, `rush`, or `deep`. Overridden by `--amp-mode`; falls back to `amp_mode` in `mala.yaml`. Only consulted when coder is `amp`. |
-| `MALA_CODEX_MODEL` | `gpt-5.5` | Codex model id. Overridden by `--codex-model`; falls back to `coder_options.codex.model`. Only consulted when coder is `codex`. |
-| `MALA_CODEX_EFFORT` | `medium` | Codex reasoning effort (validated against the SDK's `ReasoningEffort` enum). Overridden by `--codex-effort`; falls back to `coder_options.codex.effort`. Only consulted when coder is `codex`. |
+| `MALA_MODEL` | backend default | Coder model for Claude and Codex. Overridden by `--model`; falls back to `model:` in `mala.yaml`. Ignored by Amp. |
+| `MALA_EFFORT` | backend default | Reasoning effort for Claude, Codex, and supported Amp modes. Overridden by `--effort`; falls back to `effort:` in `mala.yaml`. |
 | `MALA_CODEX_APPROVAL_POLICY` | `never` | Codex approval policy: `never`, `on-request`, `on-failure`, `untrusted`. Overridden by `--codex-approval-policy`; falls back to `coder_options.codex.approval_policy`. Only consulted when coder is `codex`. |
 | `MALA_CODEX_SANDBOX` | `danger-full-access` | Codex sandbox mode: `read-only`, `workspace-write`, `danger-full-access`. Overridden by `--codex-sandbox`; falls back to `coder_options.codex.sandbox`. Only consulted when coder is `codex`. |
 
