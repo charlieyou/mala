@@ -268,6 +268,11 @@ class TestMapExitCodeToResult:
         assert len(result.issues) == 1
         assert result.issues[0].priority == 1
         assert "no consensus" in result.issues[0].title
+        assert "<iteration_dir>" not in result.issues[0].body
+        assert (
+            str(tmp_path / "project-1" / "run-1" / "iterations")
+            in result.issues[0].body
+        )
 
     def test_non_zero_exit_uses_stderr_tail(self, parser: ReviewOutputParser) -> None:
         result = parser.map_exit_code_to_result(

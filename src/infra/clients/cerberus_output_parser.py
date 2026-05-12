@@ -215,9 +215,10 @@ class ReviewOutputParser:
         parse_error = "; ".join(parse_errors) if parse_errors else None
 
         if gate_state.verdict == "requires_decision":
+            iteration_dir = state_root / project_key / run_key / "iterations"
             return ReviewResult(
                 passed=False,
-                issues=[_requires_decision_issue()],
+                issues=[_requires_decision_issue(iteration_dir)],
                 parse_error=parse_error,
                 fatal_error=False,
                 review_log_path=review_log_path,
@@ -232,12 +233,12 @@ class ReviewOutputParser:
         )
 
 
-def _requires_decision_issue() -> ReviewIssue:
+def _requires_decision_issue(iteration_dir: Path) -> ReviewIssue:
     return ReviewIssue(
         title="Cerberus reviewers reached no consensus",
         body=(
             "Gate verdict=requires_decision. Inspect per-reviewer outputs under "
-            "<iteration_dir>; human decision or re-run required."
+            f"{iteration_dir}; human decision or re-run required."
         ),
         priority=1,
         file="",
