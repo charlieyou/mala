@@ -2873,7 +2873,7 @@ class TestReviewUsesIssueCommits:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Review should use the issue's commit list, not unrelated commits."""
-        from src.infra.clients.review_output_parser import ReviewResult
+        from src.infra.clients.cerberus_output_parser import ReviewResult
         from src.domain.evidence_check import GateResult
 
         # Create a fake log file

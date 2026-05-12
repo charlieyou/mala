@@ -19,7 +19,7 @@ from src.infra.clients.cerberus_review import (
     _to_relative_path,
     format_review_issues,
 )
-from src.infra.clients.review_output_parser import (
+from src.infra.clients.cerberus_output_parser import (
     ReviewIssue,
     ReviewOutputParser,
 )
@@ -27,7 +27,7 @@ from src.infra.io.base_sink import BaseEventSink
 
 if TYPE_CHECKING:
     from src.core.protocols.events import MalaEventSink
-    from src.infra.clients.review_output_parser import ReviewResult
+    from src.infra.clients.cerberus_output_parser import ReviewResult
 
 # Path to golden files captured from real Cerberus output
 FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures" / "cerberus"
@@ -731,7 +731,7 @@ class TestNoChangesSpawnError:
         reviewer = DefaultReviewer(repo_path=Path("/tmp"))
 
         with patch(
-            "src.infra.clients.cerberus_gate_cli.CerberusGateCLI.validate_binary",
+            "src.infra.clients.cerberus_cli.CerberusGateCLI.validate_binary",
             return_value=None,
         ):
             spawn_result = MagicMock()
@@ -784,7 +784,7 @@ class TestAlreadyActiveGateError:
         reviewer = DefaultReviewer(repo_path=Path("/tmp"))
 
         with patch(
-            "src.infra.clients.cerberus_gate_cli.CerberusGateCLI.validate_binary",
+            "src.infra.clients.cerberus_cli.CerberusGateCLI.validate_binary",
             return_value=None,
         ):
             # First spawn fails with "already active"
@@ -846,7 +846,7 @@ class TestAlreadyActiveGateError:
         reviewer = DefaultReviewer(repo_path=Path("/tmp"))
 
         with patch(
-            "src.infra.clients.cerberus_gate_cli.CerberusGateCLI.validate_binary",
+            "src.infra.clients.cerberus_cli.CerberusGateCLI.validate_binary",
             return_value=None,
         ):
             # First spawn fails with "already active"
@@ -900,7 +900,7 @@ class TestAlreadyActiveGateError:
         reviewer = DefaultReviewer(repo_path=Path("/tmp"))
 
         with patch(
-            "src.infra.clients.cerberus_gate_cli.CerberusGateCLI.validate_binary",
+            "src.infra.clients.cerberus_cli.CerberusGateCLI.validate_binary",
             return_value=None,
         ):
             spawn_fail_result = MagicMock()

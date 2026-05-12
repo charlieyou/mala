@@ -12,7 +12,7 @@ from src.infra.clients.cerberus_review import (
     DefaultReviewer,
     format_review_issues,
 )
-from src.infra.clients.review_output_parser import (
+from src.infra.clients.cerberus_output_parser import (
     ReviewIssue,
     ReviewResult,
     map_exit_code_to_result,

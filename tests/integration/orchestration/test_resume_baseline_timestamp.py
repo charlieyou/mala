@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from src.infra.clients.review_output_parser import ReviewResult
+from src.infra.clients.cerberus_output_parser import ReviewResult
 from src.infra.io.log_output.run_metadata import parse_timestamp
 from src.infra.tools.env import encode_repo_path, get_claude_log_path
 from tests.fakes.agent_provider import FakeAgentProvider

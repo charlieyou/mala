@@ -1366,7 +1366,7 @@ class TestAgentSessionRunnerEventSink:
         tmp_log_path: Path,
     ) -> None:
         """Runner should emit on_review_started and on_review_passed when review passes."""
-        from src.infra.clients.review_output_parser import ReviewResult
+        from src.infra.clients.cerberus_output_parser import ReviewResult
 
         session_config = _session_pair(
             repo_path=tmp_path,
@@ -1468,7 +1468,7 @@ class TestAgentSessionRunnerEventSink:
         tmp_log_path: Path,
     ) -> None:
         """Runner should emit on_review_retry when review fails and retries are available."""
-        from src.infra.clients.review_output_parser import ReviewIssue, ReviewResult
+        from src.infra.clients.cerberus_output_parser import ReviewIssue, ReviewResult
 
         session_config = _session_pair(
             repo_path=tmp_path,
@@ -2634,7 +2634,7 @@ class TestBuildSessionOutput:
             LifecycleConfig,
             LifecycleContext,
         )
-        from src.infra.clients.review_output_parser import ReviewIssue
+        from src.infra.clients.cerberus_output_parser import ReviewIssue
 
         session_cfg = SessionConfig(
             agent_id="test-low-abc",
@@ -2803,7 +2803,7 @@ class TestEmitReviewResultEvents:
     ) -> None:
         """COMPLETE_SUCCESS should emit on_review_passed event."""
         from src.domain.lifecycle import Effect, LifecycleState, TransitionResult
-        from src.infra.clients.review_output_parser import ReviewResult
+        from src.infra.clients.cerberus_output_parser import ReviewResult
         from src.pipeline.lifecycle_effect_handler import _emit_review_result_events
 
         result = TransitionResult(
@@ -2834,7 +2834,7 @@ class TestEmitReviewResultEvents:
     ) -> None:
         """RUN_REVIEW (parse error) should emit on_warning event."""
         from src.domain.lifecycle import Effect, LifecycleState, TransitionResult
-        from src.infra.clients.review_output_parser import ReviewResult
+        from src.infra.clients.cerberus_output_parser import ReviewResult
         from src.pipeline.lifecycle_effect_handler import _emit_review_result_events
 
         result = TransitionResult(
@@ -2867,7 +2867,7 @@ class TestEmitReviewResultEvents:
     ) -> None:
         """SEND_REVIEW_RETRY should emit on_review_retry with blocking count."""
         from src.domain.lifecycle import Effect, LifecycleState, TransitionResult
-        from src.infra.clients.review_output_parser import ReviewIssue, ReviewResult
+        from src.infra.clients.cerberus_output_parser import ReviewIssue, ReviewResult
         from src.pipeline.lifecycle_effect_handler import _emit_review_result_events
 
         result = TransitionResult(
@@ -2932,7 +2932,7 @@ class TestEmitReviewResultEvents:
     def test_no_events_when_sink_is_none(self, input_data: AgentSessionInput) -> None:
         """Should not raise when event_sink is None."""
         from src.domain.lifecycle import Effect, LifecycleState, TransitionResult
-        from src.infra.clients.review_output_parser import ReviewResult
+        from src.infra.clients.cerberus_output_parser import ReviewResult
         from src.pipeline.lifecycle_effect_handler import _emit_review_result_events
 
         result = TransitionResult(
@@ -2952,7 +2952,7 @@ class TestEmitReviewResultEvents:
     ) -> None:
         """COMPLETE_FAILURE should not emit any events."""
         from src.domain.lifecycle import Effect, LifecycleState, TransitionResult
-        from src.infra.clients.review_output_parser import ReviewResult
+        from src.infra.clients.cerberus_output_parser import ReviewResult
         from src.pipeline.lifecycle_effect_handler import _emit_review_result_events
 
         result = TransitionResult(
@@ -3467,7 +3467,7 @@ class TestBuildReviewRetryPrompt:
     @pytest.mark.unit
     def test_builds_prompt_with_issues(self, tmp_path: Path) -> None:
         """Should build prompt with formatted issues."""
-        from src.infra.clients.review_output_parser import ReviewIssue
+        from src.infra.clients.cerberus_output_parser import ReviewIssue
         from src.pipeline.lifecycle_effect_handler import _build_review_retry_prompt
 
         # Create a mock review result with issues

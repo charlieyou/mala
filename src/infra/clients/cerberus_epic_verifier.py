@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, cast
 
 from src.core.constants import DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS
 from src.core.models import EpicVerdict, UnmetCriterion
-from src.infra.clients.cerberus_gate_cli import CerberusGateCLI
+from src.infra.clients.cerberus_cli import CerberusGateCLI
 from src.infra.tools.command_runner import CommandRunner
 
 if TYPE_CHECKING:

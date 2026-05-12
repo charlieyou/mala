@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from src.core.constants import DEFAULT_AGENT_SDK_REVIEW_TIMEOUT_SECONDS
-from src.infra.clients.review_output_parser import ReviewIssue, ReviewResult
+from src.infra.clients.cerberus_output_parser import ReviewIssue, ReviewResult
 
 logger = logging.getLogger(__name__)
 

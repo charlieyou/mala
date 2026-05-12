@@ -1,6 +1,6 @@
 """Tests for ReviewOutputParser component.
 
-Tests the review_output_parser module including:
+Tests the cerberus_output_parser module including:
 - JSON response parsing (via ReviewOutputParser.parse_json)
 - Exit code mapping (0-5) (via ReviewOutputParser.map_exit_code_to_result)
 - Golden file tests against real Cerberus output
@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from src.infra.clients.review_output_parser import (
+from src.infra.clients.cerberus_output_parser import (
     ReviewOutputParser,
 )
 from src.infra.io.base_sink import BaseEventSink

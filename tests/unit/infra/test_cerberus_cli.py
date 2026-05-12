@@ -1,6 +1,6 @@
 """Tests for CerberusGateCLI subprocess management.
 
-Tests the cerberus_gate_cli module including:
+Tests the cerberus_cli module including:
 - Binary validation
 - Environment merging
 - Spawn/wait/resolve subprocess operations
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-from src.infra.clients.cerberus_gate_cli import (
+from src.infra.clients.cerberus_cli import (
     CerberusGateCLI,
 )
 from src.infra.tools.command_runner import CommandResult

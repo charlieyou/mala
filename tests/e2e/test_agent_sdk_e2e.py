@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from src.infra.clients.agent_sdk_review import AgentSDKReviewer
-from src.infra.clients.review_output_parser import ReviewResult
+from src.infra.clients.cerberus_output_parser import ReviewResult
 from src.infra.io.session_log_parser import SessionLogParser
 from src.infra.sdk_adapter import SDKClientFactory
 

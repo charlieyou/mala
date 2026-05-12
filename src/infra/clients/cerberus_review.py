@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.core.constants import DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS
-from src.infra.clients.cerberus_gate_cli import CerberusGateCLI
-from src.infra.clients.review_output_parser import (
+from src.infra.clients.cerberus_cli import CerberusGateCLI
+from src.infra.clients.cerberus_output_parser import (
     ReviewIssue,  # noqa: TC001 (used at runtime in format_review_issues)
     ReviewResult,
     map_exit_code_to_result,

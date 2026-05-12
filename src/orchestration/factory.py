@@ -533,7 +533,7 @@ def _create_code_reviewer(
     """
     from src.domain.prompts import load_prompts
     from src.infra.clients.agent_sdk_review import AgentSDKReviewer
-    from src.infra.clients.cerberus_gate_cli import CerberusGateCLI
+    from src.infra.clients.cerberus_cli import CerberusGateCLI
     from src.infra.clients.cerberus_review import DefaultReviewer
     from src.infra.sdk_adapter import SDKClientFactory
 
