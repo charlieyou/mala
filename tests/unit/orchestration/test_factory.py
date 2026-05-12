@@ -13,7 +13,10 @@ from unittest.mock import patch
 import pytest
 
 from src.infra.io.config import MalaConfig
-from src.orchestration.factory import _check_review_availability
+from src.orchestration.factory import (
+    _check_review_availability,
+    _with_cerberus_bin_path,
+)
 from src.orchestration.types import OrchestratorConfig
 
 
@@ -129,6 +132,27 @@ class TestCheckReviewAvailability:
             )
         assert result is not None
         assert "review-gate" in result
+
+
+class TestWithCerberusBinPath:
+    """Tests for Cerberus runtime PATH injection."""
+
+    def test_preserves_system_path_when_env_has_no_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Configured Cerberus bin prepends to current PATH when env omits PATH."""
+        bin_path = tmp_path / "cerberus-bin"
+        monkeypatch.setenv("PATH", "/usr/bin:/bin")
+        config = MalaConfig(
+            runs_dir=Path("/tmp/runs"),
+            lock_dir=Path("/tmp/locks"),
+            cerberus_bin_path=bin_path,
+        )
+
+        result = _with_cerberus_bin_path({"CERBERUS_TOKEN": "secret"}, config)
+
+        assert result["PATH"] == f"{bin_path}:/usr/bin:/bin"
+        assert result["CERBERUS_TOKEN"] == "secret"
 
 
 class TestBuildDependenciesRuntimeDeps:

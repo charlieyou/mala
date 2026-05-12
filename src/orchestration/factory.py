@@ -444,7 +444,8 @@ def _with_cerberus_bin_path(
         return env
 
     merged = dict(env)
-    if existing_path := merged.get("PATH"):
+    existing_path = merged.get("PATH", os.environ.get("PATH", ""))
+    if existing_path:
         merged["PATH"] = str(bin_path) + os.pathsep + existing_path
     else:
         merged["PATH"] = str(bin_path)
