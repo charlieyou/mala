@@ -476,13 +476,10 @@ def _create_epic_verification_model(
             spawn_args = ()
             wait_args = ()
 
-        bin_path = mala_config.cerberus_bin_path if mala_config else None
-
         return cast(
             "EpicVerificationModel",
             CerberusEpicVerifier(
                 repo_path=repo_path,
-                bin_path=bin_path,
                 timeout=timeout_seconds,
                 spawn_args=spawn_args,
                 wait_args=wait_args,
@@ -556,7 +553,6 @@ def _create_code_reviewer(
             "CodeReviewer",
             DefaultReviewer(
                 repo_path=repo_path,
-                bin_path=mala_config.cerberus_bin_path,
                 spawn_args=spawn_args,
                 wait_args=wait_args,
                 env=env,

@@ -220,8 +220,8 @@ async def test_review_gate_full_flow(tmp_path: Path, review_gate_bin: Path) -> N
 
     reviewer = DefaultReviewer(
         repo_path=tmp_path,
-        bin_path=review_gate_bin,
         spawn_args=("--mode=fast",),  # Use fast mode for quicker tests
+        env={"PATH": str(review_gate_bin)},
     )
 
     result = await reviewer(
@@ -243,8 +243,8 @@ async def test_review_gate_commits_scope(tmp_path: Path, review_gate_bin: Path) 
 
     reviewer = DefaultReviewer(
         repo_path=tmp_path,
-        bin_path=review_gate_bin,
         spawn_args=("--mode=fast",),
+        env={"PATH": str(review_gate_bin)},
     )
 
     result = await reviewer(
@@ -304,7 +304,7 @@ async def test_review_gate_empty_commit_shortcircuit(
 
     reviewer = DefaultReviewer(
         repo_path=tmp_path,
-        bin_path=review_gate_bin,
+        env={"PATH": str(review_gate_bin)},
     )
 
     result = await reviewer(

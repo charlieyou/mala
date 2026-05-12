@@ -6,7 +6,7 @@ It handles:
 - Issue formatting for follow-up prompts
 
 JSON parsing and exit-code mapping are delegated to ReviewOutputParser.
-Subprocess management is delegated to CerberusGateCLI.
+Subprocess management is delegated to CerberusCLI.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.core.constants import DEFAULT_CERBERUS_REVIEW_TIMEOUT_SECONDS
-from src.infra.clients.cerberus_cli import CerberusGateCLI
+from src.infra.clients.cerberus_cli import CerberusCLI
 from src.infra.clients.cerberus_output_parser import (
     ReviewIssue,  # noqa: TC001 (used at runtime in format_review_issues)
     ReviewResult,
@@ -45,29 +45,29 @@ class DefaultReviewer:
     Extra args/env can be provided to customize review-gate behavior.
     For initial review with an empty diff, short-circuits to PASS without spawning.
 
-    Subprocess management is delegated to CerberusGateCLI; this class handles
-    orchestration logic, stale gate recovery, and result mapping.
+    Subprocess management is delegated to CerberusCLI; this class handles
+    orchestration logic and result mapping.
     """
 
     repo_path: Path
-    bin_path: Path | None = None
+    state_root: Path | None = None
+    project_key: str | None = None
     spawn_args: tuple[str, ...] = field(default_factory=tuple)
     wait_args: tuple[str, ...] = field(default_factory=tuple)
     env: dict[str, str] = field(default_factory=dict)
     event_sink: MalaEventSink | None = None
 
-    def _get_cli(self) -> CerberusGateCLI:
-        """Get the CerberusGateCLI instance for subprocess operations."""
-        return CerberusGateCLI(
+    def _get_cli(self) -> CerberusCLI:
+        """Get the CerberusCLI instance for subprocess operations."""
+        return CerberusCLI(
             repo_path=self.repo_path,
-            bin_path=self.bin_path,
             env=self.env,
         )
 
-    def _validate_review_gate_bin(self) -> str | None:
-        """Validate that the review-gate binary exists and is executable.
+    def _validate_cerberus_bin(self) -> str | None:
+        """Validate that the cerberus binary exists and is executable.
 
-        Delegates to CerberusGateCLI.validate_binary().
+        Delegates to CerberusCLI.validate_binary().
 
         Returns:
             None if the binary is valid, or an error message if not.
@@ -78,7 +78,7 @@ class DefaultReviewer:
     def _extract_wait_timeout(args: tuple[str, ...]) -> int | None:
         """Extract --timeout value from wait args if provided.
 
-        Delegates to CerberusGateCLI.extract_wait_timeout().
+        Delegates to CerberusCLI.extract_wait_timeout().
 
         Args:
             args: Tuple of command-line arguments to search.
@@ -86,7 +86,7 @@ class DefaultReviewer:
         Returns:
             The timeout value as int if found and valid, None otherwise.
         """
-        return CerberusGateCLI.extract_wait_timeout(args)
+        return CerberusCLI.extract_wait_timeout(args)
 
     def overrides_disabled_setting(self) -> bool:
         """Return False; DefaultReviewer respects the disabled setting."""
@@ -125,7 +125,14 @@ class DefaultReviewer:
             )
 
         runner = CommandRunner(cwd=self.repo_path)
-        env = cli.build_env(claude_session_id)
+        run_key = f"mala-{claude_session_id}" if claude_session_id else "mala-unknown"
+        state_root = self.state_root or self.repo_path / ".mala" / "cerberus"
+        env = cli.build_env(
+            run_key=run_key,
+            state_root=state_root,
+            project_key=self.project_key,
+            claude_session_id=claude_session_id,
+        )
         if "CLAUDE_SESSION_ID" not in env:
             return ReviewResult(
                 passed=False,
@@ -173,89 +180,19 @@ class DefaultReviewer:
                     parse_error=None,
                     fatal_error=False,
                 )
-
-            # Check for stale gate from a previous attempt in this session.
-            if spawn_result.already_active:
-                if self.event_sink is not None:
-                    self.event_sink.on_review_warning(
-                        "Resolving stale gate from previous attempt"
-                    )
-                resolve_result = await cli.resolve_gate(runner, env)
-                if resolve_result.success:
-                    logger.info("Stale gate resolved")
-                    # Retry spawn after resolving the stale gate
-                    spawn_result = await cli.spawn_code_review(
-                        runner=runner,
-                        env=env,
-                        timeout=timeout,
-                        spawn_args=self.spawn_args,
-                        context_file=context_file,
-                        commit_shas=commit_shas,
-                    )
-                    if spawn_result.timed_out:
-                        return ReviewResult(
-                            passed=False,
-                            issues=[],
-                            parse_error="spawn timeout",
-                            fatal_error=False,
-                        )
-                    if not spawn_result.success:
-                        if self._is_no_changes_error(spawn_result.error_detail):
-                            logger.info(
-                                "Review skipped because review-gate found no changes in diff"
-                            )
-                            return ReviewResult(
-                                passed=True,
-                                issues=[],
-                                parse_error=None,
-                                fatal_error=False,
-                            )
-
-                        # If still "already active", another session owns the gate
-                        if spawn_result.already_active:
-                            return ReviewResult(
-                                passed=False,
-                                issues=[],
-                                parse_error=(
-                                    "Another review gate is active (not from this session). "
-                                    "Wait for it to finish or resolve manually with "
-                                    "`review-gate resolve`."
-                                ),
-                                fatal_error=True,
-                            )
-                        return ReviewResult(
-                            passed=False,
-                            issues=[],
-                            parse_error=f"spawn failed: {spawn_result.error_detail}",
-                            fatal_error=False,
-                        )
-                    # Successfully spawned after clearing gate - continue to wait phase
-                else:
-                    return ReviewResult(
-                        passed=False,
-                        issues=[],
-                        parse_error=f"spawn failed: {spawn_result.error_detail} (auto-resolve failed: {resolve_result.error_detail})",
-                        fatal_error=False,
-                    )
-            else:
-                return ReviewResult(
-                    passed=False,
-                    issues=[],
-                    parse_error=f"spawn failed: {spawn_result.error_detail}",
-                    fatal_error=False,
-                )
-
-        # spawn-code-review doesn't output JSON to stdout - it just spawns reviewers
-        # and writes state to disk. We use --session-id with the Claude session ID
-        # to let the wait command find the state file.
-        session_id = env["CLAUDE_SESSION_ID"]
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error=f"spawn failed: {spawn_result.error_detail}",
+                fatal_error=False,
+            )
 
         # Check if wait_args already specifies --timeout to avoid duplicates
-        user_timeout = CerberusGateCLI.extract_wait_timeout(self.wait_args)
+        user_timeout = CerberusCLI.extract_wait_timeout(self.wait_args)
 
         # Wait for review completion
         wait_result = await cli.wait_for_review(
-            session_id=session_id,
+            run_key=run_key,
             runner=runner,
             env=env,
             cli_timeout=timeout,
@@ -276,11 +213,10 @@ class DefaultReviewer:
             wait_result.returncode,
             wait_result.stdout,
             wait_result.stderr,
-            review_log_path=wait_result.session_dir,
             event_sink=self.event_sink,
-            state_root=Path(env["CERBERUS_STATE_ROOT"]),
+            state_root=state_root,
             project_key=env["CERBERUS_PROJECT_KEY"],
-            run_key=env["CERBERUS_RUN_KEY"],
+            run_key=run_key,
         )
         logger.info(
             "Review completed: passed=%s issues=%d",

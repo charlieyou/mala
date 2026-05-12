@@ -137,7 +137,6 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
         assert isinstance(reviewer, DefaultReviewer)
         # Verify settings come from YAML config, not env vars
         assert reviewer.repo_path == tmp_path
-        assert reviewer.bin_path == Path("/usr/bin")  # bin_path still from mala_config
         assert reviewer.spawn_args == ("--yaml-spawn",)
         assert reviewer.wait_args == ("--yaml-wait", "--timeout", "600")
         assert reviewer.env == {"YAML_VAR": "yaml_value"}
@@ -163,9 +162,7 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
         assert reviewer_config.cerberus_config is None  # No cerberus section in yaml
 
         # Create minimal MalaConfig mock with cerberus settings
-        # cerberus_bin_path is a directory containing review-gate binary
         mala_config = MagicMock()
-        mala_config.cerberus_bin_path = Path("/usr/bin")
         mala_config.cerberus_spawn_args = ("--spawn",)
         mala_config.cerberus_wait_args = ("--wait",)
         mala_config.cerberus_env = {"CERBERUS_MODE": "test"}
@@ -184,7 +181,6 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
         assert isinstance(reviewer, DefaultReviewer)
         # Verify settings were passed through from env vars
         assert reviewer.repo_path == tmp_path
-        assert reviewer.bin_path == Path("/usr/bin")
         assert reviewer.spawn_args == ("--spawn",)
         assert reviewer.wait_args == ("--wait",)
         assert reviewer.env == {"CERBERUS_MODE": "test"}

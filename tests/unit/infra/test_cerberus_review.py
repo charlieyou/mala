@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from src.infra.clients.cerberus_review import (
     DefaultReviewer,
@@ -270,7 +273,7 @@ class TestNoChangesSpawnError:
         reviewer = DefaultReviewer(repo_path=Path("/tmp"))
 
         with patch(
-            "src.infra.clients.cerberus_cli.CerberusGateCLI.validate_binary",
+            "src.infra.clients.cerberus_cli.CerberusCLI.validate_binary",
             return_value=None,
         ):
             spawn_result = MagicMock()
@@ -303,180 +306,96 @@ class TestNoChangesSpawnError:
             assert "spawn-code-review" in calls[0]
 
 
-class TestAlreadyActiveGateError:
-    """Tests for 'already active' gate error handling.
+class TestDefaultReviewerConstructor:
+    """Tests for DefaultReviewer construction."""
 
-    When spawn fails with 'already active', the adapter now auto-resolves
-    the stale gate and retries spawn once. This handles the case where a
-    prior review attempt hit a parse error (e.g., invalid_verdict from one
-    model) and left a gate pending. Since we use the same CLAUDE_SESSION_ID,
-    we're resolving our own session's gate, not interfering with other runs.
-
-    If spawn still fails with 'already active' after resolve, that means
-    another session owns the gate, so we return a fatal error.
-    """
-
-    async def test_already_active_auto_resolves_and_retries(
-        self, tmp_path: Path
-    ) -> None:
-        """Auto-resolves stale gate and retries spawn successfully."""
-        from unittest.mock import AsyncMock, MagicMock, patch
-
+    def test_accepts_state_root_and_project_key(self, tmp_path: Path) -> None:
         reviewer = DefaultReviewer(
             repo_path=tmp_path,
-            env={"CERBERUS_PROJECT_KEY": "project-1"},
+            state_root=tmp_path / ".mala" / "cerberus",
+            project_key="project-1",
+        )
+
+        assert reviewer.state_root == tmp_path / ".mala" / "cerberus"
+        assert reviewer.project_key == "project-1"
+
+    def test_rejects_bin_path(self, tmp_path: Path) -> None:
+        kwargs: Any = {"repo_path": tmp_path, "bin_path": tmp_path / "bin"}
+        with pytest.raises(TypeError):
+            DefaultReviewer(**kwargs)
+
+
+class TestCerberusV2Review:
+    """Tests for v2 Cerberus review orchestration."""
+
+    async def test_normal_pass_does_not_resolve_gate_and_uses_run_key_env(
+        self, tmp_path: Path
+    ) -> None:
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        state_root = tmp_path / ".mala" / "cerberus"
+        reviewer = DefaultReviewer(
+            repo_path=tmp_path,
+            state_root=state_root,
+            project_key="project-1",
+            env={"CERBERUS_ROOT": "/tmp/cerberus"},
         )
         _write_empty_cerberus_output(tmp_path, run_key="mala-test-session")
 
-        with patch(
-            "src.infra.clients.cerberus_cli.CerberusGateCLI.validate_binary",
-            return_value=None,
+        with (
+            patch(
+                "src.infra.clients.cerberus_cli.CerberusCLI.validate_binary",
+                return_value=None,
+            ),
+            patch(
+                "src.infra.clients.cerberus_cli.CerberusCLI.resolve_gate",
+                new_callable=AsyncMock,
+            ) as mock_resolve,
         ):
-            # First spawn fails with "already active"
-            spawn_fail_result = MagicMock()
-            spawn_fail_result.returncode = 1
-            spawn_fail_result.timed_out = False
-            spawn_fail_result.stderr_tail.return_value = (
-                "Error: review gate already active"
-            )
-            spawn_fail_result.stdout_tail.return_value = ""
-
-            # Resolve succeeds
-            resolve_result = MagicMock()
-            resolve_result.returncode = 0
-            resolve_result.stderr = ""
-            resolve_result.stdout = ""
-
-            # Retry spawn succeeds
             spawn_ok_result = MagicMock()
             spawn_ok_result.returncode = 0
             spawn_ok_result.timed_out = False
 
-            # Wait returns PASS
             wait_result = MagicMock()
             wait_result.returncode = 0
             wait_result.timed_out = False
             wait_result.stdout = _gate_state_json()
+            wait_result.stderr = ""
 
             with patch(
                 "src.infra.clients.cerberus_review.CommandRunner"
             ) as mock_runner_class:
                 mock_runner = AsyncMock()
-                # Sequence: spawn (fail), resolve, spawn (ok), wait
-                mock_runner.run_async.side_effect = [
-                    spawn_fail_result,
-                    resolve_result,
-                    spawn_ok_result,
-                    wait_result,
-                ]
+                mock_runner.run_async.side_effect = [spawn_ok_result, wait_result]
                 mock_runner_class.return_value = mock_runner
 
-                with patch.dict("os.environ", {"CLAUDE_SESSION_ID": "test-session"}):
-                    result = await reviewer(commit_shas=["abc123"])
+                result = await reviewer(
+                    commit_shas=["abc123"],
+                    claude_session_id="test-session",
+                )
 
             assert result.passed is True
             assert result.fatal_error is False
             assert result.parse_error is None
+            mock_resolve.assert_not_called()
 
-            # Verify call sequence
             calls = [call[0][0] for call in mock_runner.run_async.call_args_list]
-            assert any("spawn-code-review" in str(c) for c in calls)
-            assert any("resolve" in str(c) for c in calls)
-            assert any("wait" in str(c) for c in calls)
+            assert calls[0][:2] == ["cerberus", "spawn-code-review"]
+            assert "--max-rounds" not in calls[0]
+            assert calls[1] == [
+                "cerberus",
+                "wait",
+                "--json",
+                "--finalize",
+                "--session-key",
+                "mala-test-session",
+                "--timeout",
+                "600",
+            ]
 
-    async def test_already_active_after_resolve_is_fatal(self) -> None:
-        """Returns fatal error if still 'already active' after resolve (another session)."""
-        from unittest.mock import AsyncMock, MagicMock, patch
-
-        reviewer = DefaultReviewer(repo_path=Path("/tmp"))
-
-        with patch(
-            "src.infra.clients.cerberus_cli.CerberusGateCLI.validate_binary",
-            return_value=None,
-        ):
-            # First spawn fails with "already active"
-            spawn_fail_result = MagicMock()
-            spawn_fail_result.returncode = 1
-            spawn_fail_result.timed_out = False
-            spawn_fail_result.stderr_tail.return_value = (
-                "Error: review gate already active"
-            )
-            spawn_fail_result.stdout_tail.return_value = ""
-
-            # Resolve succeeds
-            resolve_result = MagicMock()
-            resolve_result.returncode = 0
-            resolve_result.stderr = ""
-            resolve_result.stdout = ""
-
-            # Retry spawn STILL fails with "already active" (another session)
-            spawn_still_active = MagicMock()
-            spawn_still_active.returncode = 1
-            spawn_still_active.timed_out = False
-            spawn_still_active.stderr_tail.return_value = (
-                "Error: review gate already active"
-            )
-            spawn_still_active.stdout_tail.return_value = ""
-
-            with patch(
-                "src.infra.clients.cerberus_review.CommandRunner"
-            ) as mock_runner_class:
-                mock_runner = AsyncMock()
-                mock_runner.run_async.side_effect = [
-                    spawn_fail_result,
-                    resolve_result,
-                    spawn_still_active,
-                ]
-                mock_runner_class.return_value = mock_runner
-
-                with patch.dict("os.environ", {"CLAUDE_SESSION_ID": "test-session"}):
-                    result = await reviewer(commit_shas=["abc123"])
-
-            # Should be fatal error (another session owns the gate)
-            assert result.passed is False
-            assert result.fatal_error is True
-            assert result.parse_error is not None
-            assert "not from this session" in result.parse_error
-
-    async def test_resolve_failure_is_retryable(self) -> None:
-        """If resolve fails, returns retryable error (not fatal)."""
-        from unittest.mock import AsyncMock, MagicMock, patch
-
-        reviewer = DefaultReviewer(repo_path=Path("/tmp"))
-
-        with patch(
-            "src.infra.clients.cerberus_cli.CerberusGateCLI.validate_binary",
-            return_value=None,
-        ):
-            spawn_fail_result = MagicMock()
-            spawn_fail_result.returncode = 1
-            spawn_fail_result.timed_out = False
-            spawn_fail_result.stderr_tail.return_value = (
-                "Error: review gate already active"
-            )
-            spawn_fail_result.stdout_tail.return_value = ""
-
-            # Resolve fails
-            resolve_result = MagicMock()
-            resolve_result.returncode = 1
-            resolve_result.stderr = "Permission denied"
-            resolve_result.stdout = ""
-
-            with patch(
-                "src.infra.clients.cerberus_review.CommandRunner"
-            ) as mock_runner_class:
-                mock_runner = AsyncMock()
-                mock_runner.run_async.side_effect = [
-                    spawn_fail_result,
-                    resolve_result,
-                ]
-                mock_runner_class.return_value = mock_runner
-
-                with patch.dict("os.environ", {"CLAUDE_SESSION_ID": "test-session"}):
-                    result = await reviewer(commit_shas=["abc123"])
-
-            # Retryable error (not fatal)
-            assert result.passed is False
-            assert result.fatal_error is False
-            assert result.parse_error is not None
-            assert "auto-resolve failed" in result.parse_error
+            spawn_env = mock_runner.run_async.call_args_list[0].kwargs["env"]
+            assert spawn_env["CERBERUS_HOST"] == "generic"
+            assert spawn_env["CERBERUS_RUN_KEY"] == "mala-test-session"
+            assert spawn_env["CERBERUS_STATE_ROOT"] == str(state_root)
+            assert spawn_env["CERBERUS_PROJECT_KEY"] == "project-1"
+            assert spawn_env["CERBERUS_ROOT"] == "/tmp/cerberus"

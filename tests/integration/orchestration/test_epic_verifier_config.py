@@ -200,14 +200,12 @@ class TestCreateEpicVerificationModel:
         assert isinstance(model, CerberusEpicVerifier)
 
     def test_cerberus_uses_mala_config(self, tmp_path: Path) -> None:
-        """cerberus uses mala_config for bin_path and env."""
+        """cerberus uses mala_config env."""
         from src.infra.clients.cerberus_epic_verifier import CerberusEpicVerifier
         from src.infra.io.config import MalaConfig
         from src.orchestration.factory import _create_epic_verification_model
 
-        bin_path = tmp_path / "bin"
         mala_config = MalaConfig(
-            cerberus_bin_path=bin_path,
             cerberus_env=(("TEST_VAR", "test_value"),),
         )
 
@@ -218,7 +216,6 @@ class TestCreateEpicVerificationModel:
             mala_config=mala_config,
         )
         assert isinstance(model, CerberusEpicVerifier)
-        assert model.bin_path == bin_path
         assert model.env == {"TEST_VAR": "test_value"}
 
     def test_cerberus_prefers_cerberus_config(self, tmp_path: Path) -> None:
@@ -228,9 +225,7 @@ class TestCreateEpicVerificationModel:
         from src.infra.io.config import MalaConfig
         from src.orchestration.factory import _create_epic_verification_model
 
-        bin_path = tmp_path / "bin"
         mala_config = MalaConfig(
-            cerberus_bin_path=bin_path,
             cerberus_env=(("OLD_VAR", "old_value"),),
         )
         cerberus_config = CerberusConfig(
@@ -248,8 +243,6 @@ class TestCreateEpicVerificationModel:
             cerberus_config=cerberus_config,
         )
         assert isinstance(model, CerberusEpicVerifier)
-        # bin_path comes from mala_config (cerberus_config doesn't have it)
-        assert model.bin_path == bin_path
         # timeout and env come from cerberus_config
         assert model.timeout == 120
         assert model.env == {"NEW_VAR": "new_value"}
