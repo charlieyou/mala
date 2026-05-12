@@ -194,18 +194,50 @@ function resolveWithParents(p: string): string {
   return base;
 }
 
+function unescapeExistingShellPath(p: string): string {
+  if (existsSync(p) || !p.includes("\\$")) {
+    return p;
+  }
+  const unescaped = p.replaceAll("\\$", "$");
+  return existsSync(unescaped) ? unescaped : p;
+}
+
+function canonicalizeExistingPath(p: string): string {
+  if (!p.includes("\\$")) {
+    return tryRealpath(p);
+  }
+
+  const preserved: string[] = [];
+  let current = normalize(p);
+  while (current.includes("\\$")) {
+    preserved.push(basename(current));
+    const parent = dirname(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+
+  let base = tryRealpath(current);
+  for (let i = preserved.length - 1; i >= 0; i--) {
+    base = join(base, preserved[i]);
+  }
+  return base;
+}
+
 function canonicalizePath(filepath: string, repoNamespace: string): string {
   if (isAbsolute(filepath)) {
-    if (existsSync(filepath)) {
-      return tryRealpath(filepath);
+    const candidate = unescapeExistingShellPath(filepath);
+    if (existsSync(candidate)) {
+      return canonicalizeExistingPath(candidate);
     }
-    return resolveWithParents(normalize(filepath));
+    return resolveWithParents(normalize(candidate));
   }
   // Relative path: resolve relative to a realpath'd namespace
   const namespacePath = tryRealpath(repoNamespace) || resolve(repoNamespace);
-  const candidate = join(namespacePath, filepath);
+  const candidate = unescapeExistingShellPath(join(namespacePath, filepath));
   if (existsSync(candidate)) {
-    return tryRealpath(candidate);
+    return canonicalizeExistingPath(candidate);
   }
   return resolveWithParents(normalize(candidate));
 }
@@ -1200,6 +1232,7 @@ function classifyShellWrites(command: string): ShellWriteAnalysis {
 // (`export default function plugin(amp)`) remains the production
 // entrypoint Amp loads.
 export {
+  canonicalizePath,
   classifyShellWrites,
   extractRedirectTargets,
   findCommandSubstitutionWithWrite,
@@ -1207,6 +1240,7 @@ export {
   getStageCommandBaseName,
   isExcludedShellWritePath,
   isValidationLogPath,
+  lockKeyHash,
   splitPipelineStages,
   substringContainsWrite,
 };

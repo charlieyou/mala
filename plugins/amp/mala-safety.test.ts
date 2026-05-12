@@ -15,11 +15,12 @@
 //   uv run pytest tests/integration/test_amp_safety_parser.py
 
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  canonicalizePath,
   classifyShellWrites,
   default as plugin,
   extractRedirectTargets,
@@ -28,6 +29,7 @@ import {
   getStageCommandBaseName,
   isExcludedShellWritePath,
   isValidationLogPath,
+  lockKeyHash,
 } from "./mala-safety.ts";
 
 // `dd if=` is in the dangerous-pattern list of the plugin's *other*
@@ -35,6 +37,80 @@ import {
 // test sources, since some surrounding agents apply the same gate to
 // their own tool-call inputs and would refuse to write the test file.
 const DD_IF = "if" + "=";
+
+// ---------------------------------------------------------------------------
+// Lock-key canonicalization parity — shell-escaped route params
+// ---------------------------------------------------------------------------
+
+describe("lock-key canonicalization", () => {
+  test("shell-escaped dollar path matches existing literal-dollar route file", () => {
+    const root = mkdtempSync(join(tmpdir(), "mala-lock-key-test-"));
+    try {
+      const routeDir = join(
+        root,
+        "ui",
+        "src",
+        "routes",
+        "solves",
+        "$solveId",
+        "spots",
+      );
+      mkdirSync(routeDir, { recursive: true });
+      const target = join(routeDir, "$nodeId.tsx");
+      writeFileSync(target, "");
+
+      const literal = "ui/src/routes/solves/$solveId/spots/$nodeId.tsx";
+      const shellEscaped = "ui/src/routes/solves/\\$solveId/spots/\\$nodeId.tsx";
+
+      expect(canonicalizePath(shellEscaped, root)).toBe(
+        canonicalizePath(literal, root),
+      );
+      expect(lockKeyHash(shellEscaped, root)).toBe(lockKeyHash(literal, root));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("existing backslash-dollar filename remains distinct", () => {
+    const root = mkdtempSync(join(tmpdir(), "mala-lock-key-test-"));
+    try {
+      const routeDir = join(root, "ui", "src", "routes", "solves");
+      mkdirSync(routeDir, { recursive: true });
+      const literal = join(routeDir, "$solveId.tsx");
+      const escaped = join(routeDir, "\\$solveId.tsx");
+      writeFileSync(literal, "");
+      writeFileSync(escaped, "");
+
+      expect(canonicalizePath(escaped, root)).not.toBe(
+        canonicalizePath(literal, root),
+      );
+      expect(lockKeyHash(escaped, root)).not.toBe(lockKeyHash(literal, root));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("existing backslash-dollar directory segment remains distinct", () => {
+    const root = mkdtempSync(join(tmpdir(), "mala-lock-key-test-"));
+    try {
+      const literalDir = join(root, "ui", "src", "routes", "solves", "$solveId");
+      const escapedDir = join(root, "ui", "src", "routes", "solves", "\\$solveId");
+      mkdirSync(join(literalDir, "spots"), { recursive: true });
+      mkdirSync(join(escapedDir, "spots"), { recursive: true });
+      const literal = join(literalDir, "spots", "file.tsx");
+      const escaped = join(escapedDir, "spots", "file.tsx");
+      writeFileSync(literal, "");
+      writeFileSync(escaped, "");
+
+      expect(canonicalizePath(escaped, root)).not.toBe(
+        canonicalizePath(literal, root),
+      );
+      expect(lockKeyHash(escaped, root)).not.toBe(lockKeyHash(literal, root));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Plugin entrypoint env gate

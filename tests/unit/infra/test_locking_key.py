@@ -139,6 +139,57 @@ class TestLockKeyNormalization:
 
         assert key1 == key2 == key3, "Path formatting should not affect key"
 
+    def test_shell_escaped_dollar_path_matches_existing_route_file(
+        self, tmp_path: Path
+    ) -> None:
+        """Shell-escaped route params lock the same file as literal $ names."""
+        repo = tmp_path / "repo"
+        route_dir = repo / "ui" / "src" / "routes" / "solves" / "$solveId"
+        route_dir.mkdir(parents=True)
+        target = route_dir / "spots" / "$nodeId.tsx"
+        target.parent.mkdir()
+        target.touch()
+
+        literal = "ui/src/routes/solves/$solveId/spots/$nodeId.tsx"
+        shell_escaped = "ui/src/routes/solves/\\$solveId/spots/\\$nodeId.tsx"
+
+        assert _lock_key(shell_escaped, repo_namespace=str(repo)) == _lock_key(
+            literal, repo_namespace=str(repo)
+        )
+
+    def test_existing_backslash_dollar_path_is_preserved(self, tmp_path: Path) -> None:
+        """Real filenames containing backslash-dollar remain distinct."""
+        repo = tmp_path / "repo"
+        route_dir = repo / "ui" / "src" / "routes" / "solves"
+        route_dir.mkdir(parents=True)
+        literal = route_dir / "$solveId.tsx"
+        escaped = route_dir / "\\$solveId.tsx"
+        literal.touch()
+        escaped.touch()
+
+        assert _lock_key(str(escaped), repo_namespace=str(repo)) != _lock_key(
+            str(literal), repo_namespace=str(repo)
+        )
+
+    def test_existing_backslash_dollar_directory_is_preserved(
+        self, tmp_path: Path
+    ) -> None:
+        """Real directory names containing backslash-dollar remain distinct."""
+        repo = tmp_path / "repo"
+        route_dir = repo / "ui" / "src" / "routes" / "solves"
+        literal_dir = route_dir / "$solveId" / "spots"
+        escaped_dir = route_dir / "\\$solveId" / "spots"
+        literal_dir.mkdir(parents=True)
+        escaped_dir.mkdir(parents=True)
+        literal = literal_dir / "file.tsx"
+        escaped = escaped_dir / "file.tsx"
+        literal.touch()
+        escaped.touch()
+
+        assert _lock_key(str(escaped), repo_namespace=str(repo)) != _lock_key(
+            str(literal), repo_namespace=str(repo)
+        )
+
 
 class TestLockPathNormalization:
     """Test that lock_path produces correct paths with normalized keys."""

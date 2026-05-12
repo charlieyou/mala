@@ -113,6 +113,29 @@ def _resolve_with_parents(path: Path) -> Path:
     return resolved_base
 
 
+def _unescape_existing_shell_path(path: Path) -> Path:
+    """Map a shell-escaped path to the real existing file when unambiguous.
+
+    Agents sometimes pass route filenames such as ``$solveId.tsx`` to the
+    lock tool with shell-style escaping (``\$solveId.tsx``), even though MCP
+    tool inputs are JSON strings and do not undergo shell expansion. If the
+    escaped spelling does not exist but the unescaped spelling does, both
+    strings refer to the same intended file for lock purposes and must produce
+    the same lock key.
+
+    Existing escaped paths are preserved so legitimate filenames containing a
+    literal backslash are still lockable.
+    """
+    if path.exists() or "\\$" not in str(path):
+        return path
+
+    unescaped = Path(str(path).replace("\\$", "$"))
+    if unescaped.exists():
+        return unescaped
+
+    return path
+
+
 def _canonicalize_path(filepath: str, repo_namespace: str | None = None) -> str:
     """Canonicalize a file path for consistent lock key generation.
 
@@ -147,6 +170,7 @@ def _canonicalize_path(filepath: str, repo_namespace: str | None = None) -> str:
     if repo_namespace and not path.is_absolute():
         namespace_path = Path(repo_namespace).resolve()
         candidate = namespace_path / path
+        candidate = _unescape_existing_shell_path(candidate)
 
         if candidate.exists():
             # Path exists - resolve symlinks
@@ -157,6 +181,7 @@ def _canonicalize_path(filepath: str, repo_namespace: str | None = None) -> str:
             return str(_resolve_with_parents(normalized))
 
     # Absolute path or no namespace - resolve to absolute
+    path = _unescape_existing_shell_path(path)
     if path.exists():
         return str(path.resolve())  # Resolves symlinks
     else:
@@ -164,6 +189,7 @@ def _canonicalize_path(filepath: str, repo_namespace: str | None = None) -> str:
             resolved = path
         else:
             resolved = Path.cwd() / path
+        resolved = _unescape_existing_shell_path(resolved)
         # Normalize . and .. segments, then resolve parent symlinks
         normalized = Path(os.path.normpath(resolved))
         return str(_resolve_with_parents(normalized))
