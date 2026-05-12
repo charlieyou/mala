@@ -1,399 +1,290 @@
-"""Tests for ReviewOutputParser component.
-
-Tests the cerberus_output_parser module including:
-- JSON response parsing (via ReviewOutputParser.parse_json)
-- Exit code mapping (0-5) (via ReviewOutputParser.map_exit_code_to_result)
-- Golden file tests against real Cerberus output
-
-This module tests the parsing logic independently from the CLI adapter.
-"""
+"""Tests for Cerberus v2 gate-state output parsing."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from src.infra.clients.cerberus_output_parser import (
     ReviewOutputParser,
+    parse_gate_state,
 )
-from src.infra.io.base_sink import BaseEventSink
-
-if TYPE_CHECKING:
-    from src.core.protocols.events import MalaEventSink
-
-# Path to golden files captured from real Cerberus output
-FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures" / "cerberus"
 
 
-class MockEventSink(BaseEventSink):
-    """Mock event sink for testing event emissions."""
+def _gate_state(verdict: str | None = "pass", **overrides: object) -> str:
+    data: dict[str, object] = {
+        "schema_version": "2",
+        "run_key": "run-1",
+        "host": "generic",
+        "project_key": "project-1",
+        "session_id": "session-1",
+        "transcript_path": "/tmp/transcript.jsonl",
+        "status": "resolved",
+        "verdict": verdict,
+        "resolution_reason": "complete",
+        "current_iteration": 1,
+        "max_rounds": 1,
+        "debate": False,
+        "roster_id": "default",
+        "started_at": "2026-05-11T00:00:00Z",
+        "ended_at": "2026-05-11T00:01:00Z",
+    }
+    data.update(overrides)
+    return json.dumps(data)
 
-    def __init__(self) -> None:
-        self.warnings: list[str] = []
 
-    def on_review_warning(
-        self,
-        message: str,
-        agent_id: str | None = None,
-        issue_id: str | None = None,
-    ) -> None:
-        self.warnings.append(message)
-
-
-def _make_valid_response(
-    verdict: str = "PASS", issues: list[dict] | None = None
-) -> str:
-    """Helper to create a valid Cerberus review-gate response JSON."""
-    return json.dumps(
-        {
-            "status": "complete",
-            "consensus_verdict": verdict,
-            "reviewers": {
-                "codex": {
-                    "verdict": verdict,
-                    "summary": "Test",
-                    "findings": [],
-                }
-            },
-            "aggregated_findings": issues or [],
-            "parse_errors": [],
-        }
+def _write_reviewer_output(
+    state_root: Path,
+    *,
+    reviewer: str = "codex#1",
+    project_key: str = "project-1",
+    run_key: str = "run-1",
+    findings: list[dict[str, object]] | None = None,
+    raw: str | None = None,
+) -> Path:
+    reviewer_dir = (
+        state_root
+        / project_key
+        / run_key
+        / "iterations"
+        / "1"
+        / "round-1"
+        / "reviewers"
+        / reviewer
     )
+    reviewer_dir.mkdir(parents=True, exist_ok=True)
+    output_path = reviewer_dir / "output.json"
+    output_path.write_text(
+        raw
+        if raw is not None
+        else json.dumps({"findings": findings or [], "verdict": "pass"}),
+        encoding="utf-8",
+    )
+    return output_path
 
 
-def _make_issue(
-    file: str = "src/test.py",
-    line_start: int = 10,
-    line_end: int = 12,
-    priority: int | None = 1,
-    title: str = "Test finding",
-    body: str = "Test body",
-    reviewer: str = "codex",
-) -> dict:
-    """Helper to create a valid issue dict."""
+def _finding(title: str = "Test finding") -> dict[str, object]:
     return {
-        "reviewer": reviewer,
-        "file_path": file,
-        "line_start": line_start,
-        "line_end": line_end,
-        "priority": priority,
+        "file_path": "src/test.py",
+        "line_start": 10,
+        "line_end": 12,
+        "priority": 1,
         "title": title,
-        "body": body,
+        "body": "Test body",
     }
 
 
-class TestReviewOutputParserClass:
-    """Tests for ReviewOutputParser class instantiation and methods."""
+class TestParseGateState:
+    def test_happy_path_extracts_v2_fields(self) -> None:
+        state = parse_gate_state(_gate_state(verdict="fail"))
 
-    def test_parser_is_stateless(self) -> None:
-        """Parser can be instantiated and reused without state issues."""
-        parser = ReviewOutputParser()
-        output = _make_valid_response(verdict="PASS")
+        assert state.schema_version == "2"
+        assert state.run_key == "run-1"
+        assert state.host == "generic"
+        assert state.project_key == "project-1"
+        assert state.session_id == "session-1"
+        assert state.transcript_path == "/tmp/transcript.jsonl"
+        assert state.status == "resolved"
+        assert state.verdict == "fail"
+        assert state.resolution_reason == "complete"
+        assert state.current_iteration == 1
+        assert state.max_rounds == 1
+        assert state.debate is False
+        assert state.roster_id == "default"
+        assert state.started_at == "2026-05-11T00:00:00Z"
+        assert state.ended_at == "2026-05-11T00:01:00Z"
 
-        # Call multiple times
-        result1 = parser.parse_json(output)
-        result2 = parser.parse_json(output)
+    def test_malformed_json(self) -> None:
+        with pytest.raises(ValueError, match="JSON parse error"):
+            parse_gate_state("not json")
 
-        assert result1 == result2
+    def test_missing_required_field(self) -> None:
+        with pytest.raises(ValueError, match="run_key"):
+            parse_gate_state(_gate_state(run_key=None))
 
+    def test_verdict_null_is_invalid(self) -> None:
+        with pytest.raises(ValueError, match="Invalid verdict"):
+            parse_gate_state(_gate_state(verdict=None))
 
-class TestParseJson:
-    """Tests for parsing Cerberus review-gate JSON output."""
+    def test_verdict_pending_is_invalid(self) -> None:
+        with pytest.raises(ValueError, match="Invalid verdict"):
+            parse_gate_state(_gate_state(verdict="pending"))
 
-    @pytest.fixture
-    def parser(self) -> ReviewOutputParser:
-        return ReviewOutputParser()
+    def test_status_pending_is_invalid_after_wait(self) -> None:
+        with pytest.raises(ValueError, match="pending status"):
+            parse_gate_state(_gate_state(status="pending"))
 
-    def test_parses_valid_pass_response(self, parser: ReviewOutputParser) -> None:
-        output = _make_valid_response(verdict="PASS")
-        passed, issues, error = parser.parse_json(output)
-        assert passed is True
-        assert issues == []
-        assert error is None
+    def test_verdict_requires_decision_is_valid(self) -> None:
+        state = parse_gate_state(_gate_state(verdict="requires_decision"))
 
-    def test_parses_valid_fail_response(self, parser: ReviewOutputParser) -> None:
-        output = _make_valid_response(verdict="FAIL")
-        passed, issues, error = parser.parse_json(output)
-        assert passed is False
-        assert issues == []
-        assert error is None
-
-    def test_parses_needs_work_response(self, parser: ReviewOutputParser) -> None:
-        output = _make_valid_response(verdict="NEEDS_WORK")
-        passed, issues, error = parser.parse_json(output)
-        assert passed is False
-        assert issues == []
-        assert error is None
-
-    def test_parses_no_reviewers_response(self, parser: ReviewOutputParser) -> None:
-        output = _make_valid_response(verdict="no_reviewers")
-        passed, issues, error = parser.parse_json(output)
-        assert passed is False
-        assert issues == []
-        assert error is None
-
-    def test_parses_error_verdict_response(self, parser: ReviewOutputParser) -> None:
-        output = _make_valid_response(verdict="ERROR")
-        passed, issues, error = parser.parse_json(output)
-        assert passed is False
-        assert issues == []
-        assert error is None
-
-    def test_parses_issues_correctly(self, parser: ReviewOutputParser) -> None:
-        issue = _make_issue(
-            file="src/main.py",
-            line_start=42,
-            line_end=45,
-            priority=1,
-            title="[P1] Missing null check",
-            body="Variable may be None",
-            reviewer="codex",
-        )
-        output = _make_valid_response(verdict="FAIL", issues=[issue])
-        passed, issues, error = parser.parse_json(output)
-
-        assert passed is False
-        assert len(issues) == 1
-        assert issues[0].file == "src/main.py"
-        assert issues[0].line_start == 42
-        assert issues[0].line_end == 45
-        assert issues[0].priority == 1
-        assert issues[0].title == "[P1] Missing null check"
-        assert issues[0].body == "Variable may be None"
-        assert issues[0].reviewer == "codex"
-        assert error is None
-
-    def test_parses_issue_with_null_priority(self, parser: ReviewOutputParser) -> None:
-        issue = _make_issue(priority=None)
-        output = _make_valid_response(verdict="FAIL", issues=[issue])
-        _passed, issues, _error = parser.parse_json(output)
-        assert issues[0].priority is None
-
-    def test_parses_issue_with_null_file_path(self, parser: ReviewOutputParser) -> None:
-        """Handles null file_path for non-file-specific findings."""
-        issue = {
-            "reviewer": "codex",
-            "file_path": None,
-            "line_start": None,
-            "line_end": None,
-            "priority": 2,
-            "title": "General observation",
-            "body": "No specific location",
-        }
-        output = _make_valid_response(verdict="FAIL", issues=[issue])
-        _passed, issues, error = parser.parse_json(output)
-        assert error is None
-        assert issues[0].file == ""
-        assert issues[0].line_start == 0
-        assert issues[0].line_end == 0
-
-    def test_parses_multiple_issues_from_different_reviewers(
-        self, parser: ReviewOutputParser
-    ) -> None:
-        issues_data = [
-            _make_issue(reviewer="codex", title="Codex issue"),
-            _make_issue(reviewer="gemini", title="Gemini issue"),
-            _make_issue(reviewer="claude", title="Claude issue"),
-        ]
-        output = _make_valid_response(verdict="FAIL", issues=issues_data)
-        _passed, issues, _error = parser.parse_json(output)
-
-        assert len(issues) == 3
-        assert issues[0].reviewer == "codex"
-        assert issues[1].reviewer == "gemini"
-        assert issues[2].reviewer == "claude"
-
-    def test_returns_error_for_empty_output(self, parser: ReviewOutputParser) -> None:
-        passed, issues, error = parser.parse_json("")
-        assert passed is False
-        assert issues == []
-        assert error is not None
-        assert "Empty output" in error
-
-    def test_returns_error_for_whitespace_only(
-        self, parser: ReviewOutputParser
-    ) -> None:
-        passed, issues, error = parser.parse_json("   \n\t  ")
-        assert passed is False
-        assert issues == []
-        assert error is not None
-        assert "Empty output" in error
-
-    def test_returns_error_for_invalid_json(self, parser: ReviewOutputParser) -> None:
-        passed, issues, error = parser.parse_json("not valid json")
-        assert passed is False
-        assert issues == []
-        assert error is not None
-        assert "JSON parse error" in error
-
-    def test_returns_error_for_invalid_verdict(
-        self, parser: ReviewOutputParser
-    ) -> None:
-        output = json.dumps(
-            {
-                "consensus_verdict": "MAYBE",
-                "aggregated_findings": [],
-            }
-        )
-        passed, _issues, error = parser.parse_json(output)
-        assert passed is False
-        assert error is not None
-        assert "Invalid verdict" in error
-
-    def test_returns_error_for_missing_verdict(
-        self, parser: ReviewOutputParser
-    ) -> None:
-        output = json.dumps({"aggregated_findings": []})
-        passed, _issues, error = parser.parse_json(output)
-        assert passed is False
-        assert error is not None
-        assert "Invalid verdict" in error
-
-    def test_returns_error_for_invalid_issue_type(
-        self, parser: ReviewOutputParser
-    ) -> None:
-        output = json.dumps(
-            {
-                "consensus_verdict": "FAIL",
-                "aggregated_findings": ["not an object"],
-            }
-        )
-        passed, _issues, error = parser.parse_json(output)
-        assert passed is False
-        assert error is not None
-        assert "not an object" in error
-
-    def test_returns_error_for_non_object_root(
-        self, parser: ReviewOutputParser
-    ) -> None:
-        passed, _issues, error = parser.parse_json("[]")
-        assert passed is False
-        assert error is not None
-        assert "Root element is not an object" in error
-
-    def test_returns_error_for_invalid_reviewer_type(
-        self, parser: ReviewOutputParser
-    ) -> None:
-        output = json.dumps(
-            {
-                "consensus_verdict": "FAIL",
-                "aggregated_findings": [{"reviewer": 123}],
-            }
-        )
-        passed, _issues, error = parser.parse_json(output)
-        assert passed is False
-        assert error is not None
-        assert "'reviewer' must be a string" in error
-
-    def test_returns_error_for_invalid_file_path_type(
-        self, parser: ReviewOutputParser
-    ) -> None:
-        output = json.dumps(
-            {
-                "consensus_verdict": "FAIL",
-                "aggregated_findings": [{"reviewer": "codex", "file_path": 123}],
-            }
-        )
-        passed, _issues, error = parser.parse_json(output)
-        assert passed is False
-        assert error is not None
-        assert "'file_path' must be a string or null" in error
-
-    def test_returns_error_for_non_list_findings(
-        self, parser: ReviewOutputParser
-    ) -> None:
-        output = json.dumps(
-            {
-                "consensus_verdict": "FAIL",
-                "aggregated_findings": "not a list",
-            }
-        )
-        passed, _issues, error = parser.parse_json(output)
-        assert passed is False
-        assert error is not None
-        assert "'aggregated_findings' field must be an array" in error
+        assert state.verdict == "requires_decision"
 
 
 class TestMapExitCodeToResult:
-    """Tests for exit code mapping to ReviewResult."""
-
     @pytest.fixture
     def parser(self) -> ReviewOutputParser:
         return ReviewOutputParser()
 
-    def test_exit_0_pass(self, parser: ReviewOutputParser) -> None:
-        output = _make_valid_response(verdict="PASS")
-        result = parser.map_exit_code_to_result(0, output, "")
+    def test_zero_exit_pass_with_populated_reviewers_passes(
+        self, parser: ReviewOutputParser, tmp_path: Path
+    ) -> None:
+        _write_reviewer_output(tmp_path)
 
-        assert result.passed is True
-        assert result.issues == []
-        assert result.parse_error is None
-        assert result.fatal_error is False
-
-    def test_exit_0_with_issues(self, parser: ReviewOutputParser) -> None:
-        issue = _make_issue(priority=3)
-        output = _make_valid_response(verdict="PASS", issues=[issue])
-        result = parser.map_exit_code_to_result(0, output, "")
-
-        assert result.passed is True
-        assert len(result.issues) == 1
-        assert result.parse_error is None
-
-    def test_exit_1_fail(self, parser: ReviewOutputParser) -> None:
-        issue = _make_issue(priority=1)
-        output = _make_valid_response(verdict="FAIL", issues=[issue])
-        result = parser.map_exit_code_to_result(1, output, "")
-
-        assert result.passed is False
-        assert len(result.issues) == 1
-        assert result.parse_error is None
-        assert result.fatal_error is False
-
-    def test_exit_2_parse_error(self, parser: ReviewOutputParser) -> None:
-        output = json.dumps(
-            {
-                "consensus_verdict": "FAIL",
-                "aggregated_findings": [],
-                "parse_errors": ["codex: malformed JSON response", "gemini: timeout"],
-            }
-        )
-        result = parser.map_exit_code_to_result(2, output, "")
-
-        assert result.passed is False
-        assert result.issues == []
-        assert result.parse_error is not None
-        assert "codex: malformed JSON response" in result.parse_error
-        assert result.fatal_error is False
-
-    def test_exit_2_with_fallback_to_stderr(self, parser: ReviewOutputParser) -> None:
         result = parser.map_exit_code_to_result(
-            2, "invalid json", "Error: connection failed"
+            0,
+            _gate_state(verdict="pass"),
+            "",
+            state_root=tmp_path,
+            project_key="project-1",
+            run_key="run-1",
         )
 
-        assert result.passed is False
-        assert result.parse_error is not None
-        assert "connection failed" in result.parse_error
+        assert result.passed is True
+        assert result.issues == []
+        assert result.parse_error is None
         assert result.fatal_error is False
 
-    def test_exit_2_with_dict_parse_errors(self, parser: ReviewOutputParser) -> None:
-        """Handles parse_errors that are dict objects with 'error' key."""
-        output = json.dumps(
-            {
-                "consensus_verdict": "FAIL",
-                "aggregated_findings": [],
-                "parse_errors": [{"error": "Invalid response", "reviewer": "codex"}],
-            }
+    def test_zero_exit_fail_with_populated_reviewers_fails_with_findings(
+        self, parser: ReviewOutputParser, tmp_path: Path
+    ) -> None:
+        _write_reviewer_output(tmp_path, findings=[_finding()])
+
+        result = parser.map_exit_code_to_result(
+            0,
+            _gate_state(verdict="fail"),
+            "",
+            state_root=tmp_path,
+            project_key="project-1",
+            run_key="run-1",
         )
-        result = parser.map_exit_code_to_result(2, output, "")
+
+        assert result.passed is False
+        assert len(result.issues) == 1
+        assert result.issues[0].reviewer == "codex#1"
+        assert result.parse_error is None
+        assert result.fatal_error is False
+
+    def test_pass_with_missing_reviewers_dir_fails_closed(
+        self, parser: ReviewOutputParser, tmp_path: Path
+    ) -> None:
+        (tmp_path / "project-1" / "run-1" / "iterations" / "1" / "round-1").mkdir(
+            parents=True
+        )
+
+        result = parser.map_exit_code_to_result(
+            0,
+            _gate_state(verdict="pass"),
+            "",
+            state_root=tmp_path,
+            project_key="project-1",
+            run_key="run-1",
+        )
 
         assert result.passed is False
         assert result.parse_error is not None
-        assert "Invalid response" in result.parse_error
+        assert "Missing reviewers directory" in result.parse_error
+        assert result.issues == []
 
-    def test_exit_3_timeout(self, parser: ReviewOutputParser) -> None:
+    def test_fail_with_missing_reviewers_dir_surfaces_parse_error(
+        self, parser: ReviewOutputParser, tmp_path: Path
+    ) -> None:
+        (tmp_path / "project-1" / "run-1" / "iterations" / "1" / "round-1").mkdir(
+            parents=True
+        )
+
+        result = parser.map_exit_code_to_result(
+            0,
+            _gate_state(verdict="fail"),
+            "",
+            state_root=tmp_path,
+            project_key="project-1",
+            run_key="run-1",
+        )
+
+        assert result.passed is False
+        assert result.parse_error is not None
+        assert "Missing reviewers directory" in result.parse_error
+
+    def test_pass_with_malformed_peer_fails_closed_and_keeps_valid_findings(
+        self, parser: ReviewOutputParser, tmp_path: Path
+    ) -> None:
+        _write_reviewer_output(tmp_path, reviewer="codex#1", findings=[_finding()])
+        _write_reviewer_output(tmp_path, reviewer="gemini#1", raw="{broken")
+
+        result = parser.map_exit_code_to_result(
+            0,
+            _gate_state(verdict="pass"),
+            "",
+            state_root=tmp_path,
+            project_key="project-1",
+            run_key="run-1",
+        )
+
+        assert result.passed is False
+        assert result.parse_error is not None
+        assert "Malformed reviewer output JSON" in result.parse_error
+        assert len(result.issues) == 1
+        assert result.issues[0].reviewer == "codex#1"
+
+    def test_fail_with_malformed_peer_surfaces_parse_error_and_findings(
+        self, parser: ReviewOutputParser, tmp_path: Path
+    ) -> None:
+        _write_reviewer_output(tmp_path, reviewer="codex#1", findings=[_finding()])
+        _write_reviewer_output(tmp_path, reviewer="gemini#1", raw="{broken")
+
+        result = parser.map_exit_code_to_result(
+            0,
+            _gate_state(verdict="fail"),
+            "",
+            state_root=tmp_path,
+            project_key="project-1",
+            run_key="run-1",
+        )
+
+        assert result.passed is False
+        assert result.parse_error is not None
+        assert "Malformed reviewer output JSON" in result.parse_error
+        assert len(result.issues) == 1
+
+    def test_requires_decision_synthesizes_blocking_issue(
+        self, parser: ReviewOutputParser, tmp_path: Path
+    ) -> None:
+        _write_reviewer_output(tmp_path, findings=[_finding()])
+
+        result = parser.map_exit_code_to_result(
+            0,
+            _gate_state(verdict="requires_decision"),
+            "",
+            state_root=tmp_path,
+            project_key="project-1",
+            run_key="run-1",
+        )
+
+        assert result.passed is False
+        assert result.fatal_error is False
+        assert result.parse_error is None
+        assert len(result.issues) == 1
+        assert result.issues[0].priority == 1
+        assert "no consensus" in result.issues[0].title
+
+    def test_non_zero_exit_uses_stderr_tail(self, parser: ReviewOutputParser) -> None:
+        result = parser.map_exit_code_to_result(
+            2,
+            "",
+            "\n".join(f"line {index}" for index in range(25)),
+        )
+
+        assert result.passed is False
+        assert result.issues == []
+        assert result.parse_error is not None
+        assert "line 5" in result.parse_error
+        assert "line 24" in result.parse_error
+        assert "line 4" not in result.parse_error
+        assert result.fatal_error is False
+
+    def test_timeout_case(self, parser: ReviewOutputParser) -> None:
         result = parser.map_exit_code_to_result(3, "", "")
 
         assert result.passed is False
@@ -401,194 +292,20 @@ class TestMapExitCodeToResult:
         assert result.parse_error == "timeout"
         assert result.fatal_error is False
 
-    def test_exit_4_no_reviewers(self, parser: ReviewOutputParser) -> None:
-        result = parser.map_exit_code_to_result(4, "", "")
-
-        assert result.passed is False
-        assert result.issues == []
-        assert result.parse_error == "No reviewers available"
-        assert result.fatal_error is True
-
-    def test_exit_5_internal_error(self, parser: ReviewOutputParser) -> None:
-        result = parser.map_exit_code_to_result(5, "", "Unexpected error occurred")
-
-        assert result.passed is False
-        assert result.issues == []
-        assert "Unexpected error occurred" in (result.parse_error or "")
-        assert result.fatal_error is True
-
-    def test_exit_5_with_empty_stderr(self, parser: ReviewOutputParser) -> None:
-        result = parser.map_exit_code_to_result(5, "", "")
-
-        assert result.passed is False
-        assert result.fatal_error is True
-        assert result.parse_error == "Internal error"
-
-    def test_malformed_json_on_exit_0(self, parser: ReviewOutputParser) -> None:
-        result = parser.map_exit_code_to_result(0, "not json", "")
-
-        assert result.passed is False
-        assert result.parse_error is not None
-        assert "JSON parse error" in result.parse_error
-        assert result.fatal_error is False
-
-    def test_malformed_json_on_exit_1(self, parser: ReviewOutputParser) -> None:
-        result = parser.map_exit_code_to_result(1, "broken", "")
-
-        assert result.passed is False
-        assert result.parse_error is not None
-        assert result.fatal_error is False
-
-    def test_review_log_path_preserved(self, parser: ReviewOutputParser) -> None:
+    def test_review_log_path_preserved(
+        self, parser: ReviewOutputParser, tmp_path: Path
+    ) -> None:
+        _write_reviewer_output(tmp_path)
         log_path = Path("/tmp/review-session")
-        output = _make_valid_response(verdict="PASS")
-        result = parser.map_exit_code_to_result(0, output, "", review_log_path=log_path)
+
+        result = parser.map_exit_code_to_result(
+            0,
+            _gate_state(verdict="pass"),
+            "",
+            review_log_path=log_path,
+            state_root=tmp_path,
+            project_key="project-1",
+            run_key="run-1",
+        )
 
         assert result.review_log_path == log_path
-
-
-class TestFailClosedBehavior:
-    """Tests for fail-closed security behavior."""
-
-    @pytest.fixture
-    def parser(self) -> ReviewOutputParser:
-        return ReviewOutputParser()
-
-    def test_exit_0_with_json_fail_fails_closed(
-        self, parser: ReviewOutputParser
-    ) -> None:
-        """Exit code 0 but JSON verdict FAIL should fail (fail-closed security)."""
-        sink = MockEventSink()
-        output = _make_valid_response(verdict="FAIL")
-        result = parser.map_exit_code_to_result(
-            0, output, "", event_sink=cast("MalaEventSink", sink)
-        )
-
-        assert result.passed is False
-        assert result.parse_error is None
-        assert result.fatal_error is False
-
-        assert len(sink.warnings) == 1
-        assert "disagree" in sink.warnings[0]
-        assert "FAIL" in sink.warnings[0]
-        assert "fail-closed" in sink.warnings[0]
-
-    def test_exit_1_with_json_pass_fails_closed(
-        self, parser: ReviewOutputParser
-    ) -> None:
-        """Exit code 1 but JSON verdict PASS should fail (fail-closed security)."""
-        sink = MockEventSink()
-        output = _make_valid_response(verdict="PASS")
-        result = parser.map_exit_code_to_result(
-            1, output, "", event_sink=cast("MalaEventSink", sink)
-        )
-
-        assert result.passed is False
-        assert result.parse_error is None
-        assert result.fatal_error is False
-
-        assert len(sink.warnings) == 1
-        assert "disagree" in sink.warnings[0]
-        assert "PASS" in sink.warnings[0]
-        assert "fail-closed" in sink.warnings[0]
-
-    def test_no_warning_when_exit_code_and_verdict_agree(
-        self, parser: ReviewOutputParser
-    ) -> None:
-        """No warning when exit code and JSON verdict agree."""
-        sink = MockEventSink()
-        output = _make_valid_response(verdict="PASS")
-        result = parser.map_exit_code_to_result(
-            0, output, "", event_sink=cast("MalaEventSink", sink)
-        )
-
-        assert result.passed is True
-        assert len(sink.warnings) == 0
-
-    def test_exit_0_with_needs_work_fails_closed(
-        self, parser: ReviewOutputParser
-    ) -> None:
-        """Exit code 0 with NEEDS_WORK verdict should fail (fail-closed security)."""
-        output = _make_valid_response(verdict="NEEDS_WORK")
-        result = parser.map_exit_code_to_result(0, output, "")
-
-        assert result.passed is False
-        assert result.parse_error is None
-        assert result.fatal_error is False
-
-    def test_exit_0_with_no_reviewers_fails_closed(
-        self, parser: ReviewOutputParser
-    ) -> None:
-        """Exit code 0 with no_reviewers verdict should fail (fail-closed security)."""
-        output = _make_valid_response(verdict="no_reviewers")
-        result = parser.map_exit_code_to_result(0, output, "")
-
-        assert result.passed is False
-        assert result.parse_error is None
-        assert result.fatal_error is False
-
-
-class TestGoldenFiles:
-    """Golden file tests using captured real Cerberus output."""
-
-    @pytest.fixture
-    def parser(self) -> ReviewOutputParser:
-        return ReviewOutputParser()
-
-    def test_golden_pass(self, parser: ReviewOutputParser) -> None:
-        """Parse real PASS output from Cerberus."""
-        output = (FIXTURES_DIR / "wait_pass.json").read_text()
-        passed, issues, error = parser.parse_json(output)
-
-        assert error is None, f"Unexpected parse error: {error}"
-        assert passed is True
-        # PASS verdict but has P3 findings (non-blocking)
-        assert len(issues) == 1
-        assert issues[0].priority == 3
-        assert issues[0].reviewer == "gemini"
-
-    def test_golden_fail(self, parser: ReviewOutputParser) -> None:
-        """Parse real FAIL output from Cerberus with multiple reviewers."""
-        output = (FIXTURES_DIR / "wait_fail.json").read_text()
-        passed, issues, error = parser.parse_json(output)
-
-        assert error is None, f"Unexpected parse error: {error}"
-        assert passed is False
-        assert len(issues) == 3
-
-        reviewers = {i.reviewer for i in issues}
-        assert reviewers == {"claude", "codex", "gemini"}
-
-        p1_issues = [i for i in issues if i.priority == 1]
-        assert len(p1_issues) == 2
-
-        files = {i.file for i in issues}
-        assert "tests/test_cli.py" in files
-        assert "src/orchestrator.py" in files
-
-    def test_golden_no_reviewers(self, parser: ReviewOutputParser) -> None:
-        """Parse output when no reviewers were spawned."""
-        output = (FIXTURES_DIR / "wait_no_reviewers.json").read_text()
-        passed, _issues, error = parser.parse_json(output)
-
-        assert passed is False
-        assert error is not None
-        assert "Invalid verdict" in error
-
-    def test_golden_error(self, parser: ReviewOutputParser) -> None:
-        """Parse output when review-gate encounters an error."""
-        output = (FIXTURES_DIR / "wait_error.json").read_text()
-        passed, _issues, error = parser.parse_json(output)
-
-        assert passed is False
-        assert error is not None
-        assert "Invalid verdict" in error
-
-    def test_golden_timeout(self, parser: ReviewOutputParser) -> None:
-        """Parse output when review times out."""
-        output = (FIXTURES_DIR / "wait_timeout.json").read_text()
-        passed, _issues, error = parser.parse_json(output)
-
-        assert passed is False
-        assert error is not None
-        assert "Invalid verdict" in error

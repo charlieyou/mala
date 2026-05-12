@@ -1,18 +1,8 @@
-"""Tests for Cerberus review-gate adapter.
-
-Tests the cerberus_review integration including:
-- JSON response parsing
-- Exit code mapping (0-5)
-- Issue formatting
-- Parse error extraction
-- Golden file tests against real Cerberus output
-"""
+"""Tests for Cerberus review-gate adapter."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
 
 from src.infra.clients.cerberus_review import (
     DefaultReviewer,
@@ -21,501 +11,50 @@ from src.infra.clients.cerberus_review import (
 )
 from src.infra.clients.cerberus_output_parser import (
     ReviewIssue,
-    ReviewOutputParser,
 )
-from src.infra.io.base_sink import BaseEventSink
-
-if TYPE_CHECKING:
-    from src.core.protocols.events import MalaEventSink
-    from src.infra.clients.cerberus_output_parser import ReviewResult
-
-# Path to golden files captured from real Cerberus output
-FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures" / "cerberus"
-
-# Shared parser instance for tests
-_parser = ReviewOutputParser()
 
 
-def parse_cerberus_json(output: str) -> tuple[bool, list[ReviewIssue], str | None]:
-    """Test helper that delegates to parser.parse_json."""
-    return _parser.parse_json(output)
-
-
-def map_exit_code_to_result(
-    exit_code: int,
-    stdout: str,
-    stderr: str,
-    review_log_path: Path | None = None,
-    event_sink: MalaEventSink | None = None,
-) -> ReviewResult:
-    """Test helper that delegates to parser.map_exit_code_to_result."""
-    return _parser.map_exit_code_to_result(
-        exit_code, stdout, stderr, review_log_path, event_sink
-    )
-
-
-class MockEventSink(BaseEventSink):
-    """Mock event sink for testing event emissions.
-
-    Inherits from BaseEventSink to get no-op implementations for all
-    MalaEventSink methods, preventing AttributeError if tested code
-    emits additional events.
-    """
-
-    def __init__(self) -> None:
-        self.warnings: list[str] = []
-
-    def on_review_warning(
-        self,
-        message: str,
-        agent_id: str | None = None,
-        issue_id: str | None = None,
-    ) -> None:
-        self.warnings.append(message)
-
-
-def _make_valid_response(
-    verdict: str = "PASS", issues: list[dict] | None = None
+def _gate_state_json(
+    *, project_key: str = "project-1", run_key: str = "mala-test-session"
 ) -> str:
-    """Helper to create a valid Cerberus review-gate response JSON.
-
-    Uses the actual Cerberus output format with:
-    - consensus_verdict at top level (not consensus.verdict)
-    - aggregated_findings (not issues)
-    """
-    return json.dumps(
-        {
-            "status": "complete",
-            "consensus_verdict": verdict,
-            "reviewers": {
-                "codex": {
-                    "verdict": verdict,
-                    "summary": "Test",
-                    "findings": [],
-                }
-            },
-            "aggregated_findings": issues or [],
-            "parse_errors": [],
-        }
+    return (
+        "{"
+        '"schema_version":"2",'
+        f'"run_key":"{run_key}",'
+        '"host":"generic",'
+        f'"project_key":"{project_key}",'
+        '"session_id":"test-session",'
+        '"transcript_path":"/tmp/transcript.jsonl",'
+        '"status":"resolved",'
+        '"verdict":"pass",'
+        '"resolution_reason":"complete",'
+        '"current_iteration":1,'
+        '"max_rounds":1,'
+        '"debate":false,'
+        '"roster_id":"default",'
+        '"started_at":"2026-05-11T00:00:00Z",'
+        '"ended_at":"2026-05-11T00:01:00Z"'
+        "}"
     )
 
 
-def _make_issue(
-    file: str = "src/test.py",
-    line_start: int = 10,
-    line_end: int = 12,
-    priority: int | None = 1,
-    title: str = "Test finding",
-    body: str = "Test body",
-    reviewer: str = "codex",
-) -> dict:
-    """Helper to create a valid issue dict.
-
-    Uses the actual Cerberus format with file_path (not file).
-    """
-    return {
-        "reviewer": reviewer,
-        "file_path": file,
-        "line_start": line_start,
-        "line_end": line_end,
-        "priority": priority,
-        "title": title,
-        "body": body,
-    }
-
-
-class TestParseCerberusJson:
-    """Tests for parsing Cerberus review-gate JSON output."""
-
-    def test_parses_valid_pass_response(self) -> None:
-        output = _make_valid_response(verdict="PASS")
-        passed, issues, error = parse_cerberus_json(output)
-        assert passed is True
-        assert issues == []
-        assert error is None
-
-    def test_parses_valid_fail_response(self) -> None:
-        output = _make_valid_response(verdict="FAIL")
-        passed, issues, error = parse_cerberus_json(output)
-        assert passed is False
-        assert issues == []
-        assert error is None
-
-    def test_parses_needs_work_response(self) -> None:
-        output = _make_valid_response(verdict="NEEDS_WORK")
-        passed, issues, error = parse_cerberus_json(output)
-        assert passed is False
-        assert issues == []
-        assert error is None
-
-    def test_parses_no_reviewers_response(self) -> None:
-        output = _make_valid_response(verdict="no_reviewers")
-        passed, issues, error = parse_cerberus_json(output)
-        assert passed is False
-        assert issues == []
-        assert error is None
-
-    def test_parses_issues_correctly(self) -> None:
-        issue = _make_issue(
-            file="src/main.py",
-            line_start=42,
-            line_end=45,
-            priority=1,
-            title="[P1] Missing null check",
-            body="Variable may be None",
-            reviewer="codex",
-        )
-        output = _make_valid_response(verdict="FAIL", issues=[issue])
-        passed, issues, error = parse_cerberus_json(output)
-
-        assert passed is False
-        assert len(issues) == 1
-        assert issues[0].file == "src/main.py"
-        assert issues[0].line_start == 42
-        assert issues[0].line_end == 45
-        assert issues[0].priority == 1
-        assert issues[0].title == "[P1] Missing null check"
-        assert issues[0].body == "Variable may be None"
-        assert issues[0].reviewer == "codex"
-        assert error is None
-
-    def test_parses_issue_with_null_priority(self) -> None:
-        issue = _make_issue(priority=None)
-        output = _make_valid_response(verdict="FAIL", issues=[issue])
-        _passed, issues, _error = parse_cerberus_json(output)
-        assert issues[0].priority is None
-
-    def test_parses_multiple_issues_from_different_reviewers(self) -> None:
-        issues_data = [
-            _make_issue(reviewer="codex", title="Codex issue"),
-            _make_issue(reviewer="gemini", title="Gemini issue"),
-            _make_issue(reviewer="claude", title="Claude issue"),
-        ]
-        output = _make_valid_response(verdict="FAIL", issues=issues_data)
-        _passed, issues, _error = parse_cerberus_json(output)
-
-        assert len(issues) == 3
-        assert issues[0].reviewer == "codex"
-        assert issues[1].reviewer == "gemini"
-        assert issues[2].reviewer == "claude"
-
-    def test_returns_error_for_empty_output(self) -> None:
-        passed, issues, error = parse_cerberus_json("")
-        assert passed is False
-        assert issues == []
-        assert error is not None
-        assert "Empty output" in error
-
-    def test_returns_error_for_invalid_json(self) -> None:
-        passed, issues, error = parse_cerberus_json("not valid json")
-        assert passed is False
-        assert issues == []
-        assert error is not None
-        assert "JSON parse error" in error
-
-    def test_returns_error_for_invalid_verdict(self) -> None:
-        output = json.dumps(
-            {
-                "consensus": {"verdict": "MAYBE"},
-                "issues": [],
-            }
-        )
-        passed, _issues, error = parse_cerberus_json(output)
-        assert passed is False
-        assert error is not None
-        assert "Invalid verdict" in error
-
-    def test_returns_error_for_missing_consensus(self) -> None:
-        output = json.dumps({"issues": []})
-        passed, _issues, error = parse_cerberus_json(output)
-        assert passed is False
-        assert error is not None
-        assert "'consensus'" in error or "Invalid verdict" in error
-
-    def test_returns_error_for_invalid_issue_type(self) -> None:
-        """Test error when aggregated_findings contains non-object items."""
-        output = json.dumps(
-            {
-                "status": "complete",
-                "consensus_verdict": "FAIL",
-                "aggregated_findings": ["not an object"],
-            }
-        )
-        passed, _issues, error = parse_cerberus_json(output)
-        assert passed is False
-        assert error is not None
-        assert "not an object" in error
-
-    def test_returns_error_for_non_object_root(self) -> None:
-        passed, _issues, error = parse_cerberus_json("[]")
-        assert passed is False
-        assert error is not None
-        assert "Root element is not an object" in error
-
-
-class TestGoldenFiles:
-    """Golden file tests using captured real Cerberus output.
-
-    These tests ensure parse_cerberus_json correctly handles the actual
-    output format from `review-gate wait --json`, not just mock data.
-    """
-
-    def test_golden_pass(self) -> None:
-        """Parse real PASS output from Cerberus."""
-        output = (FIXTURES_DIR / "wait_pass.json").read_text()
-        passed, issues, error = parse_cerberus_json(output)
-
-        assert error is None, f"Unexpected parse error: {error}"
-        assert passed is True
-        # PASS verdict but has P3 findings (non-blocking)
-        assert len(issues) == 1
-        assert issues[0].priority == 3
-        assert issues[0].reviewer == "gemini"
-
-    def test_golden_fail(self) -> None:
-        """Parse real FAIL output from Cerberus with multiple reviewers."""
-        output = (FIXTURES_DIR / "wait_fail.json").read_text()
-        passed, issues, error = parse_cerberus_json(output)
-
-        assert error is None, f"Unexpected parse error: {error}"
-        assert passed is False
-        assert len(issues) == 3
-
-        # Verify all reviewers' findings are captured
-        reviewers = {i.reviewer for i in issues}
-        assert reviewers == {"claude", "codex", "gemini"}
-
-        # Verify P1 issues exist
-        p1_issues = [i for i in issues if i.priority == 1]
-        assert len(p1_issues) == 2
-
-        # Verify file paths are captured
-        files = {i.file for i in issues}
-        assert "tests/test_cli.py" in files
-        assert "src/orchestrator.py" in files
-
-    def test_golden_no_reviewers(self) -> None:
-        """Parse output when no reviewers were spawned."""
-        output = (FIXTURES_DIR / "wait_no_reviewers.json").read_text()
-        passed, _issues, error = parse_cerberus_json(output)
-
-        # null consensus_verdict should fail validation
-        assert passed is False
-        assert error is not None
-        assert "Invalid verdict" in error
-
-    def test_golden_error(self) -> None:
-        """Parse output when review-gate encounters an error."""
-        output = (FIXTURES_DIR / "wait_error.json").read_text()
-        passed, _issues, error = parse_cerberus_json(output)
-
-        # null consensus_verdict should fail validation
-        assert passed is False
-        assert error is not None
-        assert "Invalid verdict" in error
-
-    def test_golden_timeout(self) -> None:
-        """Parse output when review times out."""
-        output = (FIXTURES_DIR / "wait_timeout.json").read_text()
-        passed, _issues, error = parse_cerberus_json(output)
-
-        # null consensus_verdict on timeout should fail validation
-        assert passed is False
-        assert error is not None
-        assert "Invalid verdict" in error
-
-
-class TestMapExitCodeToResult:
-    """Tests for exit code mapping to ReviewResult."""
-
-    def test_exit_0_pass(self) -> None:
-        """Exit code 0 = PASS: all reviewers agree, no issues."""
-        output = _make_valid_response(verdict="PASS")
-        result = map_exit_code_to_result(0, output, "")
-
-        assert result.passed is True
-        assert result.issues == []
-        assert result.parse_error is None
-        assert result.fatal_error is False
-
-    def test_exit_0_with_issues(self) -> None:
-        """Exit code 0 with issues is still a pass (low-priority issues)."""
-        issue = _make_issue(priority=3)  # P3 = low priority
-        output = _make_valid_response(verdict="PASS", issues=[issue])
-        result = map_exit_code_to_result(0, output, "")
-
-        assert result.passed is True
-        assert len(result.issues) == 1
-        assert result.parse_error is None
-
-    def test_exit_1_fail(self) -> None:
-        """Exit code 1 = FAIL/NEEDS_WORK: legitimate review failure."""
-        issue = _make_issue(priority=1)
-        output = _make_valid_response(verdict="FAIL", issues=[issue])
-        result = map_exit_code_to_result(1, output, "")
-
-        assert result.passed is False
-        assert len(result.issues) == 1
-        assert result.parse_error is None
-        assert result.fatal_error is False
-
-    def test_exit_2_parse_error(self) -> None:
-        """Exit code 2 = Parse error: malformed reviewer output (retryable)."""
-        output = json.dumps(
-            {
-                "consensus": {"verdict": "FAIL"},
-                "issues": [],
-                "parse_errors": ["codex: malformed JSON response", "gemini: timeout"],
-            }
-        )
-        result = map_exit_code_to_result(2, output, "")
-
-        assert result.passed is False
-        assert result.issues == []
-        assert result.parse_error is not None
-        assert "codex: malformed JSON response" in result.parse_error
-        assert result.fatal_error is False
-
-    def test_exit_2_with_fallback_to_stderr(self) -> None:
-        """Exit code 2 with invalid JSON falls back to stderr."""
-        result = map_exit_code_to_result(2, "invalid json", "Error: connection failed")
-
-        assert result.passed is False
-        assert result.parse_error is not None
-        assert "connection failed" in result.parse_error
-        assert result.fatal_error is False
-
-    def test_exit_3_timeout(self) -> None:
-        """Exit code 3 = Timeout: reviewers didn't respond (retryable)."""
-        result = map_exit_code_to_result(3, "", "")
-
-        assert result.passed is False
-        assert result.issues == []
-        assert result.parse_error == "timeout"
-        assert result.fatal_error is False
-
-    def test_exit_4_no_reviewers(self) -> None:
-        """Exit code 4 = No reviewers: no reviewer CLIs available (fatal)."""
-        result = map_exit_code_to_result(4, "", "")
-
-        assert result.passed is False
-        assert result.issues == []
-        assert result.parse_error == "No reviewers available"
-        assert result.fatal_error is True
-
-    def test_exit_5_internal_error(self) -> None:
-        """Exit code 5 = Internal error: unexpected failure (fatal)."""
-        result = map_exit_code_to_result(5, "", "Unexpected error occurred")
-
-        assert result.passed is False
-        assert result.issues == []
-        assert "Unexpected error occurred" in (result.parse_error or "")
-        assert result.fatal_error is True
-
-    def test_exit_5_with_empty_stderr(self) -> None:
-        """Exit code 5 with empty stderr uses default message."""
-        result = map_exit_code_to_result(5, "", "")
-
-        assert result.passed is False
-        assert result.fatal_error is True
-        assert result.parse_error == "Internal error"
-
-    def test_malformed_json_on_exit_0(self) -> None:
-        """Malformed JSON on exit 0 is treated as parse error."""
-        result = map_exit_code_to_result(0, "not json", "")
-
-        assert result.passed is False
-        assert result.parse_error is not None
-        assert "JSON parse error" in result.parse_error
-        assert result.fatal_error is False
-
-    def test_malformed_json_on_exit_1(self) -> None:
-        """Malformed JSON on exit 1 is treated as parse error."""
-        result = map_exit_code_to_result(1, "broken", "")
-
-        assert result.passed is False
-        assert result.parse_error is not None
-        assert result.fatal_error is False
-
-    def test_review_log_path_preserved(self) -> None:
-        """Review log path is preserved in result."""
-        log_path = Path("/tmp/review-session")
-        output = _make_valid_response(verdict="PASS")
-        result = map_exit_code_to_result(0, output, "", review_log_path=log_path)
-
-        assert result.review_log_path == log_path
-
-    def test_exit_0_with_json_fail_fails_closed(self) -> None:
-        """Exit code 0 but JSON verdict FAIL should fail (fail-closed security)."""
-        # Exit code 0 but JSON says FAIL - should FAIL (fail-closed)
-        sink = MockEventSink()
-        output = _make_valid_response(verdict="FAIL")
-        result = map_exit_code_to_result(
-            0, output, "", event_sink=cast("MalaEventSink", sink)
-        )
-
-        # Fail-closed: review must fail because JSON verdict is not PASS
-        assert result.passed is False
-        assert result.parse_error is None
-        assert result.fatal_error is False
-
-        # Check that warning was emitted to event sink
-        assert len(sink.warnings) == 1
-        assert "disagree" in sink.warnings[0]
-        assert "FAIL" in sink.warnings[0]
-        assert "fail-closed" in sink.warnings[0]
-
-    def test_exit_1_with_json_pass_fails_closed(self) -> None:
-        """Exit code 1 but JSON verdict PASS should fail (fail-closed security)."""
-        # Exit code 1 but JSON says PASS - should FAIL (fail-closed)
-        sink = MockEventSink()
-        output = _make_valid_response(verdict="PASS")
-        result = map_exit_code_to_result(
-            1, output, "", event_sink=cast("MalaEventSink", sink)
-        )
-
-        # Fail-closed: review must fail because exit code is not 0
-        assert result.passed is False
-        assert result.parse_error is None
-        assert result.fatal_error is False
-
-        # Check that warning was emitted to event sink
-        assert len(sink.warnings) == 1
-        assert "disagree" in sink.warnings[0]
-        assert "PASS" in sink.warnings[0]
-        assert "fail-closed" in sink.warnings[0]
-
-    def test_no_warning_when_exit_code_and_verdict_agree(self) -> None:
-        """No warning when exit code and JSON verdict agree."""
-        # Exit code 0 and JSON says PASS - should not warn
-        sink = MockEventSink()
-        output = _make_valid_response(verdict="PASS")
-        result = map_exit_code_to_result(
-            0, output, "", event_sink=cast("MalaEventSink", sink)
-        )
-
-        assert result.passed is True
-        assert len(sink.warnings) == 0
-
-    def test_exit_0_with_needs_work_fails_closed(self) -> None:
-        """Exit code 0 with NEEDS_WORK verdict should fail (fail-closed security)."""
-        output = _make_valid_response(verdict="NEEDS_WORK")
-        result = map_exit_code_to_result(0, output, "")
-
-        # Fail-closed: NEEDS_WORK is not PASS, so must fail
-        assert result.passed is False
-        assert result.parse_error is None
-        assert result.fatal_error is False
-
-    def test_exit_0_with_no_reviewers_fails_closed(self) -> None:
-        """Exit code 0 with no_reviewers verdict should fail (fail-closed security)."""
-        output = _make_valid_response(verdict="no_reviewers")
-        result = map_exit_code_to_result(0, output, "")
-
-        # Fail-closed: no_reviewers is not PASS, so must fail
-        assert result.passed is False
-        assert result.parse_error is None
-        assert result.fatal_error is False
+def _write_empty_cerberus_output(
+    repo_path: Path, *, project_key: str = "project-1", run_key: str
+) -> None:
+    output_dir = (
+        repo_path
+        / ".mala"
+        / "cerberus"
+        / project_key
+        / run_key
+        / "iterations"
+        / "1"
+        / "round-1"
+        / "reviewers"
+        / "codex#1"
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "output.json").write_text('{"findings":[]}', encoding="utf-8")
 
 
 class TestFormatReviewIssues:
@@ -777,11 +316,17 @@ class TestAlreadyActiveGateError:
     another session owns the gate, so we return a fatal error.
     """
 
-    async def test_already_active_auto_resolves_and_retries(self) -> None:
+    async def test_already_active_auto_resolves_and_retries(
+        self, tmp_path: Path
+    ) -> None:
         """Auto-resolves stale gate and retries spawn successfully."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        reviewer = DefaultReviewer(repo_path=Path("/tmp"))
+        reviewer = DefaultReviewer(
+            repo_path=tmp_path,
+            env={"CERBERUS_PROJECT_KEY": "project-1"},
+        )
+        _write_empty_cerberus_output(tmp_path, run_key="mala-test-session")
 
         with patch(
             "src.infra.clients.cerberus_cli.CerberusGateCLI.validate_binary",
@@ -811,7 +356,7 @@ class TestAlreadyActiveGateError:
             wait_result = MagicMock()
             wait_result.returncode = 0
             wait_result.timed_out = False
-            wait_result.stdout = '{"status":"complete","consensus_verdict":"PASS","reviewers":{},"aggregated_findings":[],"parse_errors":[]}'
+            wait_result.stdout = _gate_state_json()
 
             with patch(
                 "src.infra.clients.cerberus_review.CommandRunner"

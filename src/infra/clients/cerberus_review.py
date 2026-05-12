@@ -278,6 +278,9 @@ class DefaultReviewer:
             wait_result.stderr,
             review_log_path=wait_result.session_dir,
             event_sink=self.event_sink,
+            state_root=Path(env["CERBERUS_STATE_ROOT"]),
+            project_key=env["CERBERUS_PROJECT_KEY"],
+            run_key=env["CERBERUS_RUN_KEY"],
         )
         logger.info(
             "Review completed: passed=%s issues=%d",
