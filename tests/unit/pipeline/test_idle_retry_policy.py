@@ -6,7 +6,6 @@ stream processor, and lifecycle context.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
@@ -26,6 +25,8 @@ from src.pipeline.message_stream_processor import (
 from tests.fakes import FakeLintCache, FakeSDKClientFactory, FakeStreamProcessor
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.infra.telemetry import TelemetrySpan
     from src.pipeline.message_stream_processor import (
         IdleTimeoutStream,
