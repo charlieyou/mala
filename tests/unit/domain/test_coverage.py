@@ -40,7 +40,6 @@ def make_mock_env_config() -> Mock:
     mock.scripts_dir = Path("/mock/scripts")
     mock.cache_dir = Path("/mock/cache")
     mock.lock_dir = Path("/tmp/mock-locks")
-    mock.find_cerberus_bin_path.return_value = None
     return mock
 
 

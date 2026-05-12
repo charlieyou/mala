@@ -9,8 +9,7 @@ Tests use real factory functions but mock SDK client (no network calls).
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,6 +22,9 @@ from src.pipeline.config_views import ReviewRunnerView
 from src.pipeline.review_runner import ReviewRunner
 from tests.fakes.event_sink import FakeEventSink
 from tests.fakes.sdk_client import FakeSDKClientFactory
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _make_review_json(
@@ -56,7 +58,8 @@ class TestFactoryCreatesAgentSDKReviewerByDefault:
 
         # Create minimal MalaConfig mock
         mala_config = MagicMock()
-        mala_config.cerberus_bin_path = None
+        mala_config.cerberus_state_root = None
+        mala_config.cerberus_project_key = None
         mala_config.cerberus_spawn_args = ()
         mala_config.cerberus_wait_args = ()
         mala_config.cerberus_env = {}
@@ -118,7 +121,8 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
 
         # Create MalaConfig mock with DIFFERENT values (should be ignored)
         mala_config = MagicMock()
-        mala_config.cerberus_bin_path = tmp_path / "cerberus-bin"
+        mala_config.cerberus_state_root = tmp_path / "runs" / "run-id" / "cerberus"
+        mala_config.cerberus_project_key = "yaml-project"
         mala_config.cerberus_spawn_args = ("--env-spawn",)
         mala_config.cerberus_wait_args = ("--env-wait",)
         mala_config.cerberus_env = {"ENV_VAR": "env_value"}
@@ -141,7 +145,6 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
         assert reviewer.wait_args == ("--yaml-wait", "--timeout", "600")
         assert reviewer.env == {
             "YAML_VAR": "yaml_value",
-            "PATH": str(tmp_path / "cerberus-bin"),
         }
 
     def test_factory_creates_cerberus_reviewer_fallback_to_env_vars(
@@ -166,7 +169,8 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
 
         # Create minimal MalaConfig mock with cerberus settings
         mala_config = MagicMock()
-        mala_config.cerberus_bin_path = tmp_path / "cerberus-bin"
+        mala_config.cerberus_state_root = tmp_path / "runs" / "run-id" / "cerberus"
+        mala_config.cerberus_project_key = "env-project"
         mala_config.cerberus_spawn_args = ("--spawn",)
         mala_config.cerberus_wait_args = ("--wait",)
         mala_config.cerberus_env = {"CERBERUS_MODE": "test"}
@@ -189,8 +193,9 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
         assert reviewer.wait_args == ("--wait",)
         assert reviewer.env == {
             "CERBERUS_MODE": "test",
-            "PATH": str(tmp_path / "cerberus-bin"),
         }
+        assert reviewer.state_root == tmp_path / "runs" / "run-id" / "cerberus"
+        assert reviewer.project_key == "env-project"
 
     def test_factory_injects_cerberus_timeout_into_wait_args(
         self, tmp_path: Path
@@ -215,7 +220,8 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
         assert reviewer_config.cerberus_config.timeout == 600
 
         mala_config = MagicMock()
-        mala_config.cerberus_bin_path = Path("/usr/bin")
+        mala_config.cerberus_state_root = None
+        mala_config.cerberus_project_key = None
 
         event_sink = FakeEventSink()
 
@@ -250,7 +256,8 @@ class TestFactoryCreatesCerberusReviewerWhenConfigured:
 
         reviewer_config = _get_reviewer_config(tmp_path)
         mala_config = MagicMock()
-        mala_config.cerberus_bin_path = Path("/usr/bin")
+        mala_config.cerberus_state_root = None
+        mala_config.cerberus_project_key = None
         event_sink = FakeEventSink()
 
         reviewer = _create_code_reviewer(
@@ -293,7 +300,8 @@ class TestFactoryCreatesAgentSDKReviewerWhenConfigured:
 
         # Create minimal MalaConfig mock
         mala_config = MagicMock()
-        mala_config.cerberus_bin_path = None
+        mala_config.cerberus_state_root = None
+        mala_config.cerberus_project_key = None
         mala_config.cerberus_spawn_args = ()
         mala_config.cerberus_wait_args = ()
         mala_config.cerberus_env = {}
@@ -349,7 +357,8 @@ class TestReviewRunnerIntegration:
 
         # Create minimal MalaConfig mock
         mala_config = MagicMock()
-        mala_config.cerberus_bin_path = None
+        mala_config.cerberus_state_root = None
+        mala_config.cerberus_project_key = None
         mala_config.cerberus_spawn_args = ()
         mala_config.cerberus_wait_args = ()
         mala_config.cerberus_env = {}

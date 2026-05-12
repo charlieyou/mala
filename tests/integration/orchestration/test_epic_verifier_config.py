@@ -14,13 +14,24 @@ EpicVerifierConfig → _create_epic_verification_model → EpicVerificationModel
 
 from __future__ import annotations
 
-import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def _write_fake_cerberus(root: Path) -> Path:
+    """Create a fake Cerberus v2 root with binary and reviewer prompts."""
+    bin_dir = root / "bin"
+    bin_dir.mkdir()
+    (root / "prompts" / "reviewers").mkdir(parents=True)
+    binary = bin_dir / "cerberus"
+    binary.write_text("#!/usr/bin/env sh\nexit 0\n")
+    binary.chmod(0o755)
+    return bin_dir
 
 
 class TestEpicVerifierConfigDataclass:
@@ -109,58 +120,40 @@ class TestCheckEpicVerifierAvailability:
         assert result is None
 
     def test_cerberus_unavailable_when_binary_missing(self) -> None:
-        """cerberus verifier returns unavailable when review-gate binary missing."""
+        """cerberus verifier returns unavailable when the binary is missing."""
         from src.orchestration.factory import _check_epic_verifier_availability
 
-        # Without mala_config, binary won't be found
         result = _check_epic_verifier_availability("cerberus")
         assert result is not None
-        assert "review-gate unavailable" in result or "not detected" in result
+        assert result == "cerberus binary not found in PATH"
 
-    def test_cerberus_unavailable_when_spawn_epic_review_not_supported(
+    def test_cerberus_unavailable_when_reviewer_prompts_missing(
         self, tmp_path: Path
     ) -> None:
-        """cerberus returns unavailable when spawn-epic-verify subcommand fails."""
-        import os
-        import stat
-
+        """cerberus returns unavailable when prompts/reviewers is missing."""
         from src.infra.io.config import MalaConfig
         from src.orchestration.factory import _check_epic_verifier_availability
 
-        # Create a fake review-gate binary that fails spawn-epic-verify --help
         bin_path = tmp_path / "bin"
         bin_path.mkdir()
-        review_gate = bin_path / "review-gate"
-        review_gate.write_text(
-            '#!/usr/bin/env sh\necho "unknown subcommand" >&2; exit 1\n'
-        )
-        os.chmod(review_gate, stat.S_IRWXU)
+        binary = bin_path / "cerberus"
+        binary.write_text("#!/usr/bin/env sh\nexit 0\n")
+        binary.chmod(0o755)
 
-        mala_config = MalaConfig(cerberus_bin_path=bin_path)
+        mala_config = MalaConfig(cerberus_env=(("PATH", str(bin_path)),))
         result = _check_epic_verifier_availability("cerberus", mala_config=mala_config)
-        assert result is not None
-        assert "does not support epic verification" in result
+        assert result == f"cerberus root {tmp_path} missing prompts/reviewers/"
 
-    def test_cerberus_available_when_spawn_epic_review_works(
+    def test_cerberus_available_when_binary_and_prompts_exist(
         self, tmp_path: Path
     ) -> None:
-        """cerberus verifier is available when spawn-epic-verify --help succeeds."""
-        import os
-        import stat
-
+        """cerberus verifier is available when binary and prompts exist."""
         from src.infra.io.config import MalaConfig
         from src.orchestration.factory import _check_epic_verifier_availability
 
-        # Create a fake review-gate binary that supports spawn-epic-verify --help
-        bin_path = tmp_path / "bin"
-        bin_path.mkdir()
-        review_gate = bin_path / "review-gate"
-        review_gate.write_text(
-            '#!/usr/bin/env sh\ncase "$1" in spawn-epic-verify) echo "Usage: spawn-epic-verify"; exit 0;; *) exit 1;; esac\n'
-        )
-        os.chmod(review_gate, stat.S_IRWXU)
+        bin_path = _write_fake_cerberus(tmp_path)
 
-        mala_config = MalaConfig(cerberus_bin_path=bin_path)
+        mala_config = MalaConfig(cerberus_env=(("PATH", str(bin_path)),))
         result = _check_epic_verifier_availability("cerberus", mala_config=mala_config)
         assert result is None
 
@@ -206,8 +199,10 @@ class TestCreateEpicVerificationModel:
         from src.infra.io.config import MalaConfig
         from src.orchestration.factory import _create_epic_verification_model
 
+        state_root = tmp_path / "runs" / "run-id" / "cerberus"
         mala_config = MalaConfig(
-            cerberus_bin_path=tmp_path / "cerberus-bin",
+            cerberus_state_root=state_root,
+            cerberus_project_key="project-key",
             cerberus_env=(("TEST_VAR", "test_value"),),
         )
 
@@ -218,10 +213,9 @@ class TestCreateEpicVerificationModel:
             mala_config=mala_config,
         )
         assert isinstance(model, CerberusEpicVerifier)
-        assert model.env == {
-            "TEST_VAR": "test_value",
-            "PATH": str(tmp_path / "cerberus-bin"),
-        }
+        assert model.env == {"TEST_VAR": "test_value"}
+        assert model.state_root == state_root
+        assert model.project_key == "project-key"
 
     def test_cerberus_prefers_cerberus_config(self, tmp_path: Path) -> None:
         """cerberus prefers cerberus_config over mala_config for timeout/env/args."""
@@ -230,10 +224,7 @@ class TestCreateEpicVerificationModel:
         from src.infra.io.config import MalaConfig
         from src.orchestration.factory import _create_epic_verification_model
 
-        mala_config = MalaConfig(
-            cerberus_bin_path=tmp_path / "cerberus-bin",
-            cerberus_env=(("OLD_VAR", "old_value"),),
-        )
+        mala_config = MalaConfig(cerberus_env=(("OLD_VAR", "old_value"),))
         cerberus_config = CerberusConfig(
             timeout=120,
             spawn_args=("--mode", "fast"),
@@ -253,7 +244,7 @@ class TestCreateEpicVerificationModel:
         assert model.timeout == 120
         assert model.env == {
             "NEW_VAR": "new_value",
-            "PATH": f"{tmp_path / 'cerberus-bin'}{os.pathsep}/custom/bin",
+            "PATH": "/custom/bin",
         }
         assert model.spawn_args == ("--mode", "fast")
         assert model.wait_args == ("--timeout", "99")
@@ -385,16 +376,10 @@ class TestEpicVerifierConfigIntegration:
         # Step 2: Check availability - returns reason (binary not found)
         unavailable_reason = _check_epic_verifier_availability(config.reviewer_type)
         assert unavailable_reason is not None
-        assert (
-            "review-gate unavailable" in unavailable_reason
-            or "not detected" in unavailable_reason
-        )
+        assert unavailable_reason == "cerberus binary not found in PATH"
 
     def test_full_path_cerberus_available_with_binary(self, tmp_path: Path) -> None:
         """Integration: cerberus path succeeds when binary available."""
-        import os
-        import stat
-
         from src.domain.validation.config_parser import _parse_epic_verification_config
         from src.infra.clients.cerberus_epic_verifier import CerberusEpicVerifier
         from src.infra.io.config import MalaConfig
@@ -403,16 +388,8 @@ class TestEpicVerifierConfigIntegration:
             _create_epic_verification_model,
         )
 
-        # Create a fake review-gate binary
-        bin_path = tmp_path / "bin"
-        bin_path.mkdir()
-        review_gate = bin_path / "review-gate"
-        review_gate.write_text(
-            '#!/usr/bin/env sh\ncase "$1" in spawn-epic-verify) echo "Usage: spawn-epic-verify"; exit 0;; *) exit 1;; esac\n'
-        )
-        os.chmod(review_gate, stat.S_IRWXU)
-
-        mala_config = MalaConfig(cerberus_bin_path=bin_path)
+        bin_path = _write_fake_cerberus(tmp_path)
+        mala_config = MalaConfig(cerberus_env=(("PATH", str(bin_path)),))
 
         # Step 1: Parse config
         config = _parse_epic_verification_config({"reviewer_type": "cerberus"})
@@ -472,9 +449,6 @@ class TestEpicVerifierTimeoutFallback:
 
     def test_cerberus_without_config_uses_generic_timeout(self, tmp_path: Path) -> None:
         """When cerberus has no cerberus config, use generic timeout field."""
-        import os
-        import stat
-
         import yaml
 
         from src.infra.clients.cerberus_epic_verifier import CerberusEpicVerifier
@@ -483,16 +457,7 @@ class TestEpicVerifierTimeoutFallback:
         from src.orchestration.factory import create_orchestrator
         from src.orchestration.types import OrchestratorConfig
 
-        # Create a fake review-gate binary that supports spawn-epic-verify --help
-        # This allows the real _check_epic_verifier_availability to pass
-        bin_path = tmp_path / "bin"
-        bin_path.mkdir()
-        review_gate = bin_path / "review-gate"
-        review_gate.write_text(
-            "#!/usr/bin/env sh\n"
-            'case "$1" in spawn-epic-verify) echo "Usage: spawn-epic-verify"; exit 0;; *) exit 1;; esac\n'
-        )
-        os.chmod(review_gate, stat.S_IRWXU)
+        bin_path = _write_fake_cerberus(tmp_path)
 
         # Create mala.yaml with cerberus type but no cerberus config
         # and a custom generic timeout
@@ -511,7 +476,7 @@ class TestEpicVerifierTimeoutFallback:
         )
 
         config = OrchestratorConfig(repo_path=tmp_path)
-        mala_config = MalaConfig(cerberus_bin_path=bin_path)
+        mala_config = MalaConfig(cerberus_env=(("PATH", str(bin_path)),))
         orchestrator = create_orchestrator(config, mala_config=mala_config)
 
         # Verify the epic verifier uses generic timeout (120 seconds)

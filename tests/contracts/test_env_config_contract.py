@@ -51,19 +51,6 @@ class TestFakeEnvConfigBehavior:
         assert isinstance(config.lock_dir, Path)
 
     @pytest.mark.unit
-    def test_find_cerberus_bin_path_returns_none_by_default(self) -> None:
-        """find_cerberus_bin_path() returns None by default."""
-        config = FakeEnvConfig()
-        assert config.find_cerberus_bin_path() is None
-
-    @pytest.mark.unit
-    def test_find_cerberus_bin_path_returns_configured_path(self) -> None:
-        """find_cerberus_bin_path() returns configured path when set."""
-        config = FakeEnvConfig(_cerberus_bin_path=Path("/usr/local/bin/cerberus"))
-        result = config.find_cerberus_bin_path()
-        assert result == Path("/usr/local/bin/cerberus")
-
-    @pytest.mark.unit
     def test_paths_can_be_customized(self) -> None:
         """All paths can be customized via constructor."""
         config = FakeEnvConfig(

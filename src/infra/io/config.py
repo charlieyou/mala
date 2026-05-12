@@ -414,11 +414,15 @@ class MalaConfig:
             Defaults to True.
         review_timeout: Timeout in seconds for review operations.
             Defaults to 600. Configure via mala.yaml code_review settings.
-        cerberus_spawn_args: Extra args for `review-gate spawn-code-review`.
+        cerberus_state_root: Runtime Cerberus state root injected by the factory.
+            Defaults to None.
+        cerberus_project_key: Runtime Cerberus project key injected by the factory.
+            Defaults to None.
+        cerberus_spawn_args: Extra args for `cerberus spawn-code-review`.
             Defaults to empty. Configure via mala.yaml code_review.cerberus.spawn_args.
-        cerberus_wait_args: Extra args for `review-gate wait`.
+        cerberus_wait_args: Extra args for `cerberus wait`.
             Defaults to empty. Configure via mala.yaml code_review.cerberus.wait_args.
-        cerberus_env: Extra environment variables for review-gate.
+        cerberus_env: Extra environment variables for cerberus.
             Defaults to empty. Configure via mala.yaml code_review.cerberus.env.
         track_review_issues: Whether to create beads issues for P2/P3 review findings.
             Env: MALA_TRACK_REVIEW_ISSUES (default: True). Deprecated: use
@@ -452,7 +456,8 @@ class MalaConfig:
     # Review settings
     review_enabled: bool = field(default=True)
     review_timeout: int = field(default=600)
-    cerberus_bin_path: Path | None = None  # Path to cerberus bin/ directory
+    cerberus_state_root: Path | None = None
+    cerberus_project_key: str | None = None
     cerberus_spawn_args: tuple[str, ...] = field(default_factory=tuple)
     cerberus_wait_args: tuple[str, ...] = field(default_factory=tuple)
     cerberus_env: tuple[tuple[str, str], ...] = field(default_factory=tuple)
@@ -613,11 +618,6 @@ class MalaConfig:
         # Emit warnings for deprecated env vars (no longer read - use mala.yaml)
         _warn_deprecated_env_vars()
 
-        # Auto-detect cerberus bin path from Claude plugins
-        from src.infra.tools.cerberus import find_cerberus_bin_path
-
-        cerberus_bin_path = find_cerberus_bin_path(claude_config_dir)
-
         # Parse track_review_issues flag (defaults to True)
         track_review_issues_raw = os.environ.get("MALA_TRACK_REVIEW_ISSUES", "").lower()
         track_review_issues = track_review_issues_raw not in ("0", "false", "no", "off")
@@ -752,7 +752,8 @@ class MalaConfig:
             lock_dir=lock_dir,
             claude_config_dir=claude_config_dir,
             review_timeout=600,  # Default; use mala.yaml for custom values
-            cerberus_bin_path=cerberus_bin_path,
+            cerberus_state_root=None,  # Factory injects runtime-derived value
+            cerberus_project_key=None,  # Factory injects runtime-derived value
             cerberus_spawn_args=(),  # Default; use mala.yaml for custom values
             cerberus_wait_args=(),  # Default; use mala.yaml for custom values
             cerberus_env=(),  # Default; use mala.yaml for custom values
@@ -838,8 +839,8 @@ class CLIOverrides:
     parsed and merged with MalaConfig to produce a ResolvedConfig.
 
     Attributes:
-        cerberus_spawn_args: Raw string of extra args for review-gate spawn.
-        cerberus_wait_args: Raw string of extra args for review-gate wait.
+        cerberus_spawn_args: Raw string of extra args for cerberus spawn.
+        cerberus_wait_args: Raw string of extra args for cerberus wait.
         cerberus_env: Raw string of extra env vars (JSON or KEY=VALUE,KEY=VALUE).
         review_timeout: Override for review timeout in seconds.
         max_epic_verification_retries: Override for max epic verification retries.
@@ -879,10 +880,11 @@ class ResolvedConfig:
         claude_config_dir: Claude SDK configuration directory.
         review_enabled: Whether automated code review is enabled.
         review_timeout: Timeout in seconds for review operations.
-        cerberus_bin_path: Path to cerberus bin/ directory.
-        cerberus_spawn_args: Parsed extra args for review-gate spawn.
-        cerberus_wait_args: Parsed extra args for review-gate wait.
-        cerberus_env: Parsed extra environment variables for review-gate.
+        cerberus_state_root: Runtime Cerberus state root injected by the factory.
+        cerberus_project_key: Runtime Cerberus project key injected by the factory.
+        cerberus_spawn_args: Parsed extra args for cerberus spawn.
+        cerberus_wait_args: Parsed extra args for cerberus wait.
+        cerberus_env: Parsed extra environment variables for cerberus.
         track_review_issues: Whether to create beads issues for P2/P3 (deprecated fallback).
         llm_api_key: API key for LLM calls.
         llm_base_url: Base URL for LLM API.
@@ -900,7 +902,8 @@ class ResolvedConfig:
     # Review settings
     review_enabled: bool
     review_timeout: int
-    cerberus_bin_path: Path | None
+    cerberus_state_root: Path | None
+    cerberus_project_key: str | None
     cerberus_spawn_args: tuple[str, ...]
     cerberus_wait_args: tuple[str, ...]
     cerberus_env: tuple[tuple[str, str], ...]
@@ -1088,7 +1091,8 @@ def build_resolved_config(
         claude_config_dir=base_config.claude_config_dir,
         review_enabled=review_enabled,
         review_timeout=review_timeout,
-        cerberus_bin_path=base_config.cerberus_bin_path,
+        cerberus_state_root=base_config.cerberus_state_root,
+        cerberus_project_key=base_config.cerberus_project_key,
         cerberus_spawn_args=spawn_args,
         cerberus_wait_args=wait_args,
         cerberus_env=env,

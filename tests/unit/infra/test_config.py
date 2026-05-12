@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -14,7 +13,6 @@ from src.infra.io.config import (
     MalaConfig,
     build_resolved_config,
 )
-from src.infra.tools.cerberus import find_cerberus_bin_path
 
 
 class TestMalaConfigFromEnv:
@@ -104,100 +102,26 @@ class TestMalaConfigFromEnv:
             # No field for this in MalaConfig; just verify warning is emitted
             MalaConfig.from_env(validate=False)
 
-    def test_from_env_detects_cerberus_bin_path_schema_v2(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    def test_new_cerberus_runtime_fields_default_to_none(self) -> None:
+        """Cerberus runtime fields default to None until the factory injects them."""
+        config = MalaConfig()
+        assert config.cerberus_state_root is None
+        assert config.cerberus_project_key is None
+
+    def test_from_env_does_not_populate_cerberus_runtime_fields(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """from_env() detects cerberus bin path with v2 plugins schema."""
-        plugins_dir = tmp_path / "plugins"
-        install_dir = plugins_dir / "cache" / "cerberus" / "cerberus" / "1.1.5"
-        bin_dir = install_dir / "bin"
-        bin_dir.mkdir(parents=True)
-        (bin_dir / "review-gate").write_text("#!/usr/bin/env bash\n")
-
-        installed = {
-            "version": 2,
-            "plugins": {
-                "cerberus@cerberus": [
-                    {
-                        "installPath": str(install_dir),
-                        "version": "1.1.5",
-                    }
-                ]
-            },
-        }
-        (plugins_dir / "installed_plugins.json").write_text(json.dumps(installed))
-
-        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+        """from_env() leaves runtime-derived Cerberus fields unset."""
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/custom/claude")
         config = MalaConfig.from_env(validate=False)
-        assert config.cerberus_bin_path == bin_dir
+        assert config.cerberus_state_root is None
+        assert config.cerberus_project_key is None
 
-    def test_from_env_skips_cerberus_v2_plugin_install(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """from_env() only auto-detects Cerberus 1.x plugin installs."""
-        plugins_dir = tmp_path / "plugins"
-        install_dir = plugins_dir / "cache" / "cerberus" / "cerberus" / "2.0.0"
-        bin_dir = install_dir / "bin"
-        bin_dir.mkdir(parents=True)
-        (bin_dir / "review-gate").write_text("#!/usr/bin/env bash\n")
-
-        installed = {
-            "version": 2,
-            "plugins": {
-                "cerberus@cerberus": [
-                    {
-                        "installPath": str(install_dir),
-                        "version": "2.0.0",
-                    }
-                ]
-            },
-        }
-        (plugins_dir / "installed_plugins.json").write_text(json.dumps(installed))
-
-        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
-        config = MalaConfig.from_env(validate=False)
-        assert config.cerberus_bin_path is None
-
-    def test_cerberus_bin_discovery_uses_v1_when_v2_is_also_installed(
-        self, tmp_path: Path
-    ) -> None:
-        """Cerberus discovery ignores 2.x installs and returns an available 1.x bin."""
-        plugins_dir = tmp_path / "plugins"
-        v2_install = plugins_dir / "cache" / "cerberus" / "cerberus" / "2.0.0"
-        v2_bin = v2_install / "bin"
-        v2_bin.mkdir(parents=True)
-        (v2_bin / "review-gate").write_text("#!/usr/bin/env bash\n")
-
-        v1_install = plugins_dir / "cache" / "cerberus" / "cerberus" / "1.2.3"
-        v1_bin = v1_install / "bin"
-        v1_bin.mkdir(parents=True)
-        (v1_bin / "review-gate").write_text("#!/usr/bin/env bash\n")
-
-        installed = {
-            "version": 2,
-            "plugins": {
-                "cerberus@cerberus": [
-                    {"installPath": str(v2_install), "version": "2.0.0"},
-                    {"installPath": str(v1_install), "version": "1.2.3"},
-                ]
-            },
-        }
-        (plugins_dir / "installed_plugins.json").write_text(json.dumps(installed))
-
-        assert find_cerberus_bin_path(tmp_path) == v1_bin
-
-    def test_cerberus_cache_fallback_skips_v2_directories(self, tmp_path: Path) -> None:
-        """Cache fallback only considers Cerberus 1.x version directories."""
-        cache_root = tmp_path / "plugins" / "cache" / "cerberus" / "cerberus"
-        v2_bin = cache_root / "2.0.0" / "bin"
-        v2_bin.mkdir(parents=True)
-        (v2_bin / "review-gate").write_text("#!/usr/bin/env bash\n")
-
-        v1_bin = cache_root / "1.4.0" / "bin"
-        v1_bin.mkdir(parents=True)
-        (v1_bin / "review-gate").write_text("#!/usr/bin/env bash\n")
-
-        assert find_cerberus_bin_path(tmp_path) == v1_bin
+    def test_removed_binary_path_kwarg_raises_type_error(self) -> None:
+        """The removed binary path field has no compatibility shim."""
+        removed_kwarg = "_".join(("cerberus", "bin", "path"))
+        with pytest.raises(TypeError):
+            MalaConfig(**{removed_kwarg: Path("/tmp/bin")})  # ty:ignore[invalid-argument-type]
 
     def test_from_env_validates_by_default(
         self, monkeypatch: pytest.MonkeyPatch

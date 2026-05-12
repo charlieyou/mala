@@ -36,24 +36,13 @@ def make_mock_env_config(tmp_path: Path | None = None) -> Mock:
     """Create a mock EnvConfigPort.
 
     Args:
-        tmp_path: If provided, creates a real cerberus bin directory with review-gate.
-                  Otherwise returns None (skips cerberus check).
+        tmp_path: Retained for call-site compatibility; Cerberus is resolved via PATH.
     """
+    _ = tmp_path
     mock = Mock()
     mock.scripts_dir = Path("/mock/scripts")
     mock.cache_dir = Path("/mock/cache")
     mock.lock_dir = Path("/tmp/mock-locks")
-
-    if tmp_path is not None:
-        # Create a real cerberus bin directory with review-gate
-        cerberus_bin = tmp_path / "cerberus-bin"
-        cerberus_bin.mkdir(exist_ok=True)
-        (cerberus_bin / "review-gate").touch()
-        mock.find_cerberus_bin_path.return_value = cerberus_bin
-    else:
-        # Return None so check_prereqs fails fast (not the file check)
-        mock.find_cerberus_bin_path.return_value = None
-
     return mock
 
 

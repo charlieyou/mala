@@ -165,14 +165,21 @@ class E2ERunner:
         if not shutil.which("br"):
             missing.append("br CLI not found in PATH")
 
-        # Check for Cerberus review-gate (required for E2E to test review flow)
-        cerberus_bin = self.env_config.find_cerberus_bin_path()
+        # Check for Cerberus v2 on PATH (required for E2E review flow)
+        effective_path = env.get("PATH", "")
+        cerberus_bin = shutil.which("cerberus", path=effective_path)
         if cerberus_bin is None:
-            missing.append(
-                "Cerberus review-gate not installed (check ~/.claude/plugins)"
+            missing.append("cerberus binary not found in PATH")
+        else:
+            cerberus_root = (
+                Path(env["CERBERUS_ROOT"])
+                if env.get("CERBERUS_ROOT")
+                else Path(cerberus_bin).resolve().parent.parent
             )
-        elif not (cerberus_bin / "review-gate").exists():
-            missing.append(f"review-gate binary not found at {cerberus_bin}")
+            if not (cerberus_root / "prompts" / "reviewers").is_dir():
+                missing.append(
+                    f"cerberus root {cerberus_root} missing prompts/reviewers/"
+                )
 
         if missing:
             return E2EPrereqResult(ok=False, missing=missing, can_skip=False)

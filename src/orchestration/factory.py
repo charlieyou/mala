@@ -27,6 +27,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import shutil
@@ -254,6 +255,76 @@ def _get_reviewer_config(repo_path: Path) -> _ReviewerConfig:
         return _ReviewerConfig()
 
 
+def _effective_cerberus_env(
+    mala_config: MalaConfig | None = None,
+    cerberus_config: CerberusConfig | None = None,
+) -> dict[str, str]:
+    """Return Cerberus env overrides, preferring trigger-specific config."""
+    if cerberus_config is not None:
+        return dict(cerberus_config.env)
+    if mala_config is not None:
+        return dict(mala_config.cerberus_env)
+    return {}
+
+
+def _effective_path(env: dict[str, str]) -> str:
+    """Build PATH from Cerberus env overrides and the process environment."""
+    if "PATH" in env:
+        return env["PATH"] + os.pathsep + os.environ.get("PATH", "")
+    return os.environ.get("PATH", "")
+
+
+def _resolve_cerberus_root(env: dict[str, str], effective_path: str) -> Path | None:
+    """Resolve CERBERUS_ROOT using the same precedence as CerberusCLI."""
+    if configured_root := env.get("CERBERUS_ROOT"):
+        return Path(configured_root)
+    if process_root := os.environ.get("CERBERUS_ROOT"):
+        return Path(process_root)
+    if binary := shutil.which("cerberus", path=effective_path):
+        return Path(binary).resolve().parent.parent
+    return None
+
+
+def _check_cerberus_availability(
+    mala_config: MalaConfig | None = None,
+    cerberus_config: CerberusConfig | None = None,
+) -> str | None:
+    """Check Cerberus v2 availability without invoking a subprocess."""
+    env = _effective_cerberus_env(mala_config, cerberus_config)
+    effective_path = _effective_path(env)
+    if shutil.which("cerberus", path=effective_path) is None:
+        return "cerberus binary not found in PATH"
+
+    root = _resolve_cerberus_root(env, effective_path)
+    root_label = str(root) if root is not None else "<unresolved>"
+    if root is None or not (root / "prompts" / "reviewers").is_dir():
+        return f"cerberus root {root_label} missing prompts/reviewers/"
+    return None
+
+
+def _cerberus_state_root(mala_config: MalaConfig | None) -> Path:
+    """Return the factory-provided Cerberus state root fallback."""
+    if mala_config is not None and mala_config.cerberus_state_root is not None:
+        return mala_config.cerberus_state_root
+    runs_dir = (
+        mala_config.runs_dir
+        if mala_config is not None
+        else Path.home() / ".config" / "mala" / "runs"
+    )
+    return runs_dir / "cerberus"
+
+
+def _cerberus_project_key(
+    repo_path: Path, env: dict[str, str], mala_config: MalaConfig | None
+) -> str:
+    """Return user-pinned or factory-derived Cerberus project key."""
+    if env_project_key := env.get("CERBERUS_PROJECT_KEY"):
+        return env_project_key
+    if mala_config is not None and mala_config.cerberus_project_key is not None:
+        return mala_config.cerberus_project_key
+    return hashlib.sha256(os.path.abspath(repo_path).encode()).hexdigest()[:16]
+
+
 def _check_review_availability(
     mala_config: MalaConfig,
     disabled_validations: set[str],
@@ -263,7 +334,8 @@ def _check_review_availability(
 
     Returns the reason review is disabled, or None if available.
     For agent_sdk reviewer, always available (no external dependencies).
-    For cerberus reviewer, checks if review-gate binary is available.
+    For cerberus reviewer, checks if the cerberus binary and reviewer prompts
+    are available without invoking cerberus subcommands.
     For unknown reviewer_type, returns disabled with warning.
 
     Args:
@@ -287,36 +359,8 @@ def _check_review_availability(
         logger.warning("Review disabled: reason=%s", reason)
         return reason
 
-    # Cerberus reviewer requires review-gate binary
-    review_gate_path = (
-        mala_config.cerberus_bin_path / "review-gate"
-        if mala_config.cerberus_bin_path
-        else None
-    )
-
-    if review_gate_path is None:
-        # No explicit bin_path - check PATH (respecting cerberus_env if set)
-        cerberus_env_dict = dict(mala_config.cerberus_env)
-        if "PATH" in cerberus_env_dict:
-            effective_path = (
-                cerberus_env_dict["PATH"] + os.pathsep + os.environ.get("PATH", "")
-            )
-        else:
-            effective_path = os.environ.get("PATH", "")
-        if shutil.which("review-gate", path=effective_path) is None:
-            reason = "cerberus plugin not detected (review-gate unavailable)"
-            logger.info("Review disabled: reason=%s", reason)
-            return reason
-    elif not review_gate_path.exists():
-        reason = f"review-gate missing at {review_gate_path}"
-        logger.info("Review disabled: reason=%s", reason)
-        return reason
-    elif not review_gate_path.is_file():
-        reason = f"review-gate path is not a file: {review_gate_path}"
-        logger.info("Review disabled: reason=%s", reason)
-        return reason
-    elif not os.access(review_gate_path, os.X_OK):
-        reason = f"review-gate not executable at {review_gate_path}"
+    reason = _check_cerberus_availability(mala_config=mala_config)
+    if reason is not None:
         logger.info("Review disabled: reason=%s", reason)
         return reason
 
@@ -332,124 +376,32 @@ def _check_epic_verifier_availability(
 
     Returns the reason verifier is disabled, or None if available.
     For agent_sdk reviewer, always available (no external dependencies).
-    For cerberus reviewer, probes `spawn-epic-verify --help` per R5 spec.
+    For cerberus reviewer, checks the cerberus binary and reviewer prompts
+    without invoking cerberus subcommands.
 
     Args:
         reviewer_type: Type of epic verifier ('agent_sdk' or 'cerberus').
-        mala_config: MalaConfig with Cerberus settings (bin_path, env).
+        mala_config: MalaConfig with Cerberus settings.
         cerberus_config: CerberusConfig from epic_verification.cerberus (env).
 
     Returns:
         Reason verifier is disabled, or None if available.
     """
-    import subprocess
-
     if reviewer_type == "agent_sdk":
         return None  # Always available
 
     if reviewer_type not in ("cerberus", "agent_sdk"):
         return f"unknown epic verification reviewer_type '{reviewer_type}'"
 
-    # Cerberus reviewer: probe spawn-epic-verify --help
-    review_gate_path = (
-        mala_config.cerberus_bin_path / "review-gate"
-        if mala_config and mala_config.cerberus_bin_path
-        else None
+    reason = _check_cerberus_availability(
+        mala_config=mala_config,
+        cerberus_config=cerberus_config,
     )
-
-    # Build effective env: prefer cerberus_config.env, fall back to mala_config.cerberus_env
-    if cerberus_config is not None:
-        cerberus_env_dict = dict(cerberus_config.env)
-    elif mala_config is not None:
-        cerberus_env_dict = dict(mala_config.cerberus_env)
-    else:
-        cerberus_env_dict = {}
-
-    # Check if review-gate exists
-    if review_gate_path is None:
-        # No explicit bin_path - check PATH (respecting cerberus env if set)
-        if "PATH" in cerberus_env_dict:
-            effective_path = (
-                cerberus_env_dict["PATH"] + os.pathsep + os.environ.get("PATH", "")
-            )
-        else:
-            effective_path = os.environ.get("PATH", "")
-        review_gate_bin = shutil.which("review-gate", path=effective_path)
-        if review_gate_bin is None:
-            reason = "cerberus plugin not detected (review-gate unavailable)"
-            logger.info("Epic verifier disabled: reason=%s", reason)
-            return reason
-        review_gate_cmd = review_gate_bin
-    elif not review_gate_path.exists():
-        reason = f"review-gate missing at {review_gate_path}"
-        logger.info("Epic verifier disabled: reason=%s", reason)
-        return reason
-    elif not review_gate_path.is_file():
-        reason = f"review-gate path is not a file: {review_gate_path}"
-        logger.info("Epic verifier disabled: reason=%s", reason)
-        return reason
-    elif not os.access(review_gate_path, os.X_OK):
-        reason = f"review-gate not executable at {review_gate_path}"
-        logger.info("Epic verifier disabled: reason=%s", reason)
-        return reason
-    else:
-        review_gate_cmd = str(review_gate_path)
-
-    # Probe spawn-epic-verify --help to verify subcommand support (R5)
-    env = dict(os.environ)
-    env.update(cerberus_env_dict)
-
-    try:
-        result = subprocess.run(
-            [review_gate_cmd, "spawn-epic-verify", "--help"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env=env,
-        )
-        if result.returncode != 0:
-            stderr_snippet = result.stderr[:200] if result.stderr else "(no output)"
-            reason = (
-                f"Cerberus plugin does not support epic verification: {stderr_snippet}. "
-                "Update plugin or use reviewer_type: agent_sdk."
-            )
-            logger.info("Epic verifier disabled: reason=%s", reason)
-            return reason
-    except FileNotFoundError:
-        reason = "cerberus plugin not detected (review-gate unavailable)"
-        logger.info("Epic verifier disabled: reason=%s", reason)
-        return reason
-    except subprocess.TimeoutExpired:
-        reason = "review-gate spawn-epic-verify --help timed out"
-        logger.info("Epic verifier disabled: reason=%s", reason)
-        return reason
-    except OSError as e:
-        reason = f"Failed to probe epic verification support: {e}"
+    if reason is not None:
         logger.info("Epic verifier disabled: reason=%s", reason)
         return reason
 
     return None
-
-
-def _with_cerberus_bin_path(
-    env: dict[str, str],
-    mala_config: MalaConfig | None,
-) -> dict[str, str]:
-    """Prepend configured Cerberus bin directory to PATH for runtime subprocesses."""
-    if mala_config is None:
-        return env
-
-    bin_path = getattr(mala_config, "cerberus_bin_path", None)
-    if not isinstance(bin_path, Path):
-        return env
-
-    merged = dict(env)
-    existing_path = merged.get("PATH", os.environ.get("PATH", ""))
-    if existing_path:
-        merged["PATH"] = str(bin_path) + os.pathsep + existing_path
-    else:
-        merged["PATH"] = str(bin_path)
-    return merged
 
 
 def _create_epic_verification_model(
@@ -496,15 +448,19 @@ def _create_epic_verification_model(
             env = {}
             spawn_args = ()
             wait_args = ()
+        state_root = _cerberus_state_root(mala_config)
+        project_key = _cerberus_project_key(repo_path, env, mala_config)
 
         return cast(
             "EpicVerificationModel",
             CerberusEpicVerifier(
                 repo_path=repo_path,
+                state_root=state_root,
+                project_key=project_key,
                 timeout=timeout_seconds,
                 spawn_args=spawn_args,
                 wait_args=wait_args,
-                env=_with_cerberus_bin_path(env, mala_config) or None,
+                env=env or None,
             ),
         )
 
@@ -551,7 +507,7 @@ def _create_code_reviewer(
     """
     from src.domain.prompts import load_prompts
     from src.infra.clients.agent_sdk_review import AgentSDKReviewer
-    from src.infra.clients.cerberus_cli import CerberusGateCLI
+    from src.infra.clients.cerberus_cli import CerberusCLI
     from src.infra.clients.cerberus_review import DefaultReviewer
     from src.infra.sdk_adapter import SDKClientFactory
 
@@ -563,18 +519,21 @@ def _create_code_reviewer(
             spawn_args = cerb.spawn_args
             wait_args = cerb.wait_args
             # Inject cerberus.timeout into wait_args if not already specified
-            if CerberusGateCLI.extract_wait_timeout(wait_args) is None:
+            if CerberusCLI.extract_wait_timeout(wait_args) is None:
                 wait_args = ("--timeout", str(cerb.timeout), *wait_args)
             env = dict(cerb.env)
         else:
             spawn_args = mala_config.cerberus_spawn_args
             wait_args = mala_config.cerberus_wait_args
             env = dict(mala_config.cerberus_env)
-        env = _with_cerberus_bin_path(env, mala_config)
+        state_root = _cerberus_state_root(mala_config)
+        project_key = _cerberus_project_key(repo_path, env, mala_config)
         return cast(
             "CodeReviewer",
             DefaultReviewer(
                 repo_path=repo_path,
+                state_root=state_root,
+                project_key=project_key,
                 spawn_args=spawn_args,
                 wait_args=wait_args,
                 env=env,

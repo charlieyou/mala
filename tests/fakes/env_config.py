@@ -14,7 +14,6 @@ class FakeEnvConfig:
     _scripts_dir: Path = field(default_factory=lambda: Path("/fake-scripts"))
     _cache_dir: Path = field(default_factory=lambda: Path("/fake-cache"))
     _lock_dir: Path = field(default_factory=lambda: Path("/fake-locks"))
-    _cerberus_bin_path: Path | None = None
 
     @property
     def scripts_dir(self) -> Path:
@@ -27,6 +26,3 @@ class FakeEnvConfig:
     @property
     def lock_dir(self) -> Path:
         return self._lock_dir
-
-    def find_cerberus_bin_path(self) -> Path | None:
-        return self._cerberus_bin_path

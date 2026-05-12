@@ -7,17 +7,34 @@ Tests for:
 Precedence/timeout/reviewer-type tests live in test_config_resolution.py.
 """
 
+import hashlib
+import os
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import pytest
 
-from src.infra.io.config import MalaConfig
 from src.orchestration.factory import (
+    _check_epic_verifier_availability,
     _check_review_availability,
-    _with_cerberus_bin_path,
 )
 from src.orchestration.types import OrchestratorConfig
+from src.infra.io.config import MalaConfig
+
+if TYPE_CHECKING:
+    from src.core.protocols.events import MalaEventSink
+
+
+def _write_fake_cerberus(root: Path) -> Path:
+    """Create a fake Cerberus v2 root with binary and reviewer prompts."""
+    bin_dir = root / "bin"
+    bin_dir.mkdir()
+    (root / "prompts" / "reviewers").mkdir(parents=True)
+    binary = bin_dir / "cerberus"
+    binary.write_text("#!/usr/bin/env sh\nexit 0\n")
+    binary.chmod(0o755)
+    return bin_dir
 
 
 class TestCheckReviewAvailability:
@@ -68,91 +85,157 @@ class TestCheckReviewAvailability:
         self, mala_config: MalaConfig
     ) -> None:
         """cerberus reviewer without binary should disable review."""
-        # Patch shutil.which to return None (no binary found)
         with patch("shutil.which", return_value=None):
             result = _check_review_availability(
                 mala_config=mala_config,
                 disabled_validations=set(),
                 reviewer_type="cerberus",
             )
-        assert result is not None
-        assert "review-gate" in result
+        assert result == "cerberus binary not found in PATH"
 
-    def test_cerberus_with_binary_is_available(self, mala_config: MalaConfig) -> None:
-        """cerberus reviewer with binary available should return None."""
-        # Patch shutil.which to return a path (binary found)
-        with patch("shutil.which", return_value="/usr/bin/review-gate"):
-            result = _check_review_availability(
-                mala_config=mala_config,
-                disabled_validations=set(),
-                reviewer_type="cerberus",
-            )
-        assert result is None
-
-    def test_cerberus_with_explicit_bin_path_existing(self) -> None:
-        """cerberus reviewer with explicit bin_path to existing binary is available."""
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            bin_path = Path(tmpdir)
-            # Create the review-gate binary
-            review_gate = bin_path / "review-gate"
-            review_gate.touch()
-            review_gate.chmod(0o755)
-
-            config = MalaConfig(
-                runs_dir=Path("/tmp/runs"),
-                lock_dir=Path("/tmp/locks"),
-                cerberus_bin_path=bin_path,
-            )
-            result = _check_review_availability(
-                mala_config=config,
-                disabled_validations=set(),
-                reviewer_type="cerberus",
-            )
-        assert result is None
-
-    def test_cerberus_with_explicit_bin_path_missing_binary(self) -> None:
-        """cerberus reviewer with explicit bin_path but missing binary is disabled."""
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            bin_path = Path(tmpdir)
-            # Do NOT create the review-gate binary
-
-            config = MalaConfig(
-                runs_dir=Path("/tmp/runs"),
-                lock_dir=Path("/tmp/locks"),
-                cerberus_bin_path=bin_path,
-            )
-            result = _check_review_availability(
-                mala_config=config,
-                disabled_validations=set(),
-                reviewer_type="cerberus",
-            )
-        assert result is not None
-        assert "review-gate" in result
-
-
-class TestWithCerberusBinPath:
-    """Tests for Cerberus runtime PATH injection."""
-
-    def test_preserves_system_path_when_env_has_no_path(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    def test_cerberus_with_binary_and_prompts_is_available(
+        self, tmp_path: Path
     ) -> None:
-        """Configured Cerberus bin prepends to current PATH when env omits PATH."""
-        bin_path = tmp_path / "cerberus-bin"
-        monkeypatch.setenv("PATH", "/usr/bin:/bin")
+        """cerberus reviewer is available when binary and prompts exist."""
+        bin_dir = _write_fake_cerberus(tmp_path)
+        config = MalaConfig(cerberus_env=(("PATH", str(bin_dir)),))
+        result = _check_review_availability(
+            mala_config=config,
+            disabled_validations=set(),
+            reviewer_type="cerberus",
+        )
+        assert result is None
+
+    def test_cerberus_with_missing_prompts_returns_reason(self, tmp_path: Path) -> None:
+        """cerberus reviewer is disabled when root lacks reviewer prompts."""
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        binary = bin_dir / "cerberus"
+        binary.write_text("#!/usr/bin/env sh\nexit 0\n")
+        binary.chmod(0o755)
+        config = MalaConfig(cerberus_env=(("PATH", str(bin_dir)),))
+        result = _check_review_availability(
+            mala_config=config,
+            disabled_validations=set(),
+            reviewer_type="cerberus",
+        )
+        assert result == f"cerberus root {tmp_path} missing prompts/reviewers/"
+
+    def test_availability_checks_do_not_invoke_cerberus_subprocess(
+        self, tmp_path: Path
+    ) -> None:
+        """Availability checks must not run cerberus subcommands."""
+        bin_dir = _write_fake_cerberus(tmp_path)
+        config = MalaConfig(cerberus_env=(("PATH", str(bin_dir)),))
+        with patch("subprocess.run") as run:
+            assert (
+                _check_review_availability(
+                    mala_config=config,
+                    disabled_validations=set(),
+                    reviewer_type="cerberus",
+                )
+                is None
+            )
+            assert (
+                _check_epic_verifier_availability(
+                    reviewer_type="cerberus",
+                    mala_config=config,
+                )
+                is None
+            )
+        run.assert_not_called()
+
+
+class TestCerberusFactoryWiring:
+    """Tests for Cerberus adapter construction."""
+
+    def test_create_code_reviewer_passes_state_root_and_project_key(
+        self, tmp_path: Path
+    ) -> None:
+        from src.infra.clients.cerberus_review import DefaultReviewer
+        from src.orchestration.config_resolution import _ReviewerConfig
+        from src.orchestration.factory import _create_code_reviewer
+
+        state_root = tmp_path / "runs" / "run-id" / "cerberus"
         config = MalaConfig(
-            runs_dir=Path("/tmp/runs"),
-            lock_dir=Path("/tmp/locks"),
-            cerberus_bin_path=bin_path,
+            cerberus_state_root=state_root,
+            cerberus_project_key="project-key",
+            cerberus_env=(("PATH", "/cerberus/bin"),),
         )
 
-        result = _with_cerberus_bin_path({"CERBERUS_TOKEN": "secret"}, config)
+        reviewer = _create_code_reviewer(
+            repo_path=tmp_path,
+            mala_config=config,
+            event_sink=cast("MalaEventSink", None),
+            reviewer_config=_ReviewerConfig(reviewer_type="cerberus"),
+        )
 
-        assert result["PATH"] == f"{bin_path}:/usr/bin:/bin"
-        assert result["CERBERUS_TOKEN"] == "secret"
+        assert isinstance(reviewer, DefaultReviewer)
+        assert reviewer.state_root == state_root
+        assert reviewer.project_key == "project-key"
+        assert reviewer.env == {"PATH": "/cerberus/bin"}
+
+    def test_create_code_reviewer_derives_project_key(self, tmp_path: Path) -> None:
+        from src.infra.clients.cerberus_review import DefaultReviewer
+        from src.orchestration.config_resolution import _ReviewerConfig
+        from src.orchestration.factory import _create_code_reviewer
+
+        config = MalaConfig(runs_dir=tmp_path / "runs")
+        expected = hashlib.sha256(os.path.abspath(tmp_path).encode()).hexdigest()[:16]
+
+        reviewer = _create_code_reviewer(
+            repo_path=tmp_path,
+            mala_config=config,
+            event_sink=cast("MalaEventSink", None),
+            reviewer_config=_ReviewerConfig(reviewer_type="cerberus"),
+        )
+
+        assert isinstance(reviewer, DefaultReviewer)
+        assert reviewer.state_root == tmp_path / "runs" / "cerberus"
+        assert reviewer.project_key == expected
+
+    def test_create_epic_verifier_passes_state_root_and_project_key(
+        self, tmp_path: Path
+    ) -> None:
+        from src.infra.clients.cerberus_epic_verifier import CerberusEpicVerifier
+        from src.orchestration.factory import _create_epic_verification_model
+
+        state_root = tmp_path / "runs" / "run-id" / "cerberus"
+        config = MalaConfig(
+            cerberus_state_root=state_root,
+            cerberus_project_key="project-key",
+        )
+
+        model = _create_epic_verification_model(
+            reviewer_type="cerberus",
+            repo_path=tmp_path,
+            timeout_ms=60000,
+            mala_config=config,
+        )
+
+        assert isinstance(model, CerberusEpicVerifier)
+        assert model.state_root == state_root
+        assert model.project_key == "project-key"
+
+    def test_cerberus_env_project_key_overrides_derived_key(
+        self, tmp_path: Path
+    ) -> None:
+        from src.domain.validation.config_types import CerberusConfig
+        from src.infra.clients.cerberus_epic_verifier import CerberusEpicVerifier
+        from src.orchestration.factory import _create_epic_verification_model
+
+        model = _create_epic_verification_model(
+            reviewer_type="cerberus",
+            repo_path=tmp_path,
+            timeout_ms=60000,
+            mala_config=MalaConfig(cerberus_project_key="default-project"),
+            cerberus_config=CerberusConfig(
+                env=(("CERBERUS_PROJECT_KEY", "pinned-project"),)
+            ),
+        )
+
+        assert isinstance(model, CerberusEpicVerifier)
+        assert model.project_key == "pinned-project"
 
 
 class TestBuildDependenciesRuntimeDeps:

@@ -158,7 +158,9 @@ def _install_partial_v2_import_compat(monkeypatch: pytest.MonkeyPatch) -> None:
             )
 
     monkeypatch.setattr(cerberus_cli, "CerberusGateCLI", CerberusGateCLI)
-    monkeypatch.setattr(cerberus_review, "CerberusGateCLI", CerberusGateCLI)
+    monkeypatch.setattr(
+        cerberus_review, "CerberusGateCLI", CerberusGateCLI, raising=False
+    )
 
 
 async def _run_review(

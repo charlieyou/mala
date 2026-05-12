@@ -207,13 +207,3 @@ class EnvConfig:
     def lock_dir(self) -> Path:
         """Path to the lock directory for multi-agent coordination."""
         return get_lock_dir()
-
-    def find_cerberus_bin_path(self) -> Path | None:
-        """Find the cerberus plugin bin directory.
-
-        Returns:
-            Path to cerberus bin directory, or None if not found.
-        """
-        from src.infra.tools.cerberus import find_cerberus_bin_path
-
-        return find_cerberus_bin_path(get_claude_config_dir())

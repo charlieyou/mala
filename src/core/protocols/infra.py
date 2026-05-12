@@ -142,14 +142,6 @@ class EnvConfigPort(Protocol):
         """Path to the lock directory for multi-agent coordination."""
         ...
 
-    def find_cerberus_bin_path(self) -> Path | None:
-        """Find the cerberus plugin bin directory.
-
-        Returns:
-            Path to cerberus bin directory, or None if not found.
-        """
-        ...
-
 
 @runtime_checkable
 class LockManagerPort(Protocol):

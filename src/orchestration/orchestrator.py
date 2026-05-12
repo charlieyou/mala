@@ -1330,6 +1330,20 @@ class MalaOrchestrator:
 
         # Inject run_metadata into run_coordinator for cumulative code review
         self.run_coordinator.run_metadata = run_metadata
+        if self._mala_config.cerberus_state_root is None:
+            cerberus_state_root = runs_dir / run_metadata.run_id / "cerberus"
+            if hasattr(self.code_reviewer, "state_root"):
+                code_reviewer = self.code_reviewer
+                code_reviewer_any: Any = code_reviewer
+                code_reviewer_any.state_root = cerberus_state_root
+            epic_model = (
+                getattr(self.epic_verifier, "model", None)
+                if self.epic_verifier is not None
+                else None
+            )
+            if hasattr(epic_model, "state_root"):
+                epic_model_any: Any = epic_model
+                epic_model_any.state_root = cerberus_state_root
 
         per_session_spec = build_validation_spec(
             self.repo_path,
