@@ -136,7 +136,7 @@ def _read_reviewer_output(
     try:
         raw = output_path.read_text(encoding="utf-8")
         data = json.loads(raw)
-    except json.JSONDecodeError as e:
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
         return [], f"Malformed reviewer output JSON at {output_path}: {e}"
     except OSError as e:
         return [], f"Could not read reviewer output file {output_path}: {e}"

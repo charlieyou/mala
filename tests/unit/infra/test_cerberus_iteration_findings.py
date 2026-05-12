@@ -192,6 +192,28 @@ def test_malformed_output_is_skipped_with_parse_error(tmp_path: Path) -> None:
     assert "Malformed reviewer output JSON" in parse_errors[0]
 
 
+def test_non_utf8_output_is_skipped_with_parse_error(tmp_path: Path) -> None:
+    run_root = _run_root(tmp_path)
+    _write_output(run_root, 1, 1, "codex#1", [_finding(title="valid")])
+    bad_output = (
+        run_root
+        / "iterations"
+        / "1"
+        / "round-1"
+        / "reviewers"
+        / "claude#1"
+        / "output.json"
+    )
+    bad_output.parent.mkdir(parents=True)
+    bad_output.write_bytes(b"\xff\xfe\xfa")
+
+    issues, parse_errors = read_findings(tmp_path / "state", "project", "run")
+
+    assert [issue.title for issue in issues] == ["valid"]
+    assert len(parse_errors) == 1
+    assert "Malformed reviewer output JSON" in parse_errors[0]
+
+
 @pytest.mark.parametrize("priority", [0, 1, 2, 3])
 def test_p0_to_p3_priority_parsing(tmp_path: Path, priority: int) -> None:
     run_root = _run_root(tmp_path)
