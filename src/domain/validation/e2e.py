@@ -298,7 +298,7 @@ class E2ERunner:
         # Override CLAUDE_SESSION_ID to avoid conflicts with the parent session's review.
         # Cerberus tracks pending reviews per session, so running e2e
         # inside an existing mala session (which already has an active review) would
-        # fail with "Review gate already active" unless we use a distinct session ID.
+        # fail with "active review already exists" unless we use a distinct session ID.
         child_env = dict(env)
         child_env["CLAUDE_SESSION_ID"] = f"e2e-{uuid.uuid4()}"
 
