@@ -15,6 +15,8 @@ from src.infra.clients.cerberus_review import DefaultReviewer
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from src.infra.clients.cerberus_output_parser import ReviewResult
+
 
 pytestmark = [
     pytest.mark.e2e,
@@ -105,6 +107,13 @@ def _reviewer(repo_path: Path) -> DefaultReviewer:
     )
 
 
+def _assert_review_completed(result: ReviewResult) -> None:
+    assert result.fatal_error is False, f"Fatal error: {result.parse_error}"
+    assert result.parse_error is None
+    assert isinstance(result.passed, bool)
+    assert isinstance(result.issues, list)
+
+
 def test_cerberus_binary_available() -> None:
     """The v2 cerberus binary is available for real e2e runs."""
     result = subprocess.run(
@@ -127,7 +136,7 @@ async def test_review_gate_full_flow(tmp_path: Path) -> None:
         commit_shas=[head_sha],
     )
 
-    assert result.fatal_error is False, f"Fatal error: {result.parse_error}"
+    _assert_review_completed(result)
 
 
 @pytest.mark.asyncio
@@ -140,7 +149,7 @@ async def test_review_gate_commits_scope(tmp_path: Path) -> None:
         commit_shas=[commits[1]],
     )
 
-    assert result.fatal_error is False, f"Fatal error: {result.parse_error}"
+    _assert_review_completed(result)
 
 
 @pytest.mark.asyncio

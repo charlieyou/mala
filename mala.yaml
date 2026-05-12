@@ -1,5 +1,5 @@
-coder: claude
-effort: xhigh
+coder: codex
+effort: medium
 
 preset: python-uv
 
@@ -10,6 +10,8 @@ commands:
 per_issue_review:
   enabled: true
   reviewer_type: cerberus
+  cerberus:
+    timeout: 900
   max_retries: 10
   finding_threshold: P1
 
