@@ -98,6 +98,7 @@ import uuid
 from typing import Any
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 
 pytestmark = pytest.mark.integration
 
@@ -167,6 +168,65 @@ def _new_codex(codex_app_server: Any) -> Any:  # noqa: ANN401 — SDK is optiona
     except Exception as exc:
         pytest.skip(f"Codex client construction failed (auth/runtime?): {exc!r}")
     return client
+
+
+class _ThreadCompatResponse(BaseModel):
+    """Permissive subset of Codex thread lifecycle responses.
+
+    Codex CLI 0.129 can return ``serviceTier='priority'`` before the generated
+    Python SDK enum accepts that value. The spike only needs ``thread.id`` to
+    construct the SDK ``Thread`` wrapper, so ignore nonessential response
+    fields rather than letting stale enum validation mask the thread/read
+    evidence checks.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    thread: dict[str, object]
+
+
+def _thread_id_from_lifecycle_response(response: BaseModel) -> str:
+    data = response.model_dump()
+    thread = data.get("thread")
+    thread_id = thread.get("id") if isinstance(thread, dict) else None
+    if not isinstance(thread_id, str) or not thread_id:
+        pytest.skip(f"Codex lifecycle response missing thread.id: {data!r}")
+    return thread_id
+
+
+def _thread_start(codex_app_server: Any, codex: Any, **kwargs: object) -> Any:  # noqa: ANN401 — SDK is optional dep; staticly type-erased
+    """Start a sync SDK thread while tolerating stale ``serviceTier`` enums."""
+    try:
+        generated = importlib.import_module("codex_app_server.generated.v2_all")
+        client_mod = importlib.import_module("codex_app_server.client")
+        params = generated.ThreadStartParams(**kwargs)
+        response = codex._client.request(
+            "thread/start",
+            client_mod._params_dict(params),
+            response_model=_ThreadCompatResponse,
+        )
+        return codex_app_server.Thread(
+            codex._client,
+            _thread_id_from_lifecycle_response(response),
+        )
+    except Exception as exc:
+        pytest.skip(f"Codex thread_start failed (auth/runtime?): {exc!r}")
+
+
+def _thread_resume(codex_app_server: Any, codex: Any, thread_id: str) -> Any:  # noqa: ANN401 — SDK is optional dep; staticly type-erased
+    """Resume a sync SDK thread while tolerating stale ``serviceTier`` enums."""
+    try:
+        response = codex._client.request(
+            "thread/resume",
+            {"threadId": thread_id},
+            response_model=_ThreadCompatResponse,
+        )
+        return codex_app_server.Thread(
+            codex._client,
+            _thread_id_from_lifecycle_response(response),
+        )
+    except Exception as exc:
+        pytest.skip(f"Codex thread_resume failed (auth/runtime?): {exc!r}")
 
 
 def _items_of(thread_read_response: Any) -> list:  # noqa: ANN401 — see _new_codex
@@ -253,7 +313,7 @@ def test_aggregated_output_present_for_bash_command() -> None:
     """
     sdk = _require_runtime()
     with _new_codex(sdk) as codex:
-        thread = codex.thread_start()
+        thread = _thread_start(sdk, codex)
         thread.run(
             input=f"Run this single bash command and nothing else: echo {_HELLO_PAYLOAD}"
         )
@@ -281,7 +341,7 @@ def test_thread_read_latency_baseline_under_repeat() -> None:
     sdk = _require_runtime()
     samples_ms: list[float] = []
     with _new_codex(sdk) as codex:
-        thread = codex.thread_start()
+        thread = _thread_start(sdk, codex)
         thread.run(input=f"echo {_HELLO_PAYLOAD}")
         for _ in range(_LATENCY_SAMPLE_COUNT):
             t0 = time.monotonic()
@@ -328,7 +388,7 @@ def test_cross_resume_completeness_with_bash_and_file_edit(tmp_path: Any) -> Non
     edit_target = tmp_path / f"spike-edit-{uuid.uuid4().hex}.txt"
     pre_thread_id: str
     with _new_codex(sdk) as codex:
-        thread = codex.thread_start(cwd=str(tmp_path))
+        thread = _thread_start(sdk, codex, cwd=str(tmp_path))
         thread.run(
             input=(
                 f"Run exactly this bash command and nothing else: echo {_HELLO_PAYLOAD}"
@@ -344,7 +404,7 @@ def test_cross_resume_completeness_with_bash_and_file_edit(tmp_path: Any) -> Non
         pre_thread_id = thread.id
 
     with _new_codex(sdk) as codex:
-        resumed = codex.thread_resume(pre_thread_id)
+        resumed = _thread_resume(sdk, codex, pre_thread_id)
         resumed.run(input=f"Run exactly this bash command: echo {_RESUME_PAYLOAD}")
         response = resumed.read(include_turns=True)
 
