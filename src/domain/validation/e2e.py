@@ -295,9 +295,9 @@ class E2ERunner:
         if issue_id:
             annotate_issue(fixture_path, issue_id, self._command_runner)
 
-        # Override CLAUDE_SESSION_ID to avoid conflicts with parent session's review gate.
-        # The Cerberus review-gate tracks pending reviews per session, so running e2e
-        # inside an existing mala session (which already has a review gate active) would
+        # Override CLAUDE_SESSION_ID to avoid conflicts with the parent session's review.
+        # Cerberus tracks pending reviews per session, so running e2e
+        # inside an existing mala session (which already has an active review) would
         # fail with "Review gate already active" unless we use a distinct session ID.
         child_env = dict(env)
         child_env["CLAUDE_SESSION_ID"] = f"e2e-{uuid.uuid4()}"

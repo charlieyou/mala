@@ -1,6 +1,6 @@
-"""Cerberus review-gate adapter for mala orchestrator.
+"""Cerberus review adapter for mala orchestrator.
 
-This module provides a thin adapter for the Cerberus review-gate CLI.
+This module provides a thin adapter for the Cerberus CLI.
 It handles:
 - CLI orchestration (spawn, wait, resolve)
 - Issue formatting for follow-up prompts
@@ -36,13 +36,13 @@ if TYPE_CHECKING:
 
 @dataclass
 class DefaultReviewer:
-    """Default CodeReviewer implementation using Cerberus review-gate CLI.
+    """Default CodeReviewer implementation using the Cerberus CLI.
 
     This class conforms to the CodeReviewer protocol and provides the default
     behavior for the orchestrator. Tests can inject alternative implementations.
 
-    The reviewer spawns review-gate CLI processes and parses their output.
-    Extra args/env can be provided to customize review-gate behavior.
+    The reviewer spawns Cerberus CLI processes and parses their output.
+    Extra args/env can be provided to customize Cerberus behavior.
     For initial review with an empty diff, short-circuits to PASS without spawning.
 
     Subprocess management is delegated to CerberusCLI; this class handles
@@ -79,7 +79,7 @@ class DefaultReviewer:
 
     @staticmethod
     def _is_no_changes_error(error_detail: str) -> bool:
-        """Return True when review-gate skipped spawn because the diff is empty."""
+        """Return True when Cerberus skipped spawn because the diff is empty."""
         normalized = error_detail.lower()
         return "no changes found" in normalized and "diff mode" in normalized
 
@@ -98,7 +98,7 @@ class DefaultReviewer:
         _ = author_context
         cli = self._get_cli()
 
-        # Validate review-gate binary exists and is executable before proceeding
+        # Validate the Cerberus binary exists and is executable before proceeding.
         validation_error = cli.validate_binary()
         if validation_error is not None:
             return ReviewResult(
@@ -158,9 +158,7 @@ class DefaultReviewer:
 
         if not spawn_result.success:
             if self._is_no_changes_error(spawn_result.error_detail):
-                logger.info(
-                    "Review skipped because review-gate found no changes in diff"
-                )
+                logger.info("Review skipped because Cerberus found no changes in diff")
                 return ReviewResult(
                     passed=True,
                     issues=[],

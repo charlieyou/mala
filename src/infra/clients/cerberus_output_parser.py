@@ -26,7 +26,7 @@ class ReviewIssue:
 
 @dataclass
 class ReviewResult:
-    """Result of a Cerberus review-gate review."""
+    """Result of a Cerberus review."""
 
     passed: bool
     issues: list[ReviewIssue] = field(default_factory=list)

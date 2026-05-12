@@ -1,11 +1,11 @@
 """Cerberus epic verification adapter for mala orchestrator.
 
 This module provides CerberusEpicVerifier implementing the EpicVerificationModel
-protocol using the review-gate CLI spawn/wait flow.
+protocol using the Cerberus CLI spawn/wait flow.
 
 It handles:
 - CLI orchestration (spawn-epic-verify + wait)
-- Epic file creation for review-gate input
+- Epic file creation for Cerberus input
 - JSON response parsing to EpicVerdict
 - Error classification (timeout, execution, parse)
 
@@ -59,7 +59,7 @@ class VerificationParseError(Exception):
 
 @dataclass
 class CerberusEpicVerifier:
-    """Epic verifier implementation using Cerberus review-gate CLI.
+    """Epic verifier implementation using the Cerberus CLI.
 
     This class conforms to the EpicVerificationModel protocol and provides
     epic verification using the Cerberus CLI spawn-wait pattern.

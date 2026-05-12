@@ -3,7 +3,7 @@
 This package contains clients for external services:
 - anthropic_client: Shared Anthropic client factory
 - beads_client: BeadsClient wrapper for bd CLI
-- cerberus_review: Cerberus review-gate adapter
+- cerberus_review: Cerberus review adapter
 """
 
 from __future__ import annotations

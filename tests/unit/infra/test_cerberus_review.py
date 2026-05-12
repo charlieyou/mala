@@ -1,4 +1,4 @@
-"""Tests for Cerberus review-gate adapter."""
+"""Tests for Cerberus review adapter."""
 
 from __future__ import annotations
 
@@ -268,7 +268,7 @@ class TestNoChangesSpawnError:
     """Tests for empty-diff spawn handling."""
 
     async def test_spawn_no_changes_is_treated_as_pass(self) -> None:
-        """Empty review-gate commit diffs skip review instead of failing the run."""
+        """Empty Cerberus commit diffs skip review instead of failing the run."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
         reviewer = DefaultReviewer(repo_path=Path("/tmp"))

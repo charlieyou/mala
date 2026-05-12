@@ -82,7 +82,7 @@ class CodeReviewer(Protocol):
 
     Provides a callable interface for reviewing commits and returning
     structured results. The orchestrator uses this to run post-commit
-    code reviews via the Cerberus review-gate CLI.
+    code reviews via the Cerberus CLI.
 
     The canonical implementation is DefaultReviewer in cerberus_review.py.
     Test implementations can return predetermined results for isolation.
