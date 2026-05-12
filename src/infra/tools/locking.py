@@ -114,7 +114,7 @@ def _resolve_with_parents(path: Path) -> Path:
 
 
 def _unescape_existing_shell_path(path: Path) -> Path:
-    """Map a shell-escaped path to the real existing file when unambiguous.
+    r"""Map a shell-escaped path to the real existing file when unambiguous.
 
     Agents sometimes pass route filenames such as ``$solveId.tsx`` to the
     lock tool with shell-style escaping (``\$solveId.tsx``), even though MCP
