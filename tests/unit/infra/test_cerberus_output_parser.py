@@ -96,6 +96,11 @@ class TestParseGateState:
         assert state.started_at == "2026-05-11T00:00:00Z"
         assert state.ended_at == "2026-05-11T00:01:00Z"
 
+    def test_numeric_schema_version_is_accepted(self) -> None:
+        state = parse_gate_state(_gate_state(schema_version=1))
+
+        assert state.schema_version == "1"
+
     def test_malformed_json(self) -> None:
         with pytest.raises(ValueError, match="JSON parse error"):
             parse_gate_state("not json")

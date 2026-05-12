@@ -88,7 +88,7 @@ def parse_gate_state(stdout: str) -> GateState:
         raise ValueError("'current_iteration' must be an integer")
 
     return GateState(
-        schema_version=_optional_str(data, "schema_version"),
+        schema_version=_optional_str_or_int_as_str(data, "schema_version"),
         run_key=_required_str(data, "run_key"),
         host=_optional_str(data, "host"),
         project_key=_required_str(data, "project_key"),
@@ -120,6 +120,17 @@ def _optional_str(data: dict[str, Any], field_name: str) -> str | None:
     if not isinstance(value, str):
         raise ValueError(f"'{field_name}' must be a string or null")
     return value
+
+
+def _optional_str_or_int_as_str(data: dict[str, Any], field_name: str) -> str | None:
+    value = data.get(field_name)
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    raise ValueError(f"'{field_name}' must be a string, integer, or null")
 
 
 def _optional_int(data: dict[str, Any], field_name: str) -> int | None:
