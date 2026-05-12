@@ -239,6 +239,24 @@ def test_coder_help_shows_effective_defaults(
     assert "amp deep=medium" in output
 
 
+@pytest.mark.parametrize("command", [["run"], ["epic-verify", "epic-1"]])
+def test_config_help_shows_on_config_driven_commands(
+    monkeypatch: pytest.MonkeyPatch, command: list[str]
+) -> None:
+    """Config-driven commands expose the shared --config option."""
+    from typer.testing import CliRunner
+
+    cli = _reload_cli(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, [*command, "--help"])
+
+    assert result.exit_code == 0
+    output = " ".join(result.output.replace("│", " ").split())
+    assert "--config" in output
+    assert "<repo>/mala.yaml" in output
+
+
 def test_absence_of_flags_preserves_default_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -354,6 +372,34 @@ def test_yaml_coder_amp_applied_in_cli_run(
     assert config is not None
     assert config.coder == "amp"
     assert config.coder_options.amp.mode == "deep"
+
+
+def test_run_config_option_uses_alt_yaml_from_cwd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`mala run --config alt.yaml` resolves alt.yaml from cwd and uses it."""
+    from typer.testing import CliRunner
+
+    _isolate_env(monkeypatch)
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    (repo_path / "mala.yaml").write_text("preset: python-uv\ncoder: claude\n")
+    (tmp_path / "alt.yaml").write_text(
+        "preset: python-uv\ncoder: amp\namp_mode: rush\n"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    cli = _reload_cli(monkeypatch)
+    _patch_orchestrator(monkeypatch, cli, tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["run", "--config", "alt.yaml", str(repo_path)])
+
+    assert result.exit_code == 0, result.output
+    config = _DummyOrchestrator.last_mala_config
+    assert config is not None
+    assert config.coder == "amp"
+    assert config.coder_options.amp.mode == "rush"
 
 
 def test_cli_coder_overrides_yaml(

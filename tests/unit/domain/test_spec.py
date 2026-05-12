@@ -128,6 +128,19 @@ class TestBuildValidationSpec:
         assert spec.coverage.enabled is False
         assert spec.e2e.enabled is False
 
+    def test_explicit_config_path_loads_non_default_file(self, tmp_path: Path) -> None:
+        """An explicit config path can use any filename instead of repo/mala.yaml."""
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        (repo_path / "mala.yaml").write_text("commands:\n  test: pytest default\n")
+        alt_config = tmp_path / "mala.strict.yaml"
+        alt_config.write_text("commands:\n  test: pytest strict\n")
+
+        spec = build_validation_spec(repo_path, config_path=alt_config)
+
+        test_cmd = next(cmd for cmd in spec.commands if cmd.name == "test")
+        assert test_cmd.command == "pytest strict"
+
     def test_loads_go_project_config(self, tmp_path: Path) -> None:
         """Test loading Go project configuration."""
         config_src = Path("tests/fixtures/mala-configs/go-project.yaml")

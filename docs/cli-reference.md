@@ -11,6 +11,16 @@ Mala's Cerberus integration requires the Cerberus v2 `cerberus` binary on
 
 The main command to run the mala orchestrator. See [CLI Options](#cli-options) below.
 
+By default, `mala run` loads project configuration from `<repo>/mala.yaml`.
+Use `--config PATH` to select a different config file for the run. Relative
+paths are resolved from the current working directory, not from the repository
+argument:
+
+```bash
+mala run --config mala.codex.yaml .
+mala run --config configs/mala.strict.yaml /path/to/repo
+```
+
 ### `mala init`
 
 Generate a `mala.yaml` configuration file (interactive by default).
@@ -79,12 +89,19 @@ Verify (and optionally close) a single epic without running issues.
 
 ```bash
 mala epic-verify EPIC-123 /path/to/repo
+mala epic-verify --config mala.strict.yaml EPIC-123 /path/to/repo
 mala epic-verify EPIC-123 --no-close
 mala epic-verify EPIC-123 --force
 mala epic-verify EPIC-123 --human-override --close
 ```
 
 ## CLI Options
+
+### Configuration
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config PATH` | `<repo>/mala.yaml` | Use an alternate project config file. Relative paths are resolved from the current working directory. Any filename is accepted. |
 
 ### Execution Limits
 
@@ -157,6 +174,9 @@ The `--fresh` flag starts a new SDK session instead of resuming the previous one
 |------|---------|-------------|
 | `--dry-run`, `-d` | false | Preview task order without processing |
 | `--verbose`, `-v` | false | Enable verbose output; shows full tool arguments |
+
+`mala run --dry-run` previews issue selection/order only. It does not load or
+validate project configuration, even when `--config PATH` is supplied.
 
 ### Claude Settings
 
@@ -358,7 +378,8 @@ mala uses a global config directory at `~/.config/mala/`:
 ```
 
 Environment variables are loaded from `~/.config/mala/.env` (global config).
-Precedence: CLI flags override global config, which overrides program defaults.
+Precedence for shared settings is CLI flags > environment/global config >
+selected project config (`<repo>/mala.yaml` or `--config PATH`) > defaults.
 
 ### Directory Overrides
 
@@ -370,12 +391,12 @@ Precedence: CLI flags override global config, which overrides program defaults.
 | `MALA_DISABLE_DEBUG_LOG` | - | Set to `1` to disable debug file logging (for performance or disk space) |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Claude SDK config directory (plugins, sessions) |
 | `MALA_CLAUDE_SETTINGS_SOURCES` | `local,project` | Comma-separated Claude settings sources |
-| `MALA_CODER` | `claude` | Coder backend: `claude`, `amp`, or `codex`. Overridden by `--coder`; falls back to `coder:` in `mala.yaml`. |
-| `MALA_AMP_MODE` | `deep` | Amp execution mode: `smart`, `rush`, or `deep`. Overridden by `--amp-mode`; falls back to `amp_mode` in `mala.yaml`. Only consulted when coder is `amp`. |
-| `MALA_MODEL` | backend default | Coder model for Claude and Codex. Overridden by `--model`; falls back to `model:` in `mala.yaml`. Ignored by Amp. |
-| `MALA_EFFORT` | backend default | Reasoning effort for Claude, Codex, and supported Amp modes. Overridden by `--effort`; falls back to `effort:` in `mala.yaml`. |
-| `MALA_CODEX_APPROVAL_POLICY` | `never` | Codex approval policy: `never`, `on-request`, `on-failure`, `untrusted`. Overridden by `--codex-approval-policy`; falls back to `coder_options.codex.approval_policy`. Only consulted when coder is `codex`. |
-| `MALA_CODEX_SANDBOX` | `danger-full-access` | Codex sandbox mode: `read-only`, `workspace-write`, `danger-full-access`. Overridden by `--codex-sandbox`; falls back to `coder_options.codex.sandbox`. Only consulted when coder is `codex`. |
+| `MALA_CODER` | `claude` | Coder backend: `claude`, `amp`, or `codex`. Overridden by `--coder`; falls back to `coder:` in the selected project config. |
+| `MALA_AMP_MODE` | `deep` | Amp execution mode: `smart`, `rush`, or `deep`. Overridden by `--amp-mode`; falls back to `amp_mode` in the selected project config. Only consulted when coder is `amp`. |
+| `MALA_MODEL` | backend default | Coder model for Claude and Codex. Overridden by `--model`; falls back to `model:` in the selected project config. Ignored by Amp. |
+| `MALA_EFFORT` | backend default | Reasoning effort for Claude, Codex, and supported Amp modes. Overridden by `--effort`; falls back to `effort:` in the selected project config. |
+| `MALA_CODEX_APPROVAL_POLICY` | `never` | Codex approval policy: `never`, `on-request`, `on-failure`, `untrusted`. Overridden by `--codex-approval-policy`; falls back to `coder_options.codex.approval_policy` in the selected project config. Only consulted when coder is `codex`. |
+| `MALA_CODEX_SANDBOX` | `danger-full-access` | Codex sandbox mode: `read-only`, `workspace-write`, `danger-full-access`. Overridden by `--codex-sandbox`; falls back to `coder_options.codex.sandbox` in the selected project config. Only consulted when coder is `codex`. |
 
 ### Epic Verification
 

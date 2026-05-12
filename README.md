@@ -182,6 +182,7 @@ mala run --scope ids:issue-1,issue-2 --order input /path/to/repo  # Specific iss
 mala run --resume /path/to/repo            # Include in_progress issues and resume sessions
 mala run --strict --resume /path/to/repo   # Fail if a resumed issue has no session
 mala run --watch /path/to/repo             # Keep polling for new issues
+mala run --config mala.codex.yaml /path/to/repo  # Use an alternate project config
 mala run --coder amp /path/to/repo         # Use Amp instead of Claude as the per-issue coder
 mala run --coder amp --amp-mode rush /path/to/repo  # Amp in rush mode (Haiku)
 mala run --coder codex /path/to/repo       # Use Codex (gpt-5.5) as the per-issue coder
@@ -194,7 +195,12 @@ mala logs show <run_id_prefix>            # Show run metadata
 mala clean                                # Clean up locks
 mala clean --force                         # Clean even if mala is running
 mala epic-verify proj-abc /path/to/repo   # Verify and close an epic
+mala epic-verify --config mala.strict.yaml proj-abc /path/to/repo
 ```
+
+By default, Mala loads `<repo>/mala.yaml`. `--config PATH` selects any
+alternate config filename for `run` and `epic-verify`; relative paths are
+resolved from your current working directory.
 
 ## How It Works
 
@@ -275,7 +281,7 @@ See `commands/bd-breakdown.md` for the full issue creation workflow.
 
 - [Architecture](docs/architecture.md) — Layered architecture, module responsibilities, key flows
 - [CLI Reference](docs/cli-reference.md) — CLI options, environment variables, integrations
-- [Project Configuration](docs/project-config.md) — mala.yaml schema, presets, coverage settings
+- [Project Configuration](docs/project-config.md) — mala.yaml schema, alternate config files, presets, coverage settings
 - [Validation](docs/validation.md) — Evidence check, session_end, review gates, trigger validation
 - [Validation Triggers](docs/validation-triggers.md) — Trigger-based validation and code review
 - [Development](docs/development.md) — Type checking, testing, package structure

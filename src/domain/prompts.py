@@ -443,14 +443,21 @@ def build_prompt_validation_commands(
     *,
     validation_config: ValidationConfig | None = None,
     config_missing: bool = False,
+    config_path: Path | None = None,
 ) -> PromptValidationCommands:
     """Build PromptValidationCommands for a repository.
 
-    Loads the mala.yaml configuration, merges with preset if specified,
+    Loads the Mala project configuration, merges with preset if specified,
     and returns the validation commands formatted for prompt templates.
 
     Args:
         repo_path: Path to the repository root directory.
+        validation_config: Pre-loaded ValidationConfig to avoid re-reading.
+        config_missing: Set True to skip config loading and return defaults.
+        config_path: Optional explicit config file path. Relative paths are
+            resolved relative to the current working directory when loading is
+            needed. Ignored when ``validation_config`` or ``config_missing`` is
+            supplied.
 
     Returns:
         PromptValidationCommands with command strings for prompt templates.
@@ -468,8 +475,10 @@ def build_prompt_validation_commands(
         user_config = validation_config
     else:
         try:
-            user_config = load_config(repo_path)
+            user_config = load_config(repo_path, config_path=config_path)
         except ConfigMissingError:
+            if config_path is not None:
+                raise
             # No config file - return defaults
             return get_default_validation_commands()
 

@@ -365,6 +365,106 @@ def test_epic_verify_invokes_verifier(
     )
 
 
+def test_epic_verify_config_option_uses_alt_yaml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`mala epic-verify --config alt.yaml` uses the selected config file."""
+    cli = _reload_cli(monkeypatch)
+    verifier = DummyEpicVerifier()
+    for name in ("MALA_CODER", "MALA_AMP_MODE", "MALA_EFFORT"):
+        monkeypatch.delenv(name, raising=False)
+    (tmp_path / "mala.yaml").write_text("preset: go\ncoder: claude\n")
+    alt_config = tmp_path / "mala.strict.yaml"
+    alt_config.write_text("preset: go\ncoder: amp\namp_mode: rush\n")
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+    monkeypatch.setattr(cli, "log", lambda *args, **_kwargs: None)
+
+    import src.orchestration.factory
+
+    captured: dict[str, object] = {}
+
+    def make_orchestrator(
+        config: object,
+        *,
+        mala_config: object = None,
+        deps: object = None,
+    ) -> DummyOrchestratorWithVerifier:
+        captured["config"] = config
+        captured["mala_config"] = mala_config
+        return DummyOrchestratorWithVerifier(verifier)
+
+    monkeypatch.setattr(src.orchestration.factory, "create_orchestrator", make_orchestrator)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.epic_verify(
+            epic_id="epic-1",
+            repo_path=tmp_path,
+            config_path=alt_config,
+            force=True,
+            close=False,
+        )
+
+    assert excinfo.value.exit_code == 0
+    orch_config = captured["config"]
+    mala_config = captured["mala_config"]
+    assert getattr(orch_config, "config_path") == alt_config.resolve()
+    assert getattr(mala_config, "coder") == "amp"
+    assert getattr(mala_config, "coder_options").amp.mode == "rush"
+
+
+def test_epic_verify_missing_config_option_reports_selected_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Missing ``epic-verify --config`` paths are rendered as CLI errors."""
+    cli = _reload_cli(monkeypatch)
+    missing_config = tmp_path / "missing-strict.yaml"
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+    logs: list[tuple[object, ...]] = []
+    monkeypatch.setattr(cli, "log", lambda *args, **_kwargs: logs.append(args))
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.epic_verify(
+            epic_id="epic-1",
+            repo_path=tmp_path,
+            config_path=missing_config,
+        )
+
+    assert excinfo.value.exit_code == 1
+    assert any(str(missing_config) in str(args) for args in logs)
+
+
+def test_epic_verify_invalid_config_option_reports_selected_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Invalid ``epic-verify --config`` files are rendered as CLI errors."""
+    cli = _reload_cli(monkeypatch)
+    bad_config = tmp_path / "bad-strict.yaml"
+    bad_config.write_text("preset: go\nunknown_field: true\n")
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+    logs: list[tuple[object, ...]] = []
+    monkeypatch.setattr(cli, "log", lambda *args, **_kwargs: logs.append(args))
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.epic_verify(
+            epic_id="epic-1",
+            repo_path=tmp_path,
+            config_path=bad_config,
+        )
+
+    assert excinfo.value.exit_code == 1
+    assert any(str(bad_config) in str(args) for args in logs)
+    assert any("Unknown field 'unknown_field'" in str(args) for args in logs)
+
+
 def test_epic_verify_logs_default_lock_timeout(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

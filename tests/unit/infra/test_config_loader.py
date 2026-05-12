@@ -21,6 +21,7 @@ from src.domain.validation.config_loader import (
     _parse_yaml,
     _validate_config,
     _validate_schema,
+    default_config_path,
     load_config,
 )
 
@@ -42,6 +43,25 @@ class TestLoadConfig:
         assert config.commands.test is not None
         assert config.commands.test.command == "pytest"
         assert config.preset is None
+
+    def test_default_config_path_is_repo_mala_yaml(self, tmp_path: Path) -> None:
+        """The omitted config path defaults to <repo>/mala.yaml."""
+        assert default_config_path(tmp_path) == tmp_path / "mala.yaml"
+
+    def test_load_explicit_non_default_config_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Explicit relative config paths are resolved from cwd, not repo_path."""
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        alt_config = tmp_path / "mala.codex.yaml"
+        alt_config.write_text("commands:\n  test: pytest -q\n")
+        monkeypatch.chdir(tmp_path)
+
+        config = load_config(repo_path, Path("mala.codex.yaml"))
+
+        assert config.commands.test is not None
+        assert config.commands.test.command == "pytest -q"
 
     def test_load_valid_full(self, tmp_path: Path) -> None:
         """Load full valid config with all options."""
@@ -105,6 +125,27 @@ setup_files:
         # Also verify it's a subclass of ConfigError for callers catching broader errors
         assert isinstance(exc_info.value, ConfigError)
         assert exc_info.value.repo_path == tmp_path
+        assert exc_info.value.config_path is None
+
+    def test_missing_explicit_config_names_selected_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing alternate config errors with the explicit resolved path."""
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        selected = tmp_path / "missing-alt.yaml"
+        monkeypatch.chdir(tmp_path)
+
+        with pytest.raises(ConfigMissingError) as exc_info:
+            load_config(repo_path, Path("missing-alt.yaml"))
+
+        expected = (
+            f"Configuration file not found: {selected}. "
+            "Mala requires a configuration file to run."
+        )
+        assert str(exc_info.value) == expected
+        assert exc_info.value.repo_path == repo_path
+        assert exc_info.value.config_path == selected
 
     def test_missing_file_catchable_as_config_error(self, tmp_path: Path) -> None:
         """ConfigMissingError is catchable as ConfigError for backward compatibility."""

@@ -2,7 +2,23 @@
 
 > For CLI flags and runtime settings, see [CLI Reference](cli-reference.md).
 
-`mala.yaml` is the required configuration file for mala. It defines your project's validation commands, code patterns, and coverage settings. Place it in the root of your repository.
+By default, Mala reads project configuration from `mala.yaml` in the root of
+the target repository. The file defines your project's validation commands,
+code patterns, coverage settings, coder backend, reviewers, and validation
+triggers.
+
+You can keep multiple config files for different workflows and select one at
+runtime with `--config`:
+
+```bash
+mala run --config mala.codex.yaml .
+mala epic-verify --config mala.strict.yaml EPIC-123 .
+```
+
+When `--config` is omitted, Mala preserves the default `<repo>/mala.yaml`
+lookup. When `--config PATH` is provided, `PATH` may have any filename and
+relative paths are resolved from the current working directory, not from the
+`repo_path` argument. `mala init` still writes `mala.yaml`.
 
 ## Quick Start
 
@@ -461,7 +477,8 @@ commands:
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `mala.yaml not found` | Missing config file | Create `mala.yaml` in repo root |
+| `mala.yaml not found` | Missing default config file | Create `mala.yaml` in repo root or pass `--config PATH` |
+| `Configuration file not found: <path>` | Missing explicit config selected with `--config` | Create the selected file or fix the path |
 | `Unknown preset 'foo'` | Invalid preset name | Use: python-uv, node-npm, go, rust |
 | `Unknown field 'bar'` | Typo or invalid field | Check field names against schema |
 | `At least one command must be defined` | No commands and no preset | Add a preset or define commands |
@@ -476,7 +493,7 @@ commands:
 | Matches `code_patterns` | lint, format, typecheck |
 | Matches `config_files` | lint, format, typecheck |
 | Matches `setup_files` | setup, lint, format, typecheck |
-| `mala.yaml` | All commands |
+| Selected Mala config (`mala.yaml` by default, or `--config PATH`) | All commands |
 
 ## Claude Settings Sources
 
@@ -508,7 +525,7 @@ Settings sources are resolved in this order (highest wins):
 
 1. CLI flag (`--claude-settings-sources`)
 2. Environment variable (`MALA_CLAUDE_SETTINGS_SOURCES`)
-3. mala.yaml (`claude_settings_sources`)
+3. Selected project config (`claude_settings_sources`)
 4. Default: `[local, project]`
 
 ### Valid Sources
@@ -571,7 +588,7 @@ coder_options:
     sandbox: danger-full-access   # default
 ```
 
-Existing `mala.yaml` files **without `coder:` remain valid** and default to
+Existing config files **without `coder:` remain valid** and default to
 `claude`; the field is purely additive.
 
 ### Precedence
@@ -581,7 +598,7 @@ Existing `mala.yaml` files **without `coder:` remain valid** and default to
 
 1. CLI flag (`--coder`, `--amp-mode`, `--model`, `--effort`, `--codex-approval-policy`, `--codex-sandbox`)
 2. Environment variable (`MALA_CODER`, `MALA_AMP_MODE`, `MALA_MODEL`, `MALA_EFFORT`, `MALA_CODEX_APPROVAL_POLICY`, `MALA_CODEX_SANDBOX`)
-3. `mala.yaml` (`coder:`, `amp_mode:`, `model:`, `effort:`, `coder_options.codex.*`)
+3. Selected project config (`coder:`, `amp_mode:`, `model:`, `effort:`, `coder_options.codex.*`)
 4. Defaults: `coder=claude`, `amp_mode=deep`, `claude.model=opus[1m]`, `codex.model=gpt-5.5`, `codex.approval_policy=never`, `codex.sandbox=danger-full-access`
 
 ### Validation

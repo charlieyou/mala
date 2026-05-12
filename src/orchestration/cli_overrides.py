@@ -110,6 +110,8 @@ def apply_cli_overrides(
 def build_resolved_mala_config(
     repo_path: Path,
     options: CLIOverrideOptions,
+    *,
+    config_path: Path | None = None,
 ) -> MalaConfig:
     """Build a :class:`MalaConfig` with CLI > env > yaml > default precedence.
 
@@ -120,6 +122,9 @@ def build_resolved_mala_config(
     Args:
         repo_path: Repository path; used to locate ``mala.yaml``.
         options: Parsed CLI override options.
+        config_path: Optional explicit project config file path. Relative paths
+            are resolved relative to the current working directory by the
+            loader. When omitted, ``repo_path / "mala.yaml"`` is used.
 
     Returns:
         A :class:`MalaConfig` reflecting the merged values.
@@ -142,7 +147,7 @@ def build_resolved_mala_config(
         yaml_model,
         yaml_effort,
         yaml_codex_options,
-    ) = load_yaml_coder_resolution(repo_path)
+    ) = load_yaml_coder_resolution(repo_path, config_path=config_path)
     config = MalaConfig.from_env(
         validate=False,
         yaml_claude_settings_sources=yaml_css,

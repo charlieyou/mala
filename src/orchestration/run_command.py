@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from src.core.models import WatchConfig
+from src.domain.validation.config_loader import ConfigMissingError
+from src.domain.validation.config_types import ConfigError
 from src.orchestration import factory
 from src.orchestration.cli_overrides import build_resolved_mala_config
 from src.orchestration.dry_run import compute_dry_run_outcome
@@ -62,6 +64,7 @@ def execute_run_command(
     dry_run: bool,
     watch: bool,
     override_options: CLIOverrideOptions,
+    config_path: Path | None = None,
 ) -> RunCommandOutcome:
     """Build the orchestrator from CLI inputs and run it.
 
@@ -87,6 +90,10 @@ def execute_run_command(
             outcome without building/running the orchestrator.
         watch: ``--watch`` flag.
         override_options: Parsed CLI override options (coder, effort, etc.).
+        config_path: Optional explicit project config file path. Relative paths
+            are resolved relative to the current working directory by the
+            config loader. Ignored by the dry-run branch, which does not load
+            project configuration.
 
     Returns:
         ``RunCommandOutcome`` with the exit code the CLI should propagate.
@@ -110,27 +117,35 @@ def execute_run_command(
         return RunCommandOutcome(exit_code=0, dry_run=outcome)
 
     try:
-        config = build_resolved_mala_config(repo_path, override_options)
-    except ValueError as exc:
+        config = build_resolved_mala_config(
+            repo_path,
+            override_options,
+            config_path=config_path,
+        )
+        orch_config = OrchestratorConfig(
+            repo_path=repo_path,
+            config_path=config_path,
+            max_agents=max_agents,
+            timeout_minutes=timeout,
+            max_issues=max_issues,
+            epic_id=epic_id,
+            only_ids=only_ids,
+            include_wip=resume,
+            strict_resume=strict,
+            fresh_session=fresh,
+            focus=order_resolution.focus,
+            order_preference=order_resolution.preference,
+            cli_args={"wip": resume, "max_issues": max_issues, "watch": watch},
+            orphans_only=orphans_only,
+        )
+
+        orchestrator = factory.create_orchestrator(orch_config, mala_config=config)
+    except (ConfigMissingError, ValueError) as exc:
         return RunCommandOutcome(exit_code=1, error_message=str(exc))
-
-    orch_config = OrchestratorConfig(
-        repo_path=repo_path,
-        max_agents=max_agents,
-        timeout_minutes=timeout,
-        max_issues=max_issues,
-        epic_id=epic_id,
-        only_ids=only_ids,
-        include_wip=resume,
-        strict_resume=strict,
-        fresh_session=fresh,
-        focus=order_resolution.focus,
-        order_preference=order_resolution.preference,
-        cli_args={"wip": resume, "max_issues": max_issues, "watch": watch},
-        orphans_only=orphans_only,
-    )
-
-    orchestrator = factory.create_orchestrator(orch_config, mala_config=config)
+    except ConfigError as exc:
+        if config_path is None:
+            raise
+        return RunCommandOutcome(exit_code=1, error_message=str(exc))
 
     watch_config = WatchConfig(enabled=watch)
     success_count, total = asyncio.run(orchestrator.run(watch_config=watch_config))

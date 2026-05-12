@@ -5,7 +5,8 @@ configuration file. It enforces strict schema validation and provides clear
 error messages for common misconfigurations.
 
 Key functions:
-- load_config: Load and validate mala.yaml from a repository path
+- default_config_path: Return the default project config path for a repository
+- load_config: Load and validate project config from a repository path
 - parse_yaml: Parse YAML content with error handling
 - validate_schema: Validate against expected schema
 - build_config: Convert parsed dict to ValidationConfig dataclass
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
 
 
 class ConfigMissingError(ConfigError):
-    """Raised when the mala.yaml configuration file is not found.
+    """Raised when the selected configuration file is not found.
 
     This is a subclass of ConfigError to allow callers to catch either:
     - ConfigMissingError: Only handle missing file case
@@ -43,10 +44,18 @@ class ConfigMissingError(ConfigError):
     """
 
     repo_path: Path  # Explicit class-level annotation for type checkers
+    config_path: Path | None
 
-    def __init__(self, repo_path: Path) -> None:
+    def __init__(self, repo_path: Path, config_path: Path | None = None) -> None:
         self.repo_path = repo_path
-        message = f"mala.yaml not found in {repo_path}. Mala requires a configuration file to run."
+        self.config_path = config_path
+        if config_path is None:
+            message = f"mala.yaml not found in {repo_path}. Mala requires a configuration file to run."
+        else:
+            message = (
+                f"Configuration file not found: {config_path}. "
+                "Mala requires a configuration file to run."
+            )
         super().__init__(message)
 
 
@@ -77,8 +86,25 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
 )
 
 
-def load_config(repo_path: Path) -> ValidationConfig:
-    """Load and validate mala.yaml from the repository root.
+def default_config_path(repo_path: Path) -> Path:
+    """Return the default Mala project config path for ``repo_path``."""
+    return repo_path / "mala.yaml"
+
+
+def _selected_config_path(repo_path: Path, config_path: Path | None) -> Path:
+    """Resolve the config file to load.
+
+    The default remains ``repo_path / "mala.yaml"``. Explicit relative paths
+    are resolved relative to the current working directory, matching normal
+    CLI path semantics rather than being interpreted under ``repo_path``.
+    """
+    if config_path is None:
+        return default_config_path(repo_path)
+    return config_path.expanduser().resolve()
+
+
+def load_config(repo_path: Path, config_path: Path | None = None) -> ValidationConfig:
+    """Load and validate a Mala project configuration file.
 
     This is the main entry point for loading configuration. It reads the file,
     parses YAML, validates the schema, builds the config dataclass, and runs
@@ -86,6 +112,9 @@ def load_config(repo_path: Path) -> ValidationConfig:
 
     Args:
         repo_path: Path to the repository root directory.
+        config_path: Optional explicit config file path. Relative paths are
+            resolved relative to the current working directory. When omitted,
+            ``repo_path / "mala.yaml"`` is used.
 
     Returns:
         ValidationConfig instance with all configuration loaded.
@@ -99,10 +128,13 @@ def load_config(repo_path: Path) -> ValidationConfig:
         >>> print(config.preset)
         'python-uv'
     """
-    config_file = repo_path / "mala.yaml"
+    config_file = _selected_config_path(repo_path, config_path)
 
     if not config_file.exists():
-        raise ConfigMissingError(repo_path)
+        raise ConfigMissingError(
+            repo_path,
+            config_file if config_path is not None else None,
+        )
 
     try:
         content = config_file.read_text(encoding="utf-8")
@@ -110,14 +142,15 @@ def load_config(repo_path: Path) -> ValidationConfig:
         raise ConfigError(f"Failed to read {config_file}: {e}") from e
     except UnicodeDecodeError as e:
         raise ConfigError(f"Failed to decode {config_file}: {e}") from e
-    data = _parse_yaml(content)
-    _validate_schema(data)
+    config_label = str(config_file) if config_path is not None else "mala.yaml"
+    data = _parse_yaml(content, source=config_label)
+    _validate_schema(data, source=config_label)
     config = _build_config(data)
     _validate_config(config)
     return config
 
 
-def _parse_yaml(content: str) -> dict[str, Any]:
+def _parse_yaml(content: str, *, source: str = "mala.yaml") -> dict[str, Any]:
     """Parse YAML content into a dictionary.
 
     Args:
@@ -134,7 +167,7 @@ def _parse_yaml(content: str) -> dict[str, Any]:
     except yaml.YAMLError as e:
         # Extract useful error details from the exception
         details = str(e)
-        raise ConfigError(f"Invalid YAML syntax in mala.yaml: {details}") from e
+        raise ConfigError(f"Invalid YAML syntax in {source}: {details}") from e
 
     # Handle empty file or file with only comments
     if data is None:
@@ -142,13 +175,13 @@ def _parse_yaml(content: str) -> dict[str, Any]:
 
     if not isinstance(data, dict):
         raise ConfigError(
-            f"mala.yaml must be a YAML mapping, got {type(data).__name__}"
+            f"{source} must be a YAML mapping, got {type(data).__name__}"
         )
 
     return data
 
 
-def _validate_schema(data: dict[str, Any]) -> None:
+def _validate_schema(data: dict[str, Any], *, source: str = "mala.yaml") -> None:
     """Validate the parsed YAML against the expected schema.
 
     This function checks for unknown fields at the top level. Field type
@@ -200,7 +233,7 @@ def _validate_schema(data: dict[str, Any]) -> None:
         # non-string YAML keys (e.g., null, integers) without TypeError
         unknown_as_strs = sorted(str(k) for k in unknown_fields)
         first_unknown = unknown_as_strs[0]
-        raise ConfigError(f"Unknown field '{first_unknown}' in mala.yaml")
+        raise ConfigError(f"Unknown field '{first_unknown}' in {source}")
 
 
 def _build_config(data: dict[str, Any]) -> ValidationConfig:

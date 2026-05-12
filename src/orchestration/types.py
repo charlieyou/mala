@@ -76,6 +76,9 @@ class OrchestratorConfig:
 
     Attributes:
         repo_path: Path to the repository with beads issues.
+        config_path: Optional explicit Mala project config file path. Relative
+            paths are resolved relative to the current working directory by the
+            config loader. When omitted, ``repo_path / "mala.yaml"`` is used.
         max_agents: Maximum concurrent agents (None = unlimited).
         timeout_minutes: Timeout per agent in minutes (None = default 30).
         max_issues: Maximum issues to process (None = unlimited).
@@ -93,6 +96,7 @@ class OrchestratorConfig:
     """
 
     repo_path: Path
+    config_path: Path | None = None
     max_agents: int | None = None
     timeout_minutes: int | None = None
     max_issues: int | None = None

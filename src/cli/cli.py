@@ -246,6 +246,13 @@ def _parse_scope_cli(scope: str) -> ScopeConfig:
     return scope_config
 
 
+def _resolve_cli_config_path(config_path: Path | None) -> Path | None:
+    """Resolve an explicit ``--config`` path relative to the current directory."""
+    if config_path is None:
+        return None
+    return config_path.expanduser().resolve()
+
+
 def _validate_coder_option(value: str | None) -> str | None:
     """Typer callback for ``--coder``; delegates to orchestration helper."""
     try:
@@ -329,6 +336,10 @@ _CODEX_SANDBOX_HELP = (
     "Codex sandbox mode. Valid: read-only, workspace-write, danger-full-access. "
     "Only consulted when coder=codex. Default: danger-full-access."
 )
+_CONFIG_HELP = (
+    "Path to a Mala project config file. Defaults to <repo>/mala.yaml; relative "
+    "paths are resolved from the current working directory."
+)
 
 
 @app.command()
@@ -339,6 +350,14 @@ def run(
             help="Path to repository with beads issues",
         ),
     ] = Path("."),
+    config_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--config",
+            help=_CONFIG_HELP,
+            rich_help_panel="Configuration",
+        ),
+    ] = None,
     max_agents: Annotated[
         int | None,
         typer.Option(
@@ -521,6 +540,7 @@ def run(
         raise typer.BadParameter("--fresh and --strict are mutually exclusive")
 
     repo_path = repo_path.resolve()
+    selected_config_path = _resolve_cli_config_path(config_path)
 
     # Parse --scope option
     scope_config: ScopeConfig | None = None
@@ -565,6 +585,7 @@ def run(
             codex_approval_policy=codex_approval_policy,
             codex_sandbox=codex_sandbox,
         ),
+        config_path=selected_config_path,
     )
     if outcome.dry_run is not None:
         display_dry_run_tasks(outcome.dry_run.issues, focus=outcome.dry_run.focus)
@@ -587,6 +608,14 @@ def epic_verify(
             help="Path to repository with beads issues",
         ),
     ] = Path("."),
+    config_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--config",
+            help=_CONFIG_HELP,
+            rich_help_panel="Configuration",
+        ),
+    ] = None,
     force: Annotated[
         bool,
         typer.Option(
@@ -690,6 +719,7 @@ def epic_verify(
         raise typer.Exit(1)
 
     repo_path = repo_path.resolve()
+    selected_config_path = _resolve_cli_config_path(config_path)
     if not repo_path.exists():
         log("✗", f"Repository not found: {repo_path}", Colors.RED)
         raise typer.Exit(1)
@@ -708,13 +738,21 @@ def epic_verify(
                 codex_approval_policy=codex_approval_policy,
                 codex_sandbox=codex_sandbox,
             ),
+            config_path=selected_config_path,
         )
+        orch_config = _lazy("OrchestratorConfig")(
+            repo_path=repo_path,
+            config_path=selected_config_path,
+        )
+        orchestrator = _lazy("create_orchestrator")(orch_config, mala_config=config)
     except ValueError as exc:
         log("✗", str(exc), Colors.RED)
         raise typer.Exit(1)
-
-    orch_config = _lazy("OrchestratorConfig")(repo_path=repo_path)
-    orchestrator = _lazy("create_orchestrator")(orch_config, mala_config=config)
+    except ConfigError as exc:
+        if selected_config_path is None:
+            raise
+        log("✗", str(exc), Colors.RED)
+        raise typer.Exit(1)
     verifier = getattr(orchestrator, "epic_verifier", None)
 
     if verifier is None:

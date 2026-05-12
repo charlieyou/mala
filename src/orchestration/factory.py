@@ -157,6 +157,7 @@ def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
 
 def load_yaml_coder_resolution(
     repo_path: Path,
+    config_path: Path | None = None,
 ) -> tuple[
     tuple[str, ...] | None,
     Literal["claude", "amp", "codex"] | None,
@@ -176,8 +177,10 @@ def load_yaml_coder_resolution(
     CLI > env > yaml > default precedence (AC-3 of the Amp provider epic
     and AC #3/#4 of the Codex provider epic).
 
-    When ``mala.yaml`` is missing, returns ``(None, ..., None)`` so
-    ``from_env`` falls back to env / defaults.
+    When the default ``mala.yaml`` is missing, returns ``(None, ..., None)``
+    so ``from_env`` falls back to env / defaults. When an explicit
+    ``config_path`` is selected, a missing file is propagated as a
+    :class:`ConfigMissingError` so the caller can report the selected path.
 
     Raises:
         ConfigError: ``mala.yaml`` is present but malformed (propagates so
@@ -189,8 +192,10 @@ def load_yaml_coder_resolution(
     from src.domain.validation.preset_registry import PresetRegistry
 
     try:
-        user_config = load_config(repo_path)
+        user_config = load_config(repo_path, config_path=config_path)
     except ConfigMissingError:
+        if config_path is not None:
+            raise
         return (None, None, None, None, None, None)
 
     if user_config.preset is not None:
@@ -230,7 +235,10 @@ def create_issue_provider(
     return BeadsClient(repo_path, log_warning=log_warning)
 
 
-def _get_reviewer_config(repo_path: Path) -> _ReviewerConfig:
+def _get_reviewer_config(
+    repo_path: Path,
+    config_path: Path | None = None,
+) -> _ReviewerConfig:
     """Get reviewer configuration from mala.yaml.
 
     Convenience wrapper that loads mala.yaml and extracts reviewer settings.
@@ -241,6 +249,7 @@ def _get_reviewer_config(repo_path: Path) -> _ReviewerConfig:
 
     Args:
         repo_path: Path to the repository.
+        config_path: Optional explicit config file path.
 
     Returns:
         _ReviewerConfig with reviewer settings.
@@ -249,9 +258,11 @@ def _get_reviewer_config(repo_path: Path) -> _ReviewerConfig:
     from src.domain.validation.config_loader import ConfigMissingError, load_config
 
     try:
-        validation_config = load_config(repo_path)
+        validation_config = load_config(repo_path, config_path=config_path)
         return _extract_reviewer_config(validation_config)
     except ConfigMissingError:
+        if config_path is not None:
+            raise
         return _ReviewerConfig()
     except ConfigError as e:
         logger.warning("Failed to load reviewer config from mala.yaml: %s", e)
@@ -862,8 +873,9 @@ def create_orchestrator(
 
     from .orchestrator import MalaOrchestrator
 
-    # Load ValidationConfig once from mala.yaml for all settings that need to flow
-    # to MalaConfig and reviewer configuration (avoids redundant I/O and parsing)
+    # Load ValidationConfig once from the selected project config for all
+    # settings that need to flow to MalaConfig and reviewer configuration
+    # (avoids redundant I/O and parsing).
     yaml_claude_settings_sources: tuple[str, ...] | None = None
     yaml_coder: Literal["claude", "amp", "codex"] | None = None
     yaml_amp_mode: Literal["smart", "rush", "deep"] | None = None
@@ -874,7 +886,7 @@ def create_orchestrator(
     validation_config = None
     validation_config_missing = False
     try:
-        user_config = load_config(config.repo_path)
+        user_config = load_config(config.repo_path, config_path=config.config_path)
         # Merge with preset if specified (required for trigger base pool)
         if user_config.preset is not None:
             registry = PresetRegistry()
@@ -890,6 +902,8 @@ def create_orchestrator(
         yaml_codex_options = validation_config.codex_options
         reviewer_config = _extract_reviewer_config(validation_config)
     except ConfigMissingError:
+        if config.config_path is not None:
+            raise
         # mala.yaml not present - use defaults
         validation_config_missing = True
     except ConfigError:

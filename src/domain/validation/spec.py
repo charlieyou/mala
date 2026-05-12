@@ -364,10 +364,11 @@ def build_validation_spec(
     *,
     validation_config: ValidationConfig | None = None,
     config_missing: bool = False,
+    config_path: Path | None = None,
 ) -> ValidationSpec:
     """Build a ValidationSpec from config files.
 
-    This function loads the mala.yaml configuration from the repository,
+    This function loads the Mala project configuration from the repository,
     merges it with any preset configuration, and builds a ValidationSpec.
 
     Disable values:
@@ -382,7 +383,11 @@ def build_validation_spec(
         scope: The validation scope. Defaults to PER_SESSION.
         disable_validations: Set of validation types to disable.
         validation_config: Pre-loaded ValidationConfig to avoid re-reading mala.yaml.
-        config_missing: Set True to skip config loading and return an empty spec.
+        config_missing: Set True to skip config loading and return the default spec.
+        config_path: Optional explicit config file path. Relative paths are
+            resolved relative to the current working directory when loading is
+            needed. Ignored when ``validation_config`` or ``config_missing`` is
+            supplied.
 
     Returns:
         A ValidationSpec configured according to the config files.
@@ -415,8 +420,10 @@ def build_validation_spec(
         user_config = validation_config
     else:
         try:
-            user_config = load_config(repo_path)
+            user_config = load_config(repo_path, config_path=config_path)
         except ConfigMissingError:
+            if config_path is not None:
+                raise
             user_config = None
 
     if user_config is None:

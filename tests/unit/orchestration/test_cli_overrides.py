@@ -185,3 +185,24 @@ class TestBuildResolvedMalaConfig:
         config = build_resolved_mala_config(tmp_path, CLIOverrideOptions())
         assert config.coder == "amp"
         assert config.coder_options.amp.mode == "rush"
+
+    def test_explicit_config_path_feeds_yaml_coder_resolution(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An explicit non-mala.yaml file supplies yaml coder values."""
+        for name in ("MALA_CODER", "MALA_AMP_MODE", "MALA_EFFORT"):
+            monkeypatch.delenv(name, raising=False)
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        (repo_path / "mala.yaml").write_text("preset: go\ncoder: claude\n")
+        alt_config = tmp_path / "mala.codex.yaml"
+        alt_config.write_text("preset: go\ncoder: amp\namp_mode: deep\n")
+
+        config = build_resolved_mala_config(
+            repo_path,
+            CLIOverrideOptions(),
+            config_path=alt_config,
+        )
+
+        assert config.coder == "amp"
+        assert config.coder_options.amp.mode == "deep"

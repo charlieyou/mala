@@ -105,6 +105,17 @@ def _run_kwargs(**overrides: object) -> dict[str, Any]:
     return defaults
 
 
+def _isolate_coder_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove coder-related env vars so yaml assertions stay deterministic."""
+    for name in (
+        "MALA_CODER",
+        "MALA_AMP_MODE",
+        "MALA_MODEL",
+        "MALA_EFFORT",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 class TestRunCommandOutcomeShape:
     def test_default_no_error_or_dry_run(self) -> None:
         outcome = RunCommandOutcome(exit_code=0)
@@ -200,6 +211,29 @@ class TestSuccessfulRun:
         assert orchestrator.last_watch_config is not None
         assert orchestrator.last_watch_config.enabled is True
 
+    def test_run_uses_explicit_config_path_for_mala_config(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """``mala run --config alt.yaml`` uses alt.yaml for yaml coder values."""
+        _isolate_coder_env(monkeypatch)
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        (repo_path / "mala.yaml").write_text("preset: go\ncoder: claude\n")
+        alt_config = tmp_path / "alt.yaml"
+        alt_config.write_text("preset: go\ncoder: amp\namp_mode: rush\n")
+        orchestrator = FakeOrchestrator()
+        _install_fake_orchestrator(monkeypatch, orchestrator)
+
+        outcome = execute_run_command(
+            repo_path=repo_path,
+            **_run_kwargs(config_path=alt_config),
+        )
+
+        assert outcome.exit_code == 0
+        assert orchestrator.last_orch_config.config_path == alt_config
+        assert orchestrator.last_mala_config.coder == "amp"
+        assert orchestrator.last_mala_config.coder_options.amp.mode == "rush"
+
 
 class TestExitCodeComputation:
     """Verify the exit code mapping from orchestrator results."""
@@ -290,7 +324,12 @@ class TestConfigResolutionErrors:
         """A ValueError from build_resolved_mala_config becomes an outcome error."""
         import src.orchestration.run_command as module
 
-        def boom(repo_path: object, options: object) -> None:
+        def boom(
+            repo_path: object,
+            options: object,
+            *,
+            config_path: object = None,
+        ) -> None:
             raise ValueError("invalid override")
 
         monkeypatch.setattr(module, "build_resolved_mala_config", boom)
@@ -299,3 +338,41 @@ class TestConfigResolutionErrors:
 
         assert outcome.exit_code == 1
         assert outcome.error_message == "invalid override"
+
+    def test_missing_explicit_config_surfaces_selected_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Missing explicit config paths become user-facing outcome errors."""
+        _isolate_coder_env(monkeypatch)
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        missing_config = tmp_path / "missing.yaml"
+
+        outcome = execute_run_command(
+            repo_path=repo_path,
+            **_run_kwargs(config_path=missing_config),
+        )
+
+        assert outcome.exit_code == 1
+        assert outcome.error_message is not None
+        assert str(missing_config) in outcome.error_message
+
+    def test_invalid_explicit_config_surfaces_selected_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Invalid explicit config files become user-facing outcome errors."""
+        _isolate_coder_env(monkeypatch)
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        bad_config = tmp_path / "bad-alt.yaml"
+        bad_config.write_text("commands\n  test: pytest\n")
+
+        outcome = execute_run_command(
+            repo_path=repo_path,
+            **_run_kwargs(config_path=bad_config),
+        )
+
+        assert outcome.exit_code == 1
+        assert outcome.error_message is not None
+        assert str(bad_config) in outcome.error_message
+        assert "Invalid YAML syntax" in outcome.error_message

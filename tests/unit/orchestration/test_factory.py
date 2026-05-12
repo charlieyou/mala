@@ -29,6 +29,16 @@ if TYPE_CHECKING:
     from src.core.protocols.events import MalaEventSink
 
 
+class _NoopReviewer:
+    """Injected reviewer that satisfies the factory wiring contract."""
+
+    async def __call__(self, *args: object, **kwargs: object) -> object:
+        raise AssertionError("reviewer should not be called during factory tests")
+
+    def overrides_disabled_setting(self) -> bool:
+        return False
+
+
 def _write_fake_cerberus(root: Path) -> Path:
     """Create a fake Cerberus v2 root with binary and reviewer prompts."""
     bin_dir = root / "bin"
@@ -123,7 +133,6 @@ class TestCheckReviewAvailability:
             reviewer_type="cerberus",
         )
         assert result == f"cerberus root {tmp_path} missing prompts/reviewers/"
-
     def test_availability_checks_do_not_invoke_cerberus_subprocess(
         self, tmp_path: Path
     ) -> None:
@@ -427,6 +436,67 @@ class TestCheckReviewAvailability:
         )
 
         assert orchestrator.epic_verifier is None
+
+
+def test_create_orchestrator_uses_explicit_config_path_for_validation_config(
+    tmp_path: Path,
+) -> None:
+    """Factory validation/reviewer/trigger settings come from the selected file."""
+    from tests.fakes.agent_provider import FakeAgentProvider
+    from tests.fakes.issue_provider import FakeIssueProvider
+    from tests.fakes.sdk_client import FakeSDKClientFactory
+    from src.orchestration.types import OrchestratorDependencies
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    (repo_path / "mala.yaml").write_text(
+        dedent("""\
+        preset: go
+        timeout_minutes: 11
+        per_issue_review:
+          enabled: true
+          reviewer_type: agent_sdk
+          agent_sdk_timeout: 999
+        epic_verification:
+          enabled: true
+        """)
+    )
+    alt_config = tmp_path / "mala.strict.yaml"
+    alt_config.write_text(
+        dedent("""\
+        preset: go
+        timeout_minutes: 3
+        per_issue_review:
+          enabled: true
+          reviewer_type: agent_sdk
+          agent_sdk_timeout: 123
+        epic_verification:
+          enabled: false
+        validation_triggers:
+          run_end:
+            failure_mode: continue
+            commands: []
+        """)
+    )
+    deps = OrchestratorDependencies(
+        issue_provider=FakeIssueProvider(),
+        agent_provider=FakeAgentProvider(FakeSDKClientFactory()),
+        code_reviewer=_NoopReviewer(),
+    )
+
+    orchestrator = create_orchestrator(
+        OrchestratorConfig(repo_path=repo_path, config_path=alt_config),
+        mala_config=MalaConfig.from_env(validate=False),
+        deps=deps,
+    )
+
+    assert orchestrator.timeout_seconds == 3 * 60
+    assert orchestrator._derived.review_timeout_seconds == 123
+    assert orchestrator._validation_config is not None
+    assert orchestrator._validation_config.timeout_minutes == 3
+    assert orchestrator._validation_config.epic_verification.enabled is False
+    assert orchestrator._validation_config.validation_triggers is not None
+    assert orchestrator._validation_config.validation_triggers.run_end is not None
 
 
 class TestCerberusFactoryWiring:
