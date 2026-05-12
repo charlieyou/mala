@@ -388,6 +388,20 @@ class TestCerberusEpicVerifierErrors:
             )
 
     @pytest.mark.asyncio
+    async def test_non_zero_wait_exit_with_invalid_stdout_raises_execution_error(
+        self, tmp_path: Path
+    ) -> None:
+        verifier = _make_verifier(tmp_path)
+
+        with pytest.raises(VerificationExecutionError, match="runtime failed"):
+            await _run_verify_with_output(
+                verifier,
+                "",
+                wait_returncode=2,
+                wait_stderr="runtime failed",
+            )
+
+    @pytest.mark.asyncio
     async def test_cleanup_on_error(self, tmp_path: Path) -> None:
         verifier = _make_verifier(tmp_path)
         created_paths: list[Path] = []

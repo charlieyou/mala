@@ -160,6 +160,10 @@ class CerberusEpicVerifier:
         run_key: str,
     ) -> EpicVerdict:
         """Parse Cerberus v2 gate-state and iteration artifacts into EpicVerdict."""
+        if returncode != 0:
+            detail = stderr.strip() or f"cerberus wait failed with exit {returncode}"
+            raise VerificationExecutionError(detail)
+
         try:
             gate_state = parse_gate_state(stdout)
         except ValueError as e:
@@ -167,10 +171,6 @@ class CerberusEpicVerifier:
             raise VerificationParseError(
                 f"Invalid Cerberus gate-state: {e}. Output preview: {preview}"
             ) from e
-
-        if returncode != 0:
-            detail = stderr.strip() or f"cerberus wait failed with exit {returncode}"
-            raise VerificationExecutionError(detail)
 
         findings, parse_errors = read_findings(
             state_root=state_root,
