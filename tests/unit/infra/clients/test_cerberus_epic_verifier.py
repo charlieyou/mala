@@ -58,21 +58,23 @@ class FakeCommandResult:
         return self.stderr[:max_chars]
 
 
-def _make_review_gate(tmp_path: Path) -> Path:
-    bin_path = tmp_path / "bin"
-    bin_path.mkdir()
-    review_gate = bin_path / "review-gate"
-    review_gate.write_text("#!/usr/bin/env sh\nexit 0\n")
-    os.chmod(review_gate, stat.S_IRWXU)
-    return bin_path
+def _make_cerberus_root(tmp_path: Path) -> tuple[Path, Path]:
+    root = tmp_path / "cerberus-root"
+    bin_path = root / "bin"
+    bin_path.mkdir(parents=True)
+    (root / "prompts" / "reviewers").mkdir(parents=True)
+    cerberus = bin_path / "cerberus"
+    cerberus.write_text("#!/usr/bin/env sh\nexit 0\n")
+    os.chmod(cerberus, stat.S_IRWXU)
+    return root, bin_path
 
 
 def _make_verifier(tmp_path: Path) -> CerberusEpicVerifier:
-    bin_path = _make_review_gate(tmp_path)
+    root, bin_path = _make_cerberus_root(tmp_path)
     return CerberusEpicVerifier(
         repo_path=tmp_path,
         bin_path=bin_path,
-        env={},
+        env={"PATH": str(bin_path), "CERBERUS_ROOT": str(root)},
     )
 
 
@@ -125,7 +127,7 @@ class TestCerberusEpicVerifierCommands:
         assert captured_epic_paths
 
     @pytest.mark.asyncio
-    async def test_wait_command_includes_session_id(self, tmp_path: Path) -> None:
+    async def test_wait_command_includes_session_key(self, tmp_path: Path) -> None:
         verifier = _make_verifier(tmp_path)
         captured_commands: list[list[str]] = []
 
@@ -159,7 +161,8 @@ class TestCerberusEpicVerifierCommands:
             await verifier.verify(epic_context="criteria")
 
         wait_cmd = next(cmd for cmd in captured_commands if cmd[1] == "wait")
-        assert "--session-id" in wait_cmd
+        assert "--session-key" in wait_cmd
+        assert "--session-id" not in wait_cmd
 
 
 @pytest.mark.unit

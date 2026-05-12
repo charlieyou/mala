@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 from src.infra.clients.cerberus_cli import (
     CerberusCLI,
+    CerberusGateCLI,
     WaitResult,
 )
 from src.infra.tools.command_runner import CommandResult
@@ -75,6 +76,21 @@ class TestValidateBinary:
         assert (
             cli.validate_binary() == f"cerberus root {root} missing prompts/reviewers/"
         )
+
+    def test_compat_wrapper_validates_path_binary_when_bin_path_configured(
+        self, tmp_path: Path
+    ) -> None:
+        """Legacy bin_path must not bypass the v2 PATH/root validation."""
+        legacy_bin_path = tmp_path / "legacy-bin"
+        legacy_bin_path.mkdir()
+
+        cli = CerberusGateCLI(
+            repo_path=tmp_path,
+            bin_path=legacy_bin_path,
+            env={"PATH": "/nonexistent/path"},
+        )
+
+        assert cli.validate_binary() == "cerberus binary not found in PATH"
 
 
 class TestBuildEnv:
@@ -530,6 +546,33 @@ class TestWaitForReview:
             "stderr",
             "timed_out",
         )
+
+
+class TestCerberusGateCLICompat:
+    """Tests for the temporary adapter compatibility wrapper."""
+
+    @pytest.mark.asyncio
+    async def test_wait_uses_session_key_from_run_key(self, tmp_path: Path) -> None:
+        """Legacy wait wrapper still invokes the v2 wait addressing contract."""
+        cli = CerberusGateCLI(repo_path=tmp_path)
+        runner = FakeCommandRunner(allow_unregistered=True)
+
+        await cli.wait_for_review(
+            session_id="claude-session",
+            runner=runner,
+            env={
+                "CERBERUS_RUN_KEY": "mala-claude-session",
+                "CERBERUS_STATE_ROOT": str(tmp_path / "state"),
+                "CERBERUS_PROJECT_KEY": "project",
+            },
+            cli_timeout=300,
+        )
+
+        call_args = runner.calls[0][0]
+        assert call_args[:2] == ("cerberus", "wait")
+        assert "--session-key" in call_args
+        assert "mala-claude-session" in call_args
+        assert "--session-id" not in call_args
 
 
 class TestSpawnEpicVerify:

@@ -58,9 +58,14 @@ class WaitResult:
     stderr: str = ""
     timed_out: bool = False
 
-    def __getattr__(self, name: str) -> Path | None:
-        """Support legacy dynamic attributes without expanding the dataclass."""
-        raise AttributeError(name)
+    @property
+    def session_dir(self) -> Path | None:
+        """Legacy adapter-only review log path."""
+        return self.__dict__.get("_session_dir")
+
+    @session_dir.setter
+    def session_dir(self, value: Path | None) -> None:
+        self.__dict__["_session_dir"] = value
 
 
 @dataclass
@@ -399,13 +404,11 @@ class CerberusGateCLI:
         bin_path: Path | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
-        self._legacy_bin_path = bin_path
+        _ = bin_path
         self._cli = CerberusCLI(repo_path=repo_path, env=env or {})
 
     def validate_binary(self) -> str | None:
         """Validate that cerberus is available."""
-        if self._legacy_bin_path is not None:
-            return None
         return self._cli.validate_binary()
 
     def build_env(self, claude_session_id: str | None) -> dict[str, str]:
@@ -481,9 +484,10 @@ class CerberusGateCLI:
             "wait",
             "--json",
             "--finalize",
-            "--session-id",
-            session_id,
+            "--session-key",
+            env["CERBERUS_RUN_KEY"],
         ]
+        _ = session_id
         if user_timeout is None:
             wait_cmd.extend(["--timeout", str(cli_timeout)])
         if wait_args:
