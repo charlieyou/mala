@@ -594,16 +594,24 @@ class CodexAgentProvider:
             approval_policy=self._approval_policy,
             sandbox=self._sandbox,
         )
-        # Thread the per-provider isolated ``CODEX_HOME`` into the
+        # Thread a per-provider isolated ``CODEX_HOME`` into the
         # runtime's per-process env so the spawned ``codex app-server``
-        # reads the mala-scoped plugin tree from the isolated location
-        # instead of the user's normal Codex home. Without this overlay
-        # the installation would be isolated on disk but Codex would
-        # still inherit the user's ``CODEX_HOME`` at runtime.
-        if self._isolated_codex_home is not None:
-            builder.with_env(
-                extra={"CODEX_HOME": str(Path(self._isolated_codex_home.name))}
-            )
+        # reads mala-scoped config, plugins, and skills from the
+        # isolated location instead of the user's normal Codex home.
+        #
+        # ``install_prerequisites`` normally allocates this home before
+        # any runtime is built, but the runtime builder is also part of
+        # the provider's public surface (tests, fixer paths, and future
+        # call sites can construct it directly). Ensure isolation here
+        # too so Codex never falls back to user ``~/.codex/skills`` just
+        # because a caller reached the builder before the installer.
+        if self._isolated_codex_home is None:
+            from src.infra.clients.codex_plugin_installer import _resolve_codex_home
+
+            isolated_home = self._ensure_isolated_codex_home(_resolve_codex_home())
+        else:
+            isolated_home = Path(self._isolated_codex_home.name)
+        builder.with_env(extra={"CODEX_HOME": str(isolated_home)})
         return cast("CoderRuntimeBuilder", builder)
 
     def mcp_server_factory(self) -> McpServerFactory:
@@ -620,14 +628,17 @@ class CodexAgentProvider:
         """Lazily allocate this provider's private ``CODEX_HOME`` and
         seed it with the user's auth credential.
 
-        The plugin tree + ``config.toml`` Codex reads at
+        The plugin tree, skills directory, and ``config.toml`` Codex reads at
         ``thread_start`` live under ``$CODEX_HOME``. Installing Mala's
         safety plugin into the user's real Codex home makes it visible
         to ordinary Codex CLI sessions, where ``MALA_AGENT_ID`` /
         ``MALA_LOCK_DIR`` are absent and the hook fails closed on
-        edits. Allocating a per-provider ``TemporaryDirectory`` whose
+        edits. User-installed skills under the real ``$CODEX_HOME`` must
+        likewise not be offered to unattended Mala workers. Allocating a
+        per-provider ``TemporaryDirectory`` whose
         path is fed to the spawned Codex via :meth:`runtime_builder`
-        scopes the plugin and trust entries to this mala run only.
+        scopes the plugin, trust entries, and ``$CODEX_HOME/skills`` to
+        this mala run only.
 
         The same isolation also removes the user-MCP race the prior
         design fixed only for ``coder_options.codex.mcp_servers``: a
@@ -954,9 +965,9 @@ class CodexAgentProvider:
             # the plugin via ``configured_plugins_from_stack``; and
             # ``[hooks.state."<id>:..."]`` with the matching
             # ``trusted_hash`` to mark the hook Trusted. ``codex_home``
-            # here is the *active* home (isolated when user MCP is
-            # configured, user's real home otherwise) so the writes
-            # land in the same directory the spawned Codex will read.
+            # here is always the provider-private isolated home, so the
+            # writes land in the same directory the spawned Codex will
+            # read without mutating the user's normal Codex config.
             _write_codex_plugin_config(codex_home=codex_home)
 
             return install_result.plugin_hash

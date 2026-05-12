@@ -278,6 +278,100 @@ def test_runtime_builder_threads_resolved_options(
 
 
 @pytest.mark.unit
+def test_runtime_builder_isolates_codex_home_before_install_prerequisites(
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """A Codex runtime must not inherit user ``$CODEX_HOME/skills``.
+
+    ``install_prerequisites`` normally creates the provider-private
+    ``CODEX_HOME`` before any runtime is built, but direct runtime-builder
+    call sites should still get the same config/plugin/skill isolation.
+    Without this, a Codex app-server launched from such a runtime would
+    discover skills installed under the user's real ``~/.codex``.
+    """
+    codex_home, _bin_dir = fake_codex_env
+    user_skill = codex_home / "skills" / "local-user-skill" / "SKILL.md"
+    user_skill.parent.mkdir(parents=True)
+    user_skill.write_text("---\nname: local-user-skill\n---\n", encoding="utf-8")
+
+    provider = CodexAgentProvider()
+    runtime = provider.runtime_builder(
+        tmp_path, "agent-x", mcp_server_factory=fake_mcp_factory
+    ).build()
+
+    assert isinstance(runtime, CodexRuntime)
+    isolated_home = _provider_isolated_codex_home(provider)
+    assert isolated_home != codex_home
+    assert runtime.env["CODEX_HOME"] == str(isolated_home)
+    assert not (isolated_home / "skills" / "local-user-skill").exists()
+    assert user_skill.is_file()
+
+
+@pytest.mark.unit
+def test_runtime_builder_isolated_home_preserves_keyring_seed_before_install(
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """Direct builder isolation still carries auth-scoped config.
+
+    Keyring users often have no ``auth.json`` in their real
+    ``CODEX_HOME``. If runtime-builder-created isolation failed to seed
+    ``cli_auth_credentials_store = "keyring"``, a direct builder caller
+    would launch Codex with an isolated home that cannot find the user's
+    stored credentials.
+    """
+    codex_home, _bin_dir = fake_codex_env
+    (codex_home / "auth.json").unlink()
+    (codex_home / "config.toml").write_text(
+        'cli_auth_credentials_store = "keyring"\n', encoding="utf-8"
+    )
+
+    provider = CodexAgentProvider()
+    runtime = provider.runtime_builder(
+        tmp_path, "agent-x", mcp_server_factory=fake_mcp_factory
+    ).build()
+
+    assert isinstance(runtime, CodexRuntime)
+    isolated_config = (
+        _provider_isolated_codex_home(provider) / "config.toml"
+    ).read_text(encoding="utf-8")
+    assert 'cli_auth_credentials_store = "keyring"' in isolated_config
+
+
+@pytest.mark.unit
+def test_install_prerequisites_reuses_runtime_builder_isolated_home(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """Builder-first and install-first paths share one isolated home."""
+    codex_home, bin_dir = fake_codex_env
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    provider = CodexAgentProvider(selftest_probe=_noop_probe)
+    runtime = provider.runtime_builder(
+        tmp_path, "agent-x", mcp_server_factory=fake_mcp_factory
+    ).build()
+    assert isinstance(runtime, CodexRuntime)
+    isolated_home = Path(runtime.env["CODEX_HOME"])
+
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    assert _provider_isolated_codex_home(provider) == isolated_home
+    assert _codex_plugin_dir(isolated_home).is_dir()
+    assert "trusted_hash" in (isolated_home / "config.toml").read_text(
+        encoding="utf-8"
+    )
+    assert not _codex_plugin_dir(codex_home).exists()
+
+
+@pytest.mark.unit
 def test_runtime_builder_records_resume_token(
     tmp_path: Path, fake_mcp_factory: Callable[..., dict[str, object]]
 ) -> None:
