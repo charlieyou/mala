@@ -162,10 +162,8 @@ error.
 [Cerberus](https://github.com/charlieyou/cerberus) provides automated code review when `reviewer_type: cerberus`
 is enabled in `mala.yaml`. If you use `reviewer_type: agent_sdk`, no Cerberus install is required.
 
-```bash
-claude /plugin marketplace add charlieyou/cerberus
-claude /plugin install cerberus
-```
+To enable Cerberus reviews, install the Cerberus v2 binary and make sure `cerberus`
+is available on `$PATH`.
 
 ## Installation
 
