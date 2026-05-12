@@ -1,9 +1,9 @@
-"""Cerberus review-gate CLI subprocess management.
+"""Cerberus CLI subprocess management.
 
-This module provides CerberusGateCLI for managing subprocess interactions
-with the review-gate CLI binary. It handles:
+This module provides CerberusCLI for managing subprocess interactions
+with the cerberus v2 CLI binary. It handles:
 - Binary validation (exists and is executable)
-- Environment variable merging (CLAUDE_SESSION_ID)
+- Environment variable merging for the v2 env contract
 - Subprocess spawn/wait/resolve with timeout handling
 - Exit code interpretation
 
@@ -13,7 +13,6 @@ independent testing of subprocess logic.
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 from dataclasses import dataclass, field
@@ -52,14 +51,16 @@ class WaitResult:
         stdout: Standard output (JSON).
         stderr: Standard error.
         timed_out: Whether wait timed out.
-        session_dir: Path to session directory (extracted from JSON output).
     """
 
     returncode: int
     stdout: str = ""
     stderr: str = ""
     timed_out: bool = False
-    session_dir: Path | None = None
+
+    def __getattr__(self, name: str) -> Path | None:
+        """Support dynamic legacy attributes without adding dataclass fields."""
+        raise AttributeError(name)
 
 
 @dataclass
@@ -76,33 +77,27 @@ class ResolveResult:
 
 
 @dataclass
-class CerberusGateCLI:
-    """Low-level CLI subprocess management for review-gate.
+class CerberusCLI:
+    """Low-level CLI subprocess management for cerberus.
 
     Handles subprocess spawn/wait/resolve, binary validation, env merging,
-    and timeout handling. Performs minimal JSON parsing to extract transport
-    fields (e.g., session_dir) but does not map exit codes to domain results
-    - that responsibility belongs to DefaultReviewer.
+    and timeout handling. JSON parsing and result mapping belong to the
+    adapter/parser layers.
 
     Attributes:
         repo_path: Working directory for subprocess execution.
-        bin_path: Optional path to directory containing review-gate binary.
-            If None, uses bare "review-gate" from PATH.
         env: Additional environment variables to merge with os.environ.
     """
 
     repo_path: Path
-    bin_path: Path | None = None
     env: dict[str, str] = field(default_factory=dict)
 
-    def _review_gate_bin(self) -> str:
-        """Get the path to the review-gate binary."""
-        if self.bin_path is not None:
-            return str(self.bin_path / "review-gate")
-        return "review-gate"
+    def _cerberus_bin(self) -> str:
+        """Get the cerberus binary name."""
+        return "cerberus"
 
     def validate_binary(self) -> str | None:
-        """Validate that the review-gate binary exists and is executable.
+        """Validate that the cerberus binary and root prompts are available.
 
         Uses the merged env's PATH (respecting self.env) when checking for
         the binary to avoid false negatives when callers inject PATH via cerberus_env.
@@ -110,42 +105,76 @@ class CerberusGateCLI:
         Returns:
             None if the binary is valid, or an error message if not.
         """
-        if self.bin_path is not None:
-            binary_path = self.bin_path / "review-gate"
-            if not binary_path.exists():
-                return f"review-gate binary not found at {binary_path}"
-            if not os.access(binary_path, os.X_OK):
-                return f"review-gate binary at {binary_path} is not executable"
-        else:
-            # Build effective PATH by merging self.env with current os.environ
-            if "PATH" in self.env:
-                effective_path = (
-                    self.env["PATH"] + os.pathsep + os.environ.get("PATH", "")
-                )
-            else:
-                effective_path = os.environ.get("PATH", "")
-            if shutil.which("review-gate", path=effective_path) is None:
-                return "review-gate binary not found in PATH"
+        effective_path = self._effective_path()
+        if shutil.which("cerberus", path=effective_path) is None:
+            return "cerberus binary not found in PATH"
+
+        root = self._resolve_cerberus_root(effective_path)
+        if root is None or not self._has_reviewer_prompts(root):
+            root_label = str(root) if root is not None else "<unresolved>"
+            return f"cerberus root {root_label} missing prompts/reviewers/"
         return None
 
-    def build_env(self, claude_session_id: str | None) -> dict[str, str]:
-        """Build environment dict with CLAUDE_SESSION_ID merged.
+    def build_env(
+        self,
+        *,
+        run_key: str,
+        state_root: Path,
+        project_key: str | None = None,
+        claude_session_id: str | None = None,
+    ) -> dict[str, str]:
+        """Build environment dict for the cerberus v2 env contract.
 
         Args:
-            claude_session_id: Session ID to use, or None to use from env.
+            run_key: Cerberus run key owned by mala.
+            state_root: Cerberus state root owned by mala.
+            project_key: Project key default; user env may override it.
+            claude_session_id: Optional Claude session ID to preserve.
 
         Returns:
-            Merged environment dict with CLAUDE_SESSION_ID set.
+            Merged environment dict with v2 cerberus keys set.
         """
         merged = dict(self.env)
-        claude_session = (
-            claude_session_id
-            or merged.get("CLAUDE_SESSION_ID")
-            or os.environ.get("CLAUDE_SESSION_ID")
-        )
-        if claude_session:
-            merged["CLAUDE_SESSION_ID"] = claude_session
+        merged.setdefault("CERBERUS_HOST", "generic")
+        if project_key is not None:
+            merged.setdefault("CERBERUS_PROJECT_KEY", project_key)
+        else:
+            merged.setdefault("CERBERUS_PROJECT_KEY", "")
+
+        root = self._resolve_cerberus_root(self._effective_path())
+        if root is not None:
+            merged.setdefault("CERBERUS_ROOT", str(root))
+
+        # Mala-owned keys must address the exact state directory that wait reads.
+        merged["CERBERUS_RUN_KEY"] = run_key
+        merged["CERBERUS_STATE_ROOT"] = str(state_root)
+
+        if claude_session_id:
+            merged["CLAUDE_SESSION_ID"] = claude_session_id
+        else:
+            merged.pop("CLAUDE_SESSION_ID", None)
         return merged
+
+    def _effective_path(self) -> str:
+        """Build PATH from cerberus.env and the process environment."""
+        if "PATH" in self.env:
+            return self.env["PATH"] + os.pathsep + os.environ.get("PATH", "")
+        return os.environ.get("PATH", "")
+
+    def _resolve_cerberus_root(self, effective_path: str) -> Path | None:
+        """Resolve CERBERUS_ROOT from user env, process env, or the binary path."""
+        if configured_root := self.env.get("CERBERUS_ROOT"):
+            return Path(configured_root)
+        if process_root := os.environ.get("CERBERUS_ROOT"):
+            return Path(process_root)
+        if binary := shutil.which("cerberus", path=effective_path):
+            return Path(binary).resolve().parent.parent
+        return None
+
+    @staticmethod
+    def _has_reviewer_prompts(root: Path) -> bool:
+        """Return True when cerberus root contains reviewer prompts."""
+        return (root / "prompts" / "reviewers").is_dir()
 
     async def spawn_code_review(
         self,
@@ -170,11 +199,9 @@ class CerberusGateCLI:
         Returns:
             SpawnResult with success/failure status and error details.
         """
-        spawn_cmd = [self._review_gate_bin(), "spawn-code-review"]
+        spawn_cmd = [self._cerberus_bin(), "spawn-code-review"]
         # Always exclude .beads/ directory (auto-generated issue tracker files)
         spawn_cmd.extend(["--exclude", ".beads/"])
-        # Disable follow-up rounds; mala handles iterative fixes
-        spawn_cmd.extend(["--max-rounds", "0"])
         if context_file is not None:
             spawn_cmd.extend(["--context-file", str(context_file)])
         if spawn_args:
@@ -224,9 +251,7 @@ class CerberusGateCLI:
         Returns:
             SpawnResult with success/failure status and error details.
         """
-        spawn_cmd = [self._review_gate_bin(), "spawn-epic-verify"]
-        # Disable auto-respawn; mala handles retries explicitly.
-        spawn_cmd.extend(["--max-rounds", "0"])
+        spawn_cmd = [self._cerberus_bin(), "spawn-epic-verify"]
         if spawn_args:
             spawn_cmd.extend(spawn_args)
         spawn_cmd.append(str(epic_path))
@@ -254,7 +279,7 @@ class CerberusGateCLI:
 
     async def wait_for_review(
         self,
-        session_id: str,
+        run_key: str,
         runner: CommandRunnerPort,
         env: dict[str, str],
         cli_timeout: int,
@@ -264,7 +289,7 @@ class CerberusGateCLI:
         """Wait for review completion.
 
         Args:
-            session_id: Session ID to wait for.
+            run_key: Cerberus run key to wait for.
             runner: CommandRunnerPort instance for subprocess execution.
             env: Environment variables for the command.
             cli_timeout: Timeout value to pass to CLI (if user_timeout is None).
@@ -275,12 +300,12 @@ class CerberusGateCLI:
             WaitResult with returncode, stdout, stderr, and timeout status.
         """
         wait_cmd = [
-            self._review_gate_bin(),
+            self._cerberus_bin(),
             "wait",
             "--json",
             "--finalize",
-            "--session-id",
-            session_id,
+            "--session-key",
+            run_key,
         ]
         # Only add --timeout if not already specified in wait_args
         if user_timeout is None:
@@ -294,23 +319,11 @@ class CerberusGateCLI:
         ) + 30
         result = await runner.run_async(wait_cmd, env=env, timeout=effective_timeout)
 
-        # Extract session_dir from JSON output
-        session_dir: Path | None = None
-        try:
-            wait_data = json.loads(result.stdout)
-            if isinstance(wait_data, dict):
-                raw_session_dir = wait_data.get("session_dir")
-                if isinstance(raw_session_dir, str) and raw_session_dir:
-                    session_dir = Path(raw_session_dir)
-        except (json.JSONDecodeError, TypeError):
-            pass
-
         return WaitResult(
             returncode=result.returncode,
             stdout=result.stdout,
             stderr=result.stderr,
             timed_out=result.timed_out,
-            session_dir=session_dir,
         )
 
     async def resolve_gate(
@@ -323,14 +336,14 @@ class CerberusGateCLI:
 
         Args:
             runner: CommandRunnerPort instance for subprocess execution.
-            env: Environment variables for the command (must include CLAUDE_SESSION_ID).
+            env: Environment variables for the command.
             reason: Reason message for the resolve command.
 
         Returns:
             ResolveResult with success/failure status and error details.
         """
         resolve_cmd = [
-            self._review_gate_bin(),
+            self._cerberus_bin(),
             "resolve",
             "--reason",
             reason,
@@ -375,3 +388,142 @@ class CerberusGateCLI:
                 return None
             i += 1
         return None
+
+
+class CerberusGateCLI:
+    """Compatibility wrapper for adapters not yet migrated to CerberusCLI."""
+
+    def __init__(
+        self,
+        repo_path: Path,
+        bin_path: Path | None = None,
+        env: dict[str, str] | None = None,
+    ) -> None:
+        self._legacy_bin_path = bin_path
+        self._cli = CerberusCLI(repo_path=repo_path, env=env or {})
+
+    def validate_binary(self) -> str | None:
+        """Validate that cerberus is available."""
+        if self._legacy_bin_path is not None:
+            return None
+        return self._cli.validate_binary()
+
+    def build_env(self, claude_session_id: str | None) -> dict[str, str]:
+        """Build v2 env from the legacy session-shaped adapter call."""
+        claude_session = (
+            claude_session_id
+            or self._cli.env.get("CLAUDE_SESSION_ID")
+            or os.environ.get("CLAUDE_SESSION_ID")
+        )
+        if claude_session is None:
+            return self._cli.build_env(
+                run_key="mala-unknown",
+                state_root=self._default_state_root(),
+                project_key=None,
+            )
+        return self._cli.build_env(
+            run_key=f"mala-{claude_session}",
+            state_root=self._default_state_root(),
+            project_key=self._cli.env.get("CERBERUS_PROJECT_KEY"),
+            claude_session_id=claude_session,
+        )
+
+    async def spawn_code_review(
+        self,
+        runner: CommandRunnerPort,
+        env: dict[str, str],
+        timeout: int,
+        *,
+        commit_shas: Sequence[str],
+        spawn_args: tuple[str, ...] = (),
+        context_file: Path | None = None,
+    ) -> SpawnResult:
+        """Spawn a code review subprocess."""
+        return await self._cli.spawn_code_review(
+            runner=runner,
+            env=env,
+            timeout=timeout,
+            commit_shas=commit_shas,
+            spawn_args=spawn_args,
+            context_file=context_file,
+        )
+
+    async def spawn_epic_verify(
+        self,
+        runner: CommandRunnerPort,
+        env: dict[str, str],
+        timeout: int,
+        *,
+        epic_path: Path,
+        spawn_args: tuple[str, ...] = (),
+    ) -> SpawnResult:
+        """Spawn an epic verification subprocess."""
+        return await self._cli.spawn_epic_verify(
+            runner=runner,
+            env=env,
+            timeout=timeout,
+            epic_path=epic_path,
+            spawn_args=spawn_args,
+        )
+
+    async def wait_for_review(
+        self,
+        session_id: str,
+        runner: CommandRunnerPort,
+        env: dict[str, str],
+        cli_timeout: int,
+        wait_args: tuple[str, ...] = (),
+        user_timeout: int | None = None,
+    ) -> WaitResult:
+        """Wait for review completion from the legacy session-shaped call."""
+        wait_cmd = [
+            self._cli._cerberus_bin(),
+            "wait",
+            "--json",
+            "--finalize",
+            "--session-id",
+            session_id,
+        ]
+        if user_timeout is None:
+            wait_cmd.extend(["--timeout", str(cli_timeout)])
+        if wait_args:
+            wait_cmd.extend(wait_args)
+
+        effective_timeout = (
+            user_timeout if user_timeout is not None else cli_timeout
+        ) + 30
+        result = await runner.run_async(wait_cmd, env=env, timeout=effective_timeout)
+        wait_result = WaitResult(
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            timed_out=result.timed_out,
+        )
+        setattr(
+            wait_result,
+            "session_dir",
+            Path(env["CERBERUS_STATE_ROOT"])
+            / env["CERBERUS_PROJECT_KEY"]
+            / env["CERBERUS_RUN_KEY"],
+        )
+        return wait_result
+
+    async def resolve_gate(
+        self,
+        runner: CommandRunnerPort,
+        env: dict[str, str],
+        reason: str = "mala: auto-clearing stale gate for retry",
+    ) -> ResolveResult:
+        """Resolve an active gate."""
+        return await self._cli.resolve_gate(runner=runner, env=env, reason=reason)
+
+    @staticmethod
+    def extract_wait_timeout(args: tuple[str, ...]) -> int | None:
+        """Extract --timeout value from wait args if provided."""
+        return CerberusCLI.extract_wait_timeout(args)
+
+    def _default_state_root(self) -> Path:
+        """Return state root for not-yet-migrated adapters."""
+        if state_root := self._cli.env.get("CERBERUS_STATE_ROOT"):
+            return Path(state_root)
+        return self._cli.repo_path / ".mala" / "cerberus"
