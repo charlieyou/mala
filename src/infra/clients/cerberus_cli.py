@@ -147,8 +147,8 @@ class CerberusCLI:
             merged.setdefault("CERBERUS_PROJECT_KEY", "")
 
         root = self._resolve_cerberus_root(self._effective_path())
-        if root is not None:
-            merged.setdefault("CERBERUS_ROOT", str(root))
+        if root is not None and not merged.get("CERBERUS_ROOT"):
+            merged["CERBERUS_ROOT"] = str(root)
 
         # Mala-owned keys must address the exact state directory that wait reads.
         merged["CERBERUS_RUN_KEY"] = run_key
@@ -404,8 +404,13 @@ class CerberusGateCLI:
         bin_path: Path | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
-        _ = bin_path
-        self._cli = CerberusCLI(repo_path=repo_path, env=env or {})
+        merged_env = dict(env or {})
+        if bin_path is not None:
+            if merged_env.get("PATH"):
+                merged_env["PATH"] = str(bin_path) + os.pathsep + merged_env["PATH"]
+            else:
+                merged_env["PATH"] = str(bin_path)
+        self._cli = CerberusCLI(repo_path=repo_path, env=merged_env)
 
     def validate_binary(self) -> str | None:
         """Validate that cerberus is available."""
@@ -479,29 +484,14 @@ class CerberusGateCLI:
         user_timeout: int | None = None,
     ) -> WaitResult:
         """Wait for review completion from the legacy session-shaped call."""
-        wait_cmd = [
-            self._cli._cerberus_bin(),
-            "wait",
-            "--json",
-            "--finalize",
-            "--session-key",
-            env["CERBERUS_RUN_KEY"],
-        ]
         _ = session_id
-        if user_timeout is None:
-            wait_cmd.extend(["--timeout", str(cli_timeout)])
-        if wait_args:
-            wait_cmd.extend(wait_args)
-
-        effective_timeout = (
-            user_timeout if user_timeout is not None else cli_timeout
-        ) + 30
-        result = await runner.run_async(wait_cmd, env=env, timeout=effective_timeout)
-        wait_result = WaitResult(
-            returncode=result.returncode,
-            stdout=result.stdout,
-            stderr=result.stderr,
-            timed_out=result.timed_out,
+        wait_result = await self._cli.wait_for_review(
+            run_key=env["CERBERUS_RUN_KEY"],
+            runner=runner,
+            env=env,
+            cli_timeout=cli_timeout,
+            wait_args=wait_args,
+            user_timeout=user_timeout,
         )
         setattr(
             wait_result,

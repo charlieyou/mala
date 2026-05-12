@@ -92,6 +92,18 @@ class TestValidateBinary:
 
         assert cli.validate_binary() == "cerberus binary not found in PATH"
 
+    def test_compat_wrapper_prepends_bin_path_to_path(self, tmp_path: Path) -> None:
+        """Legacy bin_path is still honored by the temporary wrapper."""
+        _, bin_dir = self._make_cerberus_root(tmp_path)
+
+        cli = CerberusGateCLI(
+            repo_path=tmp_path,
+            bin_path=bin_dir,
+            env={"PATH": "/nonexistent/path"},
+        )
+
+        assert cli.validate_binary() is None
+
 
 class TestBuildEnv:
     """Tests for environment merging."""
@@ -130,6 +142,31 @@ class TestBuildEnv:
         )
 
         assert env["CERBERUS_PROJECT_KEY"] == "user-project"
+
+    def test_empty_user_root_is_replaced_with_resolved_root(
+        self, tmp_path: Path
+    ) -> None:
+        """Empty CERBERUS_ROOT should not override the validated root."""
+        root = tmp_path / "cerberus-root"
+        bin_dir = root / "bin"
+        bin_dir.mkdir(parents=True)
+        (root / "prompts" / "reviewers").mkdir(parents=True)
+        binary = bin_dir / "cerberus"
+        binary.touch()
+        binary.chmod(0o755)
+        cli = CerberusCLI(
+            repo_path=tmp_path,
+            env={"PATH": str(bin_dir), "CERBERUS_ROOT": ""},
+        )
+
+        assert cli.validate_binary() is None
+        env = cli.build_env(
+            run_key="run-1",
+            state_root=tmp_path / "state",
+            project_key="project",
+        )
+
+        assert env["CERBERUS_ROOT"] == str(root)
 
     def test_mala_owned_run_key_overrides_user_env(self, tmp_path: Path) -> None:
         """User cerberus.env run key cannot override mala value."""
