@@ -549,6 +549,84 @@ class TestContextFileCleanup:
         assert "This is a false positive because X." in captured_text
 
     @pytest.mark.asyncio
+    async def test_cerberus_set_failure_uses_review_runner_context_file(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Cerberus set failures still spawn with ReviewRunner's context file."""
+        from unittest.mock import patch
+
+        from src.infra.clients.cerberus_output_parser import ReviewResult
+        from src.infra.clients.cerberus_review import DefaultReviewer
+        from src.infra.tools.command_runner import CommandResult
+
+        captured_spawn_context: str | None = None
+        captured_spawn_cmd: list[str] | None = None
+
+        class CapturingRunner:
+            async def run_async(
+                self,
+                cmd: list[str] | str,
+                **_kwargs: object,
+            ) -> CommandResult:
+                nonlocal captured_spawn_context, captured_spawn_cmd
+                assert isinstance(cmd, list)
+                if cmd[:3] == ["cerberus", "author-context", "--"]:
+                    return CommandResult(
+                        command=cmd,
+                        returncode=1,
+                        stderr="state unavailable",
+                    )
+                if cmd[:2] == ["cerberus", "spawn-code-review"]:
+                    captured_spawn_cmd = cmd
+                    context_index = cmd.index("--context-file") + 1
+                    captured_spawn_context = Path(cmd[context_index]).read_text()
+                    return CommandResult(command=cmd, returncode=0)
+                if cmd[:2] == ["cerberus", "wait"]:
+                    return CommandResult(command=cmd, returncode=0, stdout="{}")
+                raise AssertionError(f"Unexpected command: {cmd}")
+
+        reviewer = DefaultReviewer(
+            repo_path=tmp_path,
+            env={"CERBERUS_ROOT": "/tmp/cerberus"},
+        )
+        runner = ReviewRunner(
+            code_reviewer=cast("CodeReviewer", reviewer),
+            view=_make_view(),
+        )
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            issue_description="Fix the bug",
+            author_context="This finding is a false positive.",
+            commit_shas=["abc123"],
+            claude_session_id="test-session",
+        )
+
+        with (
+            patch(
+                "src.infra.clients.cerberus_cli.CerberusCLI.validate_binary",
+                return_value=None,
+            ),
+            patch(
+                "src.infra.clients.cerberus_review.CommandRunner",
+                return_value=CapturingRunner(),
+            ),
+            patch(
+                "src.infra.clients.cerberus_review.map_exit_code_to_result",
+                return_value=ReviewResult(passed=True, issues=[]),
+            ),
+        ):
+            output = await runner.run_review(review_input)
+
+        assert output.result.passed is True
+        assert captured_spawn_cmd is not None
+        assert "--context-file" in captured_spawn_cmd
+        assert captured_spawn_context is not None
+        assert "Fix the bug" in captured_spawn_context
+        assert "This finding is a false positive." in captured_spawn_context
+
+    @pytest.mark.asyncio
     async def test_context_file_cleaned_up_after_success(
         self,
         tmp_path: Path,

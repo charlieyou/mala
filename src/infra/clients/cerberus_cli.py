@@ -82,6 +82,14 @@ class ResolveResult:
 
 
 @dataclass
+class AuthorContextResult:
+    """Result of updating Cerberus author context state."""
+
+    success: bool
+    error_detail: str = ""
+
+
+@dataclass
 class CerberusCLI:
     """Low-level CLI subprocess management for cerberus.
 
@@ -364,6 +372,36 @@ class CerberusCLI:
             )
         except Exception as e:
             return ResolveResult(success=False, error_detail=str(e))
+
+    async def set_author_context(
+        self,
+        runner: CommandRunnerPort,
+        env: dict[str, str],
+        author_context: str | None,
+    ) -> AuthorContextResult:
+        """Set or clear Cerberus author context for the active run.
+
+        Cerberus v2 stores author context as run state via the
+        ``cerberus author-context`` command. The code-review spawn command reads
+        that state and injects it into the reviewer prompt.
+        """
+        if author_context:
+            cmd = [self._cerberus_bin(), "author-context", "--", author_context]
+        else:
+            cmd = [self._cerberus_bin(), "author-context", "--clear"]
+
+        try:
+            result = await runner.run_async(cmd, env=env, timeout=30)
+            if result.returncode == 0:
+                return AuthorContextResult(success=True)
+            stderr = result.stderr_tail()
+            stdout = result.stdout_tail()
+            return AuthorContextResult(
+                success=False,
+                error_detail=stderr or stdout or "author-context failed",
+            )
+        except Exception as e:
+            return AuthorContextResult(success=False, error_detail=str(e))
 
     @staticmethod
     def extract_wait_timeout(args: tuple[str, ...]) -> int | None:

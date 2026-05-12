@@ -93,9 +93,6 @@ class DefaultReviewer:
         commit_shas: Sequence[str],
         interrupt_event: asyncio.Event | None = None,
     ) -> ReviewResult:
-        # author_context is already included in context_file by review_runner.py
-        # with prominent formatting to highlight implementer's response to previous findings
-        _ = author_context
         cli = self._get_cli()
 
         # Validate the Cerberus binary exists and is executable before proceeding.
@@ -137,6 +134,42 @@ class DefaultReviewer:
                 fatal_error=False,
                 review_log_path=None,
             )
+
+        author_context_result = await cli.set_author_context(
+            runner=runner,
+            env=env,
+            author_context=author_context,
+        )
+        if not author_context_result.success:
+            if author_context:
+                if context_file is None:
+                    return ReviewResult(
+                        passed=False,
+                        issues=[],
+                        parse_error=(
+                            "author-context set failed and no context_file "
+                            "fallback is available: "
+                            f"{author_context_result.error_detail}"
+                        ),
+                        fatal_error=False,
+                        review_log_path=None,
+                    )
+                logger.warning(
+                    "Failed to write Cerberus author context; continuing with "
+                    "context-file fallback: %s",
+                    author_context_result.error_detail,
+                )
+            else:
+                return ReviewResult(
+                    passed=False,
+                    issues=[],
+                    parse_error=(
+                        "author-context clear failed: "
+                        f"{author_context_result.error_detail}"
+                    ),
+                    fatal_error=False,
+                    review_log_path=None,
+                )
 
         # Spawn code review
         spawn_result = await cli.spawn_code_review(

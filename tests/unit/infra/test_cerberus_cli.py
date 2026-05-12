@@ -597,6 +597,90 @@ class TestSpawnEpicVerify:
         assert "--max-rounds" not in call_args
         assert "0" not in call_args
 
+class TestAuthorContext:
+    """Tests for author-context subprocess."""
+
+    @pytest.mark.asyncio
+    async def test_sets_author_context(self, tmp_path: Path) -> None:
+        """Uses the Cerberus v2 author-context command with text."""
+        cli = CerberusCLI(repo_path=tmp_path)
+        runner = FakeCommandRunner(allow_unregistered=True)
+
+        result = await cli.set_author_context(
+            runner=runner,
+            env={"CERBERUS_RUN_KEY": "run-1"},
+            author_context="False positive: see test.py:10",
+        )
+
+        assert result.success is True
+        assert runner.calls[0][0] == (
+            "cerberus",
+            "author-context",
+            "--",
+            "False positive: see test.py:10",
+        )
+        assert runner.calls[0][1]["timeout"] == 30
+
+    @pytest.mark.asyncio
+    async def test_sets_author_context_that_starts_with_dash(
+        self, tmp_path: Path
+    ) -> None:
+        """Separates free-form text from flags with --."""
+        cli = CerberusCLI(repo_path=tmp_path)
+        runner = FakeCommandRunner(allow_unregistered=True)
+
+        result = await cli.set_author_context(
+            runner=runner,
+            env={"CERBERUS_RUN_KEY": "run-1"},
+            author_context="- Implemented:\n- Files changed: src/app.py",
+        )
+
+        assert result.success is True
+        assert runner.calls[0][0] == (
+            "cerberus",
+            "author-context",
+            "--",
+            "- Implemented:\n- Files changed: src/app.py",
+        )
+
+    @pytest.mark.asyncio
+    async def test_clears_author_context(self, tmp_path: Path) -> None:
+        """Clears Cerberus author-context state when text is absent."""
+        cli = CerberusCLI(repo_path=tmp_path)
+        runner = FakeCommandRunner(allow_unregistered=True)
+
+        result = await cli.set_author_context(
+            runner=runner,
+            env={"CERBERUS_RUN_KEY": "run-1"},
+            author_context=None,
+        )
+
+        assert result.success is True
+        assert runner.calls[0][0] == ("cerberus", "author-context", "--clear")
+
+    @pytest.mark.asyncio
+    async def test_returns_error_on_failure(self, tmp_path: Path) -> None:
+        """Returns error detail when author-context fails."""
+        cli = CerberusCLI(repo_path=tmp_path)
+        runner = FakeCommandRunner(
+            responses={
+                ("cerberus", "author-context", "--", "context"): CommandResult(
+                    command=["cerberus", "author-context", "--", "context"],
+                    returncode=1,
+                    stderr="state unavailable",
+                )
+            }
+        )
+
+        result = await cli.set_author_context(
+            runner=runner,
+            env={"CERBERUS_RUN_KEY": "run-1"},
+            author_context="context",
+        )
+
+        assert result.success is False
+        assert result.error_detail == "state unavailable"
+
 
 class TestResolveGate:
     """Tests for resolve subprocess."""

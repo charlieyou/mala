@@ -277,6 +277,10 @@ class TestNoChangesSpawnError:
             "src.infra.clients.cerberus_cli.CerberusCLI.validate_binary",
             return_value=None,
         ):
+            clear_result = MagicMock()
+            clear_result.returncode = 0
+            clear_result.timed_out = False
+
             spawn_result = MagicMock()
             spawn_result.returncode = 1
             spawn_result.timed_out = False
@@ -289,7 +293,7 @@ class TestNoChangesSpawnError:
                 "src.infra.clients.cerberus_review.CommandRunner"
             ) as mock_runner_class:
                 mock_runner = AsyncMock()
-                mock_runner.run_async.return_value = spawn_result
+                mock_runner.run_async.side_effect = [clear_result, spawn_result]
                 mock_runner_class.return_value = mock_runner
 
                 result = await reviewer(
@@ -303,8 +307,9 @@ class TestNoChangesSpawnError:
             assert result.issues == []
 
             calls = [call[0][0] for call in mock_runner.run_async.call_args_list]
-            assert len(calls) == 1
-            assert "spawn-code-review" in calls[0]
+            assert len(calls) == 2
+            assert calls[0] == ["cerberus", "author-context", "--clear"]
+            assert "spawn-code-review" in calls[1]
 
 
 class TestDefaultReviewerConstructor:
@@ -346,6 +351,10 @@ class TestCerberusV2Review:
             "src.infra.clients.cerberus_cli.CerberusCLI.validate_binary",
             return_value=None,
         ):
+            clear_result = MagicMock()
+            clear_result.returncode = 0
+            clear_result.timed_out = False
+
             spawn_ok_result = MagicMock()
             spawn_ok_result.returncode = 0
             spawn_ok_result.timed_out = False
@@ -360,7 +369,11 @@ class TestCerberusV2Review:
                 "src.infra.clients.cerberus_review.CommandRunner"
             ) as mock_runner_class:
                 mock_runner = AsyncMock()
-                mock_runner.run_async.side_effect = [spawn_ok_result, wait_result]
+                mock_runner.run_async.side_effect = [
+                    clear_result,
+                    spawn_ok_result,
+                    wait_result,
+                ]
                 mock_runner_class.return_value = mock_runner
 
                 result = await reviewer(
@@ -369,7 +382,7 @@ class TestCerberusV2Review:
                 )
 
         assert result.passed is True
-        spawn_env = mock_runner.run_async.call_args_list[0].kwargs["env"]
+        spawn_env = mock_runner.run_async.call_args_list[1].kwargs["env"]
         assert spawn_env["CERBERUS_PROJECT_KEY"] == tmp_path.name
 
     async def test_normal_pass_does_not_resolve_gate_and_uses_run_key_env(
@@ -396,6 +409,10 @@ class TestCerberusV2Review:
                 new_callable=AsyncMock,
             ) as mock_resolve,
         ):
+            clear_result = MagicMock()
+            clear_result.returncode = 0
+            clear_result.timed_out = False
+
             spawn_ok_result = MagicMock()
             spawn_ok_result.returncode = 0
             spawn_ok_result.timed_out = False
@@ -410,7 +427,11 @@ class TestCerberusV2Review:
                 "src.infra.clients.cerberus_review.CommandRunner"
             ) as mock_runner_class:
                 mock_runner = AsyncMock()
-                mock_runner.run_async.side_effect = [spawn_ok_result, wait_result]
+                mock_runner.run_async.side_effect = [
+                    clear_result,
+                    spawn_ok_result,
+                    wait_result,
+                ]
                 mock_runner_class.return_value = mock_runner
 
                 result = await reviewer(
@@ -424,9 +445,10 @@ class TestCerberusV2Review:
             mock_resolve.assert_not_called()
 
             calls = [call[0][0] for call in mock_runner.run_async.call_args_list]
-            assert calls[0][:2] == ["cerberus", "spawn-code-review"]
-            assert "--max-rounds" not in calls[0]
-            assert calls[1] == [
+            assert calls[0] == ["cerberus", "author-context", "--clear"]
+            assert calls[1][:2] == ["cerberus", "spawn-code-review"]
+            assert "--max-rounds" not in calls[1]
+            assert calls[2] == [
                 "cerberus",
                 "wait",
                 "--json",
@@ -437,9 +459,213 @@ class TestCerberusV2Review:
                 "600",
             ]
 
-            spawn_env = mock_runner.run_async.call_args_list[0].kwargs["env"]
+            spawn_env = mock_runner.run_async.call_args_list[1].kwargs["env"]
             assert spawn_env["CERBERUS_HOST"] == "generic"
             assert spawn_env["CERBERUS_RUN_KEY"] == "mala-test-session"
             assert spawn_env["CERBERUS_STATE_ROOT"] == str(state_root)
             assert spawn_env["CERBERUS_PROJECT_KEY"] == "project-1"
             assert spawn_env["CERBERUS_ROOT"] == "/tmp/cerberus"
+
+    async def test_author_context_is_written_before_spawn(
+        self, tmp_path: Path
+    ) -> None:
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        state_root = tmp_path / ".mala" / "cerberus"
+        reviewer = DefaultReviewer(
+            repo_path=tmp_path,
+            state_root=state_root,
+            project_key="project-1",
+            env={"CERBERUS_ROOT": "/tmp/cerberus"},
+        )
+        _write_empty_cerberus_output(tmp_path, run_key="mala-test-session")
+
+        with patch(
+            "src.infra.clients.cerberus_cli.CerberusCLI.validate_binary",
+            return_value=None,
+        ):
+            author_context_result = MagicMock()
+            author_context_result.returncode = 0
+            author_context_result.timed_out = False
+
+            spawn_ok_result = MagicMock()
+            spawn_ok_result.returncode = 0
+            spawn_ok_result.timed_out = False
+
+            wait_result = MagicMock()
+            wait_result.returncode = 0
+            wait_result.timed_out = False
+            wait_result.stdout = _gate_state_json()
+            wait_result.stderr = ""
+
+            with patch(
+                "src.infra.clients.cerberus_review.CommandRunner"
+            ) as mock_runner_class:
+                mock_runner = AsyncMock()
+                mock_runner.run_async.side_effect = [
+                    author_context_result,
+                    spawn_ok_result,
+                    wait_result,
+                ]
+                mock_runner_class.return_value = mock_runner
+
+                result = await reviewer(
+                    commit_shas=["abc123"],
+                    claude_session_id="test-session",
+                    author_context="False positive: covered by test_x",
+                )
+
+        assert result.passed is True
+        calls = [call[0][0] for call in mock_runner.run_async.call_args_list]
+        assert calls[0] == [
+            "cerberus",
+            "author-context",
+            "--",
+            "False positive: covered by test_x",
+        ]
+        assert calls[1][:2] == ["cerberus", "spawn-code-review"]
+        assert calls[2][:2] == ["cerberus", "wait"]
+        author_context_env = mock_runner.run_async.call_args_list[0].kwargs["env"]
+        assert author_context_env["CERBERUS_RUN_KEY"] == "mala-test-session"
+        assert author_context_env["CERBERUS_STATE_ROOT"] == str(state_root)
+
+    async def test_author_context_set_failure_uses_context_file_fallback(
+        self, tmp_path: Path
+    ) -> None:
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        reviewer = DefaultReviewer(
+            repo_path=tmp_path,
+            env={"CERBERUS_ROOT": "/tmp/cerberus"},
+        )
+        context_file = tmp_path / "review-context.txt"
+        context_file.write_text("context", encoding="utf-8")
+        _write_empty_cerberus_output(
+            tmp_path,
+            project_key=tmp_path.name,
+            run_key="mala-test-session",
+        )
+
+        with patch(
+            "src.infra.clients.cerberus_cli.CerberusCLI.validate_binary",
+            return_value=None,
+        ):
+            author_context_result = MagicMock()
+            author_context_result.returncode = 1
+            author_context_result.stderr_tail.return_value = "state unavailable"
+            author_context_result.stdout_tail.return_value = ""
+
+            spawn_ok_result = MagicMock()
+            spawn_ok_result.returncode = 0
+            spawn_ok_result.timed_out = False
+
+            wait_result = MagicMock()
+            wait_result.returncode = 0
+            wait_result.timed_out = False
+            wait_result.stdout = _gate_state_json(project_key=tmp_path.name)
+            wait_result.stderr = ""
+
+            with patch(
+                "src.infra.clients.cerberus_review.CommandRunner"
+            ) as mock_runner_class:
+                mock_runner = AsyncMock()
+                mock_runner.run_async.side_effect = [
+                    author_context_result,
+                    spawn_ok_result,
+                    wait_result,
+                ]
+                mock_runner_class.return_value = mock_runner
+
+                result = await reviewer(
+                    context_file=context_file,
+                    commit_shas=["abc123"],
+                    claude_session_id="test-session",
+                    author_context="context",
+                )
+
+        assert result.passed is True
+        calls = [call[0][0] for call in mock_runner.run_async.call_args_list]
+        assert calls[0] == ["cerberus", "author-context", "--", "context"]
+        assert calls[1][:2] == ["cerberus", "spawn-code-review"]
+        assert "--context-file" in calls[1]
+        assert str(context_file) in calls[1]
+        assert calls[2][:2] == ["cerberus", "wait"]
+
+    async def test_author_context_set_failure_without_fallback_blocks_review(
+        self, tmp_path: Path
+    ) -> None:
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        reviewer = DefaultReviewer(
+            repo_path=tmp_path,
+            env={"CERBERUS_ROOT": "/tmp/cerberus"},
+        )
+
+        with patch(
+            "src.infra.clients.cerberus_cli.CerberusCLI.validate_binary",
+            return_value=None,
+        ):
+            author_context_result = MagicMock()
+            author_context_result.returncode = 1
+            author_context_result.stderr_tail.return_value = "state unavailable"
+            author_context_result.stdout_tail.return_value = ""
+
+            with patch(
+                "src.infra.clients.cerberus_review.CommandRunner"
+            ) as mock_runner_class:
+                mock_runner = AsyncMock()
+                mock_runner.run_async.return_value = author_context_result
+                mock_runner_class.return_value = mock_runner
+
+                result = await reviewer(
+                    commit_shas=["abc123"],
+                    claude_session_id="test-session",
+                    author_context="context",
+                )
+
+        assert result.passed is False
+        assert result.parse_error == (
+            "author-context set failed and no context_file fallback is available: "
+            "state unavailable"
+        )
+        assert [call[0][0] for call in mock_runner.run_async.call_args_list] == [
+            ["cerberus", "author-context", "--", "context"]
+        ]
+
+    async def test_author_context_clear_failure_blocks_review(
+        self, tmp_path: Path
+    ) -> None:
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        reviewer = DefaultReviewer(
+            repo_path=tmp_path,
+            env={"CERBERUS_ROOT": "/tmp/cerberus"},
+        )
+
+        with patch(
+            "src.infra.clients.cerberus_cli.CerberusCLI.validate_binary",
+            return_value=None,
+        ):
+            clear_result = MagicMock()
+            clear_result.returncode = 1
+            clear_result.stderr_tail.return_value = "state unavailable"
+            clear_result.stdout_tail.return_value = ""
+
+            with patch(
+                "src.infra.clients.cerberus_review.CommandRunner"
+            ) as mock_runner_class:
+                mock_runner = AsyncMock()
+                mock_runner.run_async.return_value = clear_result
+                mock_runner_class.return_value = mock_runner
+
+                result = await reviewer(
+                    commit_shas=["abc123"],
+                    claude_session_id="test-session",
+                    author_context=None,
+                )
+
+        assert result.passed is False
+        assert result.parse_error == "author-context clear failed: state unavailable"
+        assert [call[0][0] for call in mock_runner.run_async.call_args_list] == [
+            ["cerberus", "author-context", "--clear"]
+        ]
