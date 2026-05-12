@@ -223,7 +223,7 @@ and model routing to keep working (notably keyring-backed ChatGPT
 credentials and a selected non-default ``model_provider``), but they
 must not inherit user plugin/hook/MCP/tooling config. Inheriting those
 tables lets interactive local Codex extensions (for example stop hooks
-that wait for a review gate) run inside unattended Mala workers and can
+that wait for blocking review hooks) run inside unattended Mala workers and can
 block completion after the model has already emitted its final marker.
 
 Keep this allowlist intentionally small. Mala supplies its own

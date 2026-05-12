@@ -9,7 +9,7 @@ It handles:
 - JSON response parsing to EpicVerdict
 - Error classification (timeout, execution, parse)
 
-Subprocess management is delegated to CerberusGateCLI patterns.
+Subprocess management is delegated to CerberusCLI.
 """
 
 from __future__ import annotations

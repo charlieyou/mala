@@ -915,7 +915,7 @@ def test_isolated_codex_home_strips_user_plugins_hooks_and_shell_env(
     """Regression: Mala Codex workers must not inherit user hook/plugin config.
 
     A user's normal Codex config can enable interactive plugins with
-    long-running Stop hooks (for example review gates). Copying that whole
+    long-running Stop hooks (for example blocking review hooks). Copying that whole
     config into Mala's isolated ``CODEX_HOME`` lets those hooks block an
     unattended worker after the model has already emitted a terminal marker.
     The isolated seed keeps auth-related scalars but strips third-party
