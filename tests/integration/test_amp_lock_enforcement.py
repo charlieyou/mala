@@ -79,6 +79,7 @@ _AMP_BINARY_REASON = (
 )
 
 pytestmark = [
+    pytest.mark.e2e,
     pytest.mark.skipif(shutil.which("amp") is None, reason=_AMP_BINARY_REASON),
 ]
 

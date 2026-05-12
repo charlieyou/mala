@@ -34,6 +34,7 @@ from src.domain.validation.spec import (
     ValidationScope,
     ValidationSpec,
 )
+from src.domain.validation_wrapper import build_canonical_wrapper
 from src.infra.clients.codex_evidence_provider import CodexEvidenceProvider
 
 if TYPE_CHECKING:
@@ -92,6 +93,28 @@ def _append_jsonl(path: Path, events: Iterable[dict[str, object]]) -> None:
             fh.write("\n")
 
 
+def _validation_command_completed(
+    item_id: str,
+    command: ValidationCommand,
+    *,
+    exit_code: int = 0,
+    issue_id: str = "codex-resume",
+) -> dict[str, object]:
+    validation_log_dir = Path("/tmp/mala-validation-logs")
+    wrapper = build_canonical_wrapper(
+        command,
+        issue_id=issue_id,
+        validation_log_dir=validation_log_dir,
+    )
+    log_path = validation_log_dir / f"{issue_id}.{command.name}.log"
+    return _command_completed(
+        item_id,
+        wrapper,
+        f"MALA_EVIDENCE name={command.name} exit={exit_code} log={log_path}",
+        exit_code=exit_code,
+    )
+
+
 class _NoopRunner:
     """Minimal :class:`CommandRunnerPort` stand-in.
 
@@ -146,6 +169,10 @@ def _spec_with_lint_test_typecheck() -> ValidationSpec:
     )
 
 
+def _commands_by_name(spec: ValidationSpec) -> dict[str, ValidationCommand]:
+    return {command.name: command for command in spec.commands}
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -177,13 +204,15 @@ def test_evidence_check_sees_invocation_1_evidence_after_resume(
     """
     sessions_dir = tmp_path / "codex-sessions"
     log_path = sessions_dir / "thr_resume_test.jsonl"
+    spec = _spec_with_lint_test_typecheck()
+    commands = _commands_by_name(spec)
 
     _write_jsonl(
         log_path,
         [
-            _command_completed("inv1-test", "uv run pytest -q", "5 passed"),
-            _command_completed("inv1-lint", "uvx ruff check .", "ok"),
-            _command_completed("inv1-tc", "uvx ty check", "ok"),
+            _validation_command_completed("inv1-test", commands["pytest"]),
+            _validation_command_completed("inv1-lint", commands["ruff-check"]),
+            _validation_command_completed("inv1-tc", commands["ty"]),
         ],
     )
     end_of_invocation_1 = log_path.stat().st_size
@@ -204,7 +233,7 @@ def test_evidence_check_sees_invocation_1_evidence_after_resume(
 
     evidence = check.parse_validation_evidence_with_spec(
         log_path,
-        _spec_with_lint_test_typecheck(),
+        spec,
         offset=end_of_invocation_1,
     )
 
@@ -297,15 +326,15 @@ def test_failed_pytest_is_routed_to_failed_commands(tmp_path: Path) -> None:
     """
     sessions_dir = tmp_path / "codex-sessions"
     log_path = sessions_dir / "thr_resume_test.jsonl"
+    spec = _spec_with_lint_test_typecheck()
+    commands = _commands_by_name(spec)
 
     _write_jsonl(
         log_path,
         [
-            _command_completed(
+            _validation_command_completed(
                 "item-pytest-fail",
-                "uv run pytest -q",
-                "1 failed",
-                "completed",
+                commands["pytest"],
                 exit_code=1,
             ),
         ],
@@ -320,7 +349,7 @@ def test_failed_pytest_is_routed_to_failed_commands(tmp_path: Path) -> None:
 
     evidence = check.parse_validation_evidence_with_spec(
         log_path,
-        _spec_with_lint_test_typecheck(),
+        spec,
     )
 
     pytest_evidence = evidence.commands["pytest"]

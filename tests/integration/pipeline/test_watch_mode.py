@@ -591,10 +591,11 @@ async def main():
     event_sink = FakeEventSink()
     watch_config = WatchConfig(enabled=True, poll_interval_seconds=60.0)
     interrupt_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
 
     # Set up SIGINT handler
     def sigint_handler(signum, frame):
-        interrupt_event.set()
+        loop.call_soon_threadsafe(interrupt_event.set)
     signal.signal(signal.SIGINT, sigint_handler)
 
     coord = IssueExecutionCoordinator(
