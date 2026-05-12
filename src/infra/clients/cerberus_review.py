@@ -64,33 +64,18 @@ class DefaultReviewer:
             env=self.env,
         )
 
-    def _validate_cerberus_bin(self) -> str | None:
-        """Validate that the cerberus binary exists and is executable.
-
-        Delegates to CerberusCLI.validate_binary().
-
-        Returns:
-            None if the binary is valid, or an error message if not.
-        """
-        return self._get_cli().validate_binary()
-
-    @staticmethod
-    def _extract_wait_timeout(args: tuple[str, ...]) -> int | None:
-        """Extract --timeout value from wait args if provided.
-
-        Delegates to CerberusCLI.extract_wait_timeout().
-
-        Args:
-            args: Tuple of command-line arguments to search.
-
-        Returns:
-            The timeout value as int if found and valid, None otherwise.
-        """
-        return CerberusCLI.extract_wait_timeout(args)
-
     def overrides_disabled_setting(self) -> bool:
         """Return False; DefaultReviewer respects the disabled setting."""
         return False
+
+    def _project_key(self) -> str:
+        """Return the non-empty Cerberus project key for this review run."""
+        return (
+            self.project_key
+            or self.env.get("CERBERUS_PROJECT_KEY")
+            or self.repo_path.name
+            or "default"
+        )
 
     @staticmethod
     def _is_no_changes_error(error_detail: str) -> bool:
@@ -127,12 +112,14 @@ class DefaultReviewer:
         runner = CommandRunner(cwd=self.repo_path)
         run_key = f"mala-{claude_session_id}" if claude_session_id else "mala-unknown"
         state_root = self.state_root or self.repo_path / ".mala" / "cerberus"
+        project_key = self._project_key()
         env = cli.build_env(
             run_key=run_key,
             state_root=state_root,
-            project_key=self.project_key,
+            project_key=project_key,
             claude_session_id=claude_session_id,
         )
+        env["CERBERUS_PROJECT_KEY"] = project_key
         if "CLAUDE_SESSION_ID" not in env:
             return ReviewResult(
                 passed=False,

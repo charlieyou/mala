@@ -183,6 +183,11 @@ def _wait_for_artifact(path: Path, timeout_s: float = 10.0) -> None:
         time.sleep(0.2)
 
 
+def _review_gate_env(review_gate_bin: Path) -> dict[str, str]:
+    """Prepend review-gate bin while preserving system utilities on PATH."""
+    return {"PATH": f"{review_gate_bin}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+
 @pytest.fixture
 def review_gate_bin() -> Path:
     """Get the real review-gate binary, skip if not available."""
@@ -221,7 +226,7 @@ async def test_review_gate_full_flow(tmp_path: Path, review_gate_bin: Path) -> N
     reviewer = DefaultReviewer(
         repo_path=tmp_path,
         spawn_args=("--mode=fast",),  # Use fast mode for quicker tests
-        env={"PATH": str(review_gate_bin)},
+        env=_review_gate_env(review_gate_bin),
     )
 
     result = await reviewer(
@@ -244,7 +249,7 @@ async def test_review_gate_commits_scope(tmp_path: Path, review_gate_bin: Path) 
     reviewer = DefaultReviewer(
         repo_path=tmp_path,
         spawn_args=("--mode=fast",),
-        env={"PATH": str(review_gate_bin)},
+        env=_review_gate_env(review_gate_bin),
     )
 
     result = await reviewer(
@@ -304,7 +309,7 @@ async def test_review_gate_empty_commit_shortcircuit(
 
     reviewer = DefaultReviewer(
         repo_path=tmp_path,
-        env={"PATH": str(review_gate_bin)},
+        env=_review_gate_env(review_gate_bin),
     )
 
     result = await reviewer(
