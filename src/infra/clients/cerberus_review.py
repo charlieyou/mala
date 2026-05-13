@@ -198,12 +198,15 @@ class DefaultReviewer:
                     parse_error=None,
                     fatal_error=False,
                 )
-            return ReviewResult(
-                passed=False,
-                issues=[],
-                parse_error=f"spawn failed: {spawn_result.error_detail}",
-                fatal_error=False,
-            )
+            if spawn_result.already_active:
+                logger.info("Review already active for run_key=%s; waiting", run_key)
+            else:
+                return ReviewResult(
+                    passed=False,
+                    issues=[],
+                    parse_error=f"spawn failed: {spawn_result.error_detail}",
+                    fatal_error=False,
+                )
 
         # Check if wait_args already specifies --timeout to avoid duplicates
         user_timeout = CerberusCLI.extract_wait_timeout(self.wait_args)

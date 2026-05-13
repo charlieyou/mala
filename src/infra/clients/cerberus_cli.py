@@ -233,7 +233,7 @@ class CerberusCLI:
             stdout = result.stdout_tail()
             detail = stderr or stdout or "spawn failed"
             combined = f"{stderr or ''} {stdout or ''}".lower()
-            already_active = "already active" in combined
+            already_active = "already active" in combined or "already pending" in combined
             return SpawnResult(
                 success=False,
                 timed_out=False,

@@ -636,6 +636,272 @@ class TestCerberusV2Review:
         assert author_context_env["CERBERUS_RUN_KEY"] == "mala-test-session"
         assert author_context_env["CERBERUS_STATE_ROOT"] == str(state_root)
 
+    async def test_wait_timeout_is_retryable_tool_error(self, tmp_path: Path) -> None:
+        """A wait timeout should let lifecycle reattach and wait again."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        reviewer = DefaultReviewer(
+            repo_path=tmp_path,
+            env={"CERBERUS_ROOT": "/tmp/cerberus"},
+        )
+
+        with patch(
+            "src.infra.clients.cerberus_cli.CerberusCLI.validate_binary",
+            return_value=None,
+        ):
+            clear_result = MagicMock()
+            clear_result.returncode = 0
+            clear_result.timed_out = False
+
+            spawn_ok_result = MagicMock()
+            spawn_ok_result.returncode = 0
+            spawn_ok_result.timed_out = False
+
+            wait_result = MagicMock()
+            wait_result.returncode = 124
+            wait_result.timed_out = True
+            wait_result.stdout = ""
+            wait_result.stderr = "timed out waiting for gate state"
+
+            with patch(
+                "src.infra.clients.cerberus_review.CommandRunner"
+            ) as mock_runner_class:
+                mock_runner = AsyncMock()
+                mock_runner.run_async.side_effect = [
+                    clear_result,
+                    spawn_ok_result,
+                    wait_result,
+                ]
+                mock_runner_class.return_value = mock_runner
+
+                result = await reviewer(
+                    commit_shas=["abc123"],
+                    claude_session_id="test-session",
+                )
+
+        assert result.passed is False
+        assert result.parse_error == "timeout"
+        assert result.fatal_error is False
+
+    async def test_cerberus_cli_timeout_exit_is_retryable_tool_error(
+        self, tmp_path: Path
+    ) -> None:
+        """A Cerberus wait timeout exit should stay retryable."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        reviewer = DefaultReviewer(
+            repo_path=tmp_path,
+            env={"CERBERUS_ROOT": "/tmp/cerberus"},
+        )
+
+        with patch(
+            "src.infra.clients.cerberus_cli.CerberusCLI.validate_binary",
+            return_value=None,
+        ):
+            clear_result = MagicMock()
+            clear_result.returncode = 0
+            clear_result.timed_out = False
+
+            spawn_ok_result = MagicMock()
+            spawn_ok_result.returncode = 0
+            spawn_ok_result.timed_out = False
+
+            wait_result = MagicMock()
+            wait_result.returncode = 3
+            wait_result.timed_out = False
+            wait_result.stdout = ""
+            wait_result.stderr = ""
+
+            with patch(
+                "src.infra.clients.cerberus_review.CommandRunner"
+            ) as mock_runner_class:
+                mock_runner = AsyncMock()
+                mock_runner.run_async.side_effect = [
+                    clear_result,
+                    spawn_ok_result,
+                    wait_result,
+                ]
+                mock_runner_class.return_value = mock_runner
+
+                result = await reviewer(
+                    commit_shas=["abc123"],
+                    claude_session_id="test-session",
+                )
+
+        assert result.passed is False
+        assert result.parse_error == "timeout"
+        assert result.fatal_error is False
+
+    async def test_timeout_retry_reattaches_to_same_run_key(
+        self, tmp_path: Path
+    ) -> None:
+        """A second reviewer invocation after timeout should wait on the same run."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        reviewer = DefaultReviewer(
+            repo_path=tmp_path,
+            env={"CERBERUS_ROOT": "/tmp/cerberus"},
+        )
+        _write_empty_cerberus_output(
+            tmp_path,
+            project_key=tmp_path.name,
+            run_key="mala-test-session",
+        )
+
+        with (
+            patch(
+                "src.infra.clients.cerberus_cli.CerberusCLI.validate_binary",
+                return_value=None,
+            ),
+            patch(
+                "src.infra.clients.cerberus_cli.CerberusCLI.resolve_gate",
+                new_callable=AsyncMock,
+            ) as mock_resolve,
+        ):
+            first_clear = MagicMock()
+            first_clear.returncode = 0
+            first_clear.timed_out = False
+
+            first_spawn = MagicMock()
+            first_spawn.returncode = 0
+            first_spawn.timed_out = False
+
+            first_wait = MagicMock()
+            first_wait.returncode = 3
+            first_wait.timed_out = False
+            first_wait.stdout = ""
+            first_wait.stderr = ""
+
+            second_clear = MagicMock()
+            second_clear.returncode = 0
+            second_clear.timed_out = False
+
+            second_spawn = MagicMock()
+            second_spawn.returncode = 1
+            second_spawn.timed_out = False
+            second_spawn.stderr_tail.return_value = (
+                'review already pending for run key "mala-test-session"'
+            )
+            second_spawn.stdout_tail.return_value = ""
+
+            second_wait = MagicMock()
+            second_wait.returncode = 0
+            second_wait.timed_out = False
+            second_wait.stdout = _gate_state_json(project_key=tmp_path.name)
+            second_wait.stderr = ""
+
+            with patch(
+                "src.infra.clients.cerberus_review.CommandRunner"
+            ) as mock_runner_class:
+                mock_runner = AsyncMock()
+                mock_runner.run_async.side_effect = [
+                    first_clear,
+                    first_spawn,
+                    first_wait,
+                    second_clear,
+                    second_spawn,
+                    second_wait,
+                ]
+                mock_runner_class.return_value = mock_runner
+
+                first_result = await reviewer(
+                    commit_shas=["abc123"],
+                    claude_session_id="test-session",
+                )
+                second_result = await reviewer(
+                    commit_shas=["abc123"],
+                    claude_session_id="test-session",
+                )
+
+        assert first_result.parse_error == "timeout"
+        assert first_result.fatal_error is False
+        assert second_result.passed is True
+        assert mock_resolve.await_count == 0
+
+        calls = [call[0][0] for call in mock_runner.run_async.call_args_list]
+        assert calls[1][:2] == ["cerberus", "spawn-code-review"]
+        assert calls[2][:5] == [
+            "cerberus",
+            "wait",
+            "--json",
+            "--finalize",
+            "--session-key",
+        ]
+        assert calls[2][5] == "mala-test-session"
+        assert calls[4][:2] == ["cerberus", "spawn-code-review"]
+        assert calls[5][:5] == [
+            "cerberus",
+            "wait",
+            "--json",
+            "--finalize",
+            "--session-key",
+        ]
+        assert calls[5][5] == "mala-test-session"
+
+        first_spawn_env = mock_runner.run_async.call_args_list[1].kwargs["env"]
+        second_spawn_env = mock_runner.run_async.call_args_list[4].kwargs["env"]
+        assert first_spawn_env["CERBERUS_RUN_KEY"] == "mala-test-session"
+        assert second_spawn_env["CERBERUS_RUN_KEY"] == "mala-test-session"
+
+    async def test_already_pending_spawn_failure_reattaches_and_waits(
+        self, tmp_path: Path
+    ) -> None:
+        """A pending Cerberus run for the same key should be waited on."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        reviewer = DefaultReviewer(
+            repo_path=tmp_path,
+            env={"CERBERUS_ROOT": "/tmp/cerberus"},
+        )
+        _write_empty_cerberus_output(
+            tmp_path,
+            project_key=tmp_path.name,
+            run_key="mala-test-session",
+        )
+
+        with patch(
+            "src.infra.clients.cerberus_cli.CerberusCLI.validate_binary",
+            return_value=None,
+        ):
+            clear_result = MagicMock()
+            clear_result.returncode = 0
+            clear_result.timed_out = False
+
+            spawn_result = MagicMock()
+            spawn_result.returncode = 1
+            spawn_result.timed_out = False
+            spawn_result.stderr_tail.return_value = (
+                'review already pending for run key "mala-test-session"'
+            )
+            spawn_result.stdout_tail.return_value = ""
+
+            wait_result = MagicMock()
+            wait_result.returncode = 0
+            wait_result.timed_out = False
+            wait_result.stdout = _gate_state_json(project_key=tmp_path.name)
+            wait_result.stderr = ""
+
+            with patch(
+                "src.infra.clients.cerberus_review.CommandRunner"
+            ) as mock_runner_class:
+                mock_runner = AsyncMock()
+                mock_runner.run_async.side_effect = [
+                    clear_result,
+                    spawn_result,
+                    wait_result,
+                ]
+                mock_runner_class.return_value = mock_runner
+
+                result = await reviewer(
+                    commit_shas=["abc123"],
+                    claude_session_id="test-session",
+                )
+
+        assert result.passed is True
+        calls = [call[0][0] for call in mock_runner.run_async.call_args_list]
+        assert calls[1][:2] == ["cerberus", "spawn-code-review"]
+        assert calls[2][:2] == ["cerberus", "wait"]
+
     async def test_author_context_set_failure_uses_context_file_fallback(
         self, tmp_path: Path
     ) -> None:

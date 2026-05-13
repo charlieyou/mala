@@ -328,6 +328,41 @@ class TestSpawnCodeReview:
         assert "already active" in result.error_detail
 
     @pytest.mark.asyncio
+    async def test_detects_already_pending(self, tmp_path: Path) -> None:
+        """Returns already_active when spawn fails with already pending error."""
+        cli = CerberusCLI(repo_path=tmp_path)
+
+        class AlreadyPendingRunner(FakeCommandRunner):
+            async def run_async(
+                self,
+                cmd: list[str] | str,
+                env: Mapping[str, str] | None = None,
+                timeout: float | None = None,
+                use_process_group: bool | None = None,
+                shell: bool = False,
+                cwd: Path | None = None,
+            ) -> CommandResult:
+                return CommandResult(
+                    command=list(cmd) if not isinstance(cmd, str) else cmd,
+                    returncode=1,
+                    timed_out=False,
+                    stderr="review already pending for run key \"mala-test-session\"",
+                )
+
+        runner = AlreadyPendingRunner()
+
+        result = await cli.spawn_code_review(
+            runner=runner,
+            env={"CLAUDE_SESSION_ID": "test"},
+            timeout=300,
+            commit_shas=["commit1"],
+        )
+
+        assert result.success is False
+        assert result.already_active is True
+        assert "already pending" in result.error_detail
+
+    @pytest.mark.asyncio
     async def test_returns_error_on_failure(self, tmp_path: Path) -> None:
         """Returns error detail when spawn fails."""
         cli = CerberusCLI(repo_path=tmp_path)
