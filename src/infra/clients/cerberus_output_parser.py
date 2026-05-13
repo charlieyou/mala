@@ -57,7 +57,8 @@ class GateState:
     ended_at: str | None
 
 
-VALID_VERDICTS = {"pass", "fail", "requires_decision"}
+VALID_VERDICTS = {"pass", "fail", "needs_work", "requires_decision"}
+PASSING_VERDICTS = {"pass", "needs_work"}
 
 
 def parse_gate_state(stdout: str) -> GateState:
@@ -168,7 +169,7 @@ class ReviewOutputParser:
             state = parse_gate_state(output)
         except ValueError as e:
             return False, [], str(e)
-        return state.verdict == "pass", [], None
+        return state.verdict in PASSING_VERDICTS, [], None
 
     def map_exit_code_to_result(
         self,
@@ -224,6 +225,9 @@ class ReviewOutputParser:
 
         issues, parse_errors = read_findings(state_root, project_key, run_key)
         parse_error = "; ".join(parse_errors) if parse_errors else None
+        has_blocking_issues = any(
+            issue.priority is not None and issue.priority <= 1 for issue in issues
+        )
 
         if gate_state.verdict == "requires_decision":
             iteration_dir = state_root / project_key / run_key / "iterations"
@@ -237,7 +241,11 @@ class ReviewOutputParser:
             )
 
         return ReviewResult(
-            passed=gate_state.verdict == "pass" and parse_error is None,
+            passed=(
+                gate_state.verdict in PASSING_VERDICTS
+                and parse_error is None
+                and not has_blocking_issues
+            ),
             issues=issues,
             parse_error=parse_error,
             fatal_error=False,

@@ -35,6 +35,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+PASSING_VERDICTS = {"pass", "needs_work"}
+
 
 class VerificationTimeoutError(Exception):
     """Raised when epic verification times out.
@@ -186,9 +188,12 @@ class CerberusEpicVerifier:
         unmet_criteria = self._map_findings_to_unmet_criteria(findings)
         if gate_state.verdict == "requires_decision":
             unmet_criteria.append(self._requires_decision_criterion(gate_state))
+        has_blocking_findings = any(
+            criterion.priority <= 1 for criterion in unmet_criteria
+        )
 
         return EpicVerdict(
-            passed=gate_state.verdict == "pass",
+            passed=gate_state.verdict in PASSING_VERDICTS and not has_blocking_findings,
             unmet_criteria=unmet_criteria,
             reasoning=f"Cerberus epic verification verdict {gate_state.verdict}.",
         )

@@ -281,6 +281,14 @@ class TestFakeIssueProviderContract:
         assert result is False
 
     @pytest.mark.integration
+    async def test_update_issue_status(self, fake_provider: FakeIssueProvider) -> None:
+        """update_issue_async supports status changes."""
+        result = await fake_provider.update_issue_async("issue-1", status="deferred")
+
+        assert result is True
+        assert fake_provider.issues["issue-1"].status == "deferred"
+
+    @pytest.mark.integration
     async def test_get_epic_children(self, fake_provider: FakeIssueProvider) -> None:
         """get_epic_children_async returns child issue IDs."""
         children = await fake_provider.get_epic_children_async("epic-1")

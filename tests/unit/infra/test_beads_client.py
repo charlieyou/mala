@@ -2797,6 +2797,28 @@ class TestUpdateIssueAsync:
         assert "--priority" in cmd
         assert "P1" in cmd
 
+    @pytest.mark.asyncio
+    async def test_updates_status(self, tmp_path: Path) -> None:
+        """Should update status when requested."""
+        beads = BeadsClient(tmp_path)
+        captured_cmds: list[list[str]] = []
+
+        async def capturing_run(cmd: list[str]) -> CommandResult:
+            captured_cmds.append(cmd)
+            return make_command_result()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", capturing_run)
+            await beads.update_issue_async("issue-1", status="deferred")
+
+        assert captured_cmds[0] == [
+            "br",
+            "update",
+            "issue-1",
+            "--status",
+            "deferred",
+        ]
+
 
 class TestRunSubprocessAsyncTimeout:
     """Test _run_subprocess_async timeout handling."""

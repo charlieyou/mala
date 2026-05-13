@@ -359,3 +359,86 @@ class TestRemediationIssueDependencies:
             call("advisory-1", "blocking-2"),
             call("advisory-2", "advisory-1"),
         ]
+
+    @pytest.mark.asyncio
+    async def test_requires_decision_remediation_issue_is_deferred(self) -> None:
+        """Human-decision remediation tasks should be created deferred."""
+        beads = MagicMock()
+        beads.find_issue_by_tag_async = AsyncMock(return_value=None)
+        beads.create_issue_async = AsyncMock(return_value="decision-1")
+        beads.update_issue_async = AsyncMock(return_value=True)
+        beads.add_dependency_async = AsyncMock(return_value=True)
+
+        verifier = EpicVerifier(
+            beads=beads,
+            model=MagicMock(),
+            repo_path=Path("/tmp"),
+            command_runner=MagicMock(),
+        )
+
+        verdict = EpicVerdict(
+            passed=False,
+            unmet_criteria=[
+                UnmetCriterion(
+                    "Cerberus reviewers reached no consensus",
+                    "Gate verdict=requires_decision.",
+                    1,
+                    "hash-decision",
+                )
+            ],
+            reasoning="requires decision",
+        )
+
+        blocking_ids, informational_ids = await verifier.create_remediation_issues(
+            "epic-1", verdict
+        )
+
+        assert blocking_ids == ["decision-1"]
+        assert informational_ids == []
+        beads.update_issue_async.assert_awaited_once_with(
+            "decision-1", status="deferred"
+        )
+
+    @pytest.mark.asyncio
+    async def test_existing_requires_decision_remediation_issue_is_deferred(
+        self,
+    ) -> None:
+        """Existing human-decision remediation tasks should also be deferred."""
+        beads = MagicMock()
+        beads.find_issue_by_tag_async = AsyncMock(return_value="decision-1")
+        beads.update_issue_async = AsyncMock(return_value=True)
+        beads.add_parent_child_dependency_async = AsyncMock(return_value=True)
+        beads.add_dependency_async = AsyncMock(return_value=True)
+
+        verifier = EpicVerifier(
+            beads=beads,
+            model=MagicMock(),
+            repo_path=Path("/tmp"),
+            command_runner=MagicMock(),
+        )
+
+        verdict = EpicVerdict(
+            passed=False,
+            unmet_criteria=[
+                UnmetCriterion(
+                    "Cerberus reviewers reached no consensus",
+                    "Gate verdict=requires_decision.",
+                    1,
+                    "hash-decision",
+                )
+            ],
+            reasoning="requires decision",
+        )
+
+        blocking_ids, informational_ids = await verifier.create_remediation_issues(
+            "epic-1", verdict
+        )
+
+        assert blocking_ids == ["decision-1"]
+        assert informational_ids == []
+        beads.update_issue_async.assert_awaited_once_with(
+            "decision-1", status="deferred"
+        )
+        beads.add_parent_child_dependency_async.assert_awaited_once_with(
+            "decision-1", "epic-1"
+        )

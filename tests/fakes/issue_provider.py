@@ -13,7 +13,7 @@ Observable state:
 - dependency_calls: List of (issue_id, depends_on_id) tuples
 - parent_child_dependency_calls: List of (issue_id, parent_id) tuples
 - updated_descriptions: List of (issue_id, description) tuples
-- updated_issues: List of (issue_id, title, priority) tuples
+- updated_issues: List of (issue_id, title, priority, status) tuples
 """
 
 from dataclasses import dataclass, field
@@ -65,7 +65,9 @@ class FakeIssueProvider:
         self.parent_child_dependency_calls: list[tuple[str, str]] = []
         self.epic_blockers: dict[str, set[str]] = {}
         self.updated_descriptions: list[tuple[str, str]] = []
-        self.updated_issues: list[tuple[str, str | None, str | None]] = []
+        self.updated_issues: list[
+            tuple[str, str | None, str | None, str | None]
+        ] = []
         self.commit_calls: int = 0
         self.close_epics_calls: int = 0
 
@@ -298,15 +300,18 @@ class FakeIssueProvider:
         *,
         title: str | None = None,
         priority: str | None = None,
+        status: str | None = None,
     ) -> bool:
-        """Update an issue's title and/or priority."""
+        """Update an issue's title, priority, and/or status."""
         if issue_id not in self.issues:
             return False
         if title is not None:
             self.issues[issue_id].title = title
         if priority is not None:
             self.issues[issue_id].priority = _priority_to_int(priority)
-        self.updated_issues.append((issue_id, title, priority))
+        if status is not None:
+            self.issues[issue_id].status = status
+        self.updated_issues.append((issue_id, title, priority, status))
         return True
 
     async def get_blocked_count_async(self) -> int | None:

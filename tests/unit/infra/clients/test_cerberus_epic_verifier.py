@@ -280,6 +280,64 @@ class TestCerberusEpicVerifierParsing:
         assert verdict.unmet_criteria[0].priority == 1
 
     @pytest.mark.asyncio
+    async def test_needs_work_passes_with_advisory_findings(
+        self, tmp_path: Path
+    ) -> None:
+        verifier = _make_verifier(tmp_path)
+        _write_reviewer_output(
+            verifier.state_root or tmp_path,
+            findings=[
+                {
+                    "title": "Optional follow-up",
+                    "body": "Advisory evidence",
+                    "priority": 2,
+                    "file_path": "src/foo.py",
+                    "line_start": 10,
+                    "line_end": 12,
+                }
+            ],
+        )
+
+        verdict, _, _ = await _run_verify_with_output(
+            verifier,
+            _gate_state(verdict="needs_work"),
+        )
+
+        assert verdict.passed is True
+        assert len(verdict.unmet_criteria) == 1
+        assert verdict.unmet_criteria[0].criterion == "Optional follow-up"
+        assert verdict.unmet_criteria[0].priority == 2
+
+    @pytest.mark.asyncio
+    async def test_needs_work_fails_with_blocking_findings(
+        self, tmp_path: Path
+    ) -> None:
+        verifier = _make_verifier(tmp_path)
+        _write_reviewer_output(
+            verifier.state_root or tmp_path,
+            findings=[
+                {
+                    "title": "Blocking follow-up",
+                    "body": "Must be fixed before closure",
+                    "priority": 1,
+                    "file_path": "src/foo.py",
+                    "line_start": 10,
+                    "line_end": 12,
+                }
+            ],
+        )
+
+        verdict, _, _ = await _run_verify_with_output(
+            verifier,
+            _gate_state(verdict="needs_work"),
+        )
+
+        assert verdict.passed is False
+        assert len(verdict.unmet_criteria) == 1
+        assert verdict.unmet_criteria[0].criterion == "Blocking follow-up"
+        assert verdict.unmet_criteria[0].priority == 1
+
+    @pytest.mark.asyncio
     async def test_pass_with_missing_reviewers_fails_closed(
         self, tmp_path: Path
     ) -> None:

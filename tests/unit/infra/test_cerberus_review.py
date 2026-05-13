@@ -15,11 +15,15 @@ from src.infra.clients.cerberus_review import (
 )
 from src.infra.clients.cerberus_output_parser import (
     ReviewIssue,
+    map_exit_code_to_result,
 )
 
 
 def _gate_state_json(
-    *, project_key: str = "project-1", run_key: str = "mala-test-session"
+    *,
+    project_key: str = "project-1",
+    run_key: str = "mala-test-session",
+    verdict: str = "pass",
 ) -> str:
     return (
         "{"
@@ -30,7 +34,7 @@ def _gate_state_json(
         '"session_id":"test-session",'
         '"transcript_path":"/tmp/transcript.jsonl",'
         '"status":"resolved",'
-        '"verdict":"pass",'
+        f'"verdict":"{verdict}",'
         '"resolution_reason":"complete",'
         '"current_iteration":1,'
         '"max_rounds":1,'
@@ -59,6 +63,109 @@ def _write_empty_cerberus_output(
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "output.json").write_text('{"findings":[]}', encoding="utf-8")
+
+
+class TestCerberusOutputParser:
+    """Tests for Cerberus gate-state result mapping."""
+
+    def _write_output(
+        self,
+        tmp_path: Path,
+        *,
+        findings_json: str,
+        run_key: str = "mala-test-session",
+        project_key: str = "project-1",
+    ) -> None:
+        output_dir = (
+            tmp_path
+            / ".mala"
+            / "cerberus"
+            / project_key
+            / run_key
+            / "iterations"
+            / "1"
+            / "round-1"
+            / "reviewers"
+            / "codex#1"
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "output.json").write_text(findings_json, encoding="utf-8")
+
+    def test_needs_work_passes_with_findings_for_tracking(
+        self, tmp_path: Path
+    ) -> None:
+        """needs_work closes the source while preserving findings as issues."""
+        run_key = "mala-test-session"
+        project_key = "project-1"
+        self._write_output(
+            tmp_path,
+            findings_json="""
+            {
+              "findings": [
+                {
+                  "title": "Follow-up cleanup",
+                  "body": "Non-blocking improvement",
+                  "priority": 2,
+                  "file_path": "src/foo.py",
+                  "line_start": 10,
+                  "line_end": 12
+                }
+              ]
+            }
+            """,
+        )
+
+        result = map_exit_code_to_result(
+            0,
+            _gate_state_json(verdict="needs_work"),
+            "",
+            state_root=tmp_path / ".mala" / "cerberus",
+            project_key=project_key,
+            run_key=run_key,
+        )
+
+        assert result.passed is True
+        assert result.parse_error is None
+        assert len(result.issues) == 1
+        assert result.issues[0].title == "Follow-up cleanup"
+
+    def test_needs_work_with_blocking_finding_does_not_pass(
+        self, tmp_path: Path
+    ) -> None:
+        """needs_work cannot silently close when artifacts contain P0/P1 findings."""
+        run_key = "mala-test-session"
+        project_key = "project-1"
+        self._write_output(
+            tmp_path,
+            findings_json="""
+            {
+              "findings": [
+                {
+                  "title": "Blocking regression",
+                  "body": "Must be fixed before closure",
+                  "priority": 1,
+                  "file_path": "src/foo.py",
+                  "line_start": 10,
+                  "line_end": 12
+                }
+              ]
+            }
+            """,
+        )
+
+        result = map_exit_code_to_result(
+            0,
+            _gate_state_json(verdict="needs_work"),
+            "",
+            state_root=tmp_path / ".mala" / "cerberus",
+            project_key=project_key,
+            run_key=run_key,
+        )
+
+        assert result.passed is False
+        assert result.parse_error is None
+        assert len(result.issues) == 1
+        assert result.issues[0].title == "Blocking regression"
 
 
 class TestFormatReviewIssues:

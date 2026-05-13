@@ -1167,8 +1167,20 @@ class EpicVerifier:
             pending_informational_ids.append(issue_id)
             informational_ids.append(issue_id)
 
+        async def defer_requires_decision_issue(issue_id: str) -> None:
+            updated = await self.beads.update_issue_async(issue_id, status="deferred")
+            if not updated:
+                logger.warning(
+                    "Failed to mark requires_decision remediation issue %s deferred",
+                    issue_id,
+                )
+
+        def is_requires_decision_criterion(criterion: UnmetCriterion) -> bool:
+            return criterion.criterion == "Cerberus reviewers reached no consensus"
+
         for criterion in verdict.unmet_criteria:
             is_blocking = criterion.priority <= 1  # P0/P1 are blocking
+            defer_issue = is_requires_decision_criterion(criterion)
 
             # Build dedup tag (truncate to fit 50-char label limit)
             # Format: "er:{epic_id_prefix}:{hash_prefix}" = 3 + 16 + 1 + 16 = 36 chars max
@@ -1177,6 +1189,8 @@ class EpicVerifier:
             # Check for existing issue with this tag
             existing_id = await self.beads.find_issue_by_tag_async(dedup_tag)
             if existing_id:
+                if defer_issue:
+                    await defer_requires_decision_issue(existing_id)
                 if is_blocking:
                     attached = await self.beads.add_parent_child_dependency_async(
                         existing_id, epic_id
@@ -1236,6 +1250,8 @@ This issue was auto-created by epic verification for epic `{epic_id}`.
                 parent_id=epic_id if is_blocking else None,
             )
             if issue_id:
+                if defer_issue:
+                    await defer_requires_decision_issue(issue_id)
                 if is_blocking:
                     register_blocking_issue(issue_id)
                 else:
