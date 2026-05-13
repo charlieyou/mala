@@ -1070,9 +1070,9 @@ class TestIsEpicBlockedAsync:
 
     @pytest.mark.asyncio
     async def test_returns_true_for_blocked_status(self, tmp_path: Path) -> None:
-        """Should return True when epic has status=blocked."""
+        """Should return True when epic has status=deferred."""
         beads = BeadsClient(tmp_path)
-        epic_json = json.dumps({"id": "epic-1", "status": "blocked"})
+        epic_json = json.dumps({"id": "epic-1", "status": "deferred"})
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
@@ -1149,7 +1149,7 @@ class TestIsEpicBlockedAsync:
     async def test_caches_blocked_status(self, tmp_path: Path) -> None:
         """Should cache blocked status and not call subprocess again."""
         beads = BeadsClient(tmp_path)
-        epic_json = json.dumps({"id": "epic-1", "status": "blocked"})
+        epic_json = json.dumps({"id": "epic-1", "status": "deferred"})
 
         with pytest.MonkeyPatch.context() as mp:
             mock_run = AsyncMock(return_value=make_command_result(stdout=epic_json))
@@ -1169,7 +1169,7 @@ class TestIsEpicBlockedAsync:
     async def test_handles_list_response(self, tmp_path: Path) -> None:
         """Should handle bd show returning a list (single item)."""
         beads = BeadsClient(tmp_path)
-        epic_json = json.dumps([{"id": "epic-1", "status": "blocked"}])
+        epic_json = json.dumps([{"id": "epic-1", "status": "deferred"}])
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
@@ -2068,15 +2068,15 @@ class TestGetBlockedCountAsync:
     """Test get_blocked_count_async method."""
 
     @pytest.mark.asyncio
-    async def test_returns_count_of_blocked_issues(self, tmp_path: Path) -> None:
-        """Should return the count of blocked issues."""
+    async def test_returns_count_of_deferred_issues(self, tmp_path: Path) -> None:
+        """Should return the count of deferred issues."""
         beads = BeadsClient(tmp_path)
         blocked_response = json.dumps(
             {
                 "issues": [
-                    {"id": "blocked-1", "status": "blocked"},
-                    {"id": "blocked-2", "status": "blocked"},
-                    {"id": "blocked-3", "status": "blocked"},
+                    {"id": "blocked-1", "status": "deferred"},
+                    {"id": "blocked-2", "status": "deferred"},
+                    {"id": "blocked-3", "status": "deferred"},
                 ]
             }
         )
@@ -2093,7 +2093,7 @@ class TestGetBlockedCountAsync:
 
     @pytest.mark.asyncio
     async def test_returns_zero_when_no_blocked_issues(self, tmp_path: Path) -> None:
-        """Should return 0 when no issues are blocked."""
+        """Should return 0 when no issues are deferred."""
         beads = BeadsClient(tmp_path)
 
         with pytest.MonkeyPatch.context() as mp:
@@ -2155,7 +2155,7 @@ class TestGetBlockedCountAsync:
 
     @pytest.mark.asyncio
     async def test_calls_bd_list_with_correct_args(self, tmp_path: Path) -> None:
-        """Should call br list with unlimited blocked task results."""
+        """Should call br list with unlimited deferred task results."""
         beads = BeadsClient(tmp_path)
         captured_cmds: list[list[str]] = []
 
@@ -2172,7 +2172,7 @@ class TestGetBlockedCountAsync:
             "br",
             "list",
             "--status",
-            "blocked",
+            "deferred",
             "--json",
             "-t",
             "task",

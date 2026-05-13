@@ -412,16 +412,16 @@ class TestFakeIssueProviderObservableState:
         assert "a" not in provider.claimed
 
     @pytest.mark.unit
-    async def test_get_blocked_count_only_counts_blocked_tasks(self) -> None:
-        """get_blocked_count_async counts only tasks with status='blocked'.
+    async def test_get_blocked_count_only_counts_deferred_tasks(self) -> None:
+        """get_blocked_count_async counts only tasks with status='deferred'.
 
-        Mirrors BeadsClient semantics: bd list --status blocked -t task
-        - Only status="blocked" is counted (not open, ready, in_progress, closed)
+        Mirrors BeadsClient semantics: bd list --status deferred -t task
+        - Only status="deferred" is counted (not open, ready, in_progress, closed)
         - Only issue_type="task" is counted (not epic)
         """
         issues = {
             "blocked-task": FakeIssue(
-                "blocked-task", status="blocked", issue_type="task"
+                "blocked-task", status="deferred", issue_type="task"
             ),
             "open-task": FakeIssue("open-task", status="open", issue_type="task"),
             "ready-task": FakeIssue("ready-task", status="ready", issue_type="task"),
@@ -430,7 +430,7 @@ class TestFakeIssueProviderObservableState:
             ),
             "closed-task": FakeIssue("closed-task", status="closed", issue_type="task"),
             "blocked-epic": FakeIssue(
-                "blocked-epic", status="blocked", issue_type="epic"
+                "blocked-epic", status="deferred", issue_type="epic"
             ),
         }
         provider = FakeIssueProvider(issues)

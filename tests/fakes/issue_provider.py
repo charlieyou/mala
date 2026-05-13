@@ -310,14 +310,14 @@ class FakeIssueProvider:
         return True
 
     async def get_blocked_count_async(self) -> int | None:
-        """Get count of blocked task issues.
+        """Get count of deferred task issues.
 
-        Returns the count of task issues with status="blocked".
-        Mirrors BeadsClient which runs: bd list --status blocked -t task
+        Returns the count of task issues with status="deferred".
+        Mirrors BeadsClient which runs: bd list --status deferred -t task
         """
         blocked = 0
         for issue in self.issues.values():
-            if issue.issue_type == "task" and issue.status == "blocked":
+            if issue.issue_type == "task" and issue.status == "deferred":
                 blocked += 1
         return blocked
 

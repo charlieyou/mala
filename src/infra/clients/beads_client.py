@@ -933,18 +933,20 @@ class BeadsClient:
         *,
         title: str | None = None,
         priority: str | None = None,
+        status: str | None = None,
     ) -> bool:
-        """Update an issue's title and/or priority.
+        """Update an issue's title, priority, and/or status.
 
         Args:
             issue_id: The issue ID to update.
             title: New title (optional).
             priority: New priority string like "P2" (optional).
+            status: New status string like "deferred" (optional).
 
         Returns:
             True if successfully updated, False otherwise.
         """
-        if title is None and priority is None:
+        if title is None and priority is None and status is None:
             return True  # Nothing to update
 
         cmd = ["br", "update", issue_id]
@@ -952,6 +954,8 @@ class BeadsClient:
             cmd.extend(["--title", title])
         if priority is not None:
             cmd.extend(["--priority", priority])
+        if status is not None:
+            cmd.extend(["--status", status])
 
         result = await self._run_subprocess_async(cmd)
         return result.returncode == 0
@@ -1120,10 +1124,10 @@ class BeadsClient:
         return set()
 
     async def _is_epic_blocked_async(self, epic_id: str) -> bool:
-        """Check if an epic is blocked (has blocked_by or status=blocked).
+        """Check if an epic is blocked (has blocked_by or status=deferred).
 
         An epic is considered blocked if:
-        - It has status "blocked", OR
+        - It has status "deferred", OR
         - It has a non-empty blocked_by field (unmet dependencies)
 
         Results are cached to avoid repeated subprocess calls.
@@ -1161,7 +1165,7 @@ class BeadsClient:
                 if isinstance(issue_data, dict):
                     status = issue_data.get("status")
                     blocked_by = issue_data.get("blocked_by")
-                    is_blocked = status == "blocked" or bool(blocked_by)
+                    is_blocked = status == "deferred" or bool(blocked_by)
                     self._blocked_epic_cache[epic_id] = is_blocked
                     return is_blocked
             except json.JSONDecodeError:
@@ -1200,14 +1204,14 @@ class BeadsClient:
         cannot be determined (e.g., br CLI failure).
 
         Returns:
-            Count of blocked issues, or None on error.
+            Count of deferred issues, or None on error.
         """
         result = await self._run_subprocess_async(
             [
                 "br",
                 "list",
                 "--status",
-                "blocked",
+                "deferred",
                 "--json",
                 "-t",
                 "task",

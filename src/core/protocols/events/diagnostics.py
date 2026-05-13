@@ -217,6 +217,6 @@ class DiagnosticsEvents(Protocol):
 
         Args:
             wait_seconds: Duration of the upcoming sleep.
-            issues_blocked: Count of blocked issues, or None if unknown.
+            issues_blocked: Count of deferred issues, or None if unknown.
         """
         ...

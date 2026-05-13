@@ -137,7 +137,7 @@ class WatchState:
 
 **IssueProvider protocol extension**:
 - Add optional `get_blocked_count_async() -> int | None` method to `IssueProvider` protocol with default `None` return (not all providers can answer this).
-- `BeadsClient` implementation: call `bd list --status blocked --json | wc -l` or similar to get count.
+- `BeadsClient` implementation: call `bd list --status deferred --json | wc -l` or similar to get count.
 - If provider returns `None`, console sink logs "Idle: no ready issues" (without distinction).
 
 **Coordinator signature update**:

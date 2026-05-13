@@ -293,16 +293,18 @@ class IssueProvider(Protocol):
         *,
         title: str | None = None,
         priority: str | None = None,
+        status: str | None = None,
     ) -> bool:
-        """Update an issue's title and/or priority.
+        """Update an issue's title, priority, and/or status.
 
         Used for updating tracking issues when new findings change
-        the count or highest priority.
+        the count or highest priority, and for marking deferred follow-ups.
 
         Args:
             issue_id: The issue ID to update.
             title: New title (optional).
             priority: New priority string like "P2" (optional).
+            status: New status string like "deferred" (optional).
 
         Returns:
             True if successfully updated, False otherwise.
@@ -312,10 +314,10 @@ class IssueProvider(Protocol):
     async def get_blocked_count_async(self) -> int | None:
         """Get count of issues that exist but aren't ready.
 
-        Used by watch mode to report how many issues are blocked on
-        dependencies or other conditions.
+        Used by watch mode to report how many issues are deferred or otherwise
+        not ready.
 
         Returns:
-            Count of blocked issues, or None if unknown/unsupported.
+            Count of deferred issues, or None if unknown/unsupported.
         """
         ...
