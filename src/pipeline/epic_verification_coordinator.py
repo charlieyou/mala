@@ -38,6 +38,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# How long to wait for a remediation task to respond after cancellation before
+# treating it as unresponsive. Keep bounded so interrupt-driven shutdown cannot
+# hang forever if an agent suppresses CancelledError.
+REMEDIATION_CANCEL_GRACE_SECONDS = 10.0
+
 
 class EpicVerifierProvider(Protocol):
     """Port for retrieving the currently configured epic verifier."""
@@ -131,6 +136,13 @@ class EpicVerificationCoordinator:
     # State: Tracked across multiple check_epic_closure calls
     verified_epics: set[str] = field(default_factory=set)
     epics_being_verified: set[str] = field(default_factory=set)
+    epics_pending_recheck: set[str] = field(default_factory=set)
+
+    def reset_state(self) -> None:
+        """Clear per-run verification state before a new orchestrator run."""
+        self.verified_epics.clear()
+        self.epics_being_verified.clear()
+        self.epics_pending_recheck.clear()
 
     async def check_epic_closure(
         self,
@@ -157,19 +169,28 @@ class EpicVerificationCoordinator:
         if parent_epic is None or parent_epic in self.verified_epics:
             return
 
-        # Guard against re-entrant verification (e.g., when remediation tasks complete)
-        if parent_epic in self.epics_being_verified:
+        if not self._has_epic_verifier():
             return
 
-        if not self._has_epic_verifier():
+        # Guard against re-entrant verification (e.g., when remediation tasks complete)
+        if parent_epic in self.epics_being_verified:
+            self.epics_pending_recheck.add(parent_epic)
             return
 
         # Mark as being verified to prevent parallel verification loops
         self.epics_being_verified.add(parent_epic)
         try:
-            await self._verify_epic_with_retries(
-                parent_epic, run_metadata, interrupt_event=interrupt_event
-            )
+            while True:
+                self.epics_pending_recheck.discard(parent_epic)
+                if parent_epic in self.verified_epics:
+                    return
+
+                await self._verify_epic_with_retries(
+                    parent_epic, run_metadata, interrupt_event=interrupt_event
+                )
+
+                if parent_epic not in self.epics_pending_recheck:
+                    return
         finally:
             # Always remove from being_verified set when done
             self.epics_being_verified.discard(parent_epic)
@@ -411,7 +432,11 @@ class EpicVerificationCoordinator:
 
             if interrupt_task in done and task in pending:
                 task.cancel()
-                await asyncio.wait([task])
+                _done, still_pending = await asyncio.wait(
+                    [task], timeout=REMEDIATION_CANCEL_GRACE_SECONDS
+                )
+                if still_pending:
+                    return self._unresponsive_task_result(issue_id)
 
             if interrupt_task in pending:
                 interrupt_task.cancel()
@@ -421,6 +446,17 @@ class EpicVerificationCoordinator:
                     pass
 
         return self._extract_task_result(issue_id, task)
+
+    def _unresponsive_task_result(self, issue_id: str) -> IssueResult:
+        """Build a failed result for a remediation task that ignored cancellation."""
+        from src.pipeline.issue_result import IssueResult
+
+        return IssueResult(
+            issue_id=issue_id,
+            agent_id=self.remediation_port.get_epic_remediation_agent_id(issue_id),
+            success=False,
+            summary="Remediation task did not stop after interrupt",
+        )
 
     def _extract_task_result(
         self, issue_id: str, task: asyncio.Task[IssueResult]

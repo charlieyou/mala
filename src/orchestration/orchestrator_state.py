@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import asyncio
     from pathlib import Path
 
     from src.pipeline.issue_result import IssueResult
@@ -30,6 +31,7 @@ class OrchestratorState:
         deadlock_victim_issues: Tracks issue IDs killed due to deadlock resolution.
         run_start_commit: HEAD commit captured at run start for baseline tracking.
         issue_base_shas: Maps issue_id to base_sha (HEAD at issue session start).
+        epic_verification_tasks: Tracked post-issue epic verification work.
     """
 
     agent_ids: dict[str, str] = field(default_factory=dict)
@@ -39,3 +41,4 @@ class OrchestratorState:
     deadlock_victim_issues: set[str] = field(default_factory=set)
     run_start_commit: str | None = None
     issue_base_shas: dict[str, str] = field(default_factory=dict)
+    epic_verification_tasks: set[asyncio.Task[None]] = field(default_factory=set)

@@ -520,6 +520,7 @@ class MalaOrchestrator:
             event_sink=runtime.event_sink,
             issue_lifecycle=issue_lifecycle,
             epic_verification_coordinator=self.epic_verification_coordinator,
+            on_issue_closed_successfully=self._schedule_epic_verification,
             evidence_check=self.evidence_check,
             per_session_spec=None,
         )
@@ -799,6 +800,46 @@ class MalaOrchestrator:
             # (agent_id is deferred from run_implementer.finally to keep it
             # available for remediation error attribution)
             self._cleanup_issue_runtime_state(issue_id)
+
+    def _schedule_epic_verification(
+        self, issue_id: str, run_metadata: RunMetadata
+    ) -> None:
+        """Schedule parent-epic verification without blocking issue finalization."""
+
+        task = asyncio.create_task(
+            self._run_epic_verification(issue_id, run_metadata),
+            name=f"epic-verification:{issue_id}",
+        )
+        self._state.epic_verification_tasks.add(task)
+
+        def discard_completed(completed_task: asyncio.Task[None]) -> None:
+            self._state.epic_verification_tasks.discard(completed_task)
+            if completed_task.cancelled():
+                return
+            try:
+                completed_task.result()
+            except Exception:
+                logger.exception(
+                    "Epic verification task failed: issue_id=%s", issue_id
+                )
+
+        task.add_done_callback(discard_completed)
+
+    async def _run_epic_verification(
+        self, issue_id: str, run_metadata: RunMetadata
+    ) -> None:
+        await self.epic_verification_coordinator.check_epic_closure(
+            issue_id,
+            run_metadata,
+            interrupt_event=self.issue_coordinator.interrupt_event,
+        )
+
+    async def _drain_epic_verification_tasks(self) -> None:
+        """Wait for tracked epic verification work before run-level finalization."""
+
+        while self._state.epic_verification_tasks:
+            tasks = set(self._state.epic_verification_tasks)
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _abort_active_tasks(
         self, run_metadata: RunMetadata, *, is_interrupt: bool = False
@@ -1263,6 +1304,7 @@ class MalaOrchestrator:
         """
         # Reset per-run state to ensure clean state if orchestrator is reused
         self._state = OrchestratorState()
+        self.epic_verification_coordinator.reset_state()
         self._exit_code = 0
         self._reset_sigint_state()
 
@@ -1419,6 +1461,7 @@ class MalaOrchestrator:
                 else:
                     raise
             finally:
+                await self._drain_epic_verification_tasks()
                 lock_releaser = (
                     self._lock_releaser
                     if self._lock_releaser is not None

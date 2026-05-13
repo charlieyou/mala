@@ -320,6 +320,123 @@ class TestEpicVerificationInterruptHandling:
         callbacks.verify_epic.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_concurrent_same_epic_closure_rechecks_after_current_pass(
+        self,
+        callbacks: EpicVerificationHarness,
+        run_metadata: MagicMock,
+    ) -> None:
+        """A sibling closure during verification schedules a follow-up recheck."""
+        first_verification_started = asyncio.Event()
+        release_first_verification = asyncio.Event()
+        verification_call_count = 0
+
+        async def verify_epic(
+            epic_id: str, human_override: bool
+        ) -> EpicVerificationResult:
+            nonlocal verification_call_count
+            del epic_id, human_override
+            verification_call_count += 1
+            if verification_call_count == 1:
+                first_verification_started.set()
+                await release_first_verification.wait()
+                return make_verification_result(
+                    verified_count=0,
+                    passed_count=0,
+                    failed_count=0,
+                )
+            return make_verification_result(
+                verified_count=1,
+                passed_count=1,
+                failed_count=0,
+            )
+
+        callbacks.verify_epic = AsyncMock(side_effect=verify_epic)
+        coordinator = callbacks.to_coordinator(max_retries=0)
+
+        first_check = asyncio.create_task(
+            coordinator.check_epic_closure("issue-1", run_metadata)
+        )
+        await asyncio.wait_for(first_verification_started.wait(), timeout=0.2)
+
+        second_check = asyncio.create_task(
+            coordinator.check_epic_closure("issue-2", run_metadata)
+        )
+        await asyncio.wait_for(second_check, timeout=0.2)
+
+        release_first_verification.set()
+        await asyncio.wait_for(first_check, timeout=0.2)
+
+        assert verification_call_count == 2
+        assert "epic-1" in coordinator.verified_epics
+        assert "epic-1" not in coordinator.epics_being_verified
+        assert "epic-1" not in coordinator.epics_pending_recheck
+
+    @pytest.mark.asyncio
+    async def test_interrupt_unresponsive_remediation_returns_bounded_failure(
+        self,
+        callbacks: EpicVerificationHarness,
+        run_metadata: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Interrupted remediation that ignores cancellation does not hang forever."""
+        import src.pipeline.epic_verification_coordinator as epic_verification_module
+
+        monkeypatch.setattr(
+            epic_verification_module, "REMEDIATION_CANCEL_GRACE_SECONDS", 0.01
+        )
+        finish_task = asyncio.Event()
+        spawned_task: asyncio.Task[IssueResult] | None = None
+
+        async def spawn_remediation(
+            issue_id: str, flow: str = "implementer"
+        ) -> asyncio.Task[IssueResult]:
+            del flow
+
+            async def work() -> IssueResult:
+                try:
+                    await asyncio.sleep(10.0)
+                except asyncio.CancelledError:
+                    await finish_task.wait()
+                return make_issue_result(issue_id)
+
+            nonlocal spawned_task
+            spawned_task = asyncio.create_task(work())
+            return spawned_task
+
+        callbacks.spawn_epic_remediation_mock = AsyncMock(side_effect=spawn_remediation)
+        callbacks.verify_epic = AsyncMock(
+            return_value=make_verification_result(
+                failed_count=1,
+                remediation_issues=["rem-1"],
+            )
+        )
+        coordinator = callbacks.to_coordinator(max_retries=1)
+        interrupt_event = asyncio.Event()
+
+        async def interrupt_after_spawn() -> None:
+            while spawned_task is None:
+                await asyncio.sleep(0)
+            interrupt_event.set()
+
+        interrupter = asyncio.create_task(interrupt_after_spawn())
+        await asyncio.wait_for(
+            coordinator.check_epic_closure(
+                "issue-1", run_metadata, interrupt_event=interrupt_event
+            ),
+            timeout=0.2,
+        )
+        await interrupter
+
+        callbacks.finalize_epic_remediation_mock.assert_awaited_once()
+        finalized_result = callbacks.finalize_epic_remediation_mock.await_args.args[1]
+        assert finalized_result.success is False
+        assert finalized_result.summary == "Remediation task did not stop after interrupt"
+
+        finish_task.set()
+        if spawned_task is not None:
+            await asyncio.wait_for(spawned_task, timeout=0.2)
+
+    @pytest.mark.asyncio
     async def test_spawn_remediation_passes_flow_parameter(
         self,
         callbacks: EpicVerificationHarness,

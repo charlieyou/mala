@@ -91,8 +91,8 @@ def make_subprocess_result(
 
 
 @pytest.mark.asyncio
-async def test_finalizer_uses_issue_lifecycle_port_interrupt_event() -> None:
-    """Finalizer epic closure should read interrupt state from the port."""
+async def test_finalizer_defers_epic_verification() -> None:
+    """Issue finalization closes issues without awaiting epic verification."""
     interrupt_event = asyncio.Event()
     issue_lifecycle = FakeIssueLifecyclePort()
     issue_lifecycle.interrupt_event = interrupt_event
@@ -109,7 +109,7 @@ async def test_finalizer_uses_issue_lifecycle_port_interrupt_event() -> None:
     )
     run_metadata = MagicMock()
 
-    await finalizer.finalize(
+    output = await finalizer.finalize(
         IssueFinalizeInput(
             issue_id="issue-1",
             result=IssueResult(
@@ -122,11 +122,172 @@ async def test_finalizer_uses_issue_lifecycle_port_interrupt_event() -> None:
         )
     )
 
-    epic_verification_coordinator.check_epic_closure.assert_awaited_once_with(
-        "issue-1",
-        run_metadata,
-        interrupt_event=interrupt_event,
+    assert output.closed is True
+    epic_verification_coordinator.check_epic_closure.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_epic_verification_scheduled_if_post_close_bookkeeping_raises(
+    tmp_path: Path,
+    make_orchestrator: Callable[..., MalaOrchestrator],
+) -> None:
+    """A closed child still schedules epic verification if later bookkeeping fails."""
+    issue_provider = FakeIssueProvider(
+        {
+            "epic-1": FakeIssue("epic-1", issue_type="epic"),
+            "issue-1": FakeIssue("issue-1", parent_epic="epic-1"),
+        }
     )
+    orchestrator = make_orchestrator(
+        repo_path=tmp_path,
+        max_agents=1,
+        max_issues=1,
+        issue_provider=issue_provider,
+        event_sink=FakeEventSink(),
+        runs_dir=tmp_path / "runs",
+    )
+    checked_issues: list[str] = []
+
+    async def check_epic_closure(
+        issue_id: str,
+        run_metadata: object,
+        *,
+        interrupt_event: asyncio.Event | None = None,
+    ) -> None:
+        del run_metadata, interrupt_event
+        checked_issues.append(issue_id)
+
+    orchestrator.epic_verification_coordinator.check_epic_closure = (  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        check_epic_closure
+    )
+    run_metadata = MagicMock()
+    run_metadata.record_issue.side_effect = RuntimeError("metadata failed")
+
+    with pytest.raises(RuntimeError, match="metadata failed"):
+        await orchestrator._finalize_issue_result(
+            "issue-1",
+            IssueResult(
+                issue_id="issue-1",
+                agent_id="agent-1",
+                success=True,
+                summary="done",
+            ),
+            run_metadata,
+        )
+    await orchestrator._drain_epic_verification_tasks()
+
+    assert issue_provider.issues["issue-1"].status == "closed"
+    assert checked_issues == ["issue-1"]
+
+
+@pytest.mark.asyncio
+async def test_epic_verification_scheduled_after_review_tracking_children(
+    tmp_path: Path,
+    make_orchestrator: Callable[..., MalaOrchestrator],
+) -> None:
+    """Epic verification waits until review tracking children are attached."""
+    checked_issues: list[str] = []
+    created_parent_ids: list[str | None] = []
+
+    class OrderingIssueProvider(FakeIssueProvider):
+        async def create_issue_async(
+            self,
+            title: str,
+            description: str,
+            priority: str,
+            tags: list[str] | None = None,
+            parent_id: str | None = None,
+        ) -> str | None:
+            assert checked_issues == []
+            created_parent_ids.append(parent_id)
+            return await super().create_issue_async(
+                title,
+                description,
+                priority,
+                tags=tags,
+                parent_id=parent_id,
+            )
+
+    issue_provider = OrderingIssueProvider(
+        {
+            "epic-1": FakeIssue("epic-1", issue_type="epic"),
+            "issue-1": FakeIssue("issue-1", parent_epic="epic-1"),
+        }
+    )
+    orchestrator = make_orchestrator(
+        repo_path=tmp_path,
+        max_agents=1,
+        max_issues=1,
+        issue_provider=issue_provider,
+        event_sink=FakeEventSink(),
+        runs_dir=tmp_path / "runs",
+    )
+
+    async def check_epic_closure(
+        issue_id: str,
+        run_metadata: object,
+        *,
+        interrupt_event: asyncio.Event | None = None,
+    ) -> None:
+        del run_metadata, interrupt_event
+        assert created_parent_ids == ["epic-1"]
+        checked_issues.append(issue_id)
+
+    orchestrator.epic_verification_coordinator.check_epic_closure = (  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        check_epic_closure
+    )
+
+    await orchestrator._finalize_issue_result(
+        "issue-1",
+        IssueResult(
+            issue_id="issue-1",
+            agent_id="agent-1",
+            success=True,
+            summary="done",
+            low_priority_review_issues=[
+                SimpleNamespace(
+                    file="src/example.py",
+                    line_start=1,
+                    line_end=1,
+                    priority=2,
+                    title="Minor review finding",
+                    body="Track this later.",
+                    reviewer="test-reviewer",
+                )
+            ],
+        ),
+        MagicMock(),
+    )
+    await orchestrator._drain_epic_verification_tasks()
+
+    assert checked_issues == ["issue-1"]
+    assert issue_provider.created_issues[0]["parent_id"] == "epic-1"
+
+
+@pytest.mark.asyncio
+async def test_run_resets_epic_verification_state(
+    tmp_path: Path,
+    make_orchestrator: Callable[..., MalaOrchestrator],
+) -> None:
+    """Reusing an orchestrator starts with clean epic verification state."""
+    orchestrator = make_orchestrator(
+        repo_path=tmp_path,
+        max_agents=1,
+        max_issues=1,
+        issue_provider=FakeIssueProvider({}),
+        event_sink=FakeEventSink(),
+        runs_dir=tmp_path / "runs",
+        lock_releaser=lambda _agent_ids: 0,
+    )
+    orchestrator.epic_verification_coordinator.verified_epics.add("epic-1")
+    orchestrator.epic_verification_coordinator.epics_being_verified.add("epic-2")
+    orchestrator.epic_verification_coordinator.epics_pending_recheck.add("epic-3")
+
+    assert await orchestrator.run() == (0, 0)
+
+    assert orchestrator.epic_verification_coordinator.verified_epics == set()
+    assert orchestrator.epic_verification_coordinator.epics_being_verified == set()
+    assert orchestrator.epic_verification_coordinator.epics_pending_recheck == set()
 
 
 def test_pipeline_components_construct_without_orchestrator(tmp_path: Path) -> None:
@@ -5663,7 +5824,7 @@ class TestFreshSessionMode:
             # prompt. The follow-up says to continue following the implementer
             # prompt, so a fresh SDK session needs both prompt bodies.
             first_prompt = first_input.prompt
-            assert "# Beads Issue Implementer" in first_prompt
+            assert "# Issue Implementer" in first_prompt
             assert "Test issue" in first_prompt
             assert "File: src/test.py" in first_prompt
             assert "L10-12: [test-reviewer]" in first_prompt

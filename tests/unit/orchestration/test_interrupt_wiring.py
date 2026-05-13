@@ -15,7 +15,6 @@ import pytest
 
 from src.infra.io.log_output.run_metadata import RunMetadata
 from src.orchestration.factory import OrchestratorConfig, OrchestratorDependencies
-from src.pipeline.issue_finalizer import IssueFinalizeInput
 from src.pipeline.issue_result import IssueResult
 
 if TYPE_CHECKING:
@@ -69,13 +68,13 @@ class TestInterruptWiring:
         assert orchestrator._interrupt_event is not None
         assert not orchestrator._interrupt_event.is_set()
 
-    async def test_issue_finalizer_passes_interrupt_event_to_epic_closure(
+    async def test_scheduled_epic_verification_gets_interrupt_event(
         self, tmp_path: Path, tmp_runs_dir: Path
     ) -> None:
-        """IssueFinalizer passes interrupt_event to check_epic_closure.
+        """Scheduled epic verification passes interrupt_event to check_epic_closure.
 
-        This audit test verifies the finalizer built by _build_issue_finalizer
-        correctly passes self._interrupt_event to EpicVerificationCoordinator.
+        This audit test verifies the orchestrator-owned epic verification task
+        correctly passes the issue coordinator interrupt event through.
         """
         from src.orchestration.factory import create_orchestrator
         from tests.fakes.event_sink import FakeEventSink
@@ -96,9 +95,10 @@ class TestInterruptWiring:
         )
         orchestrator = create_orchestrator(config, deps=deps)
 
-        # Set up _interrupt_event as if run() had started
+        # Set up interrupt wiring as if run() had started.
         interrupt_event = asyncio.Event()
         orchestrator._interrupt_event = interrupt_event
+        orchestrator.issue_coordinator.interrupt_event = interrupt_event
 
         # Mock the epic verification coordinator to capture the call
         captured_interrupt_event: asyncio.Event | None = None
@@ -116,23 +116,78 @@ class TestInterruptWiring:
             mock_check_epic_closure
         )
 
-        # Finalize a successful issue so the finalizer triggers epic closure.
+        # Finalize a successful issue so the orchestrator schedules epic closure.
         mock_run_metadata = MagicMock(spec=RunMetadata)
-        await orchestrator.issue_finalizer.finalize(
-            IssueFinalizeInput(
+        await orchestrator._finalize_issue_result(
+            "test-issue",
+            IssueResult(
                 issue_id="test-issue",
-                result=IssueResult(
+                agent_id="agent-1",
+                success=True,
+                summary="done",
+            ),
+            mock_run_metadata,
+        )
+        await orchestrator._drain_epic_verification_tasks()
+
+        # Verify interrupt_event was passed
+        assert captured_interrupt_event is interrupt_event
+
+    async def test_issue_finalization_does_not_wait_for_epic_verification(
+        self, tmp_path: Path, tmp_runs_dir: Path
+    ) -> None:
+        """Successful issue finalization returns while epic verification is pending."""
+        from src.orchestration.factory import create_orchestrator
+        from tests.fakes.event_sink import FakeEventSink
+        from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
+
+        provider = FakeIssueProvider({"test-issue": FakeIssue("test-issue")})
+        event_sink = FakeEventSink()
+        orchestrator = create_orchestrator(
+            OrchestratorConfig(repo_path=tmp_path, max_agents=1, max_issues=1),
+            deps=OrchestratorDependencies(
+                issue_provider=provider,
+                event_sink=event_sink,
+                runs_dir=tmp_runs_dir,
+            ),
+        )
+
+        release_verification = asyncio.Event()
+        verification_started = asyncio.Event()
+
+        async def slow_check_epic_closure(
+            issue_id: str,
+            run_metadata: RunMetadata,
+            *,
+            interrupt_event: asyncio.Event | None = None,
+        ) -> None:
+            del issue_id, run_metadata, interrupt_event
+            verification_started.set()
+            await release_verification.wait()
+
+        orchestrator.epic_verification_coordinator.check_epic_closure = (  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+            slow_check_epic_closure
+        )
+
+        await asyncio.wait_for(
+            orchestrator._finalize_issue_result(
+                "test-issue",
+                IssueResult(
                     issue_id="test-issue",
                     agent_id="agent-1",
                     success=True,
                     summary="done",
                 ),
-                run_metadata=mock_run_metadata,
-            )
+                MagicMock(spec=RunMetadata),
+            ),
+            timeout=0.2,
         )
 
-        # Verify interrupt_event was passed
-        assert captured_interrupt_event is interrupt_event
+        assert provider.issues["test-issue"].status == "closed"
+        await asyncio.wait_for(verification_started.wait(), timeout=0.2)
+
+        release_verification.set()
+        await orchestrator._drain_epic_verification_tasks()
 
     async def test_issue_coordinator_receives_interrupt_event(
         self, tmp_path: Path, tmp_runs_dir: Path

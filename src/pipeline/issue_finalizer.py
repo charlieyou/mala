@@ -5,7 +5,7 @@ This module handles:
 - Recording issue runs to metadata
 - Cleaning up session paths
 - Emitting completion events
-- Closing issues and triggering epic checks
+- Closing issues and notifying the orchestrator about successful closes
 
 The IssueFinalizer receives explicit inputs and returns explicit outputs,
 making it testable without orchestrator dependencies.
@@ -30,6 +30,7 @@ from src.pipeline.gate_metadata import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from src.core.protocols.review import ReviewIssueProtocol
@@ -104,7 +105,7 @@ class IssueFinalizer:
     The IssueFinalizer is responsible for:
     - Building gate metadata from stored results or logs
     - Closing issues and emitting events
-    - Triggering epic closure checks
+    - Notifying its owner immediately after successful issue closure
     - Creating tracking issues for review findings
     - Recording issue runs to metadata
     - Emitting completion events
@@ -115,6 +116,9 @@ class IssueFinalizer:
         event_sink: Event emission port.
         issue_lifecycle: Issue lifecycle state/effect port.
         epic_verification_coordinator: Coordinator for parent epic closure checks.
+        on_issue_closed_successfully: Optional callback invoked after close_async
+            succeeds and any review-tracking children are created, before later
+            metadata/completion bookkeeping that may raise.
         evidence_check: Quality gate checker for fallback metadata extraction.
         per_session_spec: Validation spec for fallback metadata extraction.
     """
@@ -124,6 +128,7 @@ class IssueFinalizer:
     event_sink: MalaEventSink
     issue_lifecycle: IssueLifecyclePort
     epic_verification_coordinator: EpicVerificationCoordinator
+    on_issue_closed_successfully: Callable[[str, RunMetadata], None] | None = None
     evidence_check: GateChecker | None = None
     per_session_spec: ValidationSpec | None = None
 
@@ -146,24 +151,25 @@ class IssueFinalizer:
         # Build gate metadata from stored result or logs
         gate_metadata = self._build_gate_metadata(input)
 
-        # Close issue in beads on success
+        # Close issue in beads on success. Epic verification is intentionally
+        # scheduled by the orchestrator after this fast finalization path returns;
+        # awaiting verifier/remediation work here would block the issue coordinator
+        # from finalizing other completed agent tasks.
         # Failed issues are excluded via failed_issues set and may be retried
         closed = False
         if result.success:
             closed = await self.issue_provider.close_async(issue_id)
             if closed:
                 self.event_sink.on_issue_closed(issue_id, issue_id)
-                await self.epic_verification_coordinator.check_epic_closure(
-                    issue_id,
-                    input.run_metadata,
-                    interrupt_event=self.issue_lifecycle.interrupt_event,
-                )
 
             # Create tracking issues for P2/P3 review findings (if enabled)
             if self.config.track_review_issues and result.low_priority_review_issues:
                 await self._create_tracking_issues(
                     issue_id, result.low_priority_review_issues
                 )
+
+            if closed and self.on_issue_closed_successfully is not None:
+                self.on_issue_closed_successfully(issue_id, input.run_metadata)
 
         # Record to run metadata
         self._record_issue_run(input, gate_metadata)
