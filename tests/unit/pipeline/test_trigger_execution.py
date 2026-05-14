@@ -978,28 +978,36 @@ class TestEpicCompletionTriggerIntegration:
         return coordinator, queued_triggers, ports
 
     @pytest.mark.asyncio
-    async def test_epic_depth_top_level_nested_epic_does_not_fire(
+    async def test_epic_depth_top_level_nested_epic_fires_for_closed_ancestor_only(
         self, tmp_path: Path
     ) -> None:
-        """epic_depth=top_level: nested epic doesn't fire trigger."""
+        """epic_depth=top_level: nested epic is skipped, closed ancestor fires."""
         trigger_config = EpicCompletionTriggerConfig(
             failure_mode=FailureMode.CONTINUE,
             commands=(),
             epic_depth=EpicDepth.TOP_LEVEL,
             fire_on=FireOn.SUCCESS,
         )
-        # epic-1 has a parent epic, so it's nested
+        # epic-1 has a parent epic, so it's nested; parent-epic is top-level.
         coordinator, queued, _ = self._make_epic_coordinator(
             trigger_config=trigger_config,
-            parent_epic_map={"child-1": "epic-1", "epic-1": "parent-epic"},
+            parent_epic_map={
+                "child-1": "epic-1",
+                "epic-1": "parent-epic",
+                "parent-epic": None,
+            },
         )
 
         # Run verification
         run_metadata = self._make_run_metadata(tmp_path)
         await coordinator.check_epic_closure("child-1", run_metadata)
 
-        # No trigger should be queued for nested epic
-        assert len(queued) == 0
+        # No trigger should be queued for the nested epic, but the top-level
+        # ancestor closes via propagation and does fire.
+        assert len(queued) == 1
+        _trigger_type, context = queued[0]
+        assert context["epic_id"] == "parent-epic"
+        assert context["depth"] == "top_level"
 
     @pytest.mark.asyncio
     async def test_epic_depth_top_level_top_level_epic_fires(
@@ -1038,21 +1046,30 @@ class TestEpicCompletionTriggerIntegration:
             epic_depth=EpicDepth.ALL,
             fire_on=FireOn.SUCCESS,
         )
-        # epic-1 has a parent
+        # epic-1 has a parent; both close via propagation.
         coordinator, queued, _ = self._make_epic_coordinator(
             trigger_config=trigger_config,
-            parent_epic_map={"child-1": "epic-1", "epic-1": "grandparent-epic"},
+            parent_epic_map={
+                "child-1": "epic-1",
+                "epic-1": "grandparent-epic",
+                "grandparent-epic": None,
+            },
         )
 
         run_metadata = self._make_run_metadata(tmp_path)
         await coordinator.check_epic_closure("child-1", run_metadata)
 
-        # Trigger should be queued even for nested epic
-        assert len(queued) == 1
+        # Trigger should be queued for the nested epic and its closed ancestor.
+        assert len(queued) == 2
         trigger_type, context = queued[0]
         assert trigger_type == TriggerType.EPIC_COMPLETION
         assert context["epic_id"] == "epic-1"
         assert context["depth"] == "nested"
+        assert context["verification_result"] == "passed"
+        trigger_type, context = queued[1]
+        assert trigger_type == TriggerType.EPIC_COMPLETION
+        assert context["epic_id"] == "grandparent-epic"
+        assert context["depth"] == "top_level"
         assert context["verification_result"] == "passed"
 
     @pytest.mark.asyncio

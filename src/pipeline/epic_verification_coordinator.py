@@ -166,34 +166,61 @@ class EpicVerificationCoordinator:
                 verification loop exits early and remediation tasks are cancelled.
         """
         parent_epic = await self.issue_provider.get_parent_epic_async(issue_id)
-        if parent_epic is None or parent_epic in self.verified_epics:
+        if parent_epic is None or parent_epic == issue_id:
             return
 
         if not self._has_epic_verifier():
             return
 
+        parent_closed = await self._check_single_epic_closure(
+            parent_epic, run_metadata, interrupt_event=interrupt_event
+        )
+        if parent_closed:
+            if interrupt_event is not None and interrupt_event.is_set():
+                return
+            await self.check_epic_closure(
+                parent_epic, run_metadata, interrupt_event=interrupt_event
+            )
+
+    async def _check_single_epic_closure(
+        self,
+        epic_id: str,
+        run_metadata: RunMetadata,
+        *,
+        interrupt_event: asyncio.Event | None = None,
+    ) -> bool:
+        """Verify and close one epic if eligible.
+
+        Returns True only when the epic was actually verified and closed, so the
+        caller can continue closure propagation to ancestor epics.
+        """
+        if epic_id in self.verified_epics:
+            return False
+
         # Guard against re-entrant verification (e.g., when remediation tasks complete)
-        if parent_epic in self.epics_being_verified:
-            self.epics_pending_recheck.add(parent_epic)
-            return
+        if epic_id in self.epics_being_verified:
+            self.epics_pending_recheck.add(epic_id)
+            return False
 
         # Mark as being verified to prevent parallel verification loops
-        self.epics_being_verified.add(parent_epic)
+        self.epics_being_verified.add(epic_id)
+        closed_any = False
         try:
             while True:
-                self.epics_pending_recheck.discard(parent_epic)
-                if parent_epic in self.verified_epics:
-                    return
+                self.epics_pending_recheck.discard(epic_id)
+                if epic_id in self.verified_epics:
+                    return closed_any
 
-                await self._verify_epic_with_retries(
-                    parent_epic, run_metadata, interrupt_event=interrupt_event
+                closed = await self._verify_epic_with_retries(
+                    epic_id, run_metadata, interrupt_event=interrupt_event
                 )
+                closed_any = closed_any or closed
 
-                if parent_epic not in self.epics_pending_recheck:
-                    return
+                if epic_id not in self.epics_pending_recheck:
+                    return closed_any
         finally:
             # Always remove from being_verified set when done
-            self.epics_being_verified.discard(parent_epic)
+            self.epics_being_verified.discard(epic_id)
 
     async def _verify_epic_with_retries(
         self,
@@ -201,13 +228,16 @@ class EpicVerificationCoordinator:
         run_metadata: RunMetadata,
         *,
         interrupt_event: asyncio.Event | None = None,
-    ) -> None:
+    ) -> bool:
         """Run epic verification with retry loop.
 
         Args:
             epic_id: The epic to verify.
             run_metadata: Run metadata for recording remediation issue results.
             interrupt_event: Optional event to signal interrupt.
+
+        Returns:
+            True when the epic passed verification and was closed.
         """
         from src.infra.sigint_guard import InterruptGuard
 
@@ -222,7 +252,7 @@ class EpicVerificationCoordinator:
         for attempt in range(1, max_attempts + 1):
             # Check for interrupt before each retry iteration
             if guard.is_interrupted():
-                return
+                return False
 
             # Log attempt if retrying (attempt > 1)
             if attempt > 1:
@@ -235,16 +265,16 @@ class EpicVerificationCoordinator:
             # If epic wasn't eligible (children still open), don't mark as verified
             # so it can be re-checked when more children close
             if verification_result.verified_count == 0:
-                return
+                return False
 
             # If epic passed verification, mark as verified and return
             if verification_result.passed_count > 0:
                 self.verified_epics.add(epic_id)
                 # Queue epic_completion trigger on success
-                await self._maybe_queue_epic_completion_trigger(
+                await self._try_queue_epic_completion_trigger(
                     epic_id, verification_passed=True
                 )
-                return
+                return True
 
             # If no remediation issues were created, or max attempts reached,
             # mark as verified (to prevent infinite loops) and return
@@ -258,16 +288,34 @@ class EpicVerificationCoordinator:
                     )
                 self.verified_epics.add(epic_id)
                 # Queue epic_completion trigger on failure (verification completed but didn't pass)
-                await self._maybe_queue_epic_completion_trigger(
+                await self._try_queue_epic_completion_trigger(
                     epic_id, verification_passed=False
                 )
-                return
+                return False
 
             # Execute remediation issues before next verification attempt
             await self._execute_remediation_issues(
                 verification_result.remediation_issues_created,
                 run_metadata,
                 interrupt_event=interrupt_event,
+            )
+
+        return False
+
+    async def _try_queue_epic_completion_trigger(
+        self,
+        epic_id: str,
+        *,
+        verification_passed: bool,
+    ) -> None:
+        """Queue epic_completion trigger without blocking verification flow."""
+        try:
+            await self._maybe_queue_epic_completion_trigger(
+                epic_id, verification_passed=verification_passed
+            )
+        except Exception as e:
+            self.event_sink.on_warning(
+                f"Failed to queue epic_completion trigger for {epic_id}: {e}"
             )
 
     async def _maybe_queue_epic_completion_trigger(

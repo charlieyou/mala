@@ -320,6 +320,132 @@ class TestEpicVerificationInterruptHandling:
         callbacks.verify_epic.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_successful_nested_epic_closure_propagates_to_ancestor(
+        self,
+        callbacks: EpicVerificationHarness,
+        run_metadata: MagicMock,
+    ) -> None:
+        """Closing a nested epic continues verification up to its parent epic."""
+        parents = {
+            "issue-1": "epic-child",
+            "epic-child": "epic-root",
+            "epic-root": None,
+        }
+        callbacks.issue_provider.get_parent_epic_async = AsyncMock(
+            side_effect=lambda issue_id: parents[issue_id]
+        )
+        callbacks.verify_epic = AsyncMock(
+            return_value=make_verification_result(
+                passed_count=1,
+                failed_count=0,
+            )
+        )
+
+        coordinator = callbacks.to_coordinator(max_retries=0)
+
+        await coordinator.check_epic_closure("issue-1", run_metadata)
+
+        assert coordinator.verified_epics == {"epic-child", "epic-root"}
+
+    @pytest.mark.asyncio
+    async def test_failed_nested_epic_closure_does_not_check_ancestor(
+        self,
+        callbacks: EpicVerificationHarness,
+        run_metadata: MagicMock,
+    ) -> None:
+        """Ancestor verification waits until the immediate parent closes."""
+        parents = {
+            "issue-1": "epic-child",
+            "epic-child": "epic-root",
+            "epic-root": None,
+        }
+        callbacks.issue_provider.get_parent_epic_async = AsyncMock(
+            side_effect=lambda issue_id: parents[issue_id]
+        )
+        callbacks.verify_epic = AsyncMock(return_value=make_verification_result())
+
+        coordinator = callbacks.to_coordinator(max_retries=0)
+
+        await coordinator.check_epic_closure("issue-1", run_metadata)
+
+        assert coordinator.verified_epics == {"epic-child"}
+        assert "epic-root" not in coordinator.verified_epics
+
+    @pytest.mark.asyncio
+    async def test_interrupt_prevents_ancestor_propagation_after_parent_closes(
+        self,
+        callbacks: EpicVerificationHarness,
+        run_metadata: MagicMock,
+    ) -> None:
+        """An interrupt set after parent closure prevents ancestor verification."""
+        parents = {
+            "issue-1": "epic-child",
+            "epic-child": "epic-root",
+            "epic-root": None,
+        }
+        callbacks.issue_provider.get_parent_epic_async = AsyncMock(
+            side_effect=lambda issue_id: parents[issue_id]
+        )
+        interrupt_event = asyncio.Event()
+
+        async def verify_epic(
+            epic_id: str, human_override: bool
+        ) -> EpicVerificationResult:
+            del human_override
+            if epic_id == "epic-child":
+                interrupt_event.set()
+                return make_verification_result(passed_count=1, failed_count=0)
+            return make_verification_result(passed_count=1, failed_count=0)
+
+        callbacks.verify_epic = AsyncMock(side_effect=verify_epic)
+        coordinator = callbacks.to_coordinator(max_retries=0)
+
+        await coordinator.check_epic_closure(
+            "issue-1", run_metadata, interrupt_event=interrupt_event
+        )
+
+        assert coordinator.verified_epics == {"epic-child"}
+        assert "epic-root" not in coordinator.verified_epics
+
+    @pytest.mark.asyncio
+    async def test_trigger_queue_failure_does_not_block_ancestor_propagation(
+        self,
+        callbacks: EpicVerificationHarness,
+        run_metadata: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Trigger errors are best-effort and do not strand closed ancestors."""
+        parents = {
+            "issue-1": "epic-child",
+            "epic-child": "epic-root",
+            "epic-root": None,
+        }
+        callbacks.issue_provider.get_parent_epic_async = AsyncMock(
+            side_effect=lambda issue_id: parents[issue_id]
+        )
+        callbacks.verify_epic = AsyncMock(
+            return_value=make_verification_result(passed_count=1, failed_count=0)
+        )
+        coordinator = callbacks.to_coordinator(max_retries=0)
+
+        async def fail_to_queue_trigger(
+            epic_id: str, *, verification_passed: bool
+        ) -> None:
+            del epic_id, verification_passed
+            raise RuntimeError("trigger unavailable")
+
+        monkeypatch.setattr(
+            coordinator,
+            "_maybe_queue_epic_completion_trigger",
+            fail_to_queue_trigger,
+        )
+
+        await coordinator.check_epic_closure("issue-1", run_metadata)
+
+        assert coordinator.verified_epics == {"epic-child", "epic-root"}
+        assert callbacks.event_sink.on_warning.call_count == 2
+
+    @pytest.mark.asyncio
     async def test_concurrent_same_epic_closure_rechecks_after_current_pass(
         self,
         callbacks: EpicVerificationHarness,
@@ -428,6 +554,7 @@ class TestEpicVerificationInterruptHandling:
         await interrupter
 
         callbacks.finalize_epic_remediation_mock.assert_awaited_once()
+        assert callbacks.finalize_epic_remediation_mock.await_args is not None
         finalized_result = callbacks.finalize_epic_remediation_mock.await_args.args[1]
         assert finalized_result.success is False
         assert finalized_result.summary == "Remediation task did not stop after interrupt"
