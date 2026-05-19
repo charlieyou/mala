@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .orchestration.orchestrator import MalaOrchestrator
 
-__version__ = "1.2.43"
+__version__ = "1.2.44"
 __all__ = ["MalaOrchestrator", "__version__"]
 
 
