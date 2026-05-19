@@ -122,7 +122,7 @@ async def create_review_tracking_issues(
     source_issue_id: str,
     review_issues: list[ReviewIssueProtocol],
     parent_epic_id: str | None = None,
-) -> None:
+) -> bool:
     """Create or update a beads issue from P2/P3 review findings.
 
     All low-priority issues that didn't block the review are consolidated
@@ -135,9 +135,12 @@ async def create_review_tracking_issues(
         source_issue_id: The issue ID that triggered the review.
         review_issues: List of ReviewIssueProtocol objects from the review.
         parent_epic_id: Optional parent epic ID to attach new tracking issues to.
+
+    Returns:
+        True if a new tracking issue was created, False otherwise.
     """
     if not review_issues:
-        return
+        return False
 
     # Build the new findings section and get a content-based dedup tag
     new_findings_section, new_dedup_tag, new_fingerprints = _build_findings_section(
@@ -156,11 +159,11 @@ async def create_review_tracking_issues(
                 f"Failed to fetch description for {existing_id}, skipping update",
                 agent_id=source_issue_id,
             )
-            return
+            return False
 
         # Check batch-level dedup first (fast path)
         if new_dedup_tag in existing_desc:
-            return
+            return False
 
         # Finding 6: Filter out individually duplicate findings
         existing_fingerprints = _extract_existing_fingerprints(existing_desc)
@@ -172,7 +175,7 @@ async def create_review_tracking_issues(
 
         if not unique_issues:
             # All findings already exist individually
-            return
+            return False
 
         # Append new findings to existing issue
         # Count existing findings to continue numbering
@@ -226,7 +229,7 @@ async def create_review_tracking_issues(
                 f"Failed to update tracking issue {existing_id}",
                 agent_id=source_issue_id,
             )
-            return
+            return False
 
         # Update title and priority (Finding 3)
         title_update_success = await beads.update_issue_async(
@@ -244,7 +247,7 @@ async def create_review_tracking_issues(
             f"Appended {len(unique_issues)} finding{'s' if len(unique_issues) > 1 else ''} to tracking issue {existing_id}",
             agent_id=source_issue_id,
         )
-        return
+        return False
 
     # No existing issue - create a new one
     # Determine highest priority among findings (lowest number = highest priority)
@@ -296,3 +299,6 @@ async def create_review_tracking_issues(
             f"Created tracking issue {new_issue_id} for {issue_count} {priority_str}+ review finding{'s' if issue_count > 1 else ''}",
             agent_id=source_issue_id,
         )
+        return True
+
+    return False

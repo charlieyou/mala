@@ -16,6 +16,7 @@ from src.pipeline.issue_execution_plan import (
     IssueExecutionPlan,
     build_issue_execution_plan,
 )
+from src.pipeline.issue_finalizer import IssueFinalizeOutput
 from src.pipeline.issue_result import IssueResult
 from src.pipeline.run_coordinator import TriggerValidationResult
 
@@ -129,8 +130,13 @@ def _build_plan(
         issue_id: str,
         result: IssueResult,
         run_metadata: object,
-    ) -> None:
+    ) -> IssueFinalizeOutput:
         finalized.append(result)
+        return IssueFinalizeOutput(
+            success=True,
+            closed=True,
+            gate_metadata=MagicMock(),
+        )
 
     return build_issue_execution_plan(
         run_metadata=MagicMock(),

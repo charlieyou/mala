@@ -98,7 +98,7 @@ if TYPE_CHECKING:
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.infra.telemetry import TelemetryProvider
     from src.pipeline.epic_verification_coordinator import EpicVerificationCoordinator
-    from src.pipeline.issue_finalizer import IssueFinalizer
+    from src.pipeline.issue_finalizer import IssueFinalizer, IssueFinalizeOutput
     from src.pipeline.session_callback_factory import SessionRunnerAdapters
 
     from src.core.models import (
@@ -760,7 +760,7 @@ class MalaOrchestrator:
         issue_id: str,
         result: IssueResult,
         run_metadata: RunMetadata,
-    ) -> None:
+    ) -> IssueFinalizeOutput:
         """Record an issue result, update metadata, and emit logs.
 
         Delegates to IssueFinalizer for the core finalization logic.
@@ -791,7 +791,7 @@ class MalaOrchestrator:
 
         # Delegate to finalizer, ensuring cleanup happens even if finalize raises
         try:
-            await self.issue_finalizer.finalize(finalize_input)
+            return await self.issue_finalizer.finalize(finalize_input)
         finally:
             # Update tracking state (active_tasks is updated by mark_completed in finalize_callback)
             self._state.completed.append(result)

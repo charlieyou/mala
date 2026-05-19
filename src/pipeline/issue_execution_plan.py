@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
     from src.core.models import PeriodicValidationConfig, RunResult, WatchConfig
     from src.infra.io.log_output.run_metadata import RunMetadata
+    from src.pipeline.issue_finalizer import IssueFinalizeOutput
     from src.pipeline.issue_execution_coordinator import (
         AbortCallback,
         AbortResult,
@@ -130,7 +131,9 @@ def build_issue_execution_plan(
     epic_override_ids: set[str],
     spawn_agent: SpawnCallback,
     abort_active_tasks: _AbortActiveTasks,
-    finalize_issue_result: Callable[[str, IssueResult, RunMetadata], Awaitable[None]],
+    finalize_issue_result: Callable[
+        [str, IssueResult, RunMetadata], Awaitable[IssueFinalizeOutput]
+    ],
     cleanup_issue_runtime_state: Callable[[str], None],
     check_and_queue_periodic_trigger: Callable[[IssueResult], None],
     mark_validation_failed: Callable[[], None],
@@ -142,7 +145,7 @@ def build_issue_execution_plan(
 ) -> IssueExecutionPlan:
     """Build the issue execution plan for a run without touching IO."""
 
-    async def finalize_callback(issue_id: str, task: asyncio.Task[object]) -> None:
+    async def finalize_callback(issue_id: str, task: asyncio.Task[object]) -> bool:
         result = _task_issue_result(
             issue_id,
             task,
@@ -154,16 +157,17 @@ def build_issue_execution_plan(
             issue_coordinator.release_task(issue_id)
             cleanup_issue_runtime_state(issue_id)
             state.deadlock_victim_issues.discard(issue_id)
-            return
+            return False
 
         state.deadlock_victim_issues.discard(issue_id)
-        await finalize_issue_result(issue_id, result, run_metadata)
+        finalize_output = await finalize_issue_result(issue_id, result, run_metadata)
         issue_coordinator.mark_completed(issue_id)
 
         check_and_queue_periodic_trigger(result)
         trigger_result = await run_coordinator.run_trigger_validation()
         if trigger_result.status == "aborted":
             issue_coordinator.request_abort(reason="Trigger validation aborted")
+        return finalize_output.created_follow_up_work
 
     async def abort_callback(*, is_interrupt: bool = False) -> AbortResult:
         return await abort_active_tasks(run_metadata, is_interrupt=is_interrupt)

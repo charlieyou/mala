@@ -5,8 +5,11 @@ Tests for last_review_issues passthrough and persistence.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from src.pipeline.issue_finalizer import (
     IssueFinalizer,
@@ -58,6 +61,19 @@ def make_finalizer(config: IssueFinalizeConfig) -> IssueFinalizer:
         evidence_check=None,
         per_session_spec=None,
     )
+
+
+@dataclass(frozen=True)
+class FakeReviewIssue:
+    """Fake ReviewIssueProtocol for tracking issue tests."""
+
+    file: str
+    line_start: int
+    line_end: int
+    priority: int | None
+    title: str
+    body: str
+    reviewer: str
 
 
 class TestIssueFinalizer:
@@ -161,3 +177,45 @@ class TestIssueFinalizer:
 
         assert recorded_issue_run is not None
         assert recorded_issue_run.last_review_issues == []
+
+    @pytest.mark.asyncio
+    async def test_finalize_reports_created_follow_up_work(self) -> None:
+        """Finalization signals when review tracking creates a new issue."""
+        provider = FakeIssueProvider({"test-issue": FakeIssue("test-issue")})
+        finalizer = IssueFinalizer(
+            config=IssueFinalizeConfig(track_review_issues=True),
+            issue_provider=provider,
+            event_sink=FakeEventSink(),
+            issue_lifecycle=FakeIssueLifecyclePort(),
+            epic_verification_coordinator=MagicMock(check_epic_closure=AsyncMock()),
+            evidence_check=None,
+            per_session_spec=None,
+        )
+        result = IssueResult(
+            issue_id="test-issue",
+            agent_id="test-agent",
+            success=True,
+            summary="done",
+            low_priority_review_issues=[
+                FakeReviewIssue(
+                    file="src/foo.py",
+                    line_start=10,
+                    line_end=10,
+                    priority=2,
+                    title="Consider refactoring",
+                    body="details",
+                    reviewer="reviewer",
+                )
+            ],
+        )
+
+        output = await finalizer.finalize(
+            IssueFinalizeInput(
+                issue_id="test-issue",
+                result=result,
+                run_metadata=MagicMock(),
+            )
+        )
+
+        assert output.created_follow_up_work is True
+        assert len(provider.created_issues) == 1

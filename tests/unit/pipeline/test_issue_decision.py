@@ -131,6 +131,7 @@ def test_spawn_capacity(snapshot: WorkQueueSnapshot, expected: int) -> None:
             WorkQueueSnapshot(startup_no_ready_check_pending=True),
             ExitDecision(False),
         ),
+        (WorkQueueSnapshot(follow_up_repoll_pending=True), ExitDecision(False)),
         (
             WorkQueueSnapshot(completed_count=1, last_validation_at=0),
             ExitDecision(True, "success", 0, run_final_validation=True),

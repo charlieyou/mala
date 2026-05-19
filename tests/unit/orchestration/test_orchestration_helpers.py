@@ -674,7 +674,7 @@ class TestCreateReviewTrackingIssues:
             ),
         ]
 
-        await create_review_tracking_issues(
+        created = await create_review_tracking_issues(
             beads=cast("IssueProvider", beads),
             event_sink=cast("MalaEventSink", event_sink),
             source_issue_id="bd-test-1",
@@ -697,6 +697,7 @@ class TestCreateReviewTrackingIssues:
         assert "Consider refactoring" in description
         assert "Code smell" in description
         assert len(event_sink.warnings) == 1
+        assert created is True
 
     @pytest.mark.asyncio
     async def test_creates_issue_with_line_range_in_description(self) -> None:
@@ -828,7 +829,7 @@ This issue consolidates 1 non-blocking finding from code review.
             )
         ]
 
-        await create_review_tracking_issues(
+        created = await create_review_tracking_issues(
             beads=cast("IssueProvider", beads),
             event_sink=cast("MalaEventSink", event_sink),
             source_issue_id="bd-test-6",
@@ -850,6 +851,7 @@ This issue consolidates 1 non-blocking finding from code review.
         # Warning should mention appending
         assert len(event_sink.warnings) == 1
         assert "Appended" in event_sink.warnings[0]
+        assert created is False
 
     @pytest.mark.asyncio
     async def test_handles_none_priority(self) -> None:
@@ -885,7 +887,7 @@ This issue consolidates 1 non-blocking finding from code review.
         beads = FakeIssueProvider()
         event_sink = FakeEventSink()
 
-        await create_review_tracking_issues(
+        created = await create_review_tracking_issues(
             beads=cast("IssueProvider", beads),
             event_sink=cast("MalaEventSink", event_sink),
             source_issue_id="bd-test-5",
@@ -894,6 +896,7 @@ This issue consolidates 1 non-blocking finding from code review.
 
         assert len(beads.created_issues) == 0
         assert len(event_sink.warnings) == 0
+        assert created is False
 
     @pytest.mark.asyncio
     async def test_passes_parent_epic_id_to_create_issue(self) -> None:

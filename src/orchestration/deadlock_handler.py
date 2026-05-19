@@ -59,7 +59,7 @@ class DeadlockHandlerCallbacks:
     on_tasks_aborting: Callable[[int, str], None]
     do_cleanup_agent_locks: Callable[[str], tuple[int, list[str]]]
     unregister_agent: Callable[[str], None]
-    finalize_issue_result: Callable[[str, IssueResult, RunMetadata], Awaitable[None]]
+    finalize_issue_result: Callable[[str, IssueResult, RunMetadata], Awaitable[object]]
     mark_completed: Callable[[str], None]
 
 

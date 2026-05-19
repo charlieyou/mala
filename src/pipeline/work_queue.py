@@ -98,6 +98,7 @@ class WorkQueueSnapshot:
     max_issues: int | None = None
     watch_enabled: bool = False
     startup_no_ready_check_pending: bool = False
+    follow_up_repoll_pending: bool = False
     abort_requested: bool = False
     interrupt_requested: bool = False
     is_draining: bool = False
@@ -224,6 +225,7 @@ class WorkQueue:
         consecutive_poll_failures: int = 0,
         watch_enabled: bool = False,
         startup_no_ready_check_pending: bool = False,
+        follow_up_repoll_pending: bool = False,
         abort_requested: bool = False,
         interrupt_requested: bool = False,
         is_draining: bool = False,
@@ -246,6 +248,7 @@ class WorkQueue:
             max_issues=self._config.max_issues,
             watch_enabled=watch_enabled,
             startup_no_ready_check_pending=startup_no_ready_check_pending,
+            follow_up_repoll_pending=follow_up_repoll_pending,
             abort_requested=abort_requested,
             interrupt_requested=interrupt_requested,
             is_draining=is_draining,
@@ -377,6 +380,8 @@ def exit_reason(snapshot: WorkQueueSnapshot) -> ExitDecision:
     if snapshot.ready_issue_ids:
         return ExitDecision(False)
     if snapshot.watch_enabled or snapshot.startup_no_ready_check_pending:
+        return ExitDecision(False)
+    if snapshot.follow_up_repoll_pending:
         return ExitDecision(False)
     return ExitDecision(
         True,

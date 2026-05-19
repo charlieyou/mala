@@ -87,11 +87,14 @@ class IssueFinalizeOutput:
         success: Whether finalization completed successfully.
         closed: Whether the issue was closed.
         gate_metadata: The extracted gate metadata.
+        created_follow_up_work: Whether finalization created a new issue that
+            may be ready for this run to pick up.
     """
 
     success: bool
     closed: bool
     gate_metadata: GateMetadata
+    created_follow_up_work: bool = False
 
 
 @dataclass
@@ -157,6 +160,7 @@ class IssueFinalizer:
         # from finalizing other completed agent tasks.
         # Failed issues are excluded via failed_issues set and may be retried
         closed = False
+        created_follow_up_work = False
         if result.success:
             closed = await self.issue_provider.close_async(issue_id)
             if closed:
@@ -164,7 +168,7 @@ class IssueFinalizer:
 
             # Create tracking issues for P2/P3 review findings (if enabled)
             if self.config.track_review_issues and result.low_priority_review_issues:
-                await self._create_tracking_issues(
+                created_follow_up_work = await self._create_tracking_issues(
                     issue_id, result.low_priority_review_issues
                 )
 
@@ -181,6 +185,7 @@ class IssueFinalizer:
             success=True,
             closed=closed,
             gate_metadata=gate_metadata,
+            created_follow_up_work=created_follow_up_work,
         )
 
     def _build_gate_metadata(self, input: IssueFinalizeInput) -> GateMetadata:
@@ -274,12 +279,12 @@ class IssueFinalizer:
         self,
         issue_id: str,
         review_issues: list[ReviewIssueProtocol],
-    ) -> None:
+    ) -> bool:
         """Create tracking issues for non-blocking review findings."""
         from src.pipeline.review_tracking import create_review_tracking_issues
 
         parent_epic_id = await self.issue_provider.get_parent_epic_async(issue_id)
-        await create_review_tracking_issues(
+        return await create_review_tracking_issues(
             self.issue_provider,
             self.event_sink,
             issue_id,

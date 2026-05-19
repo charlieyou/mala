@@ -58,6 +58,9 @@ class MockIssueProvider:
                 for issue_id in self._ready_sequences[self._call_count]
                 if issue_id not in exclude
             ]
+            if only_ids is not None:
+                allowed = set(only_ids)
+                result = [issue_id for issue_id in result if issue_id in allowed]
             self._call_count += 1
             return result
         return []
@@ -352,6 +355,70 @@ class TestRunLoop:
         # (verified by issues_spawned == 0 above and no completed_ids)
         assert coord.completed_ids == set()
         assert ("no_more_issues", ("none_ready",)) in event_sink.events
+
+    @pytest.mark.asyncio
+    async def test_repolls_after_finalization_creates_follow_up_work(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Non-watch runs pick up ready work created while finalizing last issue."""
+        beads = MockIssueProvider(ready_issues=[["source"], ["follow-up"], []])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            config=CoordinatorConfig(max_agents=1),
+        )
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None] | None:
+            async def work() -> None:
+                pass
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> bool:
+            coord.mark_completed(issue_id)
+            return issue_id == "source"
+
+        result = await coord.run_loop(
+            spawn_callback,
+            finalize_callback,
+            AsyncMock(),
+        )
+
+        assert result.exit_reason == "success"
+        assert result.issues_spawned == 2
+        assert coord.completed_ids == {"source", "follow-up"}
+
+    @pytest.mark.asyncio
+    async def test_follow_up_repoll_preserves_only_ids_scope(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """The forced repoll uses normal selection filters instead of direct enqueue."""
+        beads = MockIssueProvider(ready_issues=[["source"], ["follow-up"], []])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            config=CoordinatorConfig(max_agents=1, only_ids=["source"]),
+        )
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None] | None:
+            async def work() -> None:
+                pass
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> bool:
+            coord.mark_completed(issue_id)
+            return True
+
+        result = await coord.run_loop(
+            spawn_callback,
+            finalize_callback,
+            AsyncMock(),
+        )
+
+        assert result.exit_reason == "success"
+        assert result.issues_spawned == 1
+        assert coord.completed_ids == {"source"}
 
     @pytest.mark.asyncio
     async def test_repolls_after_startup_no_ready_work(

@@ -142,7 +142,7 @@ class FinalizeCallback(Protocol):
     Takes the issue_id and the task that completed.
     """
 
-    async def __call__(self, issue_id: str, task: asyncio.Task[Any]) -> None:
+    async def __call__(self, issue_id: str, task: asyncio.Task[Any]) -> bool | None:
         """Finalize the result of a completed task."""
         ...
 
@@ -418,6 +418,7 @@ class IssueExecutionCoordinator:
         issues_spawned = 0
         interrupt_task: asyncio.Task[object] | None = None
         startup_no_ready_check_pending = True
+        follow_up_repoll_pending = False
         validate_every = self._validate_every(validation_config)
         watch_state = WatchState(next_validation_threshold=validate_every or 10)
         poll_strategy = _CoordinatorPollStrategy(
@@ -437,8 +438,11 @@ class IssueExecutionCoordinator:
             self.interrupt_event = interrupt_event
 
         async def finalize_task(issue_id: str, task: asyncio.Task[Any]) -> bool:
+            nonlocal follow_up_repoll_pending
             already_completed = issue_id in self.completed_ids
-            await finalize_callback(issue_id, task)
+            created_follow_up_work = await finalize_callback(issue_id, task)
+            if created_follow_up_work is True:
+                follow_up_repoll_pending = True
             return issue_id in self.completed_ids and not already_completed
 
         try:
@@ -454,6 +458,7 @@ class IssueExecutionCoordinator:
                     ready_issue_ids=(),
                     watch_config=watch_config,
                     startup_no_ready_check_pending=startup_no_ready_check_pending,
+                    follow_up_repoll_pending=follow_up_repoll_pending,
                     drain_event=drain_event,
                 )
                 decision = exit_reason(snapshot)
@@ -480,6 +485,8 @@ class IssueExecutionCoordinator:
                 watch_state.consecutive_poll_failures = (
                     poll_result.consecutive_poll_failures
                 )
+                if poll_result.succeeded:
+                    follow_up_repoll_pending = False
 
                 poll_decision = poll_result.decision
                 if poll_decision.kind == "transient_error":
@@ -530,6 +537,7 @@ class IssueExecutionCoordinator:
                     ready_issue_ids=ready,
                     watch_config=watch_config,
                     startup_no_ready_check_pending=startup_no_ready_check_pending,
+                    follow_up_repoll_pending=follow_up_repoll_pending,
                     drain_event=drain_event,
                 )
 
@@ -572,6 +580,7 @@ class IssueExecutionCoordinator:
                         ready_issue_ids=ready,
                         watch_config=watch_config,
                         startup_no_ready_check_pending=startup_no_ready_check_pending,
+                        follow_up_repoll_pending=follow_up_repoll_pending,
                         drain_event=drain_event,
                     )
                     if snapshot.interrupt_requested or snapshot.abort_requested:
@@ -632,6 +641,7 @@ class IssueExecutionCoordinator:
         ready_issue_ids: list[str] | tuple[str, ...],
         watch_config: WatchConfig | None,
         startup_no_ready_check_pending: bool,
+        follow_up_repoll_pending: bool,
         drain_event: asyncio.Event | None,
     ) -> WorkQueueSnapshot:
         snapshot = work_queue.snapshot(
@@ -645,6 +655,7 @@ class IssueExecutionCoordinator:
             consecutive_poll_failures=watch_state.consecutive_poll_failures,
             watch_enabled=self._watch_enabled(watch_config),
             startup_no_ready_check_pending=startup_no_ready_check_pending,
+            follow_up_repoll_pending=follow_up_repoll_pending,
             abort_requested=self.abort_run,
             interrupt_requested=self._interrupt_event.is_set(),
             is_draining=self._event_is_set(drain_event),
