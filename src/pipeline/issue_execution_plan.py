@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
+    from src.core.protocols.issue_lifecycle_port import IssueLifecycleState
     from src.core.models import PeriodicValidationConfig, RunResult, WatchConfig
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.pipeline.issue_finalizer import IssueFinalizeOutput
@@ -46,6 +47,9 @@ class _IssueLifecycle(Protocol):
     """Issue coordinator methods used by plan callbacks."""
 
     abort_reason: str | None
+
+    @property
+    def current_state(self) -> IssueLifecycleState: ...
 
     def release_task(self, issue_id: str) -> None: ...
 
@@ -142,6 +146,7 @@ def build_issue_execution_plan(
     drain_event: asyncio.Event | None = None,
     interrupt_event: asyncio.Event | None = None,
     validation_callback: Callable[[], Awaitable[bool]] | None = None,
+    await_background_repo_work: Callable[[], Awaitable[None]] | None = None,
 ) -> IssueExecutionPlan:
     """Build the issue execution plan for a run without touching IO."""
 
@@ -164,9 +169,12 @@ def build_issue_execution_plan(
         issue_coordinator.mark_completed(issue_id)
 
         check_and_queue_periodic_trigger(result)
-        trigger_result = await run_coordinator.run_trigger_validation()
-        if trigger_result.status == "aborted":
-            issue_coordinator.request_abort(reason="Trigger validation aborted")
+        if not issue_coordinator.current_state.active_issue_ids:
+            if await_background_repo_work is not None:
+                await await_background_repo_work()
+            trigger_result = await run_coordinator.run_trigger_validation()
+            if trigger_result.status == "aborted":
+                issue_coordinator.request_abort(reason="Trigger validation aborted")
         return finalize_output.created_follow_up_work
 
     async def abort_callback(*, is_interrupt: bool = False) -> AbortResult:

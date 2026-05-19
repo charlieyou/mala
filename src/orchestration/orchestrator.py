@@ -1443,6 +1443,7 @@ class MalaOrchestrator:
                     drain_event=drain_event,
                     interrupt_event=interrupt_event,
                     validation_callback=None,
+                    await_background_repo_work=self._drain_epic_verification_tasks,
                 )
                 run_task = asyncio.create_task(plan.run(self.issue_coordinator))
                 self._lifecycle.run_task = run_task

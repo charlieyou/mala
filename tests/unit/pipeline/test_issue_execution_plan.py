@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.core.models import EpicVerificationResult, RunResult
+from src.core.protocols.issue_lifecycle_port import IssueLifecycleState
 from src.pipeline.issue_execution_coordinator import AbortResult
 from src.pipeline.issue_execution_plan import (
     IssueExecutionPlan,
@@ -21,6 +22,8 @@ from src.pipeline.issue_result import IssueResult
 from src.pipeline.run_coordinator import TriggerValidationResult
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from src.pipeline.issue_execution_coordinator import IssueExecutionCoordinator
 
 
@@ -34,15 +37,29 @@ class FakeState:
 class FakeIssueCoordinator:
     def __init__(self) -> None:
         self.abort_reason: str | None = None
+        self.active_issue_ids: set[str] = set()
         self.released: list[str] = []
         self.completed: list[str] = []
         self.abort_requests: list[str] = []
         self.run_loop_kwargs: dict[str, object] | None = None
 
+    @property
+    def current_state(self) -> IssueLifecycleState:
+        return IssueLifecycleState(
+            active_issue_ids=frozenset(self.active_issue_ids),
+            failed_issues=frozenset(),
+            abort_requested=False,
+            abort_reason=self.abort_reason,
+            max_issues=None,
+            interrupt_requested=False,
+        )
+
     def release_task(self, issue_id: str) -> None:
+        self.active_issue_ids.discard(issue_id)
         self.released.append(issue_id)
 
     def mark_completed(self, issue_id: str) -> None:
+        self.active_issue_ids.discard(issue_id)
         self.completed.append(issue_id)
 
     def request_abort(self, reason: str) -> None:
@@ -122,6 +139,7 @@ def _build_plan(
     epic_verifier: FakeEpicVerifier | None = None,
     finalized: list[IssueResult] | None = None,
     trigger_checked: list[str] | None = None,
+    await_background_repo_work: Callable[[], Awaitable[None]] | None = None,
 ) -> IssueExecutionPlan:
     finalized = finalized if finalized is not None else []
     trigger_checked = trigger_checked if trigger_checked is not None else []
@@ -157,6 +175,7 @@ def _build_plan(
             result.issue_id
         ),
         mark_validation_failed=lambda: trigger_checked.append("validation_failed"),
+        await_background_repo_work=await_background_repo_work,
     )
 
 
@@ -264,6 +283,82 @@ async def test_finalize_callback_aborts_when_trigger_validation_aborts() -> None
     await plan.finalize_callback("issue-1", task)
 
     assert issue_coordinator.abort_requests == ["Trigger validation aborted"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_finalize_callback_defers_trigger_validation_until_agents_drain() -> None:
+    issue_coordinator = FakeIssueCoordinator()
+    issue_coordinator.active_issue_ids = {"issue-1", "issue-2"}
+    run_coordinator = FakeRunCoordinator()
+    plan = _build_plan(
+        issue_coordinator=issue_coordinator,
+        run_coordinator=run_coordinator,
+    )
+
+    async def succeed(issue_id: str) -> IssueResult:
+        return IssueResult(
+            issue_id=issue_id,
+            agent_id=f"agent-{issue_id}",
+            success=True,
+            summary="done",
+        )
+
+    task_1 = asyncio.create_task(succeed("issue-1"))
+    await asyncio.sleep(0)
+
+    await plan.finalize_callback("issue-1", task_1)
+
+    assert run_coordinator.calls == 0
+
+    task_2 = asyncio.create_task(succeed("issue-2"))
+    await asyncio.sleep(0)
+
+    await plan.finalize_callback("issue-2", task_2)
+
+    assert run_coordinator.calls == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_finalize_callback_waits_for_background_repo_work_before_validation() -> None:
+    issue_coordinator = FakeIssueCoordinator()
+    issue_coordinator.active_issue_ids = {"issue-1"}
+    run_coordinator = FakeRunCoordinator()
+    drain_started = asyncio.Event()
+    drain_can_finish = asyncio.Event()
+
+    async def await_background_repo_work() -> None:
+        drain_started.set()
+        await drain_can_finish.wait()
+
+    plan = _build_plan(
+        issue_coordinator=issue_coordinator,
+        run_coordinator=run_coordinator,
+        await_background_repo_work=await_background_repo_work,
+    )
+
+    async def succeed() -> IssueResult:
+        return IssueResult(
+            issue_id="issue-1",
+            agent_id="agent-1",
+            success=True,
+            summary="done",
+        )
+
+    issue_task = asyncio.create_task(succeed())
+    await asyncio.sleep(0)
+    finalize_task = asyncio.create_task(
+        plan.finalize_callback("issue-1", issue_task)
+    )
+
+    await asyncio.wait_for(drain_started.wait(), timeout=1)
+    assert run_coordinator.calls == 0
+
+    drain_can_finish.set()
+    await finalize_task
+
+    assert run_coordinator.calls == 1
 
 
 @pytest.mark.unit
