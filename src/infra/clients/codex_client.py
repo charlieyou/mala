@@ -52,6 +52,8 @@ import dataclasses
 import json
 import logging
 import os
+import signal
+import sys
 from typing import TYPE_CHECKING, Any
 
 from src.infra.clients.codex_event_adapter import CodexEventAdapter
@@ -173,6 +175,7 @@ class CodexClient:
         self._tee_file: Any = (
             None  # binary file handle; typed Any to avoid IO[...] noise
         )
+        self._sigint_pgid: int | None = None
 
     # ------------------------------------------------------------------
     # Properties used by the orchestrator + tests
@@ -233,7 +236,10 @@ class CodexClient:
         to its bundled ``codex_cli_bin`` package when ``codex_bin`` is
         ``None``; it does not search ``PATH`` itself.
         """
+        from src.infra.sdk_transport import ensure_codex_sigint_isolated_app_server
+
         codex_app_server = import_codex_app_server()
+        ensure_codex_sigint_isolated_app_server()
         AppServerConfig = codex_app_server.AppServerConfig
         AsyncCodex = codex_app_server.AsyncCodex
 
@@ -245,6 +251,7 @@ class CodexClient:
         )
         self._codex = AsyncCodex(config=config)
         await self._codex.__aenter__()
+        self._sigint_pgid = self._detect_sigint_pgid(self._codex)
         return self
 
     async def __aexit__(
@@ -491,11 +498,42 @@ class CodexClient:
         finally:
             self._tee_file = None
 
+    def _detect_sigint_pgid(self, codex: object) -> int | None:
+        """Best-effort process-group id for the SDK-owned app-server."""
+        if sys.platform == "win32":
+            return None
+        proc = getattr(getattr(getattr(codex, "_client", None), "_sync", None), "_proc", None)
+        patched_pgid = getattr(proc, "_mala_sigint_pgid", None)
+        if isinstance(patched_pgid, int):
+            return patched_pgid
+        return None
+
+    def _clear_sigint_pgid(self) -> None:
+        """Unregister the SDK-owned app-server process group if known."""
+        if self._sigint_pgid is None:
+            return
+        from src.infra.tools.command_runner import CommandRunner
+
+        CommandRunner.unregister_sigint_pgid(self._sigint_pgid)
+        self._sigint_pgid = None
+
+    def _kill_sigint_pgid(self) -> None:
+        """Force-kill and unregister the SDK-owned app-server process group."""
+        if self._sigint_pgid is None or sys.platform == "win32":
+            self._clear_sigint_pgid()
+            return
+        try:
+            os.killpg(self._sigint_pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        finally:
+            self._clear_sigint_pgid()
+
     async def _run_disconnect_step(
         self,
         step_name: str,
         awaitable: Coroutine[Any, Any, object],
-    ) -> None:
+    ) -> bool:
         """Run one SDK teardown step without letting it hang disconnect().
 
         ``asyncio.wait_for()`` waits for the cancelled awaitable to unwind after
@@ -523,7 +561,8 @@ class CodexClient:
                 await task
             except Exception as exc:
                 logger.debug("CodexClient: %s raised on disconnect: %s", step_name, exc)
-            return
+                return False
+            return True
 
         logger.warning(
             "CodexClient: %s timed out after %.1fs during disconnect; "
@@ -535,6 +574,7 @@ class CodexClient:
         task.add_done_callback(
             lambda t: self._consume_late_disconnect_step(step_name, t)
         )
+        return False
 
     def _consume_late_disconnect_step(
         self, step_name: str, task: asyncio.Task[object]
@@ -589,9 +629,12 @@ class CodexClient:
                     "TurnHandle.interrupt", turn.interrupt()
                 )
         finally:
+            close_completed = codex is None
             try:
                 if codex is not None:
-                    await self._run_disconnect_step("AsyncCodex.close", codex.close())
+                    close_completed = await self._run_disconnect_step(
+                        "AsyncCodex.close", codex.close()
+                    )
             finally:
                 # Close tee file last so a bad SDK teardown does not strand
                 # a buffered final write on disk; the inner ``finally``
@@ -599,3 +642,7 @@ class CodexClient:
                 # raises (it shouldn't, but the ordering is the safer of
                 # the two).
                 self._close_tee()
+                if close_completed:
+                    self._clear_sigint_pgid()
+                else:
+                    self._kill_sigint_pgid()

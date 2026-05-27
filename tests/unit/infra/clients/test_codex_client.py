@@ -1122,6 +1122,54 @@ async def test_disconnect_swallows_sdk_close_errors(
 
 
 @pytest.mark.unit
+def test_detect_sigint_pgid_requires_wrapper_marker() -> None:
+    """Raw SDK proc.pid is not enough to prove pid == process-group id."""
+    from src.infra.clients.codex_client import CodexClient
+
+    client = CodexClient.__new__(CodexClient)
+    proc = SimpleNamespace(pid=9876)
+    codex = SimpleNamespace(_client=SimpleNamespace(_sync=SimpleNamespace(_proc=proc)))
+
+    assert client._detect_sigint_pgid(codex) is None
+
+    proc._mala_sigint_pgid = 6789
+    assert client._detect_sigint_pgid(codex) == 6789
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_disconnect_kills_registered_pgid_when_sdk_close_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed SDK close may leave Codex alive, so force-kill its PGID."""
+    import signal
+    from unittest.mock import patch
+
+    from src.infra.clients.codex_client import CodexClient
+    from src.infra.tools import command_runner
+
+    fake_codex = _install_fake_sdk(monkeypatch)
+
+    async def boom_close(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("simulated SDK close error")
+
+    fake_codex.close = boom_close  # type: ignore[method-assign,assignment]  # ty:ignore[invalid-assignment]
+    runtime = _build_runtime(tmp_path)
+
+    client = CodexClient(runtime)
+    await client.__aenter__()
+    await client.query("hi")
+    client._sigint_pgid = 5432
+    command_runner._SIGINT_FORWARD_PGIDS.add(5432)
+
+    with patch("os.killpg") as mock_killpg:
+        await client.disconnect()
+
+    mock_killpg.assert_called_once_with(5432, signal.SIGKILL)
+    assert 5432 not in command_runner._SIGINT_FORWARD_PGIDS
+
+
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_disconnect_bounds_hung_turn_interrupt_and_still_closes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1177,9 +1225,12 @@ async def test_disconnect_bounds_hung_close_and_closes_tee(
 ) -> None:
     """A stuck Codex close must not strand the tee file or hang timeout."""
     import asyncio
+    import signal
+    from unittest.mock import patch
 
     import src.infra.clients.codex_client as codex_client
     from src.infra.clients.codex_client import CodexClient
+    from src.infra.tools import command_runner
 
     monkeypatch.setattr(codex_client, "_DISCONNECT_STEP_TIMEOUT_SECONDS", 0.01)
     fake_codex = _install_fake_sdk(monkeypatch)
@@ -1214,12 +1265,17 @@ async def test_disconnect_bounds_hung_close_and_closes_tee(
             close_cancelled.set()
 
     fake_codex.close = hung_close  # type: ignore[method-assign,assignment]  # ty:ignore[invalid-assignment]
+    client._sigint_pgid = 4321
+    command_runner._SIGINT_FORWARD_PGIDS.add(4321)
 
-    await asyncio.wait_for(client.disconnect(), timeout=1.0)
+    with patch("os.killpg") as mock_killpg:
+        await asyncio.wait_for(client.disconnect(), timeout=1.0)
     await asyncio.wait_for(close_cancelled.wait(), timeout=1.0)
 
     assert fake_codex.close_calls == 1
     assert client._tee_file is None
+    mock_killpg.assert_called_once_with(4321, signal.SIGKILL)
+    assert 4321 not in command_runner._SIGINT_FORWARD_PGIDS
 
 
 @pytest.mark.unit
