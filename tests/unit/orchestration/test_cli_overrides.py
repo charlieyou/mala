@@ -29,21 +29,17 @@ class TestCLIOverrideOptions:
     def test_has_any_false_when_all_none(self) -> None:
         assert CLIOverrideOptions().has_any() is False
 
-    @pytest.mark.parametrize(
-        "field",
-        [
-            "claude_settings_sources",
-            "coder",
-            "amp_mode",
-            "model",
-            "effort",
-            "codex_approval_policy",
-            "codex_sandbox",
-        ],
-    )
-    def test_has_any_true_when_any_field_set(self, field: str) -> None:
-        options = CLIOverrideOptions(**{field: "value"})
-        assert options.has_any() is True
+    def test_has_any_true_when_any_string_field_set(self) -> None:
+        assert CLIOverrideOptions(claude_settings_sources="value").has_any() is True
+        assert CLIOverrideOptions(coder="value").has_any() is True
+        assert CLIOverrideOptions(amp_mode="value").has_any() is True
+        assert CLIOverrideOptions(model="value").has_any() is True
+        assert CLIOverrideOptions(effort="value").has_any() is True
+        assert CLIOverrideOptions(codex_approval_policy="value").has_any() is True
+        assert CLIOverrideOptions(codex_sandbox="value").has_any() is True
+
+    def test_has_any_true_when_fast_set(self) -> None:
+        assert CLIOverrideOptions(fast=True).has_any() is True
 
 
 class TestApplyCLIOverrides:
@@ -113,6 +109,15 @@ class TestApplyCLIOverrides:
         codex = result.coder_options.codex
         assert codex.approval_policy == "never"
         assert codex.sandbox == "workspace-write"
+
+    def test_fast_override_enables_codex_fast_mode(self) -> None:
+        """--fast lands on Codex options without selecting another coder."""
+        config = MalaConfig.from_env(validate=False, yaml_coder="codex")
+
+        result = apply_cli_overrides(config, CLIOverrideOptions(fast=True))
+
+        assert result.coder == "codex"
+        assert result.coder_options.codex.fast_mode is True
 
     def test_invalid_amp_mode_raises_value_error(self) -> None:
         """build_resolved_config raises ValueError on invalid override values."""

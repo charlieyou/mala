@@ -65,6 +65,7 @@ def test_factory_threads_resolved_coder_options_to_provider() -> None:
             codex=CodexOptions(
                 approval_policy="on-request",
                 sandbox="workspace-write",
+                fast_mode=True,
             ),
         ),
     )
@@ -74,6 +75,7 @@ def test_factory_threads_resolved_coder_options_to_provider() -> None:
     assert provider.effort == "medium"
     assert provider.approval_policy == "on-request"
     assert provider.sandbox == "workspace-write"
+    assert provider.fast_mode is True
 
 
 def test_codex_provider_install_prerequisites_fails_closed_without_sdk(

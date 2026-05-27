@@ -139,6 +139,46 @@ def test_default_codex_options_when_flags_absent(
     assert config.effort == "medium"
     assert config.coder_options.codex.approval_policy == "never"
     assert config.coder_options.codex.sandbox == "danger-full-access"
+    assert config.coder_options.codex.fast_mode is False
+
+
+def test_fast_flag_enables_codex_fast_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from typer.testing import CliRunner
+
+    _isolate_env(monkeypatch)
+    cli = _reload_cli(monkeypatch)
+    _patch_orchestrator(monkeypatch, cli, tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app, ["run", str(tmp_path), "--coder", "codex", "--fast"]
+    )
+
+    assert result.exit_code == 0, result.output
+    config = _DummyOrchestrator.last_mala_config
+    assert config is not None
+    assert config.coder == "codex"
+    assert config.coder_options.codex.fast_mode is True
+
+
+def test_no_fast_flag_is_not_registered(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from typer.testing import CliRunner
+
+    _isolate_env(monkeypatch)
+    cli = _reload_cli(monkeypatch)
+    _patch_orchestrator(monkeypatch, cli, tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app, ["run", str(tmp_path), "--coder", "codex", "--no-fast"]
+    )
+
+    assert result.exit_code != 0
+    assert "No such option" in result.output
 
 
 def test_invalid_effort_rejected(

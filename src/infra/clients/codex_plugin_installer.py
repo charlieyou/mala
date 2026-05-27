@@ -431,6 +431,42 @@ def _ensure_key_in_section(
     return "".join(lines)
 
 
+def _ensure_top_level_key(existing: str, *, key: str, value: str) -> str:
+    """Ensure a top-level ``<key> = <value>`` entry before the first table."""
+    new_line = f"{key} = {value}\n"
+    lines = existing.splitlines(keepends=True)
+    if not lines:
+        return new_line
+
+    first_section = len(lines)
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            first_section = idx
+            break
+
+    for idx in range(first_section):
+        stripped = lines[idx].strip()
+        if not stripped.startswith(key):
+            continue
+        remainder = stripped[len(key) :].lstrip()
+        if not remainder.startswith("="):
+            continue
+        if stripped == f"{key} = {value}":
+            return existing
+        indent_len = len(lines[idx]) - len(lines[idx].lstrip())
+        lines[idx] = lines[idx][:indent_len] + new_line
+        return "".join(lines)
+
+    insert_at = first_section
+    while insert_at > 0 and lines[insert_at - 1].strip() == "":
+        insert_at -= 1
+    if insert_at > 0 and not lines[insert_at - 1].endswith("\n"):
+        lines[insert_at - 1] += "\n"
+    lines.insert(insert_at, new_line)
+    return "".join(lines)
+
+
 def _rewrite_toml_block(existing: str, *, section_header: str, new_block: str) -> str:
     """Return ``existing`` with ``section_header``'s block replaced by ``new_block``.
 
@@ -478,6 +514,7 @@ def _write_codex_plugin_config(
     *,
     codex_home: Path,
     marketplace: str = PLUGIN_MARKETPLACE,
+    fast_mode: bool = False,
 ) -> None:
     """Fail-closed write of the config-side preconditions to ``config.toml``.
 
@@ -526,6 +563,9 @@ def _write_codex_plugin_config(
         without this policy an unattended lock_acquire call waits for
         approval and is then rejected before the write hook can observe
         an active lock.
+      * When requested for this run, Codex fast mode is enabled with
+        top-level ``service_tier = "fast"`` plus
+        ``[features] fast_mode = true``.
 
     Without all of these entries, Codex would discover the cached plugin
     tree (``$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>/``)
@@ -656,6 +696,16 @@ def _write_codex_plugin_config(
     for state_section, state_block in state_blocks:
         rewritten = _rewrite_toml_block(
             rewritten, section_header=state_section, new_block=state_block
+        )
+    if fast_mode:
+        rewritten = _ensure_top_level_key(
+            rewritten, key="service_tier", value='"fast"'
+        )
+        rewritten = _ensure_key_in_section(
+            rewritten,
+            section_header="[features]",
+            key="fast_mode",
+            value="true",
         )
     if rewritten == existing:
         return  # all config entries already correct

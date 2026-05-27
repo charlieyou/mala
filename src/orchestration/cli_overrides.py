@@ -28,6 +28,7 @@ class CLIOverrideOptions:
     effort: str | None = None
     codex_approval_policy: str | None = None
     codex_sandbox: str | None = None
+    fast: bool = False
 
     def has_any(self) -> bool:
         """Return True when at least one override value is set."""
@@ -42,7 +43,7 @@ class CLIOverrideOptions:
                 self.codex_approval_policy,
                 self.codex_sandbox,
             )
-        )
+        ) or self.fast
 
 
 def apply_cli_overrides(
@@ -77,6 +78,7 @@ def apply_cli_overrides(
         effort=options.effort,
         codex_approval_policy=options.codex_approval_policy,
         codex_sandbox=options.codex_sandbox,
+        fast=options.fast,
     )
     resolved = build_resolved_config(config, overrides)
 

@@ -336,6 +336,10 @@ _CODEX_SANDBOX_HELP = (
     "Codex sandbox mode. Valid: read-only, workspace-write, danger-full-access. "
     "Only consulted when coder=codex. Default: danger-full-access."
 )
+_FAST_HELP = (
+    "Enable Codex fast mode for this run. Only consulted when coder=codex; "
+    "writes service_tier=\"fast\" and [features].fast_mode=true to Codex config."
+)
 _CONFIG_HELP = (
     "Path to a Mala project config file. Defaults to <repo>/mala.yaml; relative "
     "paths are resolved from the current working directory."
@@ -517,6 +521,14 @@ def run(
             rich_help_panel="Coder",
         ),
     ] = None,
+    fast: Annotated[
+        bool,
+        typer.Option(
+            "--fast",
+            help=_FAST_HELP,
+            rich_help_panel="Coder",
+        ),
+    ] = False,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
@@ -584,6 +596,7 @@ def run(
             effort=effort,
             codex_approval_policy=codex_approval_policy,
             codex_sandbox=codex_sandbox,
+            fast=fast,
         ),
         config_path=selected_config_path,
     )

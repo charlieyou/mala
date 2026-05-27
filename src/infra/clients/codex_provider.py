@@ -560,6 +560,7 @@ class CodexAgentProvider:
             "read-only", "workspace-write", "danger-full-access"
         ] = DEFAULT_CODEX_SANDBOX,
         mcp_servers: tuple[tuple[str, object], ...] = (),
+        fast_mode: bool = False,
         selftest_probe: Callable[[Path, dict[str, str], str], None] | None = None,
     ) -> None:
         """Initialize the provider.
@@ -591,6 +592,7 @@ class CodexAgentProvider:
             sandbox
         )
         self._mcp_servers: tuple[tuple[str, object], ...] = mcp_servers
+        self._fast_mode = fast_mode
         self._selftest_probe: Callable[[Path, dict[str, str], str], None] = (
             selftest_probe if selftest_probe is not None else _default_selftest_probe
         )
@@ -660,6 +662,11 @@ class CodexAgentProvider:
     ) -> Literal["read-only", "workspace-write", "danger-full-access"]:
         """Resolved Codex sandbox mode."""
         return self._sandbox
+
+    @property
+    def fast_mode(self) -> bool:
+        """Whether Codex fast mode is enabled for this provider."""
+        return self._fast_mode
 
     def runtime_builder(
         self,
@@ -872,6 +879,7 @@ class CodexAgentProvider:
         fingerprint_payload = {
             "user_codex_home": str(user_codex_home.expanduser().resolve()),
             "mcp_servers": canonical_mcp_servers,
+            "fast_mode": self._fast_mode,
         }
         fingerprint = hashlib.sha256(
             json.dumps(
@@ -1117,7 +1125,10 @@ class CodexAgentProvider:
             # here is always the provider-private isolated home, so the
             # writes land in the same directory the spawned Codex will
             # read without mutating the user's normal Codex config.
-            _write_codex_plugin_config(codex_home=codex_home)
+            _write_codex_plugin_config(
+                codex_home=codex_home,
+                fast_mode=self._fast_mode,
+            )
 
             return install_result.plugin_hash
 

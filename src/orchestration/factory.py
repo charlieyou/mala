@@ -140,6 +140,7 @@ def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
                 approval_policy=codex.approval_policy,
                 sandbox=codex.sandbox,
                 mcp_servers=codex.mcp_servers,
+                fast_mode=codex.fast_mode,
             ),
         )
 

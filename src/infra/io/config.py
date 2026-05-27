@@ -352,6 +352,8 @@ class CodexOptions:
         mcp_servers: Optional pre-merged MCP server map. Phase G3 merges
             user-supplied servers with the bundled ``mala-locking`` server;
             Phase B passes the raw map through unchanged.
+        fast_mode: Whether Codex should opt into fast service tier for this
+            run. Currently set only by the ``mala run --fast`` CLI flag.
     """
 
     approval_policy: Literal["never", "on-request", "on-failure", "untrusted"] = (
@@ -361,6 +363,7 @@ class CodexOptions:
         DEFAULT_CODEX_SANDBOX
     )
     mcp_servers: tuple[tuple[str, object], ...] = field(default_factory=tuple)
+    fast_mode: bool = False
 
 
 @dataclass(frozen=True)
@@ -844,6 +847,7 @@ class CLIOverrides:
     effort: str | None = None
     codex_approval_policy: str | None = None
     codex_sandbox: str | None = None
+    fast: bool = False
 
 
 @dataclass(frozen=True)
@@ -1018,6 +1022,7 @@ def build_resolved_config(
             cli_codex_sandbox if cli_codex_sandbox is not None else base_codex.sandbox
         ),
         mcp_servers=base_codex.mcp_servers,
+        fast_mode=overrides.fast or base_codex.fast_mode,
     )
     coder_options = CoderOptions(amp=AmpOptions(mode=amp_mode), codex=codex_options)
 

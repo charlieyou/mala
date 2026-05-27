@@ -880,6 +880,59 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
     assert len(match.group(1)) == len("sha256:") + 64
 
 
+@pytest.mark.unit
+def test_install_prerequisites_writes_fast_mode_config_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """``mala run --fast`` maps to Codex config.toml fast-mode keys."""
+    _codex_home, bin_dir = fake_codex_env
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    provider = CodexAgentProvider(fast_mode=True, selftest_probe=_noop_probe)
+    provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+
+    config_toml = (_provider_isolated_codex_home(provider) / "config.toml").read_text(
+        encoding="utf-8"
+    )
+    assert 'service_tier = "fast"' in config_toml
+    assert "fast_mode = true" in config_toml
+
+
+@pytest.mark.unit
+def test_fast_and_non_fast_providers_use_distinct_isolated_homes(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_codex_env: tuple[Path, Path],
+    fake_mcp_factory: Callable[..., dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    """Fast config does not leak into the default Codex isolated home."""
+    _codex_home, bin_dir = fake_codex_env
+    _install_fake_sdk(monkeypatch, present=True)
+    _make_executable(bin_dir / "codex")
+    _make_executable(bin_dir / "mala-codex-pre-tool-use")
+
+    default_provider = CodexAgentProvider(selftest_probe=_noop_probe)
+    default_provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+    default_home = _provider_isolated_codex_home(default_provider)
+
+    fast_provider = CodexAgentProvider(fast_mode=True, selftest_probe=_noop_probe)
+    fast_provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+    fast_home = _provider_isolated_codex_home(fast_provider)
+
+    assert fast_home != default_home
+    default_config = (default_home / "config.toml").read_text(encoding="utf-8")
+    fast_config = (fast_home / "config.toml").read_text(encoding="utf-8")
+    assert 'service_tier = "fast"' not in default_config
+    assert "fast_mode = true" not in default_config
+    assert 'service_tier = "fast"' in fast_config
+    assert "fast_mode = true" in fast_config
+
+
 def _provider_isolated_codex_home(provider: CodexAgentProvider) -> Path:
     """Return the per-provider isolated ``CODEX_HOME`` allocated by
     :meth:`CodexAgentProvider.install_prerequisites`.
