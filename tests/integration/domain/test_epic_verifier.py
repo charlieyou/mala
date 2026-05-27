@@ -43,6 +43,7 @@ def mock_beads() -> MagicMock:
     beads.get_issue_description_async = AsyncMock(return_value="Epic description")
     beads.get_epic_children_async = AsyncMock(return_value={"child-1", "child-2"})
     beads.get_epic_blockers_async = AsyncMock(return_value=set())
+    beads.get_parent_epic_async = AsyncMock(return_value=None)
     beads.close_async = AsyncMock(return_value=True)
     beads.find_issue_by_tag_async = AsyncMock(return_value=None)
     beads.create_issue_async = AsyncMock(return_value="issue-123")
@@ -555,6 +556,52 @@ class TestVerifyAndCloseEligible:
 
         assert result.passed_count == 1
         mock_beads.close_async.assert_called_with("epic-1")
+
+    @pytest.mark.asyncio
+    async def test_scoped_eligible_verification_includes_sub_epics_only(
+        self, verifier: EpicVerifier, mock_beads: MagicMock
+    ) -> None:
+        """Scoped startup verification includes descendants and excludes unrelated epics."""
+
+        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
+            if "epic" in cmd and "status" in cmd:
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout=json.dumps(
+                        [
+                            {"eligible_for_close": True, "epic": {"id": "root"}},
+                            {"eligible_for_close": True, "epic": {"id": "sub"}},
+                            {
+                                "eligible_for_close": True,
+                                "epic": {"id": "nested"},
+                            },
+                            {
+                                "eligible_for_close": True,
+                                "epic": {"id": "other"},
+                            },
+                        ]
+                    ),
+                )
+            return CommandResult(command=cmd, returncode=0, stdout="")
+
+        async def get_parent_epic(issue_id: str) -> str | None:
+            return {
+                "sub": "root",
+                "nested": "sub",
+                "other": "other-root",
+                "other-root": None,
+            }.get(issue_id)
+
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]  # ty:ignore[invalid-assignment]
+        mock_beads.get_parent_epic_async.side_effect = get_parent_epic
+        _stub_commit_helpers(verifier)
+
+        result = await verifier.verify_and_close_eligible_within("root")
+
+        assert result.passed_count == 3
+        closed_epics = [call.args[0] for call in mock_beads.close_async.call_args_list]
+        assert closed_epics == ["root", "sub", "nested"]
 
     @pytest.mark.asyncio
     async def test_human_override_bypasses_verification(

@@ -550,6 +550,66 @@ class EpicVerifier:
             remediation_issues_created=all_remediation_issues,
         )
 
+    async def verify_and_close_eligible_within(
+        self,
+        scope_epic_id: str,
+        human_override_epic_ids: set[str] | None = None,
+    ) -> EpicVerificationResult:
+        """Verify eligible epics within a scoped epic tree.
+
+        Includes the scoped epic itself and any eligible descendant epics, while
+        excluding unrelated eligible epics elsewhere in the repository.
+        """
+        human_override_epic_ids = human_override_epic_ids or set()
+        eligible_epics = await self._get_eligible_epics()
+        scoped_epics = [
+            epic_id
+            for epic_id in eligible_epics
+            if await self._is_epic_within_scope(epic_id, scope_epic_id)
+        ]
+
+        all_verdicts: dict[str, EpicVerdict] = {}
+        all_remediation_issues: list[str] = []
+        verified_count = 0
+        passed_count = 0
+        failed_count = 0
+
+        for epic_id in scoped_epics:
+            result = await self.verify_epic_with_options(
+                epic_id,
+                human_override=epic_id in human_override_epic_ids,
+                require_eligible=False,
+                close_epic=True,
+            )
+            all_verdicts.update(result.verdicts)
+            all_remediation_issues.extend(result.remediation_issues_created)
+            verified_count += result.verified_count
+            passed_count += result.passed_count
+            failed_count += result.failed_count
+
+        return EpicVerificationResult(
+            verified_count=verified_count,
+            passed_count=passed_count,
+            failed_count=failed_count,
+            verdicts=all_verdicts,
+            remediation_issues_created=all_remediation_issues,
+        )
+
+    async def _is_epic_within_scope(self, epic_id: str, scope_epic_id: str) -> bool:
+        """Return whether ``epic_id`` is ``scope_epic_id`` or its descendant."""
+        if epic_id == scope_epic_id:
+            return True
+
+        seen: set[str] = {epic_id}
+        parent = await self.beads.get_parent_epic_async(epic_id)
+        while parent is not None and parent not in seen:
+            if parent == scope_epic_id:
+                return True
+            seen.add(parent)
+            parent = await self.beads.get_parent_epic_async(parent)
+
+        return False
+
     async def verify_epic(self, epic_id: str) -> EpicVerdict:
         """Verify a single epic against its acceptance criteria.
 

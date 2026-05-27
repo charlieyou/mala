@@ -73,6 +73,12 @@ class _WarningSink(Protocol):
 
 
 class _StartupEpicVerifier(Protocol):
+    async def verify_and_close_eligible_within(
+        self,
+        scope_epic_id: str,
+        human_override_epic_ids: set[str] | None = None,
+    ) -> AnyEpicVerificationResult: ...
+
     async def verify_and_close_eligible(
         self, human_override_epic_ids: set[str]
     ) -> AnyEpicVerificationResult: ...
@@ -141,6 +147,8 @@ def build_issue_execution_plan(
     cleanup_issue_runtime_state: Callable[[str], None],
     check_and_queue_periodic_trigger: Callable[[IssueResult], None],
     mark_validation_failed: Callable[[], None],
+    startup_epic_id: str | None = None,
+    allow_global_startup_epic_verification: bool = True,
     watch_config: WatchConfig | None = None,
     validation_config: PeriodicValidationConfig | None = None,
     drain_event: asyncio.Event | None = None,
@@ -183,15 +191,25 @@ def build_issue_execution_plan(
     async def verify_startup_eligible_epics() -> bool:
         try:
             if epic_verifier is not None:
-                result = await epic_verifier.verify_and_close_eligible(
-                    epic_override_ids
-                )
+                if startup_epic_id is not None:
+                    result = await epic_verifier.verify_and_close_eligible_within(
+                        startup_epic_id,
+                        human_override_epic_ids=epic_override_ids,
+                    )
+                elif allow_global_startup_epic_verification:
+                    result = await epic_verifier.verify_and_close_eligible(
+                        epic_override_ids
+                    )
+                else:
+                    return False
                 return (
                     result.verified_count > 0
                     or len(result.remediation_issues_created) > 0
                 )
 
-            return await beads.close_eligible_epics_async()
+            if allow_global_startup_epic_verification:
+                return await beads.close_eligible_epics_async()
+            return False
         except asyncio.CancelledError:
             raise
         except Exception:

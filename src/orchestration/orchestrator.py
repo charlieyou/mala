@@ -1438,6 +1438,12 @@ class MalaOrchestrator:
                         self._check_and_queue_periodic_trigger
                     ),
                     mark_validation_failed=self._mark_validation_failed,
+                    startup_epic_id=self.epic_id,
+                    allow_global_startup_epic_verification=(
+                        self.epic_id is None
+                        and self.only_ids is None
+                        and not self.orphans_only
+                    ),
                     watch_config=watch_config,
                     validation_config=validation_config,
                     drain_event=drain_event,

@@ -341,6 +341,22 @@ class EpicVerifierProtocol(Protocol):
         """
         ...
 
+    async def verify_and_close_eligible_within(
+        self,
+        scope_epic_id: str,
+        human_override_epic_ids: set[str] | None = None,
+    ) -> EpicVerificationResult:
+        """Verify and close eligible epics within a scoped epic tree.
+
+        Args:
+            scope_epic_id: Root epic for the scoped verification.
+            human_override_epic_ids: Epic IDs to close without verification.
+
+        Returns:
+            EpicVerificationResult with aggregate verification outcome.
+        """
+        ...
+
 
 @runtime_checkable
 class EpicVerificationModel(Protocol):
