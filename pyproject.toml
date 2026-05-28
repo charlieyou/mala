@@ -1,6 +1,6 @@
 [project]
 name = "mala-agent"
-version = "1.2.47"
+version = "1.2.48"
 description = "Agent SDK orchestrator for parallel issue processing"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -16,7 +16,7 @@ classifiers = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "claude-agent-sdk",
+    "claude-agent-sdk>=0.2.87",
     # The ``openai-codex-app-server-sdk`` distribution is not yet published on
     # PyPI under that name (PR openai/codex#18996 wired the publishing
     # infrastructure but a stable wheel has not been pushed;
