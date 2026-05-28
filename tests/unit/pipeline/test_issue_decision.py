@@ -128,7 +128,7 @@ def test_spawn_capacity(snapshot: WorkQueueSnapshot, expected: int) -> None:
         (WorkQueueSnapshot(ready_issue_ids=("ready",)), ExitDecision(False)),
         (WorkQueueSnapshot(watch_enabled=True), ExitDecision(False)),
         (
-            WorkQueueSnapshot(startup_no_ready_check_pending=True),
+            WorkQueueSnapshot(epic_sweep_pending=True),
             ExitDecision(False),
         ),
         (WorkQueueSnapshot(follow_up_repoll_pending=True), ExitDecision(False)),

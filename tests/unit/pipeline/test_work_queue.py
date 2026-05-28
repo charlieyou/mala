@@ -95,7 +95,7 @@ def test_snapshot_freezes_coordinator_state_and_defaults_completed_count() -> No
         failed_issue_ids={"failed-1"},
         ready_issue_ids=["ready-1"],
         watch_enabled=True,
-        startup_no_ready_check_pending=True,
+        epic_sweep_pending=True,
     )
 
     assert snapshot.ready_issue_ids == ("ready-1",)
@@ -104,7 +104,7 @@ def test_snapshot_freezes_coordinator_state_and_defaults_completed_count() -> No
     assert snapshot.max_agents == 2
     assert snapshot.max_issues == 5
     assert snapshot.watch_enabled is True
-    assert snapshot.startup_no_ready_check_pending is True
+    assert snapshot.epic_sweep_pending is True
 
 
 @pytest.mark.asyncio
@@ -215,7 +215,7 @@ async def test_empty_startup_watch_poll_defers_idle_wait_for_startup_check() -> 
     provider = FakeIssueProvider(ready=[])
     strategy = RecordingPollStrategy()
     queue = make_queue(provider, strategy)
-    snapshot = queue.snapshot(watch_enabled=True, startup_no_ready_check_pending=True)
+    snapshot = queue.snapshot(watch_enabled=True, epic_sweep_pending=True)
 
     result = await queue.poll(snapshot)
 

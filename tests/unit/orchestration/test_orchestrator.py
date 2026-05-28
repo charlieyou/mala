@@ -655,6 +655,7 @@ class TestRunOrchestrationLoop:
 
         ready_polls = 0
         override_sets: list[set[str]] = []
+        verify_calls = 0
 
         async def get_ready_async(*args: object, **kwargs: object) -> list[str]:
             nonlocal ready_polls
@@ -664,10 +665,21 @@ class TestRunOrchestrationLoop:
         async def verify_and_close_eligible(
             human_override_epic_ids: set[str] | None = None,
         ) -> EpicVerificationResult:
+            nonlocal verify_calls
+            verify_calls += 1
             override_sets.append(human_override_epic_ids or set())
+            if verify_calls == 1:
+                # Closed an epic; the cascade re-checks for a newly-eligible parent.
+                return EpicVerificationResult(
+                    verified_count=1,
+                    passed_count=1,
+                    failed_count=0,
+                    verdicts={},
+                    remediation_issues_created=[],
+                )
             return EpicVerificationResult(
-                verified_count=1,
-                passed_count=1,
+                verified_count=0,
+                passed_count=0,
                 failed_count=0,
                 verdicts={},
                 remediation_issues_created=[],
@@ -690,7 +702,9 @@ class TestRunOrchestrationLoop:
 
         assert result == (0, 0)
         assert ready_polls >= 2
-        assert override_sets == [{"epic-override"}]
+        # The sweep cascades once (closed epic -> re-check parent), both passing
+        # the human-override ids.
+        assert override_sets == [{"epic-override"}, {"epic-override"}]
 
     @pytest.mark.asyncio
     async def test_processes_startup_epic_remediation_issue(
@@ -770,6 +784,106 @@ class TestRunOrchestrationLoop:
         assert [item.issue_id for item in orchestrator._state.completed] == [
             "remediation-1"
         ]
+
+    @pytest.mark.asyncio
+    async def test_verifies_eligible_epics_after_run_drains(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """A task ready at startup no longer suppresses epic verification: once it
+        completes and the queue drains, eligible epics are still swept and closed.
+
+        Regression for a run that finished its only ready task and exited at
+        ``none_ready`` without verifying a now-eligible epic.
+        """
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=5,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
+        assert orchestrator.epic_verifier is not None
+
+        ready_polls = 0
+        processed_issues: list[str] = []
+        verify_calls = 0
+        completed_at_sweep: list[bool] = []
+
+        async def get_ready_async(*args: object, **kwargs: object) -> list[str]:
+            nonlocal ready_polls
+            ready_polls += 1
+            if ready_polls == 1:
+                return ["task-1"]
+            return []
+
+        async def verify_and_close_eligible(
+            human_override_epic_ids: set[str] | None = None,
+        ) -> EpicVerificationResult:
+            nonlocal verify_calls
+            verify_calls += 1
+            completed_at_sweep.append(
+                "task-1" in {item.issue_id for item in orchestrator._state.completed}
+            )
+            if verify_calls == 1:
+                return EpicVerificationResult(
+                    verified_count=1,
+                    passed_count=1,
+                    failed_count=0,
+                    verdicts={},
+                    remediation_issues_created=[],
+                )
+            return EpicVerificationResult(
+                verified_count=0,
+                passed_count=0,
+                failed_count=0,
+                verdicts={},
+                remediation_issues_created=[],
+            )
+
+        async def run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
+            processed_issues.append(issue_id)
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,
+                summary="Completed successfully",
+                session_log_path=log_path,
+            )
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=get_ready_async
+            ),
+            patch.object(orchestrator.beads, "claim_async", return_value=True),
+            patch.object(orchestrator.beads, "close_async", return_value=True),
+            patch.object(
+                orchestrator.beads, "get_parent_epic_async", return_value=None
+            ),
+            patch.object(
+                orchestrator.epic_verifier,
+                "verify_and_close_eligible",
+                side_effect=verify_and_close_eligible,
+            ),
+            patch.object(orchestrator, "run_implementer", side_effect=run_implementer),
+            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
+            patch("src.orchestration.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            result = await orchestrator.run()
+
+        assert result == (1, 1)
+        assert processed_issues == ["task-1"]
+        # The sweep ran after the queue drained (task-1 already completed) and
+        # cascaded once to re-check the parent.
+        assert verify_calls == 2
+        assert completed_at_sweep == [True, True]
 
     @pytest.mark.asyncio
     async def test_retries_deadlock_victim_after_blocker_completes(
@@ -897,7 +1011,7 @@ class TestRunOrchestrationLoop:
 
         assert result == (0, 0)
         on_warning.assert_called_once_with(
-            "Startup epic verification failed; continuing without startup repoll"
+            "Epic verification sweep failed; continuing without repoll"
         )
 
     @pytest.mark.asyncio

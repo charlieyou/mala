@@ -93,8 +93,19 @@ class FakeIssueProvider:
 
 
 class FakeEpicVerifier:
-    def __init__(self, *, should_raise: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        should_raise: bool = False,
+        eligible_results: list[EpicVerificationResult] | None = None,
+    ) -> None:
         self.should_raise = should_raise
+        # Optional sequence returned by successive verify_and_close_eligible calls
+        # (clamped to the last entry) — used to exercise the cascade loop.
+        self._eligible_results = (
+            list(eligible_results) if eligible_results is not None else None
+        )
+        self.eligible_calls = 0
         self.seen_override_ids: set[str] | None = None
         self.seen_scoped_calls: list[tuple[str, set[str] | None]] = []
         self.seen_epic_calls: list[tuple[str, bool]] = []
@@ -123,9 +134,10 @@ class FakeEpicVerifier:
         self.seen_scoped_calls.append((scope_epic_id, human_override_epic_ids))
         if self.should_raise:
             raise RuntimeError("verification unavailable")
+        # Verified the scope with nothing left to close (no cascade).
         return EpicVerificationResult(
             verified_count=1,
-            passed_count=1,
+            passed_count=0,
             failed_count=0,
             verdicts={},
             remediation_issues_created=[],
@@ -135,8 +147,12 @@ class FakeEpicVerifier:
         self, human_override_epic_ids: set[str]
     ) -> EpicVerificationResult:
         self.seen_override_ids = human_override_epic_ids
+        self.eligible_calls += 1
         if self.should_raise:
             raise RuntimeError("verification unavailable")
+        if self._eligible_results is not None:
+            idx = min(self.eligible_calls - 1, len(self._eligible_results) - 1)
+            return self._eligible_results[idx]
         return EpicVerificationResult(
             verified_count=0,
             passed_count=0,
@@ -359,7 +375,9 @@ async def test_finalize_callback_defers_trigger_validation_until_agents_drain() 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_finalize_callback_waits_for_background_repo_work_before_validation() -> None:
+async def test_finalize_callback_waits_for_background_repo_work_before_validation() -> (
+    None
+):
     issue_coordinator = FakeIssueCoordinator()
     issue_coordinator.active_issue_ids = {"issue-1"}
     run_coordinator = FakeRunCoordinator()
@@ -386,9 +404,7 @@ async def test_finalize_callback_waits_for_background_repo_work_before_validatio
 
     issue_task = asyncio.create_task(succeed())
     await asyncio.sleep(0)
-    finalize_task = asyncio.create_task(
-        plan.finalize_callback("issue-1", issue_task)
-    )
+    finalize_task = asyncio.create_task(plan.finalize_callback("issue-1", issue_task))
 
     await asyncio.wait_for(drain_started.wait(), timeout=1)
     assert run_coordinator.calls == 0
@@ -401,20 +417,20 @@ async def test_finalize_callback_waits_for_background_repo_work_before_validatio
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_startup_epic_callback_uses_epic_verifier() -> None:
+async def test_epic_sweep_callback_uses_epic_verifier() -> None:
     verifier = FakeEpicVerifier()
     provider = FakeIssueProvider(close_result=False)
     plan = _build_plan(issue_provider=provider, epic_verifier=verifier)
 
-    assert plan.on_startup_no_ready is not None
-    assert await plan.on_startup_no_ready() is True
+    assert plan.on_no_ready_epic_sweep is not None
+    assert await plan.on_no_ready_epic_sweep() is True
     assert verifier.seen_override_ids == {"epic-1"}
     assert provider.close_calls == 0
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_startup_epic_callback_honors_epic_scope() -> None:
+async def test_epic_sweep_callback_honors_epic_scope() -> None:
     verifier = FakeEpicVerifier()
     provider = FakeIssueProvider(close_result=False)
     plan = _build_plan(
@@ -424,8 +440,8 @@ async def test_startup_epic_callback_honors_epic_scope() -> None:
         allow_global_startup_epic_verification=False,
     )
 
-    assert plan.on_startup_no_ready is not None
-    assert await plan.on_startup_no_ready() is True
+    assert plan.on_no_ready_epic_sweep is not None
+    assert await plan.on_no_ready_epic_sweep() is True
     assert verifier.seen_scoped_calls == [("epic-1", {"epic-1"})]
     assert verifier.seen_epic_calls == []
     assert verifier.seen_override_ids is None
@@ -434,7 +450,63 @@ async def test_startup_epic_callback_honors_epic_scope() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_startup_epic_callback_skips_global_verification_for_restricted_scope() -> None:
+async def test_epic_sweep_callback_cascades_until_no_more_close() -> None:
+    """Closing a child epic re-runs the sweep to catch a now-eligible parent.
+
+    verify_and_close_eligible snapshots the eligible set per call, so the callback
+    loops until a pass closes nothing new.
+    """
+
+    def _result(*, passed: int, verified: int) -> EpicVerificationResult:
+        return EpicVerificationResult(
+            verified_count=verified,
+            passed_count=passed,
+            failed_count=0,
+            verdicts={},
+            remediation_issues_created=[],
+        )
+
+    verifier = FakeEpicVerifier(
+        eligible_results=[
+            _result(passed=1, verified=1),  # closed child epic
+            _result(passed=0, verified=0),  # parent now eligible -> nothing left
+        ]
+    )
+    plan = _build_plan(epic_verifier=verifier)
+
+    assert plan.on_no_ready_epic_sweep is not None
+    assert await plan.on_no_ready_epic_sweep() is True
+    assert verifier.eligible_calls == 2
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_epic_sweep_callback_returns_on_remediation_without_cascading() -> None:
+    """Creating remediation work returns immediately so the loop can run it."""
+
+    verifier = FakeEpicVerifier(
+        eligible_results=[
+            EpicVerificationResult(
+                verified_count=1,
+                passed_count=0,
+                failed_count=1,
+                verdicts={},
+                remediation_issues_created=["remediate-1"],
+            ),
+        ]
+    )
+    plan = _build_plan(epic_verifier=verifier)
+
+    assert plan.on_no_ready_epic_sweep is not None
+    assert await plan.on_no_ready_epic_sweep() is True
+    assert verifier.eligible_calls == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_epic_sweep_callback_skips_global_verification_for_restricted_scope() -> (
+    None
+):
     verifier = FakeEpicVerifier()
     provider = FakeIssueProvider(close_result=True)
     plan = build_issue_execution_plan(
@@ -455,8 +527,8 @@ async def test_startup_epic_callback_skips_global_verification_for_restricted_sc
         allow_global_startup_epic_verification=False,
     )
 
-    assert plan.on_startup_no_ready is not None
-    assert await plan.on_startup_no_ready() is False
+    assert plan.on_no_ready_epic_sweep is not None
+    assert await plan.on_no_ready_epic_sweep() is False
     assert verifier.seen_epic_calls == []
     assert verifier.seen_override_ids is None
     assert provider.close_calls == 0
@@ -464,7 +536,9 @@ async def test_startup_epic_callback_skips_global_verification_for_restricted_sc
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_startup_epic_callback_skips_legacy_global_close_for_restricted_scope() -> None:
+async def test_epic_sweep_callback_skips_legacy_global_close_for_restricted_scope() -> (
+    None
+):
     provider = FakeIssueProvider(close_result=True)
     plan = build_issue_execution_plan(
         run_metadata=MagicMock(),
@@ -484,14 +558,14 @@ async def test_startup_epic_callback_skips_legacy_global_close_for_restricted_sc
         allow_global_startup_epic_verification=False,
     )
 
-    assert plan.on_startup_no_ready is not None
-    assert await plan.on_startup_no_ready() is False
+    assert plan.on_no_ready_epic_sweep is not None
+    assert await plan.on_no_ready_epic_sweep() is False
     assert provider.close_calls == 0
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_startup_epic_callback_warns_and_continues_on_failure() -> None:
+async def test_epic_sweep_callback_warns_and_continues_on_failure() -> None:
     event_sink = MagicMock()
     plan = build_issue_execution_plan(
         run_metadata=MagicMock(),
@@ -510,10 +584,10 @@ async def test_startup_epic_callback_warns_and_continues_on_failure() -> None:
         mark_validation_failed=MagicMock(),
     )
 
-    assert plan.on_startup_no_ready is not None
-    assert await plan.on_startup_no_ready() is False
+    assert plan.on_no_ready_epic_sweep is not None
+    assert await plan.on_no_ready_epic_sweep() is False
     event_sink.on_warning.assert_called_once_with(
-        "Startup epic verification failed; continuing without startup repoll"
+        "Epic verification sweep failed; continuing without repoll"
     )
 
 
@@ -532,4 +606,4 @@ async def test_plan_run_delegates_callbacks_to_issue_coordinator() -> None:
         issue_coordinator.run_loop_kwargs["finalize_callback"] is plan.finalize_callback
     )
     assert issue_coordinator.run_loop_kwargs["abort_callback"] is plan.abort_callback
-    assert issue_coordinator.run_loop_kwargs["on_startup_no_ready"] is not None
+    assert issue_coordinator.run_loop_kwargs["on_no_ready_epic_sweep"] is not None

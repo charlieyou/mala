@@ -86,6 +86,7 @@ class _StartupEpicVerifier(Protocol):
 
 class AnyEpicVerificationResult(Protocol):
     verified_count: int
+    passed_count: int
     remediation_issues_created: list[str]
 
 
@@ -111,7 +112,7 @@ class IssueExecutionPlan:
     interrupt_event: asyncio.Event | None = None
     validation_callback: Callable[[], Awaitable[bool]] | None = None
     on_validation_failed: Callable[[], None] | None = None
-    on_startup_no_ready: Callable[[], Awaitable[bool]] | None = None
+    on_no_ready_epic_sweep: Callable[[], Awaitable[bool]] | None = None
 
     async def run(self, coordinator: IssueExecutionCoordinator) -> RunResult:
         """Run the plan through the issue coordinator."""
@@ -125,7 +126,7 @@ class IssueExecutionPlan:
             interrupt_event=self.interrupt_event,
             validation_callback=self.validation_callback,
             on_validation_failed=self.on_validation_failed,
-            on_startup_no_ready=self.on_startup_no_ready,
+            on_no_ready_epic_sweep=self.on_no_ready_epic_sweep,
         )
 
 
@@ -188,9 +189,24 @@ def build_issue_execution_plan(
     async def abort_callback(*, is_interrupt: bool = False) -> AbortResult:
         return await abort_active_tasks(run_metadata, is_interrupt=is_interrupt)
 
-    async def verify_startup_eligible_epics() -> bool:
+    async def verify_eligible_epics() -> bool:
+        """Verify and close eligible epics when the queue drains to empty.
+
+        Cascades within a single invocation: closing a child epic can make its
+        parent eligible, but ``verify_and_close_eligible`` snapshots the eligible
+        set once, so we re-run until a pass closes nothing new. Returns True when
+        remediation work was created or an epic was closed, signalling the loop to
+        re-poll (to run remediation, or to re-check after the cascade).
+        """
         try:
-            if epic_verifier is not None:
+            if epic_verifier is None:
+                # No verifier: fall back to beads' one-shot eligible-epic close.
+                if allow_global_startup_epic_verification:
+                    return await beads.close_eligible_epics_async()
+                return False
+
+            did_anything = False
+            while True:
                 if startup_epic_id is not None:
                     result = await epic_verifier.verify_and_close_eligible_within(
                         startup_epic_id,
@@ -201,21 +217,22 @@ def build_issue_execution_plan(
                         epic_override_ids
                     )
                 else:
-                    return False
-                return (
-                    result.verified_count > 0
-                    or len(result.remediation_issues_created) > 0
-                )
+                    return did_anything
 
-            if allow_global_startup_epic_verification:
-                return await beads.close_eligible_epics_async()
-            return False
+                if result.remediation_issues_created:
+                    # Let the coordinator re-poll and run the new remediation work.
+                    return True
+                if result.passed_count > 0:
+                    # Closed an epic; a parent may now be eligible — cascade upward.
+                    did_anything = True
+                    continue
+                return did_anything or result.verified_count > 0
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Startup epic verification failed")
+            logger.exception("Epic verification sweep failed")
             event_sink.on_warning(
-                "Startup epic verification failed; continuing without startup repoll"
+                "Epic verification sweep failed; continuing without repoll"
             )
             return False
 
@@ -229,7 +246,7 @@ def build_issue_execution_plan(
         interrupt_event=interrupt_event,
         validation_callback=validation_callback,
         on_validation_failed=mark_validation_failed,
-        on_startup_no_ready=verify_startup_eligible_epics,
+        on_no_ready_epic_sweep=verify_eligible_epics,
     )
 
 

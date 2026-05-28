@@ -382,7 +382,7 @@ class IssueExecutionCoordinator:
         sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
         drain_event: asyncio.Event | None = None,
         on_validation_failed: Callable[[], None] | None = None,
-        on_startup_no_ready: Callable[[], Awaitable[bool]] | None = None,
+        on_no_ready_epic_sweep: Callable[[], Awaitable[bool]] | None = None,
     ) -> RunResult:
         """Run the main agent spawning and completion loop.
 
@@ -409,15 +409,17 @@ class IssueExecutionCoordinator:
             on_validation_failed: Called when validation fails, before returning with
                 exit_code=1. Used to propagate validation failure state to orchestrator
                 (e.g., for correct SIGINT exit code handling).
-            on_startup_no_ready: Called once when the first poll finds no ready issues.
-                Return True to re-poll before entering idle/exit handling.
+            on_no_ready_epic_sweep: Called whenever the task queue drains to empty with
+                no active work (at startup or after issues complete) to verify and close
+                eligible epics. Return True to re-poll before entering idle/exit handling
+                (e.g. it created remediation work or closed an epic).
 
         Returns:
             RunResult with issues_spawned, exit_code, and exit_reason.
         """
         issues_spawned = 0
         interrupt_task: asyncio.Task[object] | None = None
-        startup_no_ready_check_pending = True
+        epic_sweep_pending = True
         follow_up_repoll_pending = False
         validate_every = self._validate_every(validation_config)
         watch_state = WatchState(next_validation_threshold=validate_every or 10)
@@ -438,12 +440,17 @@ class IssueExecutionCoordinator:
             self.interrupt_event = interrupt_event
 
         async def finalize_task(issue_id: str, task: asyncio.Task[Any]) -> bool:
-            nonlocal follow_up_repoll_pending
+            nonlocal follow_up_repoll_pending, epic_sweep_pending
             already_completed = issue_id in self.completed_ids
             created_follow_up_work = await finalize_callback(issue_id, task)
             if created_follow_up_work is True:
                 follow_up_repoll_pending = True
-            return issue_id in self.completed_ids and not already_completed
+            newly_completed = issue_id in self.completed_ids and not already_completed
+            if newly_completed:
+                # A closed issue may have made its parent epic eligible; re-arm the
+                # sweep so it fires once the queue drains.
+                epic_sweep_pending = True
+            return newly_completed
 
         try:
             while True:
@@ -457,7 +464,7 @@ class IssueExecutionCoordinator:
                     watch_state,
                     ready_issue_ids=(),
                     watch_config=watch_config,
-                    startup_no_ready_check_pending=startup_no_ready_check_pending,
+                    epic_sweep_pending=epic_sweep_pending,
                     follow_up_repoll_pending=follow_up_repoll_pending,
                     drain_event=drain_event,
                 )
@@ -507,18 +514,19 @@ class IssueExecutionCoordinator:
 
                 if poll_decision.kind == "ready":
                     ready = list(poll_result.ready_issue_ids)
-                    startup_no_ready_check_pending = False
                     self.event_sink.on_ready_issues(ready)
                     poll_strategy.clear_idle()
                 elif poll_decision.kind == "empty":
                     ready = []
-                    repoll = await self._handle_startup_no_ready(
-                        startup_no_ready_check_pending,
-                        on_startup_no_ready,
-                    )
-                    startup_no_ready_check_pending = False
-                    if repoll:
-                        continue
+                    # Sweep eligible epics only once the queue is fully drained: a
+                    # re-armed flag must wait for active agents to finish first.
+                    if epic_sweep_pending and not self.active_tasks:
+                        epic_sweep_pending = False
+                        repoll = await self._handle_no_ready_epic_sweep(
+                            on_no_ready_epic_sweep,
+                        )
+                        if repoll:
+                            continue
                 elif poll_decision.kind == "terminal_drain":
                     ready = []
                 else:
@@ -536,7 +544,7 @@ class IssueExecutionCoordinator:
                     watch_state,
                     ready_issue_ids=ready,
                     watch_config=watch_config,
-                    startup_no_ready_check_pending=startup_no_ready_check_pending,
+                    epic_sweep_pending=epic_sweep_pending,
                     follow_up_repoll_pending=follow_up_repoll_pending,
                     drain_event=drain_event,
                 )
@@ -579,7 +587,7 @@ class IssueExecutionCoordinator:
                         watch_state,
                         ready_issue_ids=ready,
                         watch_config=watch_config,
-                        startup_no_ready_check_pending=startup_no_ready_check_pending,
+                        epic_sweep_pending=epic_sweep_pending,
                         follow_up_repoll_pending=follow_up_repoll_pending,
                         drain_event=drain_event,
                     )
@@ -640,7 +648,7 @@ class IssueExecutionCoordinator:
         *,
         ready_issue_ids: list[str] | tuple[str, ...],
         watch_config: WatchConfig | None,
-        startup_no_ready_check_pending: bool,
+        epic_sweep_pending: bool,
         follow_up_repoll_pending: bool,
         drain_event: asyncio.Event | None,
     ) -> WorkQueueSnapshot:
@@ -654,7 +662,7 @@ class IssueExecutionCoordinator:
             next_validation_threshold=watch_state.next_validation_threshold,
             consecutive_poll_failures=watch_state.consecutive_poll_failures,
             watch_enabled=self._watch_enabled(watch_config),
-            startup_no_ready_check_pending=startup_no_ready_check_pending,
+            epic_sweep_pending=epic_sweep_pending,
             follow_up_repoll_pending=follow_up_repoll_pending,
             abort_requested=self.abort_run,
             interrupt_requested=self._interrupt_event.is_set(),
@@ -854,16 +862,13 @@ class IssueExecutionCoordinator:
             )
         return None
 
-    async def _handle_startup_no_ready(
+    async def _handle_no_ready_epic_sweep(
         self,
-        startup_no_ready_check_pending: bool,
-        on_startup_no_ready: Callable[[], Awaitable[bool]] | None,
+        on_no_ready_epic_sweep: Callable[[], Awaitable[bool]] | None,
     ) -> bool:
-        if not startup_no_ready_check_pending:
+        if on_no_ready_epic_sweep is None:
             return False
-        if on_startup_no_ready is None:
-            return False
-        return await on_startup_no_ready()
+        return await on_no_ready_epic_sweep()
 
     async def _cleanup_interrupt_task(
         self, interrupt_task: asyncio.Task[object] | None

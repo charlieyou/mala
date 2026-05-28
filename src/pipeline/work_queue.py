@@ -97,7 +97,7 @@ class WorkQueueSnapshot:
     max_agents: int | None = None
     max_issues: int | None = None
     watch_enabled: bool = False
-    startup_no_ready_check_pending: bool = False
+    epic_sweep_pending: bool = False
     follow_up_repoll_pending: bool = False
     abort_requested: bool = False
     interrupt_requested: bool = False
@@ -224,7 +224,7 @@ class WorkQueue:
         next_validation_threshold: int | None = None,
         consecutive_poll_failures: int = 0,
         watch_enabled: bool = False,
-        startup_no_ready_check_pending: bool = False,
+        epic_sweep_pending: bool = False,
         follow_up_repoll_pending: bool = False,
         abort_requested: bool = False,
         interrupt_requested: bool = False,
@@ -247,7 +247,7 @@ class WorkQueue:
             max_agents=self._config.max_agents,
             max_issues=self._config.max_issues,
             watch_enabled=watch_enabled,
-            startup_no_ready_check_pending=startup_no_ready_check_pending,
+            epic_sweep_pending=epic_sweep_pending,
             follow_up_repoll_pending=follow_up_repoll_pending,
             abort_requested=abort_requested,
             interrupt_requested=interrupt_requested,
@@ -293,7 +293,7 @@ class WorkQueue:
             not ready_issue_ids
             and snapshot.watch_enabled
             and not snapshot.has_active_work
-            and not snapshot.startup_no_ready_check_pending
+            and not snapshot.epic_sweep_pending
         ):
             await self._poll_strategy.wait_until_next_poll(polled)
         return PollResult(
@@ -379,7 +379,7 @@ def exit_reason(snapshot: WorkQueueSnapshot) -> ExitDecision:
         return ExitDecision(False)
     if snapshot.ready_issue_ids:
         return ExitDecision(False)
-    if snapshot.watch_enabled or snapshot.startup_no_ready_check_pending:
+    if snapshot.watch_enabled or snapshot.epic_sweep_pending:
         return ExitDecision(False)
     if snapshot.follow_up_repoll_pending:
         return ExitDecision(False)
