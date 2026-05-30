@@ -139,31 +139,41 @@ def ensure_sigint_isolated_cli_transport() -> None:
                 raise error from e
 
         async def close(self) -> None:
-            try:
-                # Kill entire process group before closing, not just the leader.
-                # Without this, child processes (e.g., pytest spawned by Bash tool)
-                # become orphans and run forever when the Claude CLI exits.
-                if self._mala_sigint_pgid is not None and hasattr(os, "killpg"):
-                    import signal
+            # Shield teardown from cancellation. On a Stage-2 abort the task that
+            # owns this transport is cancelled; if the cancel lands on the grace
+            # ``sleep`` or ``super().close()`` below, the SIGKILL and the
+            # transport close are skipped, leaking the asyncio subprocess
+            # transport. That orphaned transport then emits
+            # ``RuntimeError: Event loop is closed`` from
+            # ``BaseSubprocessTransport.__del__`` once ``asyncio.run()`` closes
+            # the loop. Running teardown to completion under a shield avoids it.
+            with anyio.CancelScope(shield=True):
+                try:
+                    # Kill entire process group before closing, not just the
+                    # leader. Without this, child processes (e.g., pytest spawned
+                    # by the Bash tool) become orphans and run forever when the
+                    # Claude CLI exits.
+                    if self._mala_sigint_pgid is not None and hasattr(os, "killpg"):
+                        import signal
 
-                    from src.infra.tools.command_runner import (
-                        DEFAULT_KILL_GRACE_SECONDS,
-                    )
+                        from src.infra.tools.command_runner import (
+                            DEFAULT_KILL_GRACE_SECONDS,
+                        )
 
-                    try:
-                        os.killpg(self._mala_sigint_pgid, signal.SIGTERM)
-                    except (ProcessLookupError, PermissionError):
-                        pass
-                    else:
-                        # Grace period, then force kill if still running
-                        await anyio.sleep(DEFAULT_KILL_GRACE_SECONDS)
                         try:
-                            os.killpg(self._mala_sigint_pgid, signal.SIGKILL)
+                            os.killpg(self._mala_sigint_pgid, signal.SIGTERM)
                         except (ProcessLookupError, PermissionError):
                             pass
-                await super().close()
-            finally:
-                self._clear_sigint_pgid()
+                        else:
+                            # Grace period, then force kill if still running
+                            await anyio.sleep(DEFAULT_KILL_GRACE_SECONDS)
+                            try:
+                                os.killpg(self._mala_sigint_pgid, signal.SIGKILL)
+                            except (ProcessLookupError, PermissionError):
+                                pass
+                    await super().close()
+                finally:
+                    self._clear_sigint_pgid()
 
     subprocess_cli.SubprocessCLITransport = MalaSubprocessCLITransport  # type: ignore[invalid-assignment]  # ty:ignore[invalid-assignment]
     subprocess_cli._MALA_SIGINT_PATCHED = True  # type: ignore[unresolved-attribute]  # ty:ignore[unresolved-attribute]

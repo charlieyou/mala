@@ -287,16 +287,22 @@ class TestInterruptWiring:
         interrupt_event = asyncio.Event()
         orchestrator._interrupt_event = interrupt_event
 
-        # Capture the interrupt_event passed to run_session
+        # Set up drain_event as if run() had started
+        drain_event = orchestrator._lifecycle.drain_event
+
+        # Capture the events passed to run_session
         captured_interrupt_event: asyncio.Event | None = None
+        captured_drain_event: asyncio.Event | None = None
 
         async def mock_run_session(
             input,  # noqa: ANN001
             tracer=None,  # noqa: ANN001
             interrupt_event: asyncio.Event | None = None,
+            drain_event: asyncio.Event | None = None,
         ) -> AgentSessionOutput:
-            nonlocal captured_interrupt_event
+            nonlocal captured_interrupt_event, captured_drain_event
             captured_interrupt_event = interrupt_event
+            captured_drain_event = drain_event
             return AgentSessionOutput(
                 success=True,
                 summary="Success",
@@ -312,8 +318,9 @@ class TestInterruptWiring:
 
             await orchestrator.run_implementer("test-issue")
 
-        # Verify interrupt_event was passed to run_session
+        # Verify both the interrupt and drain events were passed to run_session
         assert captured_interrupt_event is interrupt_event
+        assert captured_drain_event is drain_event
 
     async def test_gate_callback_passes_interrupt_event(
         self, tmp_path: Path, tmp_runs_dir: Path

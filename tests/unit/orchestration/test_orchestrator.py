@@ -590,6 +590,7 @@ class TestCoderTelemetryAttribute:
             input,  # noqa: ANN001
             tracer=None,  # noqa: ANN001
             interrupt_event: asyncio.Event | None = None,
+            drain_event: asyncio.Event | None = None,
         ) -> AgentSessionOutput:
             return AgentSessionOutput(
                 success=True,

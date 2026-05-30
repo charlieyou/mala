@@ -97,3 +97,24 @@ class AgentLifecycleEvents(Protocol):
             text: Text content (may be truncated for display).
         """
         ...
+
+    def on_background_wait(
+        self,
+        agent_id: str,
+        tool_use_id: str,
+        elapsed_seconds: float,
+        budget_seconds: float,
+    ) -> None:
+        """Called periodically while waiting on a backgrounded task to finish.
+
+        Surfaces the otherwise-silent between-turn wait that keeps the SDK client
+        connected after an agent backgrounds work and yields, so the run does not
+        look hung.
+
+        Args:
+            agent_id: Agent whose backgrounded task is being awaited.
+            tool_use_id: tool_use id of the background launch being awaited.
+            elapsed_seconds: Seconds spent waiting so far.
+            budget_seconds: Maximum seconds the wait will run before giving up.
+        """
+        ...

@@ -282,6 +282,19 @@ class ConsoleEventSink(BaseEventSink):
     def on_agent_text(self, agent_id: str, text: str) -> None:
         log_agent_text(text, agent_id)
 
+    def on_background_wait(
+        self,
+        agent_id: str,
+        tool_use_id: str,
+        elapsed_seconds: float,
+        budget_seconds: float,
+    ) -> None:
+        log(
+            "⧖",
+            f"Waiting on background task ({elapsed_seconds:.0f}s / {budget_seconds:.0f}s budget)",
+            agent_id=agent_id,
+        )
+
     # -------------------------------------------------------------------------
     # Quality gate events
     # -------------------------------------------------------------------------

@@ -819,9 +819,7 @@ class MalaOrchestrator:
             try:
                 completed_task.result()
             except Exception:
-                logger.exception(
-                    "Epic verification task failed: issue_id=%s", issue_id
-                )
+                logger.exception("Epic verification task failed: issue_id=%s", issue_id)
 
         task.add_done_callback(discard_completed)
 
@@ -1027,6 +1025,7 @@ class MalaOrchestrator:
                     session_input,
                     tracer=tracer,
                     interrupt_event=self._interrupt_event,
+                    drain_event=self._lifecycle.drain_event,
                 )
                 self._state.agent_ids[issue_id] = output.agent_id
                 if output.success:

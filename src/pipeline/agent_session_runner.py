@@ -371,6 +371,7 @@ class AgentSessionRunner:
             sdk_client_factory=self.agent_provider.client_factory,
             stream_processor_factory=self._get_stream_processor,
             config=retry_config,
+            event_sink=self.event_sink,
         )
         # Initialize lifecycle effect handler
         self._effect_handler = LifecycleEffectHandler(
@@ -475,6 +476,9 @@ class AgentSessionRunner:
         session_cfg: SessionConfig,
         state: SessionExecutionState,
         tracer: TelemetrySpan | None = None,
+        *,
+        drain_event: asyncio.Event | None = None,
+        interrupt_event: asyncio.Event | None = None,
     ) -> None:
         """Run the main lifecycle loop.
 
@@ -486,6 +490,11 @@ class AgentSessionRunner:
             session_cfg: Derived session configuration.
             state: Mutable session execution state.
             tracer: Optional telemetry span context.
+            drain_event: Set on the first Ctrl-C (drain); forwarded to
+                ``execute_iteration`` so the between-turn background wait stops
+                promptly.
+            interrupt_event: Set on abort (second Ctrl-C); forwarded for the
+                same reason.
         """
         lifecycle = state.lifecycle
         lifecycle_ctx = state.lifecycle_ctx
@@ -528,6 +537,8 @@ class AgentSessionRunner:
                     long_running=self.config.long_running,
                     await_resume_template=self.config.prompts.await_resume,
                     hard_timeout_seconds=self.view.timeout_seconds,
+                    drain_event=drain_event,
+                    interrupt_event=interrupt_event,
                 )
                 if iter_result.session_id is not None:
                     state.session_id = iter_result.session_id
@@ -1033,6 +1044,7 @@ class AgentSessionRunner:
         input: AgentSessionInput,
         tracer: TelemetrySpan | None = None,
         interrupt_event: asyncio.Event | None = None,
+        drain_event: asyncio.Event | None = None,
     ) -> AgentSessionOutput:
         """Run an agent session for the given input.
 
@@ -1045,7 +1057,11 @@ class AgentSessionRunner:
         Args:
             input: AgentSessionInput with issue_id, prompt, etc.
             tracer: Optional telemetry span context.
-            interrupt_event: Optional event to check for SIGINT interrupts.
+            interrupt_event: Optional event to check for SIGINT interrupts
+                (set on abort / second Ctrl-C).
+            drain_event: Optional event set on the first Ctrl-C (drain). Used to
+                break the between-turn background wait promptly so a backgrounded
+                long-running task does not look like a hang.
 
         Returns:
             AgentSessionOutput with success, summary, session_id, etc.
@@ -1098,7 +1114,12 @@ class AgentSessionRunner:
 
             try:
                 await self._run_lifecycle_loop(
-                    session_input, session_cfg, state, tracer
+                    session_input,
+                    session_cfg,
+                    state,
+                    tracer,
+                    drain_event=drain_event,
+                    interrupt_event=interrupt_event,
                 )
                 # Normal completion - exit loop
                 break

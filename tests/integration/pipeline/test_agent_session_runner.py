@@ -3662,6 +3662,9 @@ class TestResumeSessionId:
             session_cfg: SessionConfig,
             state: SessionExecutionState,
             tracer: TelemetrySpan | None,
+            *,
+            drain_event: object = None,
+            interrupt_event: object = None,
         ) -> None:
             # First call with resume - raise stale session error
             if input.resume_session_id:
@@ -3747,6 +3750,9 @@ class TestResumeSessionId:
             session_cfg: SessionConfig,
             state: SessionExecutionState,
             tracer: object,
+            *,
+            drain_event: object = None,
+            interrupt_event: object = None,
         ) -> None:
             # Always raise stale session error
             raise Exception("Session stale-session-id not found (404)")

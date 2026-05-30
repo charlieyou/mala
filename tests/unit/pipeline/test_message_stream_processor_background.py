@@ -44,6 +44,7 @@ class _ToolUseEvent:
 class _ToolResultEvent:
     tool_use_id: str
     is_error: bool = False
+    content: object = None
     kind: str = "tool_result"
 
 
@@ -284,6 +285,173 @@ async def test_task_started_alone_does_not_clear_pending() -> None:
             input={"command": "long.sh", "run_in_background": True},
         ),
         _TaskStartedEvent(task_id="task-1", tool_use_id="tool-bg"),
+        _ResultEvent(),
+    ]
+
+    state, result = await _run(events)
+
+    assert state.pending_background_tool_ids == {"tool-bg"}
+    assert result.pending_background_tool_ids == frozenset({"tool-bg"})
+
+
+# --- Inline retrieval clears the wait only on a terminal result ---------------
+
+_LAUNCH_ACK = (
+    "Command running in background with ID: task-1. Output is being written to: "
+    "/tmp/mala/task-1.output. You will be notified when it completes."
+)
+
+
+def _bash_bg_launch(tool_use_id: str = "tool-bg") -> _ToolUseEvent:
+    return _ToolUseEvent(
+        id=tool_use_id,
+        name="Bash",
+        input={"command": "long.sh", "run_in_background": True},
+    )
+
+
+@pytest.mark.asyncio
+async def test_taskoutput_terminal_result_clears_pending() -> None:
+    """TaskOutput(task_id) clears the launch once its result reports completion."""
+    events: list[object] = [
+        _bash_bg_launch(),
+        _TaskStartedEvent(task_id="task-1", tool_use_id="tool-bg"),
+        _ToolUseEvent(
+            id="tool-out", name="TaskOutput", input={"task_id": "task-1", "block": True}
+        ),
+        _ToolResultEvent(
+            tool_use_id="tool-out",
+            content="<status>completed</status>\n<exit_code>0</exit_code>",
+        ),
+        _ResultEvent(),
+    ]
+
+    state, result = await _run(events)
+
+    assert state.pending_background_tool_ids == set()
+    assert result.pending_background_tool_ids == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_taskoutput_terminal_result_correlates_via_ack_task_id() -> None:
+    """The launch-ack tool_result supplies the task_id for correlation.
+
+    Even without a ``task_started`` event, the ack's "ID: task-1" lets a later
+    TaskOutput(task_id=task-1) terminal result clear the launch.
+    """
+    events: list[object] = [
+        _bash_bg_launch(),
+        _ToolResultEvent(tool_use_id="tool-bg", content=_LAUNCH_ACK),
+        _ToolUseEvent(
+            id="tool-out", name="TaskOutput", input={"task_id": "task-1", "block": True}
+        ),
+        _ToolResultEvent(tool_use_id="tool-out", content="<status>completed</status>"),
+        _ResultEvent(),
+    ]
+
+    state, result = await _run(events)
+
+    assert state.pending_background_tool_ids == set()
+    assert result.pending_background_tool_ids == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_taskoutput_request_without_result_keeps_pending() -> None:
+    """A TaskOutput request alone (no result yet) does not clear the launch."""
+    events: list[object] = [
+        _bash_bg_launch(),
+        _TaskStartedEvent(task_id="task-1", tool_use_id="tool-bg"),
+        _ToolUseEvent(
+            id="tool-out", name="TaskOutput", input={"task_id": "task-1", "block": True}
+        ),
+        _ResultEvent(),
+    ]
+
+    state, result = await _run(events)
+
+    assert state.pending_background_tool_ids == {"tool-bg"}
+    assert result.pending_background_tool_ids == frozenset({"tool-bg"})
+
+
+@pytest.mark.asyncio
+async def test_taskoutput_running_result_keeps_pending() -> None:
+    """A block=False poll reporting ``running`` must NOT clear the launch."""
+    events: list[object] = [
+        _bash_bg_launch(),
+        _TaskStartedEvent(task_id="task-1", tool_use_id="tool-bg"),
+        _ToolUseEvent(
+            id="tool-out",
+            name="TaskOutput",
+            input={"task_id": "task-1", "block": False},
+        ),
+        _ToolResultEvent(tool_use_id="tool-out", content="<status>running</status>"),
+        _ResultEvent(),
+    ]
+
+    state, result = await _run(events)
+
+    assert state.pending_background_tool_ids == {"tool-bg"}
+    assert result.pending_background_tool_ids == frozenset({"tool-bg"})
+
+
+@pytest.mark.asyncio
+async def test_taskoutput_error_result_keeps_pending() -> None:
+    """An errored retrieval (is_error) leaves the launch pending."""
+    events: list[object] = [
+        _bash_bg_launch(),
+        _TaskStartedEvent(task_id="task-1", tool_use_id="tool-bg"),
+        _ToolUseEvent(
+            id="tool-out", name="TaskOutput", input={"task_id": "task-1", "block": True}
+        ),
+        _ToolResultEvent(
+            tool_use_id="tool-out",
+            is_error=True,
+            content="<status>completed</status>",
+        ),
+        _ResultEvent(),
+    ]
+
+    state, result = await _run(events)
+
+    assert state.pending_background_tool_ids == {"tool-bg"}
+    assert result.pending_background_tool_ids == frozenset({"tool-bg"})
+
+
+@pytest.mark.asyncio
+async def test_unrelated_taskoutput_does_not_clear() -> None:
+    """A TaskOutput for a different task leaves the launch pending."""
+    events: list[object] = [
+        _bash_bg_launch(),
+        _TaskStartedEvent(task_id="task-1", tool_use_id="tool-bg"),
+        _ToolUseEvent(
+            id="tool-out",
+            name="TaskOutput",
+            input={"task_id": "task-999", "block": True},
+        ),
+        _ToolResultEvent(tool_use_id="tool-out", content="<status>completed</status>"),
+        _ResultEvent(),
+    ]
+
+    state, result = await _run(events)
+
+    assert state.pending_background_tool_ids == {"tool-bg"}
+    assert result.pending_background_tool_ids == frozenset({"tool-bg"})
+
+
+@pytest.mark.asyncio
+async def test_read_does_not_clear_pending() -> None:
+    """A ``Read`` is only an interim check, never a consumption signal.
+
+    The SDK explicitly suggests Read for interim output, so a Read of the task's
+    output file must not clear the launch (it may be partial / still running).
+    """
+    events: list[object] = [
+        _bash_bg_launch(),
+        _TaskStartedEvent(task_id="task-1", tool_use_id="tool-bg"),
+        _ToolUseEvent(
+            id="tool-read", name="Read", input={"file_path": "/tmp/mala/task-1.output"}
+        ),
+        _ToolResultEvent(tool_use_id="tool-read", content="partial output..."),
         _ResultEvent(),
     ]
 

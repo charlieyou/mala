@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -27,6 +28,7 @@ from typing import (
     Generic,
     Protocol,
     TypeVar,
+    cast,
 )
 
 if TYPE_CHECKING:
@@ -52,6 +54,50 @@ class LintCacheProtocol(Protocol):
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
+
+# Parse the background-launch acknowledgement tool_result, e.g.
+# "Command running in background with ID: bu1538lol. ..." — used to learn the
+# launch's task_id when the ``task_started`` system event was not observed.
+_BG_LAUNCH_ID_RE = re.compile(r"background with ID:\s*(\S+)")
+
+# Parse the ``<status>...</status>`` field a TaskOutput/BashOutput retrieval
+# tool_result reports. Only a terminal status proves the task actually finished
+# (block=False polling reports ``running``/``pending`` and must NOT clear the wait).
+_TASK_RESULT_STATUS_RE = re.compile(r"<status>\s*(\w+)\s*</status>", re.IGNORECASE)
+_TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "stopped"})
+
+
+def _strip_trailing_punct(value: str) -> str:
+    """Drop sentence punctuation the SDK appends after ids/paths in prose."""
+    return value.strip().rstrip(".")
+
+
+def _extract_tool_result_text(content: object) -> str:
+    """Best-effort plain-text view of a tool_result's ``content``.
+
+    The Anthropic SDK delivers ``ToolResultBlock.content`` either as a string or
+    as a list of content blocks (dicts/objects carrying ``text``). Both shapes
+    are flattened so launch-acknowledgement parsing works regardless.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = cast("dict[str, Any]", item).get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+            else:
+                text = getattr(item, "text", None)
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    return str(content)
 
 
 class IdleTimeoutError(Exception):
@@ -110,14 +156,23 @@ class MessageIterationState:
         pending_lint_commands: Map of tool_use_id to (lint_type, command).
         first_message_received: Whether any message was received in current turn.
         pending_background_tool_ids: tool_use_ids of Bash launches started with
-            ``run_in_background=true`` whose ``task_completed`` event has not yet
-            arrived. Populated in :meth:`_handle_tool_use_event` and cleared when a
-            matching ``task_completed`` event is observed within the same turn.
+            ``run_in_background=true`` that the agent has not yet handled.
+            Populated in :meth:`_handle_tool_use_event` and cleared when a matching
+            ``task_completed`` event is observed, or when the agent retrieves the
+            task inline via ``TaskOutput``/``BashOutput`` *and* that retrieval's
+            tool_result reports a terminal status (completed/failed/stopped).
         background_launch_commands: Map of tool_use_id to the launch command text,
             recorded for background Bash launches when cheaply available.
         background_task_ids: Map of tool_use_id to SDK task_id, recorded when a
             ``task_started`` event is observed so the wait/resume loop can stop the
             task on timeout even when the started event was consumed mid-turn.
+        pending_bg_retrievals: Map of an in-flight ``TaskOutput``/``BashOutput``
+            retrieval's tool_use_id to the background launch's tool_use_id it
+            targets. Recorded when the agent *requests* a retrieval; resolved when
+            the retrieval's tool_result arrives — the launch is cleared from
+            ``pending_background_tool_ids`` only if that result reports a terminal
+            status (so block=False polling that says ``running`` does not skip a
+            still-needed wait).
     """
 
     session_id: str | None = None
@@ -130,6 +185,7 @@ class MessageIterationState:
     pending_background_tool_ids: set[str] = field(default_factory=set)
     background_launch_commands: dict[str, str] = field(default_factory=dict)
     background_task_ids: dict[str, str] = field(default_factory=dict)
+    pending_bg_retrievals: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -345,6 +401,13 @@ class MessageStreamProcessor:
                     issue_id,
                     block_id,
                 )
+        elif isinstance(name, str) and name.lower() in ("taskoutput", "bashoutput"):
+            # The agent is retrieving a backgrounded task. Record which launch
+            # this retrieval targets, but do NOT clear the launch yet: only the
+            # retrieval's tool_result proves the task actually finished. Clearing
+            # on the request would wrongly skip the wait for a block=False poll
+            # that merely reports the task is still running.
+            self._record_bg_retrieval_request(state, block_id, block_input)
 
     def _handle_tool_result_event(
         self,
@@ -355,10 +418,97 @@ class MessageStreamProcessor:
         tool_use_id = getattr(event, "tool_use_id", None)
         if tool_use_id:
             state.pending_tool_ids.discard(tool_use_id)
+            if tool_use_id in state.pending_background_tool_ids:
+                self._record_background_launch_metadata(
+                    state,
+                    tool_use_id,
+                    _extract_tool_result_text(getattr(event, "content", None)),
+                )
+            if tool_use_id in state.pending_bg_retrievals:
+                self._resolve_bg_retrieval(
+                    state,
+                    tool_use_id,
+                    is_error=bool(getattr(event, "is_error", False)),
+                    result_text=_extract_tool_result_text(
+                        getattr(event, "content", None)
+                    ),
+                )
         if tool_use_id in state.pending_lint_commands:
             lint_type, cmd = state.pending_lint_commands.pop(tool_use_id)
             if not getattr(event, "is_error", False):
                 lint_cache.mark_success(lint_type, cmd)
+
+    def _record_background_launch_metadata(
+        self, state: MessageIterationState, tool_use_id: str, ack_text: str
+    ) -> None:
+        """Capture the launch's task_id from its acknowledgement tool_result.
+
+        The launch tool_result reads like "Command running in background with ID:
+        <id>. ..." Recording the id (keyed by the launch's tool_use_id) lets
+        later retrieval detection correlate ``TaskOutput(task_id=...)`` back to
+        the launch even when the ``task_started`` system event was not observed.
+        """
+        if not ack_text:
+            return
+        id_match = _BG_LAUNCH_ID_RE.search(ack_text)
+        if id_match:
+            state.background_task_ids.setdefault(
+                tool_use_id, _strip_trailing_punct(id_match.group(1))
+            )
+
+    def _record_bg_retrieval_request(
+        self,
+        state: MessageIterationState,
+        retrieval_tool_use_id: str,
+        block_input: dict[str, Any],
+    ) -> None:
+        """Map a TaskOutput/BashOutput retrieval to the launch it targets.
+
+        No clearing happens here — the launch stays pending until the retrieval's
+        tool_result confirms a terminal status (see :meth:`_resolve_bg_retrieval`).
+        """
+        if not retrieval_tool_use_id:
+            return
+        task_id = str(block_input.get("task_id") or block_input.get("bash_id") or "")
+        if not task_id:
+            return
+        for launch_id in state.pending_background_tool_ids:
+            if state.background_task_ids.get(launch_id) == task_id:
+                state.pending_bg_retrievals[retrieval_tool_use_id] = launch_id
+                return
+
+    def _resolve_bg_retrieval(
+        self,
+        state: MessageIterationState,
+        retrieval_tool_use_id: str,
+        *,
+        is_error: bool,
+        result_text: str,
+    ) -> None:
+        """Clear a launch only when its retrieval returned a terminal result.
+
+        The SDK delivers a backgrounded task's completion only as a queued
+        next-turn prompt (never a standalone notification on
+        ``receive_messages()``), so a launch the agent successfully retrieved
+        inline will never surface a notification to wait on — drop it. But a
+        ``block=False`` poll that reports ``running`` (or an errored retrieval)
+        must keep the launch pending so the wait still runs.
+        """
+        launch_id = state.pending_bg_retrievals.pop(retrieval_tool_use_id, None)
+        if launch_id is None:
+            return
+        if is_error:
+            return
+        status_match = _TASK_RESULT_STATUS_RE.search(result_text)
+        status = status_match.group(1).lower() if status_match else ""
+        if status in _TERMINAL_TASK_STATUSES:
+            state.pending_background_tool_ids.discard(launch_id)
+            logger.debug(
+                "Background launch %s cleared via terminal inline retrieval "
+                "(status=%s)",
+                launch_id,
+                status,
+            )
 
     def _handle_task_started_event(
         self, event: object, issue_id: str, state: MessageIterationState

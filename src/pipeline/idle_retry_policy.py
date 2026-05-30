@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from src.core.protocols.agent_event import AgentTaskCompletedEvent
+    from src.core.protocols.events.sink import MalaEventSink
     from src.core.protocols.sdk import SDKClientFactoryProtocol, SDKClientProtocol
     from src.domain.lifecycle import LifecycleContext
     from src.domain.validation.config_types import LongRunningConfig
@@ -44,6 +45,13 @@ logger = logging.getLogger(__name__)
 # budget (interrupt + close) so the shared retry path does not cancel Codex
 # cleanup before close gets its own chance to run.
 DISCONNECT_TIMEOUT = 30.0
+
+# Cadence for surfacing the otherwise-silent background wait to the event sink.
+BACKGROUND_WAIT_PROGRESS_INTERVAL = 30.0
+
+# Sentinel returned by the wrapped stream reader when the continuous message
+# stream is exhausted (StopAsyncIteration cannot cross a Future boundary).
+_STREAM_END = object()
 
 _AGENT_SUBPROCESS_EXIT_MARKER = "agent subprocess exited with code 1"
 _RETRYABLE_SUBPROCESS_EXIT_MARKERS = (
@@ -109,6 +117,20 @@ class IterationResult:
     error_message: str | None = None
 
 
+@dataclass
+class _BgWaitOutcome:
+    """Outcome of waiting for a single backgrounded task's completion.
+
+    Distinguishes the three terminal states so the wait/resume loop can act
+    appropriately: a completion arrived, the wait was interrupted by a
+    drain/abort signal, or the wait gave up (timeout / stream end).
+    """
+
+    completed: AgentTaskCompletedEvent | None = None
+    task_id: str | None = None
+    interrupted: bool = False
+
+
 class IdleTimeoutRetryPolicy:
     """Encapsulates agent iteration retry handling with backoff semantics.
 
@@ -141,6 +163,7 @@ class IdleTimeoutRetryPolicy:
         sdk_client_factory: SDKClientFactoryProtocol,
         stream_processor_factory: Callable[[], MessageStreamProcessor],
         config: RetryConfig,
+        event_sink: MalaEventSink | None = None,
     ) -> None:
         """Initialize the retry policy.
 
@@ -150,10 +173,14 @@ class IdleTimeoutRetryPolicy:
                 instances. Called at the start of each execute_iteration to ensure
                 current config/callbacks are used.
             config: Retry configuration (max retries, backoff).
+            event_sink: Optional event sink used to surface the between-turn
+                background wait as periodic progress (so the run does not look
+                hung). None disables progress emission.
         """
         self._sdk_client_factory = sdk_client_factory
         self._stream_processor_factory = stream_processor_factory
         self._config = config
+        self._event_sink = event_sink
 
     async def execute_iteration(
         self,
@@ -169,6 +196,8 @@ class IdleTimeoutRetryPolicy:
         long_running: LongRunningConfig | None = None,
         await_resume_template: str = "",
         hard_timeout_seconds: float | None = None,
+        drain_event: asyncio.Event | None = None,
+        interrupt_event: asyncio.Event | None = None,
     ) -> IterationResult:
         """Run a single message iteration with idle retry handling.
 
@@ -205,6 +234,11 @@ class IdleTimeoutRetryPolicy:
                 ``asyncio.timeout(hard_timeout_seconds)`` so the (possibly
                 multi-hour) background wait is not killed by the per-task
                 timeout. None disables the wrapper.
+            drain_event: Set on the first Ctrl-C (drain). When set during the
+                between-turn background wait, the wait stops promptly (best-effort
+                ``stop_task``) and the iteration proceeds rather than blocking.
+            interrupt_event: Set on abort (second Ctrl-C). Treated like
+                ``drain_event`` for breaking the background wait.
 
         Returns:
             IterationResult with success status and session ID.
@@ -330,6 +364,8 @@ class IdleTimeoutRetryPolicy:
                             long_running=long_running,
                             await_resume_template=await_resume_template,
                             hard_timeout_seconds=hard_timeout_seconds,
+                            drain_event=drain_event,
+                            interrupt_event=interrupt_event,
                         )
 
                     except IdleTimeoutError:
@@ -668,18 +704,25 @@ class IdleTimeoutRetryPolicy:
         long_running: LongRunningConfig | None,
         await_resume_template: str,
         hard_timeout_seconds: float | None,
+        drain_event: asyncio.Event | None = None,
+        interrupt_event: asyncio.Event | None = None,
     ) -> IterationResult:
         """Keep the client connected to finish backgrounded work, then return.
 
         Loops while the just-finished turn left a still-pending background
-        launch, the client supports background tasks (Claude only), and the
-        long-running feature is enabled. Each cycle waits for the task's
-        completion notification on ``client.receive_messages()``, resumes the
-        agent on the *same* client with the await-resume prompt, and processes
-        the resulting turn. A wait that exceeds ``max_wait_seconds`` stops the
-        task and fails the iteration; a ``failed``/``stopped`` task still
-        resumes the agent (the await-resume prompt branches on status so the
-        agent can diagnose rather than commit a broken result).
+        launch (one the agent did *not* retrieve inline), the client supports
+        background tasks (Claude only), and the long-running feature is enabled.
+        Each cycle waits for the task's completion notification on
+        ``client.receive_messages()``, resumes the agent on the *same* client
+        with the await-resume prompt, and processes the resulting turn.
+
+        The wait is interruptible (``drain_event``/``interrupt_event``) and
+        emits periodic progress so it is never a silent hang. When the wait is
+        interrupted, times out, or the resume-cycle budget is exhausted, the
+        iteration **proceeds to the gate as success** rather than failing — the
+        agent's launch turn succeeded, and the gate re-runs validation and is
+        the real arbiter of whether the backgrounded work produced what the
+        issue needs. Only a genuine *resume-turn* error fails the iteration.
         """
         from src.domain.prompts import format_await_resume_prompt
 
@@ -710,53 +753,63 @@ class IdleTimeoutRetryPolicy:
             tool_use_id = next(iter(result.pending_background_tool_ids))
             buffered = completion_buffer.pop(tool_use_id, None)
             if buffered is not None:
-                completed = buffered
-                task_id = buffered.task_id or started_task_ids.get(tool_use_id)
+                outcome = _BgWaitOutcome(
+                    completed=buffered,
+                    task_id=buffered.task_id or started_task_ids.get(tool_use_id),
+                )
             else:
-                completed, task_id = await self._wait_for_background_completion(
+                outcome = await self._wait_for_background_completion(
                     client,
                     tool_use_id,
                     long_running.max_wait_seconds,
                     issue_id,
                     completion_buffer=completion_buffer,
                     started_task_ids=started_task_ids,
+                    drain_event=drain_event,
+                    interrupt_event=interrupt_event,
                 )
-            if completed is None:
+
+            if outcome.interrupted:
+                # Drain/abort during the wait: stop blocking and proceed. The SDK
+                # client is torn down when this iteration returns (killing the
+                # task's process group), so we do not stop_task here — keeping the
+                # first Ctrl-C responsive matters more than a tidy stop.
+                logger.info(
+                    "Session %s: background wait interrupted; proceeding to gate",
+                    issue_id,
+                )
+                self._abandon_background_state(state)
+                return IterationResult(
+                    success=result.success,
+                    session_id=result.session_id,
+                )
+
+            if outcome.completed is None:
                 # ``state.background_task_ids`` is live shared state updated by
                 # the stream processor, so a task_started consumed by a resume
                 # turn's ``receive_response`` is found here even though the
                 # pre-loop ``started_task_ids`` snapshot predates it.
                 task_id = (
-                    task_id
+                    outcome.task_id
                     or started_task_ids.get(tool_use_id)
                     or state.background_task_ids.get(tool_use_id)
                 )
                 logger.warning(
                     "Session %s: background task (tool_use_id=%s) did not "
-                    "complete within %.0fs, stopping it",
+                    "complete within %.0fs; stopping it and proceeding to gate",
                     issue_id,
                     tool_use_id,
                     long_running.max_wait_seconds,
                 )
                 if task_id:
-                    try:
-                        await client.stop_task(task_id)
-                    except Exception as exc:  # best-effort cleanup
-                        logger.debug(
-                            "Session %s: stop_task(%s) failed: %s",
-                            issue_id,
-                            task_id,
-                            exc,
-                        )
+                    await self._safe_stop_task(client, task_id, issue_id)
+                self._abandon_background_state(state)
                 return IterationResult(
-                    success=False,
+                    success=result.success,
                     session_id=result.session_id,
-                    error_message=(
-                        "Background task did not complete within "
-                        f"{long_running.max_wait_seconds:.0f}s"
-                    ),
                 )
 
+            completed = outcome.completed
             # The completion arrived on the continuous stream (not the turn's
             # ``receive_response``), so the stream processor never cleared this
             # launch from the shared iteration state. Discard it here so the
@@ -818,38 +871,26 @@ class IdleTimeoutRetryPolicy:
             cycles += 1
 
         # Resume-cycle budget exhausted while a launch is still pending: the
-        # agent kept backgrounding work without finishing. Fail the iteration
-        # (rather than letting the gate run on unwaited work) and best-effort
-        # stop any task we know the id for.
+        # agent kept backgrounding work without finishing. Best-effort stop the
+        # runaway tasks, then proceed to the gate as success and let it arbitrate
+        # rather than failing an otherwise-successful turn.
         if result.success and result.pending_background_tool_ids:
             for pending_id in result.pending_background_tool_ids:
                 stop_id = started_task_ids.get(
                     pending_id
                 ) or state.background_task_ids.get(pending_id)
-                if not stop_id:
-                    continue
-                try:
-                    await client.stop_task(stop_id)
-                except Exception as exc:  # best-effort cleanup
-                    logger.debug(
-                        "Session %s: stop_task(%s) failed: %s",
-                        issue_id,
-                        stop_id,
-                        exc,
-                    )
+                if stop_id:
+                    await self._safe_stop_task(client, stop_id, issue_id)
             logger.warning(
                 "Session %s: background work still pending after %d resume "
-                "cycles; failing",
+                "cycles; proceeding to gate",
                 issue_id,
                 long_running.max_resume_cycles,
             )
+            self._abandon_background_state(state)
             return IterationResult(
-                success=False,
+                success=result.success,
                 session_id=result.session_id,
-                error_message=(
-                    "Background work did not finish within "
-                    f"{long_running.max_resume_cycles} resume cycles"
-                ),
             )
 
         return IterationResult(
@@ -857,6 +898,33 @@ class IdleTimeoutRetryPolicy:
             session_id=result.session_id,
             error_message=None if result.success else result.error,
         )
+
+    @staticmethod
+    def _abandon_background_state(state: MessageIterationState) -> None:
+        """Drop all pending background tracking before returning success.
+
+        The interrupt, wait-timeout, and resume-exhaustion paths give up on a
+        still-pending launch and proceed to the gate. ``MessageIterationState``
+        is shared across the gate-retry ``execute_iteration`` calls in
+        ``_run_lifecycle_loop`` (and is not reset at the top of
+        ``execute_iteration``), so a launch left in ``pending_background_tool_ids``
+        would be re-reported by the next turn and force another wait for a
+        completion that can never arrive on that turn's fresh client. Clearing
+        the launch ids and their metadata here prevents that stale carry-over.
+        """
+        state.pending_background_tool_ids.clear()
+        state.background_task_ids.clear()
+        state.pending_bg_retrievals.clear()
+        state.background_launch_commands.clear()
+
+    async def _safe_stop_task(
+        self, client: SDKClientProtocol, task_id: str, issue_id: str
+    ) -> None:
+        """Best-effort ``stop_task`` that never raises into the wait loop."""
+        try:
+            await client.stop_task(task_id)
+        except Exception as exc:  # best-effort cleanup
+            logger.debug("Session %s: stop_task(%s) failed: %s", issue_id, task_id, exc)
 
     async def _wait_for_background_completion(
         self,
@@ -867,49 +935,132 @@ class IdleTimeoutRetryPolicy:
         *,
         completion_buffer: dict[str, AgentTaskCompletedEvent] | None = None,
         started_task_ids: dict[str, str] | None = None,
-    ) -> tuple[AgentTaskCompletedEvent | None, str | None]:
+        drain_event: asyncio.Event | None = None,
+        interrupt_event: asyncio.Event | None = None,
+    ) -> _BgWaitOutcome:
         """Wait for the completion notification of a backgrounded launch.
 
         Reads the client's continuous (turn-spanning) message stream until an
         ``AgentTaskCompletedEvent`` for ``tool_use_id`` arrives, bounded by
-        ``max_wait_seconds``. Returns ``(completed_event, task_id)`` on success
-        or ``(None, task_id_if_known)`` on timeout. ``task_id`` is captured
-        from the matching completion event, falling back to a ``task_started``
-        event seen for the same launch (so the caller can stop the task on
-        timeout even before any completion event).
+        ``max_wait_seconds``. The read is raced against ``drain_event`` /
+        ``interrupt_event`` so the first Ctrl-C ends the wait promptly, and
+        periodic progress is emitted on the event sink so the wait is never a
+        silent hang.
+
+        Returns a :class:`_BgWaitOutcome`: ``completed`` set on success,
+        ``interrupted`` set when a drain/abort signal fired, or both unset on
+        timeout / stream end. ``task_id`` is captured from the matching
+        completion event, falling back to a ``task_started`` event seen for the
+        same launch (so the caller can stop the task even without a completion).
         """
         task_id: str | None = None
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + max_wait_seconds
+        next_progress = loop.time() + BACKGROUND_WAIT_PROGRESS_INTERVAL
+
+        events = [ev for ev in (drain_event, interrupt_event) if ev is not None]
+        signal_tasks = [asyncio.ensure_future(ev.wait()) for ev in events]
+        next_task: asyncio.Future[object] | None = None
+        aiter = client.receive_messages().__aiter__()
+
+        def _interrupted() -> bool:
+            return any(ev.is_set() for ev in events)
+
         try:
-            async with asyncio.timeout(max_wait_seconds):
-                async for event in client.receive_messages():
-                    kind = getattr(event, "kind", None)
-                    event_tool_use_id = str(getattr(event, "tool_use_id", "") or "")
-                    if kind == "task_started":
-                        ev_task_id = str(getattr(event, "task_id", "") or "")
-                        if started_task_ids is not None and event_tool_use_id:
-                            started_task_ids[event_tool_use_id] = ev_task_id
-                        if event_tool_use_id == tool_use_id:
-                            task_id = ev_task_id or task_id
-                        continue
-                    if kind == "task_completed":
-                        completed = cast("AgentTaskCompletedEvent", event)
-                        if event_tool_use_id == tool_use_id:
-                            event_task_id = str(getattr(event, "task_id", "") or "")
-                            return completed, (event_task_id or task_id)
-                        # Completion for a *different* pending launch — buffer it
-                        # so a later cycle finds it instead of waiting until
-                        # timeout (the SDK pushes all task events onto one stream).
-                        if completion_buffer is not None and event_tool_use_id:
-                            completion_buffer[event_tool_use_id] = completed
-        except TimeoutError:
-            return None, task_id
-        # Stream ended without a matching completion event.
-        logger.debug(
-            "Session %s: background stream ended without completion for %s",
-            issue_id,
-            tool_use_id,
+            if _interrupted():
+                return _BgWaitOutcome(task_id=task_id, interrupted=True)
+            while True:
+                now = loop.time()
+                if now >= deadline:
+                    return _BgWaitOutcome(task_id=task_id)
+                if next_task is None:
+                    next_task = asyncio.ensure_future(self._next_stream_event(aiter))
+                slice_timeout = min(deadline - now, next_progress - now)
+                slice_timeout = max(slice_timeout, 0.0)
+                done, _pending = await asyncio.wait(
+                    {next_task, *signal_tasks},
+                    timeout=slice_timeout,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if _interrupted():
+                    next_task.cancel()
+                    return _BgWaitOutcome(task_id=task_id, interrupted=True)
+                if next_task not in done:
+                    # Progress tick: the in-flight read is intentionally left
+                    # running (cancelling it would corrupt the async generator).
+                    self._emit_background_wait_progress(
+                        issue_id, tool_use_id, max_wait_seconds, deadline, loop
+                    )
+                    next_progress = loop.time() + BACKGROUND_WAIT_PROGRESS_INTERVAL
+                    continue
+
+                event = next_task.result()
+                next_task = None
+                if event is _STREAM_END:
+                    logger.debug(
+                        "Session %s: background stream ended without completion for %s",
+                        issue_id,
+                        tool_use_id,
+                    )
+                    return _BgWaitOutcome(task_id=task_id)
+
+                kind = getattr(event, "kind", None)
+                event_tool_use_id = str(getattr(event, "tool_use_id", "") or "")
+                if kind == "task_started":
+                    ev_task_id = str(getattr(event, "task_id", "") or "")
+                    if started_task_ids is not None and event_tool_use_id:
+                        started_task_ids[event_tool_use_id] = ev_task_id
+                    if event_tool_use_id == tool_use_id:
+                        task_id = ev_task_id or task_id
+                    continue
+                if kind == "task_completed":
+                    completed = cast("AgentTaskCompletedEvent", event)
+                    if event_tool_use_id == tool_use_id:
+                        event_task_id = str(getattr(event, "task_id", "") or "")
+                        return _BgWaitOutcome(
+                            completed=completed, task_id=event_task_id or task_id
+                        )
+                    # Completion for a *different* pending launch — buffer it so a
+                    # later cycle finds it instead of waiting until timeout (the
+                    # SDK pushes all task events onto one stream).
+                    if completion_buffer is not None and event_tool_use_id:
+                        completion_buffer[event_tool_use_id] = completed
+        finally:
+            # Cancel any in-flight read and the signal waiters. The surrounding
+            # ``async with client`` tears the stream down, so abandoning an
+            # in-flight ``__anext__`` is safe.
+            if next_task is not None and not next_task.done():
+                next_task.cancel()
+            for sig in signal_tasks:
+                sig.cancel()
+
+    @staticmethod
+    async def _next_stream_event(aiter: object) -> object:
+        """Pull the next event from a message stream, or ``_STREAM_END``.
+
+        StopAsyncIteration cannot cross the ``asyncio.Future`` boundary used to
+        race the read against signals, so it is converted to a sentinel.
+        """
+        try:
+            return await aiter.__anext__()  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
+        except StopAsyncIteration:
+            return _STREAM_END
+
+    def _emit_background_wait_progress(
+        self,
+        issue_id: str,
+        tool_use_id: str,
+        max_wait_seconds: float,
+        deadline: float,
+        loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        """Surface the otherwise-silent background wait to the event sink."""
+        if self._event_sink is None:
+            return
+        elapsed = max_wait_seconds - max(deadline - loop.time(), 0.0)
+        self._event_sink.on_background_wait(
+            issue_id, tool_use_id, elapsed, max_wait_seconds
         )
-        return None, task_id
 
     async def _process_message_stream(
         self,

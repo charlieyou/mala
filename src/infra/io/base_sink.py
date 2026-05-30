@@ -98,6 +98,15 @@ class BaseEventSink:
     def on_agent_text(self, agent_id: str, text: str) -> None:
         pass
 
+    def on_background_wait(
+        self,
+        agent_id: str,
+        tool_use_id: str,
+        elapsed_seconds: float,
+        budget_seconds: float,
+    ) -> None:
+        pass
+
     # -------------------------------------------------------------------------
     # Quality gate events
     # -------------------------------------------------------------------------
