@@ -68,6 +68,25 @@ class _ClaudeAgentEventClient:
 
         return to_agent_events(self._inner.receive_response())
 
+    def receive_messages(self) -> AsyncIterator[AgentEventValue]:
+        """Translate the continuous (turn-spanning) SDK message stream.
+
+        Unlike :meth:`receive_response`, the underlying
+        ``ClaudeSDKClient.receive_messages`` does not stop at a
+        ``ResultMessage``, so it can surface a ``TaskNotificationMessage``
+        (→ :class:`AgentTaskCompletedEvent`) that the SDK pushes after a
+        backgrounded turn has already yielded its result.
+        """
+        from src.core.protocols.agent_event import to_agent_events
+
+        return to_agent_events(self._inner.receive_messages())
+
+    async def stop_task(self, task_id: str) -> None:
+        await self._inner.stop_task(task_id)
+
+    def supports_background_tasks(self) -> bool:
+        return True
+
     async def disconnect(self) -> None:
         await self._inner.disconnect()
 

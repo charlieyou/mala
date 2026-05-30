@@ -1128,3 +1128,40 @@ class TestTimeoutMinutesPreservedInMerge:
         result = merge_configs(preset, user)
 
         assert result.timeout_minutes is None
+
+
+class TestMergeConfigsLongRunning:
+    """long_running merge: user value always wins (presets don't define it)."""
+
+    def test_user_value_wins_over_preset(self) -> None:
+        from src.domain.validation.config_types import LongRunningConfig
+
+        preset = parse_validation_config({"commands": {"test": "pytest"}})
+        user = parse_validation_config(
+            {
+                "long_running": {
+                    "enabled": False,
+                    "max_wait_seconds": 99,
+                    "max_resume_cycles": 1,
+                }
+            }
+        )
+        result = merge_configs(preset, user)
+        assert result.long_running == LongRunningConfig(
+            enabled=False, max_wait_seconds=99, max_resume_cycles=1
+        )
+
+    def test_user_unset_uses_default(self) -> None:
+        from src.domain.validation.config_types import LongRunningConfig
+
+        preset = parse_validation_config({"commands": {"test": "pytest"}})
+        user = parse_validation_config({"commands": {"lint": "ruff check"}})
+        result = merge_configs(preset, user)
+        assert result.long_running == LongRunningConfig()
+
+    def test_no_preset_passthrough(self) -> None:
+        from src.domain.validation.config_types import LongRunningConfig
+
+        user = parse_validation_config({"long_running": {"max_resume_cycles": 5}})
+        result = merge_configs(None, user)
+        assert result.long_running == LongRunningConfig(max_resume_cycles=5)

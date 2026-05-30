@@ -41,6 +41,7 @@ from src.domain.validation.config_types import (
     EvidenceCheckConfig,
     FailureMode,
     FireOn,
+    LongRunningConfig,
     PeriodicTriggerConfig,
     RunEndTriggerConfig,
     SessionEndTriggerConfig,
@@ -430,6 +431,84 @@ def parse_per_issue_review(
     )
 
 
+_LONG_RUNNING_FIELDS = frozenset({"enabled", "max_wait_seconds", "max_resume_cycles"})
+
+
+def parse_long_running(
+    data: dict[str, Any],
+) -> tuple[LongRunningConfig | None, bool]:
+    """Parse the ``long_running`` section into a :class:`LongRunningConfig`.
+
+    Mirrors :func:`parse_per_issue_review`: absent or null yields ``None`` with
+    the matching ``was_present`` flag. Non-object values, unknown fields, or
+    wrong types raise :class:`ConfigError`. ``enabled`` must be a bool;
+    ``max_wait_seconds`` and ``max_resume_cycles`` must be non-negative integers
+    (booleans are rejected even though ``bool`` is a subclass of ``int``).
+    """
+    if "long_running" not in data:
+        return None, False
+    lr_data = data["long_running"]
+    if lr_data is None:
+        return None, True
+    if not isinstance(lr_data, dict):
+        raise ConfigError(
+            f"long_running must be an object, got {type(lr_data).__name__}"
+        )
+
+    value = cast("dict[str, object]", lr_data)
+    unknown = set(value.keys()) - _LONG_RUNNING_FIELDS
+    if unknown:
+        first = sorted(str(k) for k in unknown)[0]
+        raise ConfigError(f"Unknown field '{first}' in long_running")
+
+    enabled = True
+    if "enabled" in value:
+        enabled_val = value["enabled"]
+        if not isinstance(enabled_val, bool):
+            raise ConfigError(
+                f"long_running.enabled must be a boolean, "
+                f"got {type(enabled_val).__name__}"
+            )
+        enabled = enabled_val
+
+    max_wait_seconds = 14400
+    if "max_wait_seconds" in value:
+        mws_val = value["max_wait_seconds"]
+        if isinstance(mws_val, bool) or not isinstance(mws_val, int):
+            raise ConfigError(
+                f"long_running.max_wait_seconds must be an integer, "
+                f"got {type(mws_val).__name__}"
+            )
+        if mws_val < 0:
+            raise ConfigError(
+                f"long_running.max_wait_seconds must be non-negative, got {mws_val}"
+            )
+        max_wait_seconds = mws_val
+
+    max_resume_cycles = 3
+    if "max_resume_cycles" in value:
+        mrc_val = value["max_resume_cycles"]
+        if isinstance(mrc_val, bool) or not isinstance(mrc_val, int):
+            raise ConfigError(
+                f"long_running.max_resume_cycles must be an integer, "
+                f"got {type(mrc_val).__name__}"
+            )
+        if mrc_val < 0:
+            raise ConfigError(
+                f"long_running.max_resume_cycles must be non-negative, got {mrc_val}"
+            )
+        max_resume_cycles = mrc_val
+
+    return (
+        LongRunningConfig(
+            enabled=enabled,
+            max_wait_seconds=max_wait_seconds,
+            max_resume_cycles=max_resume_cycles,
+        ),
+        True,
+    )
+
+
 def parse_coder(
     data: dict[str, Any],
 ) -> tuple[Literal["claude", "amp", "codex"] | None, bool]:
@@ -598,6 +677,10 @@ def parse_validation_config(data: dict[str, Any]) -> ValidationConfig:
     if present:
         fields_set.add("per_issue_review")
 
+    long_running, present = parse_long_running(data)
+    if present:
+        fields_set.add("long_running")
+
     coder, present = parse_coder(data)
     if present:
         fields_set.add("coder")
@@ -640,6 +723,7 @@ def parse_validation_config(data: dict[str, Any]) -> ValidationConfig:
         per_issue_review=per_issue_review
         if per_issue_review is not None
         else CodeReviewConfig(enabled=False),
+        long_running=long_running if long_running is not None else LongRunningConfig(),
         coder=coder,
         amp_mode=amp_mode,
         model=model,

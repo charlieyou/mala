@@ -119,6 +119,7 @@ class PromptProvider:
     idle_resume_prompt: str
     checkpoint_request_prompt: str
     continuation_prompt: str
+    await_resume_prompt: str
     review_agent_prompt: str = ""
 
 
@@ -148,6 +149,7 @@ def load_prompts(prompt_dir: Path) -> PromptProvider:
         idle_resume_prompt=(prompt_dir / "idle_resume.md").read_text(),
         checkpoint_request_prompt=(prompt_dir / "checkpoint_request.md").read_text(),
         continuation_prompt=(prompt_dir / "continuation.md").read_text(),
+        await_resume_prompt=(prompt_dir / "await_resume.md").read_text(),
         review_agent_prompt=review_agent_prompt,
     )
 
@@ -298,6 +300,43 @@ def format_gate_followup_prompt(
         issue_id=issue_id,
         missing_command_wrappers=missing_command_wrappers,
         validation_log_dir=validation_log_dir,
+    )
+
+
+def format_await_resume_prompt(
+    await_resume_template: str,
+    *,
+    issue_id: str,
+    output_file: str,
+    status: str,
+    summary: str,
+) -> str:
+    """Format the await-resume prompt shown after a backgrounded task finishes.
+
+    Substitutes the ``{issue_id}``, ``{output_file}``, ``{status}`` and
+    ``{summary}`` placeholders. Values are inserted verbatim by a single
+    ``str.format`` call, which does not re-parse substituted values, so literal
+    braces in ``status``/``summary`` (e.g. JSON) are preserved as-is and need no
+    escaping.
+
+    Args:
+        await_resume_template: Raw ``await_resume.md`` template.
+        issue_id: The issue ID being implemented.
+        output_file: Path to the backgrounded task's captured output file.
+        status: Completion status reported by the SDK (e.g. ``completed``,
+            ``failed``, ``stopped``).
+        summary: Free-form summary from the SDK, typically including the exit
+            code of the backgrounded process.
+
+    Returns:
+        Formatted await-resume prompt string.
+    """
+
+    return await_resume_template.format(
+        issue_id=issue_id,
+        output_file=output_file,
+        status=status,
+        summary=summary,
     )
 
 

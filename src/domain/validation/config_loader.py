@@ -77,6 +77,7 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "evidence_check",
         "epic_verification",
         "per_issue_review",
+        "long_running",
         "coder",
         "amp_mode",
         "model",
@@ -174,9 +175,7 @@ def _parse_yaml(content: str, *, source: str = "mala.yaml") -> dict[str, Any]:
         return {}
 
     if not isinstance(data, dict):
-        raise ConfigError(
-            f"{source} must be a YAML mapping, got {type(data).__name__}"
-        )
+        raise ConfigError(f"{source} must be a YAML mapping, got {type(data).__name__}")
 
     return data
 

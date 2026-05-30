@@ -27,7 +27,9 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 
-AgentEventKind = Literal["text", "tool_use", "tool_result", "result"]
+AgentEventKind = Literal[
+    "text", "tool_use", "tool_result", "result", "task_started", "task_completed"
+]
 
 
 @runtime_checkable
@@ -87,13 +89,61 @@ class AgentResultEvent:
     kind: Literal["result"] = "result"
 
 
+@dataclass(frozen=True)
+class AgentTaskStartedEvent:
+    """A backgrounded task started (e.g. ``Bash(run_in_background=True)``).
+
+    Surfaced from the Claude SDK ``TaskStartedMessage``. ``task_id`` is the
+    SDK's task handle; ``tool_use_id`` ties the task back to the originating
+    ``Bash`` tool-use block so consumers can correlate the launch.
+    """
+
+    task_id: str = ""
+    tool_use_id: str = ""
+    kind: Literal["task_started"] = "task_started"
+
+
+@dataclass(frozen=True)
+class AgentTaskCompletedEvent:
+    """A backgrounded task finished and the SDK delivered a notification.
+
+    Surfaced from the Claude SDK ``TaskNotificationMessage``, which the SDK
+    pushes proactively on the continuous message stream after the launching
+    turn ends. ``status`` is the SDK's terminal status (e.g.
+    ``completed``/``failed``/``stopped``); ``summary`` carries the
+    human-readable summary (including exit code) and ``output_file`` the path
+    to the captured task output.
+    """
+
+    task_id: str = ""
+    tool_use_id: str = ""
+    status: str = ""
+    summary: str = ""
+    output_file: str = ""
+    kind: Literal["task_completed"] = "task_completed"
+
+
 AgentEventValue = (
-    AgentTextEvent | AgentToolUseEvent | AgentToolResultEvent | AgentResultEvent
+    AgentTextEvent
+    | AgentToolUseEvent
+    | AgentToolResultEvent
+    | AgentResultEvent
+    | AgentTaskStartedEvent
+    | AgentTaskCompletedEvent
 )
 """Concrete union of all `AgentEvent` variants for static typing."""
 
 
-_AGENT_EVENT_KINDS = frozenset({"text", "tool_use", "tool_result", "result"})
+_AGENT_EVENT_KINDS = frozenset(
+    {
+        "text",
+        "tool_use",
+        "tool_result",
+        "result",
+        "task_started",
+        "task_completed",
+    }
+)
 
 
 async def to_agent_events(
@@ -131,6 +181,10 @@ async def to_agent_events(
                     yield event
         elif msg_class == "ResultMessage":
             yield _result_to_event(message)
+        elif msg_class == "TaskStartedMessage":
+            yield _task_started_to_event(message)
+        elif msg_class == "TaskNotificationMessage":
+            yield _task_notification_to_event(message)
 
 
 def _block_to_event(block: object) -> AgentEventValue | None:
@@ -172,4 +226,33 @@ def _result_to_event(message: object) -> AgentResultEvent:
         is_error=is_error,
         subtype=subtype,
         result=raw_result,
+    )
+
+
+def _task_started_to_event(message: object) -> AgentTaskStartedEvent:
+    """Translate a Claude SDK ``TaskStartedMessage`` to ``AgentTaskStartedEvent``.
+
+    Detected by class name (not ``isinstance``) so this module keeps its
+    no-``claude_agent_sdk``-import contract, mirroring the ``AssistantMessage``
+    / ``ResultMessage`` handling above.
+    """
+    return AgentTaskStartedEvent(
+        task_id=str(getattr(message, "task_id", "") or ""),
+        tool_use_id=str(getattr(message, "tool_use_id", "") or ""),
+    )
+
+
+def _task_notification_to_event(message: object) -> AgentTaskCompletedEvent:
+    """Translate a Claude SDK ``TaskNotificationMessage`` to a completed event.
+
+    Maps ``status`` / ``summary`` / ``output_file`` / ``task_id`` /
+    ``tool_use_id`` across. ``None`` fields coerce to ``""`` so consumers can
+    rely on string-typed fields.
+    """
+    return AgentTaskCompletedEvent(
+        task_id=str(getattr(message, "task_id", "") or ""),
+        tool_use_id=str(getattr(message, "tool_use_id", "") or ""),
+        status=str(getattr(message, "status", "") or ""),
+        summary=str(getattr(message, "summary", "") or ""),
+        output_file=str(getattr(message, "output_file", "") or ""),
     )

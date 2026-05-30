@@ -4522,6 +4522,7 @@ class TestBuildResumePrompt:
             idle_resume_prompt="idle",
             checkpoint_request_prompt="checkpoint",
             continuation_prompt="continuation",
+            await_resume_prompt="await",
         )
         validation_commands = PromptValidationCommands(
             lint="lint",
@@ -4566,6 +4567,7 @@ class TestBuildResumePrompt:
             idle_resume_prompt="idle",
             checkpoint_request_prompt="checkpoint",
             continuation_prompt="continuation",
+            await_resume_prompt="await",
         )
         validation_commands = PromptValidationCommands(
             lint="uvx ruff check .",
@@ -4617,6 +4619,7 @@ class TestBuildResumePrompt:
             idle_resume_prompt="idle",
             checkpoint_request_prompt="checkpoint",
             continuation_prompt="continuation",
+            await_resume_prompt="await",
         )
         validation_commands = PromptValidationCommands(
             lint="lint",
@@ -4653,6 +4656,7 @@ class TestBuildResumePrompt:
             idle_resume_prompt="idle",
             checkpoint_request_prompt="checkpoint",
             continuation_prompt="continuation",
+            await_resume_prompt="await",
         )
         validation_commands = PromptValidationCommands(
             lint="lint",

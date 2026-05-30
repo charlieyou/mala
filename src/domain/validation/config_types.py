@@ -867,6 +867,31 @@ class CodexOptionsConfig:
 
 
 @dataclass(frozen=True)
+class LongRunningConfig:
+    """Configuration for the long-running background wait/resume mechanism.
+
+    When a Claude agent backgrounds work via ``Bash(run_in_background=true)`` and
+    yields, mala keeps the SDK connection open, waits for that task's completion
+    notification on the continuous stream, and resumes the agent on the same
+    client to finalize before gating once at the true end. Completion is
+    event-driven (a structured task notification), so there is no polling
+    interval to configure.
+
+    Attributes:
+        enabled: Whether the wait/resume mechanism is active. When False, mala
+            falls back to the immediate-gate behavior.
+        max_wait_seconds: Maximum time to wait for a single backgrounded task to
+            complete before giving up (default: 14400 = 4 hours).
+        max_resume_cycles: Maximum number of background launch/resume cycles to
+            follow within one issue before stopping (default: 3).
+    """
+
+    enabled: bool = True
+    max_wait_seconds: int = 14400
+    max_resume_cycles: int = 3
+
+
+@dataclass(frozen=True)
 class ValidationConfig:
     """Top-level configuration from mala.yaml.
 
@@ -892,6 +917,8 @@ class ValidationConfig:
         evidence_check: Evidence check configuration. None means no evidence filtering.
         epic_verification: Epic verification configuration. Controls which backend
             (agent_sdk or cerberus) is used for epic verification.
+        long_running: Configuration for the background wait/resume mechanism that
+            keeps the SDK connection open while a backgrounded task finishes.
         _fields_set: Set of field names that were explicitly provided in source.
             Used by the merger to distinguish "not set" from "explicitly set".
     """
@@ -913,6 +940,7 @@ class ValidationConfig:
     per_issue_review: CodeReviewConfig = field(
         default_factory=lambda: CodeReviewConfig(enabled=False)
     )
+    long_running: LongRunningConfig = field(default_factory=LongRunningConfig)
     # Coder selection (validated above as strict enum). Stored here so the
     # orchestrator can flow yaml values through to MalaConfig.from_env's
     # yaml_coder / yaml_amp_mode parameters (CLI > env > yaml > default).

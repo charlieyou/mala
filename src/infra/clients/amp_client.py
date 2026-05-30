@@ -523,6 +523,10 @@ class AmpClient:
                     stdout_tail=self._stdout_tail_text(),
                 )
 
+    def supports_background_tasks(self) -> bool:
+        """Amp is request/response only; mala skips the bg wait path."""
+        return False
+
     def _should_skip_preinit_stdout_log(
         self, stripped: bytes, *, skipped_count: int
     ) -> bool:

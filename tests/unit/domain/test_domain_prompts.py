@@ -61,6 +61,7 @@ class TestLoadPrompts:
         (tmp_path / "idle_resume.md").write_text("idle")
         (tmp_path / "checkpoint_request.md").write_text("checkpoint")
         (tmp_path / "continuation.md").write_text("continuation")
+        (tmp_path / "await_resume.md").write_text("await")
 
         result = load_prompts(tmp_path)
         assert result.review_agent_prompt == ""
@@ -75,6 +76,7 @@ class TestLoadPrompts:
         (tmp_path / "idle_resume.md").write_text("idle")
         (tmp_path / "checkpoint_request.md").write_text("checkpoint")
         (tmp_path / "continuation.md").write_text("continuation")
+        (tmp_path / "await_resume.md").write_text("await")
         (tmp_path / "review_agent.md").write_text("Review agent system prompt content")
 
         result = load_prompts(tmp_path)
@@ -860,3 +862,59 @@ commands:
                 validation_log_dir=validation_log_dir,
             )
             assert "[custom" + ":" not in gate_prompt
+
+
+class TestAwaitResumePrompt:
+    """Tests for await_resume prompt loading and formatting."""
+
+    def test_load_prompts_returns_await_resume_prompt(self) -> None:
+        provider = load_prompts(PROMPTS_DIR)
+        assert provider.await_resume_prompt
+        for placeholder in ("{issue_id}", "{output_file}", "{status}", "{summary}"):
+            assert placeholder in provider.await_resume_prompt
+
+    def test_format_substitutes_values(self) -> None:
+        from src.domain.prompts import format_await_resume_prompt
+
+        template = load_prompts(PROMPTS_DIR).await_resume_prompt
+        result = format_await_resume_prompt(
+            template,
+            issue_id="proj.8.15",
+            output_file="/tmp/logs/proj.8.15.bg.log",
+            status="completed",
+            summary="exit code 0",
+        )
+        assert "bd-proj.8.15" in result
+        assert "/tmp/logs/proj.8.15.bg.log" in result
+        assert "completed" in result
+        assert "exit code 0" in result
+        for placeholder in ("{issue_id}", "{output_file}", "{status}", "{summary}"):
+            assert placeholder not in result
+
+    def test_format_failure_status(self) -> None:
+        from src.domain.prompts import format_await_resume_prompt
+
+        template = load_prompts(PROMPTS_DIR).await_resume_prompt
+        result = format_await_resume_prompt(
+            template,
+            issue_id="x.1",
+            output_file="/tmp/x.log",
+            status="failed",
+            summary="exit code 1",
+        )
+        assert "failed" in result
+        assert "exit code 1" in result
+
+    def test_format_is_brace_safe(self) -> None:
+        from src.domain.prompts import format_await_resume_prompt
+
+        # status/summary from the SDK may contain literal braces (e.g. JSON).
+        template = load_prompts(PROMPTS_DIR).await_resume_prompt
+        result = format_await_resume_prompt(
+            template,
+            issue_id="x.1",
+            output_file="/tmp/x.log",
+            status="failed",
+            summary='{"exit_code": 1, "signal": null}',
+        )
+        assert '{"exit_code": 1, "signal": null}' in result

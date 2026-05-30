@@ -563,6 +563,33 @@ For reproducible validation environments, commit `.claude/settings.local.json` t
 
 This file is typically gitignored for interactive Claude Code use, but committing it ensures consistent validation across CI and all developers.
 
+## Long-Running Work
+
+When a Claude agent backgrounds work with `Bash(run_in_background=true)` and yields,
+mala keeps the SDK connection open, waits for that task's completion notification on
+the continuous stream, then resumes the same agent to finalize the issue before
+running the quality gate once at the true end. Completion is event-driven (a
+structured task notification from the SDK), so there is no polling interval to
+configure. This applies to the Claude coder only; Codex and Amp are unaffected.
+
+```yaml
+long_running:
+  # Whether the wait/resume mechanism is active. When false, mala gates
+  # immediately after the agent yields (default: true).
+  enabled: true
+
+  # Maximum time to wait for a single backgrounded task to finish before
+  # giving up, in seconds (default: 14400 = 4 hours).
+  max_wait_seconds: 14400
+
+  # Maximum number of background launch/resume cycles to follow within one
+  # issue before stopping (default: 3).
+  max_resume_cycles: 3
+```
+
+Each key is optional. The `long_running` block is not provided by presets; the
+user value always wins.
+
 ## Coder Selection
 
 Mala can drive its per-issue implementation agent on Claude, Sourcegraph's

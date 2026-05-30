@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.domain.validation.config_types import LongRunningConfig
 from src.infra.io.log_output.console import is_verbose_enabled
 from src.pipeline.agent_session_runner import AgentSessionConfig, SessionPrompts
 from src.pipeline.gate_runner import (
@@ -209,6 +210,16 @@ def build_session_config(
         idle_resume=pipeline.prompts.idle_resume_prompt,
         checkpoint_request=pipeline.prompts.checkpoint_request_prompt,
         continuation=pipeline.prompts.continuation_prompt,
+        await_resume=pipeline.prompts.await_resume_prompt,
+    )
+    # Default to enabled (LongRunningConfig defaults) when no validation config
+    # is present, so repos without a mala.yaml still get the background
+    # wait/resume behavior the implementer prompt advertises rather than gating
+    # immediately after a backgrounded yield.
+    long_running = (
+        pipeline.validation_config.long_running
+        if pipeline.validation_config is not None
+        else LongRunningConfig()
     )
     return AgentSessionConfig(
         prompts=prompts,
@@ -216,4 +227,5 @@ def build_session_config(
         lint_tools=None,  # Set at run start
         mcp_server_factory=mcp_server_factory,
         strict_resume=strict_resume,
+        long_running=long_running,
     )

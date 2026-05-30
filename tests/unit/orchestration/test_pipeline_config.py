@@ -37,6 +37,7 @@ def prompts() -> PromptProvider:
         idle_resume_prompt="idle",
         checkpoint_request_prompt="checkpoint",
         continuation_prompt="continuation",
+        await_resume_prompt="await",
     )
 
 

@@ -278,6 +278,7 @@ def test_build_resume_prompt_returns_formatted_prompt(tmp_path: Path) -> None:
         idle_resume_prompt="idle",
         checkpoint_request_prompt="checkpoint",
         continuation_prompt="continuation",
+        await_resume_prompt="await",
     )
     validation_commands = PromptValidationCommands(
         lint="lint",
@@ -316,6 +317,7 @@ def test_build_resume_prompt_returns_none_when_no_issues(tmp_path: Path) -> None
         idle_resume_prompt="idle",
         checkpoint_request_prompt="checkpoint",
         continuation_prompt="continuation",
+        await_resume_prompt="await",
     )
     validation_commands = PromptValidationCommands(
         lint="lint",

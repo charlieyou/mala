@@ -70,6 +70,35 @@ class SDKClientProtocol(Protocol):
         """Disconnect the client."""
         ...
 
+    def supports_background_tasks(self) -> bool:
+        """Whether this client can wait for and resume backgrounded work.
+
+        Providers backed by an SDK that exposes a continuous, turn-spanning
+        message stream (Claude) return True; request/response-only providers
+        (Codex, Amp) return False. Callers MUST gate the background-task wait
+        path on this before touching :meth:`receive_messages` /
+        :meth:`stop_task`.
+        """
+        ...
+
+    def receive_messages(self) -> AsyncIterator[object]:
+        """Stream raw SDK messages from the continuous (turn-spanning) stream.
+
+        Optional: only meaningful when :meth:`supports_background_tasks`
+        returns True. Unlike :meth:`receive_response`, this does not stop at a
+        terminal ``ResultMessage``, so a ``TaskNotificationMessage`` pushed
+        after a backgrounded turn can be observed on the same client.
+        """
+        ...
+
+    async def stop_task(self, task_id: str) -> None:
+        """Stop a backgrounded task by id.
+
+        Optional: only meaningful when :meth:`supports_background_tasks`
+        returns True.
+        """
+        ...
+
 
 @runtime_checkable
 class SDKClientFactoryProtocol(Protocol):

@@ -109,6 +109,15 @@ class MessageIterationState:
         pending_tool_ids: Set of tool IDs awaiting results.
         pending_lint_commands: Map of tool_use_id to (lint_type, command).
         first_message_received: Whether any message was received in current turn.
+        pending_background_tool_ids: tool_use_ids of Bash launches started with
+            ``run_in_background=true`` whose ``task_completed`` event has not yet
+            arrived. Populated in :meth:`_handle_tool_use_event` and cleared when a
+            matching ``task_completed`` event is observed within the same turn.
+        background_launch_commands: Map of tool_use_id to the launch command text,
+            recorded for background Bash launches when cheaply available.
+        background_task_ids: Map of tool_use_id to SDK task_id, recorded when a
+            ``task_started`` event is observed so the wait/resume loop can stop the
+            task on timeout even when the started event was consumed mid-turn.
     """
 
     session_id: str | None = None
@@ -118,6 +127,9 @@ class MessageIterationState:
     pending_tool_ids: set[str] = field(default_factory=set)
     pending_lint_commands: dict[str, tuple[str, str]] = field(default_factory=dict)
     first_message_received: bool = False
+    pending_background_tool_ids: set[str] = field(default_factory=set)
+    background_launch_commands: dict[str, str] = field(default_factory=dict)
+    background_task_ids: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -131,6 +143,13 @@ class MessageIterationResult:
         pending_query: Next query to send (for retries), or None if complete.
         pending_session_id: Session ID to use for next query.
         idle_retry_count: Updated idle retry count.
+        pending_background_tool_ids: tool_use_ids of background Bash launches whose
+            ``task_completed`` event was not observed before the turn ended. The
+            wait/resume loop in ``execute_iteration`` reads this to decide whether to
+            keep the SDK client connected and wait for the task notification.
+        background_task_ids: Map of tool_use_id to SDK task_id seen on
+            ``task_started`` events during the turn, so the wait/resume loop can
+            stop a task on timeout even if no completion event arrives.
     """
 
     success: bool
@@ -139,6 +158,8 @@ class MessageIterationResult:
     pending_query: str | None = None
     pending_session_id: str | None = None
     idle_retry_count: int = 0
+    pending_background_tool_ids: frozenset[str] = frozenset()
+    background_task_ids: dict[str, str] = field(default_factory=dict)
 
 
 # Callbacks for SDK message streaming events
@@ -243,6 +264,10 @@ class MessageStreamProcessor:
                     self._flush_text_delta(issue_id, pending_text_delta)
                     pending_text_delta = ""
                     self._handle_tool_result_event(event, state, lint_cache)
+                elif kind == "task_started":
+                    self._handle_task_started_event(event, issue_id, state)
+                elif kind == "task_completed":
+                    self._handle_task_completed_event(event, issue_id, state)
                 elif kind == "result":
                     self._flush_text_delta(issue_id, pending_text_delta)
                     pending_text_delta = ""
@@ -265,6 +290,8 @@ class MessageStreamProcessor:
             session_id=state.session_id,
             error=result_error,
             idle_retry_count=0,
+            pending_background_tool_ids=frozenset(state.pending_background_tool_ids),
+            background_task_ids=dict(state.background_task_ids),
         )
 
     def _handle_text_event(
@@ -305,6 +332,19 @@ class MessageStreamProcessor:
             lint_type = lint_cache.detect_lint_command(cmd)
             if lint_type:
                 state.pending_lint_commands[block_id] = (lint_type, cmd)
+            if (
+                isinstance(block_input, dict)
+                and block_input.get("run_in_background") is True
+                and block_id
+            ):
+                state.pending_background_tool_ids.add(block_id)
+                if cmd:
+                    state.background_launch_commands[block_id] = str(cmd)
+                logger.debug(
+                    "Session %s: background Bash launch detected (tool_use_id=%s)",
+                    issue_id,
+                    block_id,
+                )
 
     def _handle_tool_result_event(
         self,
@@ -319,6 +359,55 @@ class MessageStreamProcessor:
             lint_type, cmd = state.pending_lint_commands.pop(tool_use_id)
             if not getattr(event, "is_error", False):
                 lint_cache.mark_success(lint_type, cmd)
+
+    def _handle_task_started_event(
+        self, event: object, issue_id: str, state: MessageIterationState
+    ) -> None:
+        """Process a ``task_started`` AgentEvent.
+
+        Emitted by the Claude SDK when a backgrounded task begins. The launch is
+        already recorded from the originating ``tool_use`` event; additionally
+        record the ``tool_use_id -> task_id`` mapping so the wait/resume loop can
+        stop the task on timeout even when this event was consumed during the
+        launch turn (and so never reappears on the continuous stream).
+        """
+        task_id = str(getattr(event, "task_id", "") or "")
+        tool_use_id = str(getattr(event, "tool_use_id", "") or "")
+        if tool_use_id and task_id:
+            state.background_task_ids[tool_use_id] = task_id
+        logger.debug(
+            "Session %s: background task started (task_id=%s, tool_use_id=%s)",
+            issue_id,
+            task_id,
+            tool_use_id,
+        )
+
+    def _handle_task_completed_event(
+        self,
+        event: object,
+        issue_id: str,
+        state: MessageIterationState,
+    ) -> None:
+        """Process a ``task_completed`` AgentEvent.
+
+        When a backgrounded task finishes within the same turn that launched it
+        (a short task), the SDK pushes the notification before the turn ends.
+        Clear the matching launch from the pending set so the wait/resume loop in
+        ``execute_iteration`` does not block on a task that is already done.
+        """
+        tool_use_id = str(getattr(event, "tool_use_id", "") or "")
+        task_id = str(getattr(event, "task_id", "") or "")
+        status = str(getattr(event, "status", "") or "")
+        if tool_use_id and tool_use_id in state.pending_background_tool_ids:
+            state.pending_background_tool_ids.discard(tool_use_id)
+            logger.debug(
+                "Session %s: background task completed within turn "
+                "(tool_use_id=%s, task_id=%s, status=%s)",
+                issue_id,
+                tool_use_id,
+                task_id,
+                status,
+            )
 
     def _handle_result_event(
         self,

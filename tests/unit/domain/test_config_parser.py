@@ -802,3 +802,101 @@ class TestModuleSurface:
         )
         offenders = _find_config_loader_imports(ast.parse(clean))
         assert offenders == [], f"scanner false-positive on clean source: {offenders}"
+
+
+# ---------------------------------------------------------------------------
+# parse_long_running
+# ---------------------------------------------------------------------------
+
+
+class TestParseLongRunning:
+    def test_missing(self) -> None:
+        from src.domain.validation.config_parser import parse_long_running
+
+        assert parse_long_running({}) == (None, False)
+
+    def test_explicit_null(self) -> None:
+        from src.domain.validation.config_parser import parse_long_running
+
+        assert parse_long_running({"long_running": None}) == (None, True)
+
+    def test_non_dict_rejected(self) -> None:
+        from src.domain.validation.config_parser import parse_long_running
+
+        with pytest.raises(ConfigError, match="long_running must be an object"):
+            parse_long_running({"long_running": 5})
+
+    def test_unknown_field_rejected(self) -> None:
+        from src.domain.validation.config_parser import parse_long_running
+
+        with pytest.raises(ConfigError, match="Unknown field 'bogus' in long_running"):
+            parse_long_running({"long_running": {"bogus": 1}})
+
+    def test_full_values(self) -> None:
+        from src.domain.validation.config_parser import parse_long_running
+        from src.domain.validation.config_types import LongRunningConfig
+
+        value, present = parse_long_running(
+            {
+                "long_running": {
+                    "enabled": False,
+                    "max_wait_seconds": 10,
+                    "max_resume_cycles": 1,
+                }
+            }
+        )
+        assert present is True
+        assert value == LongRunningConfig(
+            enabled=False, max_wait_seconds=10, max_resume_cycles=1
+        )
+
+    def test_partial_uses_defaults(self) -> None:
+        from src.domain.validation.config_parser import parse_long_running
+        from src.domain.validation.config_types import LongRunningConfig
+
+        value, _ = parse_long_running({"long_running": {"enabled": False}})
+        assert value == LongRunningConfig(
+            enabled=False, max_wait_seconds=14400, max_resume_cycles=3
+        )
+
+    def test_enabled_must_be_bool(self) -> None:
+        from src.domain.validation.config_parser import parse_long_running
+
+        with pytest.raises(
+            ConfigError, match=r"long_running\.enabled must be a boolean"
+        ):
+            parse_long_running({"long_running": {"enabled": 1}})
+
+    @pytest.mark.parametrize("key", ["max_wait_seconds", "max_resume_cycles"])
+    def test_int_fields_reject_bool(self, key: str) -> None:
+        from src.domain.validation.config_parser import parse_long_running
+
+        with pytest.raises(
+            ConfigError, match=rf"long_running\.{key} must be an integer"
+        ):
+            parse_long_running({"long_running": {key: True}})
+
+    @pytest.mark.parametrize("key", ["max_wait_seconds", "max_resume_cycles"])
+    def test_int_fields_reject_negative(self, key: str) -> None:
+        from src.domain.validation.config_parser import parse_long_running
+
+        with pytest.raises(
+            ConfigError, match=rf"long_running\.{key} must be non-negative"
+        ):
+            parse_long_running({"long_running": {key: -1}})
+
+
+class TestParseValidationConfigLongRunning:
+    def test_tracks_fields_set_and_value(self) -> None:
+        from src.domain.validation.config_types import LongRunningConfig
+
+        config = parse_validation_config({"long_running": {"enabled": False}})
+        assert "long_running" in config._fields_set
+        assert config.long_running == LongRunningConfig(enabled=False)
+
+    def test_absent_uses_default(self) -> None:
+        from src.domain.validation.config_types import LongRunningConfig
+
+        config = parse_validation_config({})
+        assert "long_running" not in config._fields_set
+        assert config.long_running == LongRunningConfig()

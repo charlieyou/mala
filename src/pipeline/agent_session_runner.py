@@ -72,6 +72,7 @@ if TYPE_CHECKING:
         ReviewOutcome,
         TransitionResult,
     )
+    from src.domain.validation.config_types import LongRunningConfig
     from src.infra.hooks import LintCache
     from src.infra.telemetry import TelemetrySpan
     from src.core.session_end_result import SessionEndResult
@@ -187,6 +188,8 @@ class SessionPrompts:
         idle_resume: Template for idle timeout resume prompts.
         checkpoint_request: Prompt to request checkpoint from agent.
         continuation: Template for continuation prompt with checkpoint.
+        await_resume: Template shown after a backgrounded task finishes, used
+            to resume the agent on the same client so it can finalize the issue.
     """
 
     gate_followup: str
@@ -194,6 +197,7 @@ class SessionPrompts:
     idle_resume: str
     checkpoint_request: str = ""
     continuation: str = ""
+    await_resume: str = ""
 
 
 @dataclass
@@ -227,6 +231,7 @@ class AgentSessionConfig:
     lint_tools: frozenset[str] | None = None
     mcp_server_factory: McpServerFactory | None = None
     strict_resume: bool = False
+    long_running: LongRunningConfig | None = None
 
 
 @dataclass
@@ -507,21 +512,43 @@ class AgentSessionRunner:
             if pending_query is not None:
                 # The hard per-task timeout applies only while the coder is
                 # running. Post-session checks have their own timeouts and
-                # should not reduce the budget for the next coder start.
-                async with asyncio.timeout(self.view.timeout_seconds):
-                    iter_result = await self._retry_policy.execute_iteration(
-                        query=pending_query,
-                        issue_id=input.issue_id,
-                        runtime=session_cfg.runtime,
-                        state=state.msg_state,
-                        lifecycle_ctx=lifecycle_ctx,
-                        lint_cache=session_cfg.lint_cache,
-                        idle_timeout_seconds=session_cfg.idle_timeout_seconds,
-                        tracer=tracer,
-                    )
+                # should not reduce the budget for the next coder start. The
+                # timeout is applied per-turn *inside* execute_iteration
+                # (via ``hard_timeout_seconds``) so a long-running background
+                # wait between turns is not killed by the per-task timeout.
+                iter_result = await self._retry_policy.execute_iteration(
+                    query=pending_query,
+                    issue_id=input.issue_id,
+                    runtime=session_cfg.runtime,
+                    state=state.msg_state,
+                    lifecycle_ctx=lifecycle_ctx,
+                    lint_cache=session_cfg.lint_cache,
+                    idle_timeout_seconds=session_cfg.idle_timeout_seconds,
+                    tracer=tracer,
+                    long_running=self.config.long_running,
+                    await_resume_template=self.config.prompts.await_resume,
+                    hard_timeout_seconds=self.view.timeout_seconds,
+                )
                 if iter_result.session_id is not None:
                     state.session_id = iter_result.session_id
                 pending_query = None
+
+                if not iter_result.success:
+                    # A failed long-running background wait (timeout) or a resume
+                    # turn that errored must fail the session with its reason
+                    # rather than advancing to the gate as if the agent had
+                    # finished — the launch turn already produced a session_id.
+                    error_text = (
+                        iter_result.error_message
+                        or "Agent iteration failed without a reason"
+                    )
+                    result = lifecycle.on_error(lifecycle_ctx, RuntimeError(error_text))
+                    if self.event_sink is not None:
+                        self.event_sink.on_lifecycle_state(
+                            input.issue_id, lifecycle.state.name
+                        )
+                    state.final_result = lifecycle_ctx.final_result
+                    break
 
                 result = lifecycle.on_messages_complete(
                     lifecycle_ctx, has_session_id=bool(state.session_id)

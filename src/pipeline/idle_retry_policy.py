@@ -15,7 +15,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from src.pipeline.message_stream_processor import (
     IdleTimeoutError,
@@ -25,8 +25,10 @@ from src.pipeline.message_stream_processor import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from src.core.protocols.agent_event import AgentTaskCompletedEvent
     from src.core.protocols.sdk import SDKClientFactoryProtocol, SDKClientProtocol
     from src.domain.lifecycle import LifecycleContext
+    from src.domain.validation.config_types import LongRunningConfig
     from src.infra.telemetry import TelemetrySpan
     from src.pipeline.message_stream_processor import (
         LintCacheProtocol,
@@ -163,11 +165,23 @@ class IdleTimeoutRetryPolicy:
         lint_cache: LintCacheProtocol,
         idle_timeout_seconds: float | None,
         tracer: TelemetrySpan | None = None,
+        *,
+        long_running: LongRunningConfig | None = None,
+        await_resume_template: str = "",
+        hard_timeout_seconds: float | None = None,
     ) -> IterationResult:
         """Run a single message iteration with idle retry handling.
 
         Sends a query to the SDK and processes the response stream.
         Handles idle timeouts with automatic retry logic.
+
+        When the agent backgrounds work via ``Bash(run_in_background=true)`` and
+        yields, the turn ends with a still-pending background launch. If the
+        client supports background tasks (Claude only) and ``long_running`` is
+        enabled, this method keeps the SDK client connected, waits for the
+        task's completion notification on the continuous stream, resumes the
+        agent on the same client to finalize, and only then returns — so the
+        gate runs once at the true end.
 
         Args:
             query: The query to send to the agent.
@@ -181,6 +195,16 @@ class IdleTimeoutRetryPolicy:
             lint_cache: Cache for lint command results.
             idle_timeout_seconds: Idle timeout (None to disable).
             tracer: Optional telemetry span context.
+            long_running: Background wait/resume configuration. When None or
+                disabled, the wait/resume loop is skipped (immediate return).
+            await_resume_template: Template rendered into the resume prompt
+                after a backgrounded task finishes (see
+                ``format_await_resume_prompt``).
+            hard_timeout_seconds: Per-turn hard timeout that bounds the agent's
+                active compute. Each message-stream read is wrapped in
+                ``asyncio.timeout(hard_timeout_seconds)`` so the (possibly
+                multi-hour) background wait is not killed by the per-task
+                timeout. None disables the wrapper.
 
         Returns:
             IterationResult with success status and session ID.
@@ -231,7 +255,16 @@ class IdleTimeoutRetryPolicy:
                             "Session %s: sending query (new session)",
                             issue_id,
                         )
-                    await client.query(pending_query)
+                    # Bound query startup (and any SDK connect/resume work it
+                    # triggers) by the hard per-task timeout, restoring the
+                    # coverage the previous outer timeout gave. The between-turn
+                    # background wait in ``_wait_and_resume_background`` is
+                    # intentionally left unbounded.
+                    if hard_timeout_seconds is not None:
+                        async with asyncio.timeout(hard_timeout_seconds):
+                            await client.query(pending_query)
+                    else:
+                        await client.query(pending_query)
 
                     # Wrap the provider's AgentEvent stream with idle timeout
                     # handling. Both Claude (via the wrapped SDK client in
@@ -245,7 +278,7 @@ class IdleTimeoutRetryPolicy:
                     )
 
                     try:
-                        result = await self._process_message_stream(
+                        result = await self._run_message_stream_turn(
                             stream_processor,
                             stream,
                             issue_id,
@@ -254,6 +287,7 @@ class IdleTimeoutRetryPolicy:
                             lint_cache,
                             query_start,
                             tracer,
+                            hard_timeout_seconds,
                         )
                         if not result.success:
                             error_text = result.error or "SDK result reported an error"
@@ -279,9 +313,23 @@ class IdleTimeoutRetryPolicy:
                             if retry_query:
                                 pending_query = retry_query
                             continue
-                        return IterationResult(
-                            success=result.success,
-                            session_id=result.session_id,
+                        # Successful turn. If the agent backgrounded work and
+                        # yielded, keep this client connected, wait for the
+                        # task's completion notification, and resume the agent
+                        # on the same client to finalize before returning.
+                        return await self._wait_and_resume_background(
+                            client,
+                            result,
+                            stream_processor,
+                            issue_id,
+                            state,
+                            lifecycle_ctx,
+                            lint_cache,
+                            tracer,
+                            idle_timeout_seconds=idle_timeout_seconds,
+                            long_running=long_running,
+                            await_resume_template=await_resume_template,
+                            hard_timeout_seconds=hard_timeout_seconds,
                         )
 
                     except IdleTimeoutError:
@@ -562,6 +610,306 @@ class IdleTimeoutRetryPolicy:
         )
         # Return empty string to signal caller to keep original query
         return ""
+
+    async def _run_message_stream_turn(
+        self,
+        stream_processor: MessageStreamProcessor,
+        stream: IdleTimeoutStream,
+        issue_id: str,
+        state: MessageIterationState,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: LintCacheProtocol,
+        query_start: float,
+        tracer: TelemetrySpan | None,
+        hard_timeout_seconds: float | None,
+    ) -> MessageIterationResult:
+        """Process one turn's message stream, bounding active compute.
+
+        The hard per-task timeout wraps each per-turn stream read here (rather
+        than the whole ``execute_iteration``) so the background wait between
+        turns is not killed by the per-task timeout. ``IdleTimeoutStream``
+        still applies its own idle timeout within the turn.
+        """
+        if hard_timeout_seconds is None:
+            return await self._process_message_stream(
+                stream_processor,
+                stream,
+                issue_id,
+                state,
+                lifecycle_ctx,
+                lint_cache,
+                query_start,
+                tracer,
+            )
+        async with asyncio.timeout(hard_timeout_seconds):
+            return await self._process_message_stream(
+                stream_processor,
+                stream,
+                issue_id,
+                state,
+                lifecycle_ctx,
+                lint_cache,
+                query_start,
+                tracer,
+            )
+
+    async def _wait_and_resume_background(
+        self,
+        client: SDKClientProtocol,
+        result: MessageIterationResult,
+        stream_processor: MessageStreamProcessor,
+        issue_id: str,
+        state: MessageIterationState,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: LintCacheProtocol,
+        tracer: TelemetrySpan | None,
+        *,
+        idle_timeout_seconds: float | None,
+        long_running: LongRunningConfig | None,
+        await_resume_template: str,
+        hard_timeout_seconds: float | None,
+    ) -> IterationResult:
+        """Keep the client connected to finish backgrounded work, then return.
+
+        Loops while the just-finished turn left a still-pending background
+        launch, the client supports background tasks (Claude only), and the
+        long-running feature is enabled. Each cycle waits for the task's
+        completion notification on ``client.receive_messages()``, resumes the
+        agent on the *same* client with the await-resume prompt, and processes
+        the resulting turn. A wait that exceeds ``max_wait_seconds`` stops the
+        task and fails the iteration; a ``failed``/``stopped`` task still
+        resumes the agent (the await-resume prompt branches on status so the
+        agent can diagnose rather than commit a broken result).
+        """
+        from src.domain.prompts import format_await_resume_prompt
+
+        if (
+            long_running is None
+            or not long_running.enabled
+            or not client.supports_background_tasks()
+        ):
+            return IterationResult(
+                success=result.success,
+                session_id=result.session_id,
+            )
+
+        # Completions for *other* pending launches can arrive on the shared
+        # continuous stream while we wait for this one. Buffer them by
+        # tool_use_id so a later cycle finds them instead of waiting until
+        # timeout. ``started_task_ids`` is seeded from task_started events seen
+        # during the launch turn (recorded on shared state) so stop_task works
+        # on timeout even if no completion ever arrives on the stream.
+        completion_buffer: dict[str, AgentTaskCompletedEvent] = {}
+        started_task_ids: dict[str, str] = dict(state.background_task_ids)
+        cycles = 0
+        while (
+            result.success
+            and result.pending_background_tool_ids
+            and cycles < long_running.max_resume_cycles
+        ):
+            tool_use_id = next(iter(result.pending_background_tool_ids))
+            buffered = completion_buffer.pop(tool_use_id, None)
+            if buffered is not None:
+                completed = buffered
+                task_id = buffered.task_id or started_task_ids.get(tool_use_id)
+            else:
+                completed, task_id = await self._wait_for_background_completion(
+                    client,
+                    tool_use_id,
+                    long_running.max_wait_seconds,
+                    issue_id,
+                    completion_buffer=completion_buffer,
+                    started_task_ids=started_task_ids,
+                )
+            if completed is None:
+                # ``state.background_task_ids`` is live shared state updated by
+                # the stream processor, so a task_started consumed by a resume
+                # turn's ``receive_response`` is found here even though the
+                # pre-loop ``started_task_ids`` snapshot predates it.
+                task_id = (
+                    task_id
+                    or started_task_ids.get(tool_use_id)
+                    or state.background_task_ids.get(tool_use_id)
+                )
+                logger.warning(
+                    "Session %s: background task (tool_use_id=%s) did not "
+                    "complete within %.0fs, stopping it",
+                    issue_id,
+                    tool_use_id,
+                    long_running.max_wait_seconds,
+                )
+                if task_id:
+                    try:
+                        await client.stop_task(task_id)
+                    except Exception as exc:  # best-effort cleanup
+                        logger.debug(
+                            "Session %s: stop_task(%s) failed: %s",
+                            issue_id,
+                            task_id,
+                            exc,
+                        )
+                return IterationResult(
+                    success=False,
+                    session_id=result.session_id,
+                    error_message=(
+                        "Background task did not complete within "
+                        f"{long_running.max_wait_seconds:.0f}s"
+                    ),
+                )
+
+            # The completion arrived on the continuous stream (not the turn's
+            # ``receive_response``), so the stream processor never cleared this
+            # launch from the shared iteration state. Discard it here so the
+            # resume turn's result reports only launches started *during* that
+            # turn — otherwise this finished launch would be re-reported and the
+            # loop would spin until ``max_resume_cycles``.
+            state.pending_background_tool_ids.discard(tool_use_id)
+
+            resume_prompt = format_await_resume_prompt(
+                await_resume_template,
+                issue_id=issue_id,
+                output_file=completed.output_file,
+                status=completed.status,
+                summary=completed.summary,
+            )
+            logger.info(
+                "Session %s: background task completed (status=%s); resuming "
+                "agent to finalize (cycle %d/%d)",
+                issue_id,
+                completed.status,
+                cycles + 1,
+                long_running.max_resume_cycles,
+            )
+            # Reset per-turn state before the resume turn, mirroring the
+            # initial-turn setup in execute_iteration. The launch turn can end
+            # on a background Bash tool_use with no matching tool_result, leaving
+            # that id in pending_tool_ids — which would suppress the resume
+            # turn's idle timeout until the hard timeout. Start the resume turn
+            # clean.
+            state.tool_calls_this_turn = 0
+            state.first_message_received = False
+            state.pending_tool_ids.clear()
+            state.pending_lint_commands.clear()
+
+            # Bound the resume query startup by the hard per-task timeout too
+            # (the resume turn is active agent compute, not the background wait).
+            if hard_timeout_seconds is not None:
+                async with asyncio.timeout(hard_timeout_seconds):
+                    await client.query(resume_prompt)
+            else:
+                await client.query(resume_prompt)
+            resume_start = time.time()
+            stream = IdleTimeoutStream(
+                client.receive_response(),
+                idle_timeout_seconds,
+                state.pending_tool_ids,
+            )
+            result = await self._run_message_stream_turn(
+                stream_processor,
+                stream,
+                issue_id,
+                state,
+                lifecycle_ctx,
+                lint_cache,
+                resume_start,
+                tracer,
+                hard_timeout_seconds,
+            )
+            cycles += 1
+
+        # Resume-cycle budget exhausted while a launch is still pending: the
+        # agent kept backgrounding work without finishing. Fail the iteration
+        # (rather than letting the gate run on unwaited work) and best-effort
+        # stop any task we know the id for.
+        if result.success and result.pending_background_tool_ids:
+            for pending_id in result.pending_background_tool_ids:
+                stop_id = started_task_ids.get(
+                    pending_id
+                ) or state.background_task_ids.get(pending_id)
+                if not stop_id:
+                    continue
+                try:
+                    await client.stop_task(stop_id)
+                except Exception as exc:  # best-effort cleanup
+                    logger.debug(
+                        "Session %s: stop_task(%s) failed: %s",
+                        issue_id,
+                        stop_id,
+                        exc,
+                    )
+            logger.warning(
+                "Session %s: background work still pending after %d resume "
+                "cycles; failing",
+                issue_id,
+                long_running.max_resume_cycles,
+            )
+            return IterationResult(
+                success=False,
+                session_id=result.session_id,
+                error_message=(
+                    "Background work did not finish within "
+                    f"{long_running.max_resume_cycles} resume cycles"
+                ),
+            )
+
+        return IterationResult(
+            success=result.success,
+            session_id=result.session_id,
+            error_message=None if result.success else result.error,
+        )
+
+    async def _wait_for_background_completion(
+        self,
+        client: SDKClientProtocol,
+        tool_use_id: str,
+        max_wait_seconds: float,
+        issue_id: str,
+        *,
+        completion_buffer: dict[str, AgentTaskCompletedEvent] | None = None,
+        started_task_ids: dict[str, str] | None = None,
+    ) -> tuple[AgentTaskCompletedEvent | None, str | None]:
+        """Wait for the completion notification of a backgrounded launch.
+
+        Reads the client's continuous (turn-spanning) message stream until an
+        ``AgentTaskCompletedEvent`` for ``tool_use_id`` arrives, bounded by
+        ``max_wait_seconds``. Returns ``(completed_event, task_id)`` on success
+        or ``(None, task_id_if_known)`` on timeout. ``task_id`` is captured
+        from the matching completion event, falling back to a ``task_started``
+        event seen for the same launch (so the caller can stop the task on
+        timeout even before any completion event).
+        """
+        task_id: str | None = None
+        try:
+            async with asyncio.timeout(max_wait_seconds):
+                async for event in client.receive_messages():
+                    kind = getattr(event, "kind", None)
+                    event_tool_use_id = str(getattr(event, "tool_use_id", "") or "")
+                    if kind == "task_started":
+                        ev_task_id = str(getattr(event, "task_id", "") or "")
+                        if started_task_ids is not None and event_tool_use_id:
+                            started_task_ids[event_tool_use_id] = ev_task_id
+                        if event_tool_use_id == tool_use_id:
+                            task_id = ev_task_id or task_id
+                        continue
+                    if kind == "task_completed":
+                        completed = cast("AgentTaskCompletedEvent", event)
+                        if event_tool_use_id == tool_use_id:
+                            event_task_id = str(getattr(event, "task_id", "") or "")
+                            return completed, (event_task_id or task_id)
+                        # Completion for a *different* pending launch — buffer it
+                        # so a later cycle finds it instead of waiting until
+                        # timeout (the SDK pushes all task events onto one stream).
+                        if completion_buffer is not None and event_tool_use_id:
+                            completion_buffer[event_tool_use_id] = completed
+        except TimeoutError:
+            return None, task_id
+        # Stream ended without a matching completion event.
+        logger.debug(
+            "Session %s: background stream ended without completion for %s",
+            issue_id,
+            tool_use_id,
+        )
+        return None, task_id
 
     async def _process_message_stream(
         self,

@@ -942,6 +942,31 @@ These numbers were previously captured via static analysis; re-run `lizard` and 
 | Total Files | 63 |
 | Architectural Contracts | 10 |
 
+## Long-Running Background Wait/Resume
+
+When a Claude agent's deliverable is long-running, it launches the work with
+`Bash(run_in_background=true)` and ends its turn. Rather than gating immediately
+on that empty turn (which would fail the issue), mala keeps the agent's SDK
+client connected and waits for completion.
+
+The Claude Agent SDK pushes a structured task-completion notification on the
+continuous message stream (carrying `task_id`, `tool_use_id`, `status`,
+`output_file`, and a `summary` with the process exit code) shortly after the
+turn ends, with no second query. mala detects the backgrounded launch in the
+turn's tool-use stream, then reads the same client's stream until that task's
+completion notification arrives (bounded by `long_running.max_wait_seconds`; on
+timeout it stops the task and fails with a clear summary). It resumes the agent
+on the **same** client with the `await_resume.md` prompt — which is status- and
+exit-code-aware, telling the agent to diagnose a failed run or finalize a
+completed one — and repeats for any further background launches up to
+`long_running.max_resume_cycles`. The quality gate then runs **once** at the
+true end of the work.
+
+The mechanism is Claude-only and event-driven (no polling). `Monitor` is in
+`MALA_DISALLOWED_TOOLS` so long work is steered to `run_in_background`, which
+mala can observe. Codex and Amp paths are unaffected. See
+[`long_running`](project-config.md) for the tunables.
+
 ## Future Considerations
 
 1. **Language Support**: Currently Python-only (pytest, ruff, ty). Other languages would need validation spec extensions.

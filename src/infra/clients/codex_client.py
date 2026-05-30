@@ -380,6 +380,10 @@ class CodexClient:
             for event in adapter.to_events(notification):
                 yield event
 
+    def supports_background_tasks(self) -> bool:
+        """Codex is request/response only; mala skips the bg wait path."""
+        return False
+
     # ------------------------------------------------------------------
     # Tee'd-JSONL evidence stream (Phase F / T013, F3 fallback)
     # ------------------------------------------------------------------
@@ -502,7 +506,9 @@ class CodexClient:
         """Best-effort process-group id for the SDK-owned app-server."""
         if sys.platform == "win32":
             return None
-        proc = getattr(getattr(getattr(codex, "_client", None), "_sync", None), "_proc", None)
+        proc = getattr(
+            getattr(getattr(codex, "_client", None), "_sync", None), "_proc", None
+        )
         patched_pgid = getattr(proc, "_mala_sigint_pgid", None)
         if isinstance(patched_pgid, int):
             return patched_pgid
