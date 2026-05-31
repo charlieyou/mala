@@ -66,6 +66,12 @@ _BG_LAUNCH_ID_RE = re.compile(r"background with ID:\s*(\S+)")
 _TASK_RESULT_STATUS_RE = re.compile(r"<status>\s*(\w+)\s*</status>", re.IGNORECASE)
 _TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "stopped"})
 
+# Claude can evict/forget very short-lived background tasks before a later
+# TaskOutput/BashOutput poll. If the poll targeted a known background launch,
+# this error is terminal for mala's wait purposes: there is no future task
+# notification to await on the continuous stream.
+_TASK_RESULT_NOT_FOUND_RE = re.compile(r"\bNo task found with ID:\s*\S+", re.IGNORECASE)
+
 
 def _strip_trailing_punct(value: str) -> str:
     """Drop sentence punctuation the SDK appends after ids/paths in prose."""
@@ -160,7 +166,8 @@ class MessageIterationState:
             Populated in :meth:`_handle_tool_use_event` and cleared when a matching
             ``task_completed`` event is observed, or when the agent retrieves the
             task inline via ``TaskOutput``/``BashOutput`` *and* that retrieval's
-            tool_result reports a terminal status (completed/failed/stopped).
+            tool_result reports a terminal status (completed/failed/stopped) or a
+            correlated no-task-found error.
         background_launch_commands: Map of tool_use_id to the launch command text,
             recorded for background Bash launches when cheaply available.
         background_task_ids: Map of tool_use_id to SDK task_id, recorded when a
@@ -171,8 +178,9 @@ class MessageIterationState:
             targets. Recorded when the agent *requests* a retrieval; resolved when
             the retrieval's tool_result arrives — the launch is cleared from
             ``pending_background_tool_ids`` only if that result reports a terminal
-            status (so block=False polling that says ``running`` does not skip a
-            still-needed wait).
+            status or a correlated no-task-found error (so block=False polling that
+            says ``running`` or generic retrieval errors do not skip a still-needed
+            wait).
     """
 
     session_id: str | None = None
@@ -465,7 +473,8 @@ class MessageStreamProcessor:
         """Map a TaskOutput/BashOutput retrieval to the launch it targets.
 
         No clearing happens here — the launch stays pending until the retrieval's
-        tool_result confirms a terminal status (see :meth:`_resolve_bg_retrieval`).
+        tool_result confirms a terminal status or no-task-found error (see
+        :meth:`_resolve_bg_retrieval`).
         """
         if not retrieval_tool_use_id:
             return
@@ -491,13 +500,21 @@ class MessageStreamProcessor:
         next-turn prompt (never a standalone notification on
         ``receive_messages()``), so a launch the agent successfully retrieved
         inline will never surface a notification to wait on — drop it. But a
-        ``block=False`` poll that reports ``running`` (or an errored retrieval)
-        must keep the launch pending so the wait still runs.
+        ``block=False`` poll that reports ``running`` or a generic errored
+        retrieval must keep the launch pending so the wait still runs. A
+        correlated no-task-found error is terminal because there is no SDK task
+        left to wait on.
         """
         launch_id = state.pending_bg_retrievals.pop(retrieval_tool_use_id, None)
         if launch_id is None:
             return
         if is_error:
+            if _TASK_RESULT_NOT_FOUND_RE.search(result_text):
+                state.pending_background_tool_ids.discard(launch_id)
+                logger.debug(
+                    "Background launch %s cleared via no-task-found inline retrieval",
+                    launch_id,
+                )
             return
         status_match = _TASK_RESULT_STATUS_RE.search(result_text)
         status = status_match.group(1).lower() if status_match else ""

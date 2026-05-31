@@ -294,7 +294,7 @@ async def test_task_started_alone_does_not_clear_pending() -> None:
     assert result.pending_background_tool_ids == frozenset({"tool-bg"})
 
 
-# --- Inline retrieval clears the wait only on a terminal result ---------------
+# --- Inline retrieval clears only on terminal result or no-task-found error ----
 
 _LAUNCH_ACK = (
     "Command running in background with ID: task-1. Output is being written to: "
@@ -395,8 +395,8 @@ async def test_taskoutput_running_result_keeps_pending() -> None:
 
 
 @pytest.mark.asyncio
-async def test_taskoutput_error_result_keeps_pending() -> None:
-    """An errored retrieval (is_error) leaves the launch pending."""
+async def test_taskoutput_generic_error_result_keeps_pending() -> None:
+    """A generic errored retrieval leaves the launch pending."""
     events: list[object] = [
         _bash_bg_launch(),
         _TaskStartedEvent(task_id="task-1", tool_use_id="tool-bg"),
@@ -415,6 +415,37 @@ async def test_taskoutput_error_result_keeps_pending() -> None:
 
     assert state.pending_background_tool_ids == {"tool-bg"}
     assert result.pending_background_tool_ids == frozenset({"tool-bg"})
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "id_field"),
+    [("TaskOutput", "task_id"), ("BashOutput", "bash_id")],
+)
+@pytest.mark.asyncio
+async def test_background_output_no_task_found_error_clears_pending(
+    tool_name: str, id_field: str
+) -> None:
+    """A no-task-found poll is terminal for the correlated launch."""
+    events: list[object] = [
+        _bash_bg_launch(),
+        _ToolResultEvent(tool_use_id="tool-bg", content=_LAUNCH_ACK),
+        _ToolUseEvent(
+            id="tool-out",
+            name=tool_name,
+            input={id_field: "task-1", "block": False},
+        ),
+        _ToolResultEvent(
+            tool_use_id="tool-out",
+            is_error=True,
+            content="<tool_use_error>No task found with ID: task-1</tool_use_error>",
+        ),
+        _ResultEvent(),
+    ]
+
+    state, result = await _run(events)
+
+    assert state.pending_background_tool_ids == set()
+    assert result.pending_background_tool_ids == frozenset()
 
 
 @pytest.mark.asyncio
