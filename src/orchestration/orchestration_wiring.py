@@ -149,6 +149,7 @@ def build_issue_coordinator(
         focus=filters.focus,
         orphans_only=filters.orphans_only,
         order_preference=filters.order_preference,
+        prioritize_wip=filters.prioritize_wip,
     )
     return IssueExecutionCoordinator(
         beads=runtime.beads,

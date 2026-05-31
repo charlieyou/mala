@@ -180,6 +180,7 @@ mala run --max-agents 5 /path/to/repo     # Limit concurrent agents
 mala run --scope epic:proj-abc /path/to/repo    # Process children of epic
 mala run --scope ids:issue-1,issue-2 --order input /path/to/repo  # Specific issues in order
 mala run --resume /path/to/repo            # Include in_progress issues and resume sessions
+mala run --review-wip /path/to/repo        # Review in_progress issues first after interrupted reviews
 mala run --strict --resume /path/to/repo   # Fail if a resumed issue has no session
 mala run --watch /path/to/repo             # Keep polling for new issues
 mala run --config mala.codex.yaml /path/to/repo  # Use an alternate project config

@@ -11,6 +11,7 @@ Tests verify:
 
 import pytest
 
+from src.core.models import IssueResolution, ResolutionOutcome
 from src.domain.lifecycle import (
     Effect,
     ImplementerLifecycle,
@@ -72,6 +73,51 @@ class TestSessionEndTransitions:
 
         assert lifecycle.state == LifecycleState.SUCCESS
         assert result.effect == Effect.COMPLETE_SUCCESS
+
+    def test_already_complete_resolution_skips_review_by_default(self) -> None:
+        """Already-complete resolutions normally complete without review."""
+        lifecycle, ctx = self._setup_for_gate(
+            session_end_enabled=True, review_enabled=True
+        )
+        gate_result = GateResult(
+            passed=True,
+            commit_hash="abc123",
+            resolution=IssueResolution(
+                outcome=ResolutionOutcome.ALREADY_COMPLETE,
+                rationale="Work was already committed",
+            ),
+        )
+
+        result = lifecycle.on_gate_result(ctx, gate_result, new_log_offset=100)
+
+        assert lifecycle.state == LifecycleState.SUCCESS
+        assert result.effect == Effect.COMPLETE_SUCCESS
+
+    def test_force_review_reviews_already_complete_resolution(self) -> None:
+        """Review recovery can override already-complete review skipping."""
+        config = LifecycleConfig(
+            session_end_enabled=True,
+            review_enabled=True,
+            force_review=True,
+        )
+        lifecycle = ImplementerLifecycle(config)
+        lifecycle.start()
+        ctx = LifecycleContext()
+        lifecycle.on_messages_complete(ctx, has_session_id=True)
+        lifecycle.on_log_ready(ctx)
+        gate_result = GateResult(
+            passed=True,
+            commit_hash="abc123",
+            resolution=IssueResolution(
+                outcome=ResolutionOutcome.ALREADY_COMPLETE,
+                rationale="Work was already committed",
+            ),
+        )
+
+        result = lifecycle.on_gate_result(ctx, gate_result, new_log_offset=100)
+
+        assert lifecycle.state == LifecycleState.RUNNING_REVIEW
+        assert result.effect == Effect.RUN_REVIEW
 
     def test_session_end_passed_transitions_to_running_review(self) -> None:
         """Session_end passed → RUNNING_REVIEW (when review enabled)."""

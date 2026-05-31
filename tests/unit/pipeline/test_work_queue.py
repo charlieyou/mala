@@ -17,10 +17,14 @@ if TYPE_CHECKING:
 
 class FakeIssueProvider:
     def __init__(
-        self, ready: list[str] | None = None, error: Exception | None = None
+        self,
+        ready: list[str] | None = None,
+        error: Exception | None = None,
+        ready_by_include_wip: dict[bool, list[str]] | None = None,
     ) -> None:
         self.ready = ready or []
         self.error = error
+        self.ready_by_include_wip = ready_by_include_wip
         self.calls: list[dict[str, object]] = []
 
     async def get_ready_async(
@@ -48,6 +52,8 @@ class FakeIssueProvider:
         )
         if self.error is not None:
             raise self.error
+        if self.ready_by_include_wip is not None:
+            return list(self.ready_by_include_wip[include_wip])
         return list(self.ready)
 
 
@@ -139,6 +145,27 @@ async def test_poll_fetches_ready_issues_and_resets_failures() -> None:
     ]
     assert strategy.failure_waits == []
     assert strategy.idle_waits == []
+
+
+@pytest.mark.asyncio
+async def test_poll_prioritizes_wip_when_configured() -> None:
+    provider = FakeIssueProvider(
+        ready_by_include_wip={
+            True: ["ready-1", "wip-1", "ready-2"],
+            False: ["ready-1", "ready-2"],
+        }
+    )
+    strategy = RecordingPollStrategy()
+    queue = WorkQueue(
+        provider,
+        WorkQueueConfig(include_wip=True, prioritize_wip=True),
+        strategy,
+    )
+
+    result = await queue.poll(queue.snapshot())
+
+    assert result.ready_issue_ids == ("wip-1", "ready-1", "ready-2")
+    assert [call["include_wip"] for call in provider.calls] == [True, False]
 
 
 @pytest.mark.asyncio

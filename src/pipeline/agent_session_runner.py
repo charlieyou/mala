@@ -248,6 +248,8 @@ class AgentSessionInput:
         resume_session_id: Optional session ID to resume from a prior run.
         flow: Flow identifier for structured logging (e.g., "implementer", "epic_remediation").
         baseline_timestamp: Optional baseline timestamp to persist across resumes.
+        force_review: Run review even when the gate reports a resolution that
+            normally skips review, such as already_complete.
     """
 
     issue_id: str
@@ -257,6 +259,7 @@ class AgentSessionInput:
     resume_session_id: str | None = None
     flow: str = "implementer"
     baseline_timestamp: int | None = None
+    force_review: bool = False
 
 
 @dataclass
@@ -408,7 +411,8 @@ class AgentSessionRunner:
         lifecycle_config = LifecycleConfig(
             max_gate_retries=self.view.max_gate_retries,
             max_review_retries=self.view.max_review_retries,
-            review_enabled=self.config.review_enabled,
+            review_enabled=self.config.review_enabled or input.force_review,
+            force_review=input.force_review,
         )
         lifecycle = ImplementerLifecycle(lifecycle_config)
         lifecycle_ctx = LifecycleContext()
@@ -1109,6 +1113,8 @@ class AgentSessionRunner:
                 issue_description=input.issue_description,
                 resume_session_id=current_resume_session_id,
                 baseline_timestamp=input.baseline_timestamp,
+                flow=input.flow,
+                force_review=input.force_review,
             )
             session_cfg, state = self._initialize_session(session_input, agent_id)
 

@@ -69,6 +69,7 @@ def compute_dry_run_outcome(
     orphans_only: bool,
     include_wip: bool,
     order_preference: OrderPreference,
+    prioritize_wip: bool = False,
     issue_provider_factory: Callable[[Path], _DryRunIssueProvider] | None = None,
 ) -> DryRunOutcome:
     """Compute the dry-run outcome for the requested run scope.
@@ -79,6 +80,7 @@ def compute_dry_run_outcome(
         only_ids: Optional explicit ID list (from ``--scope ids:<id,...>``).
         orphans_only: Whether to restrict to orphan issues.
         include_wip: Include in-progress issues (``--resume``).
+        prioritize_wip: Move in-progress issues before ready issues.
         order_preference: Issue ordering preference.
         issue_provider_factory: Optional factory override; defaults to
             ``src.orchestration.factory.create_issue_provider``.
@@ -95,7 +97,7 @@ def compute_dry_run_outcome(
             provider = cast(
                 "_DryRunIssueProvider", factory.create_issue_provider(repo_path)
             )
-        return await provider.get_ready_issues_async(
+        issues = await provider.get_ready_issues_async(
             epic_id=epic_id,
             only_ids=only_ids,
             include_wip=include_wip,
@@ -103,6 +105,12 @@ def compute_dry_run_outcome(
             orphans_only=orphans_only,
             order_preference=order_preference,
         )
+        if include_wip and prioritize_wip:
+            return sorted(
+                issues,
+                key=lambda issue: 0 if issue.get("status") == "in_progress" else 1,
+            )
+        return issues
 
     issues = asyncio.run(_load())
     return DryRunOutcome(issues=issues, focus=focus)

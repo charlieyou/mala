@@ -65,9 +65,7 @@ class FakeIssueProvider:
         self.parent_child_dependency_calls: list[tuple[str, str]] = []
         self.epic_blockers: dict[str, set[str]] = {}
         self.updated_descriptions: list[tuple[str, str]] = []
-        self.updated_issues: list[
-            tuple[str, str | None, str | None, str | None]
-        ] = []
+        self.updated_issues: list[tuple[str, str | None, str | None, str | None]] = []
         self.commit_calls: int = 0
         self.close_epics_calls: int = 0
 
@@ -176,6 +174,12 @@ class FakeIssueProvider:
         if issue_id not in self.issues:
             return None
         return self.issues[issue_id].description
+
+    async def get_issue_status_async(self, issue_id: str) -> str | None:
+        """Get the current status of an issue."""
+        if issue_id not in self.issues:
+            return None
+        return self.issues[issue_id].status
 
     async def close_eligible_epics_async(self) -> bool:
         """Auto-close epics where all children are complete."""

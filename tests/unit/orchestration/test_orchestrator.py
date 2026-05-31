@@ -4310,6 +4310,267 @@ class TestSessionResume:
     """Tests for session resume functionality when include_wip is enabled."""
 
     @pytest.mark.asyncio
+    async def test_review_in_progress_reviews_existing_commits_first(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Review recovery starts WIP issues with review, not the agent session."""
+        fake_issues = FakeIssueProvider(
+            {
+                "test-issue": FakeIssue(
+                    id="test-issue",
+                    status="in_progress",
+                    priority=1,
+                    description="Test issue",
+                )
+            }
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            issue_provider=fake_issues,
+            include_wip=True,
+            review_in_progress=True,
+            config=MalaConfig(coder="claude"),
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
+
+        review_inputs: list[object] = []
+
+        async def fake_run_review(
+            review_input: object, interrupt_event: object = None
+        ) -> object:
+            _ = interrupt_event
+            review_inputs.append(review_input)
+            return SimpleNamespace(
+                result=SimpleNamespace(
+                    passed=True,
+                    issues=[],
+                    parse_error=None,
+                    fatal_error=False,
+                    review_log_path=None,
+                    interrupted=False,
+                ),
+                session_log_path="/tmp/review.log",
+                interrupted=False,
+            )
+
+        async def fail_agent_session(*_args: object, **_kwargs: object) -> object:
+            raise AssertionError("agent session should not start before review passes")
+
+        with (
+            patch.object(orchestrator.review_runner, "run_review", new=fake_run_review),
+            patch(
+                "src.orchestration.orchestrator.get_issue_commits_async",
+                return_value=["abc123"],
+            ),
+            patch(
+                "src.orchestration.orchestrator.lookup_prior_session_info",
+                return_value=None,
+            ),
+            patch(
+                "src.orchestration.orchestrator.AgentSessionRunner.run_session",
+                new=fail_agent_session,
+            ),
+        ):
+            task = await orchestrator.spawn_agent("test-issue")
+            assert task is not None
+            result = await task
+
+        assert fake_issues.claimed == {"test-issue"}
+        assert result.success is True
+        assert result.summary == "Review passed"
+        assert result.review_attempts == 1
+        assert result.review_log_path == "/tmp/review.log"
+        assert len(review_inputs) == 1
+        review_input = review_inputs[0]
+        assert getattr(review_input, "commit_shas") == ["abc123"]
+        assert getattr(review_input, "issue_id") == "test-issue"
+
+    @pytest.mark.asyncio
+    async def test_review_in_progress_does_not_force_review_for_ready_issue(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Review recovery only forces review for issues that were already WIP."""
+        fake_issues = FakeIssueProvider(
+            {
+                "ready-issue": FakeIssue(
+                    id="ready-issue",
+                    status="open",
+                    priority=1,
+                    description="Ready issue",
+                )
+            }
+        )
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            issue_provider=fake_issues,
+            review_in_progress=True,
+            config=MalaConfig(coder="claude"),
+            runs_dir=tmp_path / "runs",
+            lock_releaser=lambda _: 0,
+        )
+
+        captured_inputs: list[AgentSessionInput] = []
+        captured_review_enabled: list[bool] = []
+
+        async def fake_run_session(
+            runner: object, session_input: AgentSessionInput, **_kwargs: object
+        ) -> AgentSessionOutput:
+            captured_inputs.append(session_input)
+            captured_review_enabled.append(getattr(runner, "config").review_enabled)
+            return AgentSessionOutput(
+                success=True,
+                summary="done",
+                agent_id=session_input.agent_id or "agent-1",
+            )
+
+        with (
+            patch(
+                "src.orchestration.orchestrator.lookup_prior_session_info",
+                return_value=None,
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value="base",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.AgentSessionRunner.run_session",
+                new=fake_run_session,
+            ),
+        ):
+            task = await orchestrator.spawn_agent("ready-issue")
+            assert task is not None
+            result = await task
+
+        assert result.success is True
+        assert captured_inputs[0].force_review is False
+        assert captured_review_enabled == [False]
+
+    @pytest.mark.asyncio
+    async def test_review_in_progress_blocking_findings_resume_with_force_review(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Blocking preflight findings are sent to the agent and keep review forced."""
+        from src.infra.io.log_output.run_metadata import SessionInfo
+
+        fake_issues = FakeIssueProvider(
+            {
+                "test-issue": FakeIssue(
+                    id="test-issue",
+                    status="in_progress",
+                    priority=1,
+                    description="Test issue",
+                )
+            }
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            issue_provider=fake_issues,
+            review_in_progress=True,
+            config=MalaConfig(coder="claude"),
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
+        prior_session = SessionInfo(
+            run_id="run-1",
+            session_id="session-1",
+            issue_id="test-issue",
+            run_started_at="2026-01-01T00:00:00Z",
+            started_at_ts=1.0,
+            status="failed",
+            log_path=str(tmp_path / "session.jsonl"),
+            metadata_path=tmp_path / "metadata.json",
+            repo_path=str(tmp_path),
+            baseline_timestamp=123,
+        )
+        blocking_issue = SimpleNamespace(
+            file="src/example.py",
+            line_start=10,
+            line_end=10,
+            priority=1,
+            title="Fix the edge case",
+            body="The recovered review found a blocker.",
+            reviewer="cerberus",
+        )
+        captured_inputs: list[AgentSessionInput] = []
+        captured_review_enabled: list[bool] = []
+
+        async def fake_run_review(
+            review_input: object, interrupt_event: object = None
+        ) -> object:
+            _ = review_input, interrupt_event
+            return SimpleNamespace(
+                result=SimpleNamespace(
+                    passed=False,
+                    issues=[blocking_issue],
+                    parse_error=None,
+                    fatal_error=False,
+                    review_log_path=None,
+                    interrupted=False,
+                ),
+                session_log_path="/tmp/review.log",
+                interrupted=False,
+            )
+
+        async def fake_run_session(
+            runner: object, session_input: AgentSessionInput, **_kwargs: object
+        ) -> AgentSessionOutput:
+            captured_inputs.append(session_input)
+            captured_review_enabled.append(getattr(runner, "config").review_enabled)
+            return AgentSessionOutput(
+                success=True,
+                summary="fixed",
+                session_id=session_input.resume_session_id,
+                agent_id=session_input.agent_id or "agent-1",
+            )
+
+        with (
+            patch.object(orchestrator.review_runner, "run_review", new=fake_run_review),
+            patch(
+                "src.orchestration.orchestrator.get_issue_commits_async",
+                return_value=["abc123"],
+            ),
+            patch(
+                "src.orchestration.orchestrator.lookup_prior_session_info",
+                return_value=prior_session,
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value="base",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.AgentSessionRunner.run_session",
+                new=fake_run_session,
+            ),
+        ):
+            task = await orchestrator.spawn_agent("test-issue")
+            assert task is not None
+            result = await task
+
+        assert result.success is True
+        assert captured_inputs[0].force_review is True
+        assert captured_inputs[0].resume_session_id == "session-1"
+        assert captured_inputs[0].baseline_timestamp == 123
+        assert "Fix the edge case" in captured_inputs[0].prompt
+        assert "src/example.py" in captured_inputs[0].prompt
+        assert captured_review_enabled == [False]
+
+    @pytest.mark.asyncio
     async def test_resume_calls_lookup_for_wip_issues(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:

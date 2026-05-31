@@ -80,6 +80,7 @@ class WorkQueueConfig:
     focus: bool = True
     orphans_only: bool = False
     order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY
+    prioritize_wip: bool = False
 
 
 @dataclass(frozen=True)
@@ -265,16 +266,7 @@ class WorkQueue:
             )
 
         try:
-            ready_issue_ids = await self._issue_provider.get_ready_async(
-                set(snapshot.failed_issue_ids | snapshot.completed_issue_ids),
-                epic_id=self._config.epic_id,
-                only_ids=self._config.only_ids,
-                suppress_warn_ids=self._suppress_warn_ids(snapshot),
-                include_wip=self._config.include_wip,
-                focus=self._config.focus,
-                orphans_only=self._config.orphans_only,
-                order_preference=self._config.order_preference,
-            )
+            ready_issue_ids = await self._fetch_ready_issue_ids(snapshot)
         except Exception as error:
             failed = snapshot.with_ready(
                 (), consecutive_poll_failures=snapshot.consecutive_poll_failures + 1
@@ -310,6 +302,50 @@ class WorkQueue:
             | set(snapshot.active_issue_ids)
             | set(snapshot.completed_issue_ids)
         )
+
+    async def _fetch_ready_issue_ids(self, snapshot: WorkQueueSnapshot) -> list[str]:
+        exclude_ids = set(snapshot.failed_issue_ids | snapshot.completed_issue_ids)
+        suppress_warn_ids = self._suppress_warn_ids(snapshot)
+        ready_issue_ids = await self._issue_provider.get_ready_async(
+            exclude_ids,
+            epic_id=self._config.epic_id,
+            only_ids=self._config.only_ids,
+            suppress_warn_ids=suppress_warn_ids,
+            include_wip=self._config.include_wip,
+            focus=self._config.focus,
+            orphans_only=self._config.orphans_only,
+            order_preference=self._config.order_preference,
+        )
+
+        if not (self._config.include_wip and self._config.prioritize_wip):
+            return ready_issue_ids
+
+        # Recovery mode needs in-progress issues first, without changing the
+        # IssueProvider protocol. Fetch the non-WIP view and treat the set
+        # difference as WIP, preserving each provider's ordering within buckets.
+        second_suppress_warn_ids = suppress_warn_ids
+        if self._config.only_ids:
+            second_suppress_warn_ids = set(ready_issue_ids)
+            if suppress_warn_ids is not None:
+                second_suppress_warn_ids |= suppress_warn_ids
+        ready_without_wip = await self._issue_provider.get_ready_async(
+            exclude_ids,
+            epic_id=self._config.epic_id,
+            only_ids=self._config.only_ids,
+            suppress_warn_ids=second_suppress_warn_ids,
+            include_wip=False,
+            focus=self._config.focus,
+            orphans_only=self._config.orphans_only,
+            order_preference=self._config.order_preference,
+        )
+        non_wip_ids = set(ready_without_wip)
+        wip_first = [
+            issue_id for issue_id in ready_issue_ids if issue_id not in non_wip_ids
+        ]
+        ready_after = [
+            issue_id for issue_id in ready_issue_ids if issue_id in non_wip_ids
+        ]
+        return wip_first + ready_after
 
 
 def capacity_decision(snapshot: WorkQueueSnapshot) -> CapacityDecision:

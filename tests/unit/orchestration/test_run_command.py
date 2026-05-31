@@ -211,6 +211,27 @@ class TestSuccessfulRun:
         assert orchestrator.last_watch_config is not None
         assert orchestrator.last_watch_config.enabled is True
 
+    def test_run_forwards_review_in_progress(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        orchestrator = FakeOrchestrator()
+        _install_fake_orchestrator(monkeypatch, orchestrator)
+
+        execute_run_command(
+            repo_path=tmp_path,
+            **_run_kwargs(review_in_progress=True),
+        )
+
+        cfg = orchestrator.last_orch_config
+        assert cfg.include_wip is True
+        assert cfg.review_in_progress is True
+        assert cfg.cli_args == {
+            "wip": True,
+            "max_issues": None,
+            "watch": False,
+            "review_in_progress": True,
+        }
+
     def test_run_uses_explicit_config_path_for_mala_config(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

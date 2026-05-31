@@ -227,6 +227,7 @@ class LifecycleConfig:
     max_review_retries: int = 3
     session_end_enabled: bool = True
     review_enabled: bool = True
+    force_review: bool = False
 
 
 @dataclass
@@ -482,6 +483,7 @@ class ImplementerLifecycle:
         resolution_skips_review = (
             gate_result.resolution is not None
             and gate_result.resolution.outcome in _SKIP_REVIEW_OUTCOMES
+            and not self.config.force_review
         )
         if (
             self.config.review_enabled

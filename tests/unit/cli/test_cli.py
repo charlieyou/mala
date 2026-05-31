@@ -359,8 +359,7 @@ def test_epic_verify_invokes_verifier(
     assert any(f"Repository: {tmp_path}" in msg for msg in log_messages)
     assert any("Epic: epic-1" in msg for msg in log_messages)
     assert any(
-        "reviewer=cerberus close=false force=true" in msg
-        and "lock_timeout=120s" in msg
+        "reviewer=cerberus close=false force=true" in msg and "lock_timeout=120s" in msg
         for msg in log_messages
     )
 
@@ -396,7 +395,9 @@ def test_epic_verify_config_option_uses_alt_yaml(
         captured["mala_config"] = mala_config
         return DummyOrchestratorWithVerifier(verifier)
 
-    monkeypatch.setattr(src.orchestration.factory, "create_orchestrator", make_orchestrator)
+    monkeypatch.setattr(
+        src.orchestration.factory, "create_orchestrator", make_orchestrator
+    )
 
     with pytest.raises(typer.Exit) as excinfo:
         cli.epic_verify(
@@ -1057,6 +1058,34 @@ def test_run_resume_flags_set_include_wip(
     assert result.exit_code == 0
     assert DummyOrchestrator.last_orch_config is not None
     assert DummyOrchestrator.last_orch_config.include_wip is True
+
+
+def test_run_review_wip_sets_recovery_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """--review-wip includes WIP and enables review recovery mode."""
+    from typer.testing import CliRunner
+
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator(),
+    )
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["run", str(tmp_path), "--review-wip"])
+
+    assert result.exit_code == 0
+    assert DummyOrchestrator.last_orch_config is not None
+    assert DummyOrchestrator.last_orch_config.include_wip is True
+    assert DummyOrchestrator.last_orch_config.review_in_progress is True
 
 
 def test_strict_without_resume_raises_error(

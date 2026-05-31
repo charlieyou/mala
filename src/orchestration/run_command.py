@@ -64,6 +64,7 @@ def execute_run_command(
     dry_run: bool,
     watch: bool,
     override_options: CLIOverrideOptions,
+    review_in_progress: bool = False,
     config_path: Path | None = None,
 ) -> RunCommandOutcome:
     """Build the orchestrator from CLI inputs and run it.
@@ -84,6 +85,8 @@ def execute_run_command(
         scope_config: Parsed ``--scope`` value, or ``None`` for default.
         order_resolution: Resolved ``--order`` value carrying focus flag.
         resume: ``--resume`` flag (include_wip + session resume).
+        review_in_progress: ``--review-wip`` flag (include and
+            prioritize in-progress issues, then review them before completion).
         strict: ``--strict`` flag.
         fresh: ``--fresh`` flag.
         dry_run: ``--dry-run`` flag; when true, returns the dry-run
@@ -104,6 +107,7 @@ def execute_run_command(
     epic_id = scope_config.epic_id if scope_config else None
     only_ids = scope_config.ids if scope_config else None
     orphans_only = scope_config.scope_type == "orphans" if scope_config else False
+    include_wip = resume or review_in_progress
 
     if dry_run:
         outcome = compute_dry_run_outcome(
@@ -111,7 +115,8 @@ def execute_run_command(
             epic_id=epic_id,
             only_ids=only_ids,
             orphans_only=orphans_only,
-            include_wip=resume,
+            include_wip=include_wip,
+            prioritize_wip=review_in_progress,
             order_preference=order_resolution.preference,
         )
         return RunCommandOutcome(exit_code=0, dry_run=outcome)
@@ -130,12 +135,18 @@ def execute_run_command(
             max_issues=max_issues,
             epic_id=epic_id,
             only_ids=only_ids,
-            include_wip=resume,
+            include_wip=include_wip,
+            review_in_progress=review_in_progress,
             strict_resume=strict,
             fresh_session=fresh,
             focus=order_resolution.focus,
             order_preference=order_resolution.preference,
-            cli_args={"wip": resume, "max_issues": max_issues, "watch": watch},
+            cli_args={
+                "wip": include_wip,
+                "max_issues": max_issues,
+                "watch": watch,
+                **({"review_in_progress": True} if review_in_progress else {}),
+            },
             orphans_only=orphans_only,
         )
 

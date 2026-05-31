@@ -8,8 +8,10 @@ import signal
 import time
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.core.models import ReviewInput
 from src.domain.validation.spec import (
     ValidationScope,
     build_validation_spec,
@@ -23,7 +25,11 @@ from src.domain.prompts import (
 
 from src.domain.prompts import build_prompt_validation_commands
 from src.pipeline.review_formatter import format_review_issues
-from src.infra.git_utils import get_git_branch_async, get_git_commit_async
+from src.infra.git_utils import (
+    get_git_branch_async,
+    get_git_commit_async,
+    get_issue_commits_async,
+)
 from src.infra.io.log_output.run_metadata import (
     find_sessions_for_issue,
     lookup_prior_session_info,
@@ -73,8 +79,7 @@ from src.pipeline.issue_result import IssueResult
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-    from pathlib import Path
+    from collections.abc import Callable, Sequence
 
     from src.pipeline.issue_execution_coordinator import AbortResult
     from src.core.protocols.agent_provider import AgentProvider
@@ -95,7 +100,7 @@ if TYPE_CHECKING:
         PromptValidationCommands,
     )
     from src.infra.io.config import MalaConfig
-    from src.infra.io.log_output.run_metadata import RunMetadata
+    from src.infra.io.log_output.run_metadata import RunMetadata, SessionInfo
     from src.infra.telemetry import TelemetryProvider
     from src.pipeline.epic_verification_coordinator import EpicVerificationCoordinator
     from src.pipeline.issue_finalizer import IssueFinalizer, IssueFinalizeOutput
@@ -159,6 +164,42 @@ class StoredReviewIssue:
             body=str(d.get("body", "")),
             reviewer=str(d.get("reviewer", "unknown")),
         )
+
+
+@dataclass(frozen=True)
+class ReviewInProgressDecision:
+    """Result of the review-in-progress recovery preflight."""
+
+    result: IssueResult | None = None
+    followup_prompt: str | None = None
+
+
+def _blocking_review_issues(issues: Sequence[Any]) -> list[Any]:
+    """Return review findings that block issue completion."""
+    return [
+        issue for issue in issues if issue.priority is not None and issue.priority <= 1
+    ]
+
+
+def _non_blocking_review_issues(issues: Sequence[Any]) -> list[Any]:
+    """Return review findings that should be tracked but do not block."""
+    return [issue for issue in issues if issue.priority is None or issue.priority > 1]
+
+
+def _review_issues_to_metadata(issues: Sequence[Any]) -> list[dict[str, Any]]:
+    """Serialize review findings to the run-metadata shape used for resume."""
+    return [
+        {
+            "file": issue.file,
+            "line_start": issue.line_start,
+            "line_end": issue.line_end,
+            "priority": issue.priority,
+            "title": issue.title,
+            "body": issue.body,
+            "reviewer": issue.reviewer,
+        }
+        for issue in issues
+    ]
 
 
 def _build_resume_prompt(
@@ -312,7 +353,8 @@ class MalaOrchestrator:
         self._disabled_validations = derived.disabled_validations
         self._validation_config = derived.validation_config
         self._validation_config_missing = derived.validation_config_missing
-        self.include_wip = orch_config.include_wip
+        self.review_in_progress = orch_config.review_in_progress
+        self.include_wip = orch_config.include_wip or self.review_in_progress
         self.strict_resume = orch_config.strict_resume
         self.fresh_session = orch_config.fresh_session
         self.focus = orch_config.focus
@@ -478,6 +520,7 @@ class MalaOrchestrator:
             epic_id=self.epic_id,
             only_ids=self.only_ids,
             include_wip=self.include_wip,
+            prioritize_wip=self.review_in_progress,
             focus=self.focus,
             orphans_only=self.orphans_only,
             epic_override_ids=self.epic_override_ids,
@@ -754,6 +797,7 @@ class MalaOrchestrator:
         self._cleanup_active_session_path(issue_id)
         self.async_gate_runner.clear_gate_result(issue_id)
         self._state.agent_ids.pop(issue_id, None)
+        self._state.review_in_progress_issue_ids.discard(issue_id)
 
     async def _finalize_issue_result(
         self,
@@ -878,6 +922,176 @@ class MalaOrchestrator:
             on_abort=self._request_abort,
         )
 
+    async def _is_issue_in_progress(self, issue_id: str) -> bool:
+        """Return whether the issue was already in_progress before claiming."""
+        status_getter = getattr(self.beads, "get_issue_status_async", None)
+        if status_getter is None:
+            return False
+        try:
+            status = await status_getter(issue_id)
+        except Exception:
+            logger.debug(
+                "Could not read issue status: issue_id=%s", issue_id, exc_info=True
+            )
+            return False
+        return status == "in_progress"
+
+    async def _review_in_progress_first(
+        self,
+        issue_id: str,
+        agent_id: str,
+        issue_description: str | None,
+        prior_session: SessionInfo | None,
+        base_prompt: str,
+    ) -> ReviewInProgressDecision:
+        """Run review before implementation for explicit WIP recovery mode.
+
+        This handles the case where a prior run was killed after the implementer
+        committed and while review was running. A normal resume can let the agent
+        report ALREADY_COMPLETE, which the lifecycle treats as a no-review
+        resolution. Recovery mode reviews the existing issue commits first; if
+        review finds blocking issues, the normal implementer flow resumes with
+        the findings as the opening prompt.
+        """
+        commit_shas = await get_issue_commits_async(self.repo_path, issue_id)
+        if not commit_shas:
+            logger.info(
+                "Review-in-progress recovery skipped for %s: no issue commits found",
+                issue_id,
+            )
+            return ReviewInProgressDecision()
+
+        session_id = prior_session.session_id if prior_session else None
+        session_log_path = (
+            Path(prior_session.log_path)
+            if prior_session and prior_session.log_path
+            else None
+        )
+        baseline_timestamp = prior_session.baseline_timestamp if prior_session else None
+
+        logger.info(
+            "Review-in-progress recovery: reviewing %d commits for %s before implementation",
+            len(commit_shas),
+            issue_id,
+        )
+        start_time = time.time()
+        output = await self.review_runner.run_review(
+            ReviewInput(
+                issue_id=issue_id,
+                repo_path=self.repo_path,
+                issue_description=issue_description,
+                commit_shas=commit_shas,
+                claude_session_id=session_id,
+            ),
+            self._interrupt_event,
+        )
+        duration = time.time() - start_time
+        review_result = output.result
+        review_log_path = output.session_log_path
+        issues = list(review_result.issues)
+        blocking_issues = _blocking_review_issues(issues)
+        low_priority_issues = _non_blocking_review_issues(issues)
+
+        if output.interrupted or getattr(review_result, "interrupted", False):
+            return ReviewInProgressDecision(
+                result=IssueResult(
+                    issue_id=issue_id,
+                    agent_id=agent_id,
+                    success=False,
+                    summary="Review interrupted",
+                    duration_seconds=duration,
+                    session_id=session_id,
+                    gate_attempts=0,
+                    review_attempts=1,
+                    session_log_path=session_log_path,
+                    review_log_path=review_log_path,
+                    baseline_timestamp=baseline_timestamp,
+                    base_sha=self._state.issue_base_shas.get(issue_id),
+                )
+            )
+
+        if review_result.passed or (
+            not blocking_issues and review_result.parse_error is None
+        ):
+            summary = "Review passed"
+            if low_priority_issues:
+                summary = f"Review passed ({len(low_priority_issues)} P2/P3 issues noted for later)"
+            return ReviewInProgressDecision(
+                result=IssueResult(
+                    issue_id=issue_id,
+                    agent_id=agent_id,
+                    success=True,
+                    summary=summary,
+                    duration_seconds=duration,
+                    session_id=session_id,
+                    gate_attempts=0,
+                    review_attempts=1,
+                    low_priority_review_issues=low_priority_issues or None,
+                    session_log_path=session_log_path,
+                    review_log_path=review_log_path,
+                    baseline_timestamp=baseline_timestamp,
+                    base_sha=self._state.issue_base_shas.get(issue_id),
+                )
+            )
+
+        if review_result.parse_error or review_result.fatal_error:
+            summary = (
+                f"External review failed: {review_result.parse_error or 'fatal error'}"
+            )
+            return ReviewInProgressDecision(
+                result=IssueResult(
+                    issue_id=issue_id,
+                    agent_id=agent_id,
+                    success=False,
+                    summary=summary,
+                    duration_seconds=duration,
+                    session_id=session_id,
+                    gate_attempts=0,
+                    review_attempts=1,
+                    session_log_path=session_log_path,
+                    review_log_path=review_log_path,
+                    baseline_timestamp=baseline_timestamp,
+                    base_sha=self._state.issue_base_shas.get(issue_id),
+                )
+            )
+
+        review_issues = _review_issues_to_metadata(blocking_issues)
+        followup_prompt = _build_resume_prompt(
+            review_issues,
+            self._prompts,
+            self._prompt_validation_commands,
+            issue_id,
+            self.max_review_retries,
+            self.repo_path,
+            prior_session.run_id if prior_session else "review-in-progress",
+        )
+        if followup_prompt is None:
+            critical_msgs = [
+                f"{i.file}:{i.line_start}: {i.title}" for i in blocking_issues[:3]
+            ]
+            summary = f"External review failed: {'; '.join(critical_msgs)}"
+            return ReviewInProgressDecision(
+                result=IssueResult(
+                    issue_id=issue_id,
+                    agent_id=agent_id,
+                    success=False,
+                    summary=summary,
+                    duration_seconds=duration,
+                    session_id=session_id,
+                    gate_attempts=0,
+                    review_attempts=1,
+                    session_log_path=session_log_path,
+                    review_log_path=review_log_path,
+                    baseline_timestamp=baseline_timestamp,
+                    last_review_issues=review_issues,
+                    base_sha=self._state.issue_base_shas.get(issue_id),
+                )
+            )
+
+        if self.fresh_session or not session_id:
+            followup_prompt = f"{base_prompt}\n\n{followup_prompt}"
+        return ReviewInProgressDecision(followup_prompt=followup_prompt)
+
     async def run_implementer(
         self, issue_id: str, *, flow: str = "implementer"
     ) -> IssueResult:
@@ -905,6 +1119,7 @@ class MalaOrchestrator:
         # Must happen BEFORE deadlock registration to avoid leaking agent on strict early exit
         resume_session_id: str | None = None
         baseline_timestamp: int | None = None
+        prior_session: SessionInfo | None = None
         if self.include_wip:
             if self.fresh_session:
                 prior_sessions = find_sessions_for_issue(self.repo_path, issue_id)
@@ -963,6 +1178,20 @@ class MalaOrchestrator:
         if self.fresh_session:
             resume_session_id = None
 
+        review_first = issue_id in self._state.review_in_progress_issue_ids
+        if review_first:
+            review_decision = await self._review_in_progress_first(
+                issue_id,
+                temp_agent_id,
+                issue_description,
+                prior_session,
+                prompt,
+            )
+            if review_decision.result is not None:
+                return review_decision.result
+            if review_decision.followup_prompt is not None:
+                prompt = review_decision.followup_prompt
+
         # Register with deadlock monitor (after strict-resume check to avoid leaks)
         self.deadlock_monitor.register_agent(
             agent_id=temp_agent_id,
@@ -978,6 +1207,7 @@ class MalaOrchestrator:
             resume_session_id=resume_session_id,
             flow=flow,
             baseline_timestamp=baseline_timestamp,
+            force_review=review_first,
         )
 
         # T013: Capture base_sha at session start (before agent writes)
@@ -1068,7 +1298,16 @@ class MalaOrchestrator:
         self, issue_id: str, flow: str = "implementer"
     ) -> asyncio.Task[IssueResult] | None:
         """Spawn a new agent task for an issue. Returns the Task if spawned, None otherwise."""
+        review_first = self.review_in_progress and await self._is_issue_in_progress(
+            issue_id
+        )
+        if review_first:
+            self._state.review_in_progress_issue_ids.add(issue_id)
+        else:
+            self._state.review_in_progress_issue_ids.discard(issue_id)
+
         if not await self.beads.claim_async(issue_id):
+            self._state.review_in_progress_issue_ids.discard(issue_id)
             self.issue_coordinator.mark_failed(issue_id)
             self.event_sink.on_claim_failed(issue_id, issue_id)
             return None

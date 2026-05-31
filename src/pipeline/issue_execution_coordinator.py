@@ -189,6 +189,7 @@ class CoordinatorConfig:
         focus: Legacy flag for epic grouping (use order_preference instead).
         orphans_only: Only process issues with no parent epic.
         order_preference: Issue ordering (focus, epic-priority, issue-priority, or input).
+        prioritize_wip: Process in_progress issues before ready issues.
     """
 
     max_agents: int | None = None
@@ -199,6 +200,7 @@ class CoordinatorConfig:
     focus: bool = True
     orphans_only: bool = False
     order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY
+    prioritize_wip: bool = False
 
 
 class IssueExecutionCoordinator:
@@ -639,6 +641,7 @@ class IssueExecutionCoordinator:
             focus=self.config.focus,
             orphans_only=self.config.orphans_only,
             order_preference=self.config.order_preference,
+            prioritize_wip=self.config.prioritize_wip,
         )
 
     def _queue_snapshot(

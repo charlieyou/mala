@@ -118,6 +118,7 @@ mala epic-verify EPIC-123 --human-override --close
 | `--scope`, `-s` | `all` | Scope filter: `all`, `epic:<id>`, `ids:<id,...>`, `orphans` |
 | `--order` | `epic-priority` | Issue ordering mode (see [Order Modes](#order-modes)) |
 | `--resume`, `-r` | false | Include in_progress issues and attempt to resume their Claude sessions |
+| `--review-wip` | false | Include in_progress issues, process them first, and start them with code review recovery |
 | `--strict` | false | Fail if `--resume` finds no prior session for an issue (requires `--resume`) |
 | `--fresh/--no-fresh` | false | Start new SDK session instead of resuming (requires `--resume`, conflicts with `--strict`) |
 
@@ -158,9 +159,18 @@ mala run --resume /path/to/repo
 
 # Start fresh sessions while keeping WIP scope and review feedback
 mala run --resume --fresh /path/to/repo
+
+# Recover a run killed during review: review in-progress issue commits first
+mala run --review-wip /path/to/repo
 ```
 
 The `--fresh` flag starts a new SDK session instead of resuming the previous one. This is useful when you want to clear context/token history while still including in-progress issues and their review feedback in scope.
+
+Use `--review-wip` when a previous run was interrupted while an issue
+was in code review. It implies WIP scope, prioritizes those in-progress issues,
+reviews their existing issue commits before starting a new implementer turn, and
+forces the resumed lifecycle to run review even if the agent reports the issue as
+already complete.
 
 ### Watch Mode
 

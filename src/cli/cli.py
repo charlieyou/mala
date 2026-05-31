@@ -338,7 +338,7 @@ _CODEX_SANDBOX_HELP = (
 )
 _FAST_HELP = (
     "Enable Codex fast mode for this run. Only consulted when coder=codex; "
-    "writes service_tier=\"fast\" and [features].fast_mode=true to Codex config."
+    'writes service_tier="fast" and [features].fast_mode=true to Codex config.'
 )
 _CONFIG_HELP = (
     "Path to a Mala project config file. Defaults to <repo>/mala.yaml; relative "
@@ -404,6 +404,17 @@ def run(
             "--resume/--no-resume",
             "-r",
             help="Include in_progress issues AND attempt to resume their prior Claude sessions",
+            rich_help_panel="Scope & Ordering",
+        ),
+    ] = False,
+    review_in_progress: Annotated[
+        bool,
+        typer.Option(
+            "--review-wip/--no-review-wip",
+            help=(
+                "Process in_progress issues first and start them with code review "
+                "recovery instead of allowing already-complete resume skips"
+            ),
             rich_help_panel="Scope & Ordering",
         ),
     ] = False,
@@ -586,6 +597,7 @@ def run(
         resume=resume,
         strict=strict,
         fresh=fresh,
+        review_in_progress=review_in_progress,
         dry_run=dry_run,
         watch=watch,
         override_options=CLIOverrideOptions(
