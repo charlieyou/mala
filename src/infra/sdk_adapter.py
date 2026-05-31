@@ -36,6 +36,10 @@ if TYPE_CHECKING:
     from src.core.protocols.sdk import SDKClientProtocol
 
 
+CLAUDE_STDOUT_MAX_BUFFER_SIZE = 16 * 1024 * 1024
+"""Allow large single-message CLI JSON events such as verbose TaskOutput results."""
+
+
 class _ClaudeAgentEventClient:
     """Wrap :class:`ClaudeSDKClient` so ``receive_response()`` emits ``AgentEvent``s.
 
@@ -220,6 +224,7 @@ class SDKClientFactory:
             hooks=hooks,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
             resume=resume,  # type: ignore[arg-type]
             effort=effort,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            max_buffer_size=CLAUDE_STDOUT_MAX_BUFFER_SIZE,
         )
 
     def create_hook_matcher(

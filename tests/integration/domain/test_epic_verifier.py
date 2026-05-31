@@ -9,8 +9,10 @@ Tests the EpicVerifier class and ClaudeEpicVerificationModel including:
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from types import ModuleType
+from typing import TYPE_CHECKING, Self
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
@@ -20,6 +22,7 @@ if TYPE_CHECKING:
 
     from src.orchestration.orchestrator import MalaOrchestrator
 
+from src.core.models import EpicVerdict, UnmetCriterion
 from src.infra.epic_scope import ScopedCommits
 from src.infra.epic_verifier import (
     ClaudeEpicVerificationModel,
@@ -27,7 +30,7 @@ from src.infra.epic_verifier import (
     _compute_criterion_hash,
     _extract_json_from_code_blocks,
 )
-from src.core.models import EpicVerdict, UnmetCriterion
+from src.infra.sdk_adapter import CLAUDE_STDOUT_MAX_BUFFER_SIZE
 from src.infra.tools.command_runner import CommandResult
 
 
@@ -1042,6 +1045,56 @@ class TestVerifyAndCloseEpic:
 
 class TestClaudeEpicVerificationModel:
     """Tests for Claude-based verification model."""
+
+    @pytest.mark.asyncio
+    async def test_agent_sdk_options_raise_stdout_buffer_limit(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Epic verification's direct SDK options use mala's larger buffer."""
+
+        captured_options: list[dict[str, object]] = []
+
+        class FakeClaudeAgentOptions:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+                captured_options.append(kwargs)
+
+        class FakeTextBlock:
+            def __init__(self, text: str) -> None:
+                self.text = text
+
+        class FakeAssistantMessage:
+            def __init__(self, text: str) -> None:
+                self.content = [FakeTextBlock(text)]
+
+        class FakeClaudeSDKClient:
+            def __init__(self, *, options: object) -> None:
+                self.options = options
+
+            async def __aenter__(self) -> Self:
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                pass
+
+            async def query(self, prompt: str) -> None:
+                pass
+
+            async def receive_response(self) -> object:
+                yield FakeAssistantMessage("{}")
+
+        fake_sdk = ModuleType("claude_agent_sdk")
+        setattr(fake_sdk, "AssistantMessage", FakeAssistantMessage)
+        setattr(fake_sdk, "ClaudeAgentOptions", FakeClaudeAgentOptions)
+        setattr(fake_sdk, "ClaudeSDKClient", FakeClaudeSDKClient)
+        setattr(fake_sdk, "TextBlock", FakeTextBlock)
+        monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_sdk)
+
+        model = ClaudeEpicVerificationModel(repo_path=tmp_path)
+        await model._verify_with_agent_sdk("prompt")
+
+        assert captured_options
+        assert captured_options[0]["max_buffer_size"] == CLAUDE_STDOUT_MAX_BUFFER_SIZE
 
     def test_parses_valid_json_response(self) -> None:
         """Should parse valid JSON verdict."""

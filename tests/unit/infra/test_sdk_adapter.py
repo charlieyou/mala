@@ -12,7 +12,11 @@ from src.core.protocols.agent_event import (
     AgentTaskCompletedEvent,
     AgentTaskStartedEvent,
 )
-from src.infra.sdk_adapter import SDKClientFactory, _ClaudeAgentEventClient
+from src.infra.sdk_adapter import (
+    CLAUDE_STDOUT_MAX_BUFFER_SIZE,
+    SDKClientFactory,
+    _ClaudeAgentEventClient,
+)
 
 if TYPE_CHECKING:
     from claude_agent_sdk.types import ClaudeAgentOptions
@@ -77,6 +81,18 @@ class TestSettingSources:
             factory.create_options(cwd=str(tmp_path), setting_sources=[]),
         )
         assert options.setting_sources == []
+
+
+class TestMaxBufferSize:
+    """Tests for Claude subprocess stdout buffer sizing."""
+
+    def test_create_options_raises_sdk_stdout_buffer_limit(
+        self, factory: SDKClientFactory, tmp_path: Path
+    ) -> None:
+        """Large TaskOutput JSON events should not hit the SDK's 1 MiB default."""
+        options = cast("ClaudeAgentOptions", factory.create_options(cwd=str(tmp_path)))
+
+        assert options.max_buffer_size == CLAUDE_STDOUT_MAX_BUFFER_SIZE
 
 
 def _make_message(class_name: str, **attrs: object) -> object:

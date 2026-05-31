@@ -33,6 +33,7 @@ from src.core.models import (
     RetryConfig,
     UnmetCriterion,
 )
+from src.infra.sdk_adapter import CLAUDE_STDOUT_MAX_BUFFER_SIZE
 from src.infra.epic_scope import EpicScopeAnalyzer
 
 if TYPE_CHECKING:
@@ -295,6 +296,7 @@ class ClaudeEpicVerificationModel:
                 "Task",
             ],
             env=dict(os.environ),
+            max_buffer_size=CLAUDE_STDOUT_MAX_BUFFER_SIZE,
         )
 
         response_chunks: list[str] = []

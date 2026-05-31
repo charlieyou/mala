@@ -57,7 +57,7 @@ These are runtime safety contracts. Issue text, plan docs, project conventions, 
 
 ## Long-Running Work
 
-The `Monitor` tool is disabled. **Background-and-yield is supported only on the Claude coder.** When running as Claude, for a step that will not finish within this session (a long build, a long test or training run, a slow data job), launch it with `Bash` using `run_in_background=true` and then end your turn. Do not block the session waiting on it. mala keeps the session open, waits for the backgrounded task to finish, and resumes you with its status and output so you can finalize the issue — commit the deliverable, record validation evidence, and continue dependent work — at the true end.
+The `Monitor` tool is disabled. **Background-and-yield is supported only on the Claude coder.** When running as Claude, for a step that will not finish within this session (a long build, a long test or training run, a slow data job), launch it with `Bash` using `run_in_background=true` and then end your turn. Do not block the session waiting on it, and do not use `TaskOutput`/`BashOutput` to pull the full background log back into chat; if you need interim diagnostics, inspect the output file with bounded shell commands such as `tail`, `sed`, or `grep`. mala keeps the session open, waits for the backgrounded task to finish, and resumes you with its status and output so you can finalize the issue — commit the deliverable, record validation evidence, and continue dependent work — at the true end.
 
 On any other coder, do **not** rely on this: keep long-running steps in the foreground and finish them within your turn before validating and committing — never yield with a backgrounded task as the only path to completing the issue.
 
