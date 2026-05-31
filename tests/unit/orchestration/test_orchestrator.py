@@ -4388,6 +4388,7 @@ class TestSessionResume:
         review_input = review_inputs[0]
         assert getattr(review_input, "commit_shas") == ["abc123"]
         assert getattr(review_input, "issue_id") == "test-issue"
+        assert getattr(review_input, "claude_session_id") == "review-wip-test-issue"
 
     @pytest.mark.asyncio
     async def test_review_in_progress_does_not_force_review_for_ready_issue(

@@ -961,7 +961,11 @@ class MalaOrchestrator:
             )
             return ReviewInProgressDecision()
 
-        session_id = prior_session.session_id if prior_session else None
+        session_id = (
+            prior_session.session_id
+            if prior_session and prior_session.session_id
+            else f"review-wip-{issue_id}"
+        )
         session_log_path = (
             Path(prior_session.log_path)
             if prior_session and prior_session.log_path
