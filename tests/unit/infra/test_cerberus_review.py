@@ -573,6 +573,101 @@ class TestCerberusV2Review:
             assert spawn_env["CERBERUS_PROJECT_KEY"] == "project-1"
             assert spawn_env["CERBERUS_ROOT"] == "/tmp/cerberus"
 
+    async def test_concurrent_reviews_for_same_project_are_serialized(
+        self, tmp_path: Path
+    ) -> None:
+        """Concurrent reviews sharing Cerberus project state must not overlap."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from src.infra.clients.cerberus_cli import AuthorContextResult, SpawnResult
+
+        state_root = tmp_path / ".mala" / "cerberus"
+        reviewer = DefaultReviewer(
+            repo_path=tmp_path,
+            state_root=state_root,
+            project_key="project-1",
+            env={"CERBERUS_ROOT": "/tmp/cerberus"},
+        )
+        _write_empty_cerberus_output(
+            tmp_path,
+            project_key="project-1",
+            run_key="mala-session-1",
+        )
+        _write_empty_cerberus_output(
+            tmp_path,
+            project_key="project-1",
+            run_key="mala-session-2",
+        )
+
+        first_wait_started = asyncio.Event()
+        release_first_wait = asyncio.Event()
+        second_spawn_started = asyncio.Event()
+        wait_count = 0
+
+        async def set_author_context(*args: object, **kwargs: object) -> AuthorContextResult:
+            del args, kwargs
+            return AuthorContextResult(success=True)
+
+        async def spawn_code_review(*args: object, **kwargs: object) -> SpawnResult:
+            nonlocal wait_count
+            del args, kwargs
+            if wait_count == 1:
+                second_spawn_started.set()
+            return SpawnResult(success=True)
+
+        async def wait_for_review(*args: object, **kwargs: object) -> MagicMock:
+            nonlocal wait_count
+            del args, kwargs
+            wait_count += 1
+            result = MagicMock()
+            result.returncode = 0
+            result.timed_out = False
+            result.stderr = ""
+            if wait_count == 1:
+                first_wait_started.set()
+                await release_first_wait.wait()
+                result.stdout = _gate_state_json(run_key="mala-session-1")
+            else:
+                result.stdout = _gate_state_json(run_key="mala-session-2")
+            return result
+
+        with (
+            patch(
+                "src.infra.clients.cerberus_cli.CerberusCLI.validate_binary",
+                return_value=None,
+            ),
+            patch(
+                "src.infra.clients.cerberus_cli.CerberusCLI.set_author_context",
+                new=AsyncMock(side_effect=set_author_context),
+            ),
+            patch(
+                "src.infra.clients.cerberus_cli.CerberusCLI.spawn_code_review",
+                new=AsyncMock(side_effect=spawn_code_review),
+            ),
+            patch(
+                "src.infra.clients.cerberus_cli.CerberusCLI.wait_for_review",
+                new=AsyncMock(side_effect=wait_for_review),
+            ),
+        ):
+            first = asyncio.create_task(
+                reviewer(commit_shas=["abc123"], claude_session_id="session-1")
+            )
+            await asyncio.wait_for(first_wait_started.wait(), timeout=1)
+
+            second = asyncio.create_task(
+                reviewer(commit_shas=["def456"], claude_session_id="session-2")
+            )
+            await asyncio.sleep(0)
+            assert not second_spawn_started.is_set()
+
+            release_first_wait.set()
+            first_result, second_result = await asyncio.gather(first, second)
+
+        assert first_result.passed is True
+        assert second_result.passed is True
+        assert second_spawn_started.is_set()
+
     async def test_author_context_is_written_before_spawn(
         self, tmp_path: Path
     ) -> None:

@@ -11,6 +11,7 @@ Subprocess management is delegated to CerberusCLI.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,8 +28,27 @@ from src.infra.tools.command_runner import CommandRunner
 
 logger = logging.getLogger(__name__)
 
+_review_locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+
+def _review_lock(state_root: Path, project_key: str) -> asyncio.Lock:
+    """Return the process-local lock for a Cerberus project state directory.
+
+    Cerberus stores the active reviewer session under the project state. Running
+    two reviews for the same project concurrently can overwrite that active
+    session bookkeeping, leaving one waiter blocked even after its underlying
+    agent transcript completed. Serialize only reviews sharing the same
+    ``state_root`` and ``project_key``; unrelated projects can still run in
+    parallel.
+    """
+    key = (str(state_root.resolve()), project_key)
+    lock = _review_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _review_locks[key] = lock
+    return lock
+
 if TYPE_CHECKING:
-    import asyncio
     from collections.abc import Sequence
 
     from src.core.protocols.events import MalaEventSink
@@ -135,110 +155,111 @@ class DefaultReviewer:
                 review_log_path=None,
             )
 
-        author_context_result = await cli.set_author_context(
-            runner=runner,
-            env=env,
-            author_context=author_context,
-        )
-        if not author_context_result.success:
-            if author_context:
-                if context_file is None:
+        async with _review_lock(state_root, project_key):
+            author_context_result = await cli.set_author_context(
+                runner=runner,
+                env=env,
+                author_context=author_context,
+            )
+            if not author_context_result.success:
+                if author_context:
+                    if context_file is None:
+                        return ReviewResult(
+                            passed=False,
+                            issues=[],
+                            parse_error=(
+                                "author-context set failed and no context_file "
+                                "fallback is available: "
+                                f"{author_context_result.error_detail}"
+                            ),
+                            fatal_error=False,
+                            review_log_path=None,
+                        )
+                    logger.warning(
+                        "Failed to write Cerberus author context; continuing with "
+                        "context-file fallback: %s",
+                        author_context_result.error_detail,
+                    )
+                else:
                     return ReviewResult(
                         passed=False,
                         issues=[],
                         parse_error=(
-                            "author-context set failed and no context_file "
-                            "fallback is available: "
+                            "author-context clear failed: "
                             f"{author_context_result.error_detail}"
                         ),
                         fatal_error=False,
                         review_log_path=None,
                     )
-                logger.warning(
-                    "Failed to write Cerberus author context; continuing with "
-                    "context-file fallback: %s",
-                    author_context_result.error_detail,
-                )
-            else:
+
+            # Spawn code review
+            spawn_result = await cli.spawn_code_review(
+                runner=runner,
+                env=env,
+                timeout=timeout,
+                spawn_args=self.spawn_args,
+                context_file=context_file,
+                commit_shas=commit_shas,
+            )
+
+            if spawn_result.timed_out:
                 return ReviewResult(
                     passed=False,
                     issues=[],
-                    parse_error=(
-                        "author-context clear failed: "
-                        f"{author_context_result.error_detail}"
-                    ),
+                    parse_error="spawn timeout",
                     fatal_error=False,
-                    review_log_path=None,
                 )
 
-        # Spawn code review
-        spawn_result = await cli.spawn_code_review(
-            runner=runner,
-            env=env,
-            timeout=timeout,
-            spawn_args=self.spawn_args,
-            context_file=context_file,
-            commit_shas=commit_shas,
-        )
+            if not spawn_result.success:
+                if self._is_no_changes_error(spawn_result.error_detail):
+                    logger.info("Review skipped because Cerberus found no changes in diff")
+                    return ReviewResult(
+                        passed=True,
+                        issues=[],
+                        parse_error=None,
+                        fatal_error=False,
+                    )
+                if spawn_result.already_active:
+                    logger.info("Review already active for run_key=%s; waiting", run_key)
+                else:
+                    return ReviewResult(
+                        passed=False,
+                        issues=[],
+                        parse_error=f"spawn failed: {spawn_result.error_detail}",
+                        fatal_error=False,
+                    )
 
-        if spawn_result.timed_out:
-            return ReviewResult(
-                passed=False,
-                issues=[],
-                parse_error="spawn timeout",
-                fatal_error=False,
+            # Check if wait_args already specifies --timeout to avoid duplicates
+            user_timeout = CerberusCLI.extract_wait_timeout(self.wait_args)
+
+            # Wait for review completion
+            wait_result = await cli.wait_for_review(
+                run_key=run_key,
+                runner=runner,
+                env=env,
+                cli_timeout=timeout,
+                wait_args=self.wait_args,
+                user_timeout=user_timeout,
             )
 
-        if not spawn_result.success:
-            if self._is_no_changes_error(spawn_result.error_detail):
-                logger.info("Review skipped because Cerberus found no changes in diff")
-                return ReviewResult(
-                    passed=True,
-                    issues=[],
-                    parse_error=None,
-                    fatal_error=False,
-                )
-            if spawn_result.already_active:
-                logger.info("Review already active for run_key=%s; waiting", run_key)
-            else:
+            if wait_result.timed_out:
+                logger.warning("Review timeout after=%ds", timeout)
                 return ReviewResult(
                     passed=False,
                     issues=[],
-                    parse_error=f"spawn failed: {spawn_result.error_detail}",
+                    parse_error="timeout",
                     fatal_error=False,
                 )
 
-        # Check if wait_args already specifies --timeout to avoid duplicates
-        user_timeout = CerberusCLI.extract_wait_timeout(self.wait_args)
-
-        # Wait for review completion
-        wait_result = await cli.wait_for_review(
-            run_key=run_key,
-            runner=runner,
-            env=env,
-            cli_timeout=timeout,
-            wait_args=self.wait_args,
-            user_timeout=user_timeout,
-        )
-
-        if wait_result.timed_out:
-            logger.warning("Review timeout after=%ds", timeout)
-            return ReviewResult(
-                passed=False,
-                issues=[],
-                parse_error="timeout",
-                fatal_error=False,
+            result = map_exit_code_to_result(
+                wait_result.returncode,
+                wait_result.stdout,
+                wait_result.stderr,
+                event_sink=self.event_sink,
+                state_root=state_root,
+                project_key=env["CERBERUS_PROJECT_KEY"],
+                run_key=run_key,
             )
-
-        result = map_exit_code_to_result(
-            wait_result.returncode,
-            wait_result.stdout,
-            wait_result.stderr,
-            event_sink=self.event_sink,
-            state_root=state_root,
-            project_key=env["CERBERUS_PROJECT_KEY"],
-            run_key=run_key,
-        )
         logger.info(
             "Review completed: passed=%s issues=%d",
             result.passed,
