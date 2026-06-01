@@ -28,6 +28,7 @@ from src.pipeline.gate_metadata import (
     build_gate_metadata,
     build_gate_metadata_from_logs,
 )
+from src.pipeline.review_tracking import create_review_tracking_issues
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -281,8 +282,6 @@ class IssueFinalizer:
         review_issues: list[ReviewIssueProtocol],
     ) -> bool:
         """Create tracking issues for non-blocking review findings."""
-        from src.pipeline.review_tracking import create_review_tracking_issues
-
         parent_epic_id = await self.issue_provider.get_parent_epic_async(issue_id)
         return await create_review_tracking_issues(
             self.issue_provider,
