@@ -198,6 +198,33 @@ class TestDangerousCommands:
         assert is_deny(result)
         assert pattern in deny_reason(result)
 
+    def test_blocks_git_restore_from_codex_shell_command_tool(
+        self, env: dict[str, str]
+    ) -> None:
+        """Current Codex shell calls arrive as ``shell_command`` tools."""
+        result = decide(
+            make_payload("shell_command", {"command": "git restore file.py"})
+        )
+
+        assert is_deny(result)
+        assert "git restore" in deny_reason(result)
+
+    def test_blocks_git_restore_from_codex_shell_command_cmd_key(
+        self, env: dict[str, str]
+    ) -> None:
+        result = decide(make_payload("shell_command", {"cmd": "git restore file.py"}))
+
+        assert is_deny(result)
+        assert "git restore" in deny_reason(result)
+
+    def test_blocks_git_restore_from_codex_bash_tool_name(
+        self, env: dict[str, str]
+    ) -> None:
+        result = decide(make_payload("Bash", {"command": "git restore file.py"}))
+
+        assert is_deny(result)
+        assert "git restore" in deny_reason(result)
+
 
 # ---------------------------------------------------------------------------
 # Disallowed-tool gate (AC #9.c)

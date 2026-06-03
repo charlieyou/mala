@@ -59,10 +59,13 @@ from .dangerous_commands import BASH_TOOL_NAMES
 __all__ = ["decide", "main"]
 
 
-# Codex shell tool name candidates. ``bash`` is the public Codex tool name;
-# ``local-shell`` is the internal SDK name retained for compatibility with
-# the Phase D spike findings (plan L831 TBD).
-SHELL_TOOL_NAMES = frozenset({"bash", "local-shell", "shell"} | set(BASH_TOOL_NAMES))
+# Codex shell tool name candidates. ``shell_command`` is the current Codex
+# model tool name (surfaced as ``commandExecution`` items in session logs);
+# ``bash`` / ``shell`` / ``local-shell`` are retained for older SDK spikes and
+# cross-coder compatibility.
+SHELL_TOOL_NAMES = frozenset(
+    {"bash", "local-shell", "shell", "shell_command"} | set(BASH_TOOL_NAMES)
+)
 
 # Codex file-edit tool name candidates (plan L832 TBD); ``apply_patch`` is
 # the documented Codex name and is matched case-insensitively elsewhere
@@ -140,11 +143,13 @@ def _disallowed_tools(env: dict[str, str]) -> set[str]:
 def _command_string(tool_input: dict[str, Any]) -> str:
     """Pull the command string out of a Codex bash-tool-input dict.
 
-    Codex shell tools may surface either a raw string under ``command`` or
-    an argv list (plan L839 TBD). Treat lists as joined argv for the
-    heuristic; callers that need exact tokenization re-parse via shlex.
+    Codex shell tools may surface either a raw string under ``command`` /
+    ``cmd`` or an argv list (plan L839 TBD). Treat lists as joined argv for
+    the heuristic; callers that need exact tokenization re-parse via shlex.
     """
     cmd = tool_input.get("command")
+    if cmd is None:
+        cmd = tool_input.get("cmd")
     if isinstance(cmd, str):
         return cmd
     if isinstance(cmd, list):
@@ -159,6 +164,7 @@ def decide(input_payload: dict[str, Any]) -> dict[str, Any]:
     to stdout. Pure function: tests can drive it directly.
     """
     tool_name = str(input_payload.get("tool_name") or "")
+    tool_name_key = tool_name.lower()
     tool_input = input_payload.get("tool_input") or {}
     if not isinstance(tool_input, dict):
         tool_input = {}
@@ -177,7 +183,7 @@ def decide(input_payload: dict[str, Any]) -> dict[str, Any]:
     lock_dir = env.get("MALA_LOCK_DIR")
     repo_namespace = env.get("MALA_REPO_NAMESPACE")
 
-    if tool_name in SHELL_TOOL_NAMES:
+    if tool_name_key in SHELL_TOOL_NAMES:
         command = _command_string(tool_input)
         # 1. Dangerous-command detection (does not require lock env).
         # Also walks into backtick / ``$()`` substitution bodies — the
@@ -202,7 +208,7 @@ def decide(input_payload: dict[str, Any]) -> dict[str, Any]:
         )
         return _deny(reason) if reason is not None else _allow()
 
-    if tool_name in FILE_EDIT_TOOL_NAMES:
+    if tool_name_key in FILE_EDIT_TOOL_NAMES:
         if not (agent_id and lock_dir and repo_namespace):
             return _deny(_MSG_ENV_MISSING)
         targets = _apply_patch_paths(tool_input)
