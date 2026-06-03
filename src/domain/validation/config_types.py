@@ -892,6 +892,39 @@ class LongRunningConfig:
 
 
 @dataclass(frozen=True)
+class LockWaitConfig:
+    """Configuration for the lock park-and-resume (wait-until-free) mechanism.
+
+    When a Claude agent is blocked on a peer-held file lock, it yields via the
+    ``lock_wait`` tool. mala parks the session between turns (outside the hard
+    timeout), waits until each contended path has no holder, then resumes the
+    agent on the same client to re-acquire and finalize before gating once at
+    the true end. mala only waits until a path is free; it does not acquire on
+    the agent's behalf, so the agent re-runs ``lock_acquire`` itself on resume.
+
+    Unlike :class:`LongRunningConfig`, freeing is detected by polling
+    ``get_lock_holder`` (there is no completion notification), so a
+    ``poll_interval_ms`` is configurable.
+
+    Attributes:
+        enabled: Whether the park/resume mechanism is active. When False, mala
+            falls back to the in-foreground timeout-escalation behavior.
+        max_wait_seconds: Maximum time to wait for the contended locks to free
+            before resuming the agent with status ``unavailable`` (default:
+            1800 = 30 minutes).
+        max_resume_cycles: Maximum number of park/resume cycles to follow within
+            one issue before stopping (default: 3).
+        poll_interval_ms: How often to re-check lock holders while parked, in
+            milliseconds (default: 500). Must be positive.
+    """
+
+    enabled: bool = True
+    max_wait_seconds: int = 1800
+    max_resume_cycles: int = 3
+    poll_interval_ms: int = 500
+
+
+@dataclass(frozen=True)
 class ValidationConfig:
     """Top-level configuration from mala.yaml.
 
@@ -919,6 +952,8 @@ class ValidationConfig:
             (agent_sdk or cerberus) is used for epic verification.
         long_running: Configuration for the background wait/resume mechanism that
             keeps the SDK connection open while a backgrounded task finishes.
+        lock_wait: Configuration for the lock park-and-resume mechanism that
+            parks an agent blocked on a peer-held lock until it frees.
         _fields_set: Set of field names that were explicitly provided in source.
             Used by the merger to distinguish "not set" from "explicitly set".
     """
@@ -941,6 +976,7 @@ class ValidationConfig:
         default_factory=lambda: CodeReviewConfig(enabled=False)
     )
     long_running: LongRunningConfig = field(default_factory=LongRunningConfig)
+    lock_wait: LockWaitConfig = field(default_factory=LockWaitConfig)
     # Coder selection (validated above as strict enum). Stored here so the
     # orchestrator can flow yaml values through to MalaConfig.from_env's
     # yaml_coder / yaml_amp_mode parameters (CLI > env > yaml > default).

@@ -967,6 +967,16 @@ The mechanism is Claude-only and event-driven (no polling). `Monitor` is in
 mala can observe. Codex and Amp paths are unaffected. See
 [`long_running`](project-config.md) for the tunables.
 
+The same yield-and-resume shape handles lock contention. When a Claude agent is
+blocked on a peer-held file lock, it parks via the `lock_wait` tool and yields;
+mala waits until the contended paths free (polling lock holders), then resumes
+the agent on the **same** client to re-acquire and finalize, gating once at the
+true end. mala never acquires on the agent's behalf, so the parked agent adds no
+new holds while waiting (deadlock-safe). This is Claude-only; Codex and Amp keep
+the in-foreground `lock_acquire(timeout_seconds=300)` escalation. See
+[`lock_wait`](project-config.md) for the tunables (`enabled`,
+`max_wait_seconds`, `max_resume_cycles`, `poll_interval_ms`).
+
 ## Future Considerations
 
 1. **Language Support**: Currently Python-only (pytest, ruff, ty). Other languages would need validation spec extensions.

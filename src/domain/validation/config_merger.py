@@ -233,6 +233,9 @@ def merge_configs(
     # long_running: User value always takes precedence (presets don't define this)
     merged_long_running = user.long_running
 
+    # lock_wait: User value always takes precedence (presets don't define this)
+    merged_lock_wait = user.lock_wait
+
     # coder / amp_mode / model / effort / codex_options: User value always takes
     # precedence (presets don't define these)
     merged_coder = user.coder
@@ -258,6 +261,7 @@ def merge_configs(
         per_issue_review=merged_per_issue_review,
         epic_verification=merged_epic_verification,
         long_running=merged_long_running,
+        lock_wait=merged_lock_wait,
         coder=merged_coder,
         amp_mode=merged_amp_mode,
         model=merged_model,

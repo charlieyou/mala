@@ -295,6 +295,20 @@ class ConsoleEventSink(BaseEventSink):
             agent_id=agent_id,
         )
 
+    def on_lock_wait(
+        self,
+        agent_id: str,
+        elapsed_seconds: float,
+        budget_seconds: float,
+        blocked_count: int,
+    ) -> None:
+        log(
+            "⧖",
+            f"Waiting on {blocked_count} locked file(s) "
+            f"({elapsed_seconds:.0f}s / {budget_seconds:.0f}s budget)",
+            agent_id=agent_id,
+        )
+
     # -------------------------------------------------------------------------
     # Quality gate events
     # -------------------------------------------------------------------------

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.domain.validation.config_types import LongRunningConfig
+from src.domain.validation.config_types import LockWaitConfig, LongRunningConfig
 from src.infra.io.log_output.console import is_verbose_enabled
 from src.pipeline.agent_session_runner import AgentSessionConfig, SessionPrompts
 from src.pipeline.gate_runner import (
@@ -212,6 +212,7 @@ def build_session_config(
         checkpoint_request=pipeline.prompts.checkpoint_request_prompt,
         continuation=pipeline.prompts.continuation_prompt,
         await_resume=pipeline.prompts.await_resume_prompt,
+        lock_resume=pipeline.prompts.lock_resume_prompt,
     )
     # Default to enabled (LongRunningConfig defaults) when no validation config
     # is present, so repos without a mala.yaml still get the background
@@ -222,6 +223,15 @@ def build_session_config(
         if pipeline.validation_config is not None
         else LongRunningConfig()
     )
+    # Default to enabled (LockWaitConfig defaults) when no validation config is
+    # present, so repos without a mala.yaml still get the lock park/resume
+    # behavior the implementer prompt advertises rather than the in-foreground
+    # timeout-escalation fallback.
+    lock_wait = (
+        pipeline.validation_config.lock_wait
+        if pipeline.validation_config is not None
+        else LockWaitConfig()
+    )
     return AgentSessionConfig(
         prompts=prompts,
         review_enabled=review_enabled,
@@ -229,4 +239,5 @@ def build_session_config(
         mcp_server_factory=mcp_server_factory,
         strict_resume=strict_resume,
         long_running=long_running,
+        lock_wait=lock_wait,
     )

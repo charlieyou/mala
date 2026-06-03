@@ -590,6 +590,46 @@ long_running:
 Each key is optional. The `long_running` block is not provided by presets; the
 user value always wins.
 
+## Lock Wait
+
+When a Claude agent is blocked on a file lock held by a peer, it parks via the
+`lock_wait` tool and yields. mala keeps the SDK connection open, waits until each
+contended path has no holder, then resumes the same agent to re-acquire the locks
+and finalize the issue before running the quality gate once at the true end. mala
+only waits until a path is free — it does not acquire on the agent's behalf — so
+the agent re-runs `lock_acquire` itself on resume. Freeing is detected by polling
+lock holders (there is no completion notification), so a poll interval is
+configurable. This applies to the Claude coder only; on Codex and Amp `lock_wait`
+is unavailable and the agent keeps the in-foreground
+`lock_acquire(timeout_seconds=300)` escalation instead.
+
+```yaml
+lock_wait:
+  # Whether the park/resume mechanism is active. When false, mala does not
+  # park; the agent uses the in-foreground timeout-escalation fallback
+  # (default: true).
+  enabled: true
+
+  # Maximum time to wait for the contended locks to free before resuming the
+  # agent with status "unavailable", in seconds (default: 1800 = 30 minutes).
+  max_wait_seconds: 1800
+
+  # Maximum number of park/resume cycles to follow within one issue before
+  # stopping (default: 3).
+  max_resume_cycles: 3
+
+  # How often to re-check lock holders while parked, in milliseconds. Must be
+  # positive (default: 500).
+  poll_interval_ms: 500
+```
+
+Each key is optional. The `lock_wait` block is not provided by presets; the user
+value always wins. When `enabled: false`, mala never parks and the agent falls
+back to escalating `lock_acquire(timeout_seconds=...)` in the foreground. When the
+`max_wait_seconds` budget is exhausted before the locks free, mala still resumes
+the agent — with status `unavailable` — so it can re-acquire what it can or wrap
+up cleanly rather than leaving the turn dangling.
+
 ## Coder Selection
 
 Mala can drive its per-issue implementation agent on Claude, Sourcegraph's

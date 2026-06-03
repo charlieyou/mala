@@ -1302,15 +1302,19 @@ class MalaOrchestrator:
         self, issue_id: str, flow: str = "implementer"
     ) -> asyncio.Task[IssueResult] | None:
         """Spawn a new agent task for an issue. Returns the Task if spawned, None otherwise."""
-        review_first = self.review_in_progress and await self._is_issue_in_progress(
-            issue_id
-        )
+        already_in_progress = await self._is_issue_in_progress(issue_id)
+        review_first = self.review_in_progress and already_in_progress
         if review_first:
             self._state.review_in_progress_issue_ids.add(issue_id)
         else:
             self._state.review_in_progress_issue_ids.discard(issue_id)
 
-        if not await self.beads.claim_async(issue_id):
+        # Resumed WIP issues are already in_progress, so re-claiming is a no-op
+        # update. Skip it to avoid a redundant status write -- except in
+        # review-first recovery, which still records the claim before reviewing
+        # the existing commits.
+        skip_claim = already_in_progress and not review_first
+        if not skip_claim and not await self.beads.claim_async(issue_id):
             self._state.review_in_progress_issue_ids.discard(issue_id)
             self.issue_coordinator.mark_failed(issue_id)
             self.event_sink.on_claim_failed(issue_id, issue_id)

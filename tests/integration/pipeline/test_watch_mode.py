@@ -642,7 +642,7 @@ asyncio.run(main())
                     # Process exited early (likely import error)
                     pytest.fail(f"Subprocess exited early with code {proc.returncode}")
                 # Non-blocking read
-                if select.select([proc.stdout], [], [], 0.1)[0]:
+                if select.select([proc.stdout], [], [], 0.1)[0]:  # ty:ignore[invalid-argument-type]
                     line = proc.stdout.readline()  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
                     if "READY" in line:
                         ready_received = True

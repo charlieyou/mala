@@ -900,3 +900,115 @@ class TestParseValidationConfigLongRunning:
         config = parse_validation_config({})
         assert "long_running" not in config._fields_set
         assert config.long_running == LongRunningConfig()
+
+
+# ---------------------------------------------------------------------------
+# parse_lock_wait
+# ---------------------------------------------------------------------------
+
+
+class TestParseLockWait:
+    def test_missing(self) -> None:
+        from src.domain.validation.config_parser import parse_lock_wait
+
+        assert parse_lock_wait({}) == (None, False)
+
+    def test_explicit_null(self) -> None:
+        from src.domain.validation.config_parser import parse_lock_wait
+
+        assert parse_lock_wait({"lock_wait": None}) == (None, True)
+
+    def test_non_dict_rejected(self) -> None:
+        from src.domain.validation.config_parser import parse_lock_wait
+
+        with pytest.raises(ConfigError, match="lock_wait must be an object"):
+            parse_lock_wait({"lock_wait": 5})
+
+    def test_unknown_field_rejected(self) -> None:
+        from src.domain.validation.config_parser import parse_lock_wait
+
+        with pytest.raises(ConfigError, match="Unknown field 'bogus' in lock_wait"):
+            parse_lock_wait({"lock_wait": {"bogus": 1}})
+
+    def test_full_values(self) -> None:
+        from src.domain.validation.config_parser import parse_lock_wait
+        from src.domain.validation.config_types import LockWaitConfig
+
+        value, present = parse_lock_wait(
+            {
+                "lock_wait": {
+                    "enabled": False,
+                    "max_wait_seconds": 10,
+                    "max_resume_cycles": 1,
+                    "poll_interval_ms": 250,
+                }
+            }
+        )
+        assert present is True
+        assert value == LockWaitConfig(
+            enabled=False,
+            max_wait_seconds=10,
+            max_resume_cycles=1,
+            poll_interval_ms=250,
+        )
+
+    def test_partial_uses_defaults(self) -> None:
+        from src.domain.validation.config_parser import parse_lock_wait
+        from src.domain.validation.config_types import LockWaitConfig
+
+        value, _ = parse_lock_wait({"lock_wait": {"enabled": False}})
+        assert value == LockWaitConfig(
+            enabled=False,
+            max_wait_seconds=1800,
+            max_resume_cycles=3,
+            poll_interval_ms=500,
+        )
+
+    def test_enabled_must_be_bool(self) -> None:
+        from src.domain.validation.config_parser import parse_lock_wait
+
+        with pytest.raises(ConfigError, match=r"lock_wait\.enabled must be a boolean"):
+            parse_lock_wait({"lock_wait": {"enabled": 1}})
+
+    @pytest.mark.parametrize(
+        "key", ["max_wait_seconds", "max_resume_cycles", "poll_interval_ms"]
+    )
+    def test_int_fields_reject_bool(self, key: str) -> None:
+        from src.domain.validation.config_parser import parse_lock_wait
+
+        with pytest.raises(ConfigError, match=rf"lock_wait\.{key} must be an integer"):
+            parse_lock_wait({"lock_wait": {key: True}})
+
+    @pytest.mark.parametrize("key", ["max_wait_seconds", "max_resume_cycles"])
+    def test_int_fields_reject_negative(self, key: str) -> None:
+        from src.domain.validation.config_parser import parse_lock_wait
+
+        with pytest.raises(
+            ConfigError, match=rf"lock_wait\.{key} must be non-negative"
+        ):
+            parse_lock_wait({"lock_wait": {key: -1}})
+
+    @pytest.mark.parametrize("bad", [0, -1])
+    def test_poll_interval_ms_must_be_positive(self, bad: int) -> None:
+        from src.domain.validation.config_parser import parse_lock_wait
+
+        with pytest.raises(
+            ConfigError, match=r"lock_wait\.poll_interval_ms must be positive"
+        ):
+            parse_lock_wait({"lock_wait": {"poll_interval_ms": bad}})
+
+
+class TestParseValidationConfigLockWait:
+    def test_tracks_fields_set_and_value(self) -> None:
+        from src.domain.validation.config_types import LockWaitConfig
+
+        config = parse_validation_config({"lock_wait": {"enabled": False}})
+        assert "lock_wait" in config._fields_set
+        assert config.lock_wait == LockWaitConfig(enabled=False)
+
+    def test_absent_uses_default(self) -> None:
+        from src.domain.validation.config_types import LockWaitConfig
+
+        config = parse_validation_config({})
+        assert "lock_wait" not in config._fields_set
+        assert config.lock_wait == LockWaitConfig()

@@ -273,7 +273,7 @@ def mock_questionary(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     mock.confirm_return = True
     mock.checkbox_return = []
     mock.select_return = None
-    mock.select_returns: list[object] = []  # For sequenced select returns
+    mock.select_returns = []  # For sequenced select returns (list[object])
     mock.text_return = ""
 
     # Track call index for sequenced returns

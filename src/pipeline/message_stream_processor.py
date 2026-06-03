@@ -17,6 +17,7 @@ Design principles:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -181,6 +182,13 @@ class MessageIterationState:
             status or a correlated no-task-found error (so block=False polling that
             says ``running`` or generic retrieval errors do not skip a still-needed
             wait).
+        pending_lock_waits: Canonical file paths the agent parked on via the
+            ``lock_wait`` MCP tool (a ``parked: true`` result). The wait/resume loop
+            in ``execute_iteration`` reads this latest-turn snapshot to wait until
+            those locks are free, then resume the agent to re-acquire and finalize.
+        lock_wait_request_ids: tool_use_ids seen for ``lock_wait`` tool calls,
+            awaiting their result. A ``parked: true`` result moves its paths into
+            ``pending_lock_waits`` and discards the id.
     """
 
     session_id: str | None = None
@@ -194,6 +202,8 @@ class MessageIterationState:
     background_launch_commands: dict[str, str] = field(default_factory=dict)
     background_task_ids: dict[str, str] = field(default_factory=dict)
     pending_bg_retrievals: dict[str, str] = field(default_factory=dict)
+    pending_lock_waits: set[str] = field(default_factory=set)
+    lock_wait_request_ids: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -214,6 +224,9 @@ class MessageIterationResult:
         background_task_ids: Map of tool_use_id to SDK task_id seen on
             ``task_started`` events during the turn, so the wait/resume loop can
             stop a task on timeout even if no completion event arrives.
+        pending_lock_waits: Snapshot of the canonical file paths the agent parked
+            on via ``lock_wait`` during the turn. The wait/resume loop reads this to
+            wait until those locks are free and then resume the agent.
     """
 
     success: bool
@@ -224,6 +237,7 @@ class MessageIterationResult:
     idle_retry_count: int = 0
     pending_background_tool_ids: frozenset[str] = frozenset()
     background_task_ids: dict[str, str] = field(default_factory=dict)
+    pending_lock_waits: frozenset[str] = frozenset()
 
 
 # Callbacks for SDK message streaming events
@@ -356,6 +370,7 @@ class MessageStreamProcessor:
             idle_retry_count=0,
             pending_background_tool_ids=frozenset(state.pending_background_tool_ids),
             background_task_ids=dict(state.background_task_ids),
+            pending_lock_waits=frozenset(state.pending_lock_waits),
         )
 
     def _handle_text_event(
@@ -416,6 +431,16 @@ class MessageStreamProcessor:
             # on the request would wrongly skip the wait for a block=False poll
             # that merely reports the task is still running.
             self._record_bg_retrieval_request(state, block_id, block_input)
+        elif isinstance(name, str) and name.endswith("lock_wait") and block_id:
+            # The agent yielded on contended locks via the MCP ``lock_wait`` tool
+            # (``mcp__mala-locking__lock_wait``). Record the tool_use_id so the
+            # matching tool_result can populate ``pending_lock_waits`` if it parked.
+            state.lock_wait_request_ids.add(block_id)
+            logger.debug(
+                "Session %s: lock_wait call detected (tool_use_id=%s)",
+                issue_id,
+                block_id,
+            )
 
     def _handle_tool_result_event(
         self,
@@ -437,6 +462,14 @@ class MessageStreamProcessor:
                     state,
                     tool_use_id,
                     is_error=bool(getattr(event, "is_error", False)),
+                    result_text=_extract_tool_result_text(
+                        getattr(event, "content", None)
+                    ),
+                )
+            if tool_use_id in state.lock_wait_request_ids:
+                self._resolve_lock_wait(
+                    state,
+                    tool_use_id,
                     result_text=_extract_tool_result_text(
                         getattr(event, "content", None)
                     ),
@@ -525,6 +558,36 @@ class MessageStreamProcessor:
                 "(status=%s)",
                 launch_id,
                 status,
+            )
+
+    def _resolve_lock_wait(
+        self,
+        state: MessageIterationState,
+        tool_use_id: str,
+        *,
+        result_text: str,
+    ) -> None:
+        """Populate ``pending_lock_waits`` from a parked ``lock_wait`` result.
+
+        The ``lock_wait`` tool returns JSON: a park yields
+        ``{"parked": true, "wait_paths": [...]}`` (canonical blocked paths), while
+        no contention yields ``{"parked": false, ...}``. Only a parked result
+        updates ``pending_lock_waits`` (the latest-turn snapshot the wait/resume
+        loop reads). The request id is discarded once resolved.
+        """
+        state.lock_wait_request_ids.discard(tool_use_id)
+        if not result_text:
+            return
+        try:
+            payload = json.loads(result_text)
+        except (ValueError, TypeError):
+            return
+        if not isinstance(payload, dict) or not payload.get("parked"):
+            return
+        wait_paths = payload.get("wait_paths")
+        if isinstance(wait_paths, list):
+            state.pending_lock_waits.update(
+                str(path) for path in wait_paths if isinstance(path, str)
             )
 
     def _handle_task_started_event(

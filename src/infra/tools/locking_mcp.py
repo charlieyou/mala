@@ -3,6 +3,7 @@
 Provides named MCP tools for file locking operations:
 - lock_acquire: Try to acquire locks, wait if blocked until ANY progress
 - lock_release: Release specific files or all held locks
+- lock_wait: Yield and wait for contended files to free up (acquires nothing)
 
 Tools emit WAITING events via closure-captured callback when blocked,
 enabling real-time deadlock detection.
@@ -42,6 +43,7 @@ logger = logging.getLogger(__name__)
 # Tool names for hook matching
 LOCK_ACQUIRE_TOOL = "lock_acquire"
 LOCK_RELEASE_TOOL = "lock_release"
+LOCK_WAIT_TOOL = "lock_wait"
 
 
 class LockingBackend(Protocol):
@@ -117,16 +119,21 @@ class LockingToolHandlers:
     """Container for lock tool handlers, exposed for testing.
 
     Use create_locking_mcp_server() to get the MCP server config.
-    Access .lock_acquire and .lock_release handlers for direct testing.
+    Access .lock_acquire, .lock_release, and .lock_wait handlers for direct
+    testing. ``lock_wait`` is ``None`` when the server was built with
+    ``enabled=False`` (the park-and-resume feature disabled), mirroring the
+    advertised tool list.
     """
 
     def __init__(
         self,
         lock_acquire: SdkMcpTool[Any],
         lock_release: SdkMcpTool[Any],
+        lock_wait: SdkMcpTool[Any] | None,
     ) -> None:
         self.lock_acquire = lock_acquire
         self.lock_release = lock_release
+        self.lock_wait = lock_wait
 
 
 def create_locking_mcp_server(
@@ -134,6 +141,7 @@ def create_locking_mcp_server(
     repo_namespace: str | None,
     emit_lock_event: Callable[[LockEvent], object],
     *,
+    enabled: bool = True,
     locking_backend: LockingBackend | None = None,
     _return_handlers: bool = False,
 ) -> McpSdkServerConfig | tuple[McpSdkServerConfig, LockingToolHandlers]:
@@ -146,6 +154,11 @@ def create_locking_mcp_server(
         agent_id: The agent ID for lock ownership.
         repo_namespace: Optional repo namespace for cross-repo disambiguation.
         emit_lock_event: Callback to emit lock events (captured in closures).
+        enabled: Whether the lock park-and-resume feature is active. When False,
+            the ``lock_wait`` tool is NOT advertised to the agent, so a compliant
+            agent cannot yield to a park that the pipeline would not perform;
+            it falls back to the foreground ``lock_acquire`` timeout escalation.
+            ``lock_acquire``/``lock_release`` are always registered.
         locking_backend: Optional backend for DI (defaults to DefaultLockingBackend).
         _return_handlers: If True, also return handler objects for testing.
 
@@ -492,16 +505,100 @@ def create_locking_mcp_server(
             ]
         }
 
+    @tool(
+        name=LOCK_WAIT_TOOL,
+        description=(
+            "Yield and wait for contended files to become free without acquiring "
+            "them. Emits WAITING for files held by a peer, then ends your turn so "
+            "mala can park and resume you to re-acquire. Acquires nothing."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "filepaths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of file paths to wait on",
+                    "minItems": 1,
+                },
+            },
+            "required": ["filepaths"],
+        },
+    )
+    async def lock_wait(args: dict) -> dict:
+        """Classify blocked vs free paths and park; acquire nothing."""
+        filepaths = args.get("filepaths", [])
+
+        # Validate input
+        if not filepaths:
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(
+                            {"error": "filepaths must be a non-empty array"}
+                        ),
+                    }
+                ]
+            }
+
+        # Deduplicate by canonical path, preserving first occurrence
+        seen_canonical: set[str] = set()
+        blocked_paths: list[str] = []
+        for fp in filepaths:
+            canon = _canonical(fp)
+            if canon in seen_canonical:
+                continue
+            seen_canonical.add(canon)
+            holder = backend.get_lock_holder(canon, repo_namespace)
+            # free: unheld or held by self; blocked: held by a peer
+            if holder is not None and holder != agent_id:
+                blocked_paths.append(canon)
+
+        # Emit WAITING events for blocked files so the deadlock graph records
+        # the wait edge. The pipeline never acquires here, so the edge persists
+        # until the agent re-acquires via lock_acquire on resume.
+        if blocked_paths:
+            await asyncio.gather(*[_emit_waiting(canon) for canon in blocked_paths])
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(
+                            {"parked": True, "wait_paths": blocked_paths}
+                        ),
+                    }
+                ]
+            }
+
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps({"parked": False, "all_acquired_or_free": True}),
+                }
+            ]
+        }
+
+    # When the park-and-resume feature is disabled, do not advertise lock_wait:
+    # a compliant agent that called it would yield to a park the pipeline would
+    # not perform. Withholding the tool keeps it on the foreground lock_acquire
+    # escalation that the implementer prompt documents as the fallback.
+    tools = [lock_acquire, lock_release]
+    if enabled:
+        tools.append(lock_wait)
+
     config = create_sdk_mcp_server(
         name="mala-locking",
         version="1.0.0",
-        tools=[lock_acquire, lock_release],
+        tools=tools,
     )
 
     if _return_handlers:
         handlers = LockingToolHandlers(
             lock_acquire=lock_acquire,
             lock_release=lock_release,
+            lock_wait=lock_wait if enabled else None,
         )
         return config, handlers
 

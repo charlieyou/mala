@@ -38,6 +38,7 @@ from src.domain.lifecycle import (
     LifecycleState,
 )
 from src.pipeline.idle_retry_policy import (
+    DefaultLockWaitProbe,
     IdleTimeoutRetryPolicy,
     RetryConfig,
 )
@@ -72,11 +73,12 @@ if TYPE_CHECKING:
         ReviewOutcome,
         TransitionResult,
     )
-    from src.domain.validation.config_types import LongRunningConfig
+    from src.domain.validation.config_types import LockWaitConfig, LongRunningConfig
     from src.infra.hooks import LintCache
     from src.infra.telemetry import TelemetrySpan
     from src.core.session_end_result import SessionEndResult
     from src.pipeline.config_views import AgentSessionView
+    from src.pipeline.idle_retry_policy import LockWaitProbe
 
 
 # Module-level logger for idle retry messages
@@ -139,6 +141,9 @@ class SessionConfig:
         log_file_wait_timeout: Timeout for log file availability.
         log_file_poll_interval: Poll interval for log file.
         idle_timeout_seconds: Idle timeout for SDK stream.
+        lock_wait_probe: Polls which contended paths remain peer-held while the
+            agent is parked on a ``lock_wait`` yield. Built from this session's
+            ``agent_id`` and repo namespace; threaded into ``execute_iteration``.
     """
 
     agent_id: str
@@ -147,6 +152,7 @@ class SessionConfig:
     log_file_wait_timeout: float
     log_file_poll_interval: float
     idle_timeout_seconds: float | None
+    lock_wait_probe: LockWaitProbe | None = None
 
 
 @dataclass
@@ -190,6 +196,9 @@ class SessionPrompts:
         continuation: Template for continuation prompt with checkpoint.
         await_resume: Template shown after a backgrounded task finishes, used
             to resume the agent on the same client so it can finalize the issue.
+        lock_resume: Template shown after a parked lock wait finishes, used to
+            resume the agent on the same client so it can re-acquire the
+            contended files and finalize the issue.
     """
 
     gate_followup: str
@@ -198,6 +207,7 @@ class SessionPrompts:
     checkpoint_request: str = ""
     continuation: str = ""
     await_resume: str = ""
+    lock_resume: str = ""
 
 
 @dataclass
@@ -232,6 +242,7 @@ class AgentSessionConfig:
     mcp_server_factory: McpServerFactory | None = None
     strict_resume: bool = False
     long_running: LongRunningConfig | None = None
+    lock_wait: LockWaitConfig | None = None
 
 
 @dataclass
@@ -458,6 +469,15 @@ class AgentSessionRunner:
                 session_runtime, input.resume_session_id
             )
 
+        # The lock-wait probe resolves holders against the same repo namespace
+        # the ``lock_wait`` tool used to canonicalize paths (``str(repo_path)``),
+        # and treats this session's own ``agent_id`` as "free" so the park never
+        # blocks on locks the agent itself holds.
+        lock_wait_probe = DefaultLockWaitProbe(
+            agent_id=agent_id,
+            repo_namespace=str(self.view.repo_path),
+        )
+
         session_config = SessionConfig(
             agent_id=agent_id,
             runtime=session_runtime,
@@ -465,6 +485,7 @@ class AgentSessionRunner:
             log_file_wait_timeout=self.config.log_file_wait_timeout,
             log_file_poll_interval=0.5,
             idle_timeout_seconds=idle_timeout_seconds,
+            lock_wait_probe=lock_wait_probe,
         )
 
         exec_state = SessionExecutionState(
@@ -540,6 +561,9 @@ class AgentSessionRunner:
                     tracer=tracer,
                     long_running=self.config.long_running,
                     await_resume_template=self.config.prompts.await_resume,
+                    lock_wait=self.config.lock_wait,
+                    lock_resume_template=self.config.prompts.lock_resume,
+                    lock_wait_probe=session_cfg.lock_wait_probe,
                     hard_timeout_seconds=self.view.timeout_seconds,
                     drain_event=drain_event,
                     interrupt_event=interrupt_event,

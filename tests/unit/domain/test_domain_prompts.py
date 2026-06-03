@@ -62,6 +62,7 @@ class TestLoadPrompts:
         (tmp_path / "checkpoint_request.md").write_text("checkpoint")
         (tmp_path / "continuation.md").write_text("continuation")
         (tmp_path / "await_resume.md").write_text("await")
+        (tmp_path / "lock_resume.md").write_text("lock")
 
         result = load_prompts(tmp_path)
         assert result.review_agent_prompt == ""
@@ -77,6 +78,7 @@ class TestLoadPrompts:
         (tmp_path / "checkpoint_request.md").write_text("checkpoint")
         (tmp_path / "continuation.md").write_text("continuation")
         (tmp_path / "await_resume.md").write_text("await")
+        (tmp_path / "lock_resume.md").write_text("lock")
         (tmp_path / "review_agent.md").write_text("Review agent system prompt content")
 
         result = load_prompts(tmp_path)
@@ -918,3 +920,58 @@ class TestAwaitResumePrompt:
             summary='{"exit_code": 1, "signal": null}',
         )
         assert '{"exit_code": 1, "signal": null}' in result
+
+
+class TestLockResumePrompt:
+    """Tests for lock_resume prompt loading and formatting."""
+
+    def test_load_prompts_returns_lock_resume_prompt(self) -> None:
+        provider = load_prompts(PROMPTS_DIR)
+        assert provider.lock_resume_prompt
+        for placeholder in ("{issue_id}", "{wait_paths}", "{status}"):
+            assert placeholder in provider.lock_resume_prompt
+
+    def test_format_free_status(self) -> None:
+        from src.domain.prompts import format_lock_resume_prompt
+
+        template = load_prompts(PROMPTS_DIR).lock_resume_prompt
+        result = format_lock_resume_prompt(
+            template,
+            issue_id="proj.8.15",
+            wait_paths=["src/a.py", "src/b.py"],
+            status="free",
+        )
+        assert "bd-proj.8.15" in result
+        assert "free" in result
+        assert "src/a.py" in result
+        assert "src/b.py" in result
+        for placeholder in ("{issue_id}", "{wait_paths}", "{status}"):
+            assert placeholder not in result
+
+    def test_format_unavailable_status(self) -> None:
+        from src.domain.prompts import format_lock_resume_prompt
+
+        template = load_prompts(PROMPTS_DIR).lock_resume_prompt
+        result = format_lock_resume_prompt(
+            template,
+            issue_id="x.1",
+            wait_paths=["src/hot.py"],
+            status="unavailable",
+        )
+        assert "unavailable" in result
+        assert "ISSUE_NO_CHANGE" in result
+        assert "src/hot.py" in result
+
+    def test_format_is_brace_safe(self) -> None:
+        from src.domain.prompts import format_lock_resume_prompt
+
+        # Paths are inserted verbatim by a single str.format call; literal
+        # braces in a path must survive without raising or re-parsing.
+        template = load_prompts(PROMPTS_DIR).lock_resume_prompt
+        result = format_lock_resume_prompt(
+            template,
+            issue_id="x.1",
+            wait_paths=["src/{weird}.py"],
+            status="free",
+        )
+        assert "src/{weird}.py" in result

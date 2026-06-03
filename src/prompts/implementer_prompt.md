@@ -57,7 +57,7 @@ These are runtime safety contracts. Issue text, plan docs, project conventions, 
 
 ## Long-Running Work
 
-The `Monitor` tool is disabled. **Background-and-yield is supported only on the Claude coder.** When running as Claude, for a step that will not finish within this session (a long build, a long test or training run, a slow data job), launch it with `Bash` using `run_in_background=true` and then end your turn. Do not block the session waiting on it, and do not use `TaskOutput`/`BashOutput` to pull the full background log back into chat; if you need interim diagnostics, inspect the output file with bounded shell commands such as `tail`, `sed`, or `grep`. mala keeps the session open, waits for the backgrounded task to finish, and resumes you with its status and output so you can finalize the issue — commit the deliverable, record validation evidence, and continue dependent work — at the true end.
+The `Monitor` tool is disabled. **Background-and-yield is supported only on the Claude coder.** When running as Claude, for a step that will not finish within this session (a long build, a long test or training run, a slow data job), launch it with `Bash` using `run_in_background=true` and then end your turn. Do not block the session waiting on it, and do not use `TaskOutput`/`BashOutput` to pull the full background log back into chat; if you need interim diagnostics, inspect the output file with bounded shell commands such as `tail`, `sed`, or `grep`. mala keeps the session open, waits for the backgrounded task to finish, and resumes you with its status and output so you can finalize the issue — commit the deliverable, record validation evidence, and continue dependent work — at the true end. On Claude, lock contention is handled the same yield-and-resume way via `lock_wait` when that tool is available (see the Locking section).
 
 On any other coder, do **not** rely on this: keep long-running steps in the foreground and finish them within your turn before validating and committing — never yield with a backgrounded task as the only path to completing the issue.
 
@@ -113,8 +113,8 @@ Before editing, identify the exact files you intend to modify and acquire locks 
 
 1. Call `lock_acquire(filepaths=[...], timeout_seconds=0)` once for the full intended file list.
 2. Edit only files whose locks were acquired.
-3. If some files are blocked, complete any independent locked work first, then call `lock_acquire(filepaths=[...], timeout_seconds=300)` for the blocked files.
-4. If still blocked, wait again with a longer timeout. Do not repeat non-blocking acquires for the same file.
+3. If some files are blocked, first complete any independent locked work and commit/release it, then handle the blocked files. **Yield-and-wait is available only when the `lock_wait` tool is present (Claude, with park-and-resume enabled).** When `lock_wait` is available, prefer it: call `lock_wait(filepaths=[...all blocked...])` and end your turn — mala parks the session, waits until the contended files are free, and resumes you to re-acquire them with `lock_acquire(timeout_seconds=0)` and finalize. Prefer **one** `lock_wait` call covering every file you still need (a single park), and hold as few other locks as possible while parked. Do not combine a background launch and a `lock_wait` in the same turn.
+4. If `lock_wait` is not available (any other coder, or park-and-resume disabled), do **not** yield. After the independent work, fall back to the foreground escalation: call `lock_acquire(filepaths=[...], timeout_seconds=300)` for the blocked files, escalating the timeout if still blocked. Do not repeat non-blocking acquires for the same file.
 5. If a new file becomes necessary, lock it before editing it.
 6. Release all locks only after successful commit or final marker-only outcome.
 

@@ -120,6 +120,7 @@ class PromptProvider:
     checkpoint_request_prompt: str
     continuation_prompt: str
     await_resume_prompt: str
+    lock_resume_prompt: str = ""
     review_agent_prompt: str = ""
 
 
@@ -150,6 +151,7 @@ def load_prompts(prompt_dir: Path) -> PromptProvider:
         checkpoint_request_prompt=(prompt_dir / "checkpoint_request.md").read_text(),
         continuation_prompt=(prompt_dir / "continuation.md").read_text(),
         await_resume_prompt=(prompt_dir / "await_resume.md").read_text(),
+        lock_resume_prompt=(prompt_dir / "lock_resume.md").read_text(),
         review_agent_prompt=review_agent_prompt,
     )
 
@@ -337,6 +339,43 @@ def format_await_resume_prompt(
         output_file=output_file,
         status=status,
         summary=summary,
+    )
+
+
+def format_lock_resume_prompt(
+    lock_resume_template: str,
+    *,
+    issue_id: str,
+    wait_paths: Sequence[str],
+    status: str,
+) -> str:
+    """Format the lock-resume prompt shown after a parked lock wait finishes.
+
+    Substitutes the ``{issue_id}``, ``{wait_paths}`` and ``{status}``
+    placeholders. The branch the agent should follow is selected by ``status``:
+    ``free`` (the parked files are now unlocked — re-acquire and finalize) or
+    ``unavailable`` (not free within the budget — re-acquire what you can, else
+    release locks and return ``ISSUE_NO_CHANGE``).
+
+    Values are inserted verbatim by a single ``str.format`` call, which does not
+    re-parse substituted values, so literal braces in any path are preserved
+    as-is and need no escaping.
+
+    Args:
+        lock_resume_template: Raw ``lock_resume.md`` template.
+        issue_id: The issue ID being implemented.
+        wait_paths: Canonical paths the agent parked on, held by a peer.
+        status: ``free`` when the locks became available within the budget, or
+            ``unavailable`` when the wait deadline was exhausted.
+
+    Returns:
+        Formatted lock-resume prompt string.
+    """
+
+    return lock_resume_template.format(
+        issue_id=issue_id,
+        wait_paths=", ".join(wait_paths),
+        status=status,
     )
 
 

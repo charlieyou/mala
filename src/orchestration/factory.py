@@ -92,7 +92,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
+def _create_agent_provider(
+    mala_config: MalaConfig,
+    *,
+    lock_wait_enabled: bool = True,
+) -> AgentProvider:
     """Construct the :class:`AgentProvider` for this run.
 
     Selection happens once here (per plan
@@ -112,6 +116,11 @@ def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
             selecting it here raises :class:`NotImplementedError` so the
             enum widening in A8 stays observable while the actual provider
             stub lands later.
+        lock_wait_enabled: Resolved ``validation_config.lock_wait.enabled``.
+            Only the Claude provider exposes the ``lock_wait`` park-and-resume
+            tool; when False it withholds the tool so blocked agents use the
+            foreground ``lock_acquire`` escalation. Amp/Codex never advertised
+            ``lock_wait``, so this flag is inert for them.
 
     Returns:
         An :class:`AgentProvider` for the selected backend. The Amp provider
@@ -152,6 +161,7 @@ def _create_agent_provider(mala_config: MalaConfig) -> AgentProvider:
             setting_sources=list(mala_config.claude_settings_sources),
             model=mala_config.model,
             effort=mala_config.effort,
+            lock_wait_enabled=lock_wait_enabled,
         ),
     )
 
@@ -646,6 +656,7 @@ def _build_dependencies(
     epic_verifier_cerberus_config: CerberusConfig | None = None,
     epic_verifier_timeout_seconds: int = 600,
     epic_verifier_retry_policy: VerificationRetryPolicy | None = None,
+    lock_wait_enabled: bool = True,
 ) -> RuntimeDeps:
     """Build all dependencies, using provided ones or creating defaults.
 
@@ -660,6 +671,9 @@ def _build_dependencies(
         epic_verifier_cerberus_config: Optional CerberusConfig for epic_verification.cerberus.
         epic_verifier_timeout_seconds: Timeout for epic verification (from config).
         epic_verifier_retry_policy: Per-category retry limits for verification failures.
+        lock_wait_enabled: Resolved ``validation_config.lock_wait.enabled``,
+            forwarded to the agent provider so the Claude path withholds the
+            ``lock_wait`` tool when the park-and-resume feature is disabled.
 
     Returns:
         RuntimeDeps bundling every protocol implementation the orchestrator
@@ -712,7 +726,10 @@ def _build_dependencies(
     if deps is not None and deps.agent_provider is not None:
         agent_provider = deps.agent_provider
     else:
-        agent_provider = _create_agent_provider(mala_config)
+        agent_provider = _create_agent_provider(
+            mala_config,
+            lock_wait_enabled=lock_wait_enabled,
+        )
 
     # Evidence provider
     evidence_provider: EvidenceProvider
@@ -985,6 +1002,13 @@ def create_orchestrator(
         else None
     )
 
+    # Resolve lock park-and-resume enablement so the Claude provider withholds
+    # the ``lock_wait`` tool when disabled. Mirrors the orchestration_wiring
+    # default (LockWaitConfig().enabled == True) when no mala.yaml is present.
+    lock_wait_enabled = (
+        validation_config.lock_wait.enabled if validation_config is not None else True
+    )
+
     # Build dependencies (pass reviewer_config to avoid second config load)
     runtime = _build_dependencies(
         config,
@@ -997,6 +1021,7 @@ def create_orchestrator(
         epic_verifier_cerberus_config=epic_verifier_cerberus_config,
         epic_verifier_timeout_seconds=epic_verifier_timeout_seconds,
         epic_verifier_retry_policy=epic_verifier_retry_policy,
+        lock_wait_enabled=lock_wait_enabled,
     )
 
     # Install per-coder prerequisites once before the first session of the run

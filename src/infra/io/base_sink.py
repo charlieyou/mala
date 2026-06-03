@@ -107,6 +107,15 @@ class BaseEventSink:
     ) -> None:
         pass
 
+    def on_lock_wait(
+        self,
+        agent_id: str,
+        elapsed_seconds: float,
+        budget_seconds: float,
+        blocked_count: int,
+    ) -> None:
+        pass
+
     # -------------------------------------------------------------------------
     # Quality gate events
     # -------------------------------------------------------------------------

@@ -15,7 +15,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from src.pipeline.message_stream_processor import (
     IdleTimeoutError,
@@ -23,13 +23,13 @@ from src.pipeline.message_stream_processor import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from src.core.protocols.agent_event import AgentTaskCompletedEvent
     from src.core.protocols.events.sink import MalaEventSink
     from src.core.protocols.sdk import SDKClientFactoryProtocol, SDKClientProtocol
     from src.domain.lifecycle import LifecycleContext
-    from src.domain.validation.config_types import LongRunningConfig
+    from src.domain.validation.config_types import LockWaitConfig, LongRunningConfig
     from src.infra.telemetry import TelemetrySpan
     from src.pipeline.message_stream_processor import (
         LintCacheProtocol,
@@ -131,6 +131,49 @@ class _BgWaitOutcome:
     interrupted: bool = False
 
 
+class LockWaitProbe(Protocol):
+    """Polls which of a parked agent's contended paths are still peer-held.
+
+    Keeps the coder-agnostic retry policy decoupled from ``locking.py``: the
+    park loop only needs to know which canonical paths remain blocked by another
+    agent, not how locks are stored. The default :class:`DefaultLockWaitProbe`
+    wraps ``get_lock_holder``; tests inject a fake.
+    """
+
+    def blocked_paths(self, canonical_paths: Sequence[str]) -> list[str]:
+        """Return the subset of ``canonical_paths`` still held by another agent.
+
+        A path is *free* when it has no holder or is held by the parking agent
+        itself; both are excluded from the result.
+        """
+        ...
+
+
+@dataclass
+class DefaultLockWaitProbe:
+    """Production :class:`LockWaitProbe` backed by ``get_lock_holder``.
+
+    A path is treated as free when its holder is ``None`` (unlocked) or equals
+    ``agent_id`` (held by the parking agent itself, which the wait must not
+    block on). ``repo_namespace`` is the repo root path used to disambiguate
+    lock keys (``str(repo_path)``), matching how the ``lock_wait`` tool resolved
+    the canonical paths.
+    """
+
+    agent_id: str
+    repo_namespace: str
+
+    def blocked_paths(self, canonical_paths: Sequence[str]) -> list[str]:
+        from src.infra.tools.locking import get_lock_holder
+
+        blocked: list[str] = []
+        for path in canonical_paths:
+            holder = get_lock_holder(path, self.repo_namespace)
+            if holder is not None and holder != self.agent_id:
+                blocked.append(path)
+        return blocked
+
+
 class IdleTimeoutRetryPolicy:
     """Encapsulates agent iteration retry handling with backoff semantics.
 
@@ -195,6 +238,9 @@ class IdleTimeoutRetryPolicy:
         *,
         long_running: LongRunningConfig | None = None,
         await_resume_template: str = "",
+        lock_wait: LockWaitConfig | None = None,
+        lock_resume_template: str = "",
+        lock_wait_probe: LockWaitProbe | None = None,
         hard_timeout_seconds: float | None = None,
         drain_event: asyncio.Event | None = None,
         interrupt_event: asyncio.Event | None = None,
@@ -229,6 +275,13 @@ class IdleTimeoutRetryPolicy:
             await_resume_template: Template rendered into the resume prompt
                 after a backgrounded task finishes (see
                 ``format_await_resume_prompt``).
+            lock_wait: Lock park/resume configuration. When None or disabled (or
+                the client does not support background tasks), the park loop is
+                skipped after a ``lock_wait`` yield.
+            lock_resume_template: Template rendered into the resume prompt after
+                a parked lock wait finishes (see ``format_lock_resume_prompt``).
+            lock_wait_probe: Polls which contended paths remain peer-held while
+                parked. Required for the park loop to run; None skips it.
             hard_timeout_seconds: Per-turn hard timeout that bounds the agent's
                 active compute. Each message-stream read is wrapped in
                 ``asyncio.timeout(hard_timeout_seconds)`` so the (possibly
@@ -254,6 +307,12 @@ class IdleTimeoutRetryPolicy:
         state.first_message_received = False
         state.pending_tool_ids.clear()
         state.pending_lint_commands.clear()
+        # Clear at the start of every turn so that, after the turn (and any
+        # background wait/resume) completes, ``pending_lock_waits`` holds exactly
+        # the *latest* turn's parks — the stream processor repopulates it during
+        # the turn and nothing clears it post-turn, so the lock park loop reads a
+        # live latest-turn snapshot.
+        state.pending_lock_waits.clear()
         pending_retry_kind: Literal["idle", "subprocess"] | None = None
         subprocess_exit_retries = 0
 
@@ -350,8 +409,12 @@ class IdleTimeoutRetryPolicy:
                         # Successful turn. If the agent backgrounded work and
                         # yielded, keep this client connected, wait for the
                         # task's completion notification, and resume the agent
-                        # on the same client to finalize before returning.
-                        return await self._wait_and_resume_background(
+                        # on the same client to finalize. If the (latest) turn
+                        # also parked on contended locks, wait for them to free
+                        # and resume again — both waits stay inside this same
+                        # ``async with client`` block so the resume reuses the
+                        # same SDK client (Claude-only).
+                        ir = await self._wait_and_resume_background(
                             client,
                             result,
                             stream_processor,
@@ -367,6 +430,32 @@ class IdleTimeoutRetryPolicy:
                             drain_event=drain_event,
                             interrupt_event=interrupt_event,
                         )
+                        if (
+                            ir.success
+                            and state.pending_lock_waits
+                            and lock_wait is not None
+                            and lock_wait.enabled
+                            and lock_wait_probe is not None
+                            and client.supports_background_tasks()
+                        ):
+                            ir = await self._wait_and_resume_lock(
+                                client,
+                                ir,
+                                stream_processor,
+                                issue_id,
+                                state,
+                                lifecycle_ctx,
+                                lint_cache,
+                                tracer,
+                                idle_timeout_seconds=idle_timeout_seconds,
+                                lock_wait=lock_wait,
+                                lock_resume_template=lock_resume_template,
+                                probe=lock_wait_probe,
+                                hard_timeout_seconds=hard_timeout_seconds,
+                                drain_event=drain_event,
+                                interrupt_event=interrupt_event,
+                            )
+                        return ir
 
                     except IdleTimeoutError:
                         # Disconnect on idle timeout
@@ -843,6 +932,11 @@ class IdleTimeoutRetryPolicy:
             state.first_message_received = False
             state.pending_tool_ids.clear()
             state.pending_lint_commands.clear()
+            # Clear lock parks at the start of the resume turn too, so after the
+            # background loop returns ``pending_lock_waits`` reflects only this
+            # latest resume turn's parks (the supported same-turn interleaving is
+            # the final background-resume turn parking on a lock to commit).
+            state.pending_lock_waits.clear()
 
             # Bound the resume query startup by the hard per-task timeout too
             # (the resume turn is active agent compute, not the background wait).
@@ -898,6 +992,259 @@ class IdleTimeoutRetryPolicy:
             session_id=result.session_id,
             error_message=None if result.success else result.error,
         )
+
+    async def _wait_and_resume_lock(
+        self,
+        client: SDKClientProtocol,
+        result: IterationResult,
+        stream_processor: MessageStreamProcessor,
+        issue_id: str,
+        state: MessageIterationState,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: LintCacheProtocol,
+        tracer: TelemetrySpan | None,
+        *,
+        idle_timeout_seconds: float | None,
+        lock_wait: LockWaitConfig,
+        lock_resume_template: str,
+        probe: LockWaitProbe,
+        hard_timeout_seconds: float | None,
+        drain_event: asyncio.Event | None = None,
+        interrupt_event: asyncio.Event | None = None,
+    ) -> IterationResult:
+        """Park the client until contended locks free, then resume to finalize.
+
+        Mirrors :meth:`_wait_and_resume_background` for the lock case. Loops
+        while the latest turn parked on contended files (``pending_lock_waits``),
+        bounded by ``lock_wait.max_resume_cycles``. Each cycle waits (between
+        turns, interruptibly, with progress ticks) until ``probe.blocked_paths``
+        is empty or ``max_wait_seconds`` elapses, then resumes the agent on the
+        *same* client with the lock-resume prompt (status ``free`` on all-clear,
+        ``unavailable`` on deadline) so it re-acquires and finalizes.
+
+        The caller has already gated this on ``lock_wait.enabled`` and
+        ``client.supports_background_tasks()`` (Claude only), so Amp/Codex never
+        reach the same-client resume path.
+
+        On interrupt (drain/abort) or cycle exhaustion the iteration proceeds to
+        the gate as success and the lock-wait state is abandoned, mirroring the
+        background loop. ``asyncio.CancelledError`` is *not* caught here — a
+        parked agent may still hold locks, so a deadlock-victim cancellation
+        must propagate to actually resolve the deadlock (the wait helper cancels
+        its in-flight sub-tasks in ``finally`` before re-raising).
+        """
+        from src.domain.prompts import format_lock_resume_prompt
+
+        cycles = 0
+        while (
+            result.success
+            and state.pending_lock_waits
+            and cycles < lock_wait.max_resume_cycles
+        ):
+            wait_paths = sorted(state.pending_lock_waits)
+            freed, interrupted = await self._wait_for_locks_free(
+                wait_paths,
+                lock_wait,
+                issue_id,
+                probe=probe,
+                drain_event=drain_event,
+                interrupt_event=interrupt_event,
+            )
+
+            if interrupted:
+                # Drain/abort during the wait: stop blocking and proceed to the
+                # gate as success, mirroring the background interrupt path.
+                logger.info(
+                    "Session %s: lock wait interrupted; proceeding to gate",
+                    issue_id,
+                )
+                self._abandon_lock_wait_state(state)
+                return IterationResult(
+                    success=result.success,
+                    session_id=result.session_id,
+                )
+
+            status = "free" if freed else "unavailable"
+            resume_prompt = format_lock_resume_prompt(
+                lock_resume_template,
+                issue_id=issue_id,
+                wait_paths=wait_paths,
+                status=status,
+            )
+            logger.info(
+                "Session %s: contended locks %s; resuming agent to finalize "
+                "(cycle %d/%d, %d path(s))",
+                issue_id,
+                status,
+                cycles + 1,
+                lock_wait.max_resume_cycles,
+                len(wait_paths),
+            )
+            # Reset per-turn state before the resume turn, mirroring the
+            # initial-turn setup in execute_iteration and the background resume
+            # reset. Clearing ``pending_lock_waits`` here means the resume turn
+            # starts clean and only a *new* ``lock_wait`` call repopulates it,
+            # so the loop re-parks only when the agent parks again.
+            state.tool_calls_this_turn = 0
+            state.first_message_received = False
+            state.pending_tool_ids.clear()
+            state.pending_lint_commands.clear()
+            state.pending_lock_waits.clear()
+
+            # Bound the resume query startup by the hard per-task timeout (the
+            # resume turn is active agent compute, not the between-turn wait).
+            if hard_timeout_seconds is not None:
+                async with asyncio.timeout(hard_timeout_seconds):
+                    await client.query(resume_prompt)
+            else:
+                await client.query(resume_prompt)
+            resume_start = time.time()
+            stream = IdleTimeoutStream(
+                client.receive_response(),
+                idle_timeout_seconds,
+                state.pending_tool_ids,
+            )
+            turn = await self._run_message_stream_turn(
+                stream_processor,
+                stream,
+                issue_id,
+                state,
+                lifecycle_ctx,
+                lint_cache,
+                resume_start,
+                tracer,
+                hard_timeout_seconds,
+            )
+            result = IterationResult(
+                success=turn.success,
+                session_id=turn.session_id,
+                error_message=None if turn.success else turn.error,
+            )
+            cycles += 1
+
+        # Resume-cycle budget exhausted while the agent keeps re-parking: proceed
+        # to the gate as success and let it arbitrate rather than failing an
+        # otherwise-successful turn. The agent has been resumed at least once.
+        if result.success and state.pending_lock_waits:
+            logger.warning(
+                "Session %s: locks still contended after %d resume cycles; "
+                "proceeding to gate",
+                issue_id,
+                lock_wait.max_resume_cycles,
+            )
+            self._abandon_lock_wait_state(state)
+
+        return result
+
+    async def _wait_for_locks_free(
+        self,
+        wait_paths: Sequence[str],
+        lock_wait: LockWaitConfig,
+        issue_id: str,
+        *,
+        probe: LockWaitProbe,
+        drain_event: asyncio.Event | None = None,
+        interrupt_event: asyncio.Event | None = None,
+    ) -> tuple[bool, bool]:
+        """Poll until ``wait_paths`` are all free, the deadline, or a signal.
+
+        Models :meth:`_wait_for_background_completion`: races each
+        ``poll_interval`` sleep against ``drain_event``/``interrupt_event`` so
+        the first Ctrl-C ends the wait promptly, and emits progress on the event
+        sink at the same cadence as the background wait so the park is never a
+        silent hang. ``poll_interval_ms`` (validated ``> 0``) bounds the
+        re-check rate so the predicate is never a tight busy-loop.
+
+        Returns ``(freed, interrupted)``: ``freed`` True when every path became
+        free within ``max_wait_seconds``; ``interrupted`` True when a drain/abort
+        signal fired. Both False means the deadline elapsed while still blocked.
+
+        ``asyncio.CancelledError`` propagates (the in-flight sleep is cancelled
+        in ``finally``) so a deadlock-victim cancellation is not swallowed.
+        """
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + lock_wait.max_wait_seconds
+        next_progress = loop.time() + BACKGROUND_WAIT_PROGRESS_INTERVAL
+        poll_interval = lock_wait.poll_interval_ms / 1000.0
+
+        events = [ev for ev in (drain_event, interrupt_event) if ev is not None]
+        signal_tasks = [asyncio.ensure_future(ev.wait()) for ev in events]
+        sleep_task: asyncio.Future[object] | None = None
+
+        def _interrupted() -> bool:
+            return any(ev.is_set() for ev in events)
+
+        try:
+            if _interrupted():
+                return False, True
+            while True:
+                blocked = probe.blocked_paths(wait_paths)
+                if not blocked:
+                    return True, False
+                now = loop.time()
+                if now >= deadline:
+                    return False, False
+                if sleep_task is None:
+                    sleep_task = asyncio.ensure_future(asyncio.sleep(poll_interval))
+                slice_timeout = min(deadline - now, next_progress - now, poll_interval)
+                slice_timeout = max(slice_timeout, 0.0)
+                done, _pending = await asyncio.wait(
+                    {sleep_task, *signal_tasks},
+                    timeout=slice_timeout,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if _interrupted():
+                    sleep_task.cancel()
+                    return False, True
+                if loop.time() >= next_progress:
+                    self._emit_lock_wait_progress(
+                        issue_id,
+                        lock_wait.max_wait_seconds,
+                        deadline,
+                        len(blocked),
+                        loop,
+                    )
+                    next_progress = loop.time() + BACKGROUND_WAIT_PROGRESS_INTERVAL
+                if sleep_task in done:
+                    # The poll interval elapsed; re-probe on the next iteration.
+                    sleep_task = None
+        finally:
+            # Cancel any in-flight sleep and the signal waiters so a propagating
+            # CancelledError (deadlock-victim cancellation) leaves no orphans.
+            if sleep_task is not None and not sleep_task.done():
+                sleep_task.cancel()
+            for sig in signal_tasks:
+                sig.cancel()
+
+    def _emit_lock_wait_progress(
+        self,
+        issue_id: str,
+        max_wait_seconds: float,
+        deadline: float,
+        blocked_count: int,
+        loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        """Surface the otherwise-silent lock park to the event sink."""
+        if self._event_sink is None:
+            return
+        elapsed = max_wait_seconds - max(deadline - loop.time(), 0.0)
+        self._event_sink.on_lock_wait(
+            issue_id, elapsed, max_wait_seconds, blocked_count
+        )
+
+    @staticmethod
+    def _abandon_lock_wait_state(state: MessageIterationState) -> None:
+        """Drop all pending lock-wait tracking before returning success.
+
+        The interrupt and resume-exhaustion paths give up on a still-parked wait
+        and proceed to the gate. ``MessageIterationState`` is shared across the
+        gate-retry ``execute_iteration`` calls in ``_run_lifecycle_loop``, so a
+        park left in ``pending_lock_waits`` would be re-read by the next turn's
+        lock loop and force another wait. Clearing the parked paths and their
+        in-flight request ids here prevents that stale carry-over.
+        """
+        state.pending_lock_waits.clear()
+        state.lock_wait_request_ids.clear()
 
     @staticmethod
     def _abandon_background_state(state: MessageIterationState) -> None:

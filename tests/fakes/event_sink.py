@@ -144,6 +144,21 @@ class FakeEventSink(MalaEventSink):
     def on_agent_text(self, agent_id: str, text: str) -> None:
         self._record("agent_text", agent_id=agent_id, text=text)
 
+    def on_lock_wait(
+        self,
+        agent_id: str,
+        elapsed_seconds: float,
+        budget_seconds: float,
+        blocked_count: int,
+    ) -> None:
+        self._record(
+            "lock_wait",
+            agent_id=agent_id,
+            elapsed_seconds=elapsed_seconds,
+            budget_seconds=budget_seconds,
+            blocked_count=blocked_count,
+        )
+
     # -------------------------------------------------------------------------
     # Quality gate events
     # -------------------------------------------------------------------------

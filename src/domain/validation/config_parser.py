@@ -41,6 +41,7 @@ from src.domain.validation.config_types import (
     EvidenceCheckConfig,
     FailureMode,
     FireOn,
+    LockWaitConfig,
     LongRunningConfig,
     PeriodicTriggerConfig,
     RunEndTriggerConfig,
@@ -509,6 +510,100 @@ def parse_long_running(
     )
 
 
+_LOCK_WAIT_FIELDS = frozenset(
+    {"enabled", "max_wait_seconds", "max_resume_cycles", "poll_interval_ms"}
+)
+
+
+def parse_lock_wait(
+    data: dict[str, Any],
+) -> tuple[LockWaitConfig | None, bool]:
+    """Parse the ``lock_wait`` section into a :class:`LockWaitConfig`.
+
+    Mirrors :func:`parse_long_running`: absent or null yields ``None`` with the
+    matching ``was_present`` flag. Non-object values, unknown fields, or wrong
+    types raise :class:`ConfigError`. ``enabled`` must be a bool;
+    ``max_wait_seconds`` and ``max_resume_cycles`` must be non-negative integers
+    (booleans are rejected even though ``bool`` is a subclass of ``int``).
+    ``poll_interval_ms`` must be a **positive** integer — ``0`` would turn the
+    free-poll loop into a tight filesystem busy-loop.
+    """
+    if "lock_wait" not in data:
+        return None, False
+    lw_data = data["lock_wait"]
+    if lw_data is None:
+        return None, True
+    if not isinstance(lw_data, dict):
+        raise ConfigError(f"lock_wait must be an object, got {type(lw_data).__name__}")
+
+    value = cast("dict[str, object]", lw_data)
+    unknown = set(value.keys()) - _LOCK_WAIT_FIELDS
+    if unknown:
+        first = sorted(str(k) for k in unknown)[0]
+        raise ConfigError(f"Unknown field '{first}' in lock_wait")
+
+    enabled = True
+    if "enabled" in value:
+        enabled_val = value["enabled"]
+        if not isinstance(enabled_val, bool):
+            raise ConfigError(
+                f"lock_wait.enabled must be a boolean, got {type(enabled_val).__name__}"
+            )
+        enabled = enabled_val
+
+    max_wait_seconds = 1800
+    if "max_wait_seconds" in value:
+        mws_val = value["max_wait_seconds"]
+        if isinstance(mws_val, bool) or not isinstance(mws_val, int):
+            raise ConfigError(
+                f"lock_wait.max_wait_seconds must be an integer, "
+                f"got {type(mws_val).__name__}"
+            )
+        if mws_val < 0:
+            raise ConfigError(
+                f"lock_wait.max_wait_seconds must be non-negative, got {mws_val}"
+            )
+        max_wait_seconds = mws_val
+
+    max_resume_cycles = 3
+    if "max_resume_cycles" in value:
+        mrc_val = value["max_resume_cycles"]
+        if isinstance(mrc_val, bool) or not isinstance(mrc_val, int):
+            raise ConfigError(
+                f"lock_wait.max_resume_cycles must be an integer, "
+                f"got {type(mrc_val).__name__}"
+            )
+        if mrc_val < 0:
+            raise ConfigError(
+                f"lock_wait.max_resume_cycles must be non-negative, got {mrc_val}"
+            )
+        max_resume_cycles = mrc_val
+
+    poll_interval_ms = 500
+    if "poll_interval_ms" in value:
+        pim_val = value["poll_interval_ms"]
+        if isinstance(pim_val, bool) or not isinstance(pim_val, int):
+            raise ConfigError(
+                f"lock_wait.poll_interval_ms must be an integer, "
+                f"got {type(pim_val).__name__}"
+            )
+        if pim_val <= 0:
+            raise ConfigError(
+                f"lock_wait.poll_interval_ms must be positive, got {pim_val}"
+            )
+        poll_interval_ms = pim_val
+
+    return (
+        LockWaitConfig(
+            enabled=enabled,
+            max_wait_seconds=max_wait_seconds,
+            max_resume_cycles=max_resume_cycles,
+            poll_interval_ms=poll_interval_ms,
+        ),
+        True,
+    )
+
+
 def parse_coder(
     data: dict[str, Any],
 ) -> tuple[Literal["claude", "amp", "codex"] | None, bool]:
@@ -681,6 +776,10 @@ def parse_validation_config(data: dict[str, Any]) -> ValidationConfig:
     if present:
         fields_set.add("long_running")
 
+    lock_wait, present = parse_lock_wait(data)
+    if present:
+        fields_set.add("lock_wait")
+
     coder, present = parse_coder(data)
     if present:
         fields_set.add("coder")
@@ -724,6 +823,7 @@ def parse_validation_config(data: dict[str, Any]) -> ValidationConfig:
         if per_issue_review is not None
         else CodeReviewConfig(enabled=False),
         long_running=long_running if long_running is not None else LongRunningConfig(),
+        lock_wait=lock_wait if lock_wait is not None else LockWaitConfig(),
         coder=coder,
         amp_mode=amp_mode,
         model=model,

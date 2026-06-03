@@ -485,6 +485,50 @@ class TestSpawnAgent:
                 orchestrator, "run_implementer", original_run_implementer
             )
 
+    @pytest.mark.asyncio
+    async def test_spawns_already_in_progress_issue_without_reclaiming(
+        self,
+        tmp_path: Path,
+        make_orchestrator: Callable[..., MalaOrchestrator],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Resumed WIP issues should not be updated to in_progress again."""
+        fake_issues = FakeIssueProvider(
+            {
+                "wip-issue": FakeIssue(
+                    id="wip-issue", priority=1, status="in_progress"
+                )
+            }
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
+
+        async def fake_run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id="test-agent",
+                success=True,
+                summary="done",
+            )
+
+        monkeypatch.setattr(orchestrator, "run_implementer", fake_run_implementer)
+
+        task = await orchestrator.spawn_agent("wip-issue")
+
+        assert task is not None
+        assert "wip-issue" not in fake_issues.claimed
+        await task
+
 
 class TestCoderTelemetryAttribute:
     """Audit tests for AC-2: ``coder`` is propagated to telemetry surfaces.

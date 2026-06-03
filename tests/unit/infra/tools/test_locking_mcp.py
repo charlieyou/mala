@@ -55,6 +55,28 @@ def _create_handlers(
     return handlers
 
 
+def _create_lock_wait_handler(
+    agent_id: str = "test-agent",
+    repo_namespace: str | None = "/test/repo",
+    emit_lock_event: Callable[[LockEvent], None | Awaitable[None]] | None = None,
+    locking_backend: FakeLockingBackend | None = None,
+) -> Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]:
+    """Return the lock_wait tool handler, asserting it is present.
+
+    lock_wait is withheld when the server is built with enabled=False; these
+    tests build with the default (enabled=True), so the tool is always present.
+    Narrowing here keeps the per-test bodies free of None checks.
+    """
+    handlers = _create_handlers(
+        agent_id=agent_id,
+        repo_namespace=repo_namespace,
+        emit_lock_event=emit_lock_event,
+        locking_backend=locking_backend,
+    )
+    assert handlers.lock_wait is not None
+    return handlers.lock_wait.handler
+
+
 class TestLockAcquireInputValidation:
     """Test lock_acquire JSON schema validation."""
 
@@ -290,6 +312,136 @@ class TestLockAcquireWaitingEvents:
         assert len(events) == 0
 
 
+class TestLockWaitInputValidation:
+    """Test lock_wait JSON schema validation."""
+
+    @pytest.mark.asyncio
+    async def test_empty_filepaths_rejected(self) -> None:
+        """Empty filepaths array should return error."""
+        lock_wait = _create_lock_wait_handler()
+
+        result = await lock_wait({"filepaths": []})
+
+        content = json.loads(result["content"][0]["text"])
+        assert "error" in content
+        assert "non-empty" in content["error"]
+
+    @pytest.mark.asyncio
+    async def test_missing_filepaths_rejected(self) -> None:
+        """Missing filepaths should return error."""
+        lock_wait = _create_lock_wait_handler()
+
+        result = await lock_wait({})
+
+        content = json.loads(result["content"][0]["text"])
+        assert "error" in content
+
+
+class TestLockWaitClassification:
+    """Test lock_wait blocked-vs-free classification and return format."""
+
+    @pytest.mark.asyncio
+    async def test_all_free_returns_not_parked(self) -> None:
+        """No peer-held paths returns parked=false."""
+        backend = FakeLockingBackend()
+        backend.canonicalize_fn = lambda p, ns: f"/{p}"
+
+        lock_wait = _create_lock_wait_handler(locking_backend=backend)
+
+        result = await lock_wait({"filepaths": ["a.py", "b.py"]})
+
+        content = json.loads(result["content"][0]["text"])
+        assert content["parked"] is False
+        assert content["all_acquired_or_free"] is True
+
+    @pytest.mark.asyncio
+    async def test_self_held_treated_as_free(self) -> None:
+        """Paths held by the same agent are free, not blocked."""
+        backend = FakeLockingBackend()
+        backend.canonicalize_fn = lambda p, ns: f"/{p}"
+        backend.holders["/mine.py"] = "test-agent"
+
+        lock_wait = _create_lock_wait_handler(locking_backend=backend)
+
+        result = await lock_wait({"filepaths": ["mine.py"]})
+
+        content = json.loads(result["content"][0]["text"])
+        assert content["parked"] is False
+        assert content["all_acquired_or_free"] is True
+
+    @pytest.mark.asyncio
+    async def test_peer_held_returns_parked_with_wait_paths(self) -> None:
+        """Peer-held paths return parked=true with canonical wait_paths."""
+        backend = FakeLockingBackend()
+        backend.canonicalize_fn = lambda p, ns: f"/{p}"
+        backend.holders["/blocked.py"] = "other-agent"
+
+        lock_wait = _create_lock_wait_handler(locking_backend=backend)
+
+        result = await lock_wait({"filepaths": ["free.py", "blocked.py"]})
+
+        content = json.loads(result["content"][0]["text"])
+        assert content["parked"] is True
+        assert content["wait_paths"] == ["/blocked.py"]
+
+
+class TestLockWaitWaitingEvents:
+    """Test WAITING emission and that lock_wait acquires nothing."""
+
+    @pytest.mark.asyncio
+    async def test_emits_waiting_only_for_peer_held(self) -> None:
+        """WAITING emitted only for peer-held paths, not free/self-held."""
+        from src.core.models import LockEventType
+
+        events: list[Any] = []
+
+        backend = FakeLockingBackend()
+        backend.canonicalize_fn = lambda p, ns: f"/{p}"
+        backend.holders["/blocked.py"] = "other-agent"
+        backend.holders["/mine.py"] = "test-agent"
+
+        lock_wait = _create_lock_wait_handler(
+            emit_lock_event=events.append, locking_backend=backend
+        )
+
+        await lock_wait({"filepaths": ["free.py", "mine.py", "blocked.py"]})
+
+        waiting_events = [e for e in events if e.event_type == LockEventType.WAITING]
+        assert len(waiting_events) == 1
+        assert waiting_events[0].lock_path == "/blocked.py"
+        assert waiting_events[0].agent_id == "test-agent"
+
+    @pytest.mark.asyncio
+    async def test_no_waiting_when_all_free(self) -> None:
+        """No WAITING events when nothing is peer-held."""
+        events: list[Any] = []
+        backend = FakeLockingBackend()
+        backend.canonicalize_fn = lambda p, ns: f"/{p}"
+
+        lock_wait = _create_lock_wait_handler(
+            emit_lock_event=events.append, locking_backend=backend
+        )
+
+        await lock_wait({"filepaths": ["a.py", "b.py"]})
+
+        assert len(events) == 0
+
+    @pytest.mark.asyncio
+    async def test_acquires_nothing(self) -> None:
+        """lock_wait never calls try_lock or wait_for_lock_async."""
+        backend = FakeLockingBackend()
+        backend.canonicalize_fn = lambda p, ns: f"/{p}"
+        backend.holders["/blocked.py"] = "other-agent"
+
+        lock_wait = _create_lock_wait_handler(locking_backend=backend)
+
+        await lock_wait({"filepaths": ["free.py", "blocked.py"]})
+
+        assert backend.try_lock_calls == []
+        assert backend.wait_for_lock_calls == []
+        assert backend.locks == {}
+
+
 class TestAsyncEmitLockEvent:
     """Test async emit_lock_event callback support."""
 
@@ -503,7 +655,7 @@ class TestToolSchemaClaudeAPICompatibility:
     UNSUPPORTED_TOP_LEVEL_KEYS: frozenset[str] = frozenset({"oneOf", "allOf", "anyOf"})
 
     def _get_tool_schemas(self) -> list[dict[str, Any]]:
-        """Extract input_schema from both tools."""
+        """Extract input_schema from all tools."""
         from src.infra.tools.locking_mcp import create_locking_mcp_server
 
         result = create_locking_mcp_server(
@@ -514,10 +666,13 @@ class TestToolSchemaClaudeAPICompatibility:
         )
         assert isinstance(result, tuple)
         handlers = result[1]
+        # lock_wait is present by default (enabled=True); narrow for the checker.
+        assert handlers.lock_wait is not None
         # SdkMcpTool.input_schema is typed loosely in the SDK
         schemas: list[Any] = [
             handlers.lock_acquire.input_schema,
             handlers.lock_release.input_schema,
+            handlers.lock_wait.input_schema,
         ]
         return schemas  # type: ignore[return-value]
 
@@ -570,12 +725,96 @@ class TestMCPServerConfiguration:
         assert "instance" in server
         assert server["type"] == "sdk"
 
-    def test_handlers_have_both_tools(self) -> None:
-        """Handlers object has lock_acquire and lock_release SdkMcpTool objects."""
+    def test_handlers_have_all_tools(self) -> None:
+        """Handlers object has lock_acquire, lock_release, lock_wait tools."""
         handlers = _create_handlers()
 
         assert hasattr(handlers, "lock_acquire")
         assert hasattr(handlers, "lock_release")
+        assert hasattr(handlers, "lock_wait")
         # SdkMcpTool objects have .handler attribute that is callable
         assert callable(handlers.lock_acquire.handler)
         assert callable(handlers.lock_release.handler)
+        assert handlers.lock_wait is not None
+        assert callable(handlers.lock_wait.handler)
+
+
+def _advertised_tool_names(server: McpSdkServerConfig) -> set[str]:
+    """Return the tool names the SDK server advertises via tools/list.
+
+    create_sdk_mcp_server() registers a ``list_tools`` handler on the server
+    instance; this is what Claude sees as the available tool set. Driving it
+    directly verifies the *advertised* surface, not just the handler container.
+    """
+    from mcp.types import ListToolsRequest, ListToolsResult
+
+    instance = server["instance"]
+    handler = instance.request_handlers[ListToolsRequest]
+
+    async def _list() -> object:
+        return await handler(ListToolsRequest(method="tools/list"))
+
+    result = asyncio.run(_list())
+    root = getattr(result, "root", result)
+    assert isinstance(root, ListToolsResult)
+    return {t.name for t in root.tools}
+
+
+class TestLockWaitEnabledGating:
+    """Test that ``enabled`` controls whether lock_wait is exposed.
+
+    When the park-and-resume feature is disabled, ``lock_wait`` must be absent
+    from the advertised tool list so a compliant agent cannot yield to a park
+    the pipeline would not perform; it falls back to the foreground
+    ``lock_acquire`` escalation instead. ``lock_acquire``/``lock_release`` are
+    always registered regardless of ``enabled``.
+    """
+
+    def test_enabled_true_advertises_lock_wait(self) -> None:
+        """Default (enabled=True) advertises all three tools."""
+        from src.infra.tools.locking_mcp import create_locking_mcp_server
+
+        server = create_locking_mcp_server(
+            "test", None, lambda e: None, locking_backend=FakeLockingBackend()
+        )
+        assert isinstance(server, dict)
+
+        names = _advertised_tool_names(server)
+        assert names == {"lock_acquire", "lock_release", "lock_wait"}
+
+    def test_enabled_false_omits_lock_wait(self) -> None:
+        """enabled=False withholds lock_wait but keeps acquire/release."""
+        from src.infra.tools.locking_mcp import create_locking_mcp_server
+
+        server = create_locking_mcp_server(
+            "test",
+            None,
+            lambda e: None,
+            enabled=False,
+            locking_backend=FakeLockingBackend(),
+        )
+        assert isinstance(server, dict)
+
+        names = _advertised_tool_names(server)
+        assert "lock_wait" not in names
+        assert names == {"lock_acquire", "lock_release"}
+
+    def test_enabled_false_handler_is_none(self) -> None:
+        """With enabled=False, the handlers container exposes lock_wait=None."""
+        from src.infra.tools.locking_mcp import create_locking_mcp_server
+
+        result = create_locking_mcp_server(
+            "test",
+            None,
+            lambda e: None,
+            enabled=False,
+            locking_backend=FakeLockingBackend(),
+            _return_handlers=True,
+        )
+        assert isinstance(result, tuple)
+        handlers = result[1]
+
+        # acquire/release still present; lock_wait withheld
+        assert callable(handlers.lock_acquire.handler)
+        assert callable(handlers.lock_release.handler)
+        assert handlers.lock_wait is None

@@ -118,3 +118,24 @@ class AgentLifecycleEvents(Protocol):
             budget_seconds: Maximum seconds the wait will run before giving up.
         """
         ...
+
+    def on_lock_wait(
+        self,
+        agent_id: str,
+        elapsed_seconds: float,
+        budget_seconds: float,
+        blocked_count: int,
+    ) -> None:
+        """Called periodically while waiting on peer-held locks to free.
+
+        Surfaces the otherwise-silent between-turn wait that keeps the SDK client
+        connected after an agent parks on a contended lock via ``lock_wait`` and
+        yields, so the run does not look hung.
+
+        Args:
+            agent_id: Agent whose blocked locks are being awaited.
+            elapsed_seconds: Seconds spent waiting so far.
+            budget_seconds: Maximum seconds the wait will run before giving up.
+            blocked_count: Number of locked paths still held by a peer.
+        """
+        ...

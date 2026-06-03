@@ -27,12 +27,13 @@ from src.infra.io.config import MalaConfig
 
 if TYPE_CHECKING:
     from src.core.protocols.events import MalaEventSink
+    from src.core.protocols.review import ReviewResultProtocol
 
 
 class _NoopReviewer:
     """Injected reviewer that satisfies the factory wiring contract."""
 
-    async def __call__(self, *args: object, **kwargs: object) -> object:
+    async def __call__(self, *args: object, **kwargs: object) -> "ReviewResultProtocol":
         raise AssertionError("reviewer should not be called during factory tests")
 
     def overrides_disabled_setting(self) -> bool:
@@ -133,6 +134,7 @@ class TestCheckReviewAvailability:
             reviewer_type="cerberus",
         )
         assert result == f"cerberus root {tmp_path} missing prompts/reviewers/"
+
     def test_availability_checks_do_not_invoke_cerberus_subprocess(
         self, tmp_path: Path
     ) -> None:

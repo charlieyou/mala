@@ -35,7 +35,10 @@ if TYPE_CHECKING:
     from src.core.protocols.sdk import McpServerFactory
 
 
-def _create_claude_mcp_server_factory() -> McpServerFactory:
+def _create_claude_mcp_server_factory(
+    *,
+    lock_wait_enabled: bool = True,
+) -> McpServerFactory:
     """Claude-shaped MCP factory returning in-process SDK ``Server`` objects.
 
     The Claude path consumes MCP servers as Python objects passed via
@@ -43,6 +46,12 @@ def _create_claude_mcp_server_factory() -> McpServerFactory:
     and cannot be reused for Amp's ``--mcp-config`` stdio launch spec.
     Owned by the Claude provider so the orchestrator does not branch on
     ``provider.name``.
+
+    Args:
+        lock_wait_enabled: When False, the ``lock_wait`` park-and-resume tool is
+            not advertised on the per-agent locking server, so a blocked agent
+            falls back to the foreground ``lock_acquire`` escalation rather than
+            yielding to a park the pipeline would not perform.
     """
     from src.infra.tools.locking_mcp import create_locking_mcp_server
 
@@ -59,6 +68,7 @@ def _create_claude_mcp_server_factory() -> McpServerFactory:
                 agent_id=agent_id,
                 repo_namespace=str(repo_path),
                 emit_lock_event=emit_lock_event or _noop_handler,
+                enabled=lock_wait_enabled,
             )
         }
 
@@ -83,6 +93,7 @@ class ClaudeAgentProvider:
         setting_sources: Sequence[str] | None = None,
         model: str | None = None,
         effort: str | None = None,
+        lock_wait_enabled: bool = True,
     ) -> None:
         """Initialize the provider.
 
@@ -102,6 +113,13 @@ class ClaudeAgentProvider:
                 ``xhigh`` effort for normal orchestrator runs. Reviewer /
                 epic-verifier ``ClaudeAgentOptions`` instances are
                 intentionally untouched.
+            lock_wait_enabled: Whether the lock park-and-resume feature
+                (``lock_wait`` MCP tool plus the pipeline park/resume loop) is
+                active. When False, the ``lock_wait`` tool is not advertised on
+                per-agent locking servers so a blocked agent uses the foreground
+                ``lock_acquire`` escalation instead of yielding to a park the
+                pipeline would not perform. Sourced from
+                ``validation_config.lock_wait.enabled``.
         """
         self.client_factory: SDKClientFactory = SDKClientFactory()
         self.evidence_provider: FileSystemLogProvider = FileSystemLogProvider()
@@ -110,6 +128,7 @@ class ClaudeAgentProvider:
         )
         self._model: str | None = model
         self._effort: str | None = effort
+        self._lock_wait_enabled: bool = lock_wait_enabled
 
     def runtime_builder(
         self,
@@ -155,9 +174,13 @@ class ClaudeAgentProvider:
 
         Returns a fresh factory on each call (matching the prior
         orchestrator behavior); the factory itself produces a new
-        ``mala-locking`` SDK ``Server`` per agent invocation.
+        ``mala-locking`` SDK ``Server`` per agent invocation. The factory
+        withholds the ``lock_wait`` tool when this provider was built with
+        ``lock_wait_enabled=False``.
         """
-        return _create_claude_mcp_server_factory()
+        return _create_claude_mcp_server_factory(
+            lock_wait_enabled=self._lock_wait_enabled,
+        )
 
     def install_prerequisites(
         self,
