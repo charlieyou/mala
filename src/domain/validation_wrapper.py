@@ -10,6 +10,7 @@ drift.
 from __future__ import annotations
 
 import os
+import shlex
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -40,30 +41,36 @@ def build_canonical_wrapper(
     The wrapper creates the log directory, runs `command.command` under
     `timeout`, redirects stdout and stderr to an absolute log file
     `<validation_log_dir>/<issue_id>.<name>.log`, and emits one
-    `MALA_EVIDENCE` summary line that the checker recognizes. The body sits
-    inside a `(...)` subshell so the trailing `exit` terminates only the
-    subshell.
+    `MALA_EVIDENCE` summary line that the checker recognizes. The literal
+    paths are written directly into the commands (instead of routing through
+    shell substitutions such as `$(dirname "$__mala_log")` or `>"$__mala_log"`)
+    so safety hooks can classify validation-log writes as scratch output rather
+    than unresolvable dynamic write targets. The body sits inside a `(...)`
+    subshell so the trailing `exit` terminates only the subshell.
 
     Strict commands (`allow_fail=False`) propagate the command's status with
     `exit "$__mala_status"`. Advisory commands (`allow_fail=True`) end in
     `exit 0`; the real status is still recorded in the summary line.
     """
+    log_dir = os.fspath(validation_log_dir)
     log_path = os.fspath(validation_log_dir / f"{issue_id}.{command.name}.log")
+    quoted_log_dir = shlex.quote(log_dir)
+    quoted_log_path = shlex.quote(log_path)
     escaped = escape_for_bash_lc(command.command)
     exit_expression = "0" if command.allow_fail else '"$__mala_status"'
     return (
-        f'__mala_log="{log_path}"\n'
-        'mkdir -p "$(dirname "$__mala_log")"\n'
+        f"__mala_log={quoted_log_path}\n"
+        f"mkdir -p {quoted_log_dir}\n"
         "(\n"
         f"  if timeout {command.timeout} bash -lc '{escaped}'"
-        ' >"$__mala_log" 2>&1; then\n'
+        f" >{quoted_log_path} 2>&1; then\n"
         "    __mala_status=0\n"
         "  else\n"
         "    __mala_status=$?\n"
         "  fi\n"
         "  printf 'MALA_EVIDENCE name=%s exit=%s log=%s\\n'"
         f" '{command.name}'"
-        ' "$__mala_status" "$__mala_log"\n'
+        f" \"$__mala_status\" {quoted_log_path}\n"
         f"  exit {exit_expression}\n"
         ")"
     )

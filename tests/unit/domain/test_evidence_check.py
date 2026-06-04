@@ -2073,6 +2073,73 @@ class TestEvidenceSummaryParserAndRecognizer:
         assert matched is not None
         assert matched.command == command
 
+    def test_canonical_wrapper_recognizes_shell_quoted_log_assignment(
+        self, tmp_path: Path
+    ) -> None:
+        command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+        validation_log_dir = tmp_path / "logs $(touch nope)'x"
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=validation_log_dir,
+        )
+
+        matched = _recognize_canonical_wrapper(
+            wrapper,
+            {"lint": command},
+            issue_id="mala-3gbpn.3",
+            validation_log_dirs=(validation_log_dir,),
+        )
+
+        assert matched is not None
+        assert matched.command == command
+        assert matched.log_path == validation_log_dir / "mala-3gbpn.3.lint.log"
+
+    def test_parse_validation_evidence_accepts_log_path_with_spaces(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        evidence_provider: EvidenceProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        validation_log_dir = tmp_path / "logs with space 'x"
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(validation_log_dir))
+        command = ValidationCommand(
+            name="lint",
+            command="uvx ruff check .",
+            kind=CommandKind.LINT,
+        )
+        wrapper = build_canonical_wrapper(
+            command,
+            issue_id="mala-3gbpn.3",
+            validation_log_dir=validation_log_dir,
+        )
+        expected_log = validation_log_dir / "mala-3gbpn.3.lint.log"
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            _bash_tool_use_json("toolu_lint", wrapper)
+            + "\n"
+            + _tool_result_json(
+                "toolu_lint",
+                f"MALA_EVIDENCE name=lint exit=0 log={expected_log}",
+            )
+            + "\n"
+        )
+        spec = ValidationSpec(
+            commands=[command],
+            scope=ValidationScope.PER_SESSION,
+            evidence_required=("lint",),
+        )
+        gate = EvidenceCheck(tmp_path, evidence_provider, mock_command_runner)
+
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.commands["lint"].log_path == str(expected_log)
+
     def test_canonical_wrapper_matches_single_quote_and_shell_operators(
         self, tmp_path: Path
     ) -> None:

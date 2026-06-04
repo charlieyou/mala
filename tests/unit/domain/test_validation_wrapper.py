@@ -63,18 +63,18 @@ def _make_command(
 
 
 PLAN_WORKED_EXAMPLE = (
-    '__mala_log="/tmp/mala-validation-logs/bd-mala-abc.lint.log"\n'
-    'mkdir -p "$(dirname "$__mala_log")"\n'
+    "__mala_log=/tmp/mala-validation-logs/bd-mala-abc.lint.log\n"
+    "mkdir -p /tmp/mala-validation-logs\n"
     "(\n"
     "  if timeout 120 bash -lc 'uvx ruff check .'"
-    ' >"$__mala_log" 2>&1; then\n'
+    " >/tmp/mala-validation-logs/bd-mala-abc.lint.log 2>&1; then\n"
     "    __mala_status=0\n"
     "  else\n"
     "    __mala_status=$?\n"
     "  fi\n"
     "  printf 'MALA_EVIDENCE name=%s exit=%s log=%s\\n'"
     " 'lint'"
-    ' "$__mala_status" "$__mala_log"\n'
+    ' "$__mala_status" /tmp/mala-validation-logs/bd-mala-abc.lint.log\n'
     '  exit "$__mala_status"\n'
     ")"
 )
@@ -122,7 +122,24 @@ def test_build_canonical_wrapper_log_path_is_absolute_and_composed() -> None:
     )
     assert (
         wrapper.splitlines()[0]
-        == '__mala_log="/var/log/mala/bd-mala-3gbpn.1.python_test.log"'
+        == "__mala_log=/var/log/mala/bd-mala-3gbpn.1.python_test.log"
+    )
+
+
+def test_build_canonical_wrapper_shell_quotes_log_paths_with_metachars() -> None:
+    """The assignment and path uses are safe when log dirs need shell quoting."""
+    cmd = _make_command()
+    wrapper = build_canonical_wrapper(
+        cmd,
+        issue_id="bd-mala-abc",
+        validation_log_dir=Path("/tmp") / "mala logs-$(touch nope)'x",
+    )
+
+    first, mkdir_line, _, redirect_line, *_ = wrapper.splitlines()
+    assert first == "__mala_log='/tmp/mala logs-$(touch nope)'\"'\"'x/bd-mala-abc.lint.log'"
+    assert mkdir_line == "mkdir -p '/tmp/mala logs-$(touch nope)'\"'\"'x'"
+    assert redirect_line.endswith(
+        " >'/tmp/mala logs-$(touch nope)'\"'\"'x/bd-mala-abc.lint.log' 2>&1; then"
     )
 
 
@@ -157,5 +174,5 @@ def test_build_canonical_wrapper_emits_summary_line_with_command_name() -> None:
     assert (
         "  printf 'MALA_EVIDENCE name=%s exit=%s log=%s\\n'"
         " 'security-scan'"
-        ' "$__mala_status" "$__mala_log"\n'
+        ' "$__mala_status" /tmp/mala-validation-logs/bd-mala-abc.security-scan.log\n'
     ) in wrapper

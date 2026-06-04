@@ -21,6 +21,9 @@ Branches covered:
 * **lock holder lookup** — ``get_lock_holder`` returns ``None`` (no
   active lock) → deny; returns a holder different from ``agent_id``
   → deny with wrong-owner message; returns ``agent_id`` → allow.
+* **validation logs** — callers may opt canonical validation-wrapper shell
+  writes under ``MALA_VALIDATION_LOG_DIR`` out of lock lookup (file-edit tools
+  still use the normal lock path because they do not pass this option).
 
 The :func:`_resolve_against_cwd` helper resolves relative targets
 against the payload ``cwd`` so the lock-key derivation path matches
@@ -46,6 +49,7 @@ __all__ = [
     "_SHELL_EXPANSION_RE",
     "_check_lock",
     "_gate_write_targets",
+    "_is_validation_log_path",
     "_msg_no_lock",
     "_msg_wrong_owner",
     "_resolve_against_cwd",
@@ -83,6 +87,37 @@ _MSG_ENV_MISSING = (
 # and is not a write surface.
 _SHELL_EXPANSION_RE = re.compile(r"[*?\[\]{}$~]")
 _SHELL_EXPANSION_EXCEPT_DOLLAR_RE = re.compile(r"[*?\[\]{}~]")
+
+
+def _is_validation_log_path(
+    target: str, validation_log_dir: str | None, cwd: str | None
+) -> bool:
+    """Return whether a shell write target is under the validation-log dir.
+
+    Validation logs are scratch artifacts that agents are explicitly told not
+    to lock. The exemption is intentionally narrow: only literal, statically
+    resolved shell targets can match, path traversal is normalized away before
+    comparison, a root validation-log dir exempts nothing, and shell expansion
+    markers never match because bash could write somewhere else at runtime.
+    """
+    if not validation_log_dir:
+        return False
+    if target == _UNRESOLVED_SENTINEL:
+        return False
+    if _CMDSUB_PLACEHOLDER in target or _ANSI_C_PLACEHOLDER in target:
+        return False
+    if _SHELL_EXPANSION_RE.search(target):
+        return False
+
+    try:
+        resolved_target = Path(_resolve_against_cwd(target, cwd)).resolve(strict=False)
+        resolved_dir = Path(validation_log_dir).resolve(strict=False)
+    except (OSError, RuntimeError):
+        return False
+
+    if str(resolved_dir) == resolved_dir.anchor:
+        return False
+    return resolved_target == resolved_dir or resolved_dir in resolved_target.parents
 
 
 def _resolve_against_cwd(target: str, cwd: str | None) -> str:
@@ -172,9 +207,16 @@ def _gate_write_targets(
     repo_namespace: str,
     cwd: str | None,
     allow_literal_dollar: bool = False,
+    canonical_validation_log_dir: str | None = None,
+    canonical_validation_log_targets: frozenset[str] | None = None,
 ) -> str | None:
     """Run the lock check on each target; return the first deny reason."""
+    exempt_targets = canonical_validation_log_targets or frozenset()
     for target in targets:
+        if target in exempt_targets and _is_validation_log_path(
+            target, canonical_validation_log_dir, cwd
+        ):
+            continue
         reason = _check_lock(
             target,
             agent_id,

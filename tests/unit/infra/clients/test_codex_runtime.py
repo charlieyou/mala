@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from src.infra.clients.codex_runtime import CodexRuntime, CodexRuntimeBuilder
+from src.infra.tools.env import encode_repo_path
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -153,6 +154,7 @@ def test_env_carries_parent_environ_plus_mala_overlays(
     """
     monkeypatch.setenv("PARENT_VAR", "parent-value")
     monkeypatch.setenv("MALA_LOCK_DIR", "/tmp/locks-x")
+    monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", "/tmp/validation-x")
     monkeypatch.delenv("MALA_AGENT_ID", raising=False)
     monkeypatch.delenv("MALA_REPO_NAMESPACE", raising=False)
 
@@ -162,6 +164,9 @@ def test_env_carries_parent_environ_plus_mala_overlays(
     assert env["MALA_AGENT_ID"] == "agent-x"
     assert env["MALA_REPO_NAMESPACE"] == str(tmp_path)
     assert env["MALA_LOCK_DIR"] == "/tmp/locks-x"
+    assert env["MALA_VALIDATION_LOG_DIR"] == (
+        f"/tmp/validation-x/{encode_repo_path(tmp_path)}"
+    )
 
 
 @pytest.mark.unit

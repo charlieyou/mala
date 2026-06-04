@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal
@@ -89,7 +90,7 @@ EVIDENCE_CHECK_IGNORED_KINDS: set[CommandKind] = {CommandKind.SETUP}
 # Anchored to MULTILINE so it matches lines inside multi-line tool result content.
 _EVIDENCE_SUMMARY_LINE_PATTERN = re.compile(r"^MALA_EVIDENCE\b.*$", re.MULTILINE)
 _EVIDENCE_SUMMARY_PATTERN = re.compile(
-    r"^MALA_EVIDENCE name=([A-Za-z_][A-Za-z0-9_-]*) exit=(\d+) log=(\S+)$",
+    r"^MALA_EVIDENCE name=([A-Za-z_][A-Za-z0-9_-]*) exit=(\d+) log=(.+)$",
     re.MULTILINE,
 )
 
@@ -159,7 +160,23 @@ def _normalize_wrapper_lines(text: str) -> list[str]:
     return [line.strip() for line in lines if line.strip()]
 
 
-_MALA_LOG_FIRST_LINE_PATTERN = re.compile(r'^__mala_log="([^"]+)"$')
+def _parse_mala_log_assignment(line: str) -> str | None:
+    """Parse the canonical wrapper's first ``__mala_log=...`` assignment.
+
+    The wrapper shell-quotes the right-hand side with :func:`shlex.quote`, so
+    evidence recognition must parse the assignment with shell tokenization
+    rather than a double-quote-only regex.
+    """
+    try:
+        tokens = shlex.split(line, posix=True)
+    except ValueError:
+        return None
+    if len(tokens) != 1:
+        return None
+    key, sep, value = tokens[0].partition("=")
+    if key != "__mala_log" or sep != "=" or not value:
+        return None
+    return value
 
 
 def _recognize_canonical_wrapper(
@@ -187,10 +204,9 @@ def _recognize_canonical_wrapper(
     if not input_lines:
         return None
 
-    log_match = _MALA_LOG_FIRST_LINE_PATTERN.match(input_lines[0])
-    if log_match is None:
+    log_path_str = _parse_mala_log_assignment(input_lines[0])
+    if log_path_str is None:
         return None
-    log_path_str = log_match.group(1)
     log_path = Path(log_path_str)
     if not log_path.is_absolute():
         return None

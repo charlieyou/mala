@@ -446,7 +446,7 @@ class TestPromptTemplateIntegration:
         assert "printf 'MALA_EVIDENCE name=%s" in prompt
         assert " 'lint' " in prompt
         assert " 'test' " in prompt
-        assert 'mkdir -p "$(dirname "$__mala_log")"' in prompt
+        assert f"mkdir -p {validation_log_dir}" in prompt
         # Verify no unsubstituted placeholders
         assert "{missing_command_wrappers}" not in prompt
         assert "{validation_log_dir}" not in prompt
@@ -529,7 +529,7 @@ class TestFormatImplementerPrompt:
 
         assert f"**Lock Directory:** {lock_dir}" in prompt
         assert f"**Validation Log Directory:** {validation_log_dir}" in prompt
-        assert 'mkdir -p "$(dirname "$__mala_log")"' in prompt
+        assert f"mkdir -p {validation_log_dir}" in prompt
         assert f"{validation_log_dir}/test-123.test.log" in prompt
         assert f"{lock_dir}/test-123.test.log" not in prompt
 
@@ -580,7 +580,7 @@ class TestCanonicalWrapperPrompts:
         for evidence_key in ("format", "lint", "typecheck", "security-scan", "test"):
             assert f" '{evidence_key}' " in prompt, evidence_key
             log_path = validation_log_dir / f"bd-mala-abc.{evidence_key}.log"
-            assert f'__mala_log="{log_path}"' in prompt
+            assert f"__mala_log={log_path}" in prompt
 
         # Strict wrappers propagate exit; advisory wrappers exit 0
         strict_exits = prompt.count('exit "$__mala_status"')

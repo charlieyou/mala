@@ -112,15 +112,21 @@ def _resolve_env() -> dict[str, str]:
     identity bundle (``MALA_AGENT_ID`` + ``MALA_LOCK_DIR`` +
     ``MALA_REPO_NAMESPACE``) on the per-process env that the Codex
     subprocess inherits, so the hook reads them straight from
-    ``os.environ``. ``MALA_DISALLOWED_TOOLS`` is independent operator
-    policy and is read the same way.
+    ``os.environ``. ``MALA_VALIDATION_LOG_DIR`` is used only by the shell
+    branch's narrow scratch-log exemption. ``MALA_DISALLOWED_TOOLS`` is
+    independent operator policy and is read the same way.
 
     A missing key returns ``{}`` for that slot; ``decide()`` then
     surfaces ``_MSG_ENV_MISSING`` for any branch that needs the
     lock-ownership bundle.
     """
     out: dict[str, str] = {}
-    for key in ("MALA_AGENT_ID", "MALA_LOCK_DIR", "MALA_REPO_NAMESPACE"):
+    for key in (
+        "MALA_AGENT_ID",
+        "MALA_LOCK_DIR",
+        "MALA_REPO_NAMESPACE",
+        "MALA_VALIDATION_LOG_DIR",
+    ):
         env_val = os.environ.get(key)
         if env_val is not None:
             out[key] = env_val
@@ -157,6 +163,74 @@ def _command_string(tool_input: dict[str, Any]) -> str:
     return ""
 
 
+def _parse_mala_log_assignment(line: str) -> str | None:
+    """Parse ``__mala_log=<shlex-quoted-path>`` from a canonical wrapper."""
+    try:
+        tokens = shlex.split(line, posix=True)
+    except ValueError:
+        return None
+    if len(tokens) != 1:
+        return None
+    key, sep, value = tokens[0].partition("=")
+    if key != "__mala_log" or sep != "=" or not value:
+        return None
+    return value
+
+
+def _validation_log_exemption_for_canonical_wrapper(
+    command: str, validation_log_dir: str | None
+) -> tuple[str, frozenset[str]] | None:
+    """Return exact validation-log targets for Mala's canonical wrapper shape.
+
+    The lock policy has a validation-log scratch exemption, but Codex should not
+    grant it to arbitrary shell writes under that directory. Restrict it to the
+    exact outer structure emitted by ``build_canonical_wrapper``: create the log
+    directory, redirect the validation command to the literal log path, print
+    the evidence line, and exit. The inner ``bash -lc`` body remains whatever
+    the configured validation command is; this function only proves the outer
+    log writes are the canonical evidence wrapper writes.
+    """
+    if not validation_log_dir:
+        return None
+    lines = [line.strip() for line in command.splitlines() if line.strip()]
+    if len(lines) != 11:
+        return None
+
+    log_path = _parse_mala_log_assignment(lines[0])
+    if log_path is None:
+        return None
+    quoted_log_dir = shlex.quote(validation_log_dir)
+    quoted_log_path = shlex.quote(log_path)
+
+    if lines[1] != f"mkdir -p {quoted_log_dir}":
+        return None
+    if lines[2] != "(":
+        return None
+    if not (
+        lines[3].startswith("if timeout ")
+        and " bash -lc " in lines[3]
+        and lines[3].endswith(f" >{quoted_log_path} 2>&1; then")
+    ):
+        return None
+    if lines[4:8] != [
+        "__mala_status=0",
+        "else",
+        "__mala_status=$?",
+        "fi",
+    ]:
+        return None
+    if not (
+        lines[8].startswith("printf 'MALA_EVIDENCE name=%s exit=%s log=%s\\n' ")
+        and lines[8].endswith(f' "$__mala_status" {quoted_log_path}')
+    ):
+        return None
+    if lines[9] not in {'exit "$__mala_status"', "exit 0"}:
+        return None
+    if lines[10] != ")":
+        return None
+    return validation_log_dir, frozenset({validation_log_dir, log_path})
+
+
 def decide(input_payload: dict[str, Any]) -> dict[str, Any]:
     """Compute the hook decision for a single PreToolUse payload.
 
@@ -182,6 +256,7 @@ def decide(input_payload: dict[str, Any]) -> dict[str, Any]:
     agent_id = env.get("MALA_AGENT_ID")
     lock_dir = env.get("MALA_LOCK_DIR")
     repo_namespace = env.get("MALA_REPO_NAMESPACE")
+    validation_log_dir = env.get("MALA_VALIDATION_LOG_DIR")
 
     if tool_name_key in SHELL_TOOL_NAMES:
         command = _command_string(tool_input)
@@ -199,12 +274,24 @@ def decide(input_payload: dict[str, Any]) -> dict[str, Any]:
             return _allow()
         if not (agent_id and lock_dir and repo_namespace):
             return _deny(_MSG_ENV_MISSING)
+        validation_log_exemption = _validation_log_exemption_for_canonical_wrapper(
+            command,
+            validation_log_dir,
+        )
+        gate_validation_log_dir: str | None = None
+        gate_validation_log_targets: frozenset[str] | None = None
+        if validation_log_exemption is not None:
+            gate_validation_log_dir, gate_validation_log_targets = (
+                validation_log_exemption
+            )
         reason = _gate_write_targets(
             write_targets,
             agent_id=agent_id,
             lock_dir=lock_dir,
             repo_namespace=repo_namespace,
             cwd=cwd_str,
+            canonical_validation_log_dir=gate_validation_log_dir,
+            canonical_validation_log_targets=gate_validation_log_targets,
         )
         return _deny(reason) if reason is not None else _allow()
 

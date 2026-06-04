@@ -612,6 +612,139 @@ class TestOutputShape:
         assert spec["permissionDecisionReason"]
 
 
+class TestValidationLogExemption:
+    """Validation wrappers write scratch logs and should not require locks."""
+
+    def test_canonical_wrapper_validation_logs_allow_without_locks(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from src.domain.validation.spec import CommandKind, ValidationCommand
+        from src.domain.validation_wrapper import build_canonical_wrapper
+
+        validation_log_dir = tmp_path / "validation-logs"
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(validation_log_dir))
+        wrapper = build_canonical_wrapper(
+            ValidationCommand(
+                name="lint",
+                command="true",
+                kind=CommandKind.LINT,
+                timeout=120,
+            ),
+            issue_id="mala-issue",
+            validation_log_dir=validation_log_dir,
+        )
+
+        result = decide(make_payload("bash", {"command": wrapper}, cwd=repo))
+
+        assert is_allow(result), result
+
+    def test_canonical_looking_wrapper_extra_redirect_still_requires_lock(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from src.domain.validation.spec import CommandKind, ValidationCommand
+        from src.domain.validation_wrapper import build_canonical_wrapper
+
+        validation_log_dir = tmp_path / "validation-logs"
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(validation_log_dir))
+        wrapper = build_canonical_wrapper(
+            ValidationCommand(
+                name="lint",
+                command="true",
+                kind=CommandKind.LINT,
+                timeout=120,
+            ),
+            issue_id="mala-issue",
+            validation_log_dir=validation_log_dir,
+        )
+        extra_log = validation_log_dir / "extra.log"
+        canonical_log = validation_log_dir / "mala-issue.lint.log"
+        lines = wrapper.splitlines()
+        lines[3] = lines[3].replace(
+            f" >{canonical_log} 2>&1; then",
+            f" >{extra_log} >{canonical_log} 2>&1; then",
+        )
+
+        result = decide(make_payload("bash", {"command": "\n".join(lines)}, cwd=repo))
+
+        assert is_deny(result), result
+        assert str(extra_log) in deny_reason(result)
+
+    def test_arbitrary_validation_log_redirect_still_requires_lock(
+        self,
+        env: dict[str, str],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        validation_log_dir = tmp_path / "validation-logs"
+        target = validation_log_dir / "issue.test.log"
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(validation_log_dir))
+
+        result = decide(make_payload("bash", {"command": f"echo x > {target}"}))
+
+        assert is_deny(result), result
+        assert str(target) in deny_reason(result)
+
+    def test_validation_log_symlink_setup_still_requires_lock(
+        self,
+        env: dict[str, str],
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        validation_log_dir = tmp_path / "validation-logs"
+        victim = repo / "victim.py"
+        target = validation_log_dir / "issue.test.log"
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(validation_log_dir))
+
+        result = decide(
+            make_payload(
+                "bash",
+                {"command": f"ln -s {victim} {target}; echo pwned > {target}"},
+                cwd=repo,
+            )
+        )
+
+        assert is_deny(result), result
+
+    def test_validation_log_exemption_does_not_match_sibling_prefix(
+        self,
+        env: dict[str, str],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        validation_log_dir = tmp_path / "validation-logs"
+        target = tmp_path / "validation-logs-evil" / "issue.test.log"
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(validation_log_dir))
+
+        result = decide(make_payload("bash", {"command": f"echo x > {target}"}))
+
+        assert is_deny(result), result
+        assert str(target) in deny_reason(result)
+
+    def test_file_edit_tools_do_not_use_validation_log_exemption(
+        self,
+        env: dict[str, str],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        validation_log_dir = tmp_path / "validation-logs"
+        target = validation_log_dir / "issue.test.log"
+        monkeypatch.setenv("MALA_VALIDATION_LOG_DIR", str(validation_log_dir))
+
+        result = decide(make_payload("apply_patch", {"path": str(target)}))
+
+        assert is_deny(result), result
+        assert str(target) in deny_reason(result)
+
+
 # ---------------------------------------------------------------------------
 # Review-fix regressions (attempt 2 — P1/P2 findings)
 # ---------------------------------------------------------------------------

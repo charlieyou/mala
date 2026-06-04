@@ -40,6 +40,7 @@ from src.infra.hooks.codex.lock_policy import (
     _SHELL_EXPANSION_RE,
     _check_lock,
     _gate_write_targets,
+    _is_validation_log_path,
     _msg_no_lock,
     _msg_wrong_owner,
     _resolve_against_cwd,
@@ -156,6 +157,77 @@ class TestShellExpansionRegex:
     )
     def test_does_not_match_plain_paths(self, target: str) -> None:
         assert _SHELL_EXPANSION_RE.search(target) is None
+
+
+# ----- validation-log exemption ------------------------------------------
+
+
+@pytest.mark.unit
+class TestValidationLogPath:
+    def test_matches_directory_and_file_under_configured_dir(
+        self, tmp_path: Path
+    ) -> None:
+        log_dir = tmp_path / "validation-logs"
+        assert _is_validation_log_path(str(log_dir), str(log_dir), cwd=None)
+        assert _is_validation_log_path(
+            str(log_dir / "issue.test.log"), str(log_dir), cwd=None
+        )
+
+    def test_does_not_match_sibling_prefix_or_traversal(self, tmp_path: Path) -> None:
+        log_dir = tmp_path / "validation-logs"
+        assert not _is_validation_log_path(
+            str(tmp_path / "validation-logs-evil" / "issue.test.log"),
+            str(log_dir),
+            cwd=None,
+        )
+        assert not _is_validation_log_path(
+            str(log_dir / ".." / "repo" / "file.py"),
+            str(log_dir),
+            cwd=None,
+        )
+
+    def test_does_not_match_root_or_dynamic_targets(self, tmp_path: Path) -> None:
+        log_dir = tmp_path / "validation-logs"
+        assert not _is_validation_log_path("/tmp/anything.log", "/", cwd=None)
+        assert not _is_validation_log_path(
+            str(log_dir / "$name.log"), str(log_dir), cwd=None
+        )
+        assert not _is_validation_log_path(_CMDSUB_PLACEHOLDER, str(log_dir), cwd=None)
+
+    def test_gate_skips_validation_logs_without_locks(
+        self, lock_dir: Path, repo: Path, tmp_path: Path
+    ) -> None:
+        log_dir = tmp_path / "validation-logs"
+        reason = _gate_write_targets(
+            [str(log_dir), str(log_dir / "issue.test.log")],
+            agent_id="agent-me",
+            lock_dir=str(lock_dir),
+            repo_namespace=str(repo),
+            cwd=None,
+            canonical_validation_log_dir=str(log_dir),
+            canonical_validation_log_targets=frozenset(
+                {str(log_dir), str(log_dir / "issue.test.log")}
+            ),
+        )
+        assert reason is None
+
+    def test_gate_still_denies_non_exempt_validation_descendant(
+        self, lock_dir: Path, repo: Path, tmp_path: Path
+    ) -> None:
+        log_dir = tmp_path / "validation-logs"
+        target = log_dir / "extra.log"
+        reason = _gate_write_targets(
+            [str(target)],
+            agent_id="agent-me",
+            lock_dir=str(lock_dir),
+            repo_namespace=str(repo),
+            cwd=None,
+            canonical_validation_log_dir=str(log_dir),
+            canonical_validation_log_targets=frozenset(
+                {str(log_dir), str(log_dir / "issue.test.log")}
+            ),
+        )
+        assert reason == _msg_no_lock(str(target), "agent-me")
 
 
 # ----- _check_lock: pre-lookup deny branches ----------------------------
