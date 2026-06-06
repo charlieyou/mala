@@ -59,7 +59,14 @@ _T = TypeVar("_T")
 # Parse the background-launch acknowledgement tool_result, e.g.
 # "Command running in background with ID: bu1538lol. ..." — used to learn the
 # launch's task_id when the ``task_started`` system event was not observed.
-_BG_LAUNCH_ID_RE = re.compile(r"background with ID:\s*(\S+)")
+# Claude can also auto-background a long-running Bash tool; that acknowledgement
+# may be phrased with different capitalization / "backgrounded" wording.
+_BG_LAUNCH_ID_RE = re.compile(
+    r"\bbackground(?:ed)?\s+(?:with\s+)?ID:\s*(\S+)", re.IGNORECASE
+)
+_BACKGROUND_RETRIEVAL_TOOL_NAMES = frozenset(
+    {"taskoutput", "bashoutput", "taskget", "taskupdate"}
+)
 
 # Parse the ``<status>...</status>`` field a TaskOutput/BashOutput retrieval
 # tool_result reports. Only a terminal status proves the task actually finished
@@ -161,20 +168,24 @@ class MessageIterationState:
         idle_retry_count: Number of idle timeout retries attempted.
         pending_tool_ids: Set of tool IDs awaiting results.
         pending_lint_commands: Map of tool_use_id to (lint_type, command).
+        bash_tool_use_ids: Tool-use IDs whose originating tool was Bash. Used to
+            scope launch-acknowledgement parsing to actual Bash results so file
+            contents mentioning "backgrounded with ID" do not create fake waits.
         first_message_received: Whether any message was received in current turn.
-        pending_background_tool_ids: tool_use_ids of Bash launches started with
-            ``run_in_background=true`` that the agent has not yet handled.
-            Populated in :meth:`_handle_tool_use_event` and cleared when a matching
-            ``task_completed`` event is observed, or when the agent retrieves the
-            task inline via ``TaskOutput``/``BashOutput`` *and* that retrieval's
-            tool_result reports a terminal status (completed/failed/stopped) or a
-            correlated no-task-found error.
+        pending_background_tool_ids: tool_use_ids of backgrounded launches that
+            the agent has not yet handled. Populated from explicit
+            ``Bash(run_in_background=true)`` calls, Claude ``task_started`` events,
+            or launch acknowledgements that report a background task id. Cleared
+            when a matching ``task_completed`` event is observed, or when the
+            agent retrieves the task inline via a known background-output tool and
+            that retrieval's tool_result reports a terminal status
+            (completed/failed/stopped) or a correlated no-task-found error.
         background_launch_commands: Map of tool_use_id to the launch command text,
             recorded for background Bash launches when cheaply available.
         background_task_ids: Map of tool_use_id to SDK task_id, recorded when a
             ``task_started`` event is observed so the wait/resume loop can stop the
             task on timeout even when the started event was consumed mid-turn.
-        pending_bg_retrievals: Map of an in-flight ``TaskOutput``/``BashOutput``
+        pending_bg_retrievals: Map of an in-flight background-output
             retrieval's tool_use_id to the background launch's tool_use_id it
             targets. Recorded when the agent *requests* a retrieval; resolved when
             the retrieval's tool_result arrives — the launch is cleared from
@@ -197,6 +208,7 @@ class MessageIterationState:
     idle_retry_count: int = 0
     pending_tool_ids: set[str] = field(default_factory=set)
     pending_lint_commands: dict[str, tuple[str, str]] = field(default_factory=dict)
+    bash_tool_use_ids: set[str] = field(default_factory=set)
     first_message_received: bool = False
     pending_background_tool_ids: set[str] = field(default_factory=set)
     background_launch_commands: dict[str, str] = field(default_factory=dict)
@@ -217,7 +229,7 @@ class MessageIterationResult:
         pending_query: Next query to send (for retries), or None if complete.
         pending_session_id: Session ID to use for next query.
         idle_retry_count: Updated idle retry count.
-        pending_background_tool_ids: tool_use_ids of background Bash launches whose
+        pending_background_tool_ids: tool_use_ids of backgrounded launches whose
             ``task_completed`` event was not observed before the turn ended. The
             wait/resume loop in ``execute_iteration`` reads this to decide whether to
             keep the SDK client connected and wait for the task notification.
@@ -405,6 +417,8 @@ class MessageStreamProcessor:
         if self.callbacks.on_tool_use is not None:
             self.callbacks.on_tool_use(issue_id, name, block_input)
         if isinstance(name, str) and name.lower() == "bash":
+            if block_id:
+                state.bash_tool_use_ids.add(block_id)
             cmd = (
                 block_input.get("command", "") if isinstance(block_input, dict) else ""
             )
@@ -424,7 +438,7 @@ class MessageStreamProcessor:
                     issue_id,
                     block_id,
                 )
-        elif isinstance(name, str) and name.lower() in ("taskoutput", "bashoutput"):
+        elif isinstance(name, str) and name.lower() in _BACKGROUND_RETRIEVAL_TOOL_NAMES:
             # The agent is retrieving a backgrounded task. Record which launch
             # this retrieval targets, but do NOT clear the launch yet: only the
             # retrieval's tool_result proves the task actually finished. Clearing
@@ -450,30 +464,24 @@ class MessageStreamProcessor:
     ) -> None:
         tool_use_id = getattr(event, "tool_use_id", None)
         if tool_use_id:
+            result_text = _extract_tool_result_text(getattr(event, "content", None))
             state.pending_tool_ids.discard(tool_use_id)
-            if tool_use_id in state.pending_background_tool_ids:
-                self._record_background_launch_metadata(
-                    state,
-                    tool_use_id,
-                    _extract_tool_result_text(getattr(event, "content", None)),
-                )
+            if tool_use_id in state.bash_tool_use_ids:
+                self._record_background_launch_metadata(state, tool_use_id, result_text)
             if tool_use_id in state.pending_bg_retrievals:
                 self._resolve_bg_retrieval(
                     state,
                     tool_use_id,
                     is_error=bool(getattr(event, "is_error", False)),
-                    result_text=_extract_tool_result_text(
-                        getattr(event, "content", None)
-                    ),
+                    result_text=result_text,
                 )
             if tool_use_id in state.lock_wait_request_ids:
                 self._resolve_lock_wait(
                     state,
                     tool_use_id,
-                    result_text=_extract_tool_result_text(
-                        getattr(event, "content", None)
-                    ),
+                    result_text=result_text,
                 )
+            state.bash_tool_use_ids.discard(tool_use_id)
         if tool_use_id in state.pending_lint_commands:
             lint_type, cmd = state.pending_lint_commands.pop(tool_use_id)
             if not getattr(event, "is_error", False):
@@ -488,11 +496,15 @@ class MessageStreamProcessor:
         <id>. ..." Recording the id (keyed by the launch's tool_use_id) lets
         later retrieval detection correlate ``TaskOutput(task_id=...)`` back to
         the launch even when the ``task_started`` system event was not observed.
+        The acknowledgement itself also proves the tool was backgrounded, which
+        covers Claude's auto-background path where the originating ``Bash`` input
+        did not include ``run_in_background=true``.
         """
         if not ack_text:
             return
         id_match = _BG_LAUNCH_ID_RE.search(ack_text)
         if id_match:
+            state.pending_background_tool_ids.add(tool_use_id)
             state.background_task_ids.setdefault(
                 tool_use_id, _strip_trailing_punct(id_match.group(1))
             )
@@ -511,7 +523,13 @@ class MessageStreamProcessor:
         """
         if not retrieval_tool_use_id:
             return
-        task_id = str(block_input.get("task_id") or block_input.get("bash_id") or "")
+        task_id = str(
+            block_input.get("task_id")
+            or block_input.get("taskId")
+            or block_input.get("bash_id")
+            or block_input.get("bashId")
+            or ""
+        )
         if not task_id:
             return
         for launch_id in state.pending_background_tool_ids:
@@ -595,16 +613,21 @@ class MessageStreamProcessor:
     ) -> None:
         """Process a ``task_started`` AgentEvent.
 
-        Emitted by the Claude SDK when a backgrounded task begins. The launch is
-        already recorded from the originating ``tool_use`` event; additionally
-        record the ``tool_use_id -> task_id`` mapping so the wait/resume loop can
-        stop the task on timeout even when this event was consumed during the
-        launch turn (and so never reappears on the continuous stream).
+        Emitted by the Claude SDK when a backgrounded task begins. Explicit
+        ``Bash(run_in_background=true)`` launches are already recorded from the
+        originating ``tool_use`` event, but Claude may also auto-background a
+        long-running Bash tool. In both cases, the task-started event is enough
+        evidence to make validation wait for completion before the gate runs.
+        Also record the ``tool_use_id -> task_id`` mapping so the wait/resume
+        loop can stop the task on timeout even when this event was consumed
+        during the launch turn (and so never reappears on the continuous stream).
         """
         task_id = str(getattr(event, "task_id", "") or "")
         tool_use_id = str(getattr(event, "tool_use_id", "") or "")
-        if tool_use_id and task_id:
-            state.background_task_ids[tool_use_id] = task_id
+        if tool_use_id:
+            state.pending_background_tool_ids.add(tool_use_id)
+            if task_id:
+                state.background_task_ids[tool_use_id] = task_id
         logger.debug(
             "Session %s: background task started (task_id=%s, tool_use_id=%s)",
             issue_id,

@@ -189,6 +189,22 @@ async def test_run_in_background_false_not_recorded() -> None:
 
 
 @pytest.mark.asyncio
+async def test_task_started_marks_auto_backgrounded_launch_pending() -> None:
+    """Claude may auto-background a long Bash tool without run_in_background."""
+    events: list[object] = [
+        _ToolUseEvent(id="tool-bg", name="Bash", input={"command": "slow.sh"}),
+        _TaskStartedEvent(task_id="task-1", tool_use_id="tool-bg"),
+        _ResultEvent(),
+    ]
+
+    state, result = await _run(events)
+
+    assert state.pending_background_tool_ids == {"tool-bg"}
+    assert state.background_task_ids == {"tool-bg": "task-1"}
+    assert result.pending_background_tool_ids == frozenset({"tool-bg"})
+
+
+@pytest.mark.asyncio
 async def test_non_bash_tool_not_recorded() -> None:
     events: list[object] = [
         _ToolUseEvent(
@@ -356,6 +372,44 @@ async def test_taskoutput_terminal_result_correlates_via_ack_task_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_auto_background_ack_marks_launch_pending() -> None:
+    """The launch acknowledgement also covers auto-backgrounded Bash tools."""
+    events: list[object] = [
+        _ToolUseEvent(id="tool-bg", name="Bash", input={"command": "slow.sh"}),
+        _ToolResultEvent(
+            tool_use_id="tool-bg",
+            content="Command was auto-backgrounded with ID: task-1.",
+        ),
+        _ResultEvent(),
+    ]
+
+    state, result = await _run(events)
+
+    assert state.pending_background_tool_ids == {"tool-bg"}
+    assert state.background_task_ids == {"tool-bg": "task-1"}
+    assert result.pending_background_tool_ids == frozenset({"tool-bg"})
+
+
+@pytest.mark.asyncio
+async def test_non_bash_ack_text_does_not_mark_launch_pending() -> None:
+    """File/log content that mentions auto-backgrounding is not a launch ack."""
+    events: list[object] = [
+        _ToolUseEvent(id="tool-read", name="Read", input={"file_path": "log.txt"}),
+        _ToolResultEvent(
+            tool_use_id="tool-read",
+            content="log says: Command was auto-backgrounded with ID: task-1.",
+        ),
+        _ResultEvent(),
+    ]
+
+    state, result = await _run(events)
+
+    assert state.pending_background_tool_ids == set()
+    assert state.background_task_ids == {}
+    assert result.pending_background_tool_ids == frozenset()
+
+
+@pytest.mark.asyncio
 async def test_taskoutput_request_without_result_keeps_pending() -> None:
     """A TaskOutput request alone (no result yet) does not clear the launch."""
     events: list[object] = [
@@ -419,7 +473,12 @@ async def test_taskoutput_generic_error_result_keeps_pending() -> None:
 
 @pytest.mark.parametrize(
     ("tool_name", "id_field"),
-    [("TaskOutput", "task_id"), ("BashOutput", "bash_id")],
+    [
+        ("TaskOutput", "task_id"),
+        ("BashOutput", "bash_id"),
+        ("TaskGet", "taskId"),
+        ("TaskUpdate", "taskId"),
+    ],
 )
 @pytest.mark.asyncio
 async def test_background_output_no_task_found_error_clears_pending(

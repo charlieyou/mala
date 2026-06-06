@@ -307,6 +307,7 @@ class IdleTimeoutRetryPolicy:
         state.first_message_received = False
         state.pending_tool_ids.clear()
         state.pending_lint_commands.clear()
+        state.bash_tool_use_ids.clear()
         # Clear at the start of every turn so that, after the turn (and any
         # background wait/resume) completes, ``pending_lock_waits`` holds exactly
         # the *latest* turn's parks — the stream processor repopulates it during
@@ -707,6 +708,7 @@ class IdleTimeoutRetryPolicy:
         # hanging on stale tool IDs (they won't resolve on new stream)
         state.pending_tool_ids.clear()
         state.pending_lint_commands.clear()
+        state.bash_tool_use_ids.clear()
         state.first_message_received = False
 
         if resume_id is not None:
@@ -820,6 +822,7 @@ class IdleTimeoutRetryPolicy:
             or not long_running.enabled
             or not client.supports_background_tasks()
         ):
+            self._abandon_background_state(state)
             return IterationResult(
                 success=result.success,
                 session_id=result.session_id,
@@ -932,6 +935,7 @@ class IdleTimeoutRetryPolicy:
             state.first_message_received = False
             state.pending_tool_ids.clear()
             state.pending_lint_commands.clear()
+            state.bash_tool_use_ids.clear()
             # Clear lock parks at the start of the resume turn too, so after the
             # background loop returns ``pending_lock_waits`` reflects only this
             # latest resume turn's parks (the supported same-turn interleaving is
@@ -1089,6 +1093,7 @@ class IdleTimeoutRetryPolicy:
             state.first_message_received = False
             state.pending_tool_ids.clear()
             state.pending_lint_commands.clear()
+            state.bash_tool_use_ids.clear()
             state.pending_lock_waits.clear()
 
             # Bound the resume query startup by the hard per-task timeout (the
@@ -1263,6 +1268,7 @@ class IdleTimeoutRetryPolicy:
         state.background_task_ids.clear()
         state.pending_bg_retrievals.clear()
         state.background_launch_commands.clear()
+        state.bash_tool_use_ids.clear()
 
     async def _safe_stop_task(
         self, client: SDKClientProtocol, task_id: str, issue_id: str

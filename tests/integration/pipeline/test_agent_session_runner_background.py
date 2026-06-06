@@ -26,6 +26,7 @@ from src.core.protocols.agent_event import (
     AgentResultEvent,
     AgentTaskCompletedEvent,
     AgentTaskStartedEvent,
+    AgentToolResultEvent,
     AgentToolUseEvent,
 )
 from src.domain.lifecycle import LifecycleContext
@@ -78,6 +79,37 @@ def _launch_turn_events(tool_use_id: str = _LAUNCH_TOOL_USE_ID) -> list[object]:
             id=tool_use_id,
             name="Bash",
             input={"command": "long_job.sh", "run_in_background": True},
+        ),
+        AgentResultEvent(session_id="sess-1", subtype="success"),
+    ]
+
+
+def _auto_background_turn_events(tool_use_id: str = _LAUNCH_TOOL_USE_ID) -> list[object]:
+    """A Bash command that Claude auto-backgrounds after launch."""
+    return [
+        AgentToolUseEvent(
+            id=tool_use_id,
+            name="Bash",
+            input={"command": "long_job.sh"},
+        ),
+        AgentTaskStartedEvent(task_id=_TASK_ID, tool_use_id=tool_use_id),
+        AgentResultEvent(session_id="sess-1", subtype="success"),
+    ]
+
+
+def _auto_background_ack_turn_events(
+    tool_use_id: str = _LAUNCH_TOOL_USE_ID,
+) -> list[object]:
+    """A Bash command whose tool result supplies the background task id."""
+    return [
+        AgentToolUseEvent(
+            id=tool_use_id,
+            name="Bash",
+            input={"command": "long_job.sh"},
+        ),
+        AgentToolResultEvent(
+            tool_use_id=tool_use_id,
+            content=f"Command was auto-backgrounded with ID: {_TASK_ID}.",
         ),
         AgentResultEvent(session_id="sess-1", subtype="success"),
     ]
@@ -233,6 +265,55 @@ async def test_completed_background_task_resumes_then_completes() -> None:
     # The wait read the continuous stream exactly once.
     assert client.receive_messages_calls == 1
     assert client.stopped_task_ids == []
+
+
+@pytest.mark.asyncio
+async def test_auto_backgrounded_task_resumes_before_success() -> None:
+    """Claude auto-backgrounded Bash tasks wait/resume before validation can run."""
+    client = _FakeSDKClient(
+        per_turn_responses=[_auto_background_turn_events(), _finalize_turn_events()],
+        notifications=[
+            AgentTaskCompletedEvent(
+                task_id=_TASK_ID,
+                tool_use_id=_LAUNCH_TOOL_USE_ID,
+                status="completed",
+                summary="exit code 0",
+                output_file="/tmp/out.log",
+            ),
+        ],
+    )
+    result = await _run(client, long_running=LongRunningConfig())
+
+    assert result.success is True
+    assert len(client.queries) == 2
+    assert "resume ISSUE-1" in client.queries[1]
+    assert client.receive_messages_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_auto_background_ack_resumes_before_success() -> None:
+    """Ack-only auto-background metadata also drives wait/resume."""
+    client = _FakeSDKClient(
+        per_turn_responses=[
+            _auto_background_ack_turn_events(),
+            _finalize_turn_events(),
+        ],
+        notifications=[
+            AgentTaskCompletedEvent(
+                task_id=_TASK_ID,
+                tool_use_id=_LAUNCH_TOOL_USE_ID,
+                status="completed",
+                summary="exit code 0",
+                output_file="/tmp/out.log",
+            ),
+        ],
+    )
+    result = await _run(client, long_running=LongRunningConfig())
+
+    assert result.success is True
+    assert len(client.queries) == 2
+    assert "resume ISSUE-1" in client.queries[1]
+    assert client.receive_messages_calls == 1
 
 
 @pytest.mark.asyncio
