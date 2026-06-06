@@ -11,6 +11,8 @@ from src.core.protocols.agent_event import (
     AgentResultEvent,
     AgentTaskCompletedEvent,
     AgentTaskStartedEvent,
+    AgentToolResultEvent,
+    AgentToolUseEvent,
 )
 from src.infra.sdk_adapter import (
     CLAUDE_STDOUT_MAX_BUFFER_SIZE,
@@ -124,6 +126,25 @@ class _FakeInner:
         self.stopped.append(task_id)
 
 
+class _FakeRawQuery:
+    """Private Claude Query look-alike yielding raw CLI message dicts."""
+
+    def __init__(self, messages: list[dict[str, object]]) -> None:
+        self._messages = messages
+
+    async def receive_messages(self) -> object:
+        for msg in self._messages:
+            yield msg
+
+
+class _FakeRawInner(_FakeInner):
+    """Inner client exposing the private raw ``_query`` Mala uses for Claude."""
+
+    def __init__(self, messages: list[dict[str, object]]) -> None:
+        super().__init__([])
+        self._query = _FakeRawQuery(messages)
+
+
 class TestBackgroundTaskSurface:
     """The Claude wrapper exposes the background-task capability + stream."""
 
@@ -159,6 +180,146 @@ class TestBackgroundTaskSurface:
                 output_file="/tmp/out.log",
             ),
             AgentResultEvent(session_id="s1", is_error=False),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_receive_response_translates_raw_queue_notifications(self) -> None:
+        """Claude queued task notifications are recovered before SDK parsing drops them."""
+        inner = _FakeRawInner(
+            [
+                {
+                    "type": "assistant",
+                    "session_id": "s1",
+                    "message": {
+                        "model": "claude-opus",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "tool-bg",
+                                "name": "Bash",
+                                "input": {
+                                    "command": "slow.sh",
+                                    "run_in_background": True,
+                                },
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "tool-bg",
+                                "content": "Command running in background with ID: task-1.",
+                                "is_error": False,
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "queue-operation",
+                    "operation": "enqueue",
+                    "content": "\n".join(
+                        [
+                            "<task-notification>",
+                            "<task-id>task-1</task-id>",
+                            "<tool-use-id>tool-bg</tool-use-id>",
+                            "<output-file>/tmp/task-1.output</output-file>",
+                            "<status>completed</status>",
+                            "<summary>Background command completed</summary>",
+                            "</task-notification>",
+                        ]
+                    ),
+                },
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "duration_ms": 1,
+                    "duration_api_ms": 1,
+                    "is_error": False,
+                    "num_turns": 1,
+                    "session_id": "s1",
+                    "result": "done",
+                },
+                {
+                    "type": "assistant",
+                    "session_id": "s1",
+                    "message": {
+                        "model": "claude-opus",
+                        "content": [{"type": "text", "text": "after result"}],
+                    },
+                },
+            ]
+        )
+        client = _ClaudeAgentEventClient(cast("SDKClientProtocol", inner))
+
+        events = [event async for event in client.receive_response()]
+
+        assert events == [
+            AgentToolUseEvent(
+                id="tool-bg",
+                name="Bash",
+                input={"command": "slow.sh", "run_in_background": True},
+            ),
+            AgentToolResultEvent(
+                tool_use_id="tool-bg",
+                is_error=False,
+                content="Command running in background with ID: task-1.",
+            ),
+            AgentTaskCompletedEvent(
+                task_id="task-1",
+                tool_use_id="tool-bg",
+                status="completed",
+                summary="Background command completed",
+                output_file="/tmp/task-1.output",
+            ),
+            AgentResultEvent(
+                session_id="s1",
+                is_error=False,
+                subtype="success",
+                result="done",
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_receive_messages_translates_raw_task_notification_attachment(
+        self,
+    ) -> None:
+        inner = _FakeRawInner(
+            [
+                {
+                    "type": "attachment",
+                    "attachment": {
+                        "type": "queued_command",
+                        "commandMode": "task-notification",
+                        "prompt": "\n".join(
+                            [
+                                "<task-notification>",
+                                "<task-id>task-2</task-id>",
+                                "<tool-use-id>tool-bg-2</tool-use-id>",
+                                "<status>failed</status>",
+                                "<summary>exit code 100</summary>",
+                                "</task-notification>",
+                            ]
+                        ),
+                    },
+                }
+            ]
+        )
+        client = _ClaudeAgentEventClient(cast("SDKClientProtocol", inner))
+
+        events = [event async for event in client.receive_messages()]
+
+        assert events == [
+            AgentTaskCompletedEvent(
+                task_id="task-2",
+                tool_use_id="tool-bg-2",
+                status="failed",
+                summary="exit code 100",
+            )
         ]
 
     @pytest.mark.asyncio

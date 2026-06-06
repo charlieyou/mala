@@ -25,7 +25,7 @@ directly) still receive the unwrapped SDK client.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -68,9 +68,7 @@ class _ClaudeAgentEventClient:
         await self._inner.query(prompt, session_id)
 
     def receive_response(self) -> AsyncIterator[AgentEventValue]:
-        from src.core.protocols.agent_event import to_agent_events
-
-        return to_agent_events(self._inner.receive_response())
+        return self._receive_agent_events(stop_after_result=True)
 
     def receive_messages(self) -> AsyncIterator[AgentEventValue]:
         """Translate the continuous (turn-spanning) SDK message stream.
@@ -81,9 +79,50 @@ class _ClaudeAgentEventClient:
         (→ :class:`AgentTaskCompletedEvent`) that the SDK pushes after a
         backgrounded turn has already yielded its result.
         """
+        return self._receive_agent_events(stop_after_result=False)
+
+    async def _receive_agent_events(
+        self, *, stop_after_result: bool
+    ) -> AsyncIterator[AgentEventValue]:
+        """Translate Claude messages, including queued task notifications.
+
+        ``ClaudeSDKClient.receive_messages()`` first parses raw CLI messages via
+        the SDK parser. That parser intentionally skips newer/unknown message
+        types, which currently includes Claude Code's ``queue-operation`` and
+        ``attachment`` records that carry ``<task-notification>`` prompts for
+        backgrounded Bash completion. Consume the client's raw ``Query`` stream
+        when available so Mala can recover those completion events before the
+        parser drops them; fall back to the public SDK iterators for tests or
+        custom clients that do not expose the private query object.
+        """
+        raw_stream = _raw_claude_message_stream(self._inner)
+        if raw_stream is None:
+            from src.core.protocols.agent_event import to_agent_events
+
+            stream = (
+                self._inner.receive_response()
+                if stop_after_result
+                else self._inner.receive_messages()
+            )
+            async for event in to_agent_events(stream):
+                yield event
+            return
+
+        from claude_agent_sdk._internal.message_parser import parse_message
         from src.core.protocols.agent_event import to_agent_events
 
-        return to_agent_events(self._inner.receive_messages())
+        async for raw in raw_stream:
+            completed = _queued_task_completion_from_raw(raw)
+            if completed is not None:
+                yield completed
+
+            message = parse_message(raw)
+            if message is None:
+                continue
+            async for event in to_agent_events(_single_message(message)):
+                yield event
+                if stop_after_result and getattr(event, "kind", None) == "result":
+                    return
 
     async def stop_task(self, task_id: str) -> None:
         await self._inner.stop_task(task_id)
@@ -93,6 +132,41 @@ class _ClaudeAgentEventClient:
 
     async def disconnect(self) -> None:
         await self._inner.disconnect()
+
+
+def _raw_claude_message_stream(inner: object) -> AsyncIterator[dict[str, Any]] | None:
+    """Return the private raw Claude ``Query`` stream, when available."""
+    query = getattr(inner, "_query", None)
+    receive_messages = getattr(query, "receive_messages", None)
+    if not callable(receive_messages):
+        return None
+    return cast("AsyncIterator[dict[str, Any]]", receive_messages())
+
+
+async def _single_message(message: object) -> AsyncIterator[object]:
+    yield message
+
+
+def _queued_task_completion_from_raw(raw: dict[str, Any]) -> AgentEventValue | None:
+    """Recover task completion from Claude queued-command raw records."""
+    from src.core.protocols.agent_event import (
+        agent_task_completed_from_notification_text,
+    )
+
+    raw_type = raw.get("type")
+    text: object = None
+    if raw_type == "queue-operation" and raw.get("operation") == "enqueue":
+        text = raw.get("content")
+    elif raw_type == "attachment":
+        attachment = raw.get("attachment")
+        if isinstance(attachment, dict) and (
+            attachment.get("commandMode") == "task-notification"
+            or attachment.get("type") == "queued_command"
+        ):
+            text = attachment.get("prompt")
+    if not isinstance(text, str):
+        return None
+    return agent_task_completed_from_notification_text(text)
 
 
 class SDKClientFactory:

@@ -20,6 +20,8 @@ cannot transitively reach ``claude_agent_sdk``).
 
 from __future__ import annotations
 
+import html
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, runtime_checkable
 
@@ -145,6 +147,50 @@ _AGENT_EVENT_KINDS = frozenset(
     }
 )
 
+_TASK_NOTIFICATION_RE = re.compile(
+    r"<task-notification\b[^>]*>(?P<body>.*?)</task-notification>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def agent_task_completed_from_notification_text(
+    text: str,
+) -> AgentTaskCompletedEvent | None:
+    """Parse Claude's queued ``<task-notification>`` prompt, when present.
+
+    Recent Claude Code builds can deliver background-task completion as a queued
+    command / attachment prompt instead of a typed SDK ``TaskNotificationMessage``.
+    The XML-ish prompt carries the same fields, so adapters can recover the
+    canonical ``task_completed`` event from the text without depending on SDK
+    internals.
+    """
+    match = _TASK_NOTIFICATION_RE.search(text)
+    if match is None:
+        return None
+    body = match.group("body")
+    task_id = _task_notification_tag(body, "task-id")
+    tool_use_id = _task_notification_tag(body, "tool-use-id")
+    if not task_id and not tool_use_id:
+        return None
+    return AgentTaskCompletedEvent(
+        task_id=task_id,
+        tool_use_id=tool_use_id,
+        status=_task_notification_tag(body, "status"),
+        summary=_task_notification_tag(body, "summary"),
+        output_file=_task_notification_tag(body, "output-file"),
+    )
+
+
+def _task_notification_tag(body: str, name: str) -> str:
+    match = re.search(
+        rf"<{re.escape(name)}\b[^>]*>\s*(.*?)\s*</{re.escape(name)}>",
+        body,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if match is None:
+        return ""
+    return html.unescape(match.group(1).strip())
+
 
 async def to_agent_events(
     stream: AsyncIterator[object],
@@ -179,6 +225,9 @@ async def to_agent_events(
                 event = _block_to_event(block)
                 if event is not None:
                     yield event
+        elif msg_class == "UserMessage":
+            for event in _user_message_to_events(message):
+                yield event
         elif msg_class == "ResultMessage":
             yield _result_to_event(message)
         elif msg_class == "TaskStartedMessage":
@@ -208,6 +257,62 @@ def _block_to_event(block: object) -> AgentEventValue | None:
             content=getattr(block, "content", None),
         )
     return None
+
+
+def _user_message_to_events(message: object) -> list[AgentEventValue]:
+    """Translate SDK ``UserMessage`` blocks relevant to pipeline state.
+
+    Tool results are user-role messages in Claude SDK streams. The pipeline must
+    observe them to clear pending tool ids, learn background launch ids from Bash
+    acknowledgements, and mark successful lint commands. Plain user prompt text
+    is intentionally ignored, except for Claude queued task notifications, which
+    are provider-generated control prompts and should surface as task completion.
+    """
+    content = getattr(message, "content", None)
+    if isinstance(content, str):
+        event = agent_task_completed_from_notification_text(content)
+        return [event] if event is not None else []
+    if not isinstance(content, list):
+        return []
+
+    events: list[AgentEventValue] = []
+    for block in content:
+        if isinstance(block, dict):
+            block_type = str(block.get("type") or "")
+            if block_type == "tool_result":
+                events.append(
+                    AgentToolResultEvent(
+                        tool_use_id=str(block.get("tool_use_id") or ""),
+                        is_error=bool(block.get("is_error", False)),
+                        content=block.get("content"),
+                    )
+                )
+                continue
+            if block_type == "text":
+                text = block.get("text")
+                if isinstance(text, str):
+                    event = agent_task_completed_from_notification_text(text)
+                    if event is not None:
+                        events.append(event)
+                continue
+
+        block_type = type(block).__name__
+        if block_type == "ToolResultBlock":
+            events.append(
+                AgentToolResultEvent(
+                    tool_use_id=str(getattr(block, "tool_use_id", "") or ""),
+                    is_error=bool(getattr(block, "is_error", False)),
+                    content=getattr(block, "content", None),
+                )
+            )
+            continue
+        if block_type == "TextBlock":
+            event = agent_task_completed_from_notification_text(
+                str(getattr(block, "text", "") or "")
+            )
+            if event is not None:
+                events.append(event)
+    return events
 
 
 def _result_to_event(message: object) -> AgentResultEvent:
