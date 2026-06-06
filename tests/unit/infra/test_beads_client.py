@@ -2214,6 +2214,60 @@ class TestClaimAsync:
 
         assert result is False
 
+    @pytest.mark.asyncio
+    async def test_retries_transient_timestamp_validation_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """Should retry claim when br rejects a too-early updated_at."""
+        beads = BeadsClient(tmp_path)
+        mock_run = AsyncMock(
+            side_effect=[
+                make_command_result(
+                    returncode=1,
+                    stderr="Validation failed: updated_at: cannot be before created_at",
+                ),
+                make_command_result(returncode=0),
+            ]
+        )
+        mock_sleep = AsyncMock()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", mock_run)
+            mp.setattr(asyncio, "sleep", mock_sleep)
+            result = await beads.claim_async("issue-1")
+
+        assert result is True
+        assert mock_run.await_count == 2
+        mock_sleep.assert_awaited_once_with(1.0)
+
+    @pytest.mark.asyncio
+    async def test_stops_after_five_timestamp_validation_attempts(
+        self, tmp_path: Path
+    ) -> None:
+        """Should bound timestamp validation retries to five total attempts."""
+        beads = BeadsClient(tmp_path)
+        mock_run = AsyncMock(
+            return_value=make_command_result(
+                returncode=1,
+                stderr="Validation failed: updated_at: cannot be before created_at",
+            )
+        )
+        mock_sleep = AsyncMock()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", mock_run)
+            mp.setattr(asyncio, "sleep", mock_sleep)
+            result = await beads.claim_async("issue-1")
+
+        assert result is False
+        assert mock_run.await_count == 5
+        assert [args.args[0] for args in mock_sleep.await_args_list] == [
+            1.0,
+            2.0,
+            4.0,
+            8.0,
+        ]
+
 
 class TestResetAsync:
     """Test reset_async method."""

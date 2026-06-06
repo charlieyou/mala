@@ -33,6 +33,8 @@ DEFAULT_COMMAND_TIMEOUT = 30.0
 _BR_LABEL_INVALID_CHARS = re.compile(r"[^A-Za-z0-9_:-]+")
 _BR_LABEL_MAX_LENGTH = 50
 _BR_LABEL_HASH_LENGTH = 8
+_BR_UPDATED_BEFORE_CREATED_ERROR = "updated_at: cannot be before created_at"
+_BR_TIMESTAMP_RETRY_DELAYS_SECONDS = (1.0, 2.0, 4.0, 8.0)
 
 
 def _normalize_br_label(label: str) -> str:
@@ -150,6 +152,19 @@ class BeadsClient:
         if not result.ok and result.stderr:
             self._log_warning(f"Command failed: {' '.join(cmd)}: {result.stderr}")
 
+        return result
+
+    async def _run_issue_update_async(self, cmd: list[str]) -> CommandResult:
+        """Run a br update command, retrying transient timestamp-order failures."""
+        result = await self._run_subprocess_async(cmd)
+        for delay_seconds in _BR_TIMESTAMP_RETRY_DELAYS_SECONDS:
+            if (
+                result.returncode == 0
+                or _BR_UPDATED_BEFORE_CREATED_ERROR not in result.stderr
+            ):
+                break
+            await asyncio.sleep(delay_seconds)
+            result = await self._run_subprocess_async(cmd)
         return result
 
     # --- Async methods (non-blocking, use in async context) ---
@@ -600,7 +615,7 @@ class BeadsClient:
         Returns:
             True if successfully claimed, False otherwise.
         """
-        result = await self._run_subprocess_async(
+        result = await self._run_issue_update_async(
             ["br", "update", issue_id, "--status", "in_progress"]
         )
         return result.returncode == 0
@@ -626,7 +641,7 @@ class BeadsClient:
             if log_path:
                 notes_parts.append(f"Log: {log_path}")
             args.extend(["--notes", "\n".join(notes_parts)])
-        result = await self._run_subprocess_async(args)
+        result = await self._run_issue_update_async(args)
         return result.returncode == 0
 
     async def get_issue_status_async(self, issue_id: str) -> str | None:
@@ -727,7 +742,7 @@ class BeadsClient:
         notes = f"Quality gate failed: {reason}"
         if log_path:
             notes += f"\nLog: {log_path}"
-        result = await self._run_subprocess_async(
+        result = await self._run_issue_update_async(
             [
                 "br",
                 "update",
@@ -764,7 +779,7 @@ class BeadsClient:
         Returns:
             True if successfully reopened, False otherwise.
         """
-        result = await self._run_subprocess_async(
+        result = await self._run_issue_update_async(
             ["br", "update", issue_id, "--status", "open"]
         )
         return result.returncode == 0
@@ -922,7 +937,7 @@ class BeadsClient:
         Returns:
             True if successfully updated, False otherwise.
         """
-        result = await self._run_subprocess_async(
+        result = await self._run_issue_update_async(
             ["br", "update", issue_id, "--description", description]
         )
         return result.returncode == 0
@@ -957,7 +972,7 @@ class BeadsClient:
         if status is not None:
             cmd.extend(["--status", status])
 
-        result = await self._run_subprocess_async(cmd)
+        result = await self._run_issue_update_async(cmd)
         return result.returncode == 0
 
     async def get_parent_epic_async(self, issue_id: str) -> str | None:
