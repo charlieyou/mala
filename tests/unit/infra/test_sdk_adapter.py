@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING, cast
 
@@ -283,6 +284,236 @@ class TestBackgroundTaskSurface:
                 result="done",
             ),
         ]
+
+    @pytest.mark.asyncio
+    async def test_receive_response_recovers_local_transcript_task_notifications(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Transcript-only task notifications clear background launches before result."""
+        claude_config = tmp_path / "claude"
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_config))
+        transcript_dir = claude_config / "projects" / "-repo"
+        transcript_dir.mkdir(parents=True)
+        session_id = "s-transcript"
+        notification_text = "\n".join(
+            [
+                "<task-notification>",
+                "<task-id>task-transcript</task-id>",
+                "<tool-use-id>tool-bg-transcript</tool-use-id>",
+                "<output-file>/tmp/task-transcript.output</output-file>",
+                "<status>completed</status>",
+                "<summary>Background command completed</summary>",
+                "</task-notification>",
+            ]
+        )
+        (transcript_dir / f"{session_id}.jsonl").write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "queue-operation",
+                            "operation": "enqueue",
+                            "content": notification_text,
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "attachment",
+                            "attachment": {
+                                "type": "queued_command",
+                                "commandMode": "task-notification",
+                                "prompt": notification_text,
+                            },
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        inner = _FakeRawInner(
+            [
+                {
+                    "type": "assistant",
+                    "session_id": session_id,
+                    "message": {
+                        "model": "claude-opus",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "tool-bg-transcript",
+                                "name": "Bash",
+                                "input": {
+                                    "command": "slow.sh",
+                                    "run_in_background": True,
+                                },
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "tool-bg-transcript",
+                                "content": "Command running in background with ID: task-transcript.",
+                                "is_error": False,
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "duration_ms": 1,
+                    "duration_api_ms": 1,
+                    "is_error": False,
+                    "num_turns": 1,
+                    "session_id": session_id,
+                    "result": "done",
+                },
+            ]
+        )
+        client = _ClaudeAgentEventClient(cast("SDKClientProtocol", inner))
+
+        events = [event async for event in client.receive_response()]
+
+        assert events == [
+            AgentToolUseEvent(
+                id="tool-bg-transcript",
+                name="Bash",
+                input={"command": "slow.sh", "run_in_background": True},
+            ),
+            AgentToolResultEvent(
+                tool_use_id="tool-bg-transcript",
+                is_error=False,
+                content="Command running in background with ID: task-transcript.",
+            ),
+            AgentTaskCompletedEvent(
+                task_id="task-transcript",
+                tool_use_id="tool-bg-transcript",
+                status="completed",
+                summary="Background command completed",
+                output_file="/tmp/task-transcript.output",
+            ),
+            AgentResultEvent(
+                session_id=session_id,
+                is_error=False,
+                subtype="success",
+                result="done",
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_receive_messages_drains_transcript_notifications_after_result(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Close the race where transcript-only completion appears after result."""
+        claude_config = tmp_path / "claude"
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_config))
+        transcript_dir = claude_config / "projects" / "-repo"
+        transcript_dir.mkdir(parents=True)
+        session_id = "s-race"
+        transcript = transcript_dir / f"{session_id}.jsonl"
+        transcript.write_text("", encoding="utf-8")
+        inner = _FakeRawInner(
+            [
+                {
+                    "type": "assistant",
+                    "session_id": session_id,
+                    "message": {
+                        "model": "claude-opus",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "tool-bg-race",
+                                "name": "Bash",
+                                "input": {
+                                    "command": "slow.sh",
+                                    "run_in_background": True,
+                                },
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "tool-bg-race",
+                                "content": "Command running in background with ID: task-race.",
+                                "is_error": False,
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "duration_ms": 1,
+                    "duration_api_ms": 1,
+                    "is_error": False,
+                    "num_turns": 1,
+                    "session_id": session_id,
+                    "result": "done",
+                },
+            ]
+        )
+        client = _ClaudeAgentEventClient(cast("SDKClientProtocol", inner))
+
+        response_events = [event async for event in client.receive_response()]
+        assert response_events[-1] == AgentResultEvent(
+            session_id=session_id,
+            is_error=False,
+            subtype="success",
+            result="done",
+        )
+
+        notification_text = "\n".join(
+            [
+                "<task-notification>",
+                "<task-id>task-race</task-id>",
+                "<tool-use-id>tool-bg-race</tool-use-id>",
+                "<output-file>/tmp/task-race.output</output-file>",
+                "<status>completed</status>",
+                "<summary>Background command completed</summary>",
+                "</task-notification>",
+            ]
+        )
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "queue-operation",
+                    "operation": "enqueue",
+                    "content": notification_text,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        first_event: AgentTaskCompletedEvent | None = None
+        async for event in client.receive_messages():
+            first_event = cast("AgentTaskCompletedEvent", event)
+            break
+
+        assert first_event == AgentTaskCompletedEvent(
+            task_id="task-race",
+            tool_use_id="tool-bg-race",
+            status="completed",
+            summary="Background command completed",
+            output_file="/tmp/task-race.output",
+        )
 
     @pytest.mark.asyncio
     async def test_receive_messages_translates_raw_task_notification_attachment(

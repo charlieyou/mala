@@ -25,6 +25,9 @@ directly) still receive the unwrapped SDK client.
 
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -51,6 +54,8 @@ class _ClaudeAgentEventClient:
 
     def __init__(self, inner: SDKClientProtocol) -> None:
         self._inner = inner
+        self._session_id: str | None = None
+        self._seen_task_completion_keys: set[tuple[str, str]] = set()
 
     async def __aenter__(self) -> Self:
         await self._inner.__aenter__()
@@ -95,6 +100,10 @@ class _ClaudeAgentEventClient:
         parser drops them; fall back to the public SDK iterators for tests or
         custom clients that do not expose the private query object.
         """
+        if not stop_after_result and self._session_id:
+            async for transcript_event in self._local_transcript_completions():
+                yield transcript_event
+
         raw_stream = _raw_claude_message_stream(self._inner)
         if raw_stream is None:
             from src.core.protocols.agent_event import to_agent_events
@@ -105,6 +114,14 @@ class _ClaudeAgentEventClient:
                 else self._inner.receive_messages()
             )
             async for event in to_agent_events(stream):
+                if getattr(event, "kind", None) == "task_completed":
+                    if self._remember_task_completion(event):
+                        yield event
+                    continue
+                if getattr(event, "kind", None) == "result":
+                    self._session_id = str(getattr(event, "session_id", "") or "")
+                    async for transcript_event in self._local_transcript_completions():
+                        yield transcript_event
                 yield event
             return
 
@@ -113,16 +130,62 @@ class _ClaudeAgentEventClient:
 
         async for raw in raw_stream:
             completed = _queued_task_completion_from_raw(raw)
-            if completed is not None:
+            if completed is not None and self._remember_task_completion(completed):
                 yield completed
 
             message = parse_message(raw)
             if message is None:
                 continue
             async for event in to_agent_events(_single_message(message)):
+                if getattr(event, "kind", None) == "task_completed":
+                    if self._remember_task_completion(event):
+                        yield event
+                    continue
+                if getattr(event, "kind", None) == "result":
+                    self._session_id = str(getattr(event, "session_id", "") or "")
+                    async for transcript_event in self._local_transcript_completions():
+                        yield transcript_event
                 yield event
                 if stop_after_result and getattr(event, "kind", None) == "result":
                     return
+
+    def _remember_task_completion(self, event: AgentEventValue) -> bool:
+        """Return True once per task-completion event seen by this client."""
+        task_id = str(getattr(event, "task_id", "") or "")
+        tool_use_id = str(getattr(event, "tool_use_id", "") or "")
+        key = (task_id, tool_use_id)
+        if key in self._seen_task_completion_keys:
+            return False
+        self._seen_task_completion_keys.add(key)
+        return True
+
+    async def _local_transcript_completions(self) -> AsyncIterator[AgentEventValue]:
+        """Yield queued task completions mirrored only to Claude's transcript.
+
+        Claude Code can record background Bash completions as local transcript
+        ``queue-operation`` / ``attachment`` entries without surfacing those raw
+        entries on the SDK message stream. At the turn result the transcript is
+        the only place those already-delivered notifications are visible to
+        Mala; recovering them here lets the pipeline clear stale background
+        waits before returning from ``receive_response``.
+        """
+        if not self._session_id:
+            return
+        for path in _local_claude_transcript_paths(self._session_id):
+            try:
+                with path.open(encoding="utf-8") as handle:
+                    for line in handle:
+                        try:
+                            raw = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        completed = _queued_task_completion_from_raw(raw)
+                        if completed is not None and self._remember_task_completion(
+                            completed
+                        ):
+                            yield completed
+            except OSError:
+                continue
 
     async def stop_task(self, task_id: str) -> None:
         await self._inner.stop_task(task_id)
@@ -167,6 +230,31 @@ def _queued_task_completion_from_raw(raw: dict[str, Any]) -> AgentEventValue | N
     if not isinstance(text, str):
         return None
     return agent_task_completed_from_notification_text(text)
+
+
+def _local_claude_transcript_paths(session_id: str) -> list[Path]:
+    """Find local Claude transcript files for ``session_id``.
+
+    Claude's project-directory encoding is private and has changed across
+    versions (notably around dot path components), so use a shallow glob over
+    project directories instead of reimplementing the encoder here.
+    """
+    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
+    projects_dir = config_dir / "projects"
+    if not projects_dir.exists():
+        return []
+
+    def _mtime(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    return sorted(
+        projects_dir.glob(f"*/{session_id}.jsonl"),
+        key=_mtime,
+        reverse=True,
+    )
 
 
 class SDKClientFactory:
