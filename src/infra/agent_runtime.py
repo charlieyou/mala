@@ -12,6 +12,7 @@ Design principles:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -21,6 +22,29 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from src.infra.tools.env import SCRIPTS_DIR, format_mcp_timeout_ms, get_lock_dir
 
 logger = logging.getLogger(__name__)
+
+
+_IMPLEMENTER_MEMORY_DISABLED_FLOWS = frozenset({"implementer", "epic_remediation"})
+_CLAUDE_MEMORY_EXCLUDE_PATTERNS = (
+    "**/CLAUDE.md",
+    "**/CLAUDE.local.md",
+    "**/.claude/rules/**",
+)
+
+
+def _claude_settings_json(*, disable_memory: bool) -> str:
+    """Return inline Claude Code settings for SDK-launched sessions.
+
+    Claude Code has two persistent memory surfaces for these sessions:
+    CLAUDE.md / .claude/rules files, controlled by ``claudeMdExcludes``, and
+    auto memory, controlled by ``autoMemoryEnabled`` plus the CLI env override
+    applied in :meth:`ClaudeAgentRuntimeBuilder.build`.
+    """
+    settings: dict[str, object] = {"autoCompactEnabled": True}
+    if disable_memory:
+        settings["autoMemoryEnabled"] = False
+        settings["claudeMdExcludes"] = list(_CLAUDE_MEMORY_EXCLUDE_PATTERNS)
+    return json.dumps(settings, separators=(",", ":"))
 
 
 class _Unset(Enum):
@@ -624,6 +648,13 @@ class ClaudeAgentRuntimeBuilder:
         if self._env is None:
             self.with_env()
         env = self._env or {}
+        disable_memory = env.get("MALA_SDK_FLOW") in _IMPLEMENTER_MEMORY_DISABLED_FLOWS
+        if disable_memory:
+            # Claude Code auto memory is controlled by both settings and an env
+            # escape hatch. Set the env on implementer-lifecycle sessions so
+            # auto memory stays off even if lower-priority settings try to
+            # enable it. Reviewer / fixer flows keep their existing behavior.
+            env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
 
         # Build MCP servers if not explicitly set
         if self._mcp_servers is None:
@@ -677,7 +708,7 @@ class ClaudeAgentRuntimeBuilder:
             env=env,
             hooks=hooks_dict,
             setting_sources=self._setting_sources,
-            settings='{"autoCompactEnabled": true}',
+            settings=_claude_settings_json(disable_memory=disable_memory),
             effort=self._effort,
             resume=self._resume_id,
         )

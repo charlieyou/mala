@@ -5,6 +5,7 @@ Tests the centralized agent runtime configuration builder.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -553,6 +554,69 @@ class TestClaudeAgentRuntimeBuilder:
         )
         assert len(factory.created_options) == 1
         assert factory.created_options[0]["setting_sources"] == []
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("flow", ["implementer", "epic_remediation"])
+    def test_implementer_lifecycle_flows_disable_claude_memory(
+        self,
+        repo_path: Path,
+        factory: FakeSDKClientFactory,
+        monkeypatch: pytest.MonkeyPatch,
+        flow: str,
+    ) -> None:
+        """Implementer-lifecycle Claude sessions disable persistent memory.
+
+        Claude Code memory has two surfaces: CLAUDE.md / .claude/rules loaded
+        through settings, and auto memory loaded from the per-project memory
+        directory. The implementer runtime disables both while preserving the
+        normal settings-source wiring for non-memory settings.
+        """
+        monkeypatch.delenv("CLAUDE_CODE_DISABLE_AUTO_MEMORY", raising=False)
+
+        runtime = (
+            ClaudeAgentRuntimeBuilder(
+                repo_path,
+                "agent-memory-off",
+                factory,
+                setting_sources=["local", "project"],
+            )
+            .with_env(extra={"MALA_SDK_FLOW": flow})
+            .with_mcp(servers={})
+            .build()
+        )
+
+        assert runtime.env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
+        opts = factory.created_options[0]
+        settings = json.loads(opts["settings"])
+        assert settings["autoCompactEnabled"] is True
+        assert settings["autoMemoryEnabled"] is False
+        assert settings["claudeMdExcludes"] == [
+            "**/CLAUDE.md",
+            "**/CLAUDE.local.md",
+            "**/.claude/rules/**",
+        ]
+        assert opts["setting_sources"] == ["local", "project"]
+
+    @pytest.mark.unit
+    def test_fixer_flow_keeps_claude_memory_behavior(
+        self,
+        repo_path: Path,
+        factory: FakeSDKClientFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Non-implementer Claude flows keep existing memory/settings behavior."""
+        monkeypatch.delenv("CLAUDE_CODE_DISABLE_AUTO_MEMORY", raising=False)
+
+        runtime = (
+            ClaudeAgentRuntimeBuilder(repo_path, "agent-fixer", factory)
+            .with_env(extra={"MALA_SDK_FLOW": "fixer"})
+            .with_mcp(servers={})
+            .build()
+        )
+
+        assert "CLAUDE_CODE_DISABLE_AUTO_MEMORY" not in runtime.env
+        settings = json.loads(factory.created_options[0]["settings"])
+        assert settings == {"autoCompactEnabled": True}
 
 
 class TestBuildDefaultRuntimeComponents:
