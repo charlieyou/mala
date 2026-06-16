@@ -1,6 +1,6 @@
 """Unit tests for epic verification retry loop in EpicVerificationCoordinator.
 
-Tests the retry logic in EpicVerificationCoordinator.check_epic_closure which:
+Tests the inline-remediation retry logic in EpicVerificationCoordinator.check_epic_closure which:
 1. Runs epic verification
 2. If verification fails and creates remediation issues, executes them
 3. Re-verifies the epic
@@ -168,7 +168,10 @@ class FakeCallbacks:
     def to_coordinator(self, max_retries: int) -> EpicVerificationCoordinator:
         """Build an EpicVerificationCoordinator using this fake as its ports."""
         return EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=max_retries),
+            config=EpicVerificationConfig(
+                max_retries=max_retries,
+                execute_remediation_inline=True,
+            ),
             issue_provider=cast("IssueProvider", self),
             event_sink=cast("MalaEventSink", self),
             issue_lifecycle=cast("IssueLifecyclePort", self),

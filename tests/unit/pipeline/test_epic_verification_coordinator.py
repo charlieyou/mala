@@ -82,10 +82,15 @@ class EpicVerificationHarness:
     ) -> EpicVerificationResult:
         return await self.verify_epic(epic_id, human_override)
 
-    def to_coordinator(self, max_retries: int) -> EpicVerificationCoordinator:
+    def to_coordinator(
+        self, max_retries: int, *, execute_remediation_inline: bool = True
+    ) -> EpicVerificationCoordinator:
         """Build a coordinator from the current harness attributes."""
         return EpicVerificationCoordinator(
-            config=EpicVerificationConfig(max_retries=max_retries),
+            config=EpicVerificationConfig(
+                max_retries=max_retries,
+                execute_remediation_inline=execute_remediation_inline,
+            ),
             issue_provider=self.issue_provider,
             event_sink=self.event_sink,
             issue_lifecycle=self.issue_lifecycle,
@@ -318,6 +323,57 @@ class TestEpicVerificationInterruptHandling:
         # Verification should complete normally
         assert "epic-1" in coordinator.verified_epics
         callbacks.verify_epic.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_non_inline_remediation_stays_queued_without_marking_verified(
+        self,
+        callbacks: EpicVerificationHarness,
+        run_metadata: MagicMock,
+    ) -> None:
+        """Remediation tickets can be left for the main queue."""
+        callbacks.verify_epic = AsyncMock(
+            return_value=make_verification_result(
+                failed_count=1,
+                remediation_issues=["rem-1"],
+            )
+        )
+
+        coordinator = callbacks.to_coordinator(
+            max_retries=1,
+            execute_remediation_inline=False,
+        )
+
+        await coordinator.check_epic_closure("issue-1", run_metadata)
+
+        callbacks.spawn_epic_remediation_mock.assert_not_awaited()
+        assert "epic-1" not in coordinator.verified_epics
+
+    @pytest.mark.asyncio
+    async def test_non_inline_remediation_respects_retry_budget(
+        self,
+        callbacks: EpicVerificationHarness,
+        run_metadata: MagicMock,
+    ) -> None:
+        """A zero retry budget makes a remediation-producing failure terminal."""
+        callbacks.verify_epic = AsyncMock(
+            return_value=make_verification_result(
+                failed_count=1,
+                remediation_issues=["rem-1"],
+            )
+        )
+
+        coordinator = callbacks.to_coordinator(
+            max_retries=0,
+            execute_remediation_inline=False,
+        )
+
+        await coordinator.check_epic_closure("issue-1", run_metadata)
+
+        callbacks.spawn_epic_remediation_mock.assert_not_awaited()
+        assert "epic-1" in coordinator.verified_epics
+        callbacks.event_sink.on_warning.assert_called_once_with(
+            "Epic verification failed after 0 retries for epic-1"
+        )
 
     @pytest.mark.asyncio
     async def test_successful_nested_epic_closure_propagates_to_ancestor(
@@ -557,7 +613,9 @@ class TestEpicVerificationInterruptHandling:
         assert callbacks.finalize_epic_remediation_mock.await_args is not None
         finalized_result = callbacks.finalize_epic_remediation_mock.await_args.args[1]
         assert finalized_result.success is False
-        assert finalized_result.summary == "Remediation task did not stop after interrupt"
+        assert (
+            finalized_result.summary == "Remediation task did not stop after interrupt"
+        )
 
         finish_task.set()
         if spawned_task is not None:

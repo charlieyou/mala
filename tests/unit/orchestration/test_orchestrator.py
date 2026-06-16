@@ -58,6 +58,7 @@ from tests.fakes.gate_checker import FakeGateChecker
 from tests.fakes.sdk_client import FakeSDKClientFactory
 
 if TYPE_CHECKING:
+    from src.core.protocols.validation import EpicVerifierProtocol
     from src.orchestration.runtime_deps import RuntimeDeps
 
 
@@ -282,12 +283,18 @@ async def test_run_resets_epic_verification_state(
     orchestrator.epic_verification_coordinator.verified_epics.add("epic-1")
     orchestrator.epic_verification_coordinator.epics_being_verified.add("epic-2")
     orchestrator.epic_verification_coordinator.epics_pending_recheck.add("epic-3")
+    orchestrator.epic_verification_coordinator.epic_remediation_retry_counts[
+        "epic-4"
+    ] = 1
 
     assert await orchestrator.run() == (0, 0)
 
     assert orchestrator.epic_verification_coordinator.verified_epics == set()
     assert orchestrator.epic_verification_coordinator.epics_being_verified == set()
     assert orchestrator.epic_verification_coordinator.epics_pending_recheck == set()
+    assert (
+        orchestrator.epic_verification_coordinator.epic_remediation_retry_counts == {}
+    )
 
 
 def test_pipeline_components_construct_without_orchestrator(tmp_path: Path) -> None:
@@ -494,11 +501,7 @@ class TestSpawnAgent:
     ) -> None:
         """Resumed WIP issues should not be updated to in_progress again."""
         fake_issues = FakeIssueProvider(
-            {
-                "wip-issue": FakeIssue(
-                    id="wip-issue", priority=1, status="in_progress"
-                )
-            }
+            {"wip-issue": FakeIssue(id="wip-issue", priority=1, status="in_progress")}
         )
         runs_dir = tmp_path / "runs"
         runs_dir.mkdir()
@@ -829,6 +832,118 @@ class TestRunOrchestrationLoop:
         assert [item.issue_id for item in orchestrator._state.completed] == [
             "remediation-1"
         ]
+
+    @pytest.mark.asyncio
+    async def test_epic_remediation_does_not_starve_ready_non_epic_work(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Parent-epic remediation enters the normal queue instead of an inner loop."""
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        fake_issues = FakeIssueProvider(
+            {
+                "epic-1": FakeIssue("epic-1", issue_type="epic"),
+                "child-1": FakeIssue("child-1", parent_epic="epic-1"),
+                "normal-1": FakeIssue("normal-1"),
+            }
+        )
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=2,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
+
+        processed_issues: list[str] = []
+        verification_calls = 0
+
+        class FakeEpicVerifier:
+            async def verify_and_close_epic(
+                self,
+                epic_id: str,
+                *,
+                human_override: bool = False,
+            ) -> EpicVerificationResult:
+                nonlocal verification_calls
+                assert epic_id == "epic-1"
+                assert human_override is False
+                verification_calls += 1
+                if verification_calls == 1:
+                    fake_issues.issues["remediation-1"] = FakeIssue(
+                        "remediation-1",
+                        parent_epic="epic-1",
+                    )
+                    return EpicVerificationResult(
+                        verified_count=1,
+                        passed_count=0,
+                        failed_count=1,
+                        verdicts={},
+                        remediation_issues_created=["remediation-1"],
+                    )
+                return EpicVerificationResult(
+                    verified_count=1,
+                    passed_count=0,
+                    failed_count=1,
+                    verdicts={},
+                    remediation_issues_created=[],
+                )
+
+            async def verify_and_close_eligible(
+                self,
+                human_override_epic_ids: set[str] | None = None,
+            ) -> EpicVerificationResult:
+                del human_override_epic_ids
+                return EpicVerificationResult(
+                    verified_count=0,
+                    passed_count=0,
+                    failed_count=0,
+                    verdicts={},
+                    remediation_issues_created=[],
+                )
+
+            async def verify_and_close_eligible_within(
+                self,
+                scope_epic_id: str,
+                human_override_epic_ids: set[str] | None = None,
+            ) -> EpicVerificationResult:
+                del scope_epic_id, human_override_epic_ids
+                return EpicVerificationResult(
+                    verified_count=0,
+                    passed_count=0,
+                    failed_count=0,
+                    verdicts={},
+                    remediation_issues_created=[],
+                )
+
+        orchestrator.epic_verifier = cast("EpicVerifierProtocol", FakeEpicVerifier())
+
+        async def run_implementer(
+            issue_id: str, *, flow: str = "implementer"
+        ) -> IssueResult:
+            processed_issues.append(issue_id)
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,
+                summary="Completed successfully",
+                session_log_path=log_path,
+            )
+
+        with (
+            patch.object(orchestrator, "run_implementer", side_effect=run_implementer),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            result = await orchestrator.run()
+
+        assert result == (2, 2)
+        assert processed_issues == ["child-1", "normal-1"]
+        assert fake_issues.issues["remediation-1"].status == "open"
+        assert verification_calls == 1
 
     @pytest.mark.asyncio
     async def test_verifies_eligible_epics_after_run_drains(

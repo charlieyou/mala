@@ -4,7 +4,7 @@ Extracted from MalaOrchestrator to separate epic verification logic from orchest
 This module handles:
 - Checking if closing an issue should close its parent epic
 - Retry loop for epic verification with interrupt support
-- Executing remediation issues when verification fails
+- Leaving remediation issues for the normal work queue by default when verification fails
 - Graceful cancellation of remediation tasks on interrupt
 
 Design principles:
@@ -96,9 +96,14 @@ class EpicVerificationConfig:
 
     Attributes:
         max_retries: Maximum number of retry attempts after initial verification.
+        execute_remediation_inline: If True, run remediation issues inside the
+            epic verification task before retrying. The default is False so
+            auto-created remediation issues flow through the normal work queue
+            and do not starve unrelated ready work.
     """
 
     max_retries: int = 0
+    execute_remediation_inline: bool = False
 
 
 @dataclass
@@ -109,7 +114,7 @@ class EpicVerificationCoordinator:
     inline in MalaOrchestrator._check_epic_closure. It manages:
     - Tracking verified epics to avoid re-verification
     - Re-entrant guard for epics being verified
-    - Retry loop with remediation issue execution
+    - Retry loop with optional inline remediation issue execution
 
     Attributes:
         config: Verification configuration.
@@ -137,12 +142,14 @@ class EpicVerificationCoordinator:
     verified_epics: set[str] = field(default_factory=set)
     epics_being_verified: set[str] = field(default_factory=set)
     epics_pending_recheck: set[str] = field(default_factory=set)
+    epic_remediation_retry_counts: dict[str, int] = field(default_factory=dict)
 
     def reset_state(self) -> None:
         """Clear per-run verification state before a new orchestrator run."""
         self.verified_epics.clear()
         self.epics_being_verified.clear()
         self.epics_pending_recheck.clear()
+        self.epic_remediation_retry_counts.clear()
 
     async def check_epic_closure(
         self,
@@ -270,23 +277,54 @@ class EpicVerificationCoordinator:
             # If epic passed verification, mark as verified and return
             if verification_result.passed_count > 0:
                 self.verified_epics.add(epic_id)
+                self.epic_remediation_retry_counts.pop(epic_id, None)
                 # Queue epic_completion trigger on success
                 await self._try_queue_epic_completion_trigger(
                     epic_id, verification_passed=True
                 )
                 return True
 
-            # If no remediation issues were created, or max attempts reached,
-            # mark as verified (to prevent infinite loops) and return
-            if (
-                not verification_result.remediation_issues_created
-                or attempt >= max_attempts
-            ):
-                if attempt >= max_attempts and verification_result.failed_count > 0:
+            # If no remediation issues were created, mark as verified (to
+            # prevent infinite loops) and return.
+            if not verification_result.remediation_issues_created:
+                self.verified_epics.add(epic_id)
+                self.epic_remediation_retry_counts.pop(epic_id, None)
+                # Queue epic_completion trigger on failure (verification completed but didn't pass)
+                await self._try_queue_epic_completion_trigger(
+                    epic_id, verification_passed=False
+                )
+                return False
+
+            if not self.config.execute_remediation_inline:
+                retry_count = self.epic_remediation_retry_counts.get(epic_id, 0)
+                if retry_count >= max_retries:
+                    if verification_result.failed_count > 0:
+                        self.event_sink.on_warning(
+                            f"Epic verification failed after {max_retries} retries for {epic_id}"
+                        )
+                    self.verified_epics.add(epic_id)
+                    self.epic_remediation_retry_counts.pop(epic_id, None)
+                    await self._try_queue_epic_completion_trigger(
+                        epic_id, verification_passed=False
+                    )
+                    return False
+
+                self.epic_remediation_retry_counts[epic_id] = retry_count + 1
+                # Leave remediation tickets in the normal issue queue. They are
+                # parented to the epic, so closing them will naturally schedule
+                # a fresh verification check without blocking unrelated ready
+                # issues behind an inner remediation loop.
+                return False
+
+            # Inline remediation only: if max attempts were reached, mark as
+            # verified to avoid retrying the same terminal failure forever.
+            if attempt >= max_attempts:
+                if verification_result.failed_count > 0:
                     self.event_sink.on_warning(
                         f"Epic verification failed after {max_retries} retries for {epic_id}"
                     )
                 self.verified_epics.add(epic_id)
+                self.epic_remediation_retry_counts.pop(epic_id, None)
                 # Queue epic_completion trigger on failure (verification completed but didn't pass)
                 await self._try_queue_epic_completion_trigger(
                     epic_id, verification_passed=False
